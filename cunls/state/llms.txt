@@ -1,0 +1,30 @@
+# Module: state
+
+## Purpose
+
+Represents optimization variables in batched manifold form and provides `Plus`
+operations for applying tangent-space updates.
+
+## Core interfaces
+
+- `state_batch.h`: abstract base `StateBatch`
+- `sized_state_batch.h`: `SizedStateBatch<AmbientDim, TangentDim>`
+- `state_batch_ops.h`: `StateBatchOps` (reduced/full mapping + batched updates)
+
+## Implementations
+
+- Euclidean: `vector_state_batch.h`
+- Rotation groups: `so2_state_batch.h`, `so3_state_batch.h`
+- Rigid transforms: `se2_state_batch.h`, `se3_state_batch.h`
+- Similarities: `similarity2_state_batch.h`, `similarity3_state_batch.h`
+
+## Memory model
+
+- Backed by user-provided contiguous device memory.
+- Optional constant state IDs mark fixed blocks excluded from optimization.
+- `StateBlockDevicePtr(i)` returns pointers into underlying batch storage.
+
+## Related modules
+
+- Consumed by `factor/` through state pointer arrays.
+- Updated by minimizers through `StateBatchOps`.

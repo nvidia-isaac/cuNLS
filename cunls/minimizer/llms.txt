@@ -1,0 +1,31 @@
+# Module: minimizer
+
+## Purpose
+
+Problem assembly, residual orchestration, sparse system building, and iterative
+optimization.
+
+## Key files and classes
+
+- `problem.h`: `Problem` (graph composition of states + factors)
+- `residual_batch.h`: `ResidualBatch` (factor + loss wrapper)
+- `gauss_newton_minimizer.h`: `MinimizerOptions`, `MinimizerSummary`,
+  `GaussNewtonMinimizer`
+- `levenberg_marquardt_minimizer.h`:
+  `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer`
+- `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
+- `sparse_matrix.h`: sparse conversion, RHS, norms, and `SparseMatrixMultiplication`
+
+## Solver flow
+
+1. Evaluate residuals/Jacobians for all residual batches.
+2. Build sparse Jacobian in triplet, convert/update CSR.
+3. Form normal equations (`J^T J`, `-J^T r`).
+4. Solve sparse linear system.
+5. Apply manifold-aware state updates (`StateBatchOps`).
+6. Accept/reject step and iterate until convergence.
+
+## Important constraints
+
+- Problem pointers are non-owning; caller keeps lifetime.
+- Inputs and intermediate buffers are GPU-resident.

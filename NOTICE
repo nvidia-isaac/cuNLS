@@ -1,0 +1,27 @@
+cuNLS
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES
+
+This product includes third-party software components:
+
+1. spdlog
+   License: MIT
+   Copyright (c) 2016 Gabi Melman
+   https://github.com/gabime/spdlog
+
+2. NVTX
+   License: Apache-2.0
+   Copyright (c) NVIDIA Corporation
+   https://github.com/NVIDIA/NVTX
+
+3. cuDSS
+   License: Proprietary
+   Copyright (c) NVIDIA Corporation
+   https://developer.nvidia.com/cudss
+
+4. NVIDIA CUDA Toolkit libraries (CUDA Runtime, cuBLAS, cuSPARSE)
+   License: NVIDIA CUDA End User License Agreement
+   Copyright (c) NVIDIA Corporation
+   https://docs.nvidia.com/cuda/eula/index.html
+
+Full license texts for third-party components are provided in the
+third_party/LICENSES directory.

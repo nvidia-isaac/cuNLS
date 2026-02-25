@@ -1,0 +1,568 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @file point_to_point_factor_batch_test.cpp
+ * @brief Unit tests for PointToPointFactorBatch.
+ *
+ * Tests the point-to-point factor by:
+ * 1. Verifying residuals with identity and known transforms
+ * 2. Verifying analytical Jacobians against numerical differentiation
+ * 3. Verifying optimization can recover a disturbed SE(3) pose
+ */
+
+#include "cunls/factor/point_to_point_factor_batch.h"
+
+#include <gtest/gtest.h>
+
+#include <cmath>
+#include <random>
+#include <vector>
+
+#include "cunls/common/cublas_helper.h"
+#include "cunls/common/cuda_stream.h"
+#include "cunls/common/device_vector.h"
+#include "cunls/common/helper.h"
+#include "cunls/math/lie_math.h"
+#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
+#include "cunls/minimizer/problem.h"
+#include "cunls/common/profiler.h"
+#include "cunls/state/se3_state_batch.h"
+#include "cunls/common/types.h"
+
+namespace cunls {
+
+/**
+ * @brief Test fixture for PointToPointFactorBatch unit tests.
+ *
+ * Creates synthetic 3D point correspondences and SE(3) transforms to verify
+ * residual evaluation, Jacobian correctness, and optimization convergence.
+ */
+class PointToPointFactorBatchTest : public ::testing::Test {
+ public:
+  using Point3D = Vector<3>;
+
+  void SetUp() override {
+    std::mt19937 rng(fixed_seed_);
+    std::uniform_real_distribution<float> point_dist(-5.0f, 5.0f);
+    std::uniform_real_distribution<float> rotation_dist(-0.3f, 0.3f);
+    std::uniform_real_distribution<float> translation_dist(-2.0f, 2.0f);
+
+    // Generate random source points (q)
+    q_points_.resize(num_correspondences_);
+    for (size_t i = 0; i < num_correspondences_; i++) {
+      q_points_[i][0] = point_dist(rng);
+      q_points_[i][1] = point_dist(rng);
+      q_points_[i][2] = point_dist(rng);
+    }
+
+    // Generate a random SE3 transform via the exponential map
+    ground_truth_twist_.resize(1);
+    ground_truth_twist_[0][0] = rotation_dist(rng);
+    ground_truth_twist_[0][1] = rotation_dist(rng);
+    ground_truth_twist_[0][2] = rotation_dist(rng);
+    ground_truth_twist_[0][3] = translation_dist(rng);
+    ground_truth_twist_[0][4] = translation_dist(rng);
+    ground_truth_twist_[0][5] = translation_dist(rng);
+
+    // Compute the SE3 transform from the twist
+    CudaStream stream;
+    dvector<Vector<6>> twist_device(ground_truth_twist_);
+    ground_truth_pose_device_.resize(1);
+
+    ComputeExpSE3(stream.GetStream(),
+                  reinterpret_cast<const float*>(twist_device.data()),
+                  /*twist_stride=*/6, /*transform_pitch=*/4,
+                  /*transform_stride=*/16, /*size=*/1,
+                  reinterpret_cast<float*>(ground_truth_pose_device_.data()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+    // Copy pose to host
+    ground_truth_pose_.resize(1);
+    ground_truth_pose_device_.CopyToHost(ground_truth_pose_.data(), 1);
+
+    // Generate target points: p = T @ q
+    p_points_.resize(num_correspondences_);
+    for (size_t i = 0; i < num_correspondences_; i++) {
+      TransformPoint(ground_truth_pose_[0], q_points_[i], p_points_[i]);
+    }
+  }
+
+ protected:
+  /**
+   * @brief Transforms a 3D point by an SE(3) matrix on CPU: result = R*point + t.
+   */
+  void TransformPoint(const SE3Transform& pose, const Point3D& point,
+                      Point3D& result) {
+    for (int i = 0; i < 3; i++) {
+      result[i] = pose[i * 4 + 3];  // translation
+      for (int j = 0; j < 3; j++) {
+        result[i] += pose[i * 4 + j] * point[j];
+      }
+    }
+  }
+
+  /**
+   * @brief Creates an identity SE3 transform.
+   */
+  SE3Transform MakeIdentity() {
+    SE3Transform identity;
+    identity.fill(0.0f);
+    identity[0] = 1.0f;
+    identity[5] = 1.0f;
+    identity[10] = 1.0f;
+    identity[15] = 1.0f;
+    return identity;
+  }
+
+  /**
+   * @brief Computes a perturbed SE3 transform: T_perturbed = T * Exp(delta).
+   *
+   * Uses the GPU Exp map and batched matrix multiplication.
+   *
+   * @param pose The base SE3 transform
+   * @param delta The 6D tangent vector perturbation
+   * @return The perturbed SE3 transform
+   */
+  SE3Transform PerturbPose(const SE3Transform& pose, const Vector<6>& delta) {
+    CudaStream stream;
+
+    dvector<Vector<6>> delta_device({delta});
+    dvector<SE3Transform> exp_delta_device(1);
+
+    // Compute Exp(delta)
+    ComputeExpSE3(stream.GetStream(),
+                  reinterpret_cast<const float*>(delta_device.data()),
+                  /*twist_stride=*/6, /*transform_pitch=*/4,
+                  /*transform_stride=*/16, /*size=*/1,
+                  reinterpret_cast<float*>(exp_delta_device.data()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+    SE3Transform exp_delta;
+    exp_delta_device.CopyToHost(&exp_delta, 1);
+
+    // Compute T * Exp(delta) on CPU
+    SE3Transform result;
+    result.fill(0.0f);
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 4; j++) {
+        for (int k = 0; k < 4; k++) {
+          result[i * 4 + j] += pose[i * 4 + k] * exp_delta[k * 4 + j];
+        }
+      }
+    }
+    return result;
+  }
+
+  // Test configuration
+  const size_t num_correspondences_ = 1000;
+  const uint32_t fixed_seed_ = 42;
+
+  // Data
+  std::vector<Point3D> p_points_;                ///< Target points
+  std::vector<Point3D> q_points_;                ///< Source points
+  std::vector<Vector<6>> ground_truth_twist_;    ///< Ground truth twist
+  std::vector<SE3Transform> ground_truth_pose_;  ///< Ground truth pose (host)
+  dvector<SE3Transform> ground_truth_pose_device_;  ///< Ground truth pose (device)
+
+  profiler::Domain profiler_domain_{"PointToPointFactorBatchTest"};
+};
+
+/**
+ * @brief Tests that StateBlockSizes() reports the correct single block size.
+ */
+TEST_F(PointToPointFactorBatchTest, StateBlockSizes) {
+  dvector<Point3D> p_device(p_points_);
+  dvector<Point3D> q_device(q_points_);
+
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_correspondences_);
+
+  auto state_block_sizes = factor_batch.StateBlockSizes();
+  ASSERT_EQ(state_block_sizes.size(), 1);
+  EXPECT_EQ(state_block_sizes[0], 6);
+  EXPECT_EQ(factor_batch.ResidualsSize(), 3);
+  EXPECT_EQ(factor_batch.NumFactors(), num_correspondences_);
+}
+
+/**
+ * @brief Tests residual evaluation with identity transform.
+ *
+ * When T = I, residual = p - q for each correspondence.
+ */
+TEST_F(PointToPointFactorBatchTest, ResidualIdentity) {
+  auto test_range = profiler_domain_.CreateDomainRange("ResidualIdentity");
+  CudaStream stream;
+
+  // Use p and q points that are different (p != q)
+  auto identity = MakeIdentity();
+  dvector<SE3Transform> pose_device({identity});
+  dvector<Point3D> p_device(p_points_);
+  dvector<Point3D> q_device(q_points_);
+
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_correspondences_);
+
+  // Set up state pointers: all correspondences share the same pose
+  std::vector<const float*> param_ptrs(num_correspondences_,
+      reinterpret_cast<const float*>(pose_device.data()));
+  dvector<const float*> param_ptrs_device(param_ptrs);
+
+  dvector<float> residuals(num_correspondences_ * 3);
+
+  factor_batch.Evaluate(residuals.data(), nullptr,
+                         param_ptrs_device.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> host_residuals(num_correspondences_ * 3);
+  residuals.CopyToHost(host_residuals.data(), host_residuals.size());
+
+  for (size_t i = 0; i < num_correspondences_; i++) {
+    for (int j = 0; j < 3; j++) {
+      float expected = p_points_[i][j] - q_points_[i][j];
+      EXPECT_NEAR(host_residuals[3 * i + j], expected, 1e-5f)
+          << "Mismatch at correspondence " << i << ", component " << j;
+    }
+  }
+}
+
+/**
+ * @brief Tests residual evaluation with the ground truth transform.
+ *
+ * Since p = T @ q by construction, residual = p - T @ q should be zero.
+ */
+TEST_F(PointToPointFactorBatchTest, ResidualGroundTruth) {
+  auto test_range = profiler_domain_.CreateDomainRange("ResidualGroundTruth");
+  CudaStream stream;
+
+  dvector<Point3D> p_device(p_points_);
+  dvector<Point3D> q_device(q_points_);
+
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_correspondences_);
+
+  // All correspondences share the same ground truth pose
+  std::vector<const float*> param_ptrs(num_correspondences_,
+      reinterpret_cast<const float*>(ground_truth_pose_device_.data()));
+  dvector<const float*> param_ptrs_device(param_ptrs);
+
+  dvector<float> residuals(num_correspondences_ * 3);
+
+  factor_batch.Evaluate(residuals.data(), nullptr,
+                         param_ptrs_device.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> host_residuals(num_correspondences_ * 3);
+  residuals.CopyToHost(host_residuals.data(), host_residuals.size());
+
+  float max_residual = 0.0f;
+  for (float r : host_residuals) {
+    max_residual = std::max(max_residual, std::abs(r));
+  }
+  EXPECT_LT(max_residual, 1e-5f)
+      << "Residuals should be near zero for ground truth transform";
+}
+
+/**
+ * @brief Tests Jacobian evaluation with identity transform.
+ *
+ * When T = I (R = I, t = 0):
+ *   - d(r)/d(omega) = I * [q]_x = [q]_x
+ *   - d(r)/d(rho) = -I
+ */
+TEST_F(PointToPointFactorBatchTest, JacobianIdentity) {
+  auto test_range = profiler_domain_.CreateDomainRange("JacobianIdentity");
+  CudaStream stream;
+
+  auto identity = MakeIdentity();
+  dvector<SE3Transform> pose_device({identity});
+  dvector<Point3D> p_device(p_points_);
+  dvector<Point3D> q_device(q_points_);
+
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_correspondences_);
+
+  std::vector<const float*> param_ptrs(num_correspondences_,
+      reinterpret_cast<const float*>(pose_device.data()));
+  dvector<const float*> param_ptrs_device(param_ptrs);
+
+  dvector<float> residuals(num_correspondences_ * 3);
+  dvector<float> jacobians(num_correspondences_ * 3 * 6);
+
+  factor_batch.Evaluate(residuals.data(), jacobians.data(),
+                         param_ptrs_device.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> host_jacobians(num_correspondences_ * 3 * 6);
+  jacobians.CopyToHost(host_jacobians.data(), host_jacobians.size());
+
+  for (size_t i = 0; i < num_correspondences_; i++) {
+    const float* jac = host_jacobians.data() + i * 18;
+    const auto& q = q_points_[i];
+
+    // Expected Jacobian with R = I:
+    // J = [[q]_x | -I]
+    //
+    // [q]_x = [  0   -q[2]  q[1] ]
+    //         [ q[2]   0   -q[0] ]
+    //         [-q[1]  q[0]   0   ]
+
+    // Row 0: [0, -q[2], q[1], -1, 0, 0]
+    EXPECT_NEAR(jac[0 * 6 + 0], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[0 * 6 + 1], -q[2], 1e-5f);
+    EXPECT_NEAR(jac[0 * 6 + 2], q[1], 1e-5f);
+    EXPECT_NEAR(jac[0 * 6 + 3], -1.0f, 1e-5f);
+    EXPECT_NEAR(jac[0 * 6 + 4], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[0 * 6 + 5], 0.0f, 1e-5f);
+
+    // Row 1: [q[2], 0, -q[0], 0, -1, 0]
+    EXPECT_NEAR(jac[1 * 6 + 0], q[2], 1e-5f);
+    EXPECT_NEAR(jac[1 * 6 + 1], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[1 * 6 + 2], -q[0], 1e-5f);
+    EXPECT_NEAR(jac[1 * 6 + 3], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[1 * 6 + 4], -1.0f, 1e-5f);
+    EXPECT_NEAR(jac[1 * 6 + 5], 0.0f, 1e-5f);
+
+    // Row 2: [-q[1], q[0], 0, 0, 0, -1]
+    EXPECT_NEAR(jac[2 * 6 + 0], -q[1], 1e-5f);
+    EXPECT_NEAR(jac[2 * 6 + 1], q[0], 1e-5f);
+    EXPECT_NEAR(jac[2 * 6 + 2], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[2 * 6 + 3], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[2 * 6 + 4], 0.0f, 1e-5f);
+    EXPECT_NEAR(jac[2 * 6 + 5], -1.0f, 1e-5f);
+  }
+}
+
+/**
+ * @brief Tests analytical Jacobian against numerical differentiation.
+ *
+ * Uses central differences to verify the Jacobian at a non-trivial SE(3) pose.
+ * For each tangent dimension k:
+ *   J_numerical[:,k] = (r(T * Exp(eps * e_k)) - r(T * Exp(-eps * e_k))) / (2*eps)
+ */
+TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
+  auto test_range = profiler_domain_.CreateDomainRange("NumericalJacobian");
+  CudaStream stream;
+
+  // Use a smaller batch for this test (numerical differentiation is expensive)
+  const size_t num_test_points = 50;
+
+  std::vector<Point3D> test_p(p_points_.begin(),
+                              p_points_.begin() + num_test_points);
+  std::vector<Point3D> test_q(q_points_.begin(),
+                              q_points_.begin() + num_test_points);
+
+  dvector<Point3D> p_device(test_p);
+  dvector<Point3D> q_device(test_q);
+
+  // Get analytical Jacobian at the ground truth pose
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_test_points);
+
+  std::vector<const float*> param_ptrs(num_test_points,
+      reinterpret_cast<const float*>(ground_truth_pose_device_.data()));
+  dvector<const float*> param_ptrs_device(param_ptrs);
+
+  dvector<float> residuals(num_test_points * 3);
+  dvector<float> jacobians(num_test_points * 3 * 6);
+
+  factor_batch.Evaluate(residuals.data(), jacobians.data(),
+                         param_ptrs_device.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> host_jacobians(num_test_points * 3 * 6);
+  jacobians.CopyToHost(host_jacobians.data(), host_jacobians.size());
+
+  // Compute numerical Jacobian using central differences
+  constexpr float eps = 1e-4f;
+  constexpr int kTangentDim = 6;
+
+  for (int k = 0; k < kTangentDim; k++) {
+    // Create +eps and -eps perturbations along dimension k
+    Vector<6> delta_plus, delta_minus;
+    delta_plus.fill(0.0f);
+    delta_minus.fill(0.0f);
+    delta_plus[k] = eps;
+    delta_minus[k] = -eps;
+
+    SE3Transform pose_plus = PerturbPose(ground_truth_pose_[0], delta_plus);
+    SE3Transform pose_minus = PerturbPose(ground_truth_pose_[0], delta_minus);
+
+    dvector<SE3Transform> pose_plus_device({pose_plus});
+    dvector<SE3Transform> pose_minus_device({pose_minus});
+
+    // Evaluate residuals at perturbed poses
+    std::vector<const float*> ptrs_plus(num_test_points,
+        reinterpret_cast<const float*>(pose_plus_device.data()));
+    std::vector<const float*> ptrs_minus(num_test_points,
+        reinterpret_cast<const float*>(pose_minus_device.data()));
+
+    dvector<const float*> ptrs_plus_device(ptrs_plus);
+    dvector<const float*> ptrs_minus_device(ptrs_minus);
+
+    dvector<float> residuals_plus(num_test_points * 3);
+    dvector<float> residuals_minus(num_test_points * 3);
+
+    factor_batch.Evaluate(residuals_plus.data(), nullptr,
+                           ptrs_plus_device.data(), stream.GetStream());
+    factor_batch.Evaluate(residuals_minus.data(), nullptr,
+                           ptrs_minus_device.data(), stream.GetStream());
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+    std::vector<float> host_res_plus(num_test_points * 3);
+    std::vector<float> host_res_minus(num_test_points * 3);
+    residuals_plus.CopyToHost(host_res_plus.data(), host_res_plus.size());
+    residuals_minus.CopyToHost(host_res_minus.data(), host_res_minus.size());
+
+    // Compare numerical Jacobian column k with analytical
+    for (size_t i = 0; i < num_test_points; i++) {
+      for (int row = 0; row < 3; row++) {
+        float numerical = (host_res_plus[3 * i + row] -
+                           host_res_minus[3 * i + row]) / (2.0f * eps);
+        float analytical = host_jacobians[i * 18 + row * kTangentDim + k];
+
+        EXPECT_NEAR(analytical, numerical, 1e-2f)
+            << "Jacobian mismatch at correspondence " << i
+            << ", row " << row << ", col " << k
+            << " (analytical=" << analytical
+            << ", numerical=" << numerical << ")";
+      }
+    }
+  }
+}
+
+/**
+ * @brief Tests that Evaluate executes without errors when jacobians is nullptr.
+ */
+TEST_F(PointToPointFactorBatchTest, EvaluateWithoutJacobians) {
+  auto test_range =
+      profiler_domain_.CreateDomainRange("EvaluateWithoutJacobians");
+  CudaStream stream;
+
+  dvector<Point3D> p_device(p_points_);
+  dvector<Point3D> q_device(q_points_);
+
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_correspondences_);
+
+  std::vector<const float*> param_ptrs(num_correspondences_,
+      reinterpret_cast<const float*>(ground_truth_pose_device_.data()));
+  dvector<const float*> param_ptrs_device(param_ptrs);
+
+  dvector<float> residuals(num_correspondences_ * 3);
+
+  bool result = factor_batch.Evaluate(residuals.data(), nullptr,
+                                       param_ptrs_device.data(),
+                                       stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  EXPECT_TRUE(result);
+}
+
+/**
+ * @brief Tests optimization to recover a disturbed SE(3) pose.
+ *
+ * Given ground truth correspondences p = T_gt @ q, starts from a disturbed
+ * pose T_init and optimizes to minimize ||p - T @ q||^2. Verifies that the
+ * optimized pose converges to the ground truth.
+ */
+TEST_F(PointToPointFactorBatchTest, OptimizeDisturbedPose) {
+  auto test_range = profiler_domain_.CreateDomainRange("OptimizeDisturbedPose");
+  CudaStream stream;
+
+  // Create a disturbed pose: T_init = T_gt * Exp(small_delta)
+  Vector<6> disturbance;
+  disturbance[0] = 0.05f;   // rotation x
+  disturbance[1] = -0.03f;  // rotation y
+  disturbance[2] = 0.04f;   // rotation z
+  disturbance[3] = 0.3f;    // translation x
+  disturbance[4] = -0.2f;   // translation y
+  disturbance[5] = 0.15f;   // translation z
+
+  SE3Transform disturbed_pose = PerturbPose(ground_truth_pose_[0], disturbance);
+
+  // Verify the pose is actually disturbed
+  float frobenius_sq = 0.0f;
+  for (int i = 0; i < 16; i++) {
+    float diff = ground_truth_pose_[0][i] - disturbed_pose[i];
+    frobenius_sq += diff * diff;
+  }
+  ASSERT_GT(frobenius_sq, 0.01f) << "Pose should be significantly disturbed";
+
+  // Copy data to device
+  dvector<SE3Transform> pose_device({disturbed_pose});
+  dvector<Point3D> p_device(p_points_);
+  dvector<Point3D> q_device(q_points_);
+
+  // Create state batch
+  const float* pose_ptr = reinterpret_cast<const float*>(pose_device.data());
+  cuBLASHandle cublas_handle;
+  SE3StateBatch state_batch(cublas_handle, pose_ptr, 1);
+
+  // Create factor batch
+  PointToPointFactorBatch factor_batch(
+      p_device.data(), q_device.data(), num_correspondences_);
+
+  // All correspondences share the same pose (state block 0)
+  std::vector<float*> state_pointers(num_correspondences_,
+      state_batch.StateBlockDevicePtr(0));
+
+  // Build problem
+  Problem problem;
+  problem.AddStateBatch(&state_batch);
+  problem.AddFactorBatch(&factor_batch, state_pointers);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  // Optimize using Levenberg-Marquardt
+  MinimizerOptions options;
+  options.max_num_iterations = 100;
+  options.state_tolerance = 1e-8f;
+  options.cost_tolerance = 1e-10f;
+
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = options;
+  lm_options.initial_lambda = 1e-3f;
+  LevenbergMarquardtMinimizer minimizer(lm_options);
+
+  MinimizerSummary summary;
+  {
+    auto minimize_range = profiler_domain_.CreateDomainRange("Minimize");
+    summary = minimizer.Minimize(stream.GetStream(), problem);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+
+  // Verify optimization converged
+  EXPECT_LT(summary.final_cost, 1e-6f) << "Optimization should converge";
+  EXPECT_GT(summary.num_iterations, 0) << "Should take at least one iteration";
+
+  // Copy optimized pose back to host
+  SE3Transform optimized_pose;
+  pose_device.CopyToHost(&optimized_pose, 1);
+
+  // Verify pose recovered to ground truth
+  float final_frobenius_sq = 0.0f;
+  for (int i = 0; i < 16; i++) {
+    float diff = ground_truth_pose_[0][i] - optimized_pose[i];
+    final_frobenius_sq += diff * diff;
+  }
+  EXPECT_LT(final_frobenius_sq, 1e-6f)
+      << "Pose should converge to ground truth";
+  EXPECT_LT(final_frobenius_sq, frobenius_sq * 0.001f)
+      << "Final error should be much smaller than initial";
+}
+
+}  // namespace cunls

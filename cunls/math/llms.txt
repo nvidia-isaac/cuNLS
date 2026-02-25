@@ -1,0 +1,23 @@
+# Module: math
+
+## Purpose
+
+Low-level math kernels and Lie-group utilities used by factors/states.
+
+## Key files
+
+- `lie_math.h` / `lie_math.cu`: Lie operations for SO/SE/Sim groups.
+- `dense_matrix_ops.h` / `dense_matrix_ops.cu`: dense matrix helper kernels.
+
+## Usage notes
+
+- Mostly internal APIs; external applications should prefer high-level factor
+  and state classes.
+- Functions are designed for batched GPU execution and often assume contiguous
+  device memory layouts.
+
+## Dependents
+
+- `state/*_state_batch.*`
+- `factor/*_factor_batch.*`
+- `minimizer/*` (for some algebra utilities)

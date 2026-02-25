@@ -1,0 +1,46 @@
+# cuNLS
+
+> GPU-accelerated nonlinear least-squares solver library for CUDA/C++.
+
+## Overview
+
+cuNLS organizes optimization into:
+
+- `StateBatch` implementations for manifold-aware variables.
+- `FactorBatch` implementations for batched residual/Jacobian evaluation.
+- `Problem` for factor-graph composition.
+- `GaussNewtonMinimizer` and `LevenbergMarquardtMinimizer` for solving.
+- Sparse backends (`cuDSS`) and robust losses.
+
+## Entry points
+
+- Public umbrella include: `cunls/cunls.h`
+- Build scripts: `scripts/build_cunls.sh`, `scripts/build_cunls_in_docker.sh`
+- Examples: `examples/`
+- Tests: `tests/`
+- Sphinx docs: `docs/sphinx/`
+
+## Module guides
+
+- Core include tree: `cunls/llms.txt`
+- Common utilities: `cunls/common/llms.txt`
+- Factors: `cunls/factor/llms.txt`
+- Linear solver: `cunls/linear_solver/llms.txt`
+- Math internals: `cunls/math/llms.txt`
+- Minimizer/orchestration: `cunls/minimizer/llms.txt`
+- Robustifiers: `cunls/robustifier/llms.txt`
+- State manifolds: `cunls/state/llms.txt`
+
+## Quick usage pattern
+
+1. Allocate GPU state memory.
+2. Wrap memory with state batches.
+3. Construct factor batches from observations.
+4. Add states/factors to a `Problem`.
+5. Run a minimizer and read `MinimizerSummary`.
+
+## Constraints and assumptions
+
+- Inputs are device pointers unless explicitly documented otherwise.
+- Factor/state objects typically do not own user-provided observation/state memory.
+- Constant state IDs are supported via state-batch constructors.

@@ -1,0 +1,26 @@
+# Module: linear_solver
+
+## Purpose
+
+Sparse linear system abstraction and implementation used by minimizers.
+
+## Key types
+
+- `csr_sparse_linear_solver.h`: abstract `CSRSparseLinearSolver`
+- `sparse_linear_solver.h`:
+  - `SparseLinearSolverType`
+  - `SparseLinearSolverConfig`
+  - `CreateCSRSparseLinearSolver(...)`
+- `cudss_sparse_linear_solver.h`:
+  - `cuDSSLinearSolverOptions`
+  - `cuDSSLinearSolver`
+
+## Expected system form
+
+- Solves SPD systems in CSR format (`CSRSparseMatrix`), typically normal
+  equations assembled by `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`.
+
+## Performance modes
+
+- `SlowInitFastSolve`: expensive setup, fast repeated solves.
+- `FastInitSlowSolve`: faster setup, slower repeated solves.

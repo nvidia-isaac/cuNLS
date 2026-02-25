@@ -1,0 +1,31 @@
+# Module: factor
+
+## Purpose
+
+Defines residual/Jacobian models evaluated in GPU batches.
+
+## Core interfaces
+
+- `factor_batch.h`: abstract `FactorBatch`
+- `sized_factor_batch.h`: compile-time dimension helper `SizedFactorBatch`
+
+## Built-in factor families
+
+- Priors: `prior_vector_factor_batch.h`, `so2/so3/se2/se3/similarity2/similarity3_prior_factor_batch.h`
+- Relative pose: `se3_between_factor_batch.h`
+- Reprojection: `reprojection_factor_batch.h`
+- Registration: `point_to_point_factor_batch.h`, `point_to_plane_factor_batch.h`,
+  `symmetric_point_to_plane_factor_batch.h`
+- Weighting wrapper: `information_factor_batch.h`
+
+## Data contracts
+
+- Inputs are typically device pointers and must remain valid for factor lifetime.
+- `Evaluate()` writes residuals and optionally Jacobians in contiguous batched
+  layouts documented in each header.
+- `state_pointers` is a flattened pointer array, grouped per factor.
+
+## Related modules
+
+- State blocks consumed from `state/`.
+- Optional robustification through `robustifier/` via `ResidualBatch`.

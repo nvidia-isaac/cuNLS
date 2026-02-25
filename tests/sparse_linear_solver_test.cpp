@@ -1,0 +1,223 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @file sparse_linear_solver_test.cpp
+ * @brief Unit tests for the cuDSS-based sparse linear solver.
+ *
+ * Generates a random symmetric sparse matrix A and vector b, solves Ax = b
+ * on the GPU, then verifies correctness by checking A*x against b.
+ */
+
+#include "cunls/common/cudss_helper.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
+
+#include <gtest/gtest.h>
+
+#include <random>
+#include <unordered_map>
+#include <vector>
+
+#include "cunls/common/cuda_stream.h"
+#include "cunls/common/helper.h"
+#include "cunls/common/profiler.h"
+#include "cunls/common/types.h"
+#include "tests/utils.h"
+
+namespace cunls {
+
+namespace {
+
+/**
+ * @brief Generates a random sparse symmetric matrix in CSR format.
+ *
+ * Creates a symmetric sparse matrix with random values. The matrix has
+ * diagonal elements and randomly placed off-diagonal elements (controlled
+ * by sparsity parameter). Symmetry is enforced by setting A[i][j] = A[j][i].
+ *
+ * @param rng Random number generator for reproducibility.
+ * @param rows Number of rows (and columns) in the matrix.
+ * @param csr_values Output vector of non-zero values.
+ * @param csr_col_idx Output vector of column indices.
+ * @param csr_row_offsets Output vector of row offsets (size = rows + 1).
+ */
+void GenerateRandomSymmetricCSRMatrix(std::mt19937& rng, int rows,
+                                      std::vector<float>& csr_values,
+                                      std::vector<int>& csr_col_idx,
+                                      std::vector<int>& csr_row_offsets) {
+  std::uniform_real_distribution<float> val_dist(-1, 1);
+  std::uniform_real_distribution<float> prob_dist(0.0, 1.0);
+
+  // Use a map-of-maps to store symmetric COO entries before converting to CSR
+  std::unordered_map<int, std::unordered_map<int, float>> coo;
+  float sparsity = 1e-3;  // Probability of non-zero off-diagonal elements
+
+  // Generate symmetric matrix entries
+  for (int i = 0; i < rows; ++i) {
+    // Always include diagonal elements for better conditioning
+    coo[i][i] = 100;
+
+    // Generate off-diagonal elements and ensure symmetry
+    for (int j = i + 1; j < rows; ++j) {
+      if (prob_dist(rng) > sparsity) {
+        continue;  // Skip this entry (sparse matrix)
+      }
+      float val = val_dist(rng);
+      coo[i][j] = val;  // Upper triangular
+      coo[j][i] = val;  // Lower triangular (ensure symmetry)
+    }
+  }
+
+  // Convert COO format to CSR format
+  csr_row_offsets.push_back(0);
+
+  for (int i = 0; i < rows; ++i) {
+    // Collect all entries in the current row
+    std::vector<std::pair<int, float>> row_entries;
+    for (const auto& [j, val] : coo[i]) {
+      row_entries.emplace_back(j, val);
+    }
+    // Sort by column index (required for CSR format)
+    std::sort(row_entries.begin(), row_entries.end());
+
+    // Add sorted entries to CSR arrays
+    for (const auto& [j, val] : row_entries) {
+      csr_col_idx.push_back(j);
+      csr_values.push_back(val);
+    }
+    csr_row_offsets.push_back(static_cast<int>(csr_col_idx.size()));
+  }
+}
+
+/**
+ * @brief Multiplies a symmetric CSR matrix by a vector: y = A * x.
+ *
+ * Performs sparse matrix-vector multiplication on the CPU for verification
+ * purposes. Computes y = A * x where A is represented in CSR format.
+ *
+ * @param row_ptr Row offset array (size = num_rows + 1).
+ * @param col_ind Column index array for non-zero elements.
+ * @param values Value array for non-zero elements.
+ * @param x Input vector to multiply.
+ * @param y Output vector to store the result.
+ */
+void MultiplySymmetricCSRMatrixByVector(const std::vector<int>& row_ptr,
+                                        const std::vector<int>& col_ind,
+                                        const std::vector<float>& values,
+                                        const std::vector<float>& x,
+                                        std::vector<float>& y) {
+  size_t size = row_ptr.size() - 1;
+  y.assign(size, 0.0);
+
+  // Standard CSR matrix-vector multiplication: y[i] = sum(A[i,j] * x[j])
+  for (int i = 0; i < size; ++i) {
+    for (int idx = row_ptr[i]; idx < row_ptr[i + 1]; ++idx) {
+      int j = col_ind[idx];
+      auto val = values[idx];
+
+      y[i] += val * x[j];
+    }
+  }
+}
+
+}  // namespace
+
+/**
+ * @brief Tests the sparse linear solver with a random symmetric matrix.
+ *
+ * This test generates a random symmetric sparse matrix A and a random
+ * right-hand side vector b, solves the system Ax = b using cuDSSLinearSolver,
+ * and verifies that the solution is correct by computing A * x and comparing
+ * it with b. The test uses a tolerance of 1e-1 to account for numerical errors.
+ */
+TEST(SparseLinearSolverTest, Solve) {
+  profiler::ScopedRange range("SolveTest");
+  // Use fixed seed for reproducibility
+  unsigned int fixed_seed = 0;
+  std::mt19937 gen(fixed_seed);
+
+  // Test with a moderately large sparse matrix
+  constexpr int matrix_size = 10000;
+
+  // Step 1: Generate a random symmetric sparse matrix in CSR format
+  std::vector<float> csr_values;
+  std::vector<int> csr_col_idx;
+  std::vector<int> csr_row_offsets;
+
+  GenerateRandomSymmetricCSRMatrix(gen, matrix_size, csr_values, csr_col_idx,
+                                   csr_row_offsets);
+
+  // Step 2: Convert host matrix to device-compatible format
+  CSRSparseMatrix input_matrix;
+  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values,
+                                    input_matrix);
+
+  // Step 3: Generate random right-hand side vector b
+  std::vector<float> rhs_cpu;
+  test_utils::GenerateRandomVector(matrix_size, rhs_cpu);
+
+  // Step 4: Copy RHS to device and allocate result vector
+  dvector<float> rhs(rhs_cpu);
+  dvector<float> result(matrix_size);
+
+  // Step 5: Solve the linear system Ax = b on GPU
+  CudaStream stream;
+  cuDSSLinearSolverOptions cudss_solver_options = {
+      cuDSSLinearSolverMode::SlowInitFastSolve,
+      1,
+      "",
+  };
+  cuDSSHandle cudss_handle;
+  void* solver_handle = cudss_handle.GetHandle(stream.GetStream());
+  {
+    cuDSSLinearSolver solver(cudss_solver_options);
+    {
+      // Warm up: Initialize the solver and solve the linear system
+      profiler::ScopedRange range("Warm up");
+      solver.Initialize(solver_handle, input_matrix, rhs, result);
+      solver.Solve(solver_handle, input_matrix, rhs, result);
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    }
+
+    {
+      // Timed solve: Solve the linear system
+      profiler::ScopedRange range("Solve");
+      solver.Solve(solver_handle, input_matrix, rhs, result);
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    }
+  }  // solver destroyed before cudss_handle
+
+  // Step 6: Copy solution back to host
+  std::vector<float> cpu_result(matrix_size);
+  result.CopyToHost(cpu_result.data(), cpu_result.size());
+
+  // Step 7: Verify solution by computing A * x and comparing with b
+  std::vector<float> predicted_rhs;
+  MultiplySymmetricCSRMatrixByVector(csr_row_offsets, csr_col_idx, csr_values,
+                                     cpu_result, predicted_rhs);
+
+  // Step 8: Check that A * x equals b within tolerance
+  ASSERT_EQ(predicted_rhs.size(), rhs_cpu.size());
+  float squared_error = 0;
+  for (size_t i = 0; i < matrix_size; i++) {
+    squared_error += powf(predicted_rhs[i] - rhs_cpu[i], 2);
+  }
+
+  ASSERT_NEAR(squared_error / matrix_size, 0, 1e-1);
+}
+
+}  // namespace cunls
