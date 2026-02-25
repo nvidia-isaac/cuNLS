@@ -1,0 +1,609 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Common API &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api/common';</script>
+
+    <link rel="icon" href="../_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Math API" href="math.html" />
+    <link rel="prev" title="Linear Solver API" href="linear_solver.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial.html">Tutorial</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../licensing.html">Licensing</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">API Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="minimizer.html">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="state.html">State API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="factor.html">Factor API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="robustifier.html">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Common API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="math.html">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Common API</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="common-api">
+<h1>Common API<a class="headerlink" href="#common-api" title="Link to this heading">#</a></h1>
+<p><code class="code docutils literal notranslate"><span class="pre">cunls/common</span></code> provides utility containers, type aliases, profiling wrappers,
+and CUDA library handle abstractions.</p>
+<section id="core-types">
+<h2>Core types<a class="headerlink" href="#core-types" title="Link to this heading">#</a></h2>
+<p>Defined in <code class="code docutils literal notranslate"><span class="pre">cunls/common/types.h</span></code>:</p>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">Vector&lt;Dim&gt;</span></code>: fixed-size float vector (<code class="code docutils literal notranslate"><span class="pre">cuda::std::array</span></code>).</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">Matrix&lt;Dim&gt;</span></code>: row-major square matrix.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">SE3Transform</span></code>: alias of <code class="code docutils literal notranslate"><span class="pre">Matrix&lt;4&gt;</span></code>.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">dvector&lt;T&gt;</span></code>: alias for <code class="code docutils literal notranslate"><span class="pre">DeviceVector&lt;T&gt;</span></code>.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">hvector&lt;T&gt;</span></code>: alias for <code class="code docutils literal notranslate"><span class="pre">std::vector&lt;T&gt;</span></code>.</p></li>
+</ul>
+</section>
+<section id="sparse-matrix-structs">
+<h2>Sparse matrix structs<a class="headerlink" href="#sparse-matrix-structs" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">CSRSparseMatrix</span></code>
+- <code class="code docutils literal notranslate"><span class="pre">row_offsets</span></code> - [in/out] CSR row offsets.
+- <code class="code docutils literal notranslate"><span class="pre">col_ids</span></code> - [in/out] CSR column indices.
+- <code class="code docutils literal notranslate"><span class="pre">values</span></code> - [in/out] CSR non-zero values.
+- methods: <code class="code docutils literal notranslate"><span class="pre">NumRows()</span></code>, <code class="code docutils literal notranslate"><span class="pre">NumNonZeros()</span></code>.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">TripletSparseStructure</span></code>
+- <code class="code docutils literal notranslate"><span class="pre">row_ids</span></code> - [in/out] triplet row indices.
+- <code class="code docutils literal notranslate"><span class="pre">col_ids</span></code> - [in/out] triplet column indices.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">SparseJacobian</span></code>
+- <code class="code docutils literal notranslate"><span class="pre">structure</span></code> - [in/out] sparse structure.
+- <code class="code docutils literal notranslate"><span class="pre">values</span></code> - [in/out] sparse values.</p></li>
+</ul>
+</section>
+<section id="devicevector-t">
+<h2>DeviceVector&lt;T&gt;<a class="headerlink" href="#devicevector-t" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/device_vector.h</span></code></p>
+<p>RAII GPU vector with sync/async host-device copies.</p>
+<p>Constructors:</p>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">DeviceVector()</span></code></p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">DeviceVector(size_t</span> <span class="pre">num_elements)</span></code></p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">DeviceVector(const</span> <span class="pre">T&amp;</span> <span class="pre">fill_value,</span> <span class="pre">size_t</span> <span class="pre">num_elements)</span></code></p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">DeviceVector(const</span> <span class="pre">std::vector&lt;T&gt;&amp;</span> <span class="pre">host_vector)</span></code></p></li>
+<li><p>move constructor / move assignment</p></li>
+</ul>
+<section id="primary-copy-apis">
+<h3>Primary copy APIs<a class="headerlink" href="#primary-copy-apis" title="Link to this heading">#</a></h3>
+</section>
+<section id="copyfromhost">
+<h3>CopyFromHost<a class="headerlink" href="#copyfromhost" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">CopyFromHost(const</span> <span class="pre">T*</span> <span class="pre">src,</span> <span class="pre">size_t</span> <span class="pre">num_elements)</span></code> — <code class="docutils literal notranslate"><span class="pre">src</span></code> [in] Host pointer source buffer; <code class="docutils literal notranslate"><span class="pre">num_elements</span></code> [in] number of elements to copy to device.</p>
+</section>
+<section id="copytohost">
+<h3>CopyToHost<a class="headerlink" href="#copytohost" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">CopyToHost(T*</span> <span class="pre">dst,</span> <span class="pre">size_t</span> <span class="pre">num_elements)</span> <span class="pre">const</span></code> — <code class="docutils literal notranslate"><span class="pre">dst</span></code> [out] Host pointer destination buffer; <code class="docutils literal notranslate"><span class="pre">num_elements</span></code> [in] number of elements to copy from device.</p>
+</section>
+<section id="copyfromhostasync">
+<h3>CopyFromHostAsync<a class="headerlink" href="#copyfromhostasync" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">CopyFromHostAsync(const</span> <span class="pre">T*</span> <span class="pre">src,</span> <span class="pre">size_t</span> <span class="pre">num_elements,</span> <span class="pre">CudaStream&amp;</span> <span class="pre">stream)</span></code> — <code class="docutils literal notranslate"><span class="pre">src</span></code> [in] host source (prefer pinned for async); <code class="docutils literal notranslate"><span class="pre">num_elements</span></code> [in]; <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in].</p>
+</section>
+<section id="copytohostasync">
+<h3>CopyToHostAsync<a class="headerlink" href="#copytohostasync" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">CopyToHostAsync(T*</span> <span class="pre">dst,</span> <span class="pre">size_t</span> <span class="pre">num_elements,</span> <span class="pre">CudaStream&amp;</span> <span class="pre">stream)</span> <span class="pre">const</span></code> — <code class="docutils literal notranslate"><span class="pre">dst</span></code> [out] host destination; <code class="docutils literal notranslate"><span class="pre">num_elements</span></code> [in]; <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in].</p>
+</section>
+</section>
+<section id="cudastream">
+<h2>CudaStream<a class="headerlink" href="#cudastream" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/cuda_stream.h</span></code></p>
+<p>Constructor:</p>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">CudaStream(bool</span> <span class="pre">sync_on_destroy</span> <span class="pre">=</span> <span class="pre">false)</span></code></p></li>
+</ul>
+<p>Method:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cudaStream_t&amp;</span> <span class="pre">GetStream()</span></code> — [out] underlying CUDA stream handle.</p></li>
+</ul>
+</section>
+<section id="cublashandle">
+<h2>cuBLASHandle<a class="headerlink" href="#cublashandle" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/cublas_helper.h</span></code></p>
+<p>Method:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cublasHandle_t</span> <span class="pre">GetHandle(cudaStream_t</span> <span class="pre">stream)</span></code> — <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in] stream to bind; returns [out] cuBLAS handle.</p></li>
+</ul>
+</section>
+<section id="cusparse-wrappers">
+<h2>cuSPARSE wrappers<a class="headerlink" href="#cusparse-wrappers" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/cusparse_helper.h</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cuSPARSEHandle</span></code> — <code class="docutils literal notranslate"><span class="pre">cusparseHandle_t</span> <span class="pre">GetHandle(cudaStream_t</span> <span class="pre">stream)</span></code>; <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in]; returns [out] cuSPARSE handle.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuSPARSEMatrixDescription</span></code> — CSR/empty constructors; <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">UpdatePointers(const</span> <span class="pre">CSRSparseMatrix&amp;</span> <span class="pre">matrix)</span></code> with <code class="docutils literal notranslate"><span class="pre">matrix</span></code> [in]; <code class="docutils literal notranslate"><span class="pre">cusparseSpMatDescr_t</span> <span class="pre">GetDescription()</span></code> returns [out] matrix descriptor.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuSPARSEVectorDescription</span></code> — <code class="docutils literal notranslate"><span class="pre">cuSPARSEVectorDescription(const</span> <span class="pre">dvector&lt;float&gt;&amp;</span> <span class="pre">vec)</span></code> with <code class="docutils literal notranslate"><span class="pre">vec</span></code> [in]; <code class="docutils literal notranslate"><span class="pre">cusparseDnVecDescr_t</span> <span class="pre">GetDescription()</span></code> returns [out] vector descriptor.</p></li>
+</ul>
+</section>
+<section id="cusolver-wrappers">
+<h2>cuSolver wrappers<a class="headerlink" href="#cusolver-wrappers" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/cusolver_helper.h</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cuSolverHandle</span></code> — <code class="docutils literal notranslate"><span class="pre">cusolverDnHandle_t</span> <span class="pre">GetHandle(cudaStream_t</span> <span class="pre">stream)</span></code>; <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in]; returns [out] cuSolver handle.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuSolverInfo</span></code> — <code class="docutils literal notranslate"><span class="pre">syevjInfo_t</span> <span class="pre">GetInfo()</span> <span class="pre">const</span></code> returns [out] eigen-solver info handle.</p></li>
+</ul>
+</section>
+<section id="cudss-wrappers-and-pool">
+<h2>cuDSS wrappers and pool<a class="headerlink" href="#cudss-wrappers-and-pool" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/cudss_helper.h</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cuDSSDeviceMemPool</span></code> — <code class="docutils literal notranslate"><span class="pre">Alloc(ptr,</span> <span class="pre">size,</span> <span class="pre">stream)</span></code>: <code class="docutils literal notranslate"><span class="pre">ptr</span></code> [out], <code class="docutils literal notranslate"><span class="pre">size</span></code> [in], <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in]; <code class="docutils literal notranslate"><span class="pre">Dealloc(ptr,</span> <span class="pre">size,</span> <span class="pre">stream)</span></code>: <code class="docutils literal notranslate"><span class="pre">ptr</span></code> [in], <code class="docutils literal notranslate"><span class="pre">size</span></code> [in], <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in].</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuDSSHandle</span></code> — <code class="docutils literal notranslate"><span class="pre">void*</span> <span class="pre">GetHandle(cudaStream_t</span> <span class="pre">stream)</span></code>; <code class="docutils literal notranslate"><span class="pre">stream</span></code> [in]; returns [out] opaque cuDSS handle.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuDSSDescription</span></code> — constructors from <code class="docutils literal notranslate"><span class="pre">CSRSparseMatrix</span></code> or <code class="docutils literal notranslate"><span class="pre">dvector&lt;float&gt;</span></code>; <code class="docutils literal notranslate"><span class="pre">void*</span> <span class="pre">GetDescription()</span></code> returns [out] matrix/vector descriptor.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuDSSConfig</span></code> — <code class="docutils literal notranslate"><span class="pre">cuDSSConfig(reordering_algorithm,</span> <span class="pre">nthreads)</span></code>: <code class="docutils literal notranslate"><span class="pre">reordering_algorithm</span></code> [in], <code class="docutils literal notranslate"><span class="pre">nthreads</span></code> [in]; <code class="docutils literal notranslate"><span class="pre">void*</span> <span class="pre">GetData()</span> <span class="pre">const</span></code> returns [out] config pointer.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cuDSSData</span></code> — <code class="docutils literal notranslate"><span class="pre">void*</span> <span class="pre">GetData(void*</span> <span class="pre">handle)</span></code>: <code class="docutils literal notranslate"><span class="pre">handle</span></code> [in]; returns [out] opaque cuDSS data pointer.</p></li>
+</ul>
+</section>
+<section id="profiling-utilities">
+<h2>Profiling utilities<a class="headerlink" href="#profiling-utilities" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/common/profiler.h</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">profiler::ScopedRange(const</span> <span class="pre">std::string&amp;</span> <span class="pre">name)</span></code> — <code class="docutils literal notranslate"><span class="pre">name</span></code> [in] NVTX range label.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">profiler::Domain(const</span> <span class="pre">std::string&amp;</span> <span class="pre">name)</span></code> — <code class="docutils literal notranslate"><span class="pre">name</span></code> [in] NVTX domain label.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">profiler::Domain::CreateDomainRange(const</span> <span class="pre">std::string&amp;</span> <span class="pre">name)</span></code> — <code class="docutils literal notranslate"><span class="pre">name</span></code> [in] range label; returns [out] scoped range RAII object.</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="linear_solver.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Linear Solver API</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="math.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Math API</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#core-types">Core types</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sparse-matrix-structs">Sparse matrix structs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#devicevector-t">DeviceVector&lt;T&gt;</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#primary-copy-apis">Primary copy APIs</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#copyfromhost">CopyFromHost</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#copytohost">CopyToHost</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#copyfromhostasync">CopyFromHostAsync</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#copytohostasync">CopyToHostAsync</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cudastream">CudaStream</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cublashandle">cuBLASHandle</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cusparse-wrappers">cuSPARSE wrappers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cusolver-wrappers">cuSolver wrappers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cudss-wrappers-and-pool">cuDSS wrappers and pool</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#profiling-utilities">Profiling utilities</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

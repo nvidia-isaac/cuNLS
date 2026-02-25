@@ -1,0 +1,618 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Quick Start &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'quick_start';</script>
+
+    <link rel="icon" href="_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Build and Run Tests" href="testing.html" />
+    <link rel="prev" title="Tutorial" href="tutorial.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial.html">Tutorial</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="licensing.html">Licensing</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="api/index.html">API Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="api/minimizer.html">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/state.html">State API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/factor.html">Factor API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/robustifier.html">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/common.html">Common API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/math.html">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Quick Start</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="quick-start">
+<h1>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h1>
+<p>This section shows a minimal end-to-end setup:</p>
+<ol class="arabic simple">
+<li><p>Install cuNLS</p></li>
+<li><p>Write a tiny app</p></li>
+<li><p>Compile and run it against the installed library</p></li>
+</ol>
+<section id="step-1-install-cunls">
+<h2>Step 1: Install cuNLS<a class="headerlink" href="#step-1-install-cunls" title="Link to this heading">#</a></h2>
+<p>Use <a class="reference internal" href="installation.html"><span class="doc">Installation</span></a> and make sure you have an install prefix (example:
+<code class="code docutils literal notranslate"><span class="pre">/tmp/cunls_install</span></code>).</p>
+</section>
+<section id="step-2-create-a-minimal-source-file">
+<h2>Step 2: Create a minimal source file<a class="headerlink" href="#step-2-create-a-minimal-source-file" title="Link to this heading">#</a></h2>
+<p>Create <code class="code docutils literal notranslate"><span class="pre">main.cpp</span></code>. The program solves the simplest possible nonlinear
+least-squares problem: a single scalar variable <span class="math notranslate nohighlight">\(x\)</span> pulled toward a
+target value <span class="math notranslate nohighlight">\(o = 2\)</span> by a prior factor with residual <span class="math notranslate nohighlight">\(r = x - o\)</span>.
+The cost is <span class="math notranslate nohighlight">\(\tfrac{1}{2}\|x - o\|^2\)</span>, so the optimal solution is
+<span class="math notranslate nohighlight">\(x^* = 2\)</span>.</p>
+<p><strong>Includes and CUDA stream.</strong>
+All cuNLS public headers are available through the umbrella header
+<code class="code docutils literal notranslate"><span class="pre">cunls/cunls.h</span></code>. A CUDA stream is required by every cuNLS API call — it
+controls asynchronous GPU execution.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;cuda_runtime.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;vector&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;cunls/cunls.h&quot;</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// cuNLS operations are asynchronous; a CUDA stream serializes GPU work.</span>
+<span class="w">  </span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">;</span>
+<span class="w">  </span><span class="n">cudaStreamCreate</span><span class="p">(</span><span class="o">&amp;</span><span class="n">stream</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Prepare host data and upload to the GPU.</strong>
+We define one scalar state <span class="math notranslate nohighlight">\(x = 0\)</span> (the initial guess) and one
+observation <span class="math notranslate nohighlight">\(o = 2\)</span> (the target). <code class="code docutils literal notranslate"><span class="pre">dvector</span></code> (see <a class="reference internal" href="api/common.html"><span class="doc">Common API</span></a>)
+is a thin RAII wrapper around <code class="code docutils literal notranslate"><span class="pre">cudaMalloc</span></code> / <code class="code docutils literal notranslate"><span class="pre">cudaMemcpy</span></code> that uploads
+host vectors to device memory on construction.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Initial guess: x = 0.  Target observation: o = 2.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="w"> </span><span class="n">h_state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mf">0.0f</span><span class="p">};</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="w"> </span><span class="n">h_obs</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mf">2.0f</span><span class="p">};</span>
+
+<span class="c1">// Upload both vectors to GPU memory.</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">dvector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="w"> </span><span class="n">d_state</span><span class="p">(</span><span class="n">h_state</span><span class="p">);</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">dvector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="w"> </span><span class="n">d_obs</span><span class="p">(</span><span class="n">h_obs</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Create the state batch.</strong>
+A <code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;1&gt;</span></code> (see <a class="reference internal" href="api/state.html"><span class="doc">State API</span></a>) wraps the device memory as a
+batch of 1-dimensional Euclidean state blocks. The template argument <code class="docutils literal notranslate"><span class="pre">1</span></code>
+means each block has one float. The second constructor argument is the
+number of state blocks (here just one).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Wrap the device state memory in a VectorStateBatch with one block of</span>
+<span class="c1">// dimension 1.  The solver will update this memory in-place.</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">VectorStateBatch</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="w"> </span><span class="n">state_batch</span><span class="p">(</span><span class="n">d_state</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="cm">/*num_blocks=*/</span><span class="mi">1</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Create the factor batch.</strong>
+A <code class="code docutils literal notranslate"><span class="pre">PriorVectorFactorBatch&lt;1&gt;</span></code> (see <a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>) computes the residual
+<span class="math notranslate nohighlight">\(r = x - o\)</span> and Jacobian <span class="math notranslate nohighlight">\(J = I\)</span> for each factor. The
+constructor takes a device pointer to the observation vectors and the
+number of factors.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Build a prior factor that penalizes deviation from the observation.</span>
+<span class="c1">// Residual: r = x - o,  Jacobian: J = I.</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">PriorVectorFactorBatch</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="w"> </span><span class="n">prior</span><span class="p">(</span>
+<span class="w">    </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="n">cunls</span><span class="o">::</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;*&gt;</span><span class="p">(</span><span class="n">d_obs</span><span class="p">.</span><span class="n">data</span><span class="p">()),</span>
+<span class="w">    </span><span class="cm">/*num_factors=*/</span><span class="mi">1</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Wire state pointers and assemble the problem.</strong>
+The state-pointer vector tells the solver which state block each factor
+reads. For a prior factor with one state input, there is exactly one
+pointer per factor. <code class="code docutils literal notranslate"><span class="pre">Problem</span></code> (see <a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>) collects all
+state and factor batches into a single factor graph.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Each factor needs a list of device pointers to its input state blocks.</span>
+<span class="c1">// The prior factor reads one state block, so we provide one pointer.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">state_ptrs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="n">state_batch</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="mi">0</span><span class="p">)};</span>
+
+<span class="c1">// Assemble the factor graph.</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">Problem</span><span class="w"> </span><span class="n">problem</span><span class="p">;</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddStateBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">state_batch</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddFactorBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">prior</span><span class="p">,</span><span class="w"> </span><span class="n">state_ptrs</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Run the solver.</strong>
+<code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer</span></code> (see <a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>) solves the damped
+normal equations <span class="math notranslate nohighlight">\((J^T J + \lambda D)\,\Delta x = -J^T r\)</span> at each
+iteration, adapting <span class="math notranslate nohighlight">\(\lambda\)</span> based on step quality. <code class="code docutils literal notranslate"><span class="pre">Minimize</span></code>
+updates the state memory in-place and returns a <code class="code docutils literal notranslate"><span class="pre">MinimizerSummary</span></code> with
+solve statistics.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Solve with default LM settings.  The state (d_state) is updated</span>
+<span class="c1">// in-place on the GPU.</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizer</span><span class="w"> </span><span class="n">minimizer</span><span class="p">;</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">summary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">minimizer</span><span class="p">.</span><span class="n">Minimize</span><span class="p">(</span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="n">problem</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Inspect results.</strong></p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Iterations: &quot;</span><span class="w">   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">num_iterations</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Initial cost: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">initial_cost</span><span class="w">   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Final cost: &quot;</span><span class="w">   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">final_cost</span><span class="w">     </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">cudaStreamDestroy</span><span class="p">(</span><span class="n">stream</span><span class="p">);</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="step-3-create-cmakelists-txt">
+<h2>Step 3: Create CMakeLists.txt<a class="headerlink" href="#step-3-create-cmakelists-txt" title="Link to this heading">#</a></h2>
+<div class="highlight-cmake notranslate"><div class="highlight"><pre><span></span><span class="nb">cmake_minimum_required</span><span class="p">(</span><span class="s">VERSION</span><span class="w"> </span><span class="s">3.24</span><span class="p">)</span>
+<span class="nb">project</span><span class="p">(</span><span class="s">cunls_quick_start</span><span class="w"> </span><span class="s">LANGUAGES</span><span class="w"> </span><span class="s">CXX</span><span class="w"> </span><span class="s">CUDA</span><span class="p">)</span>
+
+<span class="nb">set</span><span class="p">(</span><span class="s">CMAKE_CXX_STANDARD</span><span class="w"> </span><span class="s">17</span><span class="p">)</span>
+<span class="nb">set</span><span class="p">(</span><span class="s">CMAKE_CXX_STANDARD_REQUIRED</span><span class="w"> </span><span class="s">ON</span><span class="p">)</span>
+
+<span class="nb">if</span><span class="p">(</span><span class="s">NOT</span><span class="w"> </span><span class="s">DEFINED</span><span class="w"> </span><span class="s">CUNLS_INSTALL_DIR</span><span class="p">)</span>
+<span class="w">  </span><span class="nb">message</span><span class="p">(</span><span class="s">FATAL_ERROR</span><span class="w"> </span><span class="s2">&quot;Set CUNLS_INSTALL_DIR to cuNLS install prefix.&quot;</span><span class="p">)</span>
+<span class="nb">endif</span><span class="p">()</span>
+
+<span class="nb">find_package</span><span class="p">(</span><span class="s">CUDAToolkit</span><span class="w"> </span><span class="s">REQUIRED</span><span class="p">)</span>
+<span class="nb">find_library</span><span class="p">(</span><span class="s">CUNLS_LIBRARY</span><span class="w"> </span><span class="s">cunls</span><span class="w"> </span><span class="s">PATHS</span><span class="w"> </span><span class="s2">&quot;${CUNLS_INSTALL_DIR}/lib&quot;</span><span class="w"> </span><span class="s">REQUIRED</span><span class="w"> </span><span class="s">NO_DEFAULT_PATH</span><span class="p">)</span>
+
+<span class="nb">add_executable</span><span class="p">(</span><span class="s">minimal</span><span class="w"> </span><span class="s">main.cpp</span><span class="p">)</span>
+<span class="nb">target_include_directories</span><span class="p">(</span><span class="s">minimal</span><span class="w"> </span><span class="s">PRIVATE</span><span class="w"> </span><span class="s2">&quot;${CUNLS_INSTALL_DIR}/include&quot;</span><span class="p">)</span>
+<span class="nb">target_link_libraries</span><span class="p">(</span><span class="s">minimal</span><span class="w"> </span><span class="s">PRIVATE</span><span class="w"> </span><span class="s2">&quot;${CUNLS_LIBRARY}&quot;</span><span class="w"> </span><span class="s">CUDA::cudart</span><span class="p">)</span>
+<span class="nb">set_target_properties</span><span class="p">(</span><span class="s">minimal</span><span class="w"> </span><span class="s">PROPERTIES</span>
+<span class="w">  </span><span class="s">BUILD_RPATH</span><span class="w"> </span><span class="s2">&quot;${CUNLS_INSTALL_DIR}/lib&quot;</span>
+<span class="w">  </span><span class="s">INSTALL_RPATH</span><span class="w"> </span><span class="s2">&quot;${CUNLS_INSTALL_DIR}/lib&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="step-4-build-and-run">
+<h2>Step 4: Build and run<a class="headerlink" href="#step-4-build-and-run" title="Link to this heading">#</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>-DCUNLS_INSTALL_DIR<span class="o">=</span>/tmp/cunls_install
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>-j
+./build/minimal
+</pre></div>
+</div>
+<p>You should see the final cost decrease toward zero.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="tutorial.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Tutorial</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="testing.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Build and Run Tests</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-1-install-cunls">Step 1: Install cuNLS</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-2-create-a-minimal-source-file">Step 2: Create a minimal source file</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-3-create-cmakelists-txt">Step 3: Create CMakeLists.txt</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-4-build-and-run">Step 4: Build and run</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

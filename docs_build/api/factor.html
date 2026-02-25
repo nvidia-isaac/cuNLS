@@ -1,0 +1,1292 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Factor API &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api/factor';</script>
+
+    <link rel="icon" href="../_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Robustifier API" href="robustifier.html" />
+    <link rel="prev" title="State API" href="state.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial.html">Tutorial</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../licensing.html">Licensing</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">API Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="minimizer.html">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="state.html">State API</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Factor API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="robustifier.html">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="common.html">Common API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="math.html">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Factor API</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="factor-api">
+<h1>Factor API<a class="headerlink" href="#factor-api" title="Link to this heading">#</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">cunls/factor</span></code> module provides batched residual and Jacobian models for
+non-linear least squares. Each factor computes a residual vector from one or
+more <strong>state blocks</strong>. State blocks lie on <strong>manifolds</strong>; the factor API uses
+<strong>tangent-space dimensions</strong> for Jacobian layout and solver variables. Links to
+the corresponding state batch types are in the <a class="reference internal" href="#factor-inputs"><span class="std std-ref">Factor inputs</span></a> section
+and in each factor’s <strong>Inputs</strong> subsection.</p>
+<section id="factor-inputs">
+<span id="id1"></span><h2>Factor inputs<a class="headerlink" href="#factor-inputs" title="Link to this heading">#</a></h2>
+<p>Each factor’s <strong>Inputs</strong> subsection below and the <a class="reference internal" href="state.html"><span class="doc">State API</span></a> API list the
+required state batch types (e.g. <code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;Dim&gt;</span></code>, <code class="code docutils literal notranslate"><span class="pre">SO3StateBatch</span></code>).</p>
+</section>
+<section id="factorbatch">
+<h2>FactorBatch<a class="headerlink" href="#factorbatch" title="Link to this heading">#</a></h2>
+<p>Abstract base (<code class="code docutils literal notranslate"><span class="pre">cunls/factor/factor_batch.h</span></code>).</p>
+<div class="math notranslate nohighlight">
+\[r = f(x),\qquad J = \frac{\partial f}{\partial x}\]</div>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK8EvaluateEPfPfPPCKf12cudaStream_t">
+<span id="_CPPv3NK8EvaluateEPfPfPPCKf12cudaStream_t"></span><span id="_CPPv2NK8EvaluateEPfPfPPCKf12cudaStream_t"></span><span id="Evaluate__floatP.floatP.floatCPCP.cudaStream_tC"></span><span class="kt"><span class="pre">bool</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">Evaluate</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">residuals</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">jacobians</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">state_pointers</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK8EvaluateEPfPfPPCKf12cudaStream_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>residuals</strong> – [out] Residual output buffer.</p></li>
+<li><p><strong>jacobians</strong> – [out] Optional Jacobian output buffer (<code class="docutils literal notranslate"><span class="pre">nullptr</span></code> to skip).</p></li>
+<li><p><strong>state_pointers</strong> – [in] Device pointer array mapping factor inputs to state blocks.</p></li>
+<li><p><strong>stream</strong> – [in] CUDA stream for asynchronous execution.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] <code class="docutils literal notranslate"><span class="pre">true</span></code> on success.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK13ResidualsSizeEv">
+<span id="_CPPv3NK13ResidualsSizeEv"></span><span id="_CPPv2NK13ResidualsSizeEv"></span><span id="ResidualsSizeC"></span><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">ResidualsSize</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK13ResidualsSizeEv" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>[out] Residual dimension per factor.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK15StateBlockSizesEv">
+<span id="_CPPv3NK15StateBlockSizesEv"></span><span id="_CPPv2NK15StateBlockSizesEv"></span><span id="StateBlockSizesC"></span><span class="n"><span class="pre">std</span></span><span class="p"><span class="pre">::</span></span><span class="n"><span class="pre">vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="n"><span class="pre">size_t</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">StateBlockSizes</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK15StateBlockSizesEv" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>[out] State block <strong>tangent</strong> dimensions consumed by each factor.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK10NumFactorsEv">
+<span id="_CPPv3NK10NumFactorsEv"></span><span id="_CPPv2NK10NumFactorsEv"></span><span id="NumFactorsC"></span><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">NumFactors</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK10NumFactorsEv" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>[out] Number of factors in the batch.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="sizedfactorbatch-kresidualsize-kstateblocksizes">
+<h2>SizedFactorBatch&lt;kResidualSize, …kStateBlockSizes&gt;<a class="headerlink" href="#sizedfactorbatch-kresidualsize-kstateblocksizes" title="Link to this heading">#</a></h2>
+<p>Compile-time convenience base (<code class="code docutils literal notranslate"><span class="pre">cunls/factor/sized_factor_batch.h</span></code>) that fixes
+residual and state (tangent) dimensions at compile time.</p>
+</section>
+<section id="priorvectorfactorbatch-dim">
+<h2>PriorVectorFactorBatch&lt;Dim&gt;<a class="headerlink" href="#priorvectorfactorbatch-dim" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/prior_vector_factor_batch.h</span></code></p>
+<p>Prior on a Euclidean vector (e.g. bias, landmark). Pulls the state toward observed values.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 25.8%" />
+<col style="width: 14.4%" />
+<col style="width: 25.8%" />
+<col style="width: 18.6%" />
+<col style="width: 15.5%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = x - o\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(\mathrm{Dim}\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(I\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(\mathrm{Dim} \times \mathrm{Dim}\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(\mathbb{R}^{\mathrm{Dim}}\)</span></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(x\)</span> = state vector, <span class="math notranslate nohighlight">\(o\)</span> = observation (constructor). State: one block from <code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;Dim&gt;</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<p>Constructor:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">PriorVectorFactorBatch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Vector</span><span class="o">&lt;</span><span class="n">Dim</span><span class="o">&gt;*</span><span class="w"> </span><span class="n">observations_ptr</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_factors</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">observations_ptr</span></code> — [in] Device pointer to observed vectors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">num_factors</span></code> — [in] Number of factors in this batch.</p></li>
+</ul>
+</section>
+<section id="so2priorfactorbatch">
+<h2>SO2PriorFactorBatch<a class="headerlink" href="#so2priorfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/so2_prior_factor_batch.h</span></code></p>
+<p>Prior on a 2D rotation (e.g. heading). Penalizes deviation from a target rotation.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 25.8%" />
+<col style="width: 14.4%" />
+<col style="width: 25.8%" />
+<col style="width: 18.6%" />
+<col style="width: 15.5%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = \mathrm{Log}(R_{\mathrm{target}}^\top R)\)</span></p></td>
+<td><p>1</p></td>
+<td><p><span class="math notranslate nohighlight">\(1\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(1 \times 1\)</span></p></td>
+<td><p>SO(2)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(R\)</span> = current rotation (state). State: one block from <code class="code docutils literal notranslate"><span class="pre">SO2StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv419SO2PriorFactorBatchPK6MatrixIXL2EEE6size_t">
+<span id="_CPPv319SO2PriorFactorBatchPK6MatrixIXL2EEE6size_t"></span><span id="_CPPv219SO2PriorFactorBatchPK6MatrixIX2EE6size_t"></span><span id="SO2PriorFactorBatch__Matrix:2:CP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">SO2PriorFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Matrix</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">2</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv419SO2PriorFactorBatchPK6MatrixIXL2EEE6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>observations_ptr</strong> – [in] Device pointer to SO(2) observations (2×2 row-major).</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of factors.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="so3priorfactorbatch">
+<h2>SO3PriorFactorBatch<a class="headerlink" href="#so3priorfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/so3_prior_factor_batch.h</span></code></p>
+<p>Prior on a 3D rotation. Penalizes deviation from a target orientation.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 25.8%" />
+<col style="width: 14.4%" />
+<col style="width: 25.8%" />
+<col style="width: 18.6%" />
+<col style="width: 15.5%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = \mathrm{Log}(R_{\mathrm{target}}^\top R)\)</span></p></td>
+<td><p>3</p></td>
+<td><p><span class="math notranslate nohighlight">\(J_r^{-1}(r)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(3 \times 3\)</span></p></td>
+<td><p>SO(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(R\)</span> = current rotation (state). State: one block from <code class="code docutils literal notranslate"><span class="pre">SO3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv419SO3PriorFactorBatchR12cuBLASHandlePK6MatrixIXL3EEE6size_t">
+<span id="_CPPv319SO3PriorFactorBatchR12cuBLASHandlePK6MatrixIXL3EEE6size_t"></span><span id="_CPPv219SO3PriorFactorBatchR12cuBLASHandlePK6MatrixIX3EE6size_t"></span><span id="SO3PriorFactorBatch__cuBLASHandleR.Matrix:3:CP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">SO3PriorFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cuBLASHandle</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">cublas_handle</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Matrix</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv419SO3PriorFactorBatchR12cuBLASHandlePK6MatrixIXL3EEE6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cublas_handle</strong> – [in] External cuBLAS handle wrapper.</p></li>
+<li><p><strong>observations_ptr</strong> – [in] Device pointer to SO(3) observations (3×3 row-major).</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of factors.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="se2priorfactorbatch">
+<h2>SE2PriorFactorBatch<a class="headerlink" href="#se2priorfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/se2_prior_factor_batch.h</span></code></p>
+<p>Prior on 2D rigid transform. State: one block from <code class="code docutils literal notranslate"><span class="pre">SE2StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 28.2%" />
+<col style="width: 17.9%" />
+<col style="width: 23.1%" />
+<col style="width: 17.9%" />
+<col style="width: 12.8%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = \mathrm{Log}(T_{\mathrm{target}}^{-1} T)\)</span></p></td>
+<td><p>3</p></td>
+<td><p><span class="math notranslate nohighlight">\(J_r^{-1}(r)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(3 \times 3\)</span></p></td>
+<td><p>SE(2)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="se3priorfactorbatch">
+<h2>SE3PriorFactorBatch<a class="headerlink" href="#se3priorfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/se3_prior_factor_batch.h</span></code></p>
+<p>Prior on 3D rigid transform. State: one block from <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 28.2%" />
+<col style="width: 17.9%" />
+<col style="width: 23.1%" />
+<col style="width: 17.9%" />
+<col style="width: 12.8%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = \mathrm{Log}(T_{\mathrm{target}}^{-1} T)\)</span></p></td>
+<td><p>6</p></td>
+<td><p><span class="math notranslate nohighlight">\(J_r^{-1}(r)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(6 \times 6\)</span></p></td>
+<td><p>SE(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="similarity2priorfactorbatch">
+<h2>Similarity2PriorFactorBatch<a class="headerlink" href="#similarity2priorfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/similarity2_prior_factor_batch.h</span></code></p>
+<p>Prior on 2D similarity transform. State: one block from <code class="code docutils literal notranslate"><span class="pre">Similarity2StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 27.5%" />
+<col style="width: 17.5%" />
+<col style="width: 22.5%" />
+<col style="width: 17.5%" />
+<col style="width: 15.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = \mathrm{Log}(T_{\mathrm{target}}^{-1} T)\)</span></p></td>
+<td><p>4</p></td>
+<td><p><span class="math notranslate nohighlight">\(J_r^{-1}(r)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(4 \times 4\)</span></p></td>
+<td><p>Sim(2)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="similarity3priorfactorbatch">
+<h2>Similarity3PriorFactorBatch<a class="headerlink" href="#similarity3priorfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/similarity3_prior_factor_batch.h</span></code></p>
+<p>Prior on 3D similarity transform. State: one block from <code class="code docutils literal notranslate"><span class="pre">Similarity3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>).</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 27.5%" />
+<col style="width: 17.5%" />
+<col style="width: 22.5%" />
+<col style="width: 17.5%" />
+<col style="width: 15.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(r = \mathrm{Log}(T_{\mathrm{target}}^{-1} T)\)</span></p></td>
+<td><p>7</p></td>
+<td><p><span class="math notranslate nohighlight">\(J_r^{-1}(r)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(7 \times 7\)</span></p></td>
+<td><p>Sim(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Constructors (all four prior classes above):</strong></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv49ClassNameR12cuBLASHandlePK7ObsType6size_t">
+<span id="_CPPv39ClassNameR12cuBLASHandlePK7ObsType6size_t"></span><span id="_CPPv29ClassNameR12cuBLASHandlePK7ObsType6size_t"></span><span id="ClassName__cuBLASHandleR.ObsTypeCP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">ClassName</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cuBLASHandle</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">cublas_handle</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">ObsType</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv49ClassNameR12cuBLASHandlePK7ObsType6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cublas_handle</strong> – [in] External cuBLAS handle wrapper.</p></li>
+<li><p><strong>observations_ptr</strong> – [in] Device pointer to observation transforms.</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of factors.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="se3betweenfactorbatch">
+<h2>SE3BetweenFactorBatch<a class="headerlink" href="#se3betweenfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/se3_between_factor_batch.h</span></code></p>
+<p>Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closure).</p>
+<div class="math notranslate nohighlight">
+\[r = \mathrm{Log}\bigl( \Delta^{-1} \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr)\]</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 20.7%" />
+<col style="width: 16.1%" />
+<col style="width: 32.2%" />
+<col style="width: 17.2%" />
+<col style="width: 13.8%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>(see above)</p></td>
+<td><p>6</p></td>
+<td><p>left/right SE(3) Jacobians</p></td>
+<td><p><span class="math notranslate nohighlight">\(6 \times 12\)</span></p></td>
+<td><p>SE(3) × SE(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(T_{\mathrm{left}}\)</span>, <span class="math notranslate nohighlight">\(T_{\mathrm{right}}\)</span> = two poses (state blocks). State: two blocks from <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>). <span class="math notranslate nohighlight">\(\Delta\)</span> = measured relative transform (constructor).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv421SE3BetweenFactorBatchR12cuBLASHandlePK12SE3Transform6size_t">
+<span id="_CPPv321SE3BetweenFactorBatchR12cuBLASHandlePK12SE3Transform6size_t"></span><span id="_CPPv221SE3BetweenFactorBatchR12cuBLASHandlePK12SE3Transform6size_t"></span><span id="SE3BetweenFactorBatch__cuBLASHandleR.SE3TransformCP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">SE3BetweenFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cuBLASHandle</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">cublas_handle</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">SE3Transform</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">pose_deltas_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv421SE3BetweenFactorBatchR12cuBLASHandlePK12SE3Transform6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cublas_handle</strong> – [in] External cuBLAS handle wrapper.</p></li>
+<li><p><strong>pose_deltas_ptr</strong> – [in] Device pointer to measured relative transforms.</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of between constraints.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="reprojectionfactorbatch">
+<h2>ReprojectionFactorBatch<a class="headerlink" href="#reprojectionfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/reprojection_factor_batch.h</span></code></p>
+<p>Reprojection error for bundle adjustment. Observations in <strong>normalized</strong> image coordinates.</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}P_{\mathrm{cam}} = T_{\mathrm{cam}} P,\qquad
+r = \begin{bmatrix} P_{\mathrm{cam},x}/P_{\mathrm{cam},z} - x_n \\
+                    P_{\mathrm{cam},y}/P_{\mathrm{cam},z} - y_n \end{bmatrix}\end{split}\]</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 20.7%" />
+<col style="width: 16.1%" />
+<col style="width: 25.3%" />
+<col style="width: 17.2%" />
+<col style="width: 20.7%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>(see above)</p></td>
+<td><p>2</p></td>
+<td><p>chain rule on projection</p></td>
+<td><p><span class="math notranslate nohighlight">\(2 \times 9\)</span></p></td>
+<td><p>SE(3) × <span class="math notranslate nohighlight">\(\mathbb{R}^3\)</span></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> Pose <span class="math notranslate nohighlight">\(T_{\mathrm{cam}}\)</span> (state block 1), 3D point <span class="math notranslate nohighlight">\(P\)</span> (state block 2). State: <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> then <code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;3&gt;</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>). Observations <span class="math notranslate nohighlight">\((x_n, y_n)\)</span> and optional camera-from-rig from constructor.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv423ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEE6size_tf">
+<span id="_CPPv323ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEE6size_tf"></span><span id="_CPPv223ReprojectionFactorBatchR12cuBLASHandlePK6VectorIX2EE6size_tf"></span><span id="ReprojectionFactorBatch__cuBLASHandleR.Vector:2:CP.s.float"></span><span class="sig-name descname"><span class="n"><span class="pre">ReprojectionFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cuBLASHandle</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">cublas_handle</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">2</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">observations</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_observations</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">z_threshold</span></span><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="m"><span class="pre">1e-3f</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv423ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEE6size_tf" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv423ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEEPK12SE3Transform6size_tf">
+<span id="_CPPv323ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEEPK12SE3Transform6size_tf"></span><span id="_CPPv223ReprojectionFactorBatchR12cuBLASHandlePK6VectorIX2EEPK12SE3Transform6size_tf"></span><span id="ReprojectionFactorBatch__cuBLASHandleR.Vector:2:CP.SE3TransformCP.s.float"></span><span class="sig-name descname"><span class="n"><span class="pre">ReprojectionFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cuBLASHandle</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">cublas_handle</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">2</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">observations</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">SE3Transform</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">poses_camera_from_rig</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_observations</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">z_threshold</span></span><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="m"><span class="pre">1e-3f</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv423ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEEPK12SE3Transform6size_tf" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cublas_handle</strong> – [in] External cuBLAS handle wrapper.</p></li>
+<li><p><strong>observations</strong> – [in] Device pointer to normalized observations.</p></li>
+<li><p><strong>poses_camera_from_rig</strong> – [in] Optional device pointer to camera extrinsics (second overload).</p></li>
+<li><p><strong>num_observations</strong> – [in] Number of reprojection factors.</p></li>
+<li><p><strong>z_threshold</strong> – [in] Minimum valid depth.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="pointtopointfactorbatch">
+<h2>PointToPointFactorBatch<a class="headerlink" href="#pointtopointfactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/point_to_point_factor_batch.h</span></code></p>
+<p>Point cloud registration (e.g. ICP). Residual = target point minus transformed source point.</p>
+<div class="math notranslate nohighlight">
+\[r = p - T q = p - (R q + t)\]</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 15.9%" />
+<col style="width: 31.8%" />
+<col style="width: 15.9%" />
+<col style="width: 11.4%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>(see above)</p></td>
+<td><p>3</p></td>
+<td><p><span class="math notranslate nohighlight">\([\partial r/\partial\omega\;\partial r/\partial\rho] = [R[q]_\times\;{-}R]\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(3 \times 6\)</span></p></td>
+<td><p>SE(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(T\)</span> = pose (state). State: one block from <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>). <span class="math notranslate nohighlight">\(p\)</span>, <span class="math notranslate nohighlight">\(q\)</span> = target/source points (constructor).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv423PointToPointFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t">
+<span id="_CPPv323PointToPointFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t"></span><span id="_CPPv223PointToPointFactorBatchPK6VectorIX3EEPK6VectorIX3EE6size_t"></span><span id="PointToPointFactorBatch__Vector:3:CP.Vector:3:CP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">PointToPointFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">p_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">q_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv423PointToPointFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>p_observations_ptr</strong> – [in] Device pointer to target points.</p></li>
+<li><p><strong>q_observations_ptr</strong> – [in] Device pointer to source points.</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of correspondences.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="pointtoplanefactorbatch">
+<h2>PointToPlaneFactorBatch<a class="headerlink" href="#pointtoplanefactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/point_to_plane_factor_batch.h</span></code></p>
+<p>Plane-based ICP: signed distance from transformed source point to target plane.</p>
+<div class="math notranslate nohighlight">
+\[r = n_q^\top (p - T q) = n_q \cdot (p - (R q + t))\]</div>
+<p>With <span class="math notranslate nohighlight">\(n' = R^\top n_q\)</span>, the Jacobian row is <span class="math notranslate nohighlight">\([n'^\top [q]_\times,\; -n'^\top]\)</span>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 23.3%" />
+<col style="width: 16.3%" />
+<col style="width: 32.6%" />
+<col style="width: 16.3%" />
+<col style="width: 11.6%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>(see above)</p></td>
+<td><p>1</p></td>
+<td><p><span class="math notranslate nohighlight">\([n'^\top [q]_\times\;{-}n'^\top]\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(1 \times 6\)</span></p></td>
+<td><p>SE(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(T\)</span> = pose (state). State: one block from <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>). <span class="math notranslate nohighlight">\(p\)</span>, <span class="math notranslate nohighlight">\(q\)</span>, <span class="math notranslate nohighlight">\(n_q\)</span> = target point, source point, source normal (constructor).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv423PointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t">
+<span id="_CPPv323PointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t"></span><span id="_CPPv223PointToPlaneFactorBatchPK6VectorIX3EEPK6VectorIX3EEPK6VectorIX3EE6size_t"></span><span id="PointToPlaneFactorBatch__Vector:3:CP.Vector:3:CP.Vector:3:CP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">PointToPlaneFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">p_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">q_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">nq_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv423PointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>p_observations_ptr</strong> – [in] Device pointer to target points.</p></li>
+<li><p><strong>q_observations_ptr</strong> – [in] Device pointer to source points.</p></li>
+<li><p><strong>nq_observations_ptr</strong> – [in] Device pointer to source normals.</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of correspondences.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="symmetricpointtoplanefactorbatch">
+<h2>SymmetricPointToPlaneFactorBatch<a class="headerlink" href="#symmetricpointtoplanefactorbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/symmetric_point_to_plane_factor_batch.h</span></code></p>
+<p>Symmetric point-to-plane: both frames contribute normals; <span class="math notranslate nohighlight">\(N = n_p + n_q\)</span>.</p>
+<div class="math notranslate nohighlight">
+\[r = N^\top \bigl( T p - T^{-1} q \bigr)
+  = \bigl( (R p + t) - R^\top(q - t) \bigr)^\top N\]</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 23.1%" />
+<col style="width: 17.9%" />
+<col style="width: 28.2%" />
+<col style="width: 17.9%" />
+<col style="width: 12.8%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>(see above)</p></td>
+<td><p>1</p></td>
+<td><p><span class="math notranslate nohighlight">\(\mathrm{d}(T p,\, T^{-1} q)\)</span> w.r.t. <span class="math notranslate nohighlight">\(T\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(1 \times 6\)</span></p></td>
+<td><p>SE(3)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> <span class="math notranslate nohighlight">\(T\)</span> = pose (state). State: one block from <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (see <a class="reference internal" href="state.html"><span class="doc">State API</span></a>). <span class="math notranslate nohighlight">\(p\)</span>, <span class="math notranslate nohighlight">\(n_p\)</span>, <span class="math notranslate nohighlight">\(q\)</span>, <span class="math notranslate nohighlight">\(n_q\)</span> = target/source points and normals (constructor).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv432SymmetricPointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t">
+<span id="_CPPv332SymmetricPointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t"></span><span id="_CPPv232SymmetricPointToPlaneFactorBatchPK6VectorIX3EEPK6VectorIX3EEPK6VectorIX3EEPK6VectorIX3EE6size_t"></span><span id="SymmetricPointToPlaneFactorBatch__Vector:3:CP.Vector:3:CP.Vector:3:CP.Vector:3:CP.s"></span><span class="sig-name descname"><span class="n"><span class="pre">SymmetricPointToPlaneFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">p_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">q_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">np_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="m"><span class="pre">3</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">nq_observations_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv432SymmetricPointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>p_observations_ptr</strong> – [in] Device pointer to target points.</p></li>
+<li><p><strong>q_observations_ptr</strong> – [in] Device pointer to source points.</p></li>
+<li><p><strong>np_observations_ptr</strong> – [in] Device pointer to target normals.</p></li>
+<li><p><strong>nq_observations_ptr</strong> – [in] Device pointer to source normals.</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of correspondences.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="informationfactorbatch-t">
+<h2>InformationFactorBatch&lt;T&gt;<a class="headerlink" href="#informationfactorbatch-t" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/factor/information_factor_batch.h</span></code></p>
+<p>Wraps a factor to apply a square-root information matrix <span class="math notranslate nohighlight">\(\Omega^{1/2}\)</span> (e.g. from measurement covariance).</p>
+<div class="math notranslate nohighlight">
+\[r_{\mathrm{weighted}} = \Omega^{1/2} r,\qquad
+J_{\mathrm{weighted}} = \Omega^{1/2} J\]</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 23.4%" />
+<col style="width: 14.9%" />
+<col style="width: 23.4%" />
+<col style="width: 19.1%" />
+<col style="width: 19.1%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Residual</p></th>
+<th class="head"><p>Residual dim</p></th>
+<th class="head"><p>Jacobian</p></th>
+<th class="head"><p>Jacobian dims</p></th>
+<th class="head"><p>Manifold</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>(see above)</p></td>
+<td><p>(per <span class="math notranslate nohighlight">\(T\)</span>)</p></td>
+<td><p>(see above)</p></td>
+<td><p>(per <span class="math notranslate nohighlight">\(T\)</span>)</p></td>
+<td><p>same as wrapped <span class="math notranslate nohighlight">\(T\)</span></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Inputs:</strong> Same state layout as the wrapped factor <code class="code docutils literal notranslate"><span class="pre">T</span></code>. Constructor also takes <code class="code docutils literal notranslate"><span class="pre">sqrt_information_matrices_ptr</span></code> (per-factor <span class="math notranslate nohighlight">\(\Omega^{1/2}\)</span>).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4IDpE22InformationFactorBatchR12cuBLASHandlePK6MatrixIN1T14residual_size_EE6size_tDpRR4Args">
+<span id="_CPPv3IDpE22InformationFactorBatchR12cuBLASHandlePK6MatrixIN1T14residual_size_EE6size_tDpRR4Args"></span><span id="_CPPv2IDpE22InformationFactorBatchR12cuBLASHandlePK6MatrixIN1T14residual_size_EE6size_tDpRR4Args"></span><span class="k"><span class="pre">template</span></span><span class="p"><span class="pre">&lt;</span></span><span class="k"><span class="pre">class</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="sig-name descname sig-name-template"><span class="n"><span class="pre">Args</span></span></span><span class="p"><span class="pre">&gt;</span></span><br /><span class="sig-name descname"><span class="n"><span class="pre">InformationFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cuBLASHandle</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">cublas_handle</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">Matrix</span></span><span class="p"><span class="pre">&lt;</span></span><span class="n"><span class="pre">T</span></span><span class="p"><span class="pre">::</span></span><span class="n"><span class="pre">residual_size_</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">sqrt_information_matrices_ptr</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_factors</span></span></em>,</dd>
+<dd><em class="sig-param"><a class="reference internal" href="#_CPPv4IDpE22InformationFactorBatchR12cuBLASHandlePK6MatrixIN1T14residual_size_EE6size_tDpRR4Args" title="InformationFactorBatch::Args"><span class="n"><span class="pre">Args</span></span></a><span class="p"><span class="pre">&amp;</span></span><span class="p"><span class="pre">&amp;</span></span><span class="p"><span class="pre">...</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">sized_factor_batch_args</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv4IDpE22InformationFactorBatchR12cuBLASHandlePK6MatrixIN1T14residual_size_EE6size_tDpRR4Args" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cublas_handle</strong> – [in] External cuBLAS handle wrapper.</p></li>
+<li><p><strong>sqrt_information_matrices_ptr</strong> – [in] Device pointer to per-factor square-root information matrices.</p></li>
+<li><p><strong>num_factors</strong> – [in] Number of factors and weighting matrices.</p></li>
+<li><p><strong>sized_factor_batch_args</strong> – [in] Constructor arguments forwarded to wrapped factor <code class="docutils literal notranslate"><span class="pre">T</span></code>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="state.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">State API</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="robustifier.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Robustifier API</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#factor-inputs">Factor inputs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#factorbatch">FactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK8EvaluateEPfPfPPCKf12cudaStream_t"><code class="docutils literal notranslate"><span class="pre">Evaluate()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK13ResidualsSizeEv"><code class="docutils literal notranslate"><span class="pre">ResidualsSize()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK15StateBlockSizesEv"><code class="docutils literal notranslate"><span class="pre">StateBlockSizes()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK10NumFactorsEv"><code class="docutils literal notranslate"><span class="pre">NumFactors()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sizedfactorbatch-kresidualsize-kstateblocksizes">SizedFactorBatch&lt;kResidualSize, …kStateBlockSizes&gt;</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#priorvectorfactorbatch-dim">PriorVectorFactorBatch&lt;Dim&gt;</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#so2priorfactorbatch">SO2PriorFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv419SO2PriorFactorBatchPK6MatrixIXL2EEE6size_t"><code class="docutils literal notranslate"><span class="pre">SO2PriorFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#so3priorfactorbatch">SO3PriorFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv419SO3PriorFactorBatchR12cuBLASHandlePK6MatrixIXL3EEE6size_t"><code class="docutils literal notranslate"><span class="pre">SO3PriorFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#se2priorfactorbatch">SE2PriorFactorBatch</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#se3priorfactorbatch">SE3PriorFactorBatch</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#similarity2priorfactorbatch">Similarity2PriorFactorBatch</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#similarity3priorfactorbatch">Similarity3PriorFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv49ClassNameR12cuBLASHandlePK7ObsType6size_t"><code class="docutils literal notranslate"><span class="pre">ClassName()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#se3betweenfactorbatch">SE3BetweenFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv421SE3BetweenFactorBatchR12cuBLASHandlePK12SE3Transform6size_t"><code class="docutils literal notranslate"><span class="pre">SE3BetweenFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reprojectionfactorbatch">ReprojectionFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv423ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEE6size_tf"><code class="docutils literal notranslate"><span class="pre">ReprojectionFactorBatch()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv423ReprojectionFactorBatchR12cuBLASHandlePK6VectorIXL2EEEPK12SE3Transform6size_tf"><code class="docutils literal notranslate"><span class="pre">ReprojectionFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pointtopointfactorbatch">PointToPointFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv423PointToPointFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t"><code class="docutils literal notranslate"><span class="pre">PointToPointFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pointtoplanefactorbatch">PointToPlaneFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv423PointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t"><code class="docutils literal notranslate"><span class="pre">PointToPlaneFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#symmetricpointtoplanefactorbatch">SymmetricPointToPlaneFactorBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv432SymmetricPointToPlaneFactorBatchPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEEPK6VectorIXL3EEE6size_t"><code class="docutils literal notranslate"><span class="pre">SymmetricPointToPlaneFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#informationfactorbatch-t">InformationFactorBatch&lt;T&gt;</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4IDpE22InformationFactorBatchR12cuBLASHandlePK6MatrixIN1T14residual_size_EE6size_tDpRR4Args"><code class="docutils literal notranslate"><span class="pre">InformationFactorBatch()</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

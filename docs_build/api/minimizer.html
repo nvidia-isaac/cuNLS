@@ -1,0 +1,917 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Minimizer API &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api/minimizer';</script>
+
+    <link rel="icon" href="../_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="State API" href="state.html" />
+    <link rel="prev" title="API Reference" href="index.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial.html">Tutorial</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../licensing.html">Licensing</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">API Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="state.html">State API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="factor.html">Factor API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="robustifier.html">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="common.html">Common API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="math.html">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Minimizer API</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="minimizer-api">
+<h1>Minimizer API<a class="headerlink" href="#minimizer-api" title="Link to this heading">#</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">cunls/minimizer</span></code> module provides iterative solvers for non-linear least
+squares. It implements <strong>Gauss-Newton</strong> and <strong>Levenberg-Marquardt</strong> algorithms,
+which repeatedly linearize the residuals, solve a linear least-squares system
+for the step in tangent space, and apply the step via the manifold <span class="math notranslate nohighlight">\(\oplus\)</span>
+operation. See <a class="reference external" href="https://en.wikipedia.org/wiki/Gauss%E2%80%93Newton_algorithm">Gauss–Newton algorithm</a> and
+<a class="reference external" href="https://en.wikipedia.org/wiki/Levenberg%E2%80%93Marquardt_algorithm">Levenberg–Marquardt algorithm</a> for
+background.</p>
+<section id="theory-gauss-newton-and-levenberg-marquardt">
+<h2>Theory — Gauss-Newton and Levenberg-Marquardt<a class="headerlink" href="#theory-gauss-newton-and-levenberg-marquardt" title="Link to this heading">#</a></h2>
+<p><strong>Objective</strong></p>
+<p>We minimize a sum of squared (and optionally robustified) residuals:</p>
+<div class="math notranslate nohighlight">
+\[S(x) = \frac{1}{2} \sum_i \left\| f_i(x) \right\|^2
+     = \frac{1}{2} \left\| f(x) \right\|^2\]</div>
+<p>where <span class="math notranslate nohighlight">\(x\)</span> is the state (on manifolds), <span class="math notranslate nohighlight">\(f_i\)</span> are residual blocks,
+and <span class="math notranslate nohighlight">\(f\)</span> denotes the stacked residual vector. At the current estimate
+<span class="math notranslate nohighlight">\(x_0\)</span>, we linearize:</p>
+<div class="math notranslate nohighlight">
+\[f(x_0 + \Delta x) \approx f(x_0) + J \Delta x\]</div>
+<p>with <span class="math notranslate nohighlight">\(J\)</span> the Jacobian of <span class="math notranslate nohighlight">\(f\)</span> with respect to the tangent update
+<span class="math notranslate nohighlight">\(\Delta x\)</span>. Substituting into <span class="math notranslate nohighlight">\(S\)</span> gives a quadratic model in
+<span class="math notranslate nohighlight">\(\Delta x\)</span>; minimizing it yields the <strong>Gauss-Newton</strong> step.</p>
+<p><strong>Gauss-Newton</strong></p>
+<p>The linearized least-squares problem is:</p>
+<div class="math notranslate nohighlight">
+\[\Delta x^* = \arg\min_{\Delta x} \left\| J \Delta x + f(x_0) \right\|^2\]</div>
+<p>Setting the gradient to zero gives the <strong>normal equations</strong>:</p>
+<div class="math notranslate nohighlight">
+\[J^T J \, \Delta x^* = -J^T f(x_0)\]</div>
+<p>So at each iteration we form <span class="math notranslate nohighlight">\(H = J^T J\)</span> and <span class="math notranslate nohighlight">\(b = -J^T f\)</span>, solve
+<span class="math notranslate nohighlight">\(H \Delta x = b\)</span>, then update <span class="math notranslate nohighlight">\(x_{\mathrm{new}} = x_0 \oplus \Delta x\)</span>.
+The matrix <span class="math notranslate nohighlight">\(J^T J\)</span> is the Gauss-Newton approximation to the Hessian of
+<span class="math notranslate nohighlight">\(S\)</span>; no second derivatives of <span class="math notranslate nohighlight">\(f\)</span> are needed. Convergence can be
+quadratic when the residuals are small and the model is a good approximation.</p>
+<p><strong>Levenberg-Marquardt</strong></p>
+<p>When the initial guess is poor or the problem is badly scaled, Gauss-Newton
+may diverge. The <strong>Levenberg-Marquardt</strong> method dampens the step by solving:</p>
+<div class="math notranslate nohighlight">
+\[\left( J^T J + \lambda \, D \right) \Delta x = -J^T f(x_0)\]</div>
+<p>where <span class="math notranslate nohighlight">\(\lambda \ge 0\)</span> is a damping parameter and <span class="math notranslate nohighlight">\(D\)</span> is often the
+diagonal of <span class="math notranslate nohighlight">\(J^T J\)</span> (so the step is scale-invariant). For <span class="math notranslate nohighlight">\(\lambda = 0\)</span>
+this is Gauss-Newton; for large <span class="math notranslate nohighlight">\(\lambda\)</span> the step shrinks toward the
+gradient-descent direction <span class="math notranslate nohighlight">\(-J^T f\)</span>. The implementation adjusts
+<span class="math notranslate nohighlight">\(\lambda\)</span> each iteration: increase it when a step is rejected (cost
+rises), decrease it when a step is very successful, so the method interpolates
+between gradient descent and Gauss-Newton and is more robust. See the
+Wikipedia links above for convergence and damping strategies.</p>
+<p><strong>In cuNLS</strong></p>
+<ul class="simple">
+<li><p><strong>GaussNewtonMinimizer</strong> solves <span class="math notranslate nohighlight">\(J^T J \Delta x = -J^T r\)</span> each iteration
+and updates state with <span class="math notranslate nohighlight">\(x \oplus \Delta x\)</span> until convergence (step norm
+or cost change below tolerance).</p></li>
+<li><p><strong>LevenbergMarquardtMinimizer</strong> solves
+<span class="math notranslate nohighlight">\((J^T J + \lambda \operatorname{diag}(J^T J)) \Delta x = -J^T r\)</span>,
+adapts <span class="math notranslate nohighlight">\(\lambda\)</span> from step quality (actual vs. predicted cost reduction),
+and accepts/rejects steps accordingly.</p></li>
+</ul>
+</section>
+<section id="structures">
+<h2>Structures<a class="headerlink" href="#structures" title="Link to this heading">#</a></h2>
+<section id="minimizersummary">
+<span id="cunls-minimizer-summary-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">MinimizerSummary</span></code><a class="headerlink" href="#minimizersummary" title="Link to this heading">#</a></h3>
+<p>Returned by <code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">GaussNewtonMinimizer::Minimize()</span></code> and
+<code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer::Minimize()</span></code>. Holds solve statistics for
+inspecting iteration count and cost history.</p>
+<ul class="simple">
+<li><p><strong>num_iterations</strong> [out]: Number of nonlinear iterations performed.</p></li>
+<li><p><strong>initial_cost</strong> [out]: Objective value before the first iteration.</p></li>
+<li><p><strong>final_cost</strong> [out]: Objective value at termination.</p></li>
+<li><p><strong>iteration_costs</strong> [out]: Per-iteration cost history (for plotting or debugging).</p></li>
+</ul>
+</section>
+<section id="minimizeroptions">
+<h3><code class="code docutils literal notranslate"><span class="pre">MinimizerOptions</span></code><a class="headerlink" href="#minimizeroptions" title="Link to this heading">#</a></h3>
+<p>Options for the <strong>Gauss-Newton</strong> minimizer: iteration limit, convergence
+tolerances, and sparse linear solver choice. Used when constructing a <code class="code docutils literal notranslate"><span class="pre">GaussNewtonMinimizer</span></code>.</p>
+<ul class="simple">
+<li><p><strong>max_num_iterations</strong> [in]: Maximum number of iterations.</p></li>
+<li><p><strong>state_tolerance</strong> [in]: Convergence threshold on step norm (squared).</p></li>
+<li><p><strong>cost_tolerance</strong> [in]: Convergence threshold on cost change.</p></li>
+<li><p><strong>sparse_linear_solver_type</strong> [in]: Sparse backend (e.g. Cholesky, iterative).</p></li>
+<li><p><strong>sparse_linear_solver_config</strong> [in]: Backend-specific options.</p></li>
+</ul>
+</section>
+<section id="levenbergmarquardtminimizeroptions">
+<h3><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizerOptions</span></code><a class="headerlink" href="#levenbergmarquardtminimizeroptions" title="Link to this heading">#</a></h3>
+<p>Options for the <strong>Levenberg-Marquardt</strong> minimizer. Extends
+<code class="code docutils literal notranslate"><span class="pre">MinimizerOptions</span></code> with damping and step-acceptance parameters. Used when
+constructing a <code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer</span></code>.</p>
+<ul class="simple">
+<li><p><strong>base_options</strong> [in]: Base Gauss-Newton options.</p></li>
+<li><p><strong>initial_lambda</strong> [in]: Initial damping coefficient.</p></li>
+<li><p><strong>relative_reduction_tolerance</strong> [in]: Predicted reduction threshold.</p></li>
+<li><p><strong>lambda_upscale</strong> [in]: Factor by which <span class="math notranslate nohighlight">\(\lambda\)</span> is increased after a rejected step.</p></li>
+<li><p><strong>lambda_downscale</strong> [in]: Factor by which <span class="math notranslate nohighlight">\(\lambda\)</span> is decreased after a very successful step.</p></li>
+<li><p><strong>lambda_max</strong> [in]: Upper bound for <span class="math notranslate nohighlight">\(\lambda\)</span>.</p></li>
+<li><p><strong>lambda_min</strong> [in]: Lower bound for <span class="math notranslate nohighlight">\(\lambda\)</span>.</p></li>
+<li><p><strong>step_accept_threshold</strong> [in]: Minimum step quality (e.g. rho) to accept a step.</p></li>
+<li><p><strong>lambda_downscale_threshold</strong> [in]: Step quality above which <span class="math notranslate nohighlight">\(\lambda\)</span> is decreased.</p></li>
+</ul>
+</section>
+</section>
+<section id="class-apis">
+<h2>Class APIs<a class="headerlink" href="#class-apis" title="Link to this heading">#</a></h2>
+<section id="gaussnewtonminimizer-gaussnewtonminimizer">
+<span id="gauss-newton-minimizer-ctor-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">GaussNewtonMinimizer::GaussNewtonMinimizer</span></code><a class="headerlink" href="#gaussnewtonminimizer-gaussnewtonminimizer" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Constructs a Gauss-Newton minimizer that will solve
+<span class="math notranslate nohighlight">\(J^T J \Delta x = -J^T r\)</span> each iteration and update the problem state
+until convergence.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv420GaussNewtonMinimizerRK16MinimizerOptions">
+<span id="_CPPv320GaussNewtonMinimizerRK16MinimizerOptions"></span><span id="_CPPv220GaussNewtonMinimizerRK16MinimizerOptions"></span><span id="GaussNewtonMinimizer__MinimizerOptionsCR"></span><span class="sig-name descname"><span class="n"><span class="pre">GaussNewtonMinimizer</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">MinimizerOptions</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">options</span></span><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="n"><span class="pre">MinimizerOptions</span></span><span class="p"><span class="pre">(</span></span><span class="p"><span class="pre">)</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv420GaussNewtonMinimizerRK16MinimizerOptions" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>options</strong> – [in] Solver options (max iterations, tolerances, linear solver); copied into the minimizer.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="gaussnewtonminimizer-minimize">
+<span id="gauss-newton-minimize-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">GaussNewtonMinimizer::Minimize</span></code><a class="headerlink" href="#gaussnewtonminimizer-minimize" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Runs the Gauss-Newton iteration on the given problem: at each step
+evaluates residuals and Jacobians, assembles and solves the normal equations,
+applies the tangent step via the state batches’ Plus, and checks convergence.
+Updates the problem’s state in-place when steps are accepted.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv48Minimize12cudaStream_tR7Problem">
+<span id="_CPPv38Minimize12cudaStream_tR7Problem"></span><span id="_CPPv28Minimize12cudaStream_tR7Problem"></span><span id="Minimize__cudaStream_t.ProblemR"></span><span class="n"><span class="pre">MinimizerSummary</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">Minimize</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Problem</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">problem</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv48Minimize12cudaStream_tR7Problem" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stream</strong> – [in] CUDA stream for evaluation, linear algebra, and state updates.</p></li>
+<li><p><strong>problem</strong> – [in,out] Problem (factor graph + state batches); state memory is updated in-place.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] <code class="xref cpp cpp-class docutils literal notranslate"><span class="pre">MinimizerSummary</span></code> with iteration count and cost statistics.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="levenbergmarquardtminimizer-levenbergmarquardtminimizer">
+<span id="lm-minimizer-ctor-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer::LevenbergMarquardtMinimizer</span></code><a class="headerlink" href="#levenbergmarquardtminimizer-levenbergmarquardtminimizer" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Constructs a Levenberg-Marquardt minimizer that solves the damped
+system <span class="math notranslate nohighlight">\((J^T J + \lambda D) \Delta x = -J^T r\)</span> and adapts <span class="math notranslate nohighlight">\(\lambda\)</span>
+from step quality. More robust than Gauss-Newton when the initial guess is far
+from the solution.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv427LevenbergMarquardtMinimizerRK34LevenbergMarquardtMinimizerOptions">
+<span id="_CPPv327LevenbergMarquardtMinimizerRK34LevenbergMarquardtMinimizerOptions"></span><span id="_CPPv227LevenbergMarquardtMinimizerRK34LevenbergMarquardtMinimizerOptions"></span><span id="LevenbergMarquardtMinimizer__LevenbergMarquardtMinimizerOptionsCR"></span><span class="sig-name descname"><span class="n"><span class="pre">LevenbergMarquardtMinimizer</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">LevenbergMarquardtMinimizerOptions</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">options</span></span><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="n"><span class="pre">LevenbergMarquardtMinimizerOptions</span></span><span class="p"><span class="pre">(</span></span><span class="p"><span class="pre">)</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv427LevenbergMarquardtMinimizerRK34LevenbergMarquardtMinimizerOptions" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>options</strong> – [in] LM options (damping, accept/reject thresholds, etc.).</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><a class="reference internal" href="#_CPPv427LevenbergMarquardtMinimizerRK34LevenbergMarquardtMinimizerOptions" title="LevenbergMarquardtMinimizer"><code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer()</span></code></a> also provides <a class="reference internal" href="#_CPPv48Minimize12cudaStream_tR7Problem" title="Minimize"><code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">Minimize()</span></code></a> with
+the same signature as <code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">GaussNewtonMinimizer::Minimize()</span></code>; it runs the LM
+iteration instead of pure Gauss-Newton.</p>
+</section>
+<section id="problem-addfactorbatch">
+<span id="problem-add-factor-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">Problem::AddFactorBatch</span></code><a class="headerlink" href="#problem-addfactorbatch" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Registers a factor batch (and optionally a robust loss batch) with
+the problem and binds its factor instances to state block pointers. The
+ordering of <code class="code docutils literal notranslate"><span class="pre">state_pointers</span></code> must match the factor batch’s expected
+state layout (see <a class="reference internal" href="factor.html"><span class="doc">Factor API</span></a>).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv414AddFactorBatchP11FactorBatchRKNSt6vectorIPfEE">
+<span id="_CPPv314AddFactorBatchP11FactorBatchRKNSt6vectorIPfEE"></span><span id="_CPPv214AddFactorBatchP11FactorBatchRKNSt6vectorIPfEE"></span><span id="AddFactorBatch__FactorBatchP.std::vector:floatP:CR"></span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">AddFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">FactorBatch</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">factor_batch</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">std</span></span><span class="p"><span class="pre">::</span></span><span class="n"><span class="pre">vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="kt"><span class="pre">float</span></span><span class="p"><span class="pre">*</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">state_pointers</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv414AddFactorBatchP11FactorBatchRKNSt6vectorIPfEE" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>factor_batch</strong> – [in] Factor batch pointer (non-owning).</p></li>
+<li><p><strong>state_pointers</strong> – [in] Flattened device pointers: one per (factor index, state block), mapping factors to state.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] No return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv414AddFactorBatchP11FactorBatchP17LossFunctionBatchRKNSt6vectorIPfEE">
+<span id="_CPPv314AddFactorBatchP11FactorBatchP17LossFunctionBatchRKNSt6vectorIPfEE"></span><span id="_CPPv214AddFactorBatchP11FactorBatchP17LossFunctionBatchRKNSt6vectorIPfEE"></span><span id="AddFactorBatch__FactorBatchP.LossFunctionBatchP.std::vector:floatP:CR"></span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">AddFactorBatch</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">FactorBatch</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">factor_batch</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">LossFunctionBatch</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">loss_function_batch</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">std</span></span><span class="p"><span class="pre">::</span></span><span class="n"><span class="pre">vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="kt"><span class="pre">float</span></span><span class="p"><span class="pre">*</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">state_pointers</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv414AddFactorBatchP11FactorBatchP17LossFunctionBatchRKNSt6vectorIPfEE" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>factor_batch</strong> – [in] Factor batch pointer (non-owning).</p></li>
+<li><p><strong>loss_function_batch</strong> – [in] Robust loss batch pointer (non-owning).</p></li>
+<li><p><strong>state_pointers</strong> – [in] Flattened state pointer mapping for all factors in the batch.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] No return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="problem-addstatebatch">
+<span id="problem-add-state-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">Problem::AddStateBatch</span></code><a class="headerlink" href="#problem-addstatebatch" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Registers a state batch with the problem. State batches supply the
+manifold Plus operation and state block pointers used when building
+<code class="code docutils literal notranslate"><span class="pre">state_pointers</span></code> for <code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">Problem::AddFactorBatch()</span></code> and when
+applying steps during <a class="reference internal" href="#_CPPv48Minimize12cudaStream_tR7Problem" title="Minimize"><code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">Minimize()</span></code></a>.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv413AddStateBatchP10StateBatch">
+<span id="_CPPv313AddStateBatchP10StateBatch"></span><span id="_CPPv213AddStateBatchP10StateBatch"></span><span id="AddStateBatch__StateBatchP"></span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">AddStateBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">StateBatch</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">state_batch</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv413AddStateBatchP10StateBatch" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>state_batch</strong> – [in] State batch pointer (non-owning).</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] No return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="problem-checkconsistency">
+<span id="problem-check-consistency-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">Problem::CheckConsistency</span></code><a class="headerlink" href="#problem-checkconsistency" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Verifies that the problem’s factor batches, state batches, and
+state pointer mappings are consistent (e.g. correct dimensions and
+connectivity). Call before <a class="reference internal" href="#_CPPv48Minimize12cudaStream_tR7Problem" title="Minimize"><code class="xref cpp cpp-func docutils literal notranslate"><span class="pre">Minimize()</span></code></a> to catch configuration errors.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK16CheckConsistencyEv">
+<span id="_CPPv3NK16CheckConsistencyEv"></span><span id="_CPPv2NK16CheckConsistencyEv"></span><span id="CheckConsistencyC"></span><span class="kt"><span class="pre">bool</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">CheckConsistency</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK16CheckConsistencyEv" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>[out] <code class="docutils literal notranslate"><span class="pre">true</span></code> when graph inputs and connectivity are valid.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="residualbatch-evaluate">
+<span id="residual-batch-evaluate-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">ResidualBatch::Evaluate</span></code><a class="headerlink" href="#residualbatch-evaluate" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Evaluates the residual batch: computes residuals (and optionally
+Jacobians) from the factor batch and applies the optional loss function to
+produce robustified residuals and scaled Jacobians used by the minimizer.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK8EvaluateEPfPfPfPPCKf12cudaStream_t">
+<span id="_CPPv3NK8EvaluateEPfPfPfPPCKf12cudaStream_t"></span><span id="_CPPv2NK8EvaluateEPfPfPfPPCKf12cudaStream_t"></span><span id="Evaluate__floatP.floatP.floatP.floatCPCP.cudaStream_tC"></span><span class="kt"><span class="pre">bool</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">Evaluate</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">cost</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">residuals</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">jacobians</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">state_pointers</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK8EvaluateEPfPfPfPPCKf12cudaStream_t" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cost</strong> – [out] Optional per-residual cost (e.g. <span class="math notranslate nohighlight">\(\frac{1}{2}\rho(\|f\|^2)\)</span>); can be <code class="docutils literal notranslate"><span class="pre">nullptr</span></code>.</p></li>
+<li><p><strong>residuals</strong> – [out] Residual output buffer (after loss scaling if present).</p></li>
+<li><p><strong>jacobians</strong> – [out] Optional Jacobian output (after loss scaling); can be <code class="docutils literal notranslate"><span class="pre">nullptr</span></code>.</p></li>
+<li><p><strong>state_pointers</strong> – [in] Device pointer array mapping factor inputs to state blocks.</p></li>
+<li><p><strong>stream</strong> – [in] CUDA stream for factor/loss evaluation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] <code class="docutils literal notranslate"><span class="pre">true</span></code> on successful evaluation.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="minimizerstate-copy">
+<span id="minimizer-state-copy-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">MinimizerState::Copy</span></code><a class="headerlink" href="#minimizerstate-copy" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Snapshot or restore state. Copy state from a set of device vectors
+into the minimizer state, or from another <code class="xref cpp cpp-class docutils literal notranslate"><span class="pre">MinimizerState</span></code> into a
+problem’s state storage. Useful for rollback or warm starts.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv44Copy12cudaStream_tRKNSt6vectorI7dvectorIfEEE">
+<span id="_CPPv34Copy12cudaStream_tRKNSt6vectorI7dvectorIfEEE"></span><span id="_CPPv24Copy12cudaStream_tRKNSt6vectorI7dvectorIfEEE"></span><span id="Copy__cudaStream_t.std::vector:dvector:float::CR"></span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">Copy</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">std</span></span><span class="p"><span class="pre">::</span></span><span class="n"><span class="pre">vector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="n"><span class="pre">dvector</span></span><span class="p"><span class="pre">&lt;</span></span><span class="kt"><span class="pre">float</span></span><span class="p"><span class="pre">&gt;</span></span><span class="p"><span class="pre">&gt;</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">other</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv44Copy12cudaStream_tRKNSt6vectorI7dvectorIfEEE" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stream</strong> – [in] CUDA stream for copy operations.</p></li>
+<li><p><strong>other</strong> – [in] Source state vectors (one per state batch segment).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] No return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv44Copy12cudaStream_tRK14MinimizerStateR7Problem">
+<span id="_CPPv34Copy12cudaStream_tRK14MinimizerStateR7Problem"></span><span id="_CPPv24Copy12cudaStream_tRK14MinimizerStateR7Problem"></span><span id="Copy__cudaStream_t.MinimizerStateCR.ProblemR"></span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">Copy</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">MinimizerState</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">state</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">Problem</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">problem</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv44Copy12cudaStream_tRK14MinimizerStateR7Problem" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stream</strong> – [in] CUDA stream for copy operations.</p></li>
+<li><p><strong>state</strong> – [in] Source minimizer state snapshot.</p></li>
+<li><p><strong>problem</strong> – [out] Problem whose state storage is overwritten with the copied values.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] No return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="sparsematrixmultiplication-computesquaredmatrix">
+<span id="sparse-matrix-multiplication-label"></span><h3><code class="code docutils literal notranslate"><span class="pre">SparseMatrixMultiplication::ComputeSquaredMatrix</span></code><a class="headerlink" href="#sparsematrixmultiplication-computesquaredmatrix" title="Link to this heading">#</a></h3>
+<p><strong>Purpose:</strong> Computes <span class="math notranslate nohighlight">\(A^T A\)</span> for a sparse matrix <span class="math notranslate nohighlight">\(A\)</span>. Used
+internally to form the Gauss-Newton Hessian <span class="math notranslate nohighlight">\(J^T J\)</span> from the sparse
+Jacobian <span class="math notranslate nohighlight">\(J\)</span>.</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv420ComputeSquaredMatrix12cudaStream_tRK15CSRSparseMatrixR15CSRSparseMatrix">
+<span id="_CPPv320ComputeSquaredMatrix12cudaStream_tRK15CSRSparseMatrixR15CSRSparseMatrix"></span><span id="_CPPv220ComputeSquaredMatrix12cudaStream_tRK15CSRSparseMatrixR15CSRSparseMatrix"></span><span id="ComputeSquaredMatrix__cudaStream_t.CSRSparseMatrixCR.CSRSparseMatrixR"></span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">ComputeSquaredMatrix</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">CSRSparseMatrix</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">input</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">CSRSparseMatrix</span></span><span class="w"> </span><span class="p"><span class="pre">&amp;</span></span><span class="n sig-param"><span class="pre">output</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#_CPPv420ComputeSquaredMatrix12cudaStream_tRK15CSRSparseMatrixR15CSRSparseMatrix" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stream</strong> – [in] CUDA stream for sparse transpose/multiplication.</p></li>
+<li><p><strong>input</strong> – [in] Input sparse matrix <span class="math notranslate nohighlight">\(A\)</span>.</p></li>
+<li><p><strong>output</strong> – [out] Output sparse matrix storing <span class="math notranslate nohighlight">\(A^T A\)</span>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[out] No return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">API Reference</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="state.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">State API</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#theory-gauss-newton-and-levenberg-marquardt">Theory — Gauss-Newton and Levenberg-Marquardt</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#structures">Structures</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#minimizersummary"><code class="code docutils literal notranslate"><span class="pre">MinimizerSummary</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#minimizeroptions"><code class="code docutils literal notranslate"><span class="pre">MinimizerOptions</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#levenbergmarquardtminimizeroptions"><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizerOptions</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#class-apis">Class APIs</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#gaussnewtonminimizer-gaussnewtonminimizer"><code class="code docutils literal notranslate"><span class="pre">GaussNewtonMinimizer::GaussNewtonMinimizer</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv420GaussNewtonMinimizerRK16MinimizerOptions"><code class="docutils literal notranslate"><span class="pre">GaussNewtonMinimizer()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#gaussnewtonminimizer-minimize"><code class="code docutils literal notranslate"><span class="pre">GaussNewtonMinimizer::Minimize</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv48Minimize12cudaStream_tR7Problem"><code class="docutils literal notranslate"><span class="pre">Minimize()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#levenbergmarquardtminimizer-levenbergmarquardtminimizer"><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer::LevenbergMarquardtMinimizer</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv427LevenbergMarquardtMinimizerRK34LevenbergMarquardtMinimizerOptions"><code class="docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#problem-addfactorbatch"><code class="code docutils literal notranslate"><span class="pre">Problem::AddFactorBatch</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv414AddFactorBatchP11FactorBatchRKNSt6vectorIPfEE"><code class="docutils literal notranslate"><span class="pre">AddFactorBatch()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv414AddFactorBatchP11FactorBatchP17LossFunctionBatchRKNSt6vectorIPfEE"><code class="docutils literal notranslate"><span class="pre">AddFactorBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#problem-addstatebatch"><code class="code docutils literal notranslate"><span class="pre">Problem::AddStateBatch</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv413AddStateBatchP10StateBatch"><code class="docutils literal notranslate"><span class="pre">AddStateBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#problem-checkconsistency"><code class="code docutils literal notranslate"><span class="pre">Problem::CheckConsistency</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK16CheckConsistencyEv"><code class="docutils literal notranslate"><span class="pre">CheckConsistency()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#residualbatch-evaluate"><code class="code docutils literal notranslate"><span class="pre">ResidualBatch::Evaluate</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK8EvaluateEPfPfPfPPCKf12cudaStream_t"><code class="docutils literal notranslate"><span class="pre">Evaluate()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#minimizerstate-copy"><code class="code docutils literal notranslate"><span class="pre">MinimizerState::Copy</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv44Copy12cudaStream_tRKNSt6vectorI7dvectorIfEEE"><code class="docutils literal notranslate"><span class="pre">Copy()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv44Copy12cudaStream_tRK14MinimizerStateR7Problem"><code class="docutils literal notranslate"><span class="pre">Copy()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#sparsematrixmultiplication-computesquaredmatrix"><code class="code docutils literal notranslate"><span class="pre">SparseMatrixMultiplication::ComputeSquaredMatrix</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv420ComputeSquaredMatrix12cudaStream_tRK15CSRSparseMatrixR15CSRSparseMatrix"><code class="docutils literal notranslate"><span class="pre">ComputeSquaredMatrix()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

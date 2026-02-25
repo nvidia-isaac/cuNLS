@@ -1,0 +1,638 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Math API &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api/math';</script>
+
+    <link rel="icon" href="../_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Common API" href="common.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial.html">Tutorial</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../licensing.html">Licensing</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">API Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="minimizer.html">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="state.html">State API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="factor.html">Factor API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="robustifier.html">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="common.html">Common API</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Math API</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="math-api">
+<h1>Math API<a class="headerlink" href="#math-api" title="Link to this heading">#</a></h1>
+<p><code class="code docutils literal notranslate"><span class="pre">cunls/math</span></code> contains low-level Lie-group and dense-matrix operations used by
+state/factor implementations.</p>
+<p>Headers:</p>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">cunls/math/lie_math.h</span></code></p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">cunls/math/dense_matrix_ops.h</span></code></p></li>
+</ul>
+<section id="common-parameter-semantics">
+<h2>Common parameter semantics<a class="headerlink" href="#common-parameter-semantics" title="Link to this heading">#</a></h2>
+<p>Most batched math functions in this module follow the same conventions.</p>
+<section id="parameters">
+<h3>Parameters<a class="headerlink" href="#parameters" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">stream</span></code> - [in] CUDA stream used for asynchronous kernel/library execution.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">twist</span></code> / <code class="code docutils literal notranslate"><span class="pre">rotation</span></code> / <code class="code docutils literal notranslate"><span class="pre">transform</span></code> / <code class="code docutils literal notranslate"><span class="pre">matrix</span></code> - [in] Device pointer to input
+batched data.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">*_pitch</span></code> - [in] Leading dimension (row stride) for each matrix in the batch.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">*_stride</span></code> - [in] Stride between consecutive batch elements.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">size</span></code> / <code class="code docutils literal notranslate"><span class="pre">num_matrices</span></code> - [in] Number of batch elements.</p></li>
+<li><p>output pointer parameters (for example <code class="code docutils literal notranslate"><span class="pre">skew</span></code>, <code class="code docutils literal notranslate"><span class="pre">jacobian</span></code>, <code class="code docutils literal notranslate"><span class="pre">inverse_transform</span></code>)
+- [out] Device pointer to destination buffer.</p></li>
+</ul>
+</section>
+<section id="returns">
+<h3>Returns<a class="headerlink" href="#returns" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>All functions in this module return <code class="code docutils literal notranslate"><span class="pre">void</span></code>.</p></li>
+</ul>
+</section>
+</section>
+<section id="lie-math-api-lie-math-h">
+<h2>Lie math API (<code class="code docutils literal notranslate"><span class="pre">lie_math.h</span></code>)<a class="headerlink" href="#lie-math-api-lie-math-h" title="Link to this heading">#</a></h2>
+<section id="so-3-family">
+<h3>SO(3) family<a class="headerlink" href="#so-3-family" title="Link to this heading">#</a></h3>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">ComputeSkewSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">skew_pitch</span><span class="p">,</span>
+<span class="w">                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">skew_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">skew</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeExpSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">rotation_pitch</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">rotation_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">rotation</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeLogSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">rotation</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">rotation_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">rotation_stride</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianLeftSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                            </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_pitch</span><span class="p">,</span>
+<span class="w">                            </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                            </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianRightSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                             </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_pitch</span><span class="p">,</span>
+<span class="w">                             </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                             </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianLeftInverseSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_inv_pitch</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_inv_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian_inv</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianRightInverseSO3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_inv_pitch</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_inv_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian_inv</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="se-3-family">
+<h3>SE(3) family<a class="headerlink" href="#se-3-family" title="Link to this heading">#</a></h3>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">ComputeInverseSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">transform</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_stride</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">inverse_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">inverse_stride</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">inverse_transform</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeExpSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_pitch</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">transform</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeLogSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">transform</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_stride</span><span class="p">,</span>
+<span class="w">                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeAdjointSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">transform</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_stride</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">adjoint_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">adjoint_stride</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">adjoint</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeInverseAdjointSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">transform</span><span class="p">,</span>
+<span class="w">                              </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">transform_stride</span><span class="p">,</span>
+<span class="w">                              </span><span class="kt">size_t</span><span class="w"> </span><span class="n">inv_adjoint_pitch</span><span class="p">,</span>
+<span class="w">                              </span><span class="kt">size_t</span><span class="w"> </span><span class="n">inv_adjoint_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                              </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">inv_adjoint</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianLeftSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                            </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_pitch</span><span class="p">,</span>
+<span class="w">                            </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                            </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianLeftInverseSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_pitch</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                                   </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianRightSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                             </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_pitch</span><span class="p">,</span>
+<span class="w">                             </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                             </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">ComputeJacobianRightInverseSE3</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">twist</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">twist_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_pitch</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">jacobian_stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                                    </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobian</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="general-utility">
+<h3>General utility<a class="headerlink" href="#general-utility" title="Link to this heading">#</a></h3>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">ComputeNegateMatrix</span><span class="p">(</span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">matrix</span><span class="p">,</span>
+<span class="w">                         </span><span class="kt">size_t</span><span class="w"> </span><span class="n">rows</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">cols</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">pitch</span><span class="p">,</span>
+<span class="w">                         </span><span class="kt">size_t</span><span class="w"> </span><span class="n">stride</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                         </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">negated_matrix</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="additional-parameter-docs-for-computenegatematrix">
+<h4>Additional parameter docs for <code class="code docutils literal notranslate"><span class="pre">ComputeNegateMatrix</span></code><a class="headerlink" href="#additional-parameter-docs-for-computenegatematrix" title="Link to this heading">#</a></h4>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">rows</span></code> - [in] number of rows in each matrix.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">cols</span></code> - [in] number of columns in each matrix.</p></li>
+</ul>
+</section>
+</section>
+</section>
+<section id="dense-matrix-api-dense-matrix-ops-h">
+<h2>Dense matrix API (<code class="code docutils literal notranslate"><span class="pre">dense_matrix_ops.h</span></code>)<a class="headerlink" href="#dense-matrix-api-dense-matrix-ops-h" title="Link to this heading">#</a></h2>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">ComputeSqrtMatrix</span><span class="p">(</span><span class="n">cuBLASHandle</span><span class="o">&amp;</span><span class="w"> </span><span class="n">cublas_handle</span><span class="p">,</span><span class="w"> </span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">spd_matrix</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">matrix_size</span><span class="p">,</span>
+<span class="w">                       </span><span class="kt">size_t</span><span class="w"> </span><span class="n">pitch</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_matrices</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="computesqrtmatrix-parameters">
+<h3>ComputeSqrtMatrix parameters<a class="headerlink" href="#computesqrtmatrix-parameters" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><code class="code docutils literal notranslate"><span class="pre">cublas_handle</span></code> - [in] external cuBLAS handle wrapper.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">stream</span></code> - [in] CUDA stream.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">spd_matrix</span></code> - [in,out] Device pointer to SPD matrices; replaced in-place by
+square-root factors.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">matrix_size</span></code> - [in] matrix dimension (<code class="code docutils literal notranslate"><span class="pre">N</span></code> for <code class="code docutils literal notranslate"><span class="pre">N</span> <span class="pre">x</span> <span class="pre">N</span></code>).</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">pitch</span></code> - [in] leading dimension for matrix storage.</p></li>
+<li><p><code class="code docutils literal notranslate"><span class="pre">num_matrices</span></code> - [in] batch size.</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="common.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Common API</p>
+      </div>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-parameter-semantics">Common parameter semantics</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#parameters">Parameters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#returns">Returns</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lie-math-api-lie-math-h">Lie math API (<code class="code docutils literal notranslate"><span class="pre">lie_math.h</span></code>)</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#so-3-family">SO(3) family</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#se-3-family">SE(3) family</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#general-utility">General utility</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#additional-parameter-docs-for-computenegatematrix">Additional parameter docs for <code class="code docutils literal notranslate"><span class="pre">ComputeNegateMatrix</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#dense-matrix-api-dense-matrix-ops-h">Dense matrix API (<code class="code docutils literal notranslate"><span class="pre">dense_matrix_ops.h</span></code>)</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#computesqrtmatrix-parameters">ComputeSqrtMatrix parameters</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

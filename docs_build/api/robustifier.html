@@ -1,0 +1,826 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Robustifier API &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api/robustifier';</script>
+
+    <link rel="icon" href="../_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Linear Solver API" href="linear_solver.html" />
+    <link rel="prev" title="Factor API" href="factor.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial.html">Tutorial</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../licensing.html">Licensing</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">API Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="minimizer.html">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="state.html">State API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="factor.html">Factor API</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="common.html">Common API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="math.html">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Robustifier API</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="robustifier-api">
+<h1>Robustifier API<a class="headerlink" href="#robustifier-api" title="Link to this heading">#</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">cunls/robustifier</span></code> module defines GPU-batched robust loss (robustifier)
+functions used by <code class="xref cpp cpp-class docutils literal notranslate"><span class="pre">ResidualBatch</span></code> to reduce the influence of
+outliers in non-linear least squares.</p>
+<dl>
+<dt><strong>What robustifier functions are for</strong></dt><dd><p>In least squares, a few bad measurements (outliers) can pull the solution
+away from the true optimum. A robust loss function <span class="math notranslate nohighlight">\(\rho(s)\)</span> replaces
+the squared residual term <span class="math notranslate nohighlight">\(s = \|f_i\|^2\)</span> with <span class="math notranslate nohighlight">\(\rho(s)\)</span>, so that
+large residuals contribute less to the cost. The solver then minimizes
+<span class="math notranslate nohighlight">\(\frac{1}{2}\sum_i \rho(\|f_i\|^2)\)</span> instead of
+<span class="math notranslate nohighlight">\(\frac{1}{2}\sum_i \|f_i\|^2\)</span>. Typical choices of <span class="math notranslate nohighlight">\(\rho\)</span> behave
+like <span class="math notranslate nohighlight">\(s\)</span> for small <span class="math notranslate nohighlight">\(s\)</span> (inliers) and grow sublinearly for large
+<span class="math notranslate nohighlight">\(s\)</span> (outliers), so inliers are fitted normally and outliers are
+down-weighted.</p>
+</dd>
+<dt><strong>Inputs and outputs</strong></dt><dd><p>Each robustifier evaluates at <strong>squared residual</strong> values <span class="math notranslate nohighlight">\(s = \|f\|^2\)</span>
+(one <span class="math notranslate nohighlight">\(s\)</span> per residual vector). For each <span class="math notranslate nohighlight">\(s\)</span> it returns a
+<code class="xref cpp cpp-type docutils literal notranslate"><span class="pre">float3</span></code> <span class="math notranslate nohighlight">\((\rho(s), \rho'(s), \rho''(s))\)</span>:</p>
+<ul class="simple">
+<li><p><strong>First component</strong> <span class="math notranslate nohighlight">\(\rho(s)\)</span>: robustified cost value; the term
+contributed to the total cost is <span class="math notranslate nohighlight">\(\frac{1}{2}\rho(s)\)</span>.</p></li>
+<li><p><strong>Second component</strong> <span class="math notranslate nohighlight">\(\rho'(s)\)</span>: first derivative of <span class="math notranslate nohighlight">\(\rho\)</span>
+with respect to <span class="math notranslate nohighlight">\(s\)</span>; used to scale residuals and Jacobians in the
+robustified Gauss-Newton step.</p></li>
+<li><p><strong>Third component</strong> <span class="math notranslate nohighlight">\(\rho''(s)\)</span>: second derivative of <span class="math notranslate nohighlight">\(\rho\)</span>
+with respect to <span class="math notranslate nohighlight">\(s\)</span>; used in the Triggs correction when forming
+the robustified normal equations.</p></li>
+</ul>
+<p>Calling the evaluator with negative <span class="math notranslate nohighlight">\(s\)</span> is invalid; implementations
+need not handle that case. Common choices of <span class="math notranslate nohighlight">\(\rho\)</span> satisfy
+<span class="math notranslate nohighlight">\(\rho(0)=0\)</span>, <span class="math notranslate nohighlight">\(\rho'(0)=1\)</span>, and in the outlier region
+<span class="math notranslate nohighlight">\(\rho'(s) &lt; 1\)</span> and <span class="math notranslate nohighlight">\(\rho''(s) &lt; 0\)</span>.</p>
+</dd>
+</dl>
+<section id="lossfunctionbatch">
+<h2>LossFunctionBatch<a class="headerlink" href="#lossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Abstract base (<code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/loss_function_batch.h</span></code>).</p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv4NK8EvaluateEPfP6float3i12cudaStream_t">
+<span id="_CPPv3NK8EvaluateEPfP6float3i12cudaStream_t"></span><span id="_CPPv2NK8EvaluateEPfP6float3i12cudaStream_t"></span><span id="Evaluate__floatP.float3P.i.cudaStream_tC"></span><span class="kt"><span class="pre">bool</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">Evaluate</span></span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">s</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">float3</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n sig-param"><span class="pre">out</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">num_losses</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">cudaStream_t</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">stream</span></span></em></dd>
+</dl>
+
+<span class="sig-paren">)</span><span class="w"> </span><span class="k"><span class="pre">const</span></span><a class="headerlink" href="#_CPPv4NK8EvaluateEPfP6float3i12cudaStream_t" title="Link to this definition">#</a><br /></dt>
+<dd><p>Evaluates the loss for a batch of squared residuals.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>s</strong> – [in] Device pointer to squared residual values <span class="math notranslate nohighlight">\(s = \|f\|^2\)</span>.</p></li>
+<li><p><strong>out</strong> – [out] Device pointer to <code class="xref cpp cpp-type docutils literal notranslate"><span class="pre">float3</span></code> tuples
+<span class="math notranslate nohighlight">\((\rho(s), \rho'(s), \rho''(s))\)</span> for each input.</p></li>
+<li><p><strong>num_losses</strong> – [in] Number of residual values to process.</p></li>
+<li><p><strong>stream</strong> – [in] CUDA stream for asynchronous execution.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><code class="docutils literal notranslate"><span class="pre">true</span></code> on success.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="triviallossfunctionbatch">
+<h2>TrivialLossFunctionBatch<a class="headerlink" href="#triviallossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/trivial_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv424TrivialLossFunctionBatchv">
+<span id="_CPPv324TrivialLossFunctionBatchv"></span><span id="_CPPv224TrivialLossFunctionBatchv"></span><span id="TrivialLossFunctionBatch"></span><span class="sig-name descname"><span class="n"><span class="pre">TrivialLossFunctionBatch</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv424TrivialLossFunctionBatchv" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula (unscaled)</strong></p>
+<div class="math notranslate nohighlight">
+\[\rho(s) = s,\qquad \rho'(s) = 1,\qquad \rho''(s) = 0.\]</div>
+<p>Identity loss: no robustification; equivalent to standard least squares.</p>
+</section>
+<section id="huberlossfunctionbatch">
+<h2>HuberLossFunctionBatch<a class="headerlink" href="#huberlossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/huber_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv422HuberLossFunctionBatchf">
+<span id="_CPPv322HuberLossFunctionBatchf"></span><span id="_CPPv222HuberLossFunctionBatchf"></span><span id="HuberLossFunctionBatch__float"></span><span class="sig-name descname"><span class="n"><span class="pre">HuberLossFunctionBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">delta</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv422HuberLossFunctionBatchf" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>delta</strong> – [in] Inlier/outlier threshold (scale); quadratic for
+<span class="math notranslate nohighlight">\(s \le \delta^2\)</span>, linear for <span class="math notranslate nohighlight">\(s &gt; \delta^2\)</span>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula (scaled with :math:`delta`)</strong></p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\rho(s) = \begin{cases}
+  s &amp; s \le \delta^2 \\
+  2\delta\sqrt{s} - \delta^2 &amp; s &gt; \delta^2
+\end{cases}\end{split}\]</div>
+<div class="math notranslate nohighlight">
+\[\begin{split}\rho'(s) = \begin{cases}
+  1 &amp; s \le \delta^2 \\
+  \delta/\sqrt{s} &amp; s &gt; \delta^2
+\end{cases}
+,\qquad
+\rho''(s) = \begin{cases}
+  0 &amp; s \le \delta^2 \\
+  -\rho'(s)/(2s) &amp; s &gt; \delta^2
+\end{cases}.\end{split}\]</div>
+</section>
+<section id="cauchylossfunctionbatch">
+<h2>CauchyLossFunctionBatch<a class="headerlink" href="#cauchylossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/cauchy_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv423CauchyLossFunctionBatchff">
+<span id="_CPPv323CauchyLossFunctionBatchff"></span><span id="_CPPv223CauchyLossFunctionBatchff"></span><span id="CauchyLossFunctionBatch__float.float"></span><span class="sig-name descname"><span class="n"><span class="pre">CauchyLossFunctionBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">b</span></span></em>, <em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">c</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv423CauchyLossFunctionBatchff" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>b</strong> – [in] Output scale parameter.</p></li>
+<li><p><strong>c</strong> – [in] Shape parameter (larger <span class="math notranslate nohighlight">\(c\)</span> makes the loss grow more slowly).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula</strong></p>
+<div class="math notranslate nohighlight">
+\[\rho(s) = b\,\ln(1 + c\,s),\qquad
+\rho'(s) = \frac{b\,c}{1 + c\,s},\qquad
+\rho''(s) = -\frac{c^2 b}{(1+c\,s)^2}.\]</div>
+<p>Unscaled case: <span class="math notranslate nohighlight">\(\rho(s) = \ln(1+s)\)</span> (e.g. <span class="math notranslate nohighlight">\(b=1\)</span>, <span class="math notranslate nohighlight">\(c=1\)</span>).</p>
+</section>
+<section id="arctanlossfunctionbatch">
+<h2>ArctanLossFunctionBatch<a class="headerlink" href="#arctanlossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/arctan_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv423ArctanLossFunctionBatchff">
+<span id="_CPPv323ArctanLossFunctionBatchff"></span><span id="_CPPv223ArctanLossFunctionBatchff"></span><span id="ArctanLossFunctionBatch__float.float"></span><span class="sig-name descname"><span class="n"><span class="pre">ArctanLossFunctionBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">a</span></span></em>, <em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">b</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv423ArctanLossFunctionBatchff" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>a</strong> – [in] Scale parameter (argument scale in <span class="math notranslate nohighlight">\(\arctan(s/a)\)</span>).</p></li>
+<li><p><strong>b</strong> – [in] Shape parameter, typically <span class="math notranslate nohighlight">\(1/a^2\)</span> for derivative scaling.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula</strong></p>
+<blockquote>
+<div><p>With <span class="math notranslate nohighlight">\(s\)</span> the squared residual, the implementation uses
+<span class="math notranslate nohighlight">\(\rho(s) = a\,\arctan(s/a)\)</span> and
+<span class="math notranslate nohighlight">\(\rho'(s) = 1/(1 + s^2 b)\)</span> with <span class="math notranslate nohighlight">\(b = 1/a^2\)</span>:</p>
+</div></blockquote>
+<div class="math notranslate nohighlight">
+\[\rho(s) = a\,\arctan\frac{s}{a},\qquad
+\rho'(s) = \frac{1}{1 + (s/a)^2},\qquad
+\rho''(s) = -\frac{2s/a^2}{(1+(s/a)^2)^2}.\]</div>
+<p>Unscaled case: <span class="math notranslate nohighlight">\(\rho(s) = \arctan(s)\)</span> (e.g. <span class="math notranslate nohighlight">\(a=1\)</span>, <span class="math notranslate nohighlight">\(b=1\)</span>).</p>
+</section>
+<section id="softlonelossfunctionbatch">
+<h2>SoftLOneLossFunctionBatch<a class="headerlink" href="#softlonelossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/soft_lone_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv425SoftLOneLossFunctionBatchff">
+<span id="_CPPv325SoftLOneLossFunctionBatchff"></span><span id="_CPPv225SoftLOneLossFunctionBatchff"></span><span id="SoftLOneLossFunctionBatch__float.float"></span><span class="sig-name descname"><span class="n"><span class="pre">SoftLOneLossFunctionBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">b</span></span></em>, <em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">c</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv425SoftLOneLossFunctionBatchff" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>b</strong> – [in] Scale parameter.</p></li>
+<li><p><strong>c</strong> – [in] Shape parameter (larger <span class="math notranslate nohighlight">\(c\)</span> makes the loss grow more slowly).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula</strong></p>
+<div class="math notranslate nohighlight">
+\[\rho(s) = 2b\left(\sqrt{1 + c\,s} - 1\right),\qquad
+\rho'(s) = \frac{b\,c}{\sqrt{1+c\,s}},\qquad
+\rho''(s) = -\frac{c^2 b}{2(1+c\,s)^{3/2}}.\]</div>
+<p>Unscaled case: <span class="math notranslate nohighlight">\(\rho(s) = 2(\sqrt{1+s}-1)\)</span> (e.g. <span class="math notranslate nohighlight">\(b=1\)</span>, <span class="math notranslate nohighlight">\(c=1\)</span>).</p>
+</section>
+<section id="tolerantlossfunctionbatch">
+<h2>TolerantLossFunctionBatch<a class="headerlink" href="#tolerantlossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/tolerant_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv425TolerantLossFunctionBatchff">
+<span id="_CPPv325TolerantLossFunctionBatchff"></span><span id="_CPPv225TolerantLossFunctionBatchff"></span><span id="TolerantLossFunctionBatch__float.float"></span><span class="sig-name descname"><span class="n"><span class="pre">TolerantLossFunctionBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">a</span></span></em>, <em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">b</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv425TolerantLossFunctionBatchff" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>a</strong> – [in] Offset parameter (soft threshold).</p></li>
+<li><p><strong>b</strong> – [in] Scale parameter (smoothing).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula</strong></p>
+<blockquote>
+<div><p>With <span class="math notranslate nohighlight">\(c = b\,\ln(1 + e^{-a/b})\)</span> so that <span class="math notranslate nohighlight">\(\rho(0)=0\)</span>:</p>
+</div></blockquote>
+<div class="math notranslate nohighlight">
+\[\rho(s) = b\,\ln\left(1 + e^{(s-a)/b}\right) - c,\qquad
+\rho'(s) = \frac{e^{(s-a)/b}}{1 + e^{(s-a)/b}},\qquad
+\rho''(s) = \frac{1}{4b\,\cosh^2\bigl((s-a)/(2b)\bigr)}.\]</div>
+</section>
+<section id="tukeylossfunctionbatch">
+<h2>TukeyLossFunctionBatch<a class="headerlink" href="#tukeylossfunctionbatch" title="Link to this heading">#</a></h2>
+<p>Header: <code class="code docutils literal notranslate"><span class="pre">cunls/robustifier/tukey_loss_function_batch.h</span></code></p>
+<dl class="cpp function">
+<dt class="sig sig-object cpp" id="_CPPv422TukeyLossFunctionBatchf">
+<span id="_CPPv322TukeyLossFunctionBatchf"></span><span id="_CPPv222TukeyLossFunctionBatchf"></span><span id="TukeyLossFunctionBatch__float"></span><span class="sig-name descname"><span class="n"><span class="pre">TukeyLossFunctionBatch</span></span></span><span class="sig-paren">(</span><em class="sig-param"><span class="kt"><span class="pre">float</span></span><span class="w"> </span><span class="n sig-param"><span class="pre">a</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#_CPPv422TukeyLossFunctionBatchf" title="Link to this definition">#</a><br /></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>a</strong> – [in] Cutoff threshold; residuals with <span class="math notranslate nohighlight">\(s &gt; a^2\)</span> get zero weight.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Constructor has no return value.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p><strong>Formula</strong></p>
+<blockquote>
+<div><p>With <span class="math notranslate nohighlight">\(s\)</span> the squared residual and <span class="math notranslate nohighlight">\(a^2\)</span> the squared cutoff:</p>
+</div></blockquote>
+<div class="math notranslate nohighlight">
+\[\begin{split}\rho(s) = \begin{cases}
+  \displaystyle\frac{a^2}{3}\left(1 - \left(1 - \frac{s}{a^2}\right)^3\right)
+  &amp; s \le a^2 \\[0.5em]
+  \displaystyle\frac{a^2}{3} &amp; s &gt; a^2
+\end{cases}\end{split}\]</div>
+<div class="math notranslate nohighlight">
+\[\begin{split}\rho'(s) = \begin{cases}
+  \displaystyle\left(1 - \frac{s}{a^2}\right)^2 &amp; s \le a^2 \\
+  0 &amp; s &gt; a^2
+\end{cases}
+,\qquad
+\rho''(s) = \begin{cases}
+  \displaystyle -\frac{2}{a^2}\left(1 - \frac{s}{a^2}\right) &amp; s \le a^2 \\
+  0 &amp; s &gt; a^2
+\end{cases}.\end{split}\]</div>
+<section id="theory-how-robustifier-outputs-are-used-in-optimization">
+<h3>Theory — How robustifier outputs are used in optimization<a class="headerlink" href="#theory-how-robustifier-outputs-are-used-in-optimization" title="Link to this heading">#</a></h3>
+<p>The non-linear least squares problem with robustification is</p>
+<div class="math notranslate nohighlight">
+\[\min_{\mathbf{x}} \quad \frac{1}{2}\sum_i \rho_i\bigl(\|f_i(x_{i_1},\ldots,x_{i_k})\|^2\bigr),\]</div>
+<p>where <span class="math notranslate nohighlight">\(f_i\)</span> are residual vectors and <span class="math notranslate nohighlight">\(\rho_i\)</span> are loss functions.
+Let <span class="math notranslate nohighlight">\(s = \|f\|^2\)</span> and write <span class="math notranslate nohighlight">\(\rho\)</span>, <span class="math notranslate nohighlight">\(\rho'\)</span>, <span class="math notranslate nohighlight">\(\rho''\)</span>
+for the loss and its derivatives at <span class="math notranslate nohighlight">\(s\)</span>. The contribution of one term
+to the total cost is <span class="math notranslate nohighlight">\(\frac{1}{2}\rho(s)\)</span>; the robustifier API returns
+<span class="math notranslate nohighlight">\((\rho(s), \rho'(s), \rho''(s))\)</span> so the solver can form the robustified
+gradient and Gauss-Newton system without recomputing <span class="math notranslate nohighlight">\(\rho\)</span>.</p>
+<dl>
+<dt><strong>Robustified gradient</strong></dt><dd><p>For a single residual block, the gradient of <span class="math notranslate nohighlight">\(\frac{1}{2}\rho(\|f(x)\|^2)\)</span>
+with respect to the parameters <span class="math notranslate nohighlight">\(x\)</span> is</p>
+<div class="math notranslate nohighlight">
+\[g = \rho'\, J^\top f,\]</div>
+<p>where <span class="math notranslate nohighlight">\(J\)</span> is the Jacobian of <span class="math notranslate nohighlight">\(f\)</span> with respect to <span class="math notranslate nohighlight">\(x\)</span>.
+So <span class="math notranslate nohighlight">\(\rho'\)</span> (the second component of the robustifier output) scales the
+gradient and thus down-weights the contribution of large residuals.</p>
+</dd>
+<dt><strong>Robustified Gauss-Newton Hessian</strong></dt><dd><p>The Gauss-Newton approximation to the Hessian of <span class="math notranslate nohighlight">\(\frac{1}{2}\rho(\|f\|^2)\)</span>
+involves both <span class="math notranslate nohighlight">\(\rho'\)</span> and <span class="math notranslate nohighlight">\(\rho''\)</span>. With
+<span class="math notranslate nohighlight">\(r = f(x)\)</span> and <span class="math notranslate nohighlight">\(s = \|f\|^2 = r^\top r\)</span>, the Hessian contribution
+(ignoring second derivatives of <span class="math notranslate nohighlight">\(f\)</span>) is</p>
+<div class="math notranslate nohighlight">
+\[H = J^\top \left( \rho'\, I + 2\rho''\, r r^\top \right) J.\]</div>
+<p>When <span class="math notranslate nohighlight">\(\rho'' &lt; 0\)</span> (typical for robust losses in the outlier region),
+<span class="math notranslate nohighlight">\(H\)</span> can be indefinite. To keep a positive-definite approximation and
+still use a Jacobian-based solver, the implementation rescales the residual
+and Jacobian so that the robustified problem looks like a standard least
+squares problem in the rescaled variables.</p>
+</dd>
+<dt><strong>Rescaling (Triggs correction)</strong></dt><dd><p>Let <span class="math notranslate nohighlight">\(\alpha\)</span> be a root of</p>
+<div class="math notranslate nohighlight">
+\[\frac{1}{2}\alpha^2 - \alpha - \frac{\rho''}{\rho'}\|f\|^2 = 0.\]</div>
+<p>Then the rescaled residual and Jacobian</p>
+<div class="math notranslate nohighlight">
+\[\tilde{f} = \frac{\sqrt{\rho'}}{1-\alpha}\, f,\qquad
+\tilde{J} = \sqrt{\rho'}\,\left(I - \alpha\, \frac{f f^\top}{\|f\|^2}\right) J\]</div>
+<p>yield a Gauss-Newton step equivalent to the robustified problem. When
+<span class="math notranslate nohighlight">\(2\rho''\|f\|^2 + \rho' \lesssim 0\)</span>, <span class="math notranslate nohighlight">\(\alpha\)</span> is capped (e.g.
+<span class="math notranslate nohighlight">\(\alpha \le 1-\epsilon\)</span>) to avoid numerical issues. The robustifier
+output <span class="math notranslate nohighlight">\((\rho(s), \rho'(s), \rho''(s))\)</span> is used to compute
+<span class="math notranslate nohighlight">\(\alpha\)</span> and the scaling factors <span class="math notranslate nohighlight">\(\sqrt{\rho'}\)</span> and
+<span class="math notranslate nohighlight">\((1-\alpha)^{-1}\)</span> applied to residuals and Jacobians in the solver.
+For more detail, see the Ceres Solver documentation on
+<a class="reference external" href="http://ceres-solver.org/nnls_modeling.html#lossfunction">LossFunction</a>
+and the references therein (e.g. Triggs).</p>
+</dd>
+</dl>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="factor.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Factor API</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="linear_solver.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Linear Solver API</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lossfunctionbatch">LossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv4NK8EvaluateEPfP6float3i12cudaStream_t"><code class="docutils literal notranslate"><span class="pre">Evaluate()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#triviallossfunctionbatch">TrivialLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv424TrivialLossFunctionBatchv"><code class="docutils literal notranslate"><span class="pre">TrivialLossFunctionBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#huberlossfunctionbatch">HuberLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv422HuberLossFunctionBatchf"><code class="docutils literal notranslate"><span class="pre">HuberLossFunctionBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cauchylossfunctionbatch">CauchyLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv423CauchyLossFunctionBatchff"><code class="docutils literal notranslate"><span class="pre">CauchyLossFunctionBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#arctanlossfunctionbatch">ArctanLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv423ArctanLossFunctionBatchff"><code class="docutils literal notranslate"><span class="pre">ArctanLossFunctionBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#softlonelossfunctionbatch">SoftLOneLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv425SoftLOneLossFunctionBatchff"><code class="docutils literal notranslate"><span class="pre">SoftLOneLossFunctionBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tolerantlossfunctionbatch">TolerantLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv425TolerantLossFunctionBatchff"><code class="docutils literal notranslate"><span class="pre">TolerantLossFunctionBatch()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tukeylossfunctionbatch">TukeyLossFunctionBatch</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#_CPPv422TukeyLossFunctionBatchf"><code class="docutils literal notranslate"><span class="pre">TukeyLossFunctionBatch()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#theory-how-robustifier-outputs-are-used-in-optimization">Theory — How robustifier outputs are used in optimization</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

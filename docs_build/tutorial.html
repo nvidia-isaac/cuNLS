@@ -1,0 +1,1222 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Tutorial &#8212; cuNLS</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+
+
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'tutorial';</script>
+
+    <link rel="icon" href="_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Quick Start" href="quick_start.html" />
+    <link rel="prev" title="Installation" href="installation.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+
+
+  </head>
+
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="cuNLS - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="cuNLS - Home"/>
+  
+  
+    <p class="title logo__title">cuNLS</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Tutorial</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="testing.html">Build and Run Tests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="licensing.html">Licensing</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="api/index.html">API Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="api/minimizer.html">Minimizer API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/state.html">State API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/factor.html">Factor API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/robustifier.html">Robustifier API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/linear_solver.html">Linear Solver API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/common.html">Common API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/math.html">Math API</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Tutorial</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="tutorial">
+<h1>Tutorial<a class="headerlink" href="#tutorial" title="Link to this heading">#</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>This tutorial walks through three complete cuNLS examples, each demonstrating a
+different optimization pattern. Every example follows the same high-level flow
+described in the <a class="reference internal" href="introduction.html"><span class="doc">Introduction</span></a>:</p>
+<ol class="arabic simple">
+<li><p>Allocate state data on the GPU.</p></li>
+<li><p>Wrap state memory in one or more <code class="code docutils literal notranslate"><span class="pre">StateBatch</span></code> objects
+(see <a class="reference internal" href="api/state.html"><span class="doc">State API</span></a>).</p></li>
+<li><p>Build one or more <code class="code docutils literal notranslate"><span class="pre">FactorBatch</span></code> objects from observations
+(see <a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>).</p></li>
+<li><p>Add state batches and factor batches to a <code class="code docutils literal notranslate"><span class="pre">Problem</span></code>
+(see <a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>).</p></li>
+<li><p>Run a minimizer and inspect <code class="code docutils literal notranslate"><span class="pre">MinimizerSummary</span></code>.</p></li>
+</ol>
+<p>The examples increase in complexity:</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#sparse-bundle-adjustment"><span class="std std-ref">Sparse Bundle Adjustment</span></a> — uses built-in
+<code class="code docutils literal notranslate"><span class="pre">ReprojectionFactorBatch</span></code> to jointly optimize camera poses and 3D
+landmarks from multi-view observations.</p></li>
+<li><p><a class="reference internal" href="#pose-graph-optimization"><span class="std std-ref">Pose Graph Optimization</span></a> — uses <code class="code docutils literal notranslate"><span class="pre">SE3BetweenFactorBatch</span></code> to
+recover a chain of SE(3) poses from consecutive relative-transform
+measurements.</p></li>
+<li><p><a class="reference internal" href="#custom-factor"><span class="std std-ref">Custom Factor</span></a> — shows how to implement a user-defined CUDA
+factor kernel by subclassing <code class="code docutils literal notranslate"><span class="pre">SizedFactorBatch</span></code>.</p></li>
+</ul>
+<p>Full source code for all examples lives in the <code class="docutils literal notranslate"><span class="pre">examples/</span></code> directory and is
+built by the shared <code class="docutils literal notranslate"><span class="pre">examples/CMakeLists.txt</span></code>.</p>
+</section>
+<section id="common-build-commands">
+<h2>Common build commands<a class="headerlink" href="#common-build-commands" title="Link to this heading">#</a></h2>
+<p>Build all examples locally:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>examples<span class="w"> </span>-B<span class="w"> </span>build/examples/all<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCUNLS_INSTALL_DIR<span class="o">=</span>/path/to/cunls_install
+cmake<span class="w"> </span>--build<span class="w"> </span>build/examples/all<span class="w"> </span>-j
+</pre></div>
+</div>
+<p>Build all examples in Docker and export binaries:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./examples/build_in_docker.sh<span class="w"> </span>Release<span class="w"> </span>./artifacts/examples
+</pre></div>
+</div>
+</section>
+<section id="sparse-bundle-adjustment">
+<h2>Sparse Bundle Adjustment<a class="headerlink" href="#sparse-bundle-adjustment" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>Source</strong>: examples/sparse_bundle_adjustment/main.cpp</p></li>
+</ul>
+<section id="problem-statement">
+<h3>Problem statement<a class="headerlink" href="#problem-statement" title="Link to this heading">#</a></h3>
+<p><a class="reference external" href="https://en.wikipedia.org/wiki/Bundle_adjustment">Bundle adjustment</a> is the
+problem of jointly refining 3D structure and camera parameters to minimize
+<strong>reprojection error</strong> — the difference between where a 3D point actually
+projects into an image and where it was observed.</p>
+<p>Given <span class="math notranslate nohighlight">\(M\)</span> cameras with poses <span class="math notranslate nohighlight">\(T_1, \ldots, T_M \in \mathrm{SE}(3)\)</span>
+and <span class="math notranslate nohighlight">\(N\)</span> 3D landmarks <span class="math notranslate nohighlight">\(\mathbf{p}_1, \ldots, \mathbf{p}_N \in
+\mathbb{R}^3\)</span>, we form one residual per observation. The projection model
+transforms a world point <span class="math notranslate nohighlight">\(\mathbf{p}\)</span> into camera <span class="math notranslate nohighlight">\(i\)</span>’s frame and
+divides by depth to obtain <strong>normalized image coordinates</strong>:</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\mathbf{p}_{\mathrm{cam}} = T_i \, \mathbf{p}, \qquad
+\hat{\mathbf{z}} = \begin{bmatrix}
+  p_{\mathrm{cam},x} / p_{\mathrm{cam},z} \\
+  p_{\mathrm{cam},y} / p_{\mathrm{cam},z}
+\end{bmatrix}\end{split}\]</div>
+<p>The reprojection residual for observation <span class="math notranslate nohighlight">\(k\)</span>, which pairs camera
+<span class="math notranslate nohighlight">\(i\)</span> with point <span class="math notranslate nohighlight">\(j\)</span>, is:</p>
+<div class="math notranslate nohighlight">
+\[r_k = \hat{\mathbf{z}}_k - \mathbf{z}_k
+    = \pi(T_i,\, \mathbf{p}_j) - \mathbf{z}_k\]</div>
+<p>where <span class="math notranslate nohighlight">\(\mathbf{z}_k\)</span> is the measured 2D observation and <span class="math notranslate nohighlight">\(\pi\)</span> is
+the normalized projection function above.</p>
+<p>The full bundle adjustment objective minimizes the sum of squared reprojection
+errors across all <span class="math notranslate nohighlight">\(K\)</span> observations:</p>
+<div class="math notranslate nohighlight">
+\[\min_{T_1,\ldots,T_M,\; \mathbf{p}_1,\ldots,\mathbf{p}_N}
+  \frac{1}{2} \sum_{k=1}^{K}
+    \left\| \pi(T_{i_k}, \mathbf{p}_{j_k}) - \mathbf{z}_k \right\|^2\]</div>
+<p>Because applying a rigid transform to every pose and point leaves all
+reprojection residuals unchanged, the system has a 6-DOF gauge freedom.
+Fixing one camera pose as a <strong>gauge anchor</strong> removes this freedom. In this
+example, the first pose <span class="math notranslate nohighlight">\(T_0\)</span> is held constant while the remaining
+poses <span class="math notranslate nohighlight">\(T_1, \ldots, T_{M-1}\)</span> and all 3D points are jointly optimized
+— the classic full bundle adjustment problem.</p>
+<section id="ba-factor-graph">
+<h4>BA factor graph<a class="headerlink" href="#ba-factor-graph" title="Link to this heading">#</a></h4>
+<p>The problem has a <strong>bipartite</strong> factor graph: camera-pose variable nodes on one
+side, 3D-point variable nodes on the other, and reprojection factor nodes
+connecting them.</p>
+<div style="display:flex; justify-content:center; margin:1rem 0;">
+  <div style="max-width:80%; width:100%;">
+    <img class="only-light" src="_static/sba_fg.png" alt="Bundle adjustment factor graph" style="width:100%; height:auto;">
+    <img class="only-dark" src="_static/sba_fg_dark.png" alt="Bundle adjustment factor graph" style="width:100%; height:auto;">
+  </div>
+</div><p class="centered"><em>Factor graph for sparse bundle adjustment. The blue circle is the fixed
+anchor pose</em>
+<span class="math notranslate nohighlight">\(T_0\)</span><em>, green circles are optimized camera poses
+(</em><code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code><em>) and 3D point variables
+(</em><code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;3&gt;</span></code><em>), and orange squares are reprojection factors
+(</em><code class="code docutils literal notranslate"><span class="pre">ReprojectionFactorBatch</span></code><em>). Each factor connects one camera and one
+point.</em></p>
+</section>
+<section id="ba-api-used">
+<h4>BA API used<a class="headerlink" href="#ba-api-used" title="Link to this heading">#</a></h4>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 35.0%" />
+<col style="width: 65.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Class</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (<a class="reference internal" href="api/state.html"><span class="doc">State API</span></a>)</p></td>
+<td><p>Stores camera poses on the SE(3) manifold. The first pose is marked
+constant via <code class="docutils literal notranslate"><span class="pre">device_constant_state_ids</span></code>; the rest are optimized.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;3&gt;</span></code> (<a class="reference internal" href="api/state.html"><span class="doc">State API</span></a>)</p></td>
+<td><p>Stores 3D landmark coordinates in <span class="math notranslate nohighlight">\(\mathbb{R}^3\)</span>. All points
+are optimization variables.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">ReprojectionFactorBatch</span></code> (<a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>)</p></td>
+<td><p>Computes normalized reprojection residuals and Jacobians for each
+(pose, point) pair.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="code docutils literal notranslate"><span class="pre">Problem</span></code> (<a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>)</p></td>
+<td><p>Assembles the factor graph: connects factors to states via device
+pointers.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer</span></code> (<a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>)</p></td>
+<td><p>Iteratively solves the nonlinear least-squares problem with adaptive
+damping.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="ba-code-walkthrough">
+<h4>BA code walkthrough<a class="headerlink" href="#ba-code-walkthrough" title="Link to this heading">#</a></h4>
+<p><strong>Step 1 — Generate synthetic data.</strong>
+We create random camera poses via the SE(3) exponential map. Random 3D
+points are sampled and filtered so that every point has positive depth in all
+cameras. Each ground-truth point is perturbed to create a noisy initial
+estimate. Poses <span class="math notranslate nohighlight">\(T_1, \ldots, T_{M-1}\)</span> are also perturbed with small
+SE(3) transforms while <span class="math notranslate nohighlight">\(T_0\)</span> stays at ground truth.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_poses</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_points</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">800</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_observations</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_poses</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_points</span><span class="p">;</span>
+
+<span class="c1">// Generate ground-truth SE(3) camera poses from random twists.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">;</span>
+<span class="n">GenerateRandomPoses</span><span class="p">(</span><span class="n">num_poses</span><span class="p">,</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">);</span>
+
+<span class="c1">// Sample 3D points that are visible from every camera (positive depth).</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">3</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">gt_points</span><span class="p">(</span><span class="n">num_points</span><span class="p">);</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">3</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">initial_points</span><span class="p">(</span><span class="n">num_points</span><span class="p">);</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_points</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// ... sample until depth &gt; kMinDepth in all cameras ...</span>
+<span class="w">  </span><span class="n">initial_points</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gt_points</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="w">  </span><span class="n">initial_points</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">noise_dist</span><span class="p">(</span><span class="n">rng</span><span class="p">);</span>
+<span class="w">  </span><span class="n">initial_points</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">noise_dist</span><span class="p">(</span><span class="n">rng</span><span class="p">);</span>
+<span class="w">  </span><span class="n">initial_points</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">noise_dist</span><span class="p">(</span><span class="n">rng</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// Perturb poses T_1...T_{M-1}; T_0 stays at ground truth.</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_perturbed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_poses</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">perturbations</span><span class="p">;</span>
+<span class="n">examples</span><span class="o">::</span><span class="n">GenerateRandomSE3</span><span class="p">(</span><span class="n">num_perturbed</span><span class="p">,</span><span class="w"> </span><span class="n">rng</span><span class="p">,</span><span class="w"> </span><span class="n">perturbations</span><span class="p">,</span><span class="w"> </span><span class="mf">0.02f</span><span class="p">,</span><span class="w"> </span><span class="mf">0.1f</span><span class="p">);</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">initial_poses</span><span class="p">(</span><span class="n">num_poses</span><span class="p">);</span>
+<span class="n">initial_poses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_perturbed</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">initial_poses</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">      </span><span class="n">examples</span><span class="o">::</span><span class="n">ComposeSE3</span><span class="p">(</span><span class="n">perturbations</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">]);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Step 2 — Create 2D observations.</strong>
+Each camera observes every 3D point. Observations are in <strong>normalized</strong> image
+coordinates (no intrinsics). This is the format
+<code class="code docutils literal notranslate"><span class="pre">ReprojectionFactorBatch</span></code> expects (see <a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Project ground-truth points through each camera to get observations.</span>
+<span class="c1">// Normalized coordinates: p_cam = T * p_world, obs = (x/z, y/z).</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">2</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">observations</span><span class="p">(</span><span class="n">num_observations</span><span class="p">);</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">pose_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">pose_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_poses</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">pose_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">point_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">point_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_points</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">point_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">obs_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pose_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_points</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">point_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="n">observations</span><span class="p">[</span><span class="n">obs_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">        </span><span class="n">examples</span><span class="o">::</span><span class="n">ProjectNormalized</span><span class="p">(</span><span class="n">gt_poses</span><span class="p">[</span><span class="n">pose_idx</span><span class="p">],</span><span class="w"> </span><span class="n">gt_points</span><span class="p">[</span><span class="n">point_idx</span><span class="p">]);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Step 3 — Upload data to the GPU and build state batches.</strong>
+The perturbed poses and noisy points are uploaded to the device. Camera
+poses are wrapped in an <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> with only <span class="math notranslate nohighlight">\(T_0\)</span> marked
+constant (gauge anchor); the remaining poses are optimized jointly with
+the 3D points in a <code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;3&gt;</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">dvector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">poses_device</span><span class="p">(</span><span class="n">initial_poses</span><span class="p">);</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">3</span><span class="o">&gt;&gt;</span><span class="w">    </span><span class="n">points_device</span><span class="p">(</span><span class="n">initial_points</span><span class="p">);</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">2</span><span class="o">&gt;&gt;</span><span class="w">    </span><span class="n">observations_device</span><span class="p">(</span><span class="n">observations</span><span class="p">);</span>
+
+<span class="c1">// Mark only the first camera pose as constant (gauge anchor).</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">const_pose_ids</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mi">0</span><span class="p">};</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">const_pose_ids_device</span><span class="p">(</span><span class="n">const_pose_ids</span><span class="p">);</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">cuBLASHandle</span><span class="w"> </span><span class="n">cublas_handle</span><span class="p">;</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">SE3StateBatch</span><span class="w"> </span><span class="nf">pose_states</span><span class="p">(</span>
+<span class="w">    </span><span class="n">cublas_handle</span><span class="p">,</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">poses_device</span><span class="p">.</span><span class="n">data</span><span class="p">()),</span>
+<span class="w">    </span><span class="n">num_poses</span><span class="p">,</span><span class="w"> </span><span class="n">const_pose_ids_device</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">VectorStateBatch</span><span class="o">&lt;</span><span class="mi">3</span><span class="o">&gt;</span><span class="w"> </span><span class="n">point_states</span><span class="p">(</span>
+<span class="w">    </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">points_device</span><span class="p">.</span><span class="n">data</span><span class="p">()),</span><span class="w"> </span><span class="n">num_points</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Step 4 — Build the reprojection factor batch.</strong>
+Each factor consumes two state blocks: one camera pose and one 3D point.
+The <code class="docutils literal notranslate"><span class="pre">z_threshold</span></code> guards against numerical instability when a point
+is nearly behind the camera.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">cunls</span><span class="o">::</span><span class="n">ReprojectionFactorBatch</span><span class="w"> </span><span class="nf">reproj_factor</span><span class="p">(</span>
+<span class="w">    </span><span class="n">cublas_handle</span><span class="p">,</span><span class="w"> </span><span class="n">observations_device</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_observations</span><span class="p">,</span>
+<span class="w">    </span><span class="n">kZThreshold</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Step 5 — Create the state-pointer map and assemble the problem.</strong>
+The state-pointer vector is a flattened list of device pointers, two per
+factor: <code class="docutils literal notranslate"><span class="pre">[pose_ptr,</span> <span class="pre">point_ptr]</span></code>. This tells the solver which state
+blocks each factor reads. The ordering must match
+<code class="code docutils literal notranslate"><span class="pre">ReprojectionFactorBatch</span></code>’s expected layout
+(see <a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Flatten factor connectivity: [pose_0, point_0, pose_0, point_1, ...].</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">;</span>
+<span class="n">state_pointers</span><span class="p">.</span><span class="n">reserve</span><span class="p">(</span><span class="mi">2</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_observations</span><span class="p">);</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">pose_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">pose_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_poses</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">pose_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">point_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">point_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_points</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">point_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">state_pointers</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">pose_states</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="n">pose_idx</span><span class="p">));</span>
+<span class="w">    </span><span class="n">state_pointers</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">point_states</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="n">point_idx</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">Problem</span><span class="w"> </span><span class="n">problem</span><span class="p">;</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddStateBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">pose_states</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddStateBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">point_states</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddFactorBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">reproj_factor</span><span class="p">,</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">CheckConsistency</span><span class="p">();</span>
+</pre></div>
+</div>
+<p><strong>Step 6 — Configure and run the Levenberg-Marquardt solver.</strong>
+<code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer</span></code> (see <a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>) solves the damped
+normal equations at each iteration and adapts the damping parameter
+<span class="math notranslate nohighlight">\(\lambda\)</span> based on step quality.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">cunls</span><span class="o">::</span><span class="n">MinimizerOptions</span><span class="w"> </span><span class="n">options</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">max_num_iterations</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">80</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">state_tolerance</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-8f</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">cost_tolerance</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-8f</span><span class="p">;</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizerOptions</span><span class="w"> </span><span class="n">lm_options</span><span class="p">;</span>
+<span class="n">lm_options</span><span class="p">.</span><span class="n">base_options</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">options</span><span class="p">;</span>
+<span class="n">lm_options</span><span class="p">.</span><span class="n">initial_lambda</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-3f</span><span class="p">;</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizer</span><span class="w"> </span><span class="nf">minimizer</span><span class="p">(</span><span class="n">lm_options</span><span class="p">);</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">CudaStream</span><span class="w"> </span><span class="n">stream</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">summary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">minimizer</span><span class="p">.</span><span class="n">Minimize</span><span class="p">(</span><span class="n">stream</span><span class="p">.</span><span class="n">GetStream</span><span class="p">(),</span><span class="w"> </span><span class="n">problem</span><span class="p">);</span>
+<span class="n">cudaStreamSynchronize</span><span class="p">(</span><span class="n">stream</span><span class="p">.</span><span class="n">GetStream</span><span class="p">());</span>
+</pre></div>
+</div>
+<p><strong>Step 7 — Read back results.</strong>
+After optimization, copy the updated poses and 3D points from the device
+and compare against ground truth. Both point MSE and pose MSE are reported.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">optimized_poses</span><span class="p">(</span><span class="n">num_poses</span><span class="p">);</span>
+<span class="n">poses_device</span><span class="p">.</span><span class="n">CopyToHost</span><span class="p">(</span><span class="n">optimized_poses</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_poses</span><span class="p">);</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">3</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">optimized_points</span><span class="p">(</span><span class="n">num_points</span><span class="p">);</span>
+<span class="n">points_device</span><span class="p">.</span><span class="n">CopyToHost</span><span class="p">(</span><span class="n">optimized_points</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_points</span><span class="p">);</span>
+
+<span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">initial_point_mse</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">examples</span><span class="o">::</span><span class="n">ComputeVectorMSE</span><span class="p">(</span><span class="n">initial_points</span><span class="p">,</span><span class="w"> </span><span class="n">gt_points</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">final_point_mse</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">examples</span><span class="o">::</span><span class="n">ComputeVectorMSE</span><span class="p">(</span><span class="n">optimized_points</span><span class="p">,</span><span class="w"> </span><span class="n">gt_points</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">initial_pose_mse</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">examples</span><span class="o">::</span><span class="n">ComputePoseMSE</span><span class="p">(</span><span class="n">initial_poses</span><span class="p">,</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">final_pose_mse</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="n">examples</span><span class="o">::</span><span class="n">ComputePoseMSE</span><span class="p">(</span><span class="n">optimized_poses</span><span class="p">,</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">);</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Initial cost: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">initial_cost</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Final cost:   &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">final_cost</span><span class="w">   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Iterations:   &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">num_iterations</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Point MSE:    &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">initial_point_mse</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot; -&gt; &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">final_point_mse</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Pose MSE:     &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">initial_pose_mse</span><span class="w">  </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot; -&gt; &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">final_pose_mse</span><span class="w">  </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+<section id="pose-graph-optimization">
+<h2>Pose Graph Optimization<a class="headerlink" href="#pose-graph-optimization" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>Source</strong>: examples/pose_graph_optimization/main.cpp</p></li>
+</ul>
+<section id="pgo-problem-statement">
+<h3>PGO problem statement<a class="headerlink" href="#pgo-problem-statement" title="Link to this heading">#</a></h3>
+<p><a class="reference external" href="https://en.wikipedia.org/wiki/Simultaneous_localization_and_mapping">Pose graph optimization</a> (PGO) is
+a key building block in Simultaneous Localization and Mapping (SLAM). Given a
+set of poses and <strong>pairwise relative-transform measurements</strong> between them, the
+goal is to find the configuration of poses that best satisfies all measurements.</p>
+<p>This example models a <strong>pose chain</strong>: <span class="math notranslate nohighlight">\(N\)</span> poses
+<span class="math notranslate nohighlight">\(T_0, T_1, \ldots, T_{N-1} \in \mathrm{SE}(3)\)</span> connected by
+<span class="math notranslate nohighlight">\(N{-}1\)</span> consecutive between constraints. Each constraint <span class="math notranslate nohighlight">\(i\)</span>
+connects pose <span class="math notranslate nohighlight">\(T_i\)</span> to pose <span class="math notranslate nohighlight">\(T_{i+1}\)</span> and carries a measured
+relative transform <span class="math notranslate nohighlight">\(\Delta_i\)</span>. The relative-transform residual is
+defined on the SE(3) Lie algebra:</p>
+<div class="math notranslate nohighlight">
+\[r_i = \mathrm{Log}\!\left(
+  \Delta_i \, T_i^{-1} \, T_{i+1}
+\right) \in \mathbb{R}^6\]</div>
+<p>The residual <span class="math notranslate nohighlight">\(r_i\)</span> is the 6-DOF twist that measures how far the
+observed relative transform deviates from the measurement. When the constraint
+is exactly satisfied, the argument of <span class="math notranslate nohighlight">\(\mathrm{Log}\)</span> is the identity
+and <span class="math notranslate nohighlight">\(r_i = 0\)</span>.</p>
+<p>Because adding a rigid transform to every pose leaves all relative residuals
+unchanged, the system is rank-deficient without further constraints. Fixing
+the first pose <span class="math notranslate nohighlight">\(T_0\)</span> as a <strong>gauge anchor</strong> removes this freedom.</p>
+<p>The optimization objective minimizes the sum of squared residuals over all
+non-fixed poses:</p>
+<div class="math notranslate nohighlight">
+\[\min_{T_1,\ldots,T_{N-1}}
+  \frac{1}{2} \sum_{i=0}^{N-2}
+    \left\| \mathrm{Log}\!\left(
+      \Delta_i \, T_i^{-1} \, T_{i+1}
+    \right) \right\|^2\]</div>
+<p>For a thorough introduction to graph-based SLAM see Grisetti et al.,
+<a class="reference external" href="http://ais.informatik.uni-freiburg.de/teaching/ws11/robotics2/pdfs/ls-slam-tutorial.pdf">A Tutorial on Graph-Based SLAM</a>,
+IEEE Intelligent Transportation Systems Magazine, 2010.</p>
+<section id="pgo-factor-graph">
+<h4>PGO factor graph<a class="headerlink" href="#pgo-factor-graph" title="Link to this heading">#</a></h4>
+<p>The factor graph is a <strong>chain</strong>: each pose node connects to its neighbors
+through between factors, and the first pose <span class="math notranslate nohighlight">\(T_0\)</span> is held fixed.</p>
+<div style="display:flex; justify-content:center; margin:1rem 0;">
+  <div style="max-width:80%; width:100%;">
+    <img class="only-light" src="_static/pgo_fg.png" alt="Pose graph optimization factor graph" style="width:100%; height:auto;">
+    <img class="only-dark" src="_static/pgo_fg_dark.png" alt="Pose graph optimization factor graph" style="width:100%; height:auto;">
+  </div>
+</div><p class="centered"><em>Factor graph for pose graph optimization. The blue circle is the fixed
+anchor pose</em>
+<span class="math notranslate nohighlight">\(T_0\)</span><em>, green circles are optimized poses
+(</em><code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code><em>), and orange squares are between factors
+(</em><code class="code docutils literal notranslate"><span class="pre">SE3BetweenFactorBatch</span></code><em>). Each factor encodes a measured relative
+transform</em>
+<span class="math notranslate nohighlight">\(\Delta_i\)</span><em>.</em></p>
+</section>
+<section id="pgo-api-used">
+<h4>PGO API used<a class="headerlink" href="#pgo-api-used" title="Link to this heading">#</a></h4>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 35.0%" />
+<col style="width: 65.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Class</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> (<a class="reference internal" href="api/state.html"><span class="doc">State API</span></a>)</p></td>
+<td><p>A single instance stores the full pose chain. The first pose is
+marked constant via <code class="docutils literal notranslate"><span class="pre">device_constant_state_ids</span></code>; the rest are
+optimized.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="code docutils literal notranslate"><span class="pre">SE3BetweenFactorBatch</span></code> (<a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>)</p></td>
+<td><p>Computes the relative-transform residual
+<span class="math notranslate nohighlight">\(\mathrm{Log}(\Delta \, T_i^{-1} \, T_{i+1})\)</span> and its
+Jacobians w.r.t. both pose blocks.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">Problem</span></code> (<a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>)</p></td>
+<td><p>Assembles the factor graph.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer</span></code> (<a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>)</p></td>
+<td><p>Solves the nonlinear system.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="pgo-code-walkthrough">
+<h4>PGO code walkthrough<a class="headerlink" href="#pgo-code-walkthrough" title="Link to this heading">#</a></h4>
+<p><strong>Step 1 — Generate synthetic pose chain and measurements.</strong>
+A random anchor pose and random relative transforms are generated.
+Ground-truth poses are built by chaining the transforms, then all poses
+except the anchor are perturbed to create the initial estimate. The
+perturbations are kept small so that the initial residuals stay within
+the well-conditioned region of the SE(3) log map.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_poses</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">201</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_constraints</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_poses</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">mt19937</span><span class="w"> </span><span class="nf">rng</span><span class="p">(</span><span class="mi">9012</span><span class="p">);</span>
+
+<span class="c1">// Random anchor and measured relative transforms.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">anchor_pose</span><span class="p">,</span><span class="w"> </span><span class="n">deltas</span><span class="p">;</span>
+<span class="n">examples</span><span class="o">::</span><span class="n">GenerateRandomSE3</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">rng</span><span class="p">,</span><span class="w"> </span><span class="n">anchor_pose</span><span class="p">);</span>
+<span class="n">examples</span><span class="o">::</span><span class="n">GenerateRandomSE3</span><span class="p">(</span><span class="n">num_constraints</span><span class="p">,</span><span class="w"> </span><span class="n">rng</span><span class="p">,</span><span class="w"> </span><span class="n">deltas</span><span class="p">);</span>
+
+<span class="c1">// Ground-truth chain: delta * T_i^{-1} * T_{i+1} = I</span>
+<span class="c1">// =&gt; T_{i+1} = T_i * delta^{-1}</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">(</span><span class="n">num_poses</span><span class="p">);</span>
+<span class="n">gt_poses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">anchor_pose</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_constraints</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">gt_poses</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">      </span><span class="n">examples</span><span class="o">::</span><span class="n">ComposeSE3</span><span class="p">(</span><span class="n">gt_poses</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="n">examples</span><span class="o">::</span><span class="n">InverseSE3</span><span class="p">(</span><span class="n">deltas</span><span class="p">[</span><span class="n">i</span><span class="p">]));</span>
+<span class="p">}</span>
+
+<span class="c1">// Perturb all poses except the fixed anchor.</span>
+<span class="c1">// Small rotation (0.05 rad) and translation (0.3 m) perturbations.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">disturbance</span><span class="p">;</span>
+<span class="n">examples</span><span class="o">::</span><span class="n">GenerateRandomSE3</span><span class="p">(</span><span class="n">num_constraints</span><span class="p">,</span><span class="w"> </span><span class="n">rng</span><span class="p">,</span><span class="w"> </span><span class="n">disturbance</span><span class="p">,</span><span class="w"> </span><span class="mf">0.05f</span><span class="p">,</span><span class="w"> </span><span class="mf">0.3f</span><span class="p">);</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">initial_poses</span><span class="p">(</span><span class="n">num_poses</span><span class="p">);</span>
+<span class="n">initial_poses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_constraints</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">initial_poses</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">      </span><span class="n">examples</span><span class="o">::</span><span class="n">ComposeSE3</span><span class="p">(</span><span class="n">disturbance</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="n">gt_poses</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">]);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Step 2 — Upload data and build the state batch.</strong>
+A single <code class="code docutils literal notranslate"><span class="pre">SE3StateBatch</span></code> holds the entire pose chain. Only
+<span class="math notranslate nohighlight">\(T_0\)</span> is marked constant; the remaining poses are optimizable.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">dvector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">poses_device</span><span class="p">(</span><span class="n">initial_poses</span><span class="p">);</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">deltas_device</span><span class="p">(</span><span class="n">deltas</span><span class="p">);</span>
+
+<span class="c1">// Mark only T_0 as constant (gauge anchor).</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">const_ids</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mi">0</span><span class="p">};</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">const_ids_device</span><span class="p">(</span><span class="n">const_ids</span><span class="p">);</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">cuBLASHandle</span><span class="w"> </span><span class="n">cublas_handle</span><span class="p">;</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">SE3StateBatch</span><span class="w"> </span><span class="nf">pose_states</span><span class="p">(</span>
+<span class="w">    </span><span class="n">cublas_handle</span><span class="p">,</span>
+<span class="w">    </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">poses_device</span><span class="p">.</span><span class="n">data</span><span class="p">()),</span>
+<span class="w">    </span><span class="n">num_poses</span><span class="p">,</span>
+<span class="w">    </span><span class="n">const_ids_device</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Step 3 — Build the between-factor batch.</strong>
+<code class="code docutils literal notranslate"><span class="pre">SE3BetweenFactorBatch</span></code> takes the measured relative transforms and
+internally computes the residual and 6 × 12 Jacobian for each factor.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">cunls</span><span class="o">::</span><span class="n">SE3BetweenFactorBatch</span><span class="w"> </span><span class="nf">between_factor</span><span class="p">(</span>
+<span class="w">    </span><span class="n">cublas_handle</span><span class="p">,</span><span class="w"> </span><span class="n">deltas_device</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_constraints</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Step 4 — Wire state pointers and assemble the problem.</strong>
+Each between factor reads two state blocks: <code class="docutils literal notranslate"><span class="pre">[T_i,</span> <span class="pre">T_{i+1}]</span></code>. The
+state-pointer vector is flattened in consecutive order.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// [T_0, T_1, T_1, T_2, ..., T_{N-2}, T_{N-1}]</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">;</span>
+<span class="n">state_pointers</span><span class="p">.</span><span class="n">reserve</span><span class="p">(</span><span class="mi">2</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_constraints</span><span class="p">);</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_constraints</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">state_pointers</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">pose_states</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="n">i</span><span class="p">));</span>
+<span class="w">  </span><span class="n">state_pointers</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">pose_states</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">Problem</span><span class="w"> </span><span class="n">problem</span><span class="p">;</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddStateBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">pose_states</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddFactorBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">between_factor</span><span class="p">,</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">CheckConsistency</span><span class="p">();</span>
+</pre></div>
+</div>
+<p><strong>Step 5 — Solve with Levenberg-Marquardt.</strong></p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">cunls</span><span class="o">::</span><span class="n">MinimizerOptions</span><span class="w"> </span><span class="n">options</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">max_num_iterations</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">60</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">state_tolerance</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-8f</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">cost_tolerance</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-8f</span><span class="p">;</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizerOptions</span><span class="w"> </span><span class="n">lm_options</span><span class="p">;</span>
+<span class="n">lm_options</span><span class="p">.</span><span class="n">base_options</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">options</span><span class="p">;</span>
+<span class="n">lm_options</span><span class="p">.</span><span class="n">initial_lambda</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-3f</span><span class="p">;</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizer</span><span class="w"> </span><span class="nf">minimizer</span><span class="p">(</span><span class="n">lm_options</span><span class="p">);</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">CudaStream</span><span class="w"> </span><span class="n">stream</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">summary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">minimizer</span><span class="p">.</span><span class="n">Minimize</span><span class="p">(</span><span class="n">stream</span><span class="p">.</span><span class="n">GetStream</span><span class="p">(),</span><span class="w"> </span><span class="n">problem</span><span class="p">);</span>
+<span class="n">cudaStreamSynchronize</span><span class="p">(</span><span class="n">stream</span><span class="p">.</span><span class="n">GetStream</span><span class="p">());</span>
+</pre></div>
+</div>
+<p><strong>Step 6 — Read back and validate.</strong>
+The optimized poses are downloaded and chain constraint satisfaction is
+evaluated by measuring
+<span class="math notranslate nohighlight">\(\|\Delta_i \cdot T_i^{-1} \cdot T_{i+1} - I\|\)</span> for every
+consecutive pair.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">SE3Transform</span><span class="o">&gt;</span><span class="w"> </span><span class="n">optimized_poses</span><span class="p">(</span><span class="n">num_poses</span><span class="p">);</span>
+<span class="n">poses_device</span><span class="p">.</span><span class="n">CopyToHost</span><span class="p">(</span><span class="n">optimized_poses</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_poses</span><span class="p">);</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Initial cost: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">initial_cost</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Final cost:   &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">final_cost</span><span class="w">   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Iterations:   &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">num_iterations</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+<section id="custom-factor">
+<h2>Custom Factor<a class="headerlink" href="#custom-factor" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>Source</strong>: examples/custom_factor/main.cu</p></li>
+</ul>
+<section id="custom-factor-problem-statement">
+<h3>Custom factor problem statement<a class="headerlink" href="#custom-factor-problem-statement" title="Link to this heading">#</a></h3>
+<p>This example shows how to implement a <strong>user-defined factor</strong> by subclassing
+<code class="code docutils literal notranslate"><span class="pre">SizedFactorBatch</span></code> (see <a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>) and writing a CUDA kernel that
+computes residuals and Jacobians.</p>
+<p>We model a 1-D chain of <span class="math notranslate nohighlight">\(N\)</span> scalar states
+<span class="math notranslate nohighlight">\(x_0, x_1, \ldots, x_{N-1}\)</span> connected by <span class="math notranslate nohighlight">\(N{-}1\)</span> <strong>difference
+constraints</strong>. Each constraint carries a measurement <span class="math notranslate nohighlight">\(m_i\)</span> of the
+expected difference between consecutive states:</p>
+<div class="math notranslate nohighlight">
+\[r_i = (x_{i+1} - x_i) - m_i, \qquad i = 0, \ldots, N{-}2\]</div>
+<p>The Jacobians are trivially constant:</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial r_i}{\partial x_i} = -1, \qquad
+\frac{\partial r_i}{\partial x_{i+1}} = +1\]</div>
+<p>Because adding a constant to every state leaves all difference residuals
+unchanged, the system is rank-deficient without further constraints. A
+<strong>prior factor</strong> (anchor) on the first state removes this gauge freedom:</p>
+<div class="math notranslate nohighlight">
+\[r_{\mathrm{prior}} = x_0 - x_0^{\mathrm{obs}}\]</div>
+<p>The full objective is:</p>
+<div class="math notranslate nohighlight">
+\[\min_{x_0, \ldots, x_{N-1}}
+  \frac{1}{2} \left\| x_0 - x_0^{\mathrm{obs}} \right\|^2
+  + \frac{1}{2} \sum_{i=0}^{N-2}
+    \left\| (x_{i+1} - x_i) - m_i \right\|^2\]</div>
+<p>This is a simple linear-in-state problem, but it demonstrates the full
+workflow for authoring custom factors.</p>
+<section id="custom-factor-graph">
+<h4>Custom factor graph<a class="headerlink" href="#custom-factor-graph" title="Link to this heading">#</a></h4>
+<p>The factor graph is a <strong>chain</strong>: each variable node connects to its neighbors
+through difference factors, and a prior factor anchors <span class="math notranslate nohighlight">\(x_0\)</span>.</p>
+<div style="display:flex; justify-content:center; margin:1rem 0;">
+  <div style="max-width:80%; width:100%;">
+    <img class="only-light" src="_static/custom_fg.png" alt="Custom factor (1D chain) factor graph" style="width:100%; height:auto;">
+    <img class="only-dark" src="_static/custom_fg_dark.png" alt="Custom factor (1D chain) factor graph" style="width:100%; height:auto;">
+  </div>
+</div><p class="centered"><em>Factor graph for the custom factor example. Green circles are scalar state
+variables (</em><code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;1&gt;</span></code><em>), orange squares are custom
+difference factors (</em><code class="code docutils literal notranslate"><span class="pre">ScalarDifferenceFactorBatch</span></code><em>), and the purple
+square is the anchor prior (</em><code class="code docutils literal notranslate"><span class="pre">PriorVectorFactorBatch&lt;1&gt;</span></code><em>) on</em>
+<span class="math notranslate nohighlight">\(x_0\)</span><em>.</em></p>
+</section>
+<section id="custom-factor-api-used">
+<h4>Custom factor API used<a class="headerlink" href="#custom-factor-api-used" title="Link to this heading">#</a></h4>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 35.0%" />
+<col style="width: 65.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Class</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;1&gt;</span></code> (<a class="reference internal" href="api/state.html"><span class="doc">State API</span></a>)</p></td>
+<td><p>Stores all <span class="math notranslate nohighlight">\(N\)</span> scalar states in <span class="math notranslate nohighlight">\(\mathbb{R}^1\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="code docutils literal notranslate"><span class="pre">SizedFactorBatch&lt;1,</span> <span class="pre">1,</span> <span class="pre">1&gt;</span></code> (<a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>)</p></td>
+<td><p>Compile-time base for the custom factor (residual dim = 1, two state
+blocks of tangent dim 1 each).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">PriorVectorFactorBatch&lt;1&gt;</span></code> (<a class="reference internal" href="api/factor.html"><span class="doc">Factor API</span></a>)</p></td>
+<td><p>Built-in prior factor that pulls <span class="math notranslate nohighlight">\(x_0\)</span> toward the observed
+anchor value.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="code docutils literal notranslate"><span class="pre">Problem</span></code> (<a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>)</p></td>
+<td><p>Assembles the factor graph.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="code docutils literal notranslate"><span class="pre">LevenbergMarquardtMinimizer</span></code> (<a class="reference internal" href="api/minimizer.html"><span class="doc">Minimizer API</span></a>)</p></td>
+<td><p>Solves the nonlinear system.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="custom-factor-code-walkthrough">
+<h4>Custom factor code walkthrough<a class="headerlink" href="#custom-factor-code-walkthrough" title="Link to this heading">#</a></h4>
+<p><strong>Step 1 — Implement the CUDA kernel.</strong>
+The kernel is launched with one thread per factor. It reads two state block
+pointers, computes the scalar residual, and writes the constant Jacobian
+entries.</p>
+<div class="highlight-cuda notranslate"><div class="highlight"><pre><span></span><span class="kr">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">ScalarDifferenceKernel</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">measurements</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="k">const</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="o">*</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">residuals</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobians</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_factors</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nb">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="n">num_factors</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">left</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">[</span><span class="n">idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">];</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">right</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">[</span><span class="n">idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">];</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">residual</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">right</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">left</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">measurements</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">residuals</span><span class="p">)</span><span class="w"> </span><span class="n">residuals</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">residual</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">jacobians</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">jacobians</span><span class="p">[</span><span class="n">idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="mf">-1.0f</span><span class="p">;</span><span class="w">   </span><span class="c1">// dr/dleft</span>
+<span class="w">    </span><span class="n">jacobians</span><span class="p">[</span><span class="n">idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">+</span><span class="mf">1.0f</span><span class="p">;</span><span class="w">   </span><span class="c1">// dr/dright</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Step 2 — Subclass</strong> <code class="code docutils literal notranslate"><span class="pre">SizedFactorBatch&lt;1,</span> <span class="pre">1,</span> <span class="pre">1&gt;</span></code>.
+The template arguments <code class="docutils literal notranslate"><span class="pre">&lt;1,</span> <span class="pre">1,</span> <span class="pre">1&gt;</span></code> encode: residual dim = 1, first state
+block tangent dim = 1, second state block tangent dim = 1. The subclass
+stores a device pointer to measurements and implements <code class="code docutils literal notranslate"><span class="pre">Evaluate</span></code> by
+launching the kernel above.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ScalarDifferenceFactorBatch</span>
+<span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">cunls</span><span class="o">::</span><span class="n">SizedFactorBatch</span><span class="o">&lt;</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w"> </span><span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">ScalarDifferenceFactorBatch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">measurements</span><span class="p">,</span>
+<span class="w">                              </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_factors</span><span class="p">)</span>
+<span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="n">measurements_</span><span class="p">(</span><span class="n">measurements</span><span class="p">),</span><span class="w"> </span><span class="n">num_factors_</span><span class="p">(</span><span class="n">num_factors</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">  </span><span class="kt">bool</span><span class="w"> </span><span class="n">Evaluate</span><span class="p">(</span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">residuals</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">jacobians</span><span class="p">,</span>
+<span class="w">                </span><span class="kt">float</span><span class="w"> </span><span class="k">const</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="o">*</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">,</span>
+<span class="w">                </span><span class="n">cudaStream_t</span><span class="w"> </span><span class="n">stream</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kBlockSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">256</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">grid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">num_factors_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">kBlockSize</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kBlockSize</span><span class="p">;</span>
+<span class="w">    </span><span class="n">ScalarDifferenceKernel</span><span class="o">&lt;&lt;&lt;</span><span class="n">grid</span><span class="p">,</span><span class="w"> </span><span class="n">kBlockSize</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">stream</span><span class="o">&gt;&gt;&gt;</span><span class="p">(</span>
+<span class="w">        </span><span class="n">measurements_</span><span class="p">,</span><span class="w"> </span><span class="n">state_pointers</span><span class="p">,</span><span class="w"> </span><span class="n">residuals</span><span class="p">,</span><span class="w"> </span><span class="n">jacobians</span><span class="p">,</span>
+<span class="w">        </span><span class="n">num_factors_</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="kt">size_t</span><span class="w"> </span><span class="n">NumFactors</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">num_factors_</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w"> </span><span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">measurements_</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_factors_</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p><strong>Step 3 — Generate synthetic data.</strong>
+A monotonic ground-truth chain is created, then perturbed. Measurements
+are exact consecutive differences of the ground truth.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_states</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="mi">256</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">num_diff_factors</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_states</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">gt_states</span><span class="p">(</span><span class="n">num_states</span><span class="p">);</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">initial_states</span><span class="p">(</span><span class="n">num_states</span><span class="p">);</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="w">     </span><span class="n">measurements</span><span class="p">(</span><span class="n">num_diff_factors</span><span class="p">);</span>
+
+<span class="n">gt_states</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.5f</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_states</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="n">gt_states</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gt_states</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">step_dist</span><span class="p">(</span><span class="n">rng</span><span class="p">);</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_states</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="n">initial_states</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gt_states</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">noise_dist</span><span class="p">(</span><span class="n">rng</span><span class="p">);</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_diff_factors</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="n">measurements</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gt_states</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">gt_states</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">];</span>
+</pre></div>
+</div>
+<p><strong>Step 4 — Build state batch and factor batches.</strong>
+All states share a single <code class="code docutils literal notranslate"><span class="pre">VectorStateBatch&lt;1&gt;</span></code>. Two factor batches are
+added: the custom difference factors and a built-in prior anchor.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">dvector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">states_device</span><span class="p">(</span><span class="n">initial_states</span><span class="p">);</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="w">     </span><span class="n">measurements_device</span><span class="p">(</span><span class="n">measurements</span><span class="p">);</span>
+
+<span class="c1">// Anchor observation: pin x_0 to its ground-truth value.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">anchor_obs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">gt_states</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">};</span>
+<span class="n">dvector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">anchor_obs_device</span><span class="p">(</span><span class="n">anchor_obs</span><span class="p">);</span>
+
+<span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">states_ptr</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">states_device</span><span class="p">.</span><span class="n">data</span><span class="p">());</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">VectorStateBatch</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="w"> </span><span class="n">state_batch</span><span class="p">(</span><span class="n">states_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_states</span><span class="p">);</span>
+
+<span class="n">ScalarDifferenceFactorBatch</span><span class="w"> </span><span class="nf">difference_factor</span><span class="p">(</span>
+<span class="w">    </span><span class="n">measurements_device</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_diff_factors</span><span class="p">);</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">PriorVectorFactorBatch</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="w"> </span><span class="n">anchor_factor</span><span class="p">(</span>
+<span class="w">    </span><span class="n">anchor_obs_device</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Step 5 — Wire state pointers and assemble the problem.</strong>
+Difference factors read <code class="docutils literal notranslate"><span class="pre">[x_i,</span> <span class="pre">x_{i+1}]</span></code>; the prior reads only <code class="docutils literal notranslate"><span class="pre">[x_0]</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Difference factor state pointers: [x_0, x_1, x_1, x_2, ...].</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">diff_state_pointers</span><span class="p">;</span>
+<span class="n">diff_state_pointers</span><span class="p">.</span><span class="n">reserve</span><span class="p">(</span><span class="mi">2</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_diff_factors</span><span class="p">);</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_diff_factors</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">diff_state_pointers</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">state_batch</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="n">i</span><span class="p">));</span>
+<span class="w">  </span><span class="n">diff_state_pointers</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">state_batch</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="c1">// Anchor factor state pointers: just x_0.</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">anchor_state_pointers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">state_batch</span><span class="p">.</span><span class="n">StateBlockDevicePtr</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="p">};</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">Problem</span><span class="w"> </span><span class="n">problem</span><span class="p">;</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddStateBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">state_batch</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddFactorBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">difference_factor</span><span class="p">,</span><span class="w"> </span><span class="n">diff_state_pointers</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">AddFactorBatch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">anchor_factor</span><span class="p">,</span><span class="w"> </span><span class="n">anchor_state_pointers</span><span class="p">);</span>
+<span class="n">problem</span><span class="p">.</span><span class="n">CheckConsistency</span><span class="p">();</span>
+</pre></div>
+</div>
+<p><strong>Step 6 — Solve and inspect results.</strong></p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">cunls</span><span class="o">::</span><span class="n">MinimizerOptions</span><span class="w"> </span><span class="n">options</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">max_num_iterations</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">50</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">state_tolerance</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-8f</span><span class="p">;</span>
+<span class="n">options</span><span class="p">.</span><span class="n">cost_tolerance</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-8f</span><span class="p">;</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizerOptions</span><span class="w"> </span><span class="n">lm_options</span><span class="p">;</span>
+<span class="n">lm_options</span><span class="p">.</span><span class="n">base_options</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">options</span><span class="p">;</span>
+<span class="n">lm_options</span><span class="p">.</span><span class="n">initial_lambda</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-3f</span><span class="p">;</span>
+<span class="n">cunls</span><span class="o">::</span><span class="n">LevenbergMarquardtMinimizer</span><span class="w"> </span><span class="nf">minimizer</span><span class="p">(</span><span class="n">lm_options</span><span class="p">);</span>
+
+<span class="n">cunls</span><span class="o">::</span><span class="n">CudaStream</span><span class="w"> </span><span class="n">stream</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">summary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">minimizer</span><span class="p">.</span><span class="n">Minimize</span><span class="p">(</span><span class="n">stream</span><span class="p">.</span><span class="n">GetStream</span><span class="p">(),</span><span class="w"> </span><span class="n">problem</span><span class="p">);</span>
+<span class="n">cudaStreamSynchronize</span><span class="p">(</span><span class="n">stream</span><span class="p">.</span><span class="n">GetStream</span><span class="p">());</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Vector</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">optimized_states</span><span class="p">(</span><span class="n">num_states</span><span class="p">);</span>
+<span class="n">states_device</span><span class="p">.</span><span class="n">CopyToHost</span><span class="p">(</span><span class="n">optimized_states</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_states</span><span class="p">);</span>
+
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Initial cost: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">initial_cost</span><span class="w">  </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Final cost:   &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">final_cost</span><span class="w">    </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Iterations:   &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">summary</span><span class="p">.</span><span class="n">num_iterations</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="installation.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Installation</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="quick_start.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Quick Start</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-build-commands">Common build commands</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sparse-bundle-adjustment">Sparse Bundle Adjustment</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#problem-statement">Problem statement</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ba-factor-graph">BA factor graph</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ba-api-used">BA API used</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ba-code-walkthrough">BA code walkthrough</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pose-graph-optimization">Pose Graph Optimization</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pgo-problem-statement">PGO problem statement</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#pgo-factor-graph">PGO factor graph</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#pgo-api-used">PGO API used</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#pgo-code-walkthrough">PGO code walkthrough</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#custom-factor">Custom Factor</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#custom-factor-problem-statement">Custom factor problem statement</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#custom-factor-graph">Custom factor graph</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#custom-factor-api-used">Custom factor API used</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#custom-factor-code-walkthrough">Custom factor code walkthrough</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
