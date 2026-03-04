@@ -209,10 +209,27 @@ class SparseMatrixMultiplication {
   ~SparseMatrixMultiplication();
 
   /**
+   * @brief Initializes the GEMM structural analysis for A^T * A.
+   *
+   * Transposes the input matrix to obtain its structure, then runs the
+   * full three-phase cuSPARSE GEMM reuse setup (work estimation, nonzero
+   * analysis, copy preparation) and allocates the output matrix.
+   * Must be called once whenever the sparsity pattern changes (i.e., for
+   * each new optimization problem).
+   *
+   * @param stream CUDA stream for GPU operations.
+   * @param input  Input sparse matrix A (typically the Jacobian in CSR).
+   * @param[out] output Output sparse matrix A^T * A (structure allocated).
+   */
+  void Initialize(cudaStream_t stream, const CSRSparseMatrix& input,
+                  CSRSparseMatrix& output);
+
+  /**
    * @brief Computes A^T * A for a sparse matrix A.
    *
-   * Transposes the input matrix and then multiplies the transpose by the
-   * original to produce the squared matrix (approximate Hessian).
+   * Transposes the input matrix to update values, then performs the
+   * numeric phase of the cuSPARSE GEMM reuse API.  Initialize() must
+   * have been called first for the current sparsity pattern.
    *
    * @param stream CUDA stream for GPU operations.
    * @param input Input sparse matrix A (typically the Jacobian).
@@ -257,46 +274,10 @@ class SparseMatrixMultiplication {
    */
   void ReuseCopy(cusparseHandle_t handle);
 
-  /**
-   * @brief Initializes GEMM setup if input matrix structures have changed.
-   *
-   * Uses hash-based detection to determine whether the sparsity pattern
-   * has changed since the last call. If so, runs the full three-phase
-   * cuSPARSE GEMM reuse initialization (work estimation, nonzero analysis,
-   * copy preparation).
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param handle cuSPARSE library handle.
-   * @param matrixA Left operand sparse matrix (typically J^T).
-   * @param matrixB Right operand sparse matrix (typically J).
-   * @param[out] matrixC Result matrix, resized if structure changed.
-   */
-  void TryInitializeGEMM(cudaStream_t stream, cusparseHandle_t handle,
-                         const CSRSparseMatrix& matrixA,
-                         const CSRSparseMatrix& matrixB,
-                         CSRSparseMatrix& matrixC);
-
-  /**
-   * @brief Performs sparse matrix multiplication C = A * B.
-   *
-   * Uses the cuSPARSE GEMM reuse API for efficient repeated multiplications
-   * with the same sparsity pattern.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param matrixA Left operand sparse matrix.
-   * @param matrixB Right operand sparse matrix.
-   * @param[out] matrixC Result matrix C = A * B.
-   */
-  void Multiply(cudaStream_t stream, const CSRSparseMatrix& matrixA,
-                const CSRSparseMatrix& matrixB, CSRSparseMatrix& matrixC);
-
   cuSPARSEHandle handle_;          ///< cuSPARSE handle for transpose operations.
   CSRSparseMatrix temp_matrix_;    ///< Temporary storage for the transposed matrix.
 
   cusparseSpGEMMDescr_t gemm_description_;  ///< cuSPARSE GEMM descriptor.
-
-  size_t matrixA_hash_ = 0;  ///< Hash of matrix A structure for change detection.
-  size_t matrixB_hash_ = 0;  ///< Hash of matrix B structure for change detection.
 
   cuSPARSEMatrixDescription descrA_, descrB_, descrC_;  ///< Matrix descriptors.
 

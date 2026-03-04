@@ -77,6 +77,18 @@ struct MinimizerOptions {
   float cost_tolerance = 1e-6f;
 
   /**
+   * @brief Maximum number of consecutive rejected steps before declaring
+   *        convergence.
+   *
+   * When the optimizer rejects this many steps in a row (i.e., every trial
+   * step increases cost or falls below the acceptance threshold), the
+   * minimizer treats the current solution as converged because it can no
+   * longer make progress.  Set to 0 to disable this criterion.
+   * Default: 5
+   */
+  size_t max_consecutive_rejected_steps = 5;
+
+  /**
    * @brief Type of sparse linear solver to use.
    *
    * Default: cuDSS
@@ -232,6 +244,17 @@ class GaussNewtonMinimizer {
   void UpdateStates(cudaStream_t stream, const MinimizerState& curr_state,
                         const dvector<float>& step,
                         MinimizerState& updated_state);
+
+  /**
+   * @brief Computes the total cost for the current state values.
+   *
+   * @param stream CUDA stream for GPU operations.
+   * @param problem The optimization problem.
+   * @param minimizer_state Current minimizer state.
+   * @return Total cost (sum of per-factor costs from all residual batches).
+   */
+  float ComputeCost(cudaStream_t stream, const Problem& problem,
+                    const MinimizerState& minimizer_state);
 
   const MinimizerOptions options_;  ///< Optimizer configuration options.
 

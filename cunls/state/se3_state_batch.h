@@ -96,30 +96,5 @@ class SE3StateBatch : public SizedStateBatch<16, 6> {
   /// Preallocated workspace for twist vectors. Only reallocated if
   /// num_transforms exceeds current capacity.
   mutable dvector<float> twists_;
-  /**
-   * @brief Applies an SE(3) update: result = x * Exp(skew(delta)) or
-   * result = x * Exp(-skew(delta))
-   *
-   * Computes the right-multiplication update for SE(3) transformations.
-   * First computes the update matrix Exp(skew(delta)) or Exp(-skew(delta))
-   * using Exp, then performs batched matrix multiplication using cuBLAS.
-   *
-   * This is a helper function used by Plus (invert_delta=false).
-   *
-   * Note: cuBLAS uses column-major storage, but our matrices are row-major.
-   * For right-multiplication (x * update), we use CUBLAS_OP_N for both
-   * operands. cuBLAS interprets the matrices as column-major, so this
-   * computes the equivalent of the desired row-major result.
-   *
-   * @param x Input transformation matrices (device pointer, row-major)
-   * @param delta Tangent space updates (6D twist vectors, device pointer)
-   * @param result Output transformation matrices (device pointer,
-   * row-major)
-   * @param invert_delta If true, compute Exp(-skew(delta)), otherwise
-   * Exp(skew(delta))
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ApplyUpdate(const float* x, const float* delta, float* result,
-                   bool invert_delta, cudaStream_t stream);
 };
 }  // namespace cunls

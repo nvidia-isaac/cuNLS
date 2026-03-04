@@ -66,45 +66,55 @@ class cuDSSLinearSolver : public CSRSparseLinearSolver {
    *
    * Initializes the solver with the specified cuDSS algorithm configuration.
    *
-   * @param config Solver configuration controlling initialization/solve
-   * trade-off. Defaults to SlowInitFastSolve.
-   * @param nthreads Number of threads to use for host-side operations.
-   *                  Defaults to 1.
+   * @param options Solver configuration controlling the initialization/solve
+   *                trade-off and threading settings.
    */
   cuDSSLinearSolver(
       cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions());
 
   /**
-   * @brief Performs symbolic analysis phase for the sparse linear system.
+   * @brief Performs setup for the sparse linear system.
    *
-   * Analyzes the sparsity pattern of the matrix and determines the optimal
-   * factorization strategy. For FastInitSlowSolve configuration, also performs
-   * an initial factorization.
+   * Always runs the cuDSS symbolic analysis phase. For SlowInitFastSolve mode,
+   * that is all; for FastInitSlowSolve mode, also performs an initial
+   * factorization so that subsequent Solve calls can use cheaper
+   * refactorization.
+   *
+   * Both @p rhs and @p result must be pre-allocated with the same number of
+   * elements as the number of rows in @p spd_matrix; the solver does not
+   * resize them.
    *
    * @param handle cuDSSHandle_t provided by the caller (e.g. from cuDSSHandle).
    * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
    *                   positive definite).
-   * @param rhs The right-hand side vector b.
-   * @param result Output vector x (will be used to determine dimensions).
+   * @param rhs The right-hand side vector b (size must equal matrix rows).
+   * @param result Output vector x (size must equal matrix rows).
+   * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual void Initialize(void* handle, const CSRSparseMatrix& spd_matrix,
+  virtual bool Initialize(void* handle, const CSRSparseMatrix& spd_matrix,
                           const dvector<float>& rhs,
                           dvector<float>& result) final;
 
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
    *
-   * Performs factorization (or refactorization for FastInitSlowSolve) and solve
-   * phases to compute the solution x.
+   * For SlowInitFastSolve mode, performs a full factorization followed by the
+   * solve phase. For FastInitSlowSolve mode, performs refactorization (reusing
+   * the symbolic analysis from Initialize) followed by the solve phase.
    *
-   * @param handle cuDSSHandle_t from Initialize.
+   * @p rhs and @p result must already be allocated with the same number of
+   * elements as the number of rows in @p spd_matrix. The solver does not
+   * resize them; a dimension mismatch causes the function to return false.
+   *
+   * @param handle cuDSSHandle_t obtained from Initialize.
    * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
    *                   positive definite).
-   * @param rhs The right-hand side vector b.
-   * @param result Output vector x where the solution will be stored.
-   *               Automatically resized to match the matrix dimensions.
+   * @param rhs The right-hand side vector b (size must equal matrix rows).
+   * @param result Output vector x where the solution will be stored
+   *               (size must equal matrix rows).
+   * @return true on success, false if any dimension mismatch is detected.
    */
-  virtual void Solve(void* handle, const CSRSparseMatrix& spd_matrix,
+  virtual bool Solve(void* handle, const CSRSparseMatrix& spd_matrix,
                      const dvector<float>& rhs, dvector<float>& result) final;
 
  protected:

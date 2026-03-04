@@ -33,23 +33,26 @@ namespace cunls {
 class CSRSparseLinearSolver {
  public:
   /**
-   * @brief Usually performs symbolic analysis phase for the sparse linear
-   * system or does other setup work.
+   * @brief Performs setup work for the sparse linear system.
    *
-   * Analyzes the sparsity pattern of the matrix and determines the optimal
-   * factorization strategy without performing numerical operations. This phase
-   * should be called once when the matrix structure is first known, and can be
-   * reused for subsequent solves with the same sparsity pattern.
+   * Typically runs symbolic analysis of the sparsity pattern; some modes may
+   * also perform an initial numerical factorization. Must be called once
+   * whenever the matrix structure changes, before any call to Solve.
+   *
+   * Both @p rhs and @p result must be pre-allocated with the same number of
+   * elements as the number of rows in @p spd_matrix; the solver does not
+   * resize them.
    *
    * @param handle Opaque solver handle (e.g. cuDSSHandle_t). Caller provides
    *               and owns the handle; it is used to store and pass solver
    *               context across Initialize and Solve.
    * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
    *                   positive definite).
-   * @param rhs The right-hand side vector b.
-   * @param result Output vector x (will be used to determine dimensions).
+   * @param rhs The right-hand side vector b (size must equal matrix rows).
+   * @param result Output vector x (size must equal matrix rows).
+   * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual void Initialize(void* handle, const CSRSparseMatrix& spd_matrix,
+  virtual bool Initialize(void* handle, const CSRSparseMatrix& spd_matrix,
                           const dvector<float>& rhs,
                           dvector<float>& result) = 0;
 
@@ -57,15 +60,18 @@ class CSRSparseLinearSolver {
    * @brief Solves a sparse SPD linear system Ax = b.
    *
    * Performs factorization and solve phases to compute the solution x.
+   * Both @p rhs and @p result must be pre-allocated with the same number of
+   * elements as the number of rows in @p spd_matrix; the solver does not
+   * resize them.
    *
    * @param handle Opaque solver handle (e.g. cuDSSHandle_t) from Initialize.
    * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
    *                   positive definite).
-   * @param rhs The right-hand side vector b.
-   * @param result Output vector x where the solution will be stored.
-   *               Automatically resized to match the matrix dimensions.
+   * @param rhs The right-hand side vector b (size must equal matrix rows).
+   * @param result Output vector x (size must equal matrix rows).
+   * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual void Solve(void* handle, const CSRSparseMatrix& spd_matrix,
+  virtual bool Solve(void* handle, const CSRSparseMatrix& spd_matrix,
                      const dvector<float>& rhs, dvector<float>& result) = 0;
 
   /** @brief Virtual destructor for proper cleanup of derived solver instances. */

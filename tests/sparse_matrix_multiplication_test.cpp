@@ -202,6 +202,9 @@ TEST(SparseMatrixMultiplicationTest, ComputeHessian) {
   SparseMatrixMultiplication smm;
   CudaStream stream;
 
+  smm.Initialize(stream.GetStream(), input_matrix, hessian);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
   {
     // Warm up
     smm.ComputeSquaredMatrix(stream.GetStream(), input_matrix, hessian);

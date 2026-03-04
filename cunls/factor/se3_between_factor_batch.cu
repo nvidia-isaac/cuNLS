@@ -15,9 +15,6 @@
  * limitations under the License.
  */
 
-#include <iostream>
-#include <numeric>
-
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"

@@ -99,46 +99,45 @@ void InitializeJacobian(cudaStream_t stream, const Problem& problem,
  * @param minimizer_state Current minimizer state.
  * @return Total cost (sum of squared residuals from all factors).
  */
-float ComputeCost(cudaStream_t stream, const Problem& problem,
-                  const MinimizerState& minimizer_state) {
+float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
+                                        const Problem& problem,
+                                        const MinimizerState& minimizer_state) {
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
   const auto& state_pointers = minimizer_state.GetStatePointers();
 
   const auto& residual_batches = problem.GetResidualBatches();
-  size_t max_num_factors = 0;
   size_t max_residual_dim = 0;
+  size_t total_num_cost_elements = 0;
   for (const auto& rb : residual_batches) {
     const auto& factor_batch = rb.GetFactorBatch();
-    max_num_factors = std::max(factor_batch->NumFactors(), max_num_factors);
+    size_t n = factor_batch->NumFactors();
+    total_num_cost_elements += n;
     max_residual_dim = std::max(
-        factor_batch->NumFactors() * factor_batch->ResidualsSize(), max_residual_dim);
+        n * factor_batch->ResidualsSize(), max_residual_dim);
   }
 
-  // Temporary storage: one cost value per factor
-  dvector<float> cost_vector(max_num_factors);
-  dvector<float> residuals(max_residual_dim);
-
-  float total_cost = 0;
-
-  float* cost_ptr = cost_vector.data();
-  float* residuals_ptr = residuals.data();
+  size_t buffer_floats = total_num_cost_elements + max_residual_dim;
+  if (buffer_.size() < buffer_floats * sizeof(float)) {
+    buffer_.resize(buffer_floats * sizeof(float));
+  }
+  float* cost_ptr = reinterpret_cast<float*>(buffer_.data());
+  float* residuals_ptr = reinterpret_cast<float*>(buffer_.data()) + total_num_cost_elements;
 
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto& rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
-
     rb.Evaluate(cost_ptr, residuals_ptr, nullptr, ptrs, stream);
-
     const auto& factor_batch = rb.GetFactorBatch();
-    size_t num_factors = factor_batch->NumFactors();
-
-    thrust::device_ptr<float> cost_vec_ptr(cost_vector.data());
-    float curr_cost = thrust::reduce(stream_policy, cost_vec_ptr,
-                                     cost_vec_ptr + num_factors);
-
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    total_cost += curr_cost;
+    cost_ptr += factor_batch->NumFactors();
   }
+
+  float total_cost = 0;
+  if (total_num_cost_elements > 0) {
+    thrust::device_ptr<float> cost_vec_ptr(reinterpret_cast<float*>(buffer_.data()));
+    total_cost = thrust::reduce(stream_policy, cost_vec_ptr,
+                               cost_vec_ptr + total_num_cost_elements);
+  }
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   return total_cost;
 }
 
@@ -277,6 +276,8 @@ void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
     ConvertTripletStructureToCSR(stream, handle, sparse_jacobian_.structure,
                                  csr_jacobian_, csr_mapping_, buffer_);
   }
+
+  gemm_.Initialize(stream, csr_jacobian_, hessian_);
 }
 
 /**
@@ -355,8 +356,9 @@ bool GaussNewtonMinimizer::RejectStep(float step_quality) {
  *    b. Solve for step dx
  *    c. Update states: x_new = x + dx
  *    d. Compute new cost
- *    e. Check convergence
- *    f. Accept or reject step
+ *    e. Check convergence (step norm, cost, predicted reduction)
+ *    f. Accept or reject step; if max_consecutive_rejected_steps
+ *       consecutive rejections occur, declare convergence
  * 4. Copy final state values back to problem
  *
  * @param stream CUDA stream for GPU operations.
@@ -371,6 +373,15 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
   // Initialize internal data structures
   Initialize(stream, problem);
+
+  // No optimizable states (all constant): nothing to solve
+  if (state_ops_.NumReducedStates() == 0) {
+    MinimizerState current_state(stream, problem);
+    summary.initial_cost = ComputeCost(stream, problem, current_state);
+    summary.final_cost = summary.initial_cost;
+    LogMessage("No optimizable states; skipping solver.");
+    return summary;
+  }
 
   // Create minimizer state snapshots for current and updated states
   MinimizerState current_state(stream, problem);
@@ -391,15 +402,23 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
   dvector<float> rhs;
   BuildSystem(stream, problem, current_state, lhs, rhs);
 
+  step_.resize(rhs.size());
+
   {
     // Perform symbolic analysis (solver_handle_ set in Initialize)
     auto sa_range =
         profiler_domain_.CreateDomainRange("PerformSymbolicAnalysis");
-    solver_->Initialize(solver_handle_, lhs, rhs, step_);
+    bool success = solver_->Initialize(solver_handle_, lhs, rhs, step_);
+    if (!success) {
+      std::string str = "Failed to initialize linear solver";
+      LogError(str);
+      throw std::runtime_error(str);
+    }
   }
 
   // Main optimization loop
   summary.num_iterations = 0;
+  size_t consecutive_rejected = 0;
   for (; summary.num_iterations < options_.max_num_iterations;
        summary.num_iterations++) {
     auto it_range = profiler_domain_.CreateDomainRange("Iteration");
@@ -410,7 +429,12 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
     {
       auto solve_range = profiler_domain_.CreateDomainRange("Solve");
       // Solve linear system: J^T J dx = -J^T r
-      solver_->Solve(solver_handle_, lhs, rhs, step_);
+      bool success = solver_->Solve(solver_handle_, lhs, rhs, step_);
+      if (!success) {
+        std::string str = "Failed to solve linear system";
+        LogError(str);
+        throw std::runtime_error(str);
+      }
     }
 
     // Apply step: x_new = x + dx
@@ -430,21 +454,31 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
     if (converged) {
       LogMessage("Optimization converged");
-      summary.final_cost = cost;
-      current_state.Copy(stream, updated_state.GetStates());
+      if (cost <= summary.final_cost) {
+        summary.final_cost = cost;
+        current_state.Copy(stream, updated_state.GetStates());
+      }
       break;
     }
 
     // Reject step if it increases cost
     if (RejectStep(step_quality)) {
       LogMessage("Reject step");
-      continue;
+      consecutive_rejected++;
+      if (options_.max_consecutive_rejected_steps > 0 &&
+          consecutive_rejected >= options_.max_consecutive_rejected_steps) {
+        LogMessage("Converged: {} consecutive rejected steps",
+                   consecutive_rejected);
+        break;
+      }
+    } else {
+      // Accept step and update state
+      LogMessage("Accept step");
+      consecutive_rejected = 0;
+      AcceptStep(step_quality);
+      summary.final_cost = cost;
+      current_state.Copy(stream, updated_state.GetStates());
     }
-
-    // Accept step and update state
-    AcceptStep(step_quality);
-    summary.final_cost = cost;
-    current_state.Copy(stream, updated_state.GetStates());
 
     // Rebuild linear system for next iteration
     BuildSystem(stream, problem, current_state, lhs, rhs);

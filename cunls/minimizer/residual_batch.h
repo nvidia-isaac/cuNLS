@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "cunls/common/types.h"
 #include "cunls/factor/factor_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
 namespace cunls {
@@ -79,5 +80,7 @@ class ResidualBatch {
  private:
   FactorBatch* factor_batch_ = nullptr;  ///< Factor batch.
   LossFunctionBatch* loss_function_ = nullptr;   ///< Optional loss function batch.
+  mutable dvector<float> squared_error_;       ///< Per-residual squared L2 norm (device).
+  mutable dvector<float3> robustifier_coeffs_; ///< Loss function coefficients (device).
 };
 }  // namespace cunls

@@ -125,6 +125,13 @@ void SetcuDSSDeviceMemHandler(void* handle, cuDSSDeviceMemPool& pool,
                               const char* handler_name = "cunls device pool");
 
 /**
+ * @brief Detaches the cuDSS memory handler from the given handle.
+ *
+ * @param handle Opaque cuDSS handle (cudssHandle_t).
+ */
+void DetachcuDSSDeviceMemHandler(void* handle);
+
+/**
  * @brief RAII wrapper for cuDSS handle with stream management.
  *
  * This class manages the lifecycle of a cuDSS handle and associates it with

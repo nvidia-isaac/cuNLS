@@ -104,13 +104,24 @@ inspecting iteration count and cost history.
 --------------------------------------------------------------------------------
 
 Options for the **Gauss-Newton** minimizer: iteration limit, convergence
-tolerances, and sparse linear solver choice. Used when constructing a :code:`GaussNewtonMinimizer`.
+tolerances, consecutive rejected-step limit, and sparse linear solver choice.
+Used when constructing a :code:`GaussNewtonMinimizer`.
 
-- **max_num_iterations** [in]: Maximum number of iterations.
-- **state_tolerance** [in]: Convergence threshold on step norm (squared).
-- **cost_tolerance** [in]: Convergence threshold on cost change.
-- **sparse_linear_solver_type** [in]: Sparse backend (e.g. Cholesky, iterative).
-- **sparse_linear_solver_config** [in]: Backend-specific options.
+- **max_num_iterations** [in]: Maximum number of iterations. Default: 50.
+- **state_tolerance** [in]: Convergence threshold on squared step norm; optimizer
+  terminates when the step norm falls below this. Default: 1e-6.
+- **cost_tolerance** [in]: Convergence threshold on cost; optimizer terminates
+  when the cost falls below this. Default: 1e-6.
+- **max_consecutive_rejected_steps** [in]: Maximum number of consecutive
+  rejected steps before declaring convergence. When every trial step is rejected
+  (cost increases or step quality below acceptance threshold) this many times
+  in a row, the minimizer treats the current solution as converged. Set to 0 to
+  disable. Default: 5.
+- **sparse_linear_solver_type** [in]: Sparse backend; default: cuDSS.
+- **sparse_linear_solver_config** [in]: Backend-specific options. For cuDSS,
+  contains :code:`cudss_solver_options` (mode, e.g. SlowInitFastSolve;
+  :code:`nthreads`; optional :code:`threading_lib_path` for multi-threaded
+  cuDSS).
 
 --------------------------------------------------------------------------------
 :code:`LevenbergMarquardtMinimizerOptions`
@@ -120,15 +131,20 @@ Options for the **Levenberg-Marquardt** minimizer. Extends
 :code:`MinimizerOptions` with damping and step-acceptance parameters. Used when
 constructing a :code:`LevenbergMarquardtMinimizer`.
 
-- **base_options** [in]: Base Gauss-Newton options.
-- **initial_lambda** [in]: Initial damping coefficient.
-- **relative_reduction_tolerance** [in]: Predicted reduction threshold.
-- **lambda_upscale** [in]: Factor by which :math:`\lambda` is increased after a rejected step.
-- **lambda_downscale** [in]: Factor by which :math:`\lambda` is decreased after a very successful step.
-- **lambda_max** [in]: Upper bound for :math:`\lambda`.
-- **lambda_min** [in]: Lower bound for :math:`\lambda`.
-- **step_accept_threshold** [in]: Minimum step quality (e.g. rho) to accept a step.
-- **lambda_downscale_threshold** [in]: Step quality above which :math:`\lambda` is decreased.
+- **base_options** [in]: Base Gauss-Newton options (:code:`MinimizerOptions`).
+- **initial_lambda** [in]: Initial damping coefficient. Default: 1e-3.
+- **relative_reduction_tolerance** [in]: Convergence threshold on predicted
+  relative cost reduction. Default: 1e-6.
+- **lambda_upscale** [in]: Factor by which :math:`\lambda` is increased after a
+  rejected step. Default: 2.0.
+- **lambda_downscale** [in]: Factor by which :math:`\lambda` is decreased after a
+  very successful step. Default: 0.5.
+- **lambda_max** [in]: Upper bound for :math:`\lambda`. Default: 1e+6.
+- **lambda_min** [in]: Lower bound for :math:`\lambda`. Default: 1e-6.
+- **step_accept_threshold** [in]: Minimum step quality (rho, actual/predicted
+  cost reduction) to accept a step. Default: 0.25.
+- **lambda_downscale_threshold** [in]: Step quality above which :math:`\lambda`
+  is decreased. Default: 0.75.
 
 ================================================================================
 Class APIs

@@ -26,55 +26,6 @@
 
 namespace cunls {
 
-/** @copydoc SE3StateBatch::ApplyUpdate */
-void SE3StateBatch::ApplyUpdate(const float* x, const float* delta,
-                                         float* result, bool invert_delta,
-                                         cudaStream_t stream) {
-  size_t num_transforms = NumStateBlocks();
-
-  delta_transforms_.resize(num_transforms);
-  twists_.resize(num_transforms * 6);
-
-  auto twists_ptr =
-      reinterpret_cast<const float*>(twists_.data());
-  auto delta_transforms_ptr = reinterpret_cast<float*>(
-      delta_transforms_.data());
-
-  thrust::device_ptr<const float> ptr = thrust::device_pointer_cast(delta);
-  thrust::device_ptr<float> twists_device_ptr(twists_.data());
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-  thrust::copy(stream_policy, ptr, ptr + num_transforms * 6, twists_device_ptr);
-
-  // Negate twists if computing Exp(-delta) instead of Exp(delta)
-  if (invert_delta) {
-    thrust::transform(stream_policy, twists_device_ptr, twists_device_ptr + twists_.size(),
-                      twists_device_ptr, thrust::negate<float>());
-  }
-
-  constexpr size_t twist_stride = 6;
-  constexpr size_t transform_stride = 16;
-  constexpr size_t transform_pitch = 4;
-  // Compute update matrices: delta_transforms = Exp(±delta)
-  ComputeExpSE3(stream, twists_ptr, twist_stride, transform_pitch, transform_stride,
-         num_transforms, delta_transforms_ptr);
-  auto handle = cublas_handle_.GetHandle(stream);
-
-  // cuBLAS uses column-major storage, but our matrices are row-major
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-
-  constexpr int mat_size = 4;
-  constexpr int stride = 16;
-
-  // Perform batched matrix multiplication: result = x * Exp(±delta)
-  // Note: cuBLAS uses column-major, but CUBLAS_OP_N for both operands computes
-  // the equivalent of row-major right-multiplication
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha, delta_transforms_ptr,
-      mat_size, stride, x, mat_size, stride, &beta, result,
-      mat_size, stride, num_transforms));
-}
-
 /**
  * @brief Performs the Plus operation: x_plus_delta = x * Exp(skew(delta))
  *
@@ -94,8 +45,42 @@ void SE3StateBatch::ApplyUpdate(const float* x, const float* delta,
  * @param stream CUDA stream for asynchronous execution
  */
 void SE3StateBatch::Plus(const float* x, const float* delta,
-                                  float* x_plus_delta, cudaStream_t stream) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream);
+                         float* x_plus_delta, cudaStream_t stream) {
+  size_t num_transforms = NumStateBlocks();
+
+  delta_transforms_.resize(num_transforms);
+  twists_.resize(num_transforms * 6);
+
+  auto twists_ptr = reinterpret_cast<const float*>(twists_.data());
+  auto delta_transforms_ptr =
+      reinterpret_cast<float*>(delta_transforms_.data());
+
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(twists_.data(), delta,
+                                      num_transforms * 6 * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, stream));
+
+  constexpr size_t twist_stride = 6;
+  constexpr size_t transform_stride = 16;
+  constexpr size_t transform_pitch = 4;
+  // Compute update matrices: delta_transforms = Exp(±delta)
+  ComputeExpSE3(stream, twists_ptr, twist_stride, transform_pitch,
+                transform_stride, num_transforms, delta_transforms_ptr);
+  auto handle = cublas_handle_.GetHandle(stream);
+
+  // cuBLAS uses column-major storage, but our matrices are row-major
+  constexpr float alpha = 1.0f;
+  constexpr float beta = 0.0f;
+
+  constexpr int mat_size = 4;
+  constexpr int stride = 16;
+
+  // Perform batched matrix multiplication: x_plus_delta = x * Exp(±delta)
+  // Note: cuBLAS uses column-major, but CUBLAS_OP_N for both operands computes
+  // the equivalent of row-major right-multiplication
+  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
+      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
+      delta_transforms_ptr, mat_size, stride, x, mat_size, stride, &beta,
+      x_plus_delta, mat_size, stride, num_transforms));
 }
 
 }  // namespace cunls

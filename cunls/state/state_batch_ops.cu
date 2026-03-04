@@ -127,6 +127,7 @@ StateBatchOps::StateBatchOps(
 /** @copydoc StateBatchOps::InitUpdatesVector */
 void StateBatchOps::InitUpdatesVector(
     const std::vector<StateBatch*>& state_batches) {
+  delta_ptrs_.clear();
   size_t updates_size = 0;
 
   // Calculate the total size of the state_updates_ buffer

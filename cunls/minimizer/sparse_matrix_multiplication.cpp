@@ -131,11 +131,55 @@ void SparseMatrixMultiplication::Transpose(cudaStream_t stream,
  * @throws cusparse_exception if matrix operations fail
  * @throws cuda_exception if CUDA operations fail
  */
+void SparseMatrixMultiplication::Initialize(
+    cudaStream_t stream, const CSRSparseMatrix& input,
+    CSRSparseMatrix& output) {
+  Transpose(stream, input, temp_matrix_);
+
+  auto handle = handle_.GetHandle(stream);
+
+  int num_rows, num_cols, num_nonzeros;
+  ExtractMatrixMetadata(stream, input, num_rows, num_cols, num_nonzeros);
+
+  descrA_ = std::move(
+      cuSPARSEMatrixDescription(num_cols, num_rows, num_nonzeros, temp_matrix_));
+  descrB_ = std::move(
+      cuSPARSEMatrixDescription(num_rows, num_cols, num_nonzeros, input));
+  descrC_ = std::move(cuSPARSEMatrixDescription(num_cols, num_cols));
+
+  EstimateWork(handle);
+  ReuseNonzeros(handle);
+
+  buffer1.clear();
+  buffer2.clear();
+
+  int64_t C_num_rows, C_num_cols, C_nnz;
+  THROW_ON_CUSPARSE_ERROR(cusparseSpMatGetSize(
+      descrC_.GetDescription(), &C_num_rows, &C_num_cols, &C_nnz));
+
+  output.row_offsets.resize(C_num_rows + 1);
+  output.col_ids.resize(C_nnz);
+  output.values.resize(C_nnz, 0);
+
+  descrC_.UpdatePointers(output);
+  ReuseCopy(handle);
+
+  buffer3.clear();
+}
+
 void SparseMatrixMultiplication::ComputeSquaredMatrix(
     cudaStream_t stream, const CSRSparseMatrix& input,
     CSRSparseMatrix& output) {
   Transpose(stream, input, temp_matrix_);
-  Multiply(stream, temp_matrix_, input, output);
+
+  auto handle = handle_.GetHandle(stream);
+
+  constexpr float alpha = 1;
+  constexpr float beta = 0;
+  THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_compute(
+      handle, operation, operation, &alpha, descrA_.GetDescription(),
+      descrB_.GetDescription(), &beta, descrC_.GetDescription(), CUDA_R_32F,
+      CUSPARSE_SPGEMM_DEFAULT, gemm_description_));
 }
 
 /**
@@ -237,132 +281,4 @@ void SparseMatrixMultiplication::ReuseCopy(cusparseHandle_t handle) {
       buffer5.data()));
 }
 
-/**
- * @brief Initializes sparse matrix multiplication for new matrix structures
- *
- * Performs the complete initialization sequence for sparse matrix
- * multiplication when the structure of input matrices changes. This includes:
- * 1. Creating matrix descriptors for A, B, and C
- * 2. Estimating work requirements
- * 3. Analyzing nonzero patterns
- * 4. Allocating result matrix storage
- * 5. Preparing for value computation
- *
- * The function is optimized for the case where:
- * - matrixA is J^T (Jacobian transpose)
- * - matrixB is J (Jacobian)
- * - matrixC is the Hessian approximation (J^T * J)
- *
- * @param stream CUDA stream for asynchronous execution
- * @param handle cuSPARSE handle for the operation
- * @param matrixA Left operand matrix (typically J^T)
- * @param matrixB Right operand matrix (typically J)
- * @param matrixC[out] Result matrix (resized and prepared for computation)
- *
- * @throws cusparse_exception if GEMM initialization fails
- */
-void SparseMatrixMultiplication::TryInitializeGEMM(
-    cudaStream_t stream, cusparseHandle_t handle,
-    const CSRSparseMatrix& matrixA, const CSRSparseMatrix& matrixB,
-    CSRSparseMatrix& matrixC) {
-  auto h1 = std::hash<CSRSparseMatrix>()(matrixA);
-  auto h2 = std::hash<CSRSparseMatrix>()(matrixB);
-
-  if (h1 == matrixA_hash_ && h2 == matrixB_hash_) {
-    return;
-  }
-
-  matrixA_hash_ = h1;
-  matrixB_hash_ = h2;
-
-  // MatrixA corresponds to JT
-  // MatrixB corresponds to J
-  // MatrixC corresponds to Hessian
-  int num_rows, num_cols, num_nonzeros;
-  ExtractMatrixMetadata(stream, matrixB, num_rows, num_cols, num_nonzeros);
-
-  descrA_ = std::move(
-      cuSPARSEMatrixDescription(num_cols, num_rows, num_nonzeros, matrixA));
-  descrB_ = std::move(
-      cuSPARSEMatrixDescription(num_rows, num_cols, num_nonzeros, matrixB));
-  descrC_ = std::move(cuSPARSEMatrixDescription(num_cols, num_cols));
-
-  EstimateWork(handle);
-  ReuseNonzeros(handle);
-
-  // Clear the unnecessary data;
-  buffer1.clear();
-  buffer2.clear();
-
-  // Obtain the estimated size of the output matrix
-  int64_t C_num_rows, C_num_cols, C_nnz;
-  THROW_ON_CUSPARSE_ERROR(cusparseSpMatGetSize(
-      descrC_.GetDescription(), &C_num_rows, &C_num_cols, &C_nnz));
-
-  // Resize the output matrix accordingly
-  matrixC.row_offsets.resize(C_num_rows + 1);
-  matrixC.col_ids.resize(C_nnz);
-  matrixC.values.resize(C_nnz, 0);
-
-  descrC_.UpdatePointers(matrixC);
-  ReuseCopy(handle);
-
-  // Clear the unnecessary data;
-  buffer3.clear();
-}
-
-/**
- * @brief Performs sparse matrix multiplication C = A * B
- *
- * Efficiently multiplies two sparse matrices using cuSPARSE's reuse API.
- * The function uses hash-based caching to detect when matrix structures
- * have changed, only re-initializing expensive setup operations when necessary.
- * This makes repeated multiplications with the same sparsity pattern very fast.
- *
- * The function is optimized for the specific use case where:
- * - matrixA represents J^T (Jacobian transpose)
- * - matrixB represents J (Jacobian matrix)
- * - matrixC represents the Hessian approximation (J^T * J)
- *
- * @param stream CUDA stream for asynchronous execution
- * @param matrixA Left operand sparse matrix
- * @param matrixB Right operand sparse matrix
- * @param matrixC[out] Result matrix C = A * B
- *
- * @throws cusparse_exception if matrix multiplication fails
- * @throws cuda_exception if CUDA operations fail
- *
- * @note The result matrix C is automatically resized if the input matrix
- *       structures have changed since the last multiplication.
- */
-void SparseMatrixMultiplication::Multiply(cudaStream_t stream,
-                                          const CSRSparseMatrix& matrixA,
-                                          const CSRSparseMatrix& matrixB,
-                                          CSRSparseMatrix& matrixC) {
-  // MatrixA corresponds to JT
-  // MatrixB corresponds to J
-  // MatrixC corresponds to Hessian
-  auto handle = handle_.GetHandle(stream);
-
-  // Check if the structure of inputs hasnt changed, s.t. we dont
-  // do the result analisys in vain.
-  // If the structure of the jacobian has changed, recalculate
-  // result structure and prepare working buffers.
-  TryInitializeGEMM(stream, handle, matrixA, matrixB, matrixC);
-
-  int64_t C_num_rows, C_num_cols, C_nnz;
-  THROW_ON_CUSPARSE_ERROR(cusparseSpMatGetSize(
-      descrC_.GetDescription(), &C_num_rows, &C_num_cols, &C_nnz));
-
-  assert(matrixC.row_offsets.size() == C_num_rows + 1);
-  assert(matrixC.col_ids.size() == C_nnz);
-  assert(matrixC.values.size() == C_nnz);
-
-  constexpr float alpha = 1;
-  constexpr float beta = 0;
-  THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_compute(
-      handle, operation, operation, &alpha, descrA_.GetDescription(),
-      descrB_.GetDescription(), &beta, descrC_.GetDescription(), CUDA_R_32F,
-      CUSPARSE_SPGEMM_DEFAULT, gemm_description_));
-}
 }  // namespace cunls

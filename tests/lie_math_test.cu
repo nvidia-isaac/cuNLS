@@ -872,4 +872,125 @@ TEST_F(LieMathTest, InverseSE3) {
   }
 }
 
+/**
+ * @brief Tests LogSO3 on rotations near and at 180 degrees.
+ *
+ * Verifies that:
+ * 1. Exact 180° rotation about each axis produces a twist with magnitude π.
+ * 2. Near-180° rotations produce finite (non-NaN) twists.
+ * 3. ExpSO3(LogSO3(R)) ≈ R for these edge-case rotations.
+ */
+TEST_F(LieMathTest, LogSO3_180DegreeRotation) {
+  // Build rotation matrices for 180° about x, y, z axes and several
+  // near-180° angles.
+  constexpr float pi = static_cast<float>(M_PI);
+  const float angles[] = {pi, pi - 1e-4f, pi - 1e-3f, pi - 1e-2f};
+  const float axes[][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1},
+                           {0.5774f, 0.5774f, 0.5774f}};
+  const size_t num_cases = sizeof(angles) / sizeof(angles[0]) *
+                           sizeof(axes) / sizeof(axes[0]);
+
+  std::vector<float> rotations_host(num_cases * 9);
+  size_t idx = 0;
+  for (float angle : angles) {
+    for (const auto& ax : axes) {
+      float nx = ax[0], ny = ax[1], nz = ax[2];
+      float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+      nx /= len; ny /= len; nz /= len;
+      float c = std::cos(angle), s = std::sin(angle);
+      float t = 1.0f - c;
+      float* R = rotations_host.data() + idx * 9;
+      R[0] = t * nx * nx + c;
+      R[1] = t * nx * ny - s * nz;
+      R[2] = t * nx * nz + s * ny;
+      R[3] = t * nx * ny + s * nz;
+      R[4] = t * ny * ny + c;
+      R[5] = t * ny * nz - s * nx;
+      R[6] = t * nx * nz - s * ny;
+      R[7] = t * ny * nz + s * nx;
+      R[8] = t * nz * nz + c;
+      idx++;
+    }
+  }
+
+  DeviceVector<float> rotations_device(rotations_host);
+  DeviceVector<float> twists_out(num_cases * 3);
+  DeviceVector<float> rotations_roundtrip(num_cases * 9);
+
+  CudaStream stream;
+  ComputeLogSO3(stream.GetStream(),
+                rotations_device.data(), 3, 9, 3, num_cases,
+                twists_out.data());
+  ComputeExpSO3(stream.GetStream(),
+                twists_out.data(), 3, 3, 9, num_cases,
+                rotations_roundtrip.data());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> twists_host(num_cases * 3);
+  twists_out.CopyToHost(twists_host.data(), twists_host.size());
+  std::vector<float> rt_host(num_cases * 9);
+  rotations_roundtrip.CopyToHost(rt_host.data(), rt_host.size());
+
+  idx = 0;
+  for (float angle : angles) {
+    for (size_t a = 0; a < sizeof(axes) / sizeof(axes[0]); a++) {
+      SCOPED_TRACE("angle=" + std::to_string(angle) +
+                   " axis_idx=" + std::to_string(a));
+      const float* tw = twists_host.data() + idx * 3;
+      float mag = std::sqrt(tw[0] * tw[0] + tw[1] * tw[1] + tw[2] * tw[2]);
+      EXPECT_TRUE(std::isfinite(tw[0]));
+      EXPECT_TRUE(std::isfinite(tw[1]));
+      EXPECT_TRUE(std::isfinite(tw[2]));
+      float angle_tol = (angle > 3.0f) ? 0.1f : 5e-3f;
+      EXPECT_NEAR(mag, angle, angle_tol);
+
+      const float* R_orig = rotations_host.data() + idx * 9;
+      const float* R_rt = rt_host.data() + idx * 9;
+      float rt_tol = (angle > 3.0f) ? 0.1f : 5e-3f;
+      for (int k = 0; k < 9; k++) {
+        EXPECT_NEAR(R_orig[k], R_rt[k], rt_tol);
+      }
+      idx++;
+    }
+  }
+}
+
+/**
+ * @brief Tests LogSO3 on rotation matrices with trace slightly outside [-1,3]
+ * due to simulated floating-point drift.
+ */
+TEST_F(LieMathTest, LogSO3_TraceOutOfRange) {
+  // Identity with trace nudged slightly above 3
+  std::vector<float> rotations_host = {
+      1.0f + 1e-6f, 0.0f, 0.0f,
+      0.0f, 1.0f + 1e-6f, 0.0f,
+      0.0f, 0.0f, 1.0f + 1e-6f,
+      // 180° about x with trace nudged below -1
+      1.0f, 0.0f, 0.0f,
+      0.0f, -1.0f - 1e-6f, 0.0f,
+      0.0f, 0.0f, -1.0f - 1e-6f,
+  };
+  const size_t num_cases = 2;
+
+  DeviceVector<float> rotations_device(rotations_host);
+  DeviceVector<float> twists_out(num_cases * 3);
+
+  CudaStream stream;
+  ComputeLogSO3(stream.GetStream(),
+                rotations_device.data(), 3, 9, 3, num_cases,
+                twists_out.data());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> twists_host(num_cases * 3);
+  twists_out.CopyToHost(twists_host.data(), twists_host.size());
+
+  for (size_t i = 0; i < num_cases; i++) {
+    SCOPED_TRACE("case " + std::to_string(i));
+    for (int j = 0; j < 3; j++) {
+      EXPECT_TRUE(std::isfinite(twists_host[i * 3 + j]))
+          << "NaN/Inf in twist[" << j << "]";
+    }
+  }
+}
+
 }  // namespace cunls

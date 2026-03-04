@@ -20,8 +20,12 @@
 #include <cudss.h>
 
 #include <cassert>
+#include <cmath>
+#include <cstdlib>
+#include <sstream>
 
 #include "cunls/common/cudss_helper.h"
+#include "cunls/common/log.h"
 
 namespace cunls {
 
@@ -52,10 +56,23 @@ cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
       cudss_config_(GetOrderingType(options.mode), options.nthreads) {}
 
 /** @copydoc cuDSSLinearSolver::Initialize */
-void cuDSSLinearSolver::Initialize(void* handle,
+bool cuDSSLinearSolver::Initialize(void* handle,
                                    const CSRSparseMatrix& spd_matrix,
                                    const dvector<float>& rhs,
                                    dvector<float>& result) {
+  size_t matrix_size = spd_matrix.NumRows();
+  if (matrix_size != rhs.size()) {
+    LogError("LHS size: {} does not match RHS size: {}", matrix_size,
+             rhs.size());
+    return false;
+  }
+
+  if (matrix_size != result.size()) {
+    LogError("LHS size: {} does not match result size: {}", matrix_size,
+             result.size());
+    return false;
+  }
+
   auto dss_handle = reinterpret_cast<cudssHandle_t>(handle);
   assert(dss_handle != nullptr && "Invalid cuDSS handle");
   auto cudss_data =
@@ -94,16 +111,30 @@ void cuDSSLinearSolver::Initialize(void* handle,
                                         cfg, cudss_data, desc_m, desc_result,
                                         desc_rhs));
   }
+
+  return true;
 }
 
 /** @copydoc cuDSSLinearSolver::Solve */
-void cuDSSLinearSolver::Solve(void* handle, const CSRSparseMatrix& spd_matrix,
+bool cuDSSLinearSolver::Solve(void* handle, const CSRSparseMatrix& spd_matrix,
                               const dvector<float>& rhs,
                               dvector<float>& result) {
   size_t matrix_size = spd_matrix.NumRows();
 
-  if (result.size() != matrix_size) {
-    result.resize(matrix_size);
+  if (matrix_size != rhs.size()) {
+    LogError("LHS size: {} does not match RHS size: {}", matrix_size,
+             rhs.size());
+    return false;
+  }
+
+  if (matrix_size != result.size()) {
+    LogError("LHS size: {} does not match result size: {}", matrix_size,
+             result.size());
+    return false;
+  }
+
+  if (matrix_size == 0) {
+    return true;
   }
 
   auto dss_handle = reinterpret_cast<cudssHandle_t>(handle);
@@ -142,6 +173,8 @@ void cuDSSLinearSolver::Solve(void* handle, const CSRSparseMatrix& spd_matrix,
   // Solve the linear system
   THROW_ON_CUDSS_ERROR(cudssExecute(dss_handle, CUDSS_PHASE_SOLVE, cfg,
                                     cudss_data, desc_m, desc_result, desc_rhs));
+
+  return true;
 }
 
 }  // namespace cunls

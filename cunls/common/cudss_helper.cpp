@@ -147,7 +147,7 @@ int cuDSSDeviceMemPoolDealloc(void* ctx, void* ptr, size_t size,
 void SetcuDSSDeviceMemHandler(void* handle, cuDSSDeviceMemPool& pool,
                               const char* handler_name) {
   if (handle == nullptr) {
-    throw std::invalid_argument("SetcuDSSDeviceMemHandler received null handle");
+    return;
   }
 
   cudssDeviceMemHandler_t handler{};
@@ -161,15 +161,18 @@ void SetcuDSSDeviceMemHandler(void* handle, cuDSSDeviceMemPool& pool,
                CUDSS_ALLOCATOR_NAME_LEN);
   handler.name[CUDSS_ALLOCATOR_NAME_LEN - 1] = '\0';
 
-  auto status = cudssSetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle),
-                                         &handler);
-  if (status == CUDSS_STATUS_NOT_SUPPORTED) {
-    // Some cuDSS builds do not expose custom allocator support.
-    // In that case keep using the default allocator.
-    WARN_ON_CUDSS_ERROR(status);
+  DetachcuDSSDeviceMemHandler(handle);
+
+  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(
+      reinterpret_cast<cudssHandle_t>(handle), &handler));
+}
+
+void DetachcuDSSDeviceMemHandler(void* handle) {
+  if (handle == nullptr) {
     return;
   }
-  THROW_ON_CUDSS_ERROR(status);
+  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(
+      reinterpret_cast<cudssHandle_t>(handle), nullptr));
 }
 
 /**

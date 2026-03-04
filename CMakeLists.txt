@@ -117,11 +117,16 @@ if(BUILD_TESTING)
     tests/dense_matrix_ops_test.cpp
     tests/utils_test.cpp
     tests/device_vector_test.cpp
+    tests/sba_minimizer_test.cpp
+    tests/pgo_minimizer_test.cpp
   )
 
   set_target_properties(nls_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   )
+
+  target_compile_definitions(nls_tests PRIVATE
+    "CUNLS_TEST_DATA_DIR=\"${CMAKE_SOURCE_DIR}/tests/data\"")
 
   set(TEST_LIBS cunls GTest::gtest_main)
   if(ENABLE_PROFILING)

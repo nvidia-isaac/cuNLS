@@ -213,14 +213,39 @@ __device__ void compute_log_so3(const float* rotation_matrix,
     return;
   }
 
-  if (fabsf(trace + 1.0f) < tol) {
-    // case of 180 degree rotation
+  float cos_theta = fminf(1.0f, fmaxf(-1.0f, 0.5f * (trace - 1.0f)));
+  float theta = acosf(cos_theta);
+  float sin_theta = sinf(theta);
+
+  if (sin_theta < tol) {
+    // theta ≈ π (or ≈ 0, already handled above): the standard formula
+    // has a 0/0 singularity.  Extract the axis from the column of (R + I)
+    // with the largest diagonal.  For theta = π, R = 2nnᵀ − I, so the
+    // largest R[j][j] = 2n_j² − 1 gives the best-conditioned axis component.
+    int best = 0;
+    float best_diag = rotation_matrix[0];
+    float d1 = rotation_matrix[rotation_pitch + 1];
+    float d2 = rotation_matrix[2 * rotation_pitch + 2];
+    if (d1 > best_diag) { best = 1; best_diag = d1; }
+    if (d2 > best_diag) { best = 2; best_diag = d2; }
+
+    // Read only the chosen column of (R + I) and normalize
+    float v0 = rotation_matrix[best] + ((best == 0) ? 1.0f : 0.0f);
+    float v1 = rotation_matrix[rotation_pitch + best] +
+               ((best == 1) ? 1.0f : 0.0f);
+    float v2 = rotation_matrix[2 * rotation_pitch + best] +
+               ((best == 2) ? 1.0f : 0.0f);
+    float sq = v0 * v0 + v1 * v1 + v2 * v2;
+    if (sq > 0.0f) {
+      float scale = theta * __frsqrt_rn(sq);
+      twist[0] = v0 * scale;
+      twist[1] = v1 * scale;
+      twist[2] = v2 * scale;
+    }
     return;
   }
 
-  float theta = acosf(0.5f * (trace - 1));
-  float sin = sinf(theta);
-  float k = (0.5 * theta) / sin;
+  float k = (0.5f * theta) / sin_theta;
 
   twist[0] = k * (rotation_matrix[2 * rotation_pitch + 1] -
                   rotation_matrix[1 * rotation_pitch + 2]);

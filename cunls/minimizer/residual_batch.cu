@@ -17,7 +17,6 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
-#include <thrust/device_vector.h>
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/residual_batch.h"
@@ -191,12 +190,19 @@ __device__ void outer_product(const float* __restrict__ v,
   }
 }
 
+// Shared memory layout for scale_jacobians_kernel: sh_r[residual_dim],
+// sh_partial[WARP_SIZE][WARP_SIZE], sh_dot[WARP_SIZE].
+#define SCALE_JACOB_SHMEM_R(residual_dim) (residual_dim)
+#define SCALE_JACOB_SHMEM_PARTIAL (WARP_SIZE * WARP_SIZE)
+#define SCALE_JACOB_SHMEM_DOT (WARP_SIZE)
+
 /**
  * @brief CUDA kernel to scale Jacobians by the robust loss function correction.
  *
- * Constructs the scaling matrix S = sqrt(rho') * (I - alpha * r * r^T) and
- * left-multiplies the Jacobian block by S for each residual. Uses shared
- * memory for the outer product and scaling matrix computation.
+ * Uses S*v = sqrt(rho')*(v - alpha*(r'*v)*r) so the full scaling matrix S is
+ * never stored. For each column J_col we compute dot = r'*J_col, then
+ * (S*J)_col = sqrt_rho1*(J_col - alpha*dot*r). Reduces shared memory and
+ * register pressure vs building S explicitly.
  *
  * @param residuals Residual values (num_residuals * residual_dim).
  * @param[in,out] jacobians Jacobian values, scaled in-place.
@@ -207,7 +213,7 @@ __device__ void outer_product(const float* __restrict__ v,
  * @param num_cols Number of Jacobian columns (sum of state block sizes).
  *
  * Grid: (1, num_residuals), Block: (WARP_SIZE, WARP_SIZE).
- * Shared memory: (residual_dim^2 + residual_dim * WARP_SIZE) * sizeof(float).
+ * Shared memory: (residual_dim + WARP_SIZE*WARP_SIZE + WARP_SIZE) * sizeof(float).
  */
 __global__ void scale_jacobians_kernel(float* residuals, float* jacobians,
                                        float* squared_error, float3* rho_coeffs,
@@ -215,66 +221,74 @@ __global__ void scale_jacobians_kernel(float* residuals, float* jacobians,
                                        int num_cols) {
   cg::thread_block block = cg::this_thread_block();
   cg::thread_block_tile<WARP_SIZE> tile = cg::tiled_partition<WARP_SIZE>(block);
-  extern __shared__ float sh_scaling_matrix[];
-  float* sh_temp = sh_scaling_matrix + residual_dim * residual_dim;
 
-  int thread_id = block.thread_rank();
+  extern __shared__ float sh[];
+  float* sh_r = sh;
+  float* sh_partial = sh + SCALE_JACOB_SHMEM_R(residual_dim);
+  float* sh_dot = sh_partial + SCALE_JACOB_SHMEM_PARTIAL;
 
-  float sqrt_rho1 = 0;
-  float alpha = 0;
+  const int tx = threadIdx.x;
+  const int ty = threadIdx.y;
+  const int row_offset = residual_dim * blockIdx.y;
+  const float* res_base = residuals + row_offset;
 
-  {
-    // Calculate scalar coefficients first.
-    // First lane of each warp reads the data.
-    // Consecutive warps may access same addresses, but since warps are
-    // different, no uncoaleased access happens.
-    if (tile.thread_rank() == 0) {
-      float sq_error = squared_error[blockIdx.y];
-      auto rho = rho_coeffs[blockIdx.y];
-
-      sqrt_rho1 = sqrtf(rho.y);
-      alpha = jacobian_scaling_alpha(sq_error, rho);
-    }
-
-    // Populate data across the warp
-    sqrt_rho1 = tile.shfl(sqrt_rho1, 0);
-    alpha = tile.shfl(alpha, 0);
+  // Lane 0 loads coefficients and broadcasts
+  float sqrt_rho1 = 0.f;
+  float alpha = 0.f;
+  if (tile.thread_rank() == 0) {
+    float sq_error = squared_error[blockIdx.y];
+    float3 rho = rho_coeffs[blockIdx.y];
+    sqrt_rho1 = sqrtf(rho.y);
+    alpha = jacobian_scaling_alpha(sq_error, rho);
   }
+  sqrt_rho1 = tile.shfl(sqrt_rho1, 0);
+  alpha = tile.shfl(alpha, 0);
 
-  // Calculate the outer product of the residual with all threads in the block
-  outer_product(residuals + residual_dim * blockIdx.y, sh_scaling_matrix,
-                residual_dim, thread_id);
-  block.sync();
-
-  // Scale outer product to obtain the scaling matix
-  for (int row = threadIdx.y; row < residual_dim; row += blockDim.y) {
-    for (int col = threadIdx.x; col < residual_dim; col += blockDim.x) {
-      float one_on_diag = row == col ? 1.f : 0.f;
-      sh_scaling_matrix[row * residual_dim + col] =
-          sqrt_rho1 *
-          (one_on_diag - alpha * sh_scaling_matrix[row * residual_dim + col]);
-    }
+  // Load residual into shared memory (cooperative)
+  for (int i = ty * blockDim.x + tx; i < residual_dim; i += blockDim.x * blockDim.y) {
+    sh_r[i] = res_base[i];
   }
   block.sync();
-  // // Multiply the jacobian matrix by the scaling matrix from the left
-  int row_offset = residual_dim * blockIdx.y;
 
   assert(blockDim.x == WARP_SIZE);
   assert(blockDim.y == WARP_SIZE);
 
-  for (int col = threadIdx.x; col < num_cols; col += blockDim.x) {
-    for (int row = threadIdx.y; row < residual_dim; row += blockDim.y) {
-      float sum = 0;
-      for (int k = 0; k < residual_dim; k++) {
-        sum += sh_scaling_matrix[row * residual_dim + k] *
-               jacobians[num_cols * (row_offset + k) + col];
+  // Process 32 columns per batch. S*J_col = sqrt_rho1*(J_col - alpha*(r'*J_col)*r).
+  // Use fixed iteration count so all threads hit the same block.sync()s (avoids
+  // deadlock when num_cols is not a multiple of WARP_SIZE).
+  const int num_col_batches = (num_cols + blockDim.x - 1) / blockDim.x;
+  for (int batch = 0; batch < num_col_batches; batch++) {
+    const int col = batch * blockDim.x + tx;
+    const bool active = (col < num_cols);
+
+    // Partial dot: r'*J_col over rows this thread owns
+    float partial = 0.f;
+    if (active) {
+      for (int row = ty; row < residual_dim; row += blockDim.y) {
+        partial += sh_r[row] * jacobians[num_cols * (row_offset + row) + col];
       }
-      sh_temp[WARP_SIZE * row + threadIdx.x] = sum;
+    }
+    sh_partial[ty * WARP_SIZE + tx] = partial;
+    block.sync();
+
+    // Reduce partials to get dot = r'*J_col (one thread per column)
+    if (ty == 0) {
+      float dot = 0.f;
+      for (int i = 0; i < WARP_SIZE; i++) {
+        dot += sh_partial[i * WARP_SIZE + tx];
+      }
+      sh_dot[tx] = dot;
     }
     block.sync();
-    for (int row = threadIdx.y; row < residual_dim; row += blockDim.y) {
-      jacobians[num_cols * (row_offset + row) + col] =
-          sh_temp[WARP_SIZE * row + threadIdx.x];
+
+    float dot = sh_dot[tx];
+    const float scale = sqrt_rho1 * alpha * dot;
+
+    if (active) {
+      for (int row = ty; row < residual_dim; row += blockDim.y) {
+        int idx = num_cols * (row_offset + row) + col;
+        jacobians[idx] = sqrt_rho1 * jacobians[idx] - scale * sh_r[row];
+      }
     }
     block.sync();
   }
@@ -340,12 +354,15 @@ bool ResidualBatch::Evaluate(float* cost, float* residuals, float* jacobians,
   size_t num_residuals = factor_batch_->NumFactors();
   size_t residual_dim = factor_batch_->ResidualsSize();
 
-  // allocating CUDA memory at runtime
-  thrust::device_vector<float> squared_error_(num_residuals);
-  thrust::device_vector<float3> robustifier_coeffs_(num_residuals);
+  if (squared_error_.size() < num_residuals) {
+    squared_error_.resize(num_residuals);
+  }
+  if (robustifier_coeffs_.size() < num_residuals) {
+    robustifier_coeffs_.resize(num_residuals);
+  }
 
-  auto sq_err_ptr = thrust::raw_pointer_cast(squared_error_.data());
-  auto rho_ptr = thrust::raw_pointer_cast(robustifier_coeffs_.data());
+  float* sq_err_ptr = squared_error_.data();
+  float3* rho_ptr = robustifier_coeffs_.data();
 
   {
     // Calculate squared error
@@ -373,7 +390,8 @@ bool ResidualBatch::Evaluate(float* cost, float* residuals, float* jacobians,
       dim3 threads(WARP_SIZE, WARP_SIZE);
 
       size_t sh_mem_size =
-          (residual_dim * residual_dim + residual_dim * WARP_SIZE) *
+          (SCALE_JACOB_SHMEM_R(residual_dim) + SCALE_JACOB_SHMEM_PARTIAL +
+           SCALE_JACOB_SHMEM_DOT) *
           sizeof(float);
 
       int num_cols = 0;
