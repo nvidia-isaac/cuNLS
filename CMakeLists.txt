@@ -7,19 +7,18 @@ project(cunls LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(BUILD_TESTING OFF)
+option(BUILD_SHARED_LIBS "Build shared library (OFF for static)" ON)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+find_package(CUDAToolkit REQUIRED)
+
 include(FetchContent)
-
-FetchContent_Declare(
-  spdlog
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.3.zip
-)
-FetchContent_MakeAvailable(spdlog)
-
+include(cmake/AddSpdlog.cmake)
 include(cmake/AddCUDSS.cmake)
+include(cmake/BundleStaticDeps.cmake)
+
+add_spdlog()
 option(LOCAL_CUDSS_BUILD "Build cuDSS locally" ON)
 set(CUDSS_BUILD_PATH "${PROJECT_SOURCE_DIR}/libs/cudss")
 
@@ -28,7 +27,7 @@ if(NOT LOCAL_CUDSS_BUILD)
 endif()
 add_cudss(CUDSS_BUILD_PATH "${CUDSS_BUILD_PATH}")
 
-set(CUNLS_LIBS spdlog::spdlog cudart cusparse cublas cusolver cudss)
+set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver cudss)
 
 option(ENABLE_PROFILING "Enable profiling" OFF)
 if(ENABLE_PROFILING)
@@ -50,8 +49,8 @@ include_directories(
 # Add submodules
 add_subdirectory(cunls)
 
-# Build shared library from object libraries
-add_library(cunls SHARED
+# Build library from object libraries (SHARED or STATIC per BUILD_SHARED_LIBS)
+add_library(cunls
   $<TARGET_OBJECTS:cunls_common>
   $<TARGET_OBJECTS:cunls_factor>
   $<TARGET_OBJECTS:cunls_linear_solver>
@@ -61,16 +60,49 @@ add_library(cunls SHARED
   $<TARGET_OBJECTS:cunls_robustifier>
 )
 
-target_link_libraries(cunls ${CUNLS_LIBS})
-set_target_properties(cunls PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
-# Install headers preserving directory structure
-install(DIRECTORY cunls/
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/include/cunls
-  FILES_MATCHING PATTERN "*.h"
+target_link_libraries(cunls 
+  PUBLIC CUDA::cudart
+  PRIVATE ${CUNLS_LIBS}
 )
-install(TARGETS cunls DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+
+
+if(BUILD_SHARED_LIBS)
+  set_target_properties(cunls PROPERTIES
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+else()
+  set_target_properties(cunls PROPERTIES
+      ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+  bundle_static_dependencies(cunls spdlog::spdlog cudss)
+endif()
+
+# C++ library install targets (skipped when only building Python wheel)
+if(NOT BUILD_PYTHON_BINDINGS)
+  install(DIRECTORY cunls/
+    DESTINATION include/cunls
+    FILES_MATCHING PATTERN "*.h"
+  )
+  install(TARGETS cunls
+    EXPORT cunlsTargets
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    INCLUDES DESTINATION include
+  )
+
+  install(EXPORT cunlsTargets
+    FILE cunlsTargets.cmake
+    NAMESPACE cunls::
+    DESTINATION lib/cmake/cunls
+  )
+
+  configure_file(
+    "${PROJECT_SOURCE_DIR}/cmake/cunlsConfig.cmake.in"
+    "${CMAKE_BINARY_DIR}/cunlsConfig.cmake"
+    @ONLY
+  )
+  install(FILES "${CMAKE_BINARY_DIR}/cunlsConfig.cmake"
+    DESTINATION lib/cmake/cunls
+  )
+endif()
 
 if(BUILD_TESTING)
   FetchContent_Declare(
@@ -86,7 +118,6 @@ if(BUILD_TESTING)
     nls_tests
     tests/utils.cpp
     tests/factor_batch_test.cpp
-    tests/vector_state_batch_test.cpp
     tests/problem_test.cpp
     tests/prior_vector_prior_factor_test.cpp
     tests/residual_batch_test.cpp
@@ -94,20 +125,21 @@ if(BUILD_TESTING)
     tests/jacobian_ops_test.cpp
     tests/state_batch_ops_test.cpp
     tests/sparse_matrix_test.cpp
-    tests/sparse_matrix_multiplication_test.cpp
+    tests/cusparse_matrix_multiplier_test.cpp
+    tests/fast_matrix_multiplier_test.cpp
     tests/sparse_linear_solver_test.cpp
+    tests/dense_linear_solver_test.cpp
     tests/gauss_newton_test.cpp
-    tests/se3_state_test.cpp
-    tests/so3_state_test.cpp
-    tests/so2_state_test.cpp
-    tests/se2_prior_factor_test.cpp
-    tests/so2_prior_factor_test.cpp
-    tests/so3_prior_factor_test.cpp
-    tests/se3_prior_factor_test.cpp
-    tests/similarity2_prior_factor_test.cpp
-    tests/similarity3_prior_factor_test.cpp
+    tests/so2_manifold_test.cpp
+    tests/se2_manifold_test.cpp
+    tests/so3_manifold_test.cpp
+    tests/se3_manifold_test.cpp
+    tests/sim2_manifold_test.cpp
+    tests/sim3_manifold_test.cpp
+    tests/sl4_manifold_test.cpp
+    tests/vector_manifold_test.cpp
     tests/lie_math_test.cu
-    tests/se3_between_factor_batch_test.cpp
+    tests/lie_between_factors_smoke_test.cpp
     tests/point_to_plane_factor_batch_test.cpp
     tests/point_to_point_factor_batch_test.cpp
     tests/symmetric_point_to_plane_factor_batch_test.cpp
@@ -128,7 +160,8 @@ if(BUILD_TESTING)
   target_compile_definitions(nls_tests PRIVATE
     "CUNLS_TEST_DATA_DIR=\"${CMAKE_SOURCE_DIR}/tests/data\"")
 
-  set(TEST_LIBS cunls GTest::gtest_main)
+  set(TEST_LIBS cunls GTest::gtest_main
+    CUDA::cublas CUDA::cusparse CUDA::cusolver CUDA::cudart)
   if(ENABLE_PROFILING)
     set(TEST_LIBS ${TEST_LIBS} nvtx3-cpp)
   endif()
@@ -143,6 +176,11 @@ if(ENABLE_PROFILING)
     target_compile_definitions(nls_tests PRIVATE ENABLE_PROFILING)
   endif()
 endif(ENABLE_PROFILING)
+
+option(BUILD_PYTHON_BINDINGS "Build Python bindings via nanobind" OFF)
+if(BUILD_PYTHON_BINDINGS)
+  add_subdirectory(python)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
   target_compile_options(cunls PRIVATE -fprofile-arcs -ftest-coverage)

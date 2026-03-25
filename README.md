@@ -27,12 +27,12 @@ $\left\|v\right\|^2_{\Sigma} = v^T \Sigma^{-1} v$ is the Mahalanobis norm.
 
 | Category | Details |
 |---|---|
-| **Manifold support** | SO(2), SO(3), SE(2), SE(3), Sim(2), Sim(3), Euclidean vectors |
+| **Manifold support** | SO(2), SO(3), SE(2), SE(3), Sim(2), Sim(3), SL(4), Euclidean vectors |
 | **Solvers** | Gauss-Newton, Levenberg-Marquardt with adaptive damping |
 | **Robust losses** | Huber, Cauchy, Arctan, SoftL1, Tolerant, Tukey |
-| **Built-in factors** | Reprojection, SE(3) between, point-to-point, point-to-plane, prior |
+| **Built-in factors** | Reprojection, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, prior |
 | **Custom factors** | User-defined CUDA kernels via `SizedFactorBatch` |
-| **Linear solver** | NVIDIA cuDSS integration (SlowInitFastSolve / FastInitSlowSolve) |
+| **Linear solver** | NVIDIA cuDSS integration and dense CUDA pivoted LDLT solver |
 | **Execution model** | Fully asynchronous via CUDA streams |
 
 ## Prerequisites
@@ -66,12 +66,19 @@ Example — release build with install:
 ./scripts/build_cunls_in_docker.sh <Release|Coverage> [local_install_dir]
 ```
 
-When `local_install_dir` is provided, the installed artifacts are available at:
+The Docker build produces **both** shared and static variants. Intermediate
+build directories live inside the container and are discarded; only the final
+install directory is mounted to the host.
+
+Install artifacts (default `build_docker/`, or the specified directory):
 
 ```
-<local_install_dir>/
-  include/cunls/   # headers
-  lib/             # libcunls.so
+<install_dir>/
+  include/cunls/        # headers
+  lib/
+    libcunls.so         # shared library
+    libcunls.a          # static library (with bundled deps)
+    cmake/cunls/        # CMake package config
 ```
 
 ### Direct CMake build
@@ -81,6 +88,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/cunls
 cmake --build build -j
 cmake --install build
 ```
+
+By default this builds a shared library. Pass `-DBUILD_SHARED_LIBS=OFF` to
+build a static library instead.
 
 ## Quick Start
 
@@ -184,7 +194,77 @@ Or build in Docker:
 ./examples/build_in_docker.sh Release ./artifacts/examples
 ```
 
-## Testing
+## Python Bindings (pycunls)
+
+`pycunls` exposes cuNLS to Python via [nanobind](https://github.com/wjakob/nanobind),
+with first-class [CuPy](https://cupy.dev/) interop and optional
+[NVIDIA Warp](https://github.com/NVIDIA/warp) support for writing custom
+factor kernels in Python.
+
+### Build the wheel in Docker
+
+Requires Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+
+```bash
+./scripts/build_pycunls_in_docker.sh [local_output_dir]
+```
+
+The output directory defaults to `./dist`. The script builds the wheel inside
+a container with the source mounted read-only. Intermediate build directories
+live inside the container and are discarded; only the final `.whl` file is
+written to the host output directory.
+
+### Build the wheel locally
+
+```bash
+cd python
+pip install scikit-build-core nanobind
+pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist
+```
+
+### Install the wheel
+
+```bash
+pip install ./dist/pycunls-*.whl
+```
+
+### Editable install for development
+
+For an editable (in-place) install that reflects source changes without
+rebuilding:
+
+```bash
+cd python
+pip install scikit-build-core nanobind
+pip install -e ".[test]" --no-build-isolation
+```
+
+This installs `pycunls` along with all test dependencies (`pytest`,
+`cupy-cuda12x`, `warp-lang`). Other optional dependency groups:
+
+```bash
+pip install -e ".[warp]"   # warp-lang only
+pip install -e ".[all]"    # all optional extras
+```
+
+### Run Python tests
+
+```bash
+pytest -v python/tests
+```
+
+### Python examples
+
+The `python/examples/` directory contains end-to-end pipelines using `pycunls`:
+
+| Example | Description |
+|---|---|
+| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy |
+| `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
+| `custom_warp_factor.py` | Custom factor kernel using NVIDIA Warp |
+| `custom_warp_state.py` | Custom state batch (positive-scalar manifold) using NVIDIA Warp |
+
+## C++ Testing
 
 ```bash
 cmake -S . -B build/tests -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON

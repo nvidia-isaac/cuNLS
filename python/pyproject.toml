@@ -1,0 +1,22 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.4"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pycunls"
+version = "0.1.0"
+description = "Python bindings for cuNLS: CUDA-accelerated nonlinear least squares solver"
+requires-python = ">=3.10"
+dependencies = ["cupy-cuda12x"]
+
+[project.optional-dependencies]
+warp = ["warp-lang"]
+test = ["pytest", "cupy-cuda12x", "warp-lang"]
+all = ["warp-lang"]
+
+[tool.scikit-build]
+cmake.source-dir = ".."
+cmake.args = ["-DBUILD_PYTHON_BINDINGS=ON", "-DBUILD_SHARED_LIBS=OFF"]
+cmake.build-type = "Release"
+wheel.packages = ["pycunls"]
+build-dir = "build/{wheel_tag}"

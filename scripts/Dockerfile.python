@@ -1,0 +1,30 @@
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+ARG CUDA_VERSION=12.8
+ARG PYTHON_VERSION=3.12
+
+RUN CUDA_VERSION_DASH=$(echo "${CUDA_VERSION}" | sed 's/\./-/g') && \
+    apt-get update && apt-get install -y --allow-change-held-packages \
+    apt-utils \
+    g++-13 \
+    gcc-13 \
+    git \
+    cmake \
+    software-properties-common \
+    curl \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-dev \
+    python${PYTHON_VERSION}-venv \
+    python3-pip && \
+    apt-get install -y --allow-change-held-packages \
+    libcusparse-dev-${CUDA_VERSION_DASH} \
+    libcusolver-dev-${CUDA_VERSION_DASH} \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python${PYTHON_VERSION} -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --upgrade pip && \
+    pip install scikit-build-core nanobind build wheel
+
+WORKDIR /cunls

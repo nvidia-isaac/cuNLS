@@ -23,5 +23,21 @@ This product includes third-party software components:
    Copyright (c) NVIDIA Corporation
    https://docs.nvidia.com/cuda/eula/index.html
 
+5. nanobind (pycunls build-time dependency)
+   License: BSD-3-Clause
+   Copyright (c) 2022 Wenzel Jakob
+   https://github.com/wjakob/nanobind
+
+6. CuPy (pycunls runtime dependency)
+   License: MIT
+   Copyright (c) 2015 Preferred Infrastructure, Inc.
+   Copyright (c) 2015 Preferred Networks, Inc.
+   https://github.com/cupy/cupy
+
+7. NVIDIA Warp (pycunls optional dependency)
+   License: Apache-2.0
+   Copyright (c) NVIDIA Corporation
+   https://github.com/NVIDIA/warp
+
 Full license texts for third-party components are provided in the
 third_party/LICENSES directory.
