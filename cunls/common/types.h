@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "device_vector.h"
+#include "pinned_vector.h"
 
 namespace cunls {
 
@@ -60,6 +61,11 @@ using Matrix = cuda::std::array<float, Dim * Dim>;
 using SE3Transform = Matrix<4>;
 
 /**
+ * @brief SL(4) homogeneous matrix (4x4, row-major, det = 1 in exact arithmetic).
+ */
+using SL4Transform = Matrix<4>;
+
+/**
  * @brief Alias for a device (GPU) vector.
  * @tparam T Element type (must be trivially copyable).
  */
@@ -72,6 +78,13 @@ using dvector = DeviceVector<T>;
  */
 template <class T>
 using hvector = std::vector<T>;
+
+/**
+ * @brief Alias for a pinned (CPU) vector (PinnedVector).
+ * @tparam T Element type.
+ */
+template <class T>
+using pvector = PinnedVector<T>;
 
 /**
  * @brief Compressed Sparse Row (CSR) matrix stored in GPU memory.

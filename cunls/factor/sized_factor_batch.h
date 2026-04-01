@@ -37,6 +37,14 @@ template <int kResidualSize, int... kStateBlockSizes>
 class SizedFactorBatch : public FactorBatch {
  public:
   /**
+   * @brief Same SizedFactorBatch specialization as this base (for wrapper types).
+   *
+   * Enables patterns like ``class Wrapper<T> : public T::sized_layout`` so
+   * wrappers share the compile-time residual and state-block layout of T.
+   */
+  using sized_layout = SizedFactorBatch<kResidualSize, kStateBlockSizes...>;
+
+  /**
    * @brief Returns the compile-time residual dimension.
    * @return kResidualSize
    */

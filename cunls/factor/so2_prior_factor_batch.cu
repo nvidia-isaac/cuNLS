@@ -44,7 +44,9 @@ __global__ void so2_prior_cost_kernel(const float* observations,
                                       float* residuals, float* jacobians,
                                       int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_factors) {
+    return;
+  }
 
   // Read current rotation matrix [c, -s, s, c]
   const float* R = state_pointers[tid];

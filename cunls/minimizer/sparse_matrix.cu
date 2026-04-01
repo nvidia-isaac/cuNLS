@@ -20,11 +20,14 @@
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/extrema.h>
+#include <thrust/fill.h>
 #include <thrust/functional.h>
 #include <thrust/gather.h>
 #include <thrust/inner_product.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform.h>
+
+#include <cassert>
 
 #include "cunls/common/cusparse_helper.h"
 #include "cunls/minimizer/sparse_matrix.h"
@@ -287,6 +290,120 @@ void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
 }
 
 /**
+ * Symmetric diagonal scaling of CSR values: A_ij *= scale[i]*scale[j].
+ * One CUDA warp per row; lanes stride over that row's nnz for coalesced access.
+ */
+__global__ void scale_symmetric_csr_rows_kernel(
+    const int* __restrict__ row_offsets, const int* __restrict__ col_ids,
+    float* __restrict__ values, const float* __restrict__ scale, int num_rows) {
+  int row = blockIdx.x * blockDim.y + threadIdx.y;
+  if (row >= num_rows) {
+    return;
+  }
+  int lane = threadIdx.x;
+  float sr = scale[row];
+  int start = row_offsets[row];
+  int end = row_offsets[row + 1];
+  for (int idx = start + lane; idx < end; idx += WARP_SIZE) {
+    int col = col_ids[idx];
+    values[idx] *= sr * scale[col];
+  }
+}
+
+void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix& matrix,
+                       const dvector<float>& scale) {
+  int num_rows = static_cast<int>(matrix.row_offsets.size() - 1);
+  assert(static_cast<int>(scale.size()) == num_rows);
+  dim3 block(WARP_SIZE, 8);
+  dim3 grid((num_rows + block.y - 1) / block.y);
+  scale_symmetric_csr_rows_kernel<<<grid, block, 0, stream>>>(
+      matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(),
+      scale.data(), num_rows);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+__global__ void inv_sqrt_floor_kernel(float* __restrict__ v, int n,
+                                      float floor_value) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) {
+    return;
+  }
+  float x = v[i];
+  if (x < floor_value) {
+    x = floor_value;
+  }
+  v[i] = rsqrtf(x);
+}
+
+void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
+                                float floor_value) {
+  int n = static_cast<int>(v.size());
+  if (n == 0) {
+    return;
+  }
+  constexpr int block_size = 256;
+  int grid = (n + block_size - 1) / block_size;
+  inv_sqrt_floor_kernel<<<grid, block_size, 0, stream>>>(v.data(), n,
+                                                         floor_value);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+/**
+ * Per-column sum of squares ||J_{:,j}||_2^2 from CSR Jacobian entries.
+ * One CUDA thread per nonzero; uses atomicAdd (O(nnz), no sort / no Thrust).
+ */
+__global__ void jacobian_accum_col_sq_atomic_kernel(
+    const int* __restrict__ col_ids, const float* __restrict__ values, int nnz,
+    float* __restrict__ col_sums) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= nnz) {
+    return;
+  }
+  float t = values[i];
+  atomicAdd(col_sums + col_ids[i], t * t);
+}
+
+__global__ void col_sq_to_inv_norm_kernel(float* __restrict__ col_sums,
+                                          int num_cols, float eps) {
+  int j = blockIdx.x * blockDim.x + threadIdx.x;
+  if (j >= num_cols) {
+    return;
+  }
+  float s = col_sums[j];
+  if (s < eps) {
+    s = eps;
+  }
+  col_sums[j] = rsqrtf(s);
+}
+
+void ComputeJacobianColumnScaling(cudaStream_t stream,
+                                  const CSRSparseMatrix& jacobian,
+                                  dvector<float>& column_scale) {
+  int num_rows = 0;
+  int num_cols = 0;
+  int num_nonzeros = 0;
+  ExtractMatrixMetadata(stream, jacobian, num_rows, num_cols, num_nonzeros);
+  column_scale.resize(static_cast<size_t>(num_cols));
+
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(
+      column_scale.data(), 0,
+      static_cast<size_t>(num_cols) * sizeof(float), stream));
+
+  constexpr int block_size = 256;
+  int grid_nnz = (num_nonzeros + block_size - 1) / block_size;
+  jacobian_accum_col_sq_atomic_kernel<<<grid_nnz, block_size, 0, stream>>>(
+      jacobian.col_ids.data(), jacobian.values.data(), num_nonzeros,
+      column_scale.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+
+  int grid_cols = (num_cols + block_size - 1) / block_size;
+  const float floor_value = 1e-12f;
+  col_sq_to_inv_norm_kernel<<<grid_cols, block_size, 0, stream>>>(
+      column_scale.data(), num_cols, floor_value);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+/**
  * Extracts the diagonal elements from a CSR sparse matrix.
  *
  * @param stream CUDA stream for asynchronous operations
@@ -328,9 +445,10 @@ void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix& matrix,
  * for optimal performance. Buffer is automatically resized as needed.
  */
 void MultiplySparseMatrixByDenseVector(
-    cudaStream_t stream, cusparseHandle_t handle, const CSRSparseMatrix& matrix,
+    cudaStream_t stream, void* handle, const CSRSparseMatrix& matrix,
     bool transpose_matrix, const dvector<float>& x, dvector<float>& result,
     dvector<uint8_t>& buffer) {
+  auto cusparse_handle = static_cast<cusparseHandle_t>(handle);
   int num_rows, num_cols, num_nonzeros;
   ExtractMatrixMetadata(stream, matrix, num_rows, num_cols, num_nonzeros);
 
@@ -342,9 +460,9 @@ void MultiplySparseMatrixByDenseVector(
   cuSPARSEVectorDescription vec_x_description(x);
   cuSPARSEVectorDescription vec_result_description(result);
 
-  auto matA = matrix_description.GetDescription();
-  auto vecX = vec_x_description.GetDescription();
-  auto vecY = vec_result_description.GetDescription();
+  auto matA = static_cast<cusparseSpMatDescr_t>(matrix_description.GetDescription());
+  auto vecX = static_cast<cusparseDnVecDescr_t>(vec_x_description.GetDescription());
+  auto vecY = static_cast<cusparseDnVecDescr_t>(vec_result_description.GetDescription());
 
   constexpr float alpha = 1;
   constexpr float beta = 0;
@@ -355,21 +473,19 @@ void MultiplySparseMatrixByDenseVector(
 
   size_t bufferSize = 0;
   THROW_ON_CUSPARSE_ERROR(cusparseSpMV_bufferSize(
-      handle, operation, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
+      cusparse_handle, operation, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
       CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
 
   buffer.resize(bufferSize);
 
   auto buffer_ptr = buffer.data();
 
-  // Execute preprocess
   THROW_ON_CUSPARSE_ERROR(cusparseSpMV_preprocess(
-      handle, operation, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
+      cusparse_handle, operation, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
       CUSPARSE_SPMV_ALG_DEFAULT, buffer_ptr));
 
-  // Compute sparse matrix by dense vector product
-  THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, operation, &alpha, matA, vecX,
-                                       &beta, vecY, CUDA_R_32F,
+  THROW_ON_CUSPARSE_ERROR(cusparseSpMV(cusparse_handle, operation, &alpha,
+                                       matA, vecX, &beta, vecY, CUDA_R_32F,
                                        CUSPARSE_SPMV_ALG_DEFAULT, buffer_ptr));
 }
 
@@ -420,10 +536,11 @@ void AddScaledDiagonal(cudaStream_t stream, float scale,
  * @param mapping Output mapping: mapping[triplet_idx] = csr_idx, or -1
  * @param buffer Temporary buffer for intermediate computations
  */
-void ConvertTripletStructureToCSR(cudaStream_t stream, cusparseHandle_t handle,
+void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
                                   const TripletSparseStructure& structure,
                                   CSRSparseMatrix& csr, dvector<int>& mapping,
                                   dvector<uint8_t>& buffer) {
+  auto cusparse_handle = static_cast<cusparseHandle_t>(handle);
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
   const auto& col_ids = structure.col_ids;
@@ -487,7 +604,7 @@ void ConvertTripletStructureToCSR(cudaStream_t stream, cusparseHandle_t handle,
 
   // Convert COO row indices to CSR row offsets
   THROW_ON_CUSPARSE_ERROR(cusparseXcoo2csr(
-      handle, coo_row_ids_ptr, number_of_nonzeros, num_rows,
+      cusparse_handle, coo_row_ids_ptr, number_of_nonzeros, num_rows,
       csr.row_offsets.data(), cusparseIndexBase_t::CUSPARSE_INDEX_BASE_ZERO));
 
   // Phase 2: Build mapping from triplet indices to CSR indices.
@@ -549,7 +666,7 @@ void ConvertTripletToCSRValues(cudaStream_t stream,
  * First computes J^T * r using sparse matrix-vector multiplication,
  * then negates the result to get -J^T * r.
  */
-void ComputeRHS(cudaStream_t stream, cusparseHandle_t handle,
+void ComputeRHS(cudaStream_t stream, void* handle,
                 const CSRSparseMatrix& jacobian,
                 const dvector<float>& residuals, dvector<float>& rhs,
                 dvector<uint8_t>& buffer) {
@@ -617,7 +734,7 @@ float ComputeWeightedSquaredStep(cudaStream_t stream,
  * Used when the weighting is represented as a full sparse matrix rather than
  * just diagonal weights.
  */
-float ComputeWeightedSquaredStep(cudaStream_t stream, cusparseHandle_t handle,
+float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
                                  const CSRSparseMatrix& matrix,
                                  const dvector<float>& step,
                                  dvector<uint8_t>& buffer) {

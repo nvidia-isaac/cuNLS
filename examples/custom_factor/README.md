@@ -33,7 +33,8 @@ first state to remove global shift ambiguity.
 5. Add:
    - custom difference factor batch for all edges
    - anchor prior factor for the first node
-6. Solve with `LevenbergMarquardtMinimizer`.
+6. Solve with `LevenbergMarquardtMinimizer` (the minimizer allocates GPU
+   workspace during initialization).
 7. Compare initial vs final MSE to validate improvement.
 
 ## Notes on memory layout

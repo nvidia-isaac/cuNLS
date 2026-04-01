@@ -65,6 +65,28 @@ target_link_libraries(cunls
   PRIVATE ${CUNLS_LIBS}
 )
 
+# Static archives bundle spdlog and cuDSS (see bundle_static_dependencies below).
+# CMake would otherwise propagate those PRIVATE deps on INTERFACE_LINK_LIBRARIES,
+# forcing consumers to find spdlog/cudss targets and link them again — duplicate
+# symbols and unnecessary dependencies. Only CUDA toolkit libs stay external.
+if(NOT BUILD_SHARED_LIBS)
+  if(ENABLE_PROFILING)
+    set_property(TARGET cunls PROPERTY INTERFACE_LINK_LIBRARIES
+      CUDA::cudart
+      $<LINK_ONLY:CUDA::cusparse>
+      $<LINK_ONLY:CUDA::cublas>
+      $<LINK_ONLY:CUDA::cusolver>
+      $<LINK_ONLY:nvtx3-cpp>
+    )
+  else()
+    set_property(TARGET cunls PROPERTY INTERFACE_LINK_LIBRARIES
+      CUDA::cudart
+      $<LINK_ONLY:CUDA::cusparse>
+      $<LINK_ONLY:CUDA::cublas>
+      $<LINK_ONLY:CUDA::cusolver>
+    )
+  endif()
+endif()
 
 if(BUILD_SHARED_LIBS)
   set_target_properties(cunls PROPERTIES
@@ -144,6 +166,7 @@ if(BUILD_TESTING)
     tests/point_to_point_factor_batch_test.cpp
     tests/symmetric_point_to_plane_factor_batch_test.cpp
     tests/reprojection_factor_batch_test.cpp
+    tests/pnp_factor_batch_test.cpp
     tests/decreasing_scale_minimizer_test.cpp
     tests/synthetic_pgo_test.cpp
     tests/dense_matrix_ops_test.cpp
@@ -151,6 +174,7 @@ if(BUILD_TESTING)
     tests/device_vector_test.cpp
     tests/sba_minimizer_test.cpp
     tests/pgo_minimizer_test.cpp
+    tests/weighted_factor_batch_test.cpp
   )
 
   set_target_properties(nls_tests PROPERTIES

@@ -24,8 +24,9 @@ The Docker build script now:
 - generates `run_all_examples.sh` to execute all examples sequentially
 
 Available examples:
-- `sparse_bundle_adjustment`: Uses `ReprojectionFactorBatch` to optimize 3D
-  points from synthetic camera observations while keeping camera poses fixed.
+- `sparse_bundle_adjustment`: Uses `ReprojectionFactorBatch` to jointly optimize
+  camera poses and 3D landmarks from synthetic observations (first pose fixed as
+  gauge anchor; remaining poses and all points optimized).
 - `pose_graph_optimization`: Uses `SE3BetweenFactorBatch` to optimize a chain
   of SE(3) poses from consecutive relative-transform measurements, with the
   first pose fixed as a gauge anchor.

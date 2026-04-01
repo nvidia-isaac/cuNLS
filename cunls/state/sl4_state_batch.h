@@ -26,15 +26,11 @@ class SL4StateBatch : public SizedStateBatch<16, 15> {
   using Base = SizedStateBatch<16, 15>;
 
   SL4StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                size_t num_blocks)
-      : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle) {}
+                size_t num_blocks);
 
   SL4StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
                 size_t num_blocks, const int* device_constant_state_ids,
-                size_t num_const_state_blocks)
-      : Base(device_ptr, num_blocks, device_constant_state_ids,
-             num_const_state_blocks),
-        cublas_handle_(cublas_handle) {}
+                size_t num_const_state_blocks);
 
   void Plus(const float* x, const float* delta, float* x_plus_delta,
             cudaStream_t stream) override;

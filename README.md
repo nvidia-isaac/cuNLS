@@ -182,10 +182,10 @@ The `examples/` directory contains complete working pipelines:
 Build all examples:
 
 ```bash
-cmake -S examples -B build/examples \
+cmake -S examples -B build/examples/all \
   -DCMAKE_BUILD_TYPE=Release \
   -DCUNLS_INSTALL_DIR=/path/to/cunls_install
-cmake --build build/examples -j
+cmake --build build/examples/all -j
 ```
 
 Or build in Docker:

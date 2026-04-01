@@ -14,7 +14,12 @@ optimization.
 - `levenberg_marquardt_minimizer.h`:
   `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer`
 - `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
-- `sparse_matrix.h`: sparse conversion, RHS, norms, and `SparseMatrixMultiplication`
+- `sparse_matrix.h`: sparse conversion, RHS, norms (free functions)
+- `sparse_matrix_multiplier.h`: `SparseMatrixMultiplier` base class, enum,
+  factory, and `SparseMatrixMultiplierPtr`
+- `cusparse_matrix_multiplier.h`: `cuSPARSESparseMatrixMultiplier` (cuSPARSE backend)
+- `fast_matrix_multiplier.h`: `FastSparseMatrixMultiplier`
+  (custom CUDA kernels)
 
 ## Solver flow
 

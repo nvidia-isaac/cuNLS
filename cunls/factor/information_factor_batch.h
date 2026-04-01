@@ -24,38 +24,45 @@
 
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/log.h"
+#include "cunls/common/type_traits.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/sized_factor_batch.h"
 
 namespace cunls {
 
-namespace {
 /**
- * @brief Helper struct for SFINAE-based type checking.
+ * @brief Applies sqrt-information matrices to a batch of residual vectors.
  *
- * Used to detect if a type T derives from SizedFactorBatch.
+ * Computes residuals[i] = sqrt_information[i] * residuals[i] in-place
+ * for each factor in the batch.
+ *
+ * @param cublas_handle Opaque cuBLAS handle (void*).
+ * @param sqrt_information Batched square-root information matrices (device).
+ * @param residuals Residual vectors, modified in-place (device).
+ * @param residual_size Dimension of each residual / information matrix.
+ * @param num_factors Number of factors in the batch.
  */
-struct DerivedFromAnySizedFactorBatchHelper {
-  template <int Dim, int... StateBlockSizes>
-  static std::true_type test(
-      const SizedFactorBatch<Dim, StateBlockSizes...>*);
-
-  /// Fallback overload for types that don't derive from SizedFactorBatch
-  static std::false_type test(...);
-};
+void ApplyInformationToResiduals(void* cublas_handle,
+                                 const float* sqrt_information,
+                                 float* residuals, size_t residual_size,
+                                 size_t num_factors);
 
 /**
- * @brief Type trait that checks if T derives from SizedFactorBatch.
+ * @brief Applies sqrt-information matrices to a batch of Jacobian matrices.
  *
- * Uses SFINAE to determine if a type is derived from any instantiation
- * of SizedFactorBatch. C++17 compatible alternative to concepts.
+ * Computes jacobians[i] = sqrt_information[i] * jacobians[i] in-place
+ * for each factor in the batch.
+ *
+ * @param cublas_handle Opaque cuBLAS handle (void*).
+ * @param sqrt_information Batched square-root information matrices (device).
+ * @param jacobians Jacobian matrices, modified in-place (device).
+ * @param residual_size Row dimension of the Jacobian / information matrix.
+ * @param jacobian_pitch Column dimension (total state-block width) of each Jacobian.
+ * @param num_factors Number of factors in the batch.
  */
-template <class T>
-struct IsDerivedFromAnySizedFactorBatch
-    : decltype(DerivedFromAnySizedFactorBatchHelper::test(
-          std::declval<T*>())){};
-
-}  // namespace
+void ApplyInformationToJacobians(void* cublas_handle,
+                                 const float* sqrt_information,
+                                 float* jacobians, size_t residual_size,
+                                 size_t jacobian_pitch, size_t num_factors);
 
 /**
  * @brief Wrapper factor that applies square-root information matrices.
@@ -74,10 +81,9 @@ struct IsDerivedFromAnySizedFactorBatch
  *       valid for the lifetime of this object. The memory layout is:
  *       [mat0: residual_size^2 floats][mat1: residual_size^2 floats]...
  */
-template <class T,
-          typename std::enable_if_t<
-              IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
-class InformationFactorBatch : public FactorBatch {
+template <class T, typename std::enable_if_t<
+                       IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
+class InformationFactorBatch : public T::sized_layout {
  public:
   using InformationMatrix = Matrix<T::residual_size_>;
 
@@ -85,57 +91,40 @@ class InformationFactorBatch : public FactorBatch {
    * @brief Constructs an InformationFactorBatch wrapper.
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
-   * @param sqrt_information_matrices_ptr Pointer to GPU device memory containing
-   *                                      square-root information matrices.
-   *                                      Must point to at least num_factors * residual_size^2
-   *                                      floats of allocated memory.
-   * @param num_factors Number of factors in the batch.
+   * @param sqrt_information_matrices_ptr Pointer to GPU device memory
+   * containing square-root information matrices. Must point to at least
+   * num_matrices * residual_size^2 floats of allocated memory.
+   * @param num_matrices Number of square-root information matrices; must equal
+   *                     the wrapped batch's ``NumFactors()``.
    * @param sized_factor_batch_args Arguments forwarded to the wrapped
-   * factor batch constructor.
+   * factor batch constructor verbatim (e.g. pass ``cublas_handle`` first
+   * when ``T`` is ``SE3BetweenFactorBatch``; for ``WeightedFactorBatch<U>``,
+   * pass ``weight`` then ``U``'s constructor arguments).
    */
   template <class... Args>
-  InformationFactorBatch(
-      cuBLASHandle& cublas_handle,
-      const InformationMatrix* sqrt_information_matrices_ptr,
-      size_t num_factors,
-      Args&&... sized_factor_batch_args)
+  InformationFactorBatch(cuBLASHandle& cublas_handle,
+                         const InformationMatrix* sqrt_information_matrices_ptr,
+                         size_t num_matrices, Args&&... sized_factor_batch_args)
       : cublas_handle_(cublas_handle),
         sqrt_information_matrices_ptr_(sqrt_information_matrices_ptr),
-        num_factors_(num_factors),
-        factor_batch_(
-            cublas_handle, std::forward<Args>(sized_factor_batch_args)...) {
-    if (num_factors_ != factor_batch_.NumFactors()) {
+        num_matrices_(num_matrices),
+        factor_batch_(std::forward<Args>(sized_factor_batch_args)...) {
+    if (num_matrices_ != factor_batch_.NumFactors()) {
       std::stringstream ss;
-      ss << "Number of sqrt information matrices must match number of factors";
+      ss << "Number of sqrt information matrices (" << num_matrices_
+         << ") must match wrapped factor batch size ("
+         << factor_batch_.NumFactors() << ")";
       LogError(ss.str());
       throw std::invalid_argument(ss.str());
     }
   }
 
   /**
-   * @brief Returns the size of residuals for each factor.
-   *
-   * @return Residual size (same as the wrapped factor)
-   */
-  size_t ResidualsSize() const final { return T::residual_size_; }
-
-  /**
    * @brief Returns the number of factors in the batch.
    *
    * @return Number of factors (same as number of information matrices)
    */
-  size_t NumFactors() const final {
-    return num_factors_;
-  }
-
-  /**
-   * @brief Returns the sizes of state blocks.
-   *
-   * @return Vector of state block sizes (delegated to wrapped factor).
-   */
-  std::vector<size_t> StateBlockSizes() const final {
-    return factor_batch_.StateBlockSizes();
-  }
+  size_t NumFactors() const final { return factor_batch_.NumFactors(); }
 
   /**
    * @brief Evaluates the factor with information matrix weighting.
@@ -159,41 +148,24 @@ class InformationFactorBatch : public FactorBatch {
     factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream);
 
     auto handle = cublas_handle_.GetHandle(stream);
-
-    constexpr float alpha = 1.0f;
-    constexpr float beta = 0.0f;
-
-    auto information_matrices_ptr = reinterpret_cast<const float*>(
+    auto info_ptr = reinterpret_cast<const float*>(
         sqrt_information_matrices_ptr_);
-
     const size_t rsize = T::residual_size_;
-
-    const size_t stride = rsize * rsize;
-    constexpr size_t inc = 1;
-
     const size_t num_factors = factor_batch_.NumFactors();
 
-    THROW_ON_CUBLAS_ERROR(cublasSgemvStridedBatched(
-        handle, CUBLAS_OP_N, rsize, rsize, &alpha, information_matrices_ptr,
-        rsize, stride, residuals, inc, rsize, &beta, residuals, inc, rsize,
-        num_factors));
+    ApplyInformationToResiduals(handle, info_ptr, residuals, rsize,
+                                num_factors);
 
     if (jacobians == nullptr) {
       return true;
     }
 
-    auto state_block_sizes = StateBlockSizes();
-
+    auto state_block_sizes = this->StateBlockSizes();
     const size_t jacobian_pitch = std::accumulate(
         state_block_sizes.begin(), state_block_sizes.end(), 0);
 
-    const size_t jacobian_stride = jacobian_pitch * ResidualsSize();
-
-    THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-        handle, CUBLAS_OP_N, CUBLAS_OP_N, jacobian_pitch, rsize, rsize, &alpha,
-        jacobians, jacobian_pitch, jacobian_stride, information_matrices_ptr,
-        rsize, stride, &beta, jacobians, jacobian_pitch, jacobian_stride,
-        num_factors));
+    ApplyInformationToJacobians(handle, info_ptr, jacobians, rsize,
+                                jacobian_pitch, num_factors);
 
     return true;
   }
@@ -204,8 +176,8 @@ class InformationFactorBatch : public FactorBatch {
   /// Pointer to user-managed device memory containing square-root information matrices.
   const InformationMatrix* sqrt_information_matrices_ptr_;
 
-  /// Number of factors in the batch.
-  size_t num_factors_;
+  /// Number of per-factor square-root information matrices (equals batch size).
+  size_t num_matrices_;
 
   cuBLASHandle& cublas_handle_;  ///< cuBLAS handle for matrix operations
 };

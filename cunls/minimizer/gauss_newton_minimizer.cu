@@ -16,9 +16,12 @@
  */
 
 #include <thrust/device_ptr.h>
+#include <thrust/functional.h>
 #include <thrust/reduce.h>
+#include <thrust/transform.h>
 
 #include <numeric>
+#include <stdexcept>
 
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
@@ -26,6 +29,7 @@
 #include "cunls/common/types.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/minimizer/residual_batch.h"
 #include "cunls/minimizer/sparse_matrix.h"
 
 namespace cunls {
@@ -43,7 +47,9 @@ GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions& options)
     : options_(options),
       solver_(
           CreateCSRSparseLinearSolver(options_.sparse_linear_solver_type,
-                                      options_.sparse_linear_solver_config)) {}
+                                      options_.sparse_linear_solver_config)),
+      gemm_(CreateSparseMatrixMultiplier(
+          options_.sparse_square_multiplier_type)) {}
 /**
  * @brief Initializes the residual vector to the correct size.
  *
@@ -65,25 +71,15 @@ void InitializeResiduals(const Problem& problem, dvector<float>& residuals) {
   }
 }
 
-/**
- * @brief Initializes the Jacobian structure in COO (triplet) format.
- *
- * Builds the sparse structure (row and column indices) for the Jacobian matrix
- * and allocates storage for the Jacobian values. The structure is built based
- * on the problem's factors and state batches.
- *
- * @param stream CUDA stream for GPU operations.
- * @param problem The optimization problem.
- * @param[out] coo_jacobian Jacobian in COO format to initialize.
- */
-void InitializeJacobian(cudaStream_t stream, const Problem& problem,
-                        SparseJacobian& coo_jacobian) {
-  BuildTripletSparseStructure(stream, problem, coo_jacobian.structure);
+void GaussNewtonMinimizer::InitializeJacobian(cudaStream_t stream,
+                                              const Problem& problem) {
+  current_state_.BuildTripletSparseStructure(stream, problem,
+                                             sparse_jacobian_.structure);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
-  size_t jacobian_size = coo_jacobian.structure.col_ids.size();
-  if (coo_jacobian.values.size() != jacobian_size) {
-    coo_jacobian.values.resize(jacobian_size);
+  size_t jacobian_size = sparse_jacobian_.structure.col_ids.size();
+  if (sparse_jacobian_.values.size() != jacobian_size) {
+    sparse_jacobian_.values.resize(jacobian_size);
   }
 }
 
@@ -108,25 +104,30 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
   const auto& residual_batches = problem.GetResidualBatches();
   size_t max_residual_dim = 0;
   size_t total_num_cost_elements = 0;
+  size_t max_workspace_floats = 0;
   for (const auto& rb : residual_batches) {
     const auto& factor_batch = rb.GetFactorBatch();
     size_t n = factor_batch->NumFactors();
     total_num_cost_elements += n;
     max_residual_dim = std::max(
         n * factor_batch->ResidualsSize(), max_residual_dim);
+    max_workspace_floats =
+        std::max(max_workspace_floats, ResidualBatchWorkspaceNumFloats(n));
   }
 
-  size_t buffer_floats = total_num_cost_elements + max_residual_dim;
+  size_t buffer_floats =
+      total_num_cost_elements + max_residual_dim + max_workspace_floats;
   if (buffer_.size() < buffer_floats * sizeof(float)) {
     buffer_.resize(buffer_floats * sizeof(float));
   }
   float* cost_ptr = reinterpret_cast<float*>(buffer_.data());
   float* residuals_ptr = reinterpret_cast<float*>(buffer_.data()) + total_num_cost_elements;
+  float* workspace_ptr = residuals_ptr + max_residual_dim;
 
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto& rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
-    rb.Evaluate(cost_ptr, residuals_ptr, nullptr, ptrs, stream);
+    rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, cost_ptr, nullptr);
     const auto& factor_batch = rb.GetFactorBatch();
     cost_ptr += factor_batch->NumFactors();
   }
@@ -157,9 +158,20 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
 void ComputeResidualAndJacobian(cudaStream_t stream, const Problem& problem,
                                 const MinimizerState& minimizer_state,
                                 dvector<float>& residuals,
-                                SparseJacobian& coo_jacobian) {
+                                SparseJacobian& coo_jacobian,
+                                dvector<uint8_t>& buffer) {
   const auto& state_pointers = minimizer_state.GetStatePointers();
   const auto& residual_batches = problem.GetResidualBatches();
+  size_t max_n = 0;
+  for (const auto& rb : residual_batches) {
+    max_n = std::max(max_n, rb.GetFactorBatch()->NumFactors());
+  }
+  size_t ws_floats = ResidualBatchWorkspaceNumFloats(max_n);
+  if (buffer.size() < ws_floats * sizeof(float)) {
+    buffer.resize(ws_floats * sizeof(float));
+  }
+  float* workspace_ptr = reinterpret_cast<float*>(buffer.data());
+
   float* residuals_ptr = residuals.data();
   float* jacobian_ptr = coo_jacobian.values.data();
 
@@ -167,7 +179,8 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem& problem,
     const auto& rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
 
-    rb.Evaluate(nullptr, residuals_ptr, jacobian_ptr, ptrs, stream);
+    rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, nullptr,
+                jacobian_ptr);
 
     const auto& factor_batch = rb.GetFactorBatch();
     size_t num_residuals =
@@ -196,6 +209,42 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem& problem,
  * @param[out] lhs Output left-hand side matrix (H = J^T J).
  * @param[out] rhs Output right-hand side vector (-J^T r).
  */
+void GaussNewtonMinimizer::ApplyColumnScalingToNormalEquations(
+    cudaStream_t stream, CSRSparseMatrix& lhs, dvector<float>& rhs) {
+  if (options_.column_scaling == ColumnScaling::None) {
+    return;
+  }
+
+  if (options_.column_scaling == ColumnScaling::HessianDiagonal) {
+    // S_ii = 1 / sqrt(H_ii) using unscaled Hessian in hessian_.
+    ExtractDiagonal(stream, hessian_, column_scale_);
+    InvertSqrtWithFloorInPlace(stream, column_scale_);
+  } else {
+    // ColumnScaling::JacobianColumnNorm: S_jj = 1 / ||J_{:,j}||_2.
+    ComputeJacobianColumnScaling(stream, csr_jacobian_, column_scale_);
+  }
+
+  // lhs becomes S H S; rhs becomes S b for b = -J^T r.
+  ScaleSymmetricCSR(stream, lhs, column_scale_);
+  auto policy = thrust::cuda::par_nosync.on(stream);
+  thrust::device_ptr<float> r_ptr(rhs.data());
+  thrust::device_ptr<float> s_ptr(column_scale_.data());
+  thrust::transform(policy, r_ptr, r_ptr + rhs.size(), s_ptr, r_ptr,
+                    thrust::multiplies<float>());
+}
+
+void GaussNewtonMinimizer::MapScaledLinearSolutionToTangentStep(
+    cudaStream_t stream, dvector<float>& step) {
+  if (options_.column_scaling == ColumnScaling::None || step.empty()) {
+    return;
+  }
+  auto policy = thrust::cuda::par_nosync.on(stream);
+  thrust::device_ptr<float> st_ptr(step.data());
+  thrust::device_ptr<float> sc_ptr(column_scale_.data());
+  thrust::transform(policy, st_ptr, st_ptr + step.size(), sc_ptr, st_ptr,
+                    thrust::multiplies<float>());
+}
+
 void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
                                        const Problem& problem,
                                        const MinimizerState& minimizer_state,
@@ -203,17 +252,19 @@ void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
                                        dvector<float>& rhs) {
   auto range = profiler_domain_.CreateDomainRange("BuildSystem");
   ComputeResidualAndJacobian(stream, problem, minimizer_state, residuals_,
-                             sparse_jacobian_);
+                             sparse_jacobian_, buffer_);
 
   // Copy values from triplet Jacobian to precomputed CSR structure using
   // mapping
   ConvertTripletToCSRValues(stream, sparse_jacobian_, csr_mapping_,
                             csr_jacobian_);
 
-  gemm_.ComputeSquaredMatrix(stream, csr_jacobian_, hessian_);
+  gemm_->ComputeSquaredMatrix(stream, problem, csr_jacobian_, hessian_);
   CopyCSRSparseMatrix(stream, hessian_, lhs);
   auto handle = cusparse_handle_.GetHandle(stream);
   ComputeRHS(stream, handle, csr_jacobian_, residuals_, rhs, buffer_);
+
+  ApplyColumnScalingToNormalEquations(stream, lhs, rhs);
 }
 
 /**
@@ -249,22 +300,19 @@ void GaussNewtonMinimizer::UpdateStates(cudaStream_t stream,
 /**
  * @brief Initializes internal data structures for optimization.
  *
- * Prepares residual vectors, Jacobian structures, and state operations
- * for the given problem. Also precomputes the Hessian (J^T J) sparsity
- * structure to avoid recomputing it on each iteration.
+ * Prepares residual vectors, Jacobian structures, and state operations for
+ * the given problem. Also precomputes the Hessian (J^T J) sparsity structure
+ * to avoid recomputing it on each iteration.
  *
  * @param stream CUDA stream for GPU operations.
  * @param problem The optimization problem to initialize for.
  */
 void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
-                                      const Problem& problem) {
+                                      Problem& problem) {
   auto range = profiler_domain_.CreateDomainRange("Initialize");
   InitializeResiduals(problem, residuals_);
-  InitializeJacobian(stream, problem, sparse_jacobian_);
+  InitializeJacobian(stream, problem);
   state_ops_.Preprocess(stream, problem.GetStateBatches());
-
-  // Initialize the cuDSS handle for the linear solver
-  solver_handle_ = cudss_handle_.GetHandle(stream);
 
   // Convert Jacobian triplet structure to CSR once. The structure doesn't
   // change across iterations; only values are updated via the mapping.
@@ -277,7 +325,7 @@ void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
                                  csr_jacobian_, csr_mapping_, buffer_);
   }
 
-  gemm_.Initialize(stream, csr_jacobian_, hessian_);
+  gemm_->Initialize(stream, problem, csr_jacobian_, hessian_);
 }
 
 /**
@@ -376,19 +424,19 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
   // No optimizable states (all constant): nothing to solve
   if (state_ops_.NumReducedStates() == 0) {
-    MinimizerState current_state(stream, problem);
-    summary.initial_cost = ComputeCost(stream, problem, current_state);
+    current_state_.Recreate(stream, problem);
+    summary.initial_cost = ComputeCost(stream, problem, current_state_);
     summary.final_cost = summary.initial_cost;
     LogMessage("No optimizable states; skipping solver.");
     return summary;
   }
 
   // Create minimizer state snapshots for current and updated states
-  MinimizerState current_state(stream, problem);
-  MinimizerState updated_state(stream, problem);
+  current_state_.Recreate(stream, problem);
+  updated_state_.Recreate(stream, problem);
 
   // Compute initial cost
-  summary.initial_cost = ComputeCost(stream, problem, current_state);
+  summary.initial_cost = ComputeCost(stream, problem, current_state_);
   summary.final_cost = summary.initial_cost;
   LogMessage("Initial cost = {}", summary.initial_cost);
 
@@ -398,17 +446,15 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
   }
 
   // Build initial linear system
-  CSRSparseMatrix lhs;
-  dvector<float> rhs;
-  BuildSystem(stream, problem, current_state, lhs, rhs);
+  BuildSystem(stream, problem, current_state_, lhs_work_, rhs_work_);
 
-  step_.resize(rhs.size());
+  step_.resize(rhs_work_.size());
 
   {
-    // Perform symbolic analysis (solver_handle_ set in Initialize)
+    // Perform symbolic analysis on the requested CUDA stream.
     auto sa_range =
         profiler_domain_.CreateDomainRange("PerformSymbolicAnalysis");
-    bool success = solver_->Initialize(solver_handle_, lhs, rhs, step_);
+    bool success = solver_->Initialize(stream, lhs_work_, rhs_work_, step_);
     if (!success) {
       std::string str = "Failed to initialize linear solver";
       LogError(str);
@@ -428,8 +474,8 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
     {
       auto solve_range = profiler_domain_.CreateDomainRange("Solve");
-      // Solve linear system: J^T J dx = -J^T r
-      bool success = solver_->Solve(solver_handle_, lhs, rhs, step_);
+      // Solve linear system: J^T J dx = -J^T r (or SHS z = S b with scaling)
+      bool success = solver_->Solve(stream, lhs_work_, rhs_work_, step_);
       if (!success) {
         std::string str = "Failed to solve linear system";
         LogError(str);
@@ -437,11 +483,13 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
       }
     }
 
+    MapScaledLinearSolutionToTangentStep(stream, step_);
+
     // Apply step: x_new = x + dx
-    UpdateStates(stream, current_state, step_, updated_state);
+    UpdateStates(stream, current_state_, step_, updated_state_);
 
     // Evaluate cost with updated states
-    float cost = ComputeCost(stream, problem, updated_state);
+    float cost = ComputeCost(stream, problem, updated_state_);
 
     LogMessage("Current cost = {}, updated cost = {}", summary.final_cost,
                cost);
@@ -456,7 +504,7 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
       LogMessage("Optimization converged");
       if (cost <= summary.final_cost) {
         summary.final_cost = cost;
-        current_state.Copy(stream, updated_state.GetStates());
+        current_state_.Copy(stream, updated_state_.GetStates());
       }
       break;
     }
@@ -477,17 +525,17 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
       consecutive_rejected = 0;
       AcceptStep(step_quality);
       summary.final_cost = cost;
-      current_state.Copy(stream, updated_state.GetStates());
+      current_state_.Copy(stream, updated_state_.GetStates());
     }
 
     // Rebuild linear system for next iteration
-    BuildSystem(stream, problem, current_state, lhs, rhs);
+    BuildSystem(stream, problem, current_state_, lhs_work_, rhs_work_);
   };
 
   LogMessage("Optimization finished");
 
   // Copy final state values back to problem
-  Copy(stream, current_state, problem);
+  Copy(stream, current_state_, problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
   return summary;

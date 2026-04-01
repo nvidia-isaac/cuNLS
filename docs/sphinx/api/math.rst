@@ -139,6 +139,24 @@ Additional parameter docs for `ComputeNegateMatrix`
 - `rows` - [in] number of rows in each matrix.
 - `cols` - [in] number of columns in each matrix.
 
+Sim(3) family
+^^^^^^^^^^^^^
+
+.. code-block:: cpp
+
+   void ComputeAdjointSim3(cudaStream_t stream, const float* transforms,
+                           size_t transform_stride, float* adjoints,
+                           size_t adjoint_stride, size_t size)
+
+ComputeAdjointSim3 parameters
+""""""""""""""""""""""""""""""
+
+- `transforms` - [in] Sim(3) transforms as row-major 4x4 matrices
+  (``[[R, t], [0, 1/s]]``).
+- `transform_stride` - [in] stride between consecutive transforms (in floats).
+- `adjoints` - [out] 7x7 adjoint matrices (row-major, flattened).
+- `adjoint_stride` - [in] stride between consecutive adjoints (in floats).
+
 Dense matrix API (`dense_matrix_ops.h`)
 ---------------------------------------
 
@@ -158,3 +176,21 @@ ComputeSqrtMatrix parameters
 - `matrix_size` - [in] matrix dimension (`N` for `N x N`).
 - `pitch` - [in] leading dimension for matrix storage.
 - `num_matrices` - [in] batch size.
+
+.. code-block:: cpp
+
+   void ScatterToRightBlock(cudaStream_t stream, const float* src,
+                            size_t block_dim, size_t src_stride, float* dst,
+                            size_t dst_pitch, size_t dst_stride,
+                            size_t num_blocks)
+
+ScatterToRightBlock parameters
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- `src` - [in] source dense NxN blocks (device pointer).
+- `block_dim` - [in] block dimension N.
+- `src_stride` - [in] stride between consecutive source blocks.
+- `dst` - [out] destination pointer (start of right sub-block).
+- `dst_pitch` - [in] leading dimension (row stride) of the destination.
+- `dst_stride` - [in] stride between consecutive destination blocks.
+- `num_blocks` - [in] number of blocks in the batch.

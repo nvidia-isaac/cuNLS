@@ -21,23 +21,28 @@
 
 #include <memory>
 
+#include "cunls/linear_solver/dense_linear_solver.h"
 #include "cunls/linear_solver/csr_sparse_linear_solver.h"
 #include "cunls/linear_solver/cudss_sparse_linear_solver.h"
 
 namespace cunls {
 
 /**
- * @brief Type of sparse linear solver to use.
+ * @brief Selects the linear solver backend for the Gauss-Newton system.
  */
 enum class SparseLinearSolverType {
-  cuDSS,  ///< cuDSS-based solver using NVIDIA's cuDSS library.
+  cuDSS,      ///< Sparse direct solver using NVIDIA's cuDSS library.
+  DenseLDLT,  ///< Converts CSR to dense and solves with a custom CUDA pivoted
+              ///< LDLT kernel.
 };
 
 /**
  * @brief Configuration struct for sparse linear solvers.
  *
- * Contains solver-specific configuration options. The active member depends
- * on the solver type specified in SparseLinearSolverType.
+ * Contains solver-specific configuration options. Only the member
+ * corresponding to the chosen SparseLinearSolverType is used:
+ *  - cuDSS: uses @c cudss_solver_options.
+ *  - DenseLDLT: no additional configuration (all fields are ignored).
  */
 struct SparseLinearSolverConfig {
   cuDSSLinearSolverOptions cudss_solver_options;

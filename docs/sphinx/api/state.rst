@@ -2,9 +2,13 @@
 State API
 ################################################################################
 
-The ``cunls/state`` module provides batched storage and **manifold** updates for
-optimization variables. State batches implement the **Plus** (retraction) operation
-so the solver can update states in tangent space while keeping them on the manifold.
+The state module provides batched storage and **manifold** updates for
+optimization variables. State batches implement the **Plus** (retraction)
+operation so the solver can update states in tangent space while keeping them on
+the manifold.
+
+**C++** — ``cunls/state``
+  |  **Python** — ``pycunls``
 
 ================================================================================
 Manifolds
@@ -14,7 +18,7 @@ Manifolds
 
 Many variables in nonlinear least squares do not live in :math:`\mathbb{R}^n` but
 on curved spaces: 2D/3D rotations (SO(2), SO(3)), rigid or similarity transforms
-(SE(2), SE(3), Sim(2), Sim(3)), or other constrained sets. Such a space is a
+(SE(2), SE(3), Sim(2), Sim(3)), projective linear groups (SL(4)), or other constrained sets. Such a space is a
 **manifold**: at each point :math:`x` there is a **tangent space** (a linear space
 of “directions”) whose dimension is the **intrinsic** dimension of the manifold.
 The **ambient space** is the larger Euclidean space in which the manifold is
@@ -293,6 +297,33 @@ Header: :code:`cunls/state/similarity3_state_batch.h`
      - :math:`[\omega; u; \lambda]`
      - row-major 4×4: :math:`[R\,|\,t;\; 0\; 0\; 0\; 1/s]` (16 floats)
 
+--------------------------------------------------------------------------------
+SL4StateBatch
+--------------------------------------------------------------------------------
+
+Header: :code:`cunls/state/sl4_state_batch.h`
+
+Projective special linear group SL(4). The tangent space is the 15-dimensional
+Lie algebra :math:`\mathfrak{sl}(4)`
+(:math:`\mathfrak{so}(4) \oplus \mathrm{sym\_off}(4) \oplus \mathrm{diag}_0(4)`).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\delta)`
+     - 16
+     - 15
+     - 4×4 matrix with unit determinant
+     - 15D :math:`\mathfrak{sl}(4)` Lie algebra
+     - row-major 4×4 (16 floats)
+
 .. _state-constructors:
 
 ================================================================================
@@ -375,3 +406,310 @@ each batch’s :cpp:func:`Plus`.
 .. cpp:function:: size_t NumReducedStates() const
 
   :returns: [out] Number of scalar optimization variables after removing constant states.
+
+================================================================================
+Python API (``pycunls``)
+================================================================================
+
+All Python state batches inherit from the abstract ``StateBatch`` base class.
+Every constructor argument documented as ``DevicePointer`` accepts either a
+``cupy.ndarray`` (the device pointer is extracted automatically via
+``.data.ptr``) or a raw ``int`` GPU device address.
+
+.. _py-state-batch-interface:
+
+--------------------------------------------------------------------------------
+Common ``StateBatch`` interface
+--------------------------------------------------------------------------------
+
+Every state batch — built-in or user-defined — exposes the following methods
+and properties.
+
+**Methods**
+
+- ``state_block_device_ptr(index: int) -> int`` — returns the GPU device
+  pointer (as an ``int``) for state block *index*.  The returned value is
+  the address of the first float in the block's ambient storage.  Use these
+  pointers to build the ``state_pointers`` list passed to
+  :ref:`Problem.add_factor_batch <py-problem-label>`.  *index* is
+  zero-based; passing a value ``>= num_state_blocks`` returns ``0`` (null
+  pointer).
+
+**Read-only properties**
+
+- **num_state_blocks** (``int``) — total number of state blocks in the
+  batch, including any constant blocks.
+- **tangent_size** (``int``) — tangent-space dimension per state block.
+  This is the number of unknowns the solver allocates per block (e.g. 6 for
+  SE(3), 3 for SO(3)).
+- **ambient_size** (``int``) — ambient/storage dimension per state block.
+  The GPU buffer stores ``num_state_blocks * ambient_size`` contiguous
+  floats (e.g. 16 for SE(3) = row-major 4×4 matrix).
+
+.. _py-vector-state-batches:
+
+------------------------------------------------------------------------------------------------------
+``pycunls.VectorStateBatch1`` / ``VectorStateBatch2`` / ``VectorStateBatch3`` / ``VectorStateBatch6``
+------------------------------------------------------------------------------------------------------
+
+Euclidean vector states where tangent and ambient dimensions coincide.  The
+suffix indicates the dimension (1, 2, 3, or 6).  Plus is simple addition:
+:math:`x \oplus \delta = x + \delta`.
+
+**Constructors**
+
+.. code-block:: python
+
+   # All optimizable:
+   sb = pycunls.VectorStateBatch3(data, num_blocks)
+
+   # With constant (frozen) blocks:
+   sb = pycunls.VectorStateBatch3(data, num_blocks, const_state_ids, num_const)
+
+- **data** (``DevicePointer``) — contiguous GPU buffer of
+  ``num_blocks × Dim`` floats.  The state batch does **not** copy the data;
+  it stores the pointer and reads/writes the buffer directly.  The caller
+  must keep the underlying allocation alive for the lifetime of the state
+  batch.
+- **num_blocks** (``int``) — number of state blocks in the batch.
+- **const_state_ids** (``DevicePointer``, optional) — GPU ``int32`` array
+  containing the zero-based indices of blocks that should be held constant
+  during optimization.  Constant blocks are excluded from the solver's
+  tangent vector; their ambient values are never modified.
+- **num_const** (``int``, optional) — number of entries in
+  *const_state_ids*.
+
+.. _py-lie-state-batches:
+
+--------------------------------------------------------------------------------
+``pycunls.SE3StateBatch``
+--------------------------------------------------------------------------------
+
+3-D rigid-body transform state batch.  Ambient = 16 (row-major 4×4
+homogeneous matrix), Tangent = 6 (twist :math:`[\omega; \rho]`).  Plus is
+right-multiplication by the exponential map:
+:math:`T \oplus \delta = T \cdot \mathrm{Exp}(\delta)`.
+
+**Constructors**
+
+.. code-block:: python
+
+   cublas = pycunls.CublasHandle()
+
+   # All optimizable:
+   sb = pycunls.SE3StateBatch(cublas, data, num_blocks)
+
+   # With constant blocks:
+   sb = pycunls.SE3StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
+  handle used internally for matrix operations in the exponential map.
+- **data** (``DevicePointer``) — contiguous GPU buffer of
+  ``num_blocks × 16`` floats (row-major 4×4 matrices).
+- **num_blocks** (``int``) — number of state blocks (poses).
+- **const_ids** (``DevicePointer``, optional) — GPU ``int32`` array of
+  constant-block indices (e.g. a gauge anchor).
+- **num_const** (``int``, optional) — number of constant blocks.
+
+--------------------------------------------------------------------------------
+``pycunls.SO3StateBatch``
+--------------------------------------------------------------------------------
+
+3-D rotation state batch.  Ambient = 9 (row-major 3×3 rotation matrix),
+Tangent = 3 (rotation vector / axis-angle).  Plus:
+:math:`R \oplus \delta = R \cdot \mathrm{Exp}(\mathrm{skew}(\delta))`.
+
+**Constructors** — same pattern as ``SE3StateBatch``:
+
+.. code-block:: python
+
+   sb = pycunls.SO3StateBatch(cublas, data, num_blocks)
+   sb = pycunls.SO3StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+- **data** — ``num_blocks × 9`` floats (row-major 3×3).
+
+--------------------------------------------------------------------------------
+``pycunls.SO2StateBatch``
+--------------------------------------------------------------------------------
+
+2-D rotation state batch.  Ambient = 4 (row-major 2×2 rotation matrix),
+Tangent = 1 (angle in radians).  Plus:
+:math:`R \oplus \delta = R \cdot \mathrm{Exp}(\delta)`.
+
+**Constructors** — same pattern as ``SE3StateBatch``:
+
+.. code-block:: python
+
+   sb = pycunls.SO2StateBatch(cublas, data, num_blocks)
+   sb = pycunls.SO2StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+- **data** — ``num_blocks × 4`` floats
+  (:math:`[\cos\theta,\,-\sin\theta,\,\sin\theta,\,\cos\theta]`).
+
+--------------------------------------------------------------------------------
+``pycunls.SE2StateBatch``
+--------------------------------------------------------------------------------
+
+2-D rigid-body transform state batch.  Ambient = 9 (row-major 3×3
+homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
+
+**Constructors** — same pattern as ``SE3StateBatch``:
+
+.. code-block:: python
+
+   sb = pycunls.SE2StateBatch(cublas, data, num_blocks)
+   sb = pycunls.SE2StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+- **data** — ``num_blocks × 9`` floats (row-major 3×3).
+
+.. _py-similarity-state-batches:
+
+--------------------------------------------------------------------------------
+``pycunls.Similarity2StateBatch``
+--------------------------------------------------------------------------------
+
+2-D similarity transform state batch.  Ambient = 9, Tangent = 4
+(:math:`[u_x, u_y, \theta, \lambda]` where :math:`\lambda = \log s`).
+
+**Constructors** — same pattern as ``SE3StateBatch``:
+
+.. code-block:: python
+
+   sb = pycunls.Similarity2StateBatch(cublas, data, num_blocks)
+   sb = pycunls.Similarity2StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+--------------------------------------------------------------------------------
+``pycunls.Similarity3StateBatch``
+--------------------------------------------------------------------------------
+
+3-D similarity transform state batch.  Ambient = 16, Tangent = 7
+(:math:`[\omega; u; \lambda]` where :math:`\lambda = \log s`).
+
+**Constructors** — same pattern as ``SE3StateBatch``:
+
+.. code-block:: python
+
+   sb = pycunls.Similarity3StateBatch(cublas, data, num_blocks)
+   sb = pycunls.Similarity3StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+--------------------------------------------------------------------------------
+``pycunls.SL4StateBatch``
+--------------------------------------------------------------------------------
+
+SL(4) state batch.  Ambient = 16 (row-major 4×4 matrix with unit determinant),
+Tangent = 15 (:math:`\mathfrak{sl}(4)` Lie algebra).
+Plus: :math:`T \oplus \delta = T \cdot \mathrm{Exp}(\delta)`.
+
+**Constructors** — same pattern as ``SE3StateBatch``:
+
+.. code-block:: python
+
+   sb = pycunls.SL4StateBatch(cublas, data, num_blocks)
+   sb = pycunls.SL4StateBatch(cublas, data, num_blocks, const_ids, num_const)
+
+- **data** — ``num_blocks × 16`` floats (row-major 4×4).
+
+.. _py-custom-state-batch:
+
+--------------------------------------------------------------------------------
+``pycunls.CustomStateBatch``
+--------------------------------------------------------------------------------
+
+Base class for user-defined state batches.  Subclass this to implement a
+manifold retraction that is not available as a built-in (e.g. positive
+scalars, quaternions, constrained subspaces).
+
+**Constructor**
+
+.. code-block:: python
+
+   class MyState(pycunls.CustomStateBatch):
+       def __init__(self, data, num_blocks):
+           super().__init__(
+               data,
+               ambient_size=...,
+               tangent_size=...,
+               num_blocks=num_blocks,
+           )
+
+- **data** (``DevicePointer``) — contiguous GPU buffer of
+  ``num_blocks × ambient_size`` floats.
+- **ambient_size** (``int``) — number of floats per state block in GPU
+  memory.
+- **tangent_size** (``int``) — number of tangent-space unknowns per block.
+- **num_blocks** (``int``) — number of state blocks.
+- **const_state_ids** (``DevicePointer``, optional) — GPU ``int32`` array
+  of constant-block indices.
+- **num_const_state_blocks** (``int``, default ``0``) — number of constant
+  blocks.
+
+**Methods to override**
+
+- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle) -> None`` —
+  implements the manifold retraction
+  :math:`x_{\mathrm{out}} = x \oplus \delta` for **all blocks** in the
+  batch.  All four arguments are raw ``int`` handles:
+
+  - *x_ptr* — device pointer to the current ambient state
+    (``num_blocks × ambient_size`` floats, read-only).
+  - *delta_ptr* — device pointer to the tangent-space updates
+    (``num_blocks × tangent_size`` floats, read-only).
+  - *x_plus_delta_ptr* — device pointer to the output buffer
+    (``num_blocks × ambient_size`` floats, write).
+  - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
+    **must** be launched on this stream so the minimizer can serialize
+    operations correctly.
+
+  The default implementation raises ``NotImplementedError``.
+
+.. _py-warp-state-batch:
+
+--------------------------------------------------------------------------------
+``pycunls.warp.WarpStateBatch``
+--------------------------------------------------------------------------------
+
+Convenience base for custom state batches implemented with `NVIDIA Warp
+<https://developer.nvidia.com/warp-python>`_ kernels.  Inherits from ``CustomStateBatch`` and provides helper methods for
+zero-copy pointer wrapping so you never need to manually construct
+``wp.array`` objects from raw device addresses.  Requires ``warp-lang``.
+
+**Constructor**
+
+.. code-block:: python
+
+   from pycunls.warp import WarpStateBatch
+
+   class MyWarpState(WarpStateBatch):
+       def __init__(self, data, num_blocks):
+           super().__init__(
+               data,
+               ambient_size=...,
+               tangent_size=...,
+               num_blocks=num_blocks,
+               device="cuda:0",
+           )
+
+- **device** (``str``, default ``"cuda:0"``) — Warp device string used when
+  creating ``wp.array`` wrappers via ``wrap_array``.
+
+**Helper methods** (inherited — do not override)
+
+- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of an
+  existing GPU allocation as a Warp array.  *ptr* is the device address,
+  *dtype* a Warp data type (e.g. ``wp.float32``), and *shape* an ``int`` or
+  tuple giving the array dimensions.  The returned ``wp.array`` shares the
+  memory; no allocation or copy occurs.
+
+- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — wraps a raw
+  ``cudaStream_t`` (passed as ``int``) as a ``wp.Stream``.  Use the
+  returned stream in ``wp.launch(..., stream=stream)`` to ensure the Warp
+  kernel executes on the minimizer's CUDA stream.
+
+**Methods to override**
+
+- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle) -> None`` —
+  same contract as ``CustomStateBatch.plus``.  Typical implementations wrap
+  the pointers with ``self.wrap_array``, build a ``wp.Stream`` with
+  ``self.make_warp_stream``, and launch a ``@wp.kernel``.
+
+See :ref:`pycunls_tutorial:Custom Warp State` for a complete example.

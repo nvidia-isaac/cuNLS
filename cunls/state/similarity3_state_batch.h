@@ -19,6 +19,7 @@
 #include <cuda_runtime.h>
 
 #include "cunls/common/cublas_helper.h"
+#include "cunls/common/types.h"
 #include "cunls/state/sized_state_batch.h"
 
 namespace cunls {
@@ -44,8 +45,7 @@ namespace cunls {
  * The class uses GPU-accelerated operations via CUDA kernels and cuBLAS
  * for efficient batch processing of multiple transformations.
  */
-class Similarity3StateBatch
-    : public SizedStateBatch<16, 7> {
+class Similarity3StateBatch : public SizedStateBatch<16, 7> {
  public:
   using Base = SizedStateBatch<16, 7>;
 
@@ -58,8 +58,7 @@ class Similarity3StateBatch
    * @param num_blocks The number of Sim(3) state blocks in this batch.
    */
   Similarity3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                        size_t num_blocks)
-      : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle) {}
+                        size_t num_blocks);
 
   /**
    * @brief Constructs a batch of Sim(3) state blocks with constant state constraints.
@@ -75,10 +74,7 @@ class Similarity3StateBatch
   Similarity3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
                         size_t num_blocks,
                         const int* device_constant_state_ids,
-                        size_t num_const_state_blocks)
-      : Base(device_ptr, num_blocks, device_constant_state_ids,
-             num_const_state_blocks),
-        cublas_handle_(cublas_handle) {}
+                        size_t num_const_state_blocks);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)
@@ -96,6 +92,9 @@ class Similarity3StateBatch
 
  private:
   cuBLASHandle& cublas_handle_;  ///< cuBLAS handle for matrix operations
+
+  mutable dvector<Matrix<4>> delta_transforms_;
+  mutable dvector<float> tangents_;
 
   /**
    * @brief Applies a Sim(3) update: result = x * Exp(delta) or

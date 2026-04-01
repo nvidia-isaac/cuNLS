@@ -281,7 +281,8 @@ blocks each factor reads. The ordering must match
 **Step 6 — Configure and run the Levenberg-Marquardt solver.**
 `LevenbergMarquardtMinimizer` (see :doc:`api/minimizer`) solves the damped
 normal equations at each iteration and adapts the damping parameter
-:math:`\lambda` based on step quality.
+:math:`\lambda` based on step quality. The minimizer attaches GPU workspace
+from an internal pool during initialization when needed.
 
 .. code-block:: cpp
 

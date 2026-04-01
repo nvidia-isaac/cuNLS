@@ -23,16 +23,15 @@
 #include <thrust/scatter.h>
 
 #include <numeric>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "cunls/common/helper.h"
-#include "cunls/minimizer/jacobian_ops.h"
+#include "cunls/minimizer/minimizer_state.h"
 
 namespace cunls {
 
-namespace {
+namespace detail {
 
 /**
  * @brief Calculates the number of values in a Jacobian block for a cost
@@ -372,61 +371,13 @@ void FillColIds(cudaStream_t stream,
   }
 }
 
-/**
- * @brief Builds a host-side mapping from state device pointers to column
- * indices.
- *
- * Creates a hash map that maps each non-constant state block's device
- * pointer to its starting column index in the reduced linear system.
- * Used by the CPU implementation of BuildTripletSparseStructureCPU.
- *
- * @param state_batches Vector of state batch pointers.
- * @param[out] mapping Output map from device pointer to column index.
- */
-void BuildStateBlockMapping(const std::vector<StateBatch*>& state_batches,
-                            std::unordered_map<float*, int>& mapping) {
-  int last_col_id = 0;
+}  // namespace detail
 
-  for (auto pbatch : state_batches) {
-    const int* gpu_const_param_ids = pbatch->ConstStateIds();
-    size_t num_const_params = pbatch->NumConstStateBlocks();
+void MinimizerState::BuildTripletSparseStructure(
+    cudaStream_t stream, const Problem& problem,
+    TripletSparseStructure& structure) {
+  CopyProblemStatePointersFromHost(problem);
 
-    std::unordered_set<int> const_param_ids_set;
-    if (gpu_const_param_ids != nullptr && num_const_params > 0) {
-      std::vector<int> cpu_const_param_ids(num_const_params);
-      THROW_ON_CUDA_ERROR(cudaMemcpy(cpu_const_param_ids.data(), gpu_const_param_ids,
-                                     num_const_params * sizeof(int),
-                                     cudaMemcpyDeviceToHost));
-      const_param_ids_set.insert(cpu_const_param_ids.begin(),
-                                 cpu_const_param_ids.end());
-    }
-
-    for (size_t i = 0; i < pbatch->NumStateBlocks(); i++) {
-      auto it = const_param_ids_set.find(i);
-      if (it == const_param_ids_set.end()) {
-        auto ptr = pbatch->StateBlockDevicePtr(i);
-        mapping.insert({ptr, last_col_id});
-        last_col_id += pbatch->TangentSize();
-      }
-    }
-  }
-}
-
-}  // namespace
-
-/**
- * @brief Builds the triplet (COO) sparse structure for the Jacobian on the GPU.
- *
- * Extracts factor batches from the problem's residual batches, calculates the
- * total Jacobian size, and fills row and column index arrays using CUDA
- * kernels. Column indices for constant states are set to -1.
- *
- * @param stream CUDA stream for GPU operations.
- * @param problem The optimization problem.
- * @param[out] structure Output triplet sparse structure (row_ids and col_ids).
- */
-void BuildTripletSparseStructure(cudaStream_t stream, const Problem& problem,
-                                 TripletSparseStructure& structure) {
   std::vector<FactorBatch*> factor_batches;
   factor_batches.reserve(problem.GetResidualBatches().size());
 
@@ -434,111 +385,12 @@ void BuildTripletSparseStructure(cudaStream_t stream, const Problem& problem,
     factor_batches.push_back(rb.GetFactorBatch());
   }
 
-  // Calculate the total size of the jacobian
-  size_t jacobian_size = CalculateJacobianNonZeros(factor_batches);
+  size_t jacobian_size = detail::CalculateJacobianNonZeros(factor_batches);
   structure.row_ids.resize(jacobian_size);
   structure.col_ids.resize(jacobian_size);
 
-  // Create the triplet structure
-  FillRowIds(stream, factor_batches, structure.row_ids);
-  FillColIds(stream, factor_batches, problem.GetStatePointers(),
-             problem.GetStateBatches(), structure.col_ids);
-}
-
-/**
- * @brief Builds the triplet (COO) sparse structure for the Jacobian on the CPU.
- *
- * Host-side implementation that copies state pointers to the CPU, builds
- * a pointer-to-column-index mapping, and iterates over all factor batches to
- * assign row and column indices. Constant state_pointers receive col_id = -1.
- * Results are uploaded to device vectors via host-to-device copy.
- *
- * @param problem The optimization problem.
- * @param[out] structure Output triplet sparse structure (device vectors).
- */
-void BuildTripletSparseStructureCPU(const Problem& problem,
-                                    TripletSparseStructure& structure) {
-  const auto& state_pointers = problem.GetStatePointers();
-  const auto& state_batches = problem.GetStateBatches();
-
-  std::vector<FactorBatch*> factor_batches;
-  factor_batches.reserve(problem.GetResidualBatches().size());
-
-  for (const auto& rb : problem.GetResidualBatches()) {
-    factor_batches.emplace_back(rb.GetFactorBatch());
-  }
-
-  size_t jacobian_size = CalculateJacobianNonZeros(factor_batches);
-
-  std::vector<int> row_ids(jacobian_size);
-  std::vector<int> col_ids(jacobian_size);
-
-  std::vector<std::vector<float*>> state_pointers_cpu;
-
-  for (const auto& pointers : state_pointers) {
-    std::vector<float*> host_pointers(pointers.size());
-    pointers.CopyToHost(host_pointers.data(), pointers.size());
-    state_pointers_cpu.emplace_back(std::move(host_pointers));
-  }
-
-  std::unordered_map<float*, int> mapping;
-  BuildStateBlockMapping(state_batches, mapping);
-
-  size_t block_offset = 0;
-  size_t row_offset = 0;
-  for (int i = 0; i < factor_batches.size(); i++) {
-    auto factor_batch = factor_batches[i];
-    auto p_pointers = state_pointers_cpu[i];
-
-    auto block_sizes = factor_batch->StateBlockSizes();
-    size_t num_params = block_sizes.size();
-    size_t res_dim = factor_batch->ResidualsSize();
-    size_t num_rows = res_dim * factor_batch->NumFactors();
-    size_t num_cols =
-        std::accumulate(block_sizes.begin(), block_sizes.end(), 0);
-
-    for (int row_id = 0; row_id < num_rows; row_id++) {
-      int factor_idx = row_id / res_dim;
-      for (int col_id = 0; col_id < num_cols; col_id++) {
-        int idx = block_offset + row_id * num_cols + col_id;
-        row_ids[idx] = row_offset + row_id;
-
-        // State block index in the residual state block list
-        int state_block_id = 0;
-
-        // Index within the current state block (column in that block)
-        int col_in_state_block = col_id;
-        while (state_block_id < block_sizes.size() &&
-               col_in_state_block >= block_sizes[state_block_id]) {
-          col_in_state_block -= block_sizes[state_block_id];
-          state_block_id++;
-        }
-
-        assert(state_block_id < block_sizes.size());
-
-        // Extract the pointer to the state block w.r.t. Jacobian block
-        float* state_pointer = p_pointers[factor_idx * num_params + state_block_id];
-
-        auto it = mapping.find(state_pointer);
-
-        if (it != mapping.end()) {
-          // This is non constant state
-          col_ids[idx] = it->second + col_in_state_block;
-        } else {
-          // This is constant state, set invalid column index
-          col_ids[idx] = -1;
-        }
-      }
-    }
-
-    block_offset += num_rows * num_cols;
-    row_offset += num_rows;
-  }
-
-  structure.row_ids.resize(row_ids.size());
-  structure.row_ids.CopyFromHost(row_ids.data(), row_ids.size());
-
-  structure.col_ids.resize(col_ids.size());
-  structure.col_ids.CopyFromHost(col_ids.data(), col_ids.size());
+  detail::FillRowIds(stream, factor_batches, structure.row_ids);
+  detail::FillColIds(stream, factor_batches, problem_state_ptrs_device_,
+                     problem.GetStateBatches(), structure.col_ids);
 }
 }  // namespace cunls

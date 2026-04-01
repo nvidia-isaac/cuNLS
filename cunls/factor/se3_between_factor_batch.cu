@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 
+#include <cublas_v2.h>
+
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/se3_between_factor_batch.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
 
@@ -118,7 +120,7 @@ bool SE3BetweenFactorBatch::Evaluate(float* residuals, float* jacobians,
                     pitch, stride, pitch, stride, num_factors,
                     poses_left_inv_ptr);
 
-  auto handle = cublas_handle_.GetHandle(stream);
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
 
   // cuBLAS uses column-major storage, but our matrices are row-major
   constexpr float alpha = 1.0f;
@@ -221,7 +223,7 @@ void SE3BetweenFactorBatch::ComputeLeftPoseJacobian(
   constexpr float beta = 0.0f;
   constexpr size_t mat_size = 6;
 
-  auto handle = cublas_handle_.GetHandle(stream);
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
 
   THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
       handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,

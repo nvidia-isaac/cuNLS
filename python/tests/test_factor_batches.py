@@ -44,6 +44,31 @@ class TestReprojectionFactorBatch:
         assert fb.num_factors == 10
 
 
+class TestPnPFactorBatch:
+    """PnP factor: residual=2, single SE3(6); 3D points fixed at construction."""
+    def test_creation(self, cublas):
+        num_obs = 20
+        obs = cp.zeros(num_obs * 2, dtype=cp.float32)
+        pts = cp.zeros(num_obs * 3, dtype=cp.float32)
+        fb = pycunls.PnPFactorBatch(cublas, obs, pts, num_obs)
+        assert fb.num_factors == num_obs
+        assert fb.residuals_size == 2
+        assert fb.state_block_sizes() == [6]
+
+    def test_creation_with_camera_from_rig(self, cublas):
+        n = 8
+        obs = cp.zeros(n * 2, dtype=cp.float32)
+        rig = cp.zeros(n * 16, dtype=cp.float32)
+        rig[0::16] = 1.0
+        rig[5::16] = 1.0
+        rig[10::16] = 1.0
+        rig[15::16] = 1.0
+        pts = cp.zeros(n * 3, dtype=cp.float32)
+        fb = pycunls.PnPFactorBatch(cublas, obs, rig, pts, n, z_threshold=0.02)
+        assert fb.num_factors == n
+        assert fb.state_block_sizes() == [6]
+
+
 class TestSE3BetweenFactorBatch:
     """SE(3) between factor: residual=6, states=[SE3(6), SE3(6)]."""
     def test_creation(self, cublas):
@@ -142,6 +167,91 @@ class TestSymmetricPointToPlaneFactorBatch:
         assert fb.num_factors == num
         assert fb.residuals_size == 1
         assert fb.state_block_sizes() == [6]
+
+
+class TestInformationFactorBatch:
+    """Wraps any factor and applies per-factor sqrt-information matrices."""
+    def test_creation(self, cublas):
+        num = 20
+        dim = 3
+        obs = cp.zeros(num * dim, dtype=cp.float32)
+        inner = pycunls.PriorVectorFactorBatch3(obs, num)
+        sqrt_info = cp.eye(dim, dtype=cp.float32).reshape(-1)
+        sqrt_info = cp.tile(sqrt_info, num)
+        fb = pycunls.InformationFactorBatch(cublas, inner, sqrt_info)
+        assert fb.num_factors == num
+        assert fb.residuals_size == dim
+        assert fb.state_block_sizes() == [dim]
+
+    def test_wraps_se3_between(self, cublas):
+        num = 10
+        deltas = cp.zeros(num * 16, dtype=cp.float32)
+        inner = pycunls.SE3BetweenFactorBatch(cublas, deltas, num)
+        sqrt_info = cp.eye(6, dtype=cp.float32).reshape(-1)
+        sqrt_info = cp.tile(sqrt_info, num)
+        fb = pycunls.InformationFactorBatch(cublas, inner, sqrt_info)
+        assert fb.num_factors == num
+        assert fb.residuals_size == 6
+        assert fb.state_block_sizes() == [6, 6]
+
+    def test_wraps_weighted_prior_vector(self, cublas):
+        num = 20
+        dim = 3
+        obs = cp.zeros(num * dim, dtype=cp.float32)
+        base = pycunls.PriorVectorFactorBatch3(obs, num)
+        weighted = pycunls.WeightedFactorBatch(base, weight=1.5)
+        sqrt_info = cp.eye(dim, dtype=cp.float32).reshape(-1)
+        sqrt_info = cp.tile(sqrt_info, num)
+        fb = pycunls.InformationFactorBatch(cublas, weighted, sqrt_info)
+        assert fb.num_factors == num
+        assert fb.residuals_size == dim
+        assert fb.state_block_sizes() == [dim]
+
+
+class TestWeightedFactorBatch:
+    """Wraps any factor and scales by uniform or per-factor weights."""
+    def test_uniform_weight(self):
+        num = 20
+        dim = 3
+        obs = cp.zeros(num * dim, dtype=cp.float32)
+        inner = pycunls.PriorVectorFactorBatch3(obs, num)
+        fb = pycunls.WeightedFactorBatch(inner, weight=2.0)
+        assert fb.num_factors == num
+        assert fb.residuals_size == dim
+        assert fb.state_block_sizes() == [dim]
+
+    def test_per_factor_weights(self):
+        num = 20
+        dim = 3
+        obs = cp.zeros(num * dim, dtype=cp.float32)
+        inner = pycunls.PriorVectorFactorBatch3(obs, num)
+        weights = cp.ones(num, dtype=cp.float32)
+        fb = pycunls.WeightedFactorBatch(inner, weights=weights)
+        assert fb.num_factors == num
+        assert fb.residuals_size == dim
+        assert fb.state_block_sizes() == [dim]
+
+    def test_wraps_se3_between(self, cublas):
+        num = 10
+        deltas = cp.zeros(num * 16, dtype=cp.float32)
+        inner = pycunls.SE3BetweenFactorBatch(cublas, deltas, num)
+        fb = pycunls.WeightedFactorBatch(inner, weight=0.5)
+        assert fb.num_factors == num
+        assert fb.residuals_size == 6
+        assert fb.state_block_sizes() == [6, 6]
+
+    def test_wraps_information_prior_vector(self, cublas):
+        num = 20
+        dim = 3
+        obs = cp.zeros(num * dim, dtype=cp.float32)
+        base = pycunls.PriorVectorFactorBatch3(obs, num)
+        sqrt_info = cp.eye(dim, dtype=cp.float32).reshape(-1)
+        sqrt_info = cp.tile(sqrt_info, num)
+        info_inner = pycunls.InformationFactorBatch(cublas, base, sqrt_info)
+        fb = pycunls.WeightedFactorBatch(info_inner, weight=1.5)
+        assert fb.num_factors == num
+        assert fb.residuals_size == dim
+        assert fb.state_block_sizes() == [dim]
 
 
 class TestCustomFactorBatch:

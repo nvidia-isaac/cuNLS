@@ -27,6 +27,7 @@
 
 #include "cunls/factor/reprojection_factor_batch.h"
 
+#include <cublas_v2.h>
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -38,7 +39,7 @@
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/common/profiler.h"
 #include "cunls/state/se3_state_batch.h"
@@ -370,7 +371,7 @@ class ReprojectionFactorBatchTest : public ::testing::Test {
 
     // Multiply: pose_disturbed = exp(delta) * pose
     cuBLASHandle cublas_handle;
-    auto handle = cublas_handle.GetHandle(stream.GetStream());
+    auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
     constexpr float alpha = 1.0f;
     constexpr float beta = 0.0f;
     constexpr size_t mat_size = 4;
@@ -490,8 +491,7 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
   size_t num_observations = num_poses_ * num_points_;
   ReprojectionFactorBatch factor_batch(
       cublas_handle_, observations_device.data(), num_observations, kDefaultZThreshold);
-
-  // Set up state pointers
+// Set up state pointers
   std::vector<const float*> state_pointers;
   for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
     for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
@@ -826,8 +826,7 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
   constexpr float z_threshold_for_test = 1e-3f;
   ReprojectionFactorBatch factor_batch(cublas_handle_, obs_device.data(), 1,
                                               z_threshold_for_test);
-
-  // Set up state pointers
+// Set up state pointers
   std::vector<const float*> param_ptrs = {
       reinterpret_cast<const float*>(pose_device.data()),
       reinterpret_cast<const float*>(point_device.data())};
@@ -1201,8 +1200,7 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   ReprojectionFactorBatch factor_batch(
       cublas_handle_, observations_device.data(), camera_from_rig_device.data(),
       num_observations, kDefaultZThreshold);
-
-  // Set up state pointers
+// Set up state pointers
   std::vector<const float*> state_pointers;
   for (size_t point_idx = 0; point_idx < test_num_points; point_idx++) {
     state_pointers.push_back(

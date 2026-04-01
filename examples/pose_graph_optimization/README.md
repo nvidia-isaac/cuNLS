@@ -40,6 +40,9 @@ except the fixed anchor.
 4. Add a single `SE3StateBatch` with `T_0` marked as constant.
 5. Build one between factor per consecutive pair `(T_i, T_{i+1})`.
 
+`LevenbergMarquardtMinimizer` allocates its working buffers during
+initialization before the first linearized solve.
+
 ## Validation
 
 After optimization, the example prints:

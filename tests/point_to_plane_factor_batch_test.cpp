@@ -37,7 +37,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/common/profiler.h"

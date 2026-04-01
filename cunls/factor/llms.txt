@@ -14,6 +14,7 @@ Defines residual/Jacobian models evaluated in GPU batches.
 - Priors: `prior_vector_factor_batch.h`, `so2/so3/se2/se3/similarity2/similarity3_prior_factor_batch.h`
 - Relative pose: `se3_between_factor_batch.h`
 - Reprojection: `reprojection_factor_batch.h`
+- PnP (fixed 3D points, pose-only Jacobian): `pnp_factor_batch.h`
 - Registration: `point_to_point_factor_batch.h`, `point_to_plane_factor_batch.h`,
   `symmetric_point_to_plane_factor_batch.h`
 - Weighting wrapper: `information_factor_batch.h`

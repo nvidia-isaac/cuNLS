@@ -84,16 +84,18 @@ class cuDSSLinearSolver : public CSRSparseLinearSolver {
    * elements as the number of rows in @p spd_matrix; the solver does not
    * resize them.
    *
-   * @param handle cuDSSHandle_t provided by the caller (e.g. from cuDSSHandle).
+   * @param stream CUDA stream for asynchronous GPU operations. Also used to
+   *               lazily initialize the internal cuDSS handle on first call.
    * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
    *                   positive definite).
    * @param rhs The right-hand side vector b (size must equal matrix rows).
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual bool Initialize(void* handle, const CSRSparseMatrix& spd_matrix,
-                          const dvector<float>& rhs,
-                          dvector<float>& result) final;
+  bool Initialize(cudaStream_t stream,
+                  const CSRSparseMatrix& spd_matrix,
+                  const dvector<float>& rhs,
+                  dvector<float>& result) final;
 
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
@@ -106,7 +108,8 @@ class cuDSSLinearSolver : public CSRSparseLinearSolver {
    * elements as the number of rows in @p spd_matrix. The solver does not
    * resize them; a dimension mismatch causes the function to return false.
    *
-   * @param handle cuDSSHandle_t obtained from Initialize.
+   * @param stream CUDA stream for asynchronous GPU operations. Also used to
+   *               lazily initialize the internal cuDSS handle if needed.
    * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
    *                   positive definite).
    * @param rhs The right-hand side vector b (size must equal matrix rows).
@@ -114,12 +117,14 @@ class cuDSSLinearSolver : public CSRSparseLinearSolver {
    *               (size must equal matrix rows).
    * @return true on success, false if any dimension mismatch is detected.
    */
-  virtual bool Solve(void* handle, const CSRSparseMatrix& spd_matrix,
-                     const dvector<float>& rhs, dvector<float>& result) final;
+  bool Solve(cudaStream_t stream,
+             const CSRSparseMatrix& spd_matrix,
+             const dvector<float>& rhs, dvector<float>& result) final;
 
- protected:
+ private:
   cuDSSLinearSolverOptions options_;  ///< Solver configuration.
 
+  cuDSSHandle cudss_handle_;  ///< Owns the cuDSS handle used for all solver phases.
   cuDSSDeviceMemPool device_mem_pool_;  ///< Reusable pool for cuDSS allocations.
   cuDSSData cudss_data_;  ///< cuDSS data object storing internal solver state.
 

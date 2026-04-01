@@ -45,6 +45,9 @@ observations in normalized camera coordinates:
 This layout matches `ReprojectionFactorBatch` requirements: each factor consumes
 two state blocks `(pose, point)`.
 
+`LevenbergMarquardtMinimizer::Minimize` runs `Initialize`, which allocates
+minimizer working buffers and prepares state/factor batches for the solve.
+
 ### Optimization and checks
 
 The example runs LM and prints:

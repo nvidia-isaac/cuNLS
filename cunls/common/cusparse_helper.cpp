@@ -23,55 +23,55 @@
 
 namespace cunls {
 
+const char* cusparseGetErrorString(int status) {
+  return ::cusparseGetErrorString(static_cast<cusparseStatus_t>(status));
+}
+
 /** @copydoc cuSPARSEHandle::~cuSPARSEHandle */
 cuSPARSEHandle::~cuSPARSEHandle() {
-  // Clean up the cuSPARSE handle if it was created.
-  // Use WARN instead of THROW to avoid exceptions in destructor.
   if (handle_ != nullptr) {
-    WARN_ON_CUSPARSE_ERROR(cusparseDestroy(handle_));
+    WARN_ON_CUSPARSE_ERROR(
+        cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
   }
 }
 
 /** @copydoc cuSPARSEHandle::GetHandle */
-cusparseHandle_t cuSPARSEHandle::GetHandle(cudaStream_t stream) {
+void* cuSPARSEHandle::GetHandle(cudaStream_t stream) {
   if (stream == nullptr) {
     const std::string msg = "cuSPARSEHandle recieved invalid CUDA stream.";
     LogError(msg);
     throw std::invalid_argument(msg);
   }
 
-  // Return existing handle if it's associated with the same stream
   if (stream == stream_ && handle_ != nullptr) {
     return handle_;
   }
 
-  // Destroy existing handle if we need to create one for a different stream
   if (handle_ != nullptr) {
-    THROW_ON_CUSPARSE_ERROR(cusparseDestroy(handle_));
+    THROW_ON_CUSPARSE_ERROR(
+        cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
   }
 
-  // Create new handle and associate it with the requested stream
   stream_ = stream;
-  THROW_ON_CUSPARSE_ERROR(cusparseCreate(&handle_));
-  THROW_ON_CUSPARSE_ERROR(cusparseSetStream(handle_, stream_));
+  cusparseHandle_t h = nullptr;
+  THROW_ON_CUSPARSE_ERROR(cusparseCreate(&h));
+  THROW_ON_CUSPARSE_ERROR(cusparseSetStream(h, stream_));
+  handle_ = static_cast<void*>(h);
   return handle_;
 }
 
 /** @copydoc cuSPARSEMatrixDescription::operator=(cuSPARSEMatrixDescription&&) */
 cuSPARSEMatrixDescription& cuSPARSEMatrixDescription::operator=(
     cuSPARSEMatrixDescription&& other) noexcept {
-  // Protect against self-assignment
   if (this == &other) {
     return *this;
   }
 
-  // Clean up existing descriptor before taking ownership of the new one
   if (description_) {
-    WARN_ON_CUSPARSE_ERROR(cusparseDestroySpMat(description_));
+    WARN_ON_CUSPARSE_ERROR(
+        cusparseDestroySpMat(static_cast<cusparseSpMatDescr_t>(description_)));
   }
 
-  // Transfer ownership using std::exchange to ensure other's descriptor is
-  // nulled
   description_ = std::exchange(other.description_, nullptr);
   return *this;
 }
@@ -80,9 +80,6 @@ cuSPARSEMatrixDescription& cuSPARSEMatrixDescription::operator=(
 cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(
     int num_rows, int num_cols, int num_nonzeros,
     const CSRSparseMatrix& matrix) {
-  // Extract raw pointers from device vectors
-  // const_cast is needed because cuSPARSE API expects non-const pointers
-  // even though it doesn't modify the data in read-only operations
   auto rows_ptr =
       const_cast<int*>(matrix.row_offsets.data());
   auto cols_ptr =
@@ -90,39 +87,35 @@ cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(
   auto values_ptr =
       const_cast<float*>(matrix.values.data());
 
-  // Create CSR matrix descriptor with 32-bit indices, zero-based indexing, and
-  // 32-bit floats
+  cusparseSpMatDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(
-      &description_, num_rows, num_cols, num_nonzeros, rows_ptr, cols_ptr,
+      &descr, num_rows, num_cols, num_nonzeros, rows_ptr, cols_ptr,
       values_ptr, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
       CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+  description_ = static_cast<void*>(descr);
 };
 
 /** @copydoc cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int) */
 cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows,
                                                      int num_cols) {
-  // Create empty CSR matrix descriptor (useful for output matrices)
-  // NULL pointers are used since no data is provided initially
+  cusparseSpMatDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(
-      cusparseCreateCsr(&description_, num_rows, num_cols, 0, NULL, NULL, NULL,
+      cusparseCreateCsr(&descr, num_rows, num_cols, 0, NULL, NULL, NULL,
                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                         CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+  description_ = static_cast<void*>(descr);
 };
 
 /** @copydoc cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription */
 cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription() {
-  // Clean up cuSPARSE matrix descriptor
-  // Use WARN instead of THROW to avoid exceptions in destructor
   if (description_) {
-    WARN_ON_CUSPARSE_ERROR(cusparseDestroySpMat(description_));
+    WARN_ON_CUSPARSE_ERROR(
+        cusparseDestroySpMat(static_cast<cusparseSpMatDescr_t>(description_)));
   }
 }
 
 /** @copydoc cuSPARSEMatrixDescription::UpdatePointers */
 void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix& matrix) {
-  // Update the descriptor to point to new matrix data
-  // This is more efficient than recreating the descriptor when only data
-  // changes
   auto rows_ptr =
       const_cast<int*>(matrix.row_offsets.data());
   auto cols_ptr =
@@ -130,38 +123,38 @@ void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix& matrix) {
   auto values_ptr =
       const_cast<float*>(matrix.values.data());
 
-  THROW_ON_CUSPARSE_ERROR(
-      cusparseCsrSetPointers(description_, rows_ptr, cols_ptr, values_ptr));
+  THROW_ON_CUSPARSE_ERROR(cusparseCsrSetPointers(
+      static_cast<cusparseSpMatDescr_t>(description_),
+      rows_ptr, cols_ptr, values_ptr));
 }
 
 /** @copydoc cuSPARSEMatrixDescription::GetDescription */
-cusparseSpMatDescr_t cuSPARSEMatrixDescription::GetDescription() {
+void* cuSPARSEMatrixDescription::GetDescription() {
   return description_;
 }
 
 /** @copydoc cuSPARSEVectorDescription::cuSPARSEVectorDescription */
 cuSPARSEVectorDescription::cuSPARSEVectorDescription(
     const dvector<float>& vec) {
-  // Extract raw pointer from device vector
-  // const_cast is needed because cuSPARSE API expects non-const pointers
   auto ptr = const_cast<float*>(vec.data());
 
-  // Create dense vector descriptor with 32-bit float data type
+  cusparseDnVecDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(
-      cusparseCreateDnVec(&description_, vec.size(), ptr, CUDA_R_32F));
+      cusparseCreateDnVec(&descr, vec.size(), ptr, CUDA_R_32F));
+  description_ = static_cast<void*>(descr);
 };
 
 /** @copydoc cuSPARSEVectorDescription::~cuSPARSEVectorDescription */
 cuSPARSEVectorDescription::~cuSPARSEVectorDescription() {
-  // Clean up cuSPARSE vector descriptor
-  // Use WARN instead of THROW to avoid exceptions in destructor
   if (description_) {
-    WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(description_));
+    WARN_ON_CUSPARSE_ERROR(
+        cusparseDestroyDnVec(
+            static_cast<cusparseDnVecDescr_t>(description_)));
   }
 }
 
 /** @copydoc cuSPARSEVectorDescription::GetDescription */
-cusparseDnVecDescr_t cuSPARSEVectorDescription::GetDescription() {
+void* cuSPARSEVectorDescription::GetDescription() {
   return description_;
 }
 

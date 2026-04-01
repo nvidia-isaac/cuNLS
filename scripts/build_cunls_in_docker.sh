@@ -6,24 +6,20 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
 fi
 
 CMAKE_BUILD_TYPE=$1
-LOCAL_INSTALL_DIR=$2
+LOCAL_INSTALL_DIR=${2:-$(pwd)/build_docker}
+LOCAL_INSTALL_DIR=$(realpath -m "$LOCAL_INSTALL_DIR")
+mkdir -p "$LOCAL_INSTALL_DIR"
 
 DOCKERFILE=$(dirname "$(realpath $0)")/Dockerfile
 docker build -f $DOCKERFILE . --network host --tag cunls:local
 
-# Use a separate build dir to avoid CMake cache path mismatches
-# (host build/ may contain paths like /home/user/... that don't exist in container)
-BUILD_DIR="build_docker"
-DOCKER_VOLUMES="-v $(pwd):/cunls"
-# Clean build dir so we don't reuse stale CMake cache from host or previous runs
-BUILD_CMD="rm -rf $BUILD_DIR && ./scripts/build_cunls.sh $BUILD_DIR $CMAKE_BUILD_TYPE"
+# Source is read-only; builds happen inside the container's local filesystem.
+# Only the final install directory is mounted to the host.
+INSTALL_DIR="/cunls_install"
+DOCKER_VOLUMES="-v $(pwd):/cunls:ro -v $LOCAL_INSTALL_DIR:$INSTALL_DIR"
 
-if [ -n "$LOCAL_INSTALL_DIR" ]; then
-  LOCAL_INSTALL_DIR=$(realpath "$LOCAL_INSTALL_DIR")
-  mkdir -p "$LOCAL_INSTALL_DIR"
-  CONTAINER_INSTALL_DIR="/cunls_install"
-  DOCKER_VOLUMES="$DOCKER_VOLUMES -v $LOCAL_INSTALL_DIR:$CONTAINER_INSTALL_DIR"
-  BUILD_CMD="rm -rf $BUILD_DIR && ./scripts/build_cunls.sh $BUILD_DIR $CMAKE_BUILD_TYPE $CONTAINER_INSTALL_DIR"
-fi
+BUILD_CMD="cd /tmp"
+BUILD_CMD="$BUILD_CMD && CUNLS_SOURCE_DIR=/cunls EXTRA_CMAKE_ARGS='-DBUILD_SHARED_LIBS=ON' /cunls/scripts/build_cunls.sh build_shared $CMAKE_BUILD_TYPE $INSTALL_DIR"
+BUILD_CMD="$BUILD_CMD && CUNLS_SOURCE_DIR=/cunls EXTRA_CMAKE_ARGS='-DBUILD_SHARED_LIBS=OFF' /cunls/scripts/build_cunls.sh build_static $CMAKE_BUILD_TYPE $INSTALL_DIR"
 
 docker run --gpus all --rm -it $DOCKER_VOLUMES cunls:local /bin/bash -c "$BUILD_CMD"

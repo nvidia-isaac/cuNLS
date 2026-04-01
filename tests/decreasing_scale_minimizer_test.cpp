@@ -37,7 +37,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/reprojection_factor_batch.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"

@@ -20,7 +20,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "cunls/common/device_vector.h"
 #include "cunls/factor/factor_batch.h"
 #include "cunls/minimizer/residual_batch.h"
 #include "cunls/state/state_batch.h"
@@ -50,9 +49,10 @@ class Problem {
    * A trivial (identity) loss function is used.
    *
    * @param factor_batch Pointer to the factor batch (not owned).
-   * @param state_pointers Device pointers to state blocks for each
+   * @param state_pointers Host-side list of device pointers to state blocks for each
    *                      factor instance, flattened in row-major
    *                      order: [cf0_state0, cf0_state1, ..., cfN_stateM].
+   *                      The problem stores a copy on the host.
    */
   void AddFactorBatch(FactorBatch* factor_batch,
                             const std::vector<float*>& state_pointers);
@@ -66,9 +66,10 @@ class Problem {
    *
    * @param factor_batch Pointer to the factor batch (not owned).
    * @param loss_function_batch Pointer to the loss function batch (not owned).
-   * @param state_pointers Device pointers to state blocks for each
+   * @param state_pointers Host-side list of device pointers to state blocks for each
    *                      factor instance, flattened in row-major
    *                      order: [cf0_state0, cf0_state1, ..., cfN_stateM].
+   *                      The problem stores a copy on the host.
    */
   void AddFactorBatch(FactorBatch* factor_batch,
                             LossFunctionBatch* loss_function_batch,
@@ -114,13 +115,13 @@ class Problem {
   /**
    * @brief Gets the state pointer arrays.
    *
-   * Each element corresponds to one residual batch and contains device
-   * pointers mapping factor instances to their state blocks.
+   * Each element corresponds to one residual batch and contains a host
+   * std::vector of device pointers (float*) mapping factor instances to
+   * their state blocks.
    *
-   * @return Const reference to the vector of device state pointer arrays.
+   * @return Const reference to the vector of per-batch host pointer lists.
    */
-  const std::vector<DeviceVector<float*>>& GetStatePointers()
-      const;
+  const std::vector<std::vector<float*>>& GetStatePointers() const;
 
  private:
   /**
@@ -143,7 +144,7 @@ class Problem {
  private:
   std::vector<ResidualBatch> residual_batches_;         ///< Registered residual batches.
   std::vector<StateBatch*> state_batches_;  ///< Registered state batches.
-  std::vector<DeviceVector<float*>> state_pointers_; ///< State pointers per residual batch.
+  std::vector<std::vector<float*>> state_pointers_; ///< Host copies of per-residual-batch state pointer lists.
 };
 
 }  // namespace cunls

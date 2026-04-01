@@ -14,12 +14,15 @@ if [ -n "$INSTALL_DIR" ]; then
   CMAKE_EXTRA_ARGS="-D CMAKE_INSTALL_PREFIX=${INSTALL_DIR}"
 fi
 
+SOURCE_DIR="${CUNLS_SOURCE_DIR:-..}"
+
 mkdir -p $BUILD_DIR && cd $BUILD_DIR
 
 cmake --version && cmake \
     -D CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
     ${CMAKE_EXTRA_ARGS} \
-    -G "Unix Makefiles" -S ..
+    ${EXTRA_CMAKE_ARGS} \
+    -G "Unix Makefiles" -S "$SOURCE_DIR"
 
 if [[ "$CMAKE_BUILD_TYPE" == "Coverage" ]]
 then

@@ -108,6 +108,8 @@ class ResidualBatchTest : public ::testing::Test {
     residuals_.resize(residual_size);
     jacobians_.resize(residual_size * VectorSize::size);
     cost_.resize(num_vectors_);
+    robust_workspace_.resize(
+        ResidualBatchWorkspaceNumFloats(num_vectors_));
 
     state_vectors.resize(num_vectors_);
     observations.resize(num_vectors_);
@@ -130,6 +132,7 @@ class ResidualBatchTest : public ::testing::Test {
   DeviceVector<float> residuals_;
   DeviceVector<float> jacobians_;
   DeviceVector<float> cost_;
+  dvector<float> robust_workspace_;
 
   std::vector<VectorType> state_vectors, observations;
 
@@ -167,8 +170,8 @@ TYPED_TEST(ResidualBatchTest, Residuals) {
   ResidualBatch residual_batch(&factor_batch, &loss);
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Residuals");
-    residual_batch.Evaluate(nullptr, residuals_ptr, nullptr, state_ptrs,
-                            stream.GetStream());
+    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(),
+                              residuals_ptr, state_ptrs, nullptr, nullptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -211,8 +214,8 @@ TYPED_TEST(ResidualBatchTest, Cost) {
   ResidualBatch residual_batch(&factor_batch, &loss);
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Cost");
-    residual_batch.Evaluate(cost_ptr, residuals_ptr, nullptr, state_ptrs,
-                            stream.GetStream());
+    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(),
+                              residuals_ptr, state_ptrs, cost_ptr, nullptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -250,8 +253,8 @@ TYPED_TEST(ResidualBatchTest, Jacobians) {
   ResidualBatch residual_batch(&factor_batch, &loss);
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Jacobians");
-    residual_batch.Evaluate(nullptr, residuals_ptr, jacobians_ptr, state_ptrs,
-                            stream.GetStream());
+    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(),
+                              residuals_ptr, state_ptrs, nullptr, jacobians_ptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 

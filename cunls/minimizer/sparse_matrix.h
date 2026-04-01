@@ -18,14 +18,8 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <cusparse.h>
 
-#include <memory>
-#include <vector>
-
-#include "cunls/common/cusparse_helper.h"
 #include "cunls/common/types.h"
-#include "cunls/minimizer/jacobian_ops.h"
 
 namespace cunls {
 
@@ -88,6 +82,39 @@ void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
                          CSRSparseMatrix& output);
 
 /**
+ * @brief Symmetric diagonal scaling of a CSR matrix: A_ij *= scale[i] *
+ * scale[j].
+ *
+ * @param stream CUDA stream.
+ * @param[in,out] matrix CSR matrix updated in-place.
+ * @param scale Length must match matrix row/column dimension (square H).
+ */
+void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix& matrix,
+                       const dvector<float>& scale);
+
+/**
+ * @brief Sets v[i] = 1 / sqrt(max(v[i], floor_value)) for all i (in-place).
+ *
+ * Used after ExtractDiagonal when building S from Hessian diagonal.
+ */
+void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
+                                float floor_value = 1e-12f);
+
+/**
+ * @brief Sets column_scale[j] = 1 / ||J_{:,j}||_2 from CSR Jacobian J.
+ *
+ * Accumulates J_ij^2 per column with one thread per nonzero (atomicAdd), then
+ * applies the epsilon floor for empty columns. No global sort and no Thrust.
+ *
+ * @param stream CUDA stream.
+ * @param jacobian CSR Jacobian (rows = residuals, cols = parameters).
+ * @param[out] column_scale Per-column scaling; length = number of columns of J.
+ */
+void ComputeJacobianColumnScaling(cudaStream_t stream,
+                                  const CSRSparseMatrix& jacobian,
+                                  dvector<float>& column_scale);
+
+/**
  * @brief Converts a triplet sparse structure to CSR format with index mapping.
  *
  * Filters out invalid entries (col_id == -1) from the triplet structure,
@@ -96,13 +123,14 @@ void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
  * on subsequent iterations without re-converting the structure.
  *
  * @param stream CUDA stream for GPU operations.
- * @param handle cuSPARSE library handle.
+ * @param handle Opaque cuSPARSE library handle (void*).
  * @param structure Input triplet sparse structure (may contain -1 in col_ids).
  * @param[out] csr Output CSR sparse matrix (structure filled, values zeroed).
- * @param[out] mapping Output index mapping: mapping[triplet_idx] = csr_idx, or -1.
+ * @param[out] mapping Output index mapping: mapping[triplet_idx] = csr_idx, or
+ * -1.
  * @param[out] buffer Temporary buffer for intermediate computations.
  */
-void ConvertTripletStructureToCSR(cudaStream_t stream, cusparseHandle_t handle,
+void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
                                   const TripletSparseStructure& structure,
                                   CSRSparseMatrix& csr, dvector<int>& mapping,
                                   dvector<uint8_t>& buffer);
@@ -131,13 +159,13 @@ void ConvertTripletToCSRValues(cudaStream_t stream,
  * to produce the negative gradient used in Gauss-Newton / LM solvers.
  *
  * @param stream CUDA stream for GPU operations.
- * @param handle cuSPARSE library handle.
+ * @param handle Opaque cuSPARSE library handle (void*).
  * @param jacobian CSR sparse Jacobian matrix (J).
  * @param residuals Dense residual vector (r).
  * @param[out] rhs Output right-hand side vector (-J^T * r).
  * @param[out] buffer Temporary buffer for cuSPARSE operations.
  */
-void ComputeRHS(cudaStream_t stream, cusparseHandle_t handle,
+void ComputeRHS(cudaStream_t stream, void* handle,
                 const CSRSparseMatrix& jacobian,
                 const dvector<float>& residuals, dvector<float>& rhs,
                 dvector<uint8_t>& buffer);
@@ -178,114 +206,15 @@ float ComputeWeightedSquaredStep(cudaStream_t stream,
  * matrix rather than just diagonal weights.
  *
  * @param stream CUDA stream for GPU operations.
- * @param handle cuSPARSE library handle.
+ * @param handle Opaque cuSPARSE library handle (void*).
  * @param matrix Sparse weight matrix (A).
  * @param step Step vector.
  * @param[out] buffer Temporary buffer for cuSPARSE operations.
  * @return The weighted squared norm (scalar value).
  */
-float ComputeWeightedSquaredStep(cudaStream_t stream, cusparseHandle_t handle,
+float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
                                  const CSRSparseMatrix& matrix,
                                  const dvector<float>& step,
                                  dvector<uint8_t>& buffer);
-
-/**
- * @brief Performs sparse matrix multiplication with structure caching.
- *
- * Efficiently computes the product of two sparse matrices using cuSPARSE's
- * reuse API. The class caches the sparsity-pattern analysis across calls,
- * detecting structure changes via hashing so that only the numeric phase
- * is repeated when the pattern is unchanged.
- *
- * Primary use case: computing the approximate Hessian H = J^T * J from
- * the Jacobian matrix J during nonlinear least-squares optimization.
- */
-class SparseMatrixMultiplication {
- public:
-  /** @brief Constructs and initializes the cuSPARSE GEMM descriptor. */
-  SparseMatrixMultiplication();
-
-  /** @brief Destroys the cuSPARSE GEMM descriptor and frees resources. */
-  ~SparseMatrixMultiplication();
-
-  /**
-   * @brief Initializes the GEMM structural analysis for A^T * A.
-   *
-   * Transposes the input matrix to obtain its structure, then runs the
-   * full three-phase cuSPARSE GEMM reuse setup (work estimation, nonzero
-   * analysis, copy preparation) and allocates the output matrix.
-   * Must be called once whenever the sparsity pattern changes (i.e., for
-   * each new optimization problem).
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param input  Input sparse matrix A (typically the Jacobian in CSR).
-   * @param[out] output Output sparse matrix A^T * A (structure allocated).
-   */
-  void Initialize(cudaStream_t stream, const CSRSparseMatrix& input,
-                  CSRSparseMatrix& output);
-
-  /**
-   * @brief Computes A^T * A for a sparse matrix A.
-   *
-   * Transposes the input matrix to update values, then performs the
-   * numeric phase of the cuSPARSE GEMM reuse API.  Initialize() must
-   * have been called first for the current sparsity pattern.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param input Input sparse matrix A (typically the Jacobian).
-   * @param[out] output Output sparse matrix A^T * A.
-   */
-  void ComputeSquaredMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
-                            CSRSparseMatrix& output);
-
- private:
-  /**
-   * @brief Transposes a CSR matrix using cuSPARSE CSR-to-CSC conversion.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param matrix Input CSR sparse matrix.
-   * @param[out] transposed Output transposed matrix.
-   */
-  void Transpose(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                 CSRSparseMatrix& transposed);
-
-  /**
-   * @brief Estimates work buffer size for the cuSPARSE GEMM reuse API.
-   *
-   * @param handle cuSPARSE library handle.
-   */
-  void EstimateWork(cusparseHandle_t handle);
-
-  /**
-   * @brief Analyzes the nonzero pattern of the result matrix.
-   *
-   * Second phase of the cuSPARSE GEMM reuse API setup.
-   *
-   * @param handle cuSPARSE library handle.
-   */
-  void ReuseNonzeros(cusparseHandle_t handle);
-
-  /**
-   * @brief Prepares work buffers for copying computed values to the result.
-   *
-   * Third phase of the cuSPARSE GEMM reuse API setup.
-   *
-   * @param handle cuSPARSE library handle.
-   */
-  void ReuseCopy(cusparseHandle_t handle);
-
-  cuSPARSEHandle handle_;          ///< cuSPARSE handle for transpose operations.
-  CSRSparseMatrix temp_matrix_;    ///< Temporary storage for the transposed matrix.
-
-  cusparseSpGEMMDescr_t gemm_description_;  ///< cuSPARSE GEMM descriptor.
-
-  cuSPARSEMatrixDescription descrA_, descrB_, descrC_;  ///< Matrix descriptors.
-
-  dvector<uint8_t> buffer1;  ///< Work buffer for GEMM phase 1 (work estimation).
-  dvector<uint8_t> buffer2;  ///< Work buffer for GEMM phase 2 (nonzero analysis).
-  dvector<uint8_t> buffer3;  ///< Work buffer for GEMM phase 2 (nonzero analysis).
-  dvector<uint8_t> buffer4;  ///< Work buffer for GEMM phase 2 (nonzero analysis).
-  dvector<uint8_t> buffer5;  ///< Work buffer for GEMM phase 3 (copy preparation).
-};
 
 }  // namespace cunls

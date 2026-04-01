@@ -17,10 +17,40 @@
 
 #pragma once
 
-#include "cunls/common/types.h"
+#include <cstddef>
+
+#include <cuda_runtime.h>
+
 #include "cunls/factor/factor_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
+
 namespace cunls {
+
+/**
+ * @brief Returns the byte size of device scratch needed for one ResidualBatch::Evaluate call.
+ *
+ * Layout: `num_residuals` consecutive `float` squared norms, then padding to `alignof(float3)`,
+ * then `num_residuals` consecutive `float3` values (rho triplets). Caller must provide a device
+ * buffer of at least this many bytes, interpreted as `float*` to the first element for the API.
+ *
+ * @param num_residuals Number of factors (same as `FactorBatch::NumFactors()` for this batch).
+ */
+inline size_t ResidualBatchWorkspaceSizeBytes(size_t num_residuals) {
+  const size_t sq_bytes = num_residuals * sizeof(float);
+  const size_t align = alignof(float3);
+  const size_t rho_offset = (sq_bytes + align - 1u) / align * align;
+  return rho_offset + num_residuals * sizeof(float3);
+}
+
+/**
+ * @brief Same scratch as `ResidualBatchWorkspaceSizeBytes`, expressed in `float` elements (rounded up).
+ *
+ * Use this when sub-allocating inside a larger `float` arena (e.g. GaussNewton `buffer_`).
+ */
+inline size_t ResidualBatchWorkspaceNumFloats(size_t num_residuals) {
+  return (ResidualBatchWorkspaceSizeBytes(num_residuals) + sizeof(float) - 1u) /
+         sizeof(float);
+}
 
 /**
  * @brief Wraps a factor batch with an optional loss function for evaluation.
@@ -39,29 +69,38 @@ class ResidualBatch {
    * @param loss_function Pointer to the loss function batch, or nullptr for
    *                      trivial (identity) loss (not owned).
    */
-  ResidualBatch(FactorBatch* factor_batch,
-                LossFunctionBatch* loss_function);
+  ResidualBatch(FactorBatch* factor_batch, LossFunctionBatch* loss_function);
 
   /**
    * @brief Evaluates residuals, Jacobians, and/or cost for the given state pointers.
    *
-   * Computes the residuals from the factor batch, applies the loss function
-   * (if present) to scale residuals and Jacobians for robust estimation, and
-   * optionally extracts per-residual cost values.
-   *
-   * @param[out] cost Output per-residual cost values (0.5 * rho(||r||^2)),
-   *                  or nullptr if cost is not needed.
-   * @param[out] residuals Output residual vector (scaled by loss function).
-   *                       Must not be nullptr.
-   * @param[out] jacobians Output Jacobian values (scaled by loss function),
-   *                       or nullptr if Jacobians are not needed.
-   * @param state_pointers Device pointer array to state blocks for each
-   *                       factor instance.
-   * @param stream CUDA stream for asynchronous GPU operations.
+   * @param stream CUDA stream used for all kernels launched by this call (factor, loss, scaling).
+   * @param workspace Device pointer to scratch memory on the **same stream's device**. Must not
+   *                alias `residuals`, `jacobians`, or `cost` ranges used by this call. Minimum size:
+   *                `ResidualBatchWorkspaceSizeBytes(NumFactors())` bytes (or
+   *                `ResidualBatchWorkspaceNumFloats(NumFactors())` floats in a `float` arena); layout:
+   *                the first
+   *                `NumFactors()` floats hold per-factor squared L2 norms, then aligned `float3`
+   *                rho values written by the loss batch.
+   * @param residuals Device array of length `NumFactors() * ResidualsSize()`, row-major packed
+   *                  residual vectors (one block of length `ResidualsSize()` per factor). Written by
+   *                  the factor batch, then scaled in place when a non-trivial loss is set. Must not
+   *                  be `nullptr`.
+   * @param state_pointers Device array of `float*` with length matching `FactorBatch::Evaluate`
+   *                       requirements (one pointer per factor instance into state blocks). Ownership
+   *                       of pointed-to memory is unchanged. Must not be `nullptr`.
+   * @param cost Optional. If non-null, device array of length `NumFactors()` filled with
+   *             `0.5 * rho(||r_i||^2).x` per factor after the loss is applied (trivial loss: `0.5*s`).
+   * @param jacobians Optional. If non-null, Jacobian values for this batch in the same layout as
+   *                  `FactorBatch::Evaluate`: row-major with dimensions
+   *                  `(NumFactors() * ResidualsSize())` rows and `sum(StateBlockSizes())` columns
+   *                  (one row block of height `ResidualsSize()` per factor). Written by the factor
+   *                  batch then scaled when a non-trivial loss is set.
    * @return True on success.
    */
-  bool Evaluate(float* cost, float* residuals, float* jacobians,
-                float const* const* state_pointers, cudaStream_t stream) const;
+  bool Evaluate(cudaStream_t stream, float* workspace, float* residuals,
+                float const* const* state_pointers, float* cost,
+                float* jacobians) const;
 
   /**
    * @brief Gets the factor batch.
@@ -78,9 +117,7 @@ class ResidualBatch {
   LossFunctionBatch* GetLossFunction() const { return loss_function_; }
 
  private:
-  FactorBatch* factor_batch_ = nullptr;  ///< Factor batch.
-  LossFunctionBatch* loss_function_ = nullptr;   ///< Optional loss function batch.
-  mutable dvector<float> squared_error_;       ///< Per-residual squared L2 norm (device).
-  mutable dvector<float3> robustifier_coeffs_; ///< Loss function coefficients (device).
+  FactorBatch* factor_batch_ = nullptr;         ///< Factor batch.
+  LossFunctionBatch* loss_function_ = nullptr;  ///< Optional loss function batch.
 };
 }  // namespace cunls

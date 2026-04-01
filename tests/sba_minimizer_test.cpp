@@ -285,8 +285,8 @@ class SbaMinimizerTestFixture : public ::testing::Test {
     info_factor_batch_ =
         std::make_unique<InformationFactorBatch<ReprojectionFactorBatch>>(
             cublas_handle_, sqrt_information_device_.data(), n_obs,
-            observations_device_.data(), camera_from_rig_per_obs_device_.data(),
-            n_obs, kZThreshold);
+            cublas_handle_, observations_device_.data(),
+            camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
 
     // Factor i connects pose host.pose_ids[i] and point host.point_ids[i].
     state_pointers_.clear();

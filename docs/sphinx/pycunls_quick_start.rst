@@ -73,7 +73,8 @@ single factor graph (see :doc:`api/minimizer`).
 `LevenbergMarquardtMinimizer` solves the damped normal equations at each
 iteration and adapts the damping parameter :math:`\lambda` based on step
 quality. ``minimize`` updates the state memory in-place and returns a
-`MinimizerSummary` with solve statistics.
+`MinimizerSummary` with solve statistics. The minimizer allocates GPU
+workspace during initialization before the first linearized solve.
 
 .. code-block:: python
 

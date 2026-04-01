@@ -15,6 +15,7 @@ nanobind_add_module(_pycunls_core
   src/pycunls_module.cpp
   src/bind_types.cpp
   src/bind_state.cpp
+  src/py_factor_wrappers.cpp
   src/bind_factor.cpp
   src/bind_loss.cpp
   src/bind_minimizer.cpp
@@ -28,11 +29,11 @@ target_include_directories(_pycunls_core PRIVATE
 
 target_link_libraries(_pycunls_core PRIVATE cunls CUDA::cudart)
 
-# When cunls is static, its PRIVATE CUDA dependencies don't propagate.
-# Link them explicitly so the extension module is self-contained.
+# When cunls is static, INTERFACE does not include bundled deps; link CUDA
+# toolkit libs explicitly. spdlog and cuDSS are already inside libcunls.a.
 if(NOT BUILD_SHARED_LIBS)
   target_link_libraries(_pycunls_core PRIVATE
-    CUDA::cusparse CUDA::cublas CUDA::cusolver cudss)
+    CUDA::cusparse CUDA::cublas CUDA::cusolver)
 endif()
 
 install(TARGETS _pycunls_core LIBRARY DESTINATION pycunls)

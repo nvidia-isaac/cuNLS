@@ -37,9 +37,13 @@ namespace cunls {
  *            flattened into a single vector.
  * - state_pointers_: One device vector per residual batch containing pointers
  *                   to state blocks, remapped to point into the copied state storage.
+ * - problem_state_ptrs_device_: Device copy of host problem pointer lists for
+ *   Jacobian structure and remap kernels.
  */
 class MinimizerState {
  public:
+  MinimizerState() = default;
+
   /**
    * @brief Constructs a minimizer state from a problem.
    *
@@ -50,6 +54,13 @@ class MinimizerState {
    * @param problem The problem to create a state snapshot from.
    */
   MinimizerState(cudaStream_t stream, const Problem& problem) {
+    Create(stream, problem);
+  }
+
+  /**
+   * @brief Refreshes storage from the problem (realloc only when capacity is insufficient).
+   */
+  void Recreate(cudaStream_t stream, const Problem& problem) {
     Create(stream, problem);
   }
 
@@ -102,6 +113,18 @@ class MinimizerState {
     return state_pointers_;
   }
 
+  /**
+   * @brief Builds the triplet (COO) Jacobian sparsity structure on the GPU.
+   *
+   * Definition (implementation) in jacobian_ops.cu.
+   *
+   * @param stream CUDA stream for GPU operations.
+   * @param problem The optimization problem.
+   * @param[out] structure Output row and column index arrays.
+   */
+  void BuildTripletSparseStructure(cudaStream_t stream, const Problem& problem,
+                                   TripletSparseStructure& structure);
+
  private:
   /**
    * @brief Creates minimizer state from a problem.
@@ -125,6 +148,11 @@ class MinimizerState {
   void CreateStatePointers(const Problem& problem);
 
   /**
+   * @brief Copies problem state pointer lists from host to problem_state_ptrs_device_.
+   */
+  void CopyProblemStatePointersFromHost(const Problem& problem);
+
+  /**
    * @brief State value storage.
    *
    * One device vector per state batch, containing all state values
@@ -140,6 +168,9 @@ class MinimizerState {
    * rather than the original problem's state storage.
    */
   std::vector<dvector<float*>> state_pointers_;
+
+  /// Device copy of problem.GetStatePointers() for Jacobian FillColIds and remap.
+  std::vector<dvector<float*>> problem_state_ptrs_device_;
 };
 
 /**

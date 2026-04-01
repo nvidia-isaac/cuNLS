@@ -591,4 +591,28 @@ TEST_F(SparseMatrixTest, ComputeRHS) {
   }
 }
 
+/** @brief SHS scaling matches hand-derived 2x2 normal equations. */
+TEST(SparseMatrixColumnScaling, SymmetricScaling2x2) {
+  std::vector<int> csr_row_offsets = {0, 2, 4};
+  std::vector<int> csr_col_idx = {0, 1, 0, 1};
+  std::vector<float> csr_values = {4.f, 1.f, 1.f, 9.f};
+
+  CSRSparseMatrix h;
+  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, h);
+
+  std::vector<float> host_scale = {0.5f, 1.f / 3.f};
+  dvector<float> scale(host_scale);
+
+  CudaStream stream;
+  ScaleSymmetricCSR(stream.GetStream(), h, scale);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  hvector<float> out(h.NumNonZeros());
+  h.values.CopyToHost(out.data(), out.size());
+  ASSERT_NEAR(out[0], 1.f, 1e-4f);
+  ASSERT_NEAR(out[1], 1.f / 6.f, 1e-4f);
+  ASSERT_NEAR(out[2], 1.f / 6.f, 1e-4f);
+  ASSERT_NEAR(out[3], 1.f, 1e-4f);
+}
+
 }  // namespace cunls

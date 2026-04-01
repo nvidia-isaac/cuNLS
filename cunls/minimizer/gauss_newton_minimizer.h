@@ -21,15 +21,33 @@
 
 #include <vector>
 
+#include "cunls/common/cusparse_helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/minimizer_state.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
+#include "cunls/minimizer/sparse_matrix_multiplier.h"
 #include "cunls/state/state_batch_ops.h"
 
 namespace cunls {
+
+/**
+ * @brief Diagonal column scaling S for the normal equations.
+ *
+ * When not ``None``, the linear solve uses \f$S H S \, z = S b\f$ with
+ * \f$b = -J^\top r\f$, then applies \f$\Delta x = S z\f$. ``None`` leaves
+ * the standard system \f$H \Delta x = b\f$ unchanged.
+ */
+enum class ColumnScaling {
+  /** No scaling (identity S). */
+  None = 0,
+  /** \f$S_{ii} = 1 / \sqrt{H_{ii}}\f$ with a floor on the diagonal. */
+  HessianDiagonal = 1,
+  /** \f$S_{jj} = 1 / \|J_{:,j}\|_2\f$ from the CSR Jacobian. */
+  JacobianColumnNorm = 2,
+};
 
 /**
  * @brief Summary statistics returned after optimization.
@@ -91,6 +109,12 @@ struct MinimizerOptions {
   /**
    * @brief Type of sparse linear solver to use.
    *
+   * Supported options:
+   *  - cuDSS: GPU-accelerated sparse direct solver via NVIDIA's cuDSS library.
+   *  - DenseLDLT: Converts the CSR matrix to dense and solves via a custom
+   *    CUDA pivoted LDLT factorization. Suitable for small-to-medium systems
+   *    where the matrix fits in dense form.
+   *
    * Default: cuDSS
    */
   SparseLinearSolverType sparse_linear_solver_type =
@@ -111,8 +135,32 @@ struct MinimizerOptions {
    */
   SparseLinearSolverConfig sparse_linear_solver_config = {
       .cudss_solver_options = cuDSSLinearSolverOptions()};
+
+  /**
+   * @brief Strategy for computing the approximate Hessian J^T * J.
+   *
+   * - ``cuSPARSE``: uses cuSPARSE SpGEMM reuse API (transpose + multiply).
+   *   Robust and well-tested; may allocate large internal work buffers.
+   * - ``Fast``: fast warp-efficient CUDA kernels with bitmap-based
+   *   sparsity pattern discovery. Exploits the Problem's factor layout
+   *   for kernel tuning.
+   *
+   * Default: Fast.
+   */
+  SparseMatrixMultiplierType sparse_square_multiplier_type =
+      SparseMatrixMultiplierType::Fast;
+
+  /**
+   * @brief Optional diagonal scaling of the GN/LM normal equations.
+   *
+   * See ColumnScaling. Default: None.
+   */
+  ColumnScaling column_scaling = ColumnScaling::None;
 };
 
+/**
+ * @brief Gauss-Newton nonlinear least-squares optimizer.
+ */
 class GaussNewtonMinimizer {
  public:
   /**
@@ -210,15 +258,15 @@ class GaussNewtonMinimizer {
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem to initialize for.
    */
-  virtual void Initialize(cudaStream_t stream, const Problem& problem);
+  virtual void Initialize(cudaStream_t stream, Problem& problem);
 
   /**
    * @brief Builds the Gauss-Newton linear system.
    *
    * Computes residuals and Jacobian, converts to CSR format, and constructs
-   * the linear system J^T J dx = -J^T r. The left-hand side (LHS) is the
-   * approximate Hessian H = J^T J, and the right-hand side (RHS) is the
-   * negative gradient -J^T r.
+   * the linear system J^T J dx = -J^T r (or S H S z = S b with dx = S z when
+   * column scaling is enabled). The member hessian_ holds the unscaled H;
+   * lhs and rhs are scaled for the solver when applicable.
    *
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
@@ -256,12 +304,46 @@ class GaussNewtonMinimizer {
   float ComputeCost(cudaStream_t stream, const Problem& problem,
                     const MinimizerState& minimizer_state);
 
+ private:
+  /**
+   * @brief Applies diagonal column scaling to the normal-equation system.
+   *
+   * After the unscaled Hessian copy is in lhs and rhs holds b = -J^T r,
+   * this may replace the solve target with S H S z = S b: fills column_scale_,
+   * scales lhs symmetrically, and sets rhs_i *= S_i. When column_scaling is
+   * None, returns immediately (hessian_ is unchanged and already separate).
+   *
+   * @param stream CUDA stream for GPU work.
+   * @param[in,out] lhs Approximate Hessian H = J^T J (scaled in-place when enabled).
+   * @param[in,out] rhs Right-hand side b (elementwise-scaled when enabled).
+   */
+  void ApplyColumnScalingToNormalEquations(cudaStream_t stream,
+                                           CSRSparseMatrix& lhs,
+                                           dvector<float>& rhs);
+
+  /**
+   * @brief Maps the scaled linear unknown z to the manifold tangent step dx = S z.
+   *
+   * The direct solver produces z from (S H S + damping) z = S b. This
+   * multiplies step in-place by column_scale_. No-op when column scaling
+   * is disabled or step is empty.
+   *
+   * @param stream CUDA stream for GPU work.
+   * @param[in,out] step Solution vector from the linear solver; overwritten by dx.
+   */
+  void MapScaledLinearSolutionToTangentStep(cudaStream_t stream,
+                                            dvector<float>& step);
+
+  /**
+   * @brief Builds Jacobian COO structure and resizes value buffer.
+   */
+  void InitializeJacobian(cudaStream_t stream, const Problem& problem);
+
+ protected:
   const MinimizerOptions options_;  ///< Optimizer configuration options.
 
-  cuDSSHandle cudss_handle_;         ///< cuDSS handle for linear solver (destroyed after solver_ so data is freed first).
   SparseLinearSolverPtr solver_;     ///< Linear solver for Gauss-Newton system.
-  void* solver_handle_ = nullptr;    ///< Opaque handle passed to the linear solver.
-  SparseMatrixMultiplication gemm_;  ///< Matrix multiplication for H = J^T J.
+  SparseMatrixMultiplierPtr gemm_;   ///< Matrix multiplication for H = J^T J.
   cuSPARSEHandle cusparse_handle_;   ///< cuSPARSE handle for sparse operations.
 
   StateBatchOps state_ops_;  ///< Operations on state batches.
@@ -274,9 +356,19 @@ class GaussNewtonMinimizer {
 
   CSRSparseMatrix hessian_;  ///< Approximate Hessian H = J^T J.
 
+  /// Diagonal S when column_scaling is enabled; size = number of tangent DOFs.
+  dvector<float> column_scale_;
+
   dvector<float> step_;  ///< State update step vector.
 
   dvector<uint8_t> buffer_;  ///< Temporary buffer for sparse operations.
+
+  /// Working normal-equation system; retained across Minimize calls to preserve
+  /// capacity.
+  CSRSparseMatrix lhs_work_;
+  dvector<float> rhs_work_;
+  MinimizerState current_state_;
+  MinimizerState updated_state_;
 
   profiler::Domain profiler_domain_{
       "GaussNewtonMinimizer"};  ///< Profiling domain.

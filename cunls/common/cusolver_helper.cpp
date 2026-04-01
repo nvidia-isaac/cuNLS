@@ -15,39 +15,82 @@
  * limitations under the License.
  */
 
-#include "cunls/common/cusolver_helper.h"
+#include <cusolverDn.h>
 
+#include "cunls/common/cusolver_helper.h"
 #include "cunls/common/log.h"
 
 namespace cunls {
 
-/**
- * @brief Constructs a cuSolver handle.
- *
- * Note: The handle is created lazily. The actual handle creation happens
- * in GetHandle() when a stream is provided.
- */
+const char* cusolverGetErrorString(int status) {
+  auto s = static_cast<cusolverStatus_t>(status);
+  if (s == CUSOLVER_STATUS_SUCCESS) {
+    return "CUSOLVER_STATUS_SUCCESS";
+  } else if (s == CUSOLVER_STATUS_NOT_INITIALIZED) {
+    return "CUSOLVER_STATUS_NOT_INITIALIZED";
+  } else if (s == CUSOLVER_STATUS_ALLOC_FAILED) {
+    return "CUSOLVER_STATUS_ALLOC_FAILED";
+  } else if (s == CUSOLVER_STATUS_INVALID_VALUE) {
+    return "CUSOLVER_STATUS_INVALID_VALUE";
+  } else if (s == CUSOLVER_STATUS_ARCH_MISMATCH) {
+    return "CUSOLVER_STATUS_ARCH_MISMATCH";
+  } else if (s == CUSOLVER_STATUS_MAPPING_ERROR) {
+    return "CUSOLVER_STATUS_MAPPING_ERROR";
+  } else if (s == CUSOLVER_STATUS_EXECUTION_FAILED) {
+    return "CUSOLVER_STATUS_EXECUTION_FAILED";
+  } else if (s == CUSOLVER_STATUS_INTERNAL_ERROR) {
+    return "CUSOLVER_STATUS_INTERNAL_ERROR";
+  } else if (s == CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED) {
+    return "CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
+  } else if (s == CUSOLVER_STATUS_NOT_SUPPORTED) {
+    return "CUSOLVER_STATUS_NOT_SUPPORTED";
+  } else if (s == CUSOLVER_STATUS_ZERO_PIVOT) {
+    return "CUSOLVER_STATUS_ZERO_PIVOT";
+  } else if (s == CUSOLVER_STATUS_INVALID_LICENSE) {
+    return "CUSOLVER_STATUS_INVALID_LICENSE";
+  } else if (s == CUSOLVER_STATUS_IRS_PARAMS_NOT_INITIALIZED) {
+    return "CUSOLVER_STATUS_IRS_PARAMS_NOT_INITIALIZED";
+  } else if (s == CUSOLVER_STATUS_IRS_PARAMS_INVALID) {
+    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID";
+  } else if (s == CUSOLVER_STATUS_IRS_PARAMS_INVALID_PREC) {
+    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID_PREC";
+  } else if (s == CUSOLVER_STATUS_IRS_PARAMS_INVALID_REFINE) {
+    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID_REFINE";
+  } else if (s == CUSOLVER_STATUS_IRS_PARAMS_INVALID_MAXITER) {
+    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID_MAXITER";
+  } else if (s == CUSOLVER_STATUS_IRS_INTERNAL_ERROR) {
+    return "CUSOLVER_STATUS_IRS_INTERNAL_ERROR";
+  } else if (s == CUSOLVER_STATUS_IRS_NOT_SUPPORTED) {
+    return "CUSOLVER_STATUS_IRS_NOT_SUPPORTED";
+  } else if (s == CUSOLVER_STATUS_IRS_OUT_OF_RANGE) {
+    return "CUSOLVER_STATUS_IRS_OUT_OF_RANGE";
+  } else if (s ==
+             CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES) {
+    return "CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES";
+  } else if (s == CUSOLVER_STATUS_IRS_INFOS_NOT_INITIALIZED) {
+    return "CUSOLVER_STATUS_IRS_INFOS_NOT_INITIALIZED";
+  } else if (s == CUSOLVER_STATUS_IRS_INFOS_NOT_DESTROYED) {
+    return "CUSOLVER_STATUS_IRS_INFOS_NOT_DESTROYED";
+  } else if (s == CUSOLVER_STATUS_IRS_MATRIX_SINGULAR) {
+    return "CUSOLVER_STATUS_IRS_MATRIX_SINGULAR";
+  } else if (s == CUSOLVER_STATUS_INVALID_WORKSPACE) {
+    return "CUSOLVER_STATUS_INVALID_WORKSPACE";
+  }
+  return "Unspecified cuSolver error";
+}
+
 cuSolverHandle::cuSolverHandle() {
-  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&handle_));
+  cusolverDnHandle_t h = nullptr;
+  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&h));
+  handle_ = static_cast<void*>(h);
 }
 
-/**
- * @brief Destroys the cuSolver handle.
- *
- * Uses WARN_ON_CUSOLVER_ERROR to avoid throwing exceptions in destructor.
- */
 cuSolverHandle::~cuSolverHandle() {
-  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroy(handle_));
+  WARN_ON_CUSOLVER_ERROR(
+      cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
 }
 
-/**
- * @brief Gets or creates a cuSolver handle associated with the given stream.
- *
- * If the handle is already associated with the given stream, returns it.
- * Otherwise, destroys the old handle and creates a new one associated with
- * the stream.
- */
-cusolverDnHandle_t cuSolverHandle::GetHandle(cudaStream_t stream) {
+void* cuSolverHandle::GetHandle(cudaStream_t stream) {
   if (stream == nullptr) {
     const std::string msg = "cuSolverHandle received invalid CUDA stream.";
     LogError(msg);
@@ -59,29 +102,27 @@ cusolverDnHandle_t cuSolverHandle::GetHandle(cudaStream_t stream) {
   }
 
   if (handle_ != nullptr) {
-    THROW_ON_CUSOLVER_ERROR(cusolverDnDestroy(handle_));
+    THROW_ON_CUSOLVER_ERROR(
+        cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
   }
 
   stream_ = stream;
-  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&handle_));
-  THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(handle_, stream_));
+  cusolverDnHandle_t h = nullptr;
+  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&h));
+  THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(h, stream_));
+  handle_ = static_cast<void*>(h);
   return handle_;
 }
 
-/**
- * @brief Constructs a cuSolver info object for eigenvalue decomposition.
- */
 cuSolverInfo::cuSolverInfo() {
-  THROW_ON_CUSOLVER_ERROR(cusolverDnCreateSyevjInfo(&info_));
+  syevjInfo_t info = nullptr;
+  THROW_ON_CUSOLVER_ERROR(cusolverDnCreateSyevjInfo(&info));
+  info_ = static_cast<void*>(info);
 }
 
-/**
- * @brief Destroys the cuSolver info object.
- *
- * Uses WARN_ON_CUSOLVER_ERROR to avoid throwing exceptions in destructor.
- */
 cuSolverInfo::~cuSolverInfo() {
-  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroySyevjInfo(info_));
+  WARN_ON_CUSOLVER_ERROR(
+      cusolverDnDestroySyevjInfo(static_cast<syevjInfo_t>(info_)));
 }
 
 }  // namespace cunls

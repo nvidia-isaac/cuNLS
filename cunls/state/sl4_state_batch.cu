@@ -11,11 +11,25 @@
 
 namespace cunls {
 
+SL4StateBatch::SL4StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+                             size_t num_blocks)
+    : Base(device_ptr, num_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      twists_(num_blocks * 15) {}
+
+SL4StateBatch::SL4StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+                             size_t num_blocks, const int* device_constant_state_ids,
+                             size_t num_const_state_blocks)
+    : Base(device_ptr, num_blocks, device_constant_state_ids,
+           num_const_state_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      twists_(num_blocks * 15) {}
+
 void SL4StateBatch::Plus(const float* x, const float* delta, float* x_plus_delta,
                          cudaStream_t stream) {
   size_t n = NumStateBlocks();
-  delta_transforms_.resize(n);
-  twists_.resize(n * 15);
 
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(twists_.data(), delta, n * 15 * sizeof(float),
                                       cudaMemcpyDeviceToDevice, stream));

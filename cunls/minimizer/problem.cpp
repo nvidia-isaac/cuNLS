@@ -140,18 +140,8 @@ bool Problem::CheckGraphConnectivity() const {
   }
 
   // Check whether factors are connected to valid state blocks.
-  std::vector<float*> state_ptrs;
-
-  for (const auto& device_param_ptrs : state_pointers_) {
-    const size_t total_params_in_cost_batch = device_param_ptrs.size();
-    state_ptrs.resize(total_params_in_cost_batch);
-
-    THROW_ON_CUDA_ERROR(cudaMemcpy(
-        state_ptrs.data(),
-        device_param_ptrs.data(),
-        total_params_in_cost_batch * sizeof(float*), cudaMemcpyDeviceToHost));
-
-    for (const auto p : state_ptrs) {
+  for (const auto& host_param_ptrs : state_pointers_) {
+    for (const auto p : host_param_ptrs) {
       auto it = visited.find(p);
       if (it == visited.end()) {
         // Pointer to non-existing state block.
@@ -202,8 +192,7 @@ const std::vector<StateBatch*>& Problem::GetStateBatches() const {
 }
 
 /** @brief Gets the per-residual-batch state pointer arrays. */
-const std::vector<DeviceVector<float*>>&
-Problem::GetStatePointers() const {
+const std::vector<std::vector<float*>>& Problem::GetStatePointers() const {
   return state_pointers_;
 }
 

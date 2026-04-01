@@ -21,6 +21,7 @@
 
 #include "cunls/math/dense_matrix_ops.h"
 
+#include <cublas_v2.h>
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -193,7 +194,7 @@ TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
   // Verify: (A^0.5)^2 should equal A
   // Compute (A^0.5)^2 using matrix multiplication
   cuBLASHandle cublas_handle;
-  auto handle = cublas_handle.GetHandle(stream.GetStream());
+  auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
 

@@ -68,7 +68,7 @@ __global__ void set_state_pointers_kernel(
  */
 void MinimizerState::CreateStates(const Problem& problem) {
   const auto& state_batches = problem.GetStateBatches();
-  if (states_.size() != state_batches.size()) {
+  if (states_.size() < state_batches.size()) {
     states_.resize(state_batches.size());
   }
 
@@ -96,13 +96,28 @@ void MinimizerState::CreateStates(const Problem& problem) {
  */
 void MinimizerState::CreateStatePointers(const Problem& problem) {
   const auto& problem_param_pointers = problem.GetStatePointers();
-  state_pointers_.resize(problem_param_pointers.size());
+  if (state_pointers_.size() < problem_param_pointers.size()) {
+    state_pointers_.resize(problem_param_pointers.size());
+  }
 
   for (size_t i = 0; i < problem_param_pointers.size(); i++) {
     const auto& param_ptrs = problem_param_pointers[i];
     auto& new_ptrs = state_pointers_[i];
 
     new_ptrs.resize(param_ptrs.size());
+  }
+}
+
+void MinimizerState::CopyProblemStatePointersFromHost(const Problem& problem) {
+  const auto& host = problem.GetStatePointers();
+  if (problem_state_ptrs_device_.size() < host.size()) {
+    problem_state_ptrs_device_.resize(host.size());
+  }
+  for (size_t i = 0; i < host.size(); ++i) {
+    problem_state_ptrs_device_[i].resize(host[i].size());
+    if (!host[i].empty()) {
+      problem_state_ptrs_device_[i].CopyFromHost(host[i].data(), host[i].size());
+    }
   }
 }
 
@@ -120,6 +135,7 @@ void MinimizerState::CreateStatePointers(const Problem& problem) {
 void MinimizerState::Create(cudaStream_t stream, const Problem& problem) {
   CreateStates(problem);
   CreateStatePointers(problem);
+  CopyProblemStatePointersFromHost(problem);
 
   const auto& state_batches = problem.GetStateBatches();
   {
@@ -140,14 +156,12 @@ void MinimizerState::Create(cudaStream_t stream, const Problem& problem) {
     }
   }
 
-  const auto& problem_param_pointers = problem.GetStatePointers();
-
   {
     // Remap state pointers to point into local storage
     const auto& residual_batches = problem.GetResidualBatches();
 
     for (size_t i = 0; i < residual_batches.size(); i++) {
-      const auto& param_ptrs = problem_param_pointers[i];
+      const auto& param_ptrs = problem_state_ptrs_device_[i];
       auto& new_ptrs = state_pointers_[i];
 
       assert(param_ptrs.size() == new_ptrs.size());

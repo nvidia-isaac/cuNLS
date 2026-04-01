@@ -22,53 +22,60 @@
 
 namespace cunls {
 
-/**
- * @brief Destructor implementation for cuBLASHandle.
- *
- * Safely destroys the cuBLAS handle if one exists. Uses WARN_ON_CUBLAS_ERROR
- * instead of THROW_ON_CUBLAS_ERROR to avoid throwing exceptions in destructors,
- * which could lead to undefined behavior.
- */
+const char* cublasGetErrorString(int status) {
+  auto s = static_cast<cublasStatus_t>(status);
+  if (s == CUBLAS_STATUS_SUCCESS)
+    return "CUBLAS_STATUS_SUCCESS";
+  else if (s == CUBLAS_STATUS_NOT_INITIALIZED)
+    return "CUBLAS_STATUS_NOT_INITIALIZED";
+  else if (s == CUBLAS_STATUS_ALLOC_FAILED)
+    return "CUBLAS_STATUS_ALLOC_FAILED";
+  else if (s == CUBLAS_STATUS_INVALID_VALUE)
+    return "CUBLAS_STATUS_INVALID_VALUE";
+  else if (s == CUBLAS_STATUS_ARCH_MISMATCH)
+    return "CUBLAS_STATUS_ARCH_MISMATCH";
+  else if (s == CUBLAS_STATUS_MAPPING_ERROR)
+    return "CUBLAS_STATUS_MAPPING_ERROR";
+  else if (s == CUBLAS_STATUS_EXECUTION_FAILED)
+    return "CUBLAS_STATUS_EXECUTION_FAILED";
+  else if (s == CUBLAS_STATUS_INTERNAL_ERROR)
+    return "CUBLAS_STATUS_INTERNAL_ERROR";
+  else if (s == CUBLAS_STATUS_NOT_SUPPORTED)
+    return "CUBLAS_STATUS_NOT_SUPPORTED";
+  else if (s == CUBLAS_STATUS_LICENSE_ERROR)
+    return "CUBLAS_STATUS_LICENSE_ERROR";
+  else
+    return "Unspecified cuBLAS error";
+}
+
 cuBLASHandle::~cuBLASHandle() {
   if (handle_ != nullptr) {
-    WARN_ON_CUBLAS_ERROR(cublasDestroy(handle_));
+    WARN_ON_CUBLAS_ERROR(
+        cublasDestroy(static_cast<cublasHandle_t>(handle_)));
   }
 }
 
-/**
- * @brief Implementation of GetHandle method.
- *
- * Manages the lifecycle of the cuBLAS handle:
- * 1. Validates that the stream is not nullptr
- * 2. Returns existing handle if already associated with the requested stream
- * 3. Destroys old handle if switching to a different stream
- * 4. Creates and initializes new handle for the requested stream
- *
- * This lazy initialization approach avoids creating handles until they're
- * actually needed, and automatically handles stream changes.
- */
-cublasHandle_t cuBLASHandle::GetHandle(cudaStream_t stream) {
-  // Validate input stream
+void* cuBLASHandle::GetHandle(cudaStream_t stream) {
   if (stream == nullptr) {
     const std::string msg = "cuBLASHandle received invalid CUDA stream.";
     LogError(msg);
     throw std::invalid_argument(msg);
   }
 
-  // Return existing handle if already associated with the requested stream
   if (stream == stream_ && handle_ != nullptr) {
     return handle_;
   }
 
-  // Destroy old handle if switching to a different stream
   if (handle_ != nullptr) {
-    THROW_ON_CUBLAS_ERROR(cublasDestroy(handle_));
+    THROW_ON_CUBLAS_ERROR(
+        cublasDestroy(static_cast<cublasHandle_t>(handle_)));
   }
 
-  // Create and initialize new handle for the requested stream
   stream_ = stream;
-  THROW_ON_CUBLAS_ERROR(cublasCreate(&handle_));
-  THROW_ON_CUBLAS_ERROR(cublasSetStream(handle_, stream_));
+  cublasHandle_t h = nullptr;
+  THROW_ON_CUBLAS_ERROR(cublasCreate(&h));
+  THROW_ON_CUBLAS_ERROR(cublasSetStream(h, stream_));
+  handle_ = static_cast<void*>(h);
   return handle_;
 }
 

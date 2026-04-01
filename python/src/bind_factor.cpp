@@ -29,10 +29,12 @@
 
 #include "bindings.h"
 
+#include "py_factor_wrappers.h"
+
 #include <nanobind/stl/vector.h>
 
-#include "cunls/factor/factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
+#include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/factor/se2_between_factor_batch.h"
 #include "cunls/factor/se3_between_factor_batch.h"
@@ -50,49 +52,9 @@
 #include "cunls/factor/point_to_point_factor_batch.h"
 #include "cunls/factor/point_to_plane_factor_batch.h"
 #include "cunls/factor/symmetric_point_to_plane_factor_batch.h"
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/types.h"
 
 namespace {
-
-// Python trampoline for cunls::FactorBatch.
-//
-// When the C++ optimizer calls Evaluate(), this class:
-//   1. Re-acquires the GIL (released by the minimizer wrapper).
-//   2. Looks up the Python object that wraps *this* via nb::find().
-//   3. Forwards the four raw pointers as plain ints to Python's evaluate().
-//
-// All GPU pointer arguments are passed as uintptr_t so that the Python side
-// can wrap them with CuPy or Warp arrays without any C++ ↔ Python type
-// conversion overhead.
-class PyFactorBatch : public cunls::FactorBatch {
- public:
-    size_t residual_size_;
-    size_t num_factors_;
-    std::vector<size_t> state_block_sizes_;
-
-    PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t num)
-        : residual_size_(res_size),
-          state_block_sizes_(std::move(block_sizes)),
-          num_factors_(num) {}
-
-    bool Evaluate(float* residuals, float* jacobians,
-                  float const* const* state_pointers,
-                  cudaStream_t stream) const override {
-        nb::gil_scoped_acquire gil;
-        nb::object self_obj = nb::find(this);
-        nb::object result = self_obj.attr("evaluate")(
-            reinterpret_cast<uintptr_t>(residuals),
-            reinterpret_cast<uintptr_t>(jacobians),
-            reinterpret_cast<uintptr_t>(state_pointers),
-            reinterpret_cast<uintptr_t>(stream));
-        return nb::cast<bool>(result);
-    }
-
-    size_t ResidualsSize() const override { return residual_size_; }
-    std::vector<size_t> StateBlockSizes() const override { return state_block_sizes_; }
-    size_t NumFactors() const override { return num_factors_; }
-};
 
 // Template helper to bind PriorVectorFactorBatch<Dim> for a given dimension.
 template <int Dim>
@@ -167,6 +129,45 @@ void bind_factor(nb::module_& m) {
         .def_prop_ro("num_factors", &cunls::ReprojectionFactorBatch::NumFactors)
         .def_prop_ro("residuals_size", &cunls::ReprojectionFactorBatch::ResidualsSize)
         .def("state_block_sizes", &cunls::ReprojectionFactorBatch::StateBlockSizes);
+
+    nb::class_<cunls::PnPFactorBatch, cunls::FactorBatch>(m, "PnPFactorBatch",
+        "Batched PnP reprojection: fixed 3D points, pose-only Jacobian.\n"
+        "Residual=2, States=[SE3(6)]. Observations in normalized image coords.\n"
+        "3D points are passed at construction (device); not optimized.")
+        .def("__init__", [](cunls::PnPFactorBatch* self, cunls::cuBLASHandle& cublas,
+                            nb::handle observations, nb::handle points_world,
+                            size_t num_obs, float z_threshold) {
+            auto obs_ptr = reinterpret_cast<const cunls::Vector<2>*>(
+                extract_device_ptr(observations));
+            auto p_ptr = reinterpret_cast<const cunls::Vector<3>*>(
+                extract_device_ptr(points_world));
+            new (self) cunls::PnPFactorBatch(cublas, obs_ptr, p_ptr, num_obs,
+                                            z_threshold);
+        }, nb::arg("cublas_handle"), nb::arg("observations"),
+           nb::arg("points_world"), nb::arg("num_observations"),
+           nb::arg("z_threshold") = 1e-3f,
+           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
+           nb::keep_alive<1, 4>())
+        .def("__init__", [](cunls::PnPFactorBatch* self, cunls::cuBLASHandle& cublas,
+                            nb::handle observations, nb::handle poses_camera_from_rig,
+                            nb::handle points_world, size_t num_obs,
+                            float z_threshold) {
+            auto obs_ptr = reinterpret_cast<const cunls::Vector<2>*>(
+                extract_device_ptr(observations));
+            auto rig_ptr = reinterpret_cast<const cunls::SE3Transform*>(
+                extract_device_ptr(poses_camera_from_rig));
+            auto p_ptr = reinterpret_cast<const cunls::Vector<3>*>(
+                extract_device_ptr(points_world));
+            new (self) cunls::PnPFactorBatch(cublas, obs_ptr, rig_ptr, p_ptr,
+                                            num_obs, z_threshold);
+        }, nb::arg("cublas_handle"), nb::arg("observations"),
+           nb::arg("poses_camera_from_rig"), nb::arg("points_world"),
+           nb::arg("num_observations"), nb::arg("z_threshold") = 1e-3f,
+           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
+           nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>())
+        .def_prop_ro("num_factors", &cunls::PnPFactorBatch::NumFactors)
+        .def_prop_ro("residuals_size", &cunls::PnPFactorBatch::ResidualsSize)
+        .def("state_block_sizes", &cunls::PnPFactorBatch::StateBlockSizes);
 
     // --- SE3 Between ---
     nb::class_<cunls::SE3BetweenFactorBatch, cunls::FactorBatch>(m,
@@ -410,4 +411,69 @@ void bind_factor(nb::module_& m) {
         .def_prop_ro("num_factors", &cunls::SymmetricPointToPlaneFactorBatch::NumFactors)
         .def_prop_ro("residuals_size", &cunls::SymmetricPointToPlaneFactorBatch::ResidualsSize)
         .def("state_block_sizes", &cunls::SymmetricPointToPlaneFactorBatch::StateBlockSizes);
+
+    // --- InformationFactorBatch (polymorphic wrapper) ---
+    nb::class_<PyInformationFactorBatch, cunls::FactorBatch>(m,
+        "InformationFactorBatch",
+        "Wraps any factor batch and applies per-factor sqrt-information matrices.\n\n"
+        "Residuals and Jacobians are left-multiplied by the corresponding\n"
+        "square-root information matrix: r' = Omega^{1/2} r, J' = Omega^{1/2} J.\n\n"
+        "Parameters\n"
+        "----------\n"
+        "cublas_handle : CublasHandle\n"
+        "    Shared cuBLAS handle.\n"
+        "inner_factor : FactorBatch\n"
+        "    The factor batch to wrap.\n"
+        "sqrt_information_matrices : DevicePointer\n"
+        "    Device buffer with one square-root information matrix per inner factor\n"
+        "    (``inner_factor.num_factors`` matrices), each residual_size x residual_size,\n"
+        "    stored contiguously in row-major order.")
+        .def("__init__", [](PyInformationFactorBatch* self,
+                            cunls::cuBLASHandle& cublas,
+                            cunls::FactorBatch* inner,
+                            nb::handle sqrt_info) {
+            auto ptr = reinterpret_cast<const float*>(
+                extract_device_ptr(sqrt_info));
+            new (self) PyInformationFactorBatch(cublas, inner, ptr);
+        }, nb::arg("cublas_handle"), nb::arg("inner_factor"),
+           nb::arg("sqrt_information_matrices"),
+           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
+           nb::keep_alive<1, 4>())
+        .def_prop_ro("num_factors", &PyInformationFactorBatch::NumFactors)
+        .def_prop_ro("residuals_size", &PyInformationFactorBatch::ResidualsSize)
+        .def("state_block_sizes", &PyInformationFactorBatch::StateBlockSizes);
+
+    // --- WeightedFactorBatch (polymorphic wrapper) ---
+    nb::class_<PyWeightedFactorBatch, cunls::FactorBatch>(m,
+        "WeightedFactorBatch",
+        "Wraps any factor batch and scales residuals/Jacobians by a weight.\n\n"
+        "Supports two modes:\n"
+        "  1. Uniform weight (float): every factor is scaled equally.\n"
+        "  2. Per-factor weights (DevicePointer): each factor gets its own weight.\n\n"
+        "Parameters\n"
+        "----------\n"
+        "inner_factor : FactorBatch\n"
+        "    The factor batch to wrap.\n"
+        "weight : float, optional\n"
+        "    Uniform scalar weight applied to all factors.\n"
+        "weights : DevicePointer, optional\n"
+        "    Device buffer with ``inner_factor.num_factors`` floats (one per factor).\n\n"
+        "Exactly one of ``weight`` or ``weights`` must be provided.")
+        .def("__init__", [](PyWeightedFactorBatch* self,
+                            cunls::FactorBatch* inner,
+                            float weight) {
+            new (self) PyWeightedFactorBatch(inner, weight);
+        }, nb::arg("inner_factor"), nb::arg("weight"),
+           nb::keep_alive<1, 2>())
+        .def("__init__", [](PyWeightedFactorBatch* self,
+                            cunls::FactorBatch* inner,
+                            nb::handle weights) {
+            auto ptr = reinterpret_cast<const float*>(
+                extract_device_ptr(weights));
+            new (self) PyWeightedFactorBatch(inner, ptr);
+        }, nb::arg("inner_factor"), nb::arg("weights"),
+           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
+        .def_prop_ro("num_factors", &PyWeightedFactorBatch::NumFactors)
+        .def_prop_ro("residuals_size", &PyWeightedFactorBatch::ResidualsSize)
+        .def("state_block_sizes", &PyWeightedFactorBatch::StateBlockSizes);
 }

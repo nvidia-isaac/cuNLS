@@ -69,6 +69,21 @@ class TestGaussNewtonMinimizer:
         result = cp.asnumpy(states_gpu)
         np.testing.assert_allclose(result, target, atol=1e-3)
 
+    def test_converges_with_hessian_column_scaling(self, stream):
+        problem, states_gpu, target = _make_prior_problem()
+
+        opts = pycunls.MinimizerOptions()
+        opts.max_num_iterations = 10
+        opts.column_scaling = pycunls.ColumnScaling.hessian_diagonal
+        minimizer = pycunls.GaussNewtonMinimizer(opts)
+        summary = minimizer.minimize(stream, problem)
+
+        cp.cuda.runtime.streamSynchronize(stream.get_stream())
+
+        assert summary.final_cost < 1e-6
+        result = cp.asnumpy(states_gpu)
+        np.testing.assert_allclose(result, target, atol=1e-3)
+
 
 class TestLevenbergMarquardtMinimizer:
     """LM convergence, summary field validation, and robust-loss integration."""
@@ -77,6 +92,28 @@ class TestLevenbergMarquardtMinimizer:
 
         lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
         lm_opts.base_options.max_num_iterations = 20
+        minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
+        summary = minimizer.minimize(stream, problem)
+
+        cp.cuda.runtime.streamSynchronize(stream.get_stream())
+
+        assert summary.final_cost < 1e-6
+        result = cp.asnumpy(states_gpu)
+        np.testing.assert_allclose(result, target, atol=1e-3)
+
+    @pytest.mark.parametrize(
+        "scaling",
+        [
+            pycunls.ColumnScaling.hessian_diagonal,
+            pycunls.ColumnScaling.jacobian_column_norm,
+        ],
+    )
+    def test_converges_with_column_scaling(self, stream, scaling):
+        problem, states_gpu, target = _make_prior_problem()
+
+        lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
+        lm_opts.base_options.max_num_iterations = 20
+        lm_opts.base_options.column_scaling = scaling
         minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
         summary = minimizer.minimize(stream, problem)
 
@@ -128,6 +165,7 @@ class TestMinimizerOptions:
         assert opts.state_tolerance == pytest.approx(1e-6)
         assert opts.cost_tolerance == pytest.approx(1e-6)
         assert opts.sparse_linear_solver_type == pycunls.SparseLinearSolverType.cuDSS
+        assert opts.column_scaling == pycunls.ColumnScaling.none
 
     def test_modification(self):
         opts = pycunls.MinimizerOptions()

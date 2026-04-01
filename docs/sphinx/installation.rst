@@ -28,10 +28,16 @@ Example (release build + install):
 
    ./scripts/build_cunls.sh build Release /tmp/cunls_install
 
-This produces:
+By default, this builds a **shared library** (``libcunls.so``). Set the
+``EXTRA_CMAKE_ARGS`` environment variable to override CMake options, for example
+to build a static library:
 
-- `libcunls.so` in your build output
-- headers and shared library in `install_dir` when provided
+.. code-block:: bash
+
+   EXTRA_CMAKE_ARGS='-DBUILD_SHARED_LIBS=OFF' ./scripts/build_cunls.sh build Release /tmp/cunls_install
+
+When an ``install_dir`` is provided, headers and the library binary are
+installed there.
 
 ===============================================================================
 Build with Docker
@@ -45,13 +51,20 @@ Build with Docker
 
    ./scripts/build_cunls_in_docker.sh <CMAKE_BUILD_TYPE = Release | Coverage> [local_install_dir]
 
-When `local_install_dir` is set, install artifacts are copied to:
+The Docker build produces **both** shared and static library variants.
+Intermediate build directories live inside the container and are discarded
+automatically; only the final install directory is mounted to the host.
+
+Install artifacts (default ``build_docker/``, or the specified directory):
 
 .. code-block:: text
 
-   <local_install_dir>/
-     include/cunls/
+   <install_dir>/
+     include/cunls/          # headers
      lib/
+       libcunls.so           # shared library
+       libcunls.a            # static library (with bundled deps)
+       cmake/cunls/          # CMake package config
 
 ===============================================================================
 Direct CMake build (manual path)
@@ -63,10 +76,21 @@ Direct CMake build (manual path)
    cmake --build build -j
    cmake --install build
 
+Pass ``-DBUILD_SHARED_LIBS=OFF`` to build a static library instead of a shared
+one.
+
 ===============================================================================
 Notes
 ===============================================================================
 
-- `BUILD_TESTING` is off by default.
-- `ENABLE_PROFILING=ON` adds NVTX support.
-- cuDSS integration is configured through `cmake/AddCUDSS.cmake`.
+- ``BUILD_SHARED_LIBS`` defaults to ``ON`` (shared library). Set to ``OFF``
+  for a static archive with bundled dependencies.
+- ``BUILD_TESTING`` is off by default.
+- ``ENABLE_PROFILING=ON`` adds NVTX support.
+- cuDSS integration is configured through ``cmake/AddCUDSS.cmake``.
+- ``build_cunls.sh`` supports two environment variables for advanced use:
+
+  - ``CUNLS_SOURCE_DIR`` — override the CMake source directory (defaults to
+    the parent of the build directory).
+  - ``EXTRA_CMAKE_ARGS`` — pass additional flags to the CMake configure step
+    (e.g. ``-DBUILD_SHARED_LIBS=OFF``).

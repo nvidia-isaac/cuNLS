@@ -2,8 +2,11 @@
 Common API
 ################################################################################
 
-`cunls/common` provides utility containers, type aliases, profiling wrappers,
+``cunls/common`` provides utility containers, type aliases, profiling wrappers,
 and CUDA library handle abstractions.
+
+**C++** — ``cunls/common``
+  |  **Python** — ``pycunls``
 
 Core types
 ----------
@@ -69,6 +72,35 @@ CopyToHostAsync
 
 ``void CopyToHostAsync(T* dst, size_t num_elements, CudaStream& stream) const`` — ``dst`` [out] host destination; ``num_elements`` [in]; ``stream`` [in].
 
+PinnedVector<T>
+---------------
+
+Header: `cunls/common/pinned_vector.h`
+
+RAII container for CUDA page-locked (pinned) host memory. Pinned memory
+enables fully asynchronous device-to-host and host-to-device transfers via
+``cudaMemcpyAsync``. Alias: ``pvector<T>`` (defined in ``types.h``).
+
+Constructors:
+
+- ``PinnedVector()``
+- ``PinnedVector(size_t num_elements)``
+- move constructor / move assignment
+
+Accessors:
+
+- ``T* data()`` — [out] pointer to pinned host memory.
+- ``size_t size()`` — [out] number of elements.
+- ``size_t capacity()`` — [out] number of elements allocated.
+- ``T& operator[](size_t i)`` — element access.
+
+Mutators:
+
+- ``void resize(size_t new_size, bool preserve_data = false)`` —
+  ``new_size`` [in] desired element count; ``preserve_data`` [in] if true,
+  existing data is copied when reallocation occurs. Reuses the existing
+  allocation when ``new_size <= capacity``.
+
 CudaStream
 ----------
 
@@ -127,3 +159,63 @@ Header: `cunls/common/profiler.h`
 - ``profiler::ScopedRange(const std::string& name)`` — ``name`` [in] NVTX range label.
 - ``profiler::Domain(const std::string& name)`` — ``name`` [in] NVTX domain label.
 - ``profiler::Domain::CreateDomainRange(const std::string& name)`` — ``name`` [in] range label; returns [out] scoped range RAII object.
+
+Python API (``pycunls``)
+------------------------
+
+The Python bindings expose CUDA stream and cuBLAS handle wrappers through the
+``pycunls`` package.  These are utility types shared by state batches, factor
+batches, and minimizers.
+
+.. _py-cuda-stream-label:
+
+``pycunls.CudaStream``
+^^^^^^^^^^^^^^^^^^^^^^
+
+RAII wrapper around a ``cudaStream_t``.  Every pycunls ``minimize`` call
+requires a stream to serialize asynchronous GPU work (factor evaluation,
+linear algebra, state updates).
+
+**Constructor**
+
+.. code-block:: python
+
+   stream = pycunls.CudaStream(sync_on_destroy=False)
+
+- **sync_on_destroy** (``bool``, default ``False``) — when ``True``, the
+  destructor calls ``cudaStreamSynchronize`` before destroying the stream.
+  Useful for debugging; in production leave ``False`` and synchronize
+  explicitly after ``minimize``.
+
+**Methods**
+
+- ``get_stream() -> int`` — returns the underlying ``cudaStream_t`` cast to
+  an integer.  Pass this value to ``cp.cuda.runtime.streamSynchronize`` to
+  wait for all GPU work issued on this stream, or to `NVIDIA Warp
+  <https://developer.nvidia.com/warp-python>`_
+  (``wp.Stream(cuda_stream=handle)``) when authoring custom kernels.
+
+.. _py-cublas-handle-label:
+
+``pycunls.CublasHandle``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+RAII wrapper around a ``cublasHandle_t``.  Required as the first argument by
+every Lie-group and similarity state batch constructor
+(``SE3StateBatch``, ``SO3StateBatch``, ``SO2StateBatch``, ``SE2StateBatch``,
+``Similarity2StateBatch``, ``Similarity3StateBatch``) and by factor batches
+that operate on those manifolds (``SE3BetweenFactorBatch``,
+``ReprojectionFactorBatch``, ``PnPFactorBatch``, ``SE3PriorFactorBatch``,
+``SO3PriorFactorBatch``).
+Euclidean state and factor batches (``VectorStateBatch*``,
+``PriorVectorFactorBatch*``, ICP factors) do **not** need it.
+
+**Constructor**
+
+.. code-block:: python
+
+   cublas = pycunls.CublasHandle()
+
+Creates the handle lazily; the first cuBLAS call binds it to the active CUDA
+device.  A single ``CublasHandle`` instance may be shared across all state
+and factor batches in a problem.

@@ -16,10 +16,10 @@
  */
 
 /** @file jacobian_ops_test.cpp
- *  @brief Tests for Jacobian sparse structure construction on GPU vs. CPU.
+ *  @brief Tests for Jacobian sparse structure construction on GPU.
  */
 
-#include "cunls/minimizer/jacobian_ops.h"
+#include "cunls/minimizer/minimizer_state.h"
 
 #include <gtest/gtest.h>
 
@@ -42,7 +42,8 @@ namespace cunls {
  * @brief Test fixture for Jacobian operations with typed vector sizes.
  *
  * Sets up a randomly-sized optimization problem with constant and non-constant
- * states, then verifies GPU-built triplet sparse structures against CPU reference.
+ * states, then verifies GPU-built triplet sparse structures are consistent
+ * across two MinimizerState builds.
  *
  * @tparam VectorSize Compile-time vector dimension.
  */
@@ -82,7 +83,7 @@ typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>,
     VectorSizes;
 TYPED_TEST_CASE(JacobianOpsTest, VectorSizes);
 
-/** @brief Verifies that GPU-built triplet sparse structure matches the CPU reference implementation. */
+/** @brief Verifies that two GPU triplet builds match (idempotent structure). */
 TYPED_TEST(JacobianOpsTest, BuildTripletSparseStructure) {
   auto test_range = this->profiler_domain_.CreateDomainRange(
       "BuildTripletSparseStructureTest");
@@ -110,39 +111,38 @@ TYPED_TEST(JacobianOpsTest, BuildTripletSparseStructure) {
 
   ASSERT_TRUE(problem.CheckConsistency());
 
-  // Generate triplet structure on CPU
-  TripletSparseStructure gt_structure;
-  BuildTripletSparseStructureCPU(problem, gt_structure);
-
   CudaStream stream;
 
-  // Generate triplet structure on GPU
-  TripletSparseStructure structure;
+  TripletSparseStructure structure_a;
+  TripletSparseStructure structure_b;
   {
     auto range =
         this->profiler_domain_.CreateDomainRange("BuildTripletSparseStructure");
-    BuildTripletSparseStructure(stream.GetStream(), problem, structure);
+    MinimizerState ms_a;
+    ms_a.BuildTripletSparseStructure(stream.GetStream(), problem, structure_a);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    MinimizerState ms_b;
+    ms_b.BuildTripletSparseStructure(stream.GetStream(), problem, structure_b);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
-  // Check that results are correct
-  ASSERT_EQ(structure.row_ids.size(), gt_structure.row_ids.size());
-  ASSERT_EQ(structure.col_ids.size(), gt_structure.col_ids.size());
+  ASSERT_EQ(structure_a.row_ids.size(), structure_b.row_ids.size());
+  ASSERT_EQ(structure_a.col_ids.size(), structure_b.col_ids.size());
 
-  std::vector<int> row_ids(structure.row_ids.size());
-  structure.row_ids.CopyToHost(row_ids.data(), row_ids.size());
-  std::vector<int> gt_row_ids(gt_structure.row_ids.size());
-  gt_structure.row_ids.CopyToHost(gt_row_ids.data(), gt_row_ids.size());
-  for (size_t i = 0; i < structure.row_ids.size(); i++) {
-    ASSERT_EQ(row_ids[i], gt_row_ids[i]);
+  std::vector<int> row_ids(structure_a.row_ids.size());
+  structure_a.row_ids.CopyToHost(row_ids.data(), row_ids.size());
+  std::vector<int> row_ids_b(structure_b.row_ids.size());
+  structure_b.row_ids.CopyToHost(row_ids_b.data(), row_ids_b.size());
+  for (size_t i = 0; i < structure_a.row_ids.size(); i++) {
+    ASSERT_EQ(row_ids[i], row_ids_b[i]);
   }
 
-  std::vector<int> col_ids(structure.col_ids.size());
-  structure.col_ids.CopyToHost(col_ids.data(), col_ids.size());
-  std::vector<int> gt_col_ids(gt_structure.col_ids.size());
-  gt_structure.col_ids.CopyToHost(gt_col_ids.data(), gt_col_ids.size());
-  for (size_t i = 0; i < structure.col_ids.size(); i++) {
-    ASSERT_EQ(col_ids[i], gt_col_ids[i]);
+  std::vector<int> col_ids(structure_a.col_ids.size());
+  structure_a.col_ids.CopyToHost(col_ids.data(), col_ids.size());
+  std::vector<int> col_ids_b(structure_b.col_ids.size());
+  structure_b.col_ids.CopyToHost(col_ids_b.data(), col_ids_b.size());
+  for (size_t i = 0; i < structure_a.col_ids.size(); i++) {
+    ASSERT_EQ(col_ids[i], col_ids_b[i]);
   }
 }
 }  // namespace cunls

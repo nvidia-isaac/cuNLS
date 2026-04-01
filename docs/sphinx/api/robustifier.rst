@@ -2,9 +2,11 @@
 Robustifier API
 ################################################################################
 
-The ``cunls/robustifier`` module defines GPU-batched robust loss (robustifier)
-functions used by :cpp:class:`ResidualBatch` to reduce the influence of
-outliers in non-linear least squares.
+The robustifier module defines GPU-batched robust loss functions used by the
+minimizer to reduce the influence of outliers in non-linear least squares.
+
+**C++** — ``cunls/robustifier``
+  |  **Python** — ``pycunls``
 
 **What robustifier functions are for**
   In least squares, a few bad measurements (outliers) can pull the solution
@@ -290,3 +292,38 @@ gradient and Gauss-Newton system without recomputing :math:`\rho`.
   For more detail, see the Ceres Solver documentation on
   `LossFunction <http://ceres-solver.org/nnls_modeling.html#lossfunction>`_
   and the references therein (e.g. Triggs).
+
+================================================================================
+Python API (``pycunls``)
+================================================================================
+
+All Python loss function batches share the same base class
+``pycunls.LossFunctionBatch``.  The formulas and parameters are identical to
+the C++ versions above.  Pass a loss function instance to
+``Problem.add_factor_batch`` to apply robustification:
+
+.. code-block:: python
+
+   loss = pycunls.HuberLossFunctionBatch(delta=1.0)
+   problem.add_factor_batch(factor_batch, loss, state_pointers)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Python class
+     - Constructor
+   * - ``TrivialLossFunctionBatch``
+     - ``TrivialLossFunctionBatch()``
+   * - ``HuberLossFunctionBatch``
+     - ``HuberLossFunctionBatch(delta: float)``
+   * - ``CauchyLossFunctionBatch``
+     - ``CauchyLossFunctionBatch(b: float, c: float)``
+   * - ``ArctanLossFunctionBatch``
+     - ``ArctanLossFunctionBatch(a: float, b: float)``
+   * - ``SoftLOneLossFunctionBatch``
+     - ``SoftLOneLossFunctionBatch(b: float, c: float)``
+   * - ``TolerantLossFunctionBatch``
+     - ``TolerantLossFunctionBatch(a: float, b: float)``
+   * - ``TukeyLossFunctionBatch``
+     - ``TukeyLossFunctionBatch(a: float)``

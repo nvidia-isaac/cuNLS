@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 #include "cunls/common/helper.h"
@@ -31,30 +30,7 @@ namespace cunls {
  * @param status cuBLAS status code to convert
  * @return C-string containing the error message
  */
-inline const char* cublasGetErrorString(cublasStatus_t status) {
-  if (status == CUBLAS_STATUS_SUCCESS)
-    return "CUBLAS_STATUS_SUCCESS";
-  else if (status == CUBLAS_STATUS_NOT_INITIALIZED)
-    return "CUBLAS_STATUS_NOT_INITIALIZED";
-  else if (status == CUBLAS_STATUS_ALLOC_FAILED)
-    return "CUBLAS_STATUS_ALLOC_FAILED";
-  else if (status == CUBLAS_STATUS_INVALID_VALUE)
-    return "CUBLAS_STATUS_INVALID_VALUE";
-  else if (status == CUBLAS_STATUS_ARCH_MISMATCH)
-    return "CUBLAS_STATUS_ARCH_MISMATCH";
-  else if (status == CUBLAS_STATUS_MAPPING_ERROR)
-    return "CUBLAS_STATUS_MAPPING_ERROR";
-  else if (status == CUBLAS_STATUS_EXECUTION_FAILED)
-    return "CUBLAS_STATUS_EXECUTION_FAILED";
-  else if (status == CUBLAS_STATUS_INTERNAL_ERROR)
-    return "CUBLAS_STATUS_INTERNAL_ERROR";
-  else if (status == CUBLAS_STATUS_NOT_SUPPORTED)
-    return "CUBLAS_STATUS_NOT_SUPPORTED";
-  else if (status == CUBLAS_STATUS_LICENSE_ERROR)
-    return "CUBLAS_STATUS_LICENSE_ERROR";
-  else
-    return "Unspecified cuBLAS error";
-}
+const char* cublasGetErrorString(int status);
 
 /**
  * @brief Macro to throw an exception on cuBLAS errors.
@@ -108,14 +84,14 @@ class cuBLASHandle {
    *
    * @param stream CUDA stream to associate the handle with (must not be
    * nullptr)
-   * @return cuBLAS handle ready for use with the specified stream
+   * @return An opaque pointer to the cuBLAS handle associated with the stream.
    * @throws std::invalid_argument if stream is nullptr
    */
-  cublasHandle_t GetHandle(cudaStream_t stream);
+  void* GetHandle(cudaStream_t stream);
 
  private:
-  cudaStream_t stream_ = nullptr;    ///< Currently associated CUDA stream.
-  cublasHandle_t handle_ = nullptr;  ///< The cuBLAS handle.
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
+  void* handle_ = nullptr;         ///< The cuBLAS handle.
 };
 
 }  // namespace cunls

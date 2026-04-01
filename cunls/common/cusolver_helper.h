@@ -16,7 +16,8 @@
  */
 
 #pragma once
-#include <cusolverDn.h>
+
+#include <cuda_runtime.h>
 
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
@@ -29,61 +30,7 @@ namespace cunls {
  * @param status The cuSolver status code to convert
  * @return C-string containing the error message
  */
-inline const char* cusolverGetErrorString(cusolverStatus_t status) {
-  if (status == CUSOLVER_STATUS_SUCCESS) {
-    return "CUSOLVER_STATUS_SUCCESS";
-  } else if (status == CUSOLVER_STATUS_NOT_INITIALIZED) {
-    return "CUSOLVER_STATUS_NOT_INITIALIZED";
-  } else if (status == CUSOLVER_STATUS_ALLOC_FAILED) {
-    return "CUSOLVER_STATUS_ALLOC_FAILED";
-  } else if (status == CUSOLVER_STATUS_INVALID_VALUE) {
-    return "CUSOLVER_STATUS_INVALID_VALUE";
-  } else if (status == CUSOLVER_STATUS_ARCH_MISMATCH) {
-    return "CUSOLVER_STATUS_ARCH_MISMATCH";
-  } else if (status == CUSOLVER_STATUS_MAPPING_ERROR) {
-    return "CUSOLVER_STATUS_MAPPING_ERROR";
-  } else if (status == CUSOLVER_STATUS_EXECUTION_FAILED) {
-    return "CUSOLVER_STATUS_EXECUTION_FAILED";
-  } else if (status == CUSOLVER_STATUS_INTERNAL_ERROR) {
-    return "CUSOLVER_STATUS_INTERNAL_ERROR";
-  } else if (status == CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED) {
-    return "CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
-  } else if (status == CUSOLVER_STATUS_NOT_SUPPORTED) {
-    return "CUSOLVER_STATUS_NOT_SUPPORTED";
-  } else if (status == CUSOLVER_STATUS_ZERO_PIVOT) {
-    return "CUSOLVER_STATUS_ZERO_PIVOT";
-  } else if (status == CUSOLVER_STATUS_INVALID_LICENSE) {
-    return "CUSOLVER_STATUS_INVALID_LICENSE";
-  } else if (status == CUSOLVER_STATUS_IRS_PARAMS_NOT_INITIALIZED) {
-    return "CUSOLVER_STATUS_IRS_PARAMS_NOT_INITIALIZED";
-  } else if (status == CUSOLVER_STATUS_IRS_PARAMS_INVALID) {
-    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID";
-  } else if (status == CUSOLVER_STATUS_IRS_PARAMS_INVALID_PREC) {
-    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID_PREC";
-  } else if (status == CUSOLVER_STATUS_IRS_PARAMS_INVALID_REFINE) {
-    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID_REFINE";
-  } else if (status == CUSOLVER_STATUS_IRS_PARAMS_INVALID_MAXITER) {
-    return "CUSOLVER_STATUS_IRS_PARAMS_INVALID_MAXITER";
-  } else if (status == CUSOLVER_STATUS_IRS_INTERNAL_ERROR) {
-    return "CUSOLVER_STATUS_IRS_INTERNAL_ERROR";
-  } else if (status == CUSOLVER_STATUS_IRS_NOT_SUPPORTED) {
-    return "CUSOLVER_STATUS_IRS_NOT_SUPPORTED";
-  } else if (status == CUSOLVER_STATUS_IRS_OUT_OF_RANGE) {
-    return "CUSOLVER_STATUS_IRS_OUT_OF_RANGE";
-  } else if (status ==
-             CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES) {
-    return "CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES";
-  } else if (status == CUSOLVER_STATUS_IRS_INFOS_NOT_INITIALIZED) {
-    return "CUSOLVER_STATUS_IRS_INFOS_NOT_INITIALIZED";
-  } else if (status == CUSOLVER_STATUS_IRS_INFOS_NOT_DESTROYED) {
-    return "CUSOLVER_STATUS_IRS_INFOS_NOT_DESTROYED";
-  } else if (status == CUSOLVER_STATUS_IRS_MATRIX_SINGULAR) {
-    return "CUSOLVER_STATUS_IRS_MATRIX_SINGULAR";
-  } else if (status == CUSOLVER_STATUS_INVALID_WORKSPACE) {
-    return "CUSOLVER_STATUS_INVALID_WORKSPACE";
-  }
-  return "Unspecified cuSolver error";
-}
+const char* cusolverGetErrorString(int status);
 
 /**
  * @brief Macro that throws an exception if cuSolver operation fails.
@@ -106,7 +53,7 @@ inline const char* cusolverGetErrorString(cusolverStatus_t status) {
 /**
  * @brief RAII wrapper for cuSolver handle management.
  *
- * Manages the lifecycle of a cusolverDnHandle_t handle. The handle is created
+ * Manages the lifecycle of a cuSolver handle. The handle is created
  * on construction and destroyed on destruction. The handle is associated with
  * a specific CUDA stream when GetHandle is called.
  */
@@ -135,20 +82,20 @@ class cuSolverHandle {
    *
    * @param stream CUDA stream to associate the handle with (must not be
    * nullptr)
-   * @return cuSolver handle associated with the stream
+   * @return An opaque pointer to the cuSolver handle associated with the stream.
    * @throws std::invalid_argument if stream is nullptr
    */
-  cusolverDnHandle_t GetHandle(cudaStream_t stream);
+  void* GetHandle(cudaStream_t stream);
 
  private:
-  cudaStream_t stream_ = nullptr;        ///< Currently associated CUDA stream
-  cusolverDnHandle_t handle_ = nullptr;  ///< cuSolver handle
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
+  void* handle_ = nullptr;         ///< cuSolver handle
 };
 
 /**
  * @brief RAII wrapper for cuSolver eigenvalue solver info object.
  *
- * Manages the lifecycle of a syevjInfo_t info object used for batched
+ * Manages the lifecycle of an info object used for batched
  * symmetric eigenvalue decomposition.
  */
 class cuSolverInfo {
@@ -167,14 +114,14 @@ class cuSolverInfo {
   cuSolverInfo& operator=(cuSolverInfo&&) = delete;
 
   /**
-   * @brief Gets the underlying syevjInfo_t handle.
+   * @brief Gets the underlying info handle.
    *
-   * @return The cuSolver info handle
+   * @return An opaque pointer to the cuSolver info handle
    */
-  syevjInfo_t GetInfo() const { return info_; }
+  void* GetInfo() const { return info_; }
 
  private:
-  syevjInfo_t info_ = nullptr;  ///< cuSolver eigenvalue solver info handle
+  void* info_ = nullptr;  ///< cuSolver eigenvalue solver info handle
 };
 
 }  // namespace cunls

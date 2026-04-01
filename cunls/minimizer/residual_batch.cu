@@ -28,6 +28,21 @@ namespace cg = cooperative_groups;
 
 constexpr size_t block_size = 256;  ///< Default thread block size for CUDA kernels.
 
+namespace {
+
+/** @brief Maps `workspace` to squared-error and rho pointers (layout matches `ResidualBatchWorkspaceSizeBytes`). */
+void MapRobustWorkspace(float* workspace, size_t num_residuals, float** sq_err_out,
+                        float3** rho_out) {
+  *sq_err_out = workspace;
+  const size_t sq_bytes = num_residuals * sizeof(float);
+  const size_t align = alignof(float3);
+  const size_t rho_byte_offset = (sq_bytes + align - 1u) / align * align;
+  *rho_out = reinterpret_cast<float3*>(reinterpret_cast<uint8_t*>(workspace) +
+                                        rho_byte_offset);
+}
+
+}  // namespace
+
 /**
  * @brief Computes the Jacobian scaling factor alpha for robust loss correction.
  *
@@ -149,44 +164,6 @@ __global__ void square_error_kernel(float* residuals, float* squared_error,
   sum = cg::reduce(tile, sum, cg::plus<float>());
   if (lane == 0) {
     squared_error[idx] = sum;
-  }
-}
-
-/**
- * @brief Computes the outer product v * v^T using warp shuffles.
- *
- * Each thread computes one row of the outer product matrix. Column tiles
- * are distributed across the warp using __shfl_sync for register-level
- * data sharing, avoiding shared memory overhead.
- *
- * @param v Input vector of length N.
- * @param[out] C Output N x N matrix (v * v^T), stored in row-major order.
- * @param N Length of the input vector.
- * @param tid Thread ID within the block (determines which row to compute).
- */
-__device__ void outer_product(const float* __restrict__ v,
-                              float* __restrict__ C, int N, int tid) {
-  const unsigned fullMask = 0xffffffffu;
-  const int lane = tid % WARP_SIZE;
-
-  // Each thread corresponds to one row inside the warp tile:
-  const int row = tid;
-  // load v[row] into register (0 if out of bounds)
-  const float v_row = (row < N) ? v[row] : 0.0f;
-
-  for (int colBase = 0; colBase < N; colBase += WARP_SIZE) {
-    // each lane loads one element of the column tile into a register
-    const int colIdxForLane = colBase + lane;
-    const float v_col_lane = (colIdxForLane < N) ? v[colIdxForLane] : 0.0f;
-
-    for (int k = 0; k < WARP_SIZE; ++k) {
-      const float val_col = __shfl_sync(fullMask, v_col_lane, k);
-      const int col = colBase + k;
-
-      if (row < N && col < N) {
-        C[(size_t)row * N + col] = v_row * val_col;
-      }
-    }
   }
 }
 
@@ -325,44 +302,25 @@ ResidualBatch::ResidualBatch(FactorBatch* factor_batch,
                              LossFunctionBatch* loss_function)
     : factor_batch_(factor_batch), loss_function_(loss_function) {}
 
-/**
- * @brief Evaluates residuals, Jacobians, and/or cost for the current states.
- *
- * Execution steps:
- * 1. Evaluate the factor batch to get raw residuals and Jacobians
- * 2. Compute squared error per residual (||r_i||^2)
- * 3. Evaluate the loss function: rho(||r_i||^2)
- * 4. If loss function is non-trivial, scale Jacobians and residuals
- * 5. If cost is requested, extract cost = 0.5 * rho(||r_i||^2)
- *
- * @param[out] cost Output per-residual costs, or nullptr if not needed.
- * @param[out] residuals Output residual values (must not be nullptr).
- * @param[out] jacobians Output Jacobian values, or nullptr if not needed.
- * @param state_pointers Device pointer array to state blocks.
- * @param stream CUDA stream for GPU operations.
- * @return True on success.
- */
-bool ResidualBatch::Evaluate(float* cost, float* residuals, float* jacobians,
-                             float const* const* state_pointers,
-                             cudaStream_t stream) const {
+bool ResidualBatch::Evaluate(cudaStream_t stream, float* workspace,
+                             float* residuals, float const* const* state_pointers,
+                             float* cost, float* jacobians) const {
   assert(residuals != nullptr);
   assert(state_pointers != nullptr);
 
-  // Calculate residuals and jacobians
   factor_batch_->Evaluate(residuals, jacobians, state_pointers, stream);
 
   size_t num_residuals = factor_batch_->NumFactors();
   size_t residual_dim = factor_batch_->ResidualsSize();
 
-  if (squared_error_.size() < num_residuals) {
-    squared_error_.resize(num_residuals);
+  if (num_residuals == 0) {
+    return true;
   }
-  if (robustifier_coeffs_.size() < num_residuals) {
-    robustifier_coeffs_.resize(num_residuals);
-  }
+  assert(workspace != nullptr);
 
-  float* sq_err_ptr = squared_error_.data();
-  float3* rho_ptr = robustifier_coeffs_.data();
+  float* sq_err_ptr = nullptr;
+  float3* rho_ptr = nullptr;
+  MapRobustWorkspace(workspace, num_residuals, &sq_err_ptr, &rho_ptr);
 
   {
     // Calculate squared error

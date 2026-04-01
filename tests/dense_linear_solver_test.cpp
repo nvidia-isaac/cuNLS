@@ -204,6 +204,8 @@ TEST_F(DenseLDLTSolverTestFixture, SolvePnPWithDenseSolver) {
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
   GaussNewtonMinimizer minimizer(options);
 
+
+
   const auto summary = minimizer.Minimize(stream_.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -365,6 +367,8 @@ TEST_F(DenseLDLTSolverTestFixture,
     problem.AddStateBatch(&point_batch);
     problem.AddFactorBatch(&reprojection_factor, state_pointers);
     ASSERT_TRUE(problem.CheckConsistency());
+
+
 
     const auto summary = minimizer.Minimize(stream_.GetStream(), problem);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));

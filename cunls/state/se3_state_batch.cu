@@ -21,10 +21,26 @@
 #include <thrust/transform.h>
 
 #include "cunls/common/helper.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 #include "cunls/state/se3_state_batch.h"
 
 namespace cunls {
+
+SE3StateBatch::SE3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+                             size_t num_blocks)
+    : Base(device_ptr, num_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      twists_(num_blocks * 6) {}
+
+SE3StateBatch::SE3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+                             size_t num_blocks, const int* device_constant_state_ids,
+                             size_t num_const_state_blocks)
+    : Base(device_ptr, num_blocks, device_constant_state_ids,
+           num_const_state_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      twists_(num_blocks * 6) {}
 
 /**
  * @brief Performs the Plus operation: x_plus_delta = x * Exp(skew(delta))
@@ -48,9 +64,6 @@ void SE3StateBatch::Plus(const float* x, const float* delta,
                          float* x_plus_delta, cudaStream_t stream) {
   size_t num_transforms = NumStateBlocks();
 
-  delta_transforms_.resize(num_transforms);
-  twists_.resize(num_transforms * 6);
-
   auto twists_ptr = reinterpret_cast<const float*>(twists_.data());
   auto delta_transforms_ptr =
       reinterpret_cast<float*>(delta_transforms_.data());
@@ -65,7 +78,7 @@ void SE3StateBatch::Plus(const float* x, const float* delta,
   // Compute update matrices: delta_transforms = Exp(±delta)
   ComputeExpSE3(stream, twists_ptr, twist_stride, transform_pitch,
                 transform_stride, num_transforms, delta_transforms_ptr);
-  auto handle = cublas_handle_.GetHandle(stream);
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
 
   // cuBLAS uses column-major storage, but our matrices are row-major
   constexpr float alpha = 1.0f;

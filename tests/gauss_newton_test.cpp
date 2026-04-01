@@ -179,6 +179,7 @@ TYPED_TEST(GaussNewtonMinimizerTest, SimpleGN) {
   CudaStream stream;
   GaussNewtonMinimizer minimizer(this->minimizer_options_);
   auto range = this->profiler_domain_.CreateDomainRange("GN Minimize");
+  // User-owned pool path: pre-attach before Minimize (minimizer skips auto-attach).
   minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
@@ -279,6 +280,148 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   this->CheckConvergence(vector_states, const_state_ids);
+}
+
+/**
+ * @brief Levenberg-Marquardt with Hessian-diagonal column scaling.
+ */
+TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("LMColumnScalingHessianDiagonal");
+  typename TestFixture::StateData state_data(this->state_values_);
+  auto& vector_states = state_data.get();
+  auto device_pointers =
+      test_utils::CollectStatePointers(vector_states);
+  typename TestFixture::FactorData factor_data(this->observations_);
+  auto& factor_batch = factor_data.get();
+
+  Problem problem;
+  problem.AddFactorBatch(&factor_batch, device_pointers);
+  problem.AddStateBatch(&vector_states);
+
+  CudaStream stream;
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = this->minimizer_options_;
+  lm_options.base_options.column_scaling = ColumnScaling::HessianDiagonal;
+  LevenbergMarquardtMinimizer minimizer(lm_options);
+  minimizer.Minimize(stream.GetStream(), problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  this->CheckConvergence(vector_states);
+}
+
+/**
+ * @brief Levenberg-Marquardt with Jacobian column-norm scaling.
+ */
+TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingJacobianColumnNorm) {
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("LMColumnScalingJacobianColumnNorm");
+  typename TestFixture::StateData state_data(this->state_values_);
+  auto& vector_states = state_data.get();
+  auto device_pointers =
+      test_utils::CollectStatePointers(vector_states);
+  typename TestFixture::FactorData factor_data(this->observations_);
+  auto& factor_batch = factor_data.get();
+
+  Problem problem;
+  problem.AddFactorBatch(&factor_batch, device_pointers);
+  problem.AddStateBatch(&vector_states);
+
+  CudaStream stream;
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = this->minimizer_options_;
+  lm_options.base_options.column_scaling = ColumnScaling::JacobianColumnNorm;
+  LevenbergMarquardtMinimizer minimizer(lm_options);
+  minimizer.Minimize(stream.GetStream(), problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  this->CheckConvergence(vector_states);
+}
+
+/**
+ * @brief Gauss-Newton with column scaling (shared MinimizerOptions path).
+ */
+TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("GNColumnScalingHessianDiagonal");
+  typename TestFixture::StateData state_data(this->state_values_);
+  auto& vector_states = state_data.get();
+  auto device_pointers =
+      test_utils::CollectStatePointers(vector_states);
+  typename TestFixture::FactorData factor_data(this->observations_);
+  auto& factor_batch = factor_data.get();
+
+  Problem problem;
+  problem.AddFactorBatch(&factor_batch, device_pointers);
+  problem.AddStateBatch(&vector_states);
+
+  CudaStream stream;
+  MinimizerOptions opts = this->minimizer_options_;
+  opts.column_scaling = ColumnScaling::HessianDiagonal;
+  GaussNewtonMinimizer minimizer(opts);
+  minimizer.Minimize(stream.GetStream(), problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  this->CheckConvergence(vector_states);
+}
+
+/**
+ * @brief Two Minimize calls on the same problem with the same minimizer instance
+ *        should yield identical summaries after resetting the state (regression
+ *        for persistent lhs/rhs and MinimizerState buffers).
+ */
+TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
+  constexpr size_t n = 32;
+  std::vector<Vector<1>> observations(n);
+  std::vector<Vector<1>> state_values(n);
+  for (size_t i = 0; i < n; ++i) {
+    observations[i][0] = static_cast<float>(i) - 1.f;
+    state_values[i][0] = static_cast<float>(i);
+  }
+  test_utils::VectorStateData<1> state_data(state_values);
+  auto& vector_states = state_data.get();
+  test_utils::PriorFactorData<1> factor_data(observations);
+  auto& factor_batch = factor_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
+
+  Problem problem;
+  problem.AddStateBatch(&vector_states);
+  problem.AddFactorBatch(&factor_batch, device_pointers);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  MinimizerOptions opts;
+  opts.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
+  cuDSSLinearSolverOptions cudss_solver_options = {
+      .mode = cuDSSLinearSolverMode::SlowInitFastSolve,
+      .nthreads = 1,
+      .threading_lib_path = "",
+  };
+  opts.sparse_linear_solver_config = {.cudss_solver_options =
+                                           cudss_solver_options};
+
+  CudaStream stream;
+  GaussNewtonMinimizer minimizer(opts);
+
+  float* state_base = vector_states.StateBlockDevicePtr(0);
+  const size_t num_floats = n * 1;
+  std::vector<float> initial_host(num_floats);
+  THROW_ON_CUDA_ERROR(cudaMemcpy(initial_host.data(), state_base,
+                                 num_floats * sizeof(float),
+                                 cudaMemcpyDeviceToHost));
+
+  MinimizerSummary s1 = minimizer.Minimize(stream.GetStream(), problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  THROW_ON_CUDA_ERROR(cudaMemcpy(state_base, initial_host.data(),
+                                 num_floats * sizeof(float),
+                                 cudaMemcpyHostToDevice));
+
+  MinimizerSummary s2 = minimizer.Minimize(stream.GetStream(), problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  EXPECT_EQ(s1.num_iterations, s2.num_iterations);
+  EXPECT_NEAR(s1.final_cost, s2.final_cost, 1e-4f);
+  EXPECT_NEAR(s1.initial_cost, s2.initial_cost, 1e-4f);
 }
 
 }  // namespace cunls

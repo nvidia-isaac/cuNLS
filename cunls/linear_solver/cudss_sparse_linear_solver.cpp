@@ -56,7 +56,7 @@ cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
       cudss_config_(GetOrderingType(options.mode), options.nthreads) {}
 
 /** @copydoc cuDSSLinearSolver::Initialize */
-bool cuDSSLinearSolver::Initialize(void* handle,
+bool cuDSSLinearSolver::Initialize(cudaStream_t stream,
                                    const CSRSparseMatrix& spd_matrix,
                                    const dvector<float>& rhs,
                                    dvector<float>& result) {
@@ -73,7 +73,8 @@ bool cuDSSLinearSolver::Initialize(void* handle,
     return false;
   }
 
-  auto dss_handle = reinterpret_cast<cudssHandle_t>(handle);
+  auto dss_handle =
+      reinterpret_cast<cudssHandle_t>(cudss_handle_.GetHandle(stream));
   assert(dss_handle != nullptr && "Invalid cuDSS handle");
   auto cudss_data =
       reinterpret_cast<cudssData_t>(cudss_data_.GetData(dss_handle));
@@ -116,7 +117,8 @@ bool cuDSSLinearSolver::Initialize(void* handle,
 }
 
 /** @copydoc cuDSSLinearSolver::Solve */
-bool cuDSSLinearSolver::Solve(void* handle, const CSRSparseMatrix& spd_matrix,
+bool cuDSSLinearSolver::Solve(cudaStream_t stream,
+                              const CSRSparseMatrix& spd_matrix,
                               const dvector<float>& rhs,
                               dvector<float>& result) {
   size_t matrix_size = spd_matrix.NumRows();
@@ -137,7 +139,8 @@ bool cuDSSLinearSolver::Solve(void* handle, const CSRSparseMatrix& spd_matrix,
     return true;
   }
 
-  auto dss_handle = reinterpret_cast<cudssHandle_t>(handle);
+  auto dss_handle =
+      reinterpret_cast<cudssHandle_t>(cudss_handle_.GetHandle(stream));
   assert(dss_handle != nullptr && "Invalid cuDSS handle");
   SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
   auto cudss_data =

@@ -330,10 +330,7 @@ static void ComputeOutputStructure(cudaStream_t stream,
     size_t nb = factor->StateBlockSizes().size();
 
     factor_blocks.resize(nb);
-    h_ptrs.resize(state_ptrs[rb].size());
-    THROW_ON_CUDA_ERROR(cudaMemcpy(h_ptrs.data(), state_ptrs[rb].data(),
-                                   h_ptrs.size() * sizeof(float*),
-                                   cudaMemcpyDeviceToHost));
+    h_ptrs = state_ptrs[rb];
 
     for (size_t f = 0; f < nf; f++) {
       int nblocks = 0;

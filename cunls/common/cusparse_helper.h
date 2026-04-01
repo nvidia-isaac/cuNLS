@@ -18,10 +18,19 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <cusparse.h>
 
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+
+namespace cunls {
+
+/**
+ * @brief Converts a cuSPARSE status code to a human-readable error string.
+ *
+ * @param status The cuSPARSE status code to convert.
+ * @return A string describing the status code.
+ */
+const char* cusparseGetErrorString(int status);
 
 /**
  * @brief Macro to check cuSPARSE status and throw an exception on error
@@ -42,8 +51,6 @@
  */
 #define WARN_ON_CUSPARSE_ERROR(status) \
   CHECK_CUDA_ERROR(status, cusparseGetErrorString, false)
-
-namespace cunls {
 
 /**
  * @class cuSPARSEHandle
@@ -82,24 +89,24 @@ class cuSPARSEHandle {
    * stream is requested, the old handle is destroyed and a new one is created.
    *
    * @param stream The CUDA stream to associate with the cuSPARSE handle
-   * @return cusparseHandle_t The cuSPARSE handle ready for use
+   * @return An opaque pointer to the cuSPARSE handle ready for use.
    * @throws Runtime error if handle creation or stream association fails
    */
-  cusparseHandle_t GetHandle(cudaStream_t stream);
+  void* GetHandle(cudaStream_t stream);
 
  private:
-  cudaStream_t stream_ = nullptr;      ///< Currently associated CUDA stream
-  cusparseHandle_t handle_ = nullptr;  ///< The cuSPARSE handle object
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
+  void* handle_ = nullptr;         ///< The cuSPARSE handle object
 };
 
 /**
  * @class cuSPARSEMatrixDescription
  * @brief RAII wrapper for cuSPARSE sparse matrix descriptors
  *
- * This class encapsulates cuSPARSE sparse matrix descriptors
- * (cusparseSpMatDescr_t) and provides automatic memory management. It supports
- * CSR (Compressed Sparse Row) format matrices and allows updating matrix data
- * pointers without recreating the descriptor.
+ * This class encapsulates cuSPARSE sparse matrix descriptors and provides
+ * automatic memory management. It supports CSR (Compressed Sparse Row) format
+ * matrices and allows updating matrix data pointers without recreating the
+ * descriptor.
  */
 class cuSPARSEMatrixDescription {
  public:
@@ -177,23 +184,21 @@ class cuSPARSEMatrixDescription {
    * Returns the underlying cuSPARSE sparse matrix descriptor for use with
    * cuSPARSE API functions.
    *
-   * @return cusparseSpMatDescr_t The matrix descriptor
+   * @return An opaque pointer to the matrix descriptor.
    */
-  cusparseSpMatDescr_t GetDescription();
+  void* GetDescription();
 
  private:
-  cusparseSpMatDescr_t description_ =
-      nullptr;  ///< The cuSPARSE matrix descriptor
+  void* description_ = nullptr;  ///< The cuSPARSE matrix descriptor
 };
 
 /**
  * @class cuSPARSEVectorDescription
  * @brief RAII wrapper for cuSPARSE dense vector descriptors
  *
- * This class encapsulates cuSPARSE dense vector descriptors
- * (cusparseDnVecDescr_t) and provides automatic memory management. It's
- * designed to work with device vectors of float values and is commonly used in
- * sparse matrix-vector operations.
+ * This class encapsulates cuSPARSE dense vector descriptors and provides
+ * automatic memory management. It's designed to work with device vectors
+ * of float values and is commonly used in sparse matrix-vector operations.
  */
 class cuSPARSEVectorDescription {
  public:
@@ -222,13 +227,12 @@ class cuSPARSEVectorDescription {
    * Returns the underlying cuSPARSE dense vector descriptor for use with
    * cuSPARSE API functions such as sparse matrix-vector multiplication.
    *
-   * @return cusparseDnVecDescr_t The vector descriptor
+   * @return An opaque pointer to the vector descriptor.
    */
-  cusparseDnVecDescr_t GetDescription();
+  void* GetDescription();
 
  private:
-  cusparseDnVecDescr_t description_ =
-      nullptr;  ///< The cuSPARSE vector descriptor
+  void* description_ = nullptr;  ///< The cuSPARSE vector descriptor
 };
 
 }  // namespace cunls

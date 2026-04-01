@@ -21,126 +21,33 @@
 #include <thrust/transform.h>
 
 #include "cunls/common/helper.h"
+#include "cunls/math/sim_lie_math.h"
 #include "cunls/state/similarity3_state_batch.h"
 
 namespace cunls {
 
-/**
- * @brief CUDA kernel that computes the Sim(3) exponential map for a batch
- *        of tangent vectors.
- *
- * For each tangent vector [w1,w2,w3, u1,u2,u3, lambda], computes the 4x4
- * Sim(3) matrix in row-major order:
- *   [R00 R01 R02 tx]
- *   [R10 R11 R12 ty]
- *   [R20 R21 R22 tz]
- *   [ 0   0   0  1/s]
- *
- * where R = Exp_SO3(w), [tx,ty,tz] = V(w,lambda)*[u1,u2,u3], s = exp(lambda).
- *
- * The V-matrix for Sim(3) is V = P*I + Q*W + R_c*W*W  (Eade, Lie Groups).
- *
- * @param tangent  Input tangent vectors (7D, stride 7)
- * @param transforms  Output 4x4 matrices (stride 16)
- * @param size  Number of elements
- */
-__global__ void ExpSim3Kernel(const float* tangent, float* transforms,
-                              size_t size) {
-  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= size) return;
+Similarity3StateBatch::Similarity3StateBatch(cuBLASHandle& cublas_handle,
+                                             const float* device_ptr,
+                                             size_t num_blocks)
+    : Base(device_ptr, num_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      tangents_(num_blocks * 7) {}
 
-  const float* xi = tangent + idx * 7;
-  float w1 = xi[0], w2 = xi[1], w3 = xi[2];
-  float u1 = xi[3], u2 = xi[4], u3 = xi[5];
-  float lambda = xi[6];
+Similarity3StateBatch::Similarity3StateBatch(
+    cuBLASHandle& cublas_handle, const float* device_ptr, size_t num_blocks,
+    const int* device_constant_state_ids, size_t num_const_state_blocks)
+    : Base(device_ptr, num_blocks, device_constant_state_ids,
+           num_const_state_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      tangents_(num_blocks * 7) {}
 
-  float theta2 = w1 * w1 + w2 * w2 + w3 * w3;
-  float theta = sqrtf(theta2);
-
-  // --- SO(3) coefficients ---
-  float A1, A2, A3, A4;
-  if (theta2 > 1e-6f) {
-    float st = sinf(theta), ct = cosf(theta);
-    A1 = st / theta;
-    A2 = (1.0f - ct) / theta2;
-    A3 = (1.0f - A1) / theta2;
-    A4 = (0.5f - A2) / theta2;
-  } else {
-    A1 = 1.0f - theta2 / 6.0f;
-    A2 = 0.5f - theta2 / 24.0f;
-    A3 = 1.0f / 6.0f - theta2 / 120.0f;
-    A4 = 1.0f / 24.0f - theta2 / 720.0f;
-  }
-
-  // --- Sim(3) V-matrix coefficients ---
-  float lambda2 = lambda * lambda;
-  float P_c, Q_c, R_c;
-
-  if (lambda2 > 1e-8f) {
-    float e = expf(-lambda);
-    P_c = (1.0f - e) / lambda;
-    float alpha = lambda2 / (lambda2 + theta2);
-    float beta = (e - 1.0f + lambda) / lambda2;
-    float mu = (1.0f - lambda + 0.5f * lambda2 - e) / (lambda2 * lambda);
-    float one_m_alpha = 1.0f - alpha;
-    Q_c = alpha * beta + one_m_alpha * (A2 - lambda * A3);
-    R_c = alpha * mu + one_m_alpha * (A3 - lambda * A4);
-  } else {
-    P_c = 1.0f - lambda / 2.0f + lambda2 / 6.0f;
-    Q_c = A2 - lambda * A3;
-    R_c = A3 - lambda * A4;
-  }
-
-  // --- Build R via Rodrigues ---
-  float ct_val = 1.0f - A2 * theta2;  // = cos(theta) for non-tiny theta
-  // R = ct*I + A1*W + A2*ww^T
-  float* T = transforms + idx * 16;
-  T[0]  = ct_val + A2 * w1 * w1;
-  T[1]  = A2 * w1 * w2 - A1 * w3;
-  T[2]  = A2 * w1 * w3 + A1 * w2;
-  T[4]  = A2 * w2 * w1 + A1 * w3;
-  T[5]  = ct_val + A2 * w2 * w2;
-  T[6]  = A2 * w2 * w3 - A1 * w1;
-  T[8]  = A2 * w3 * w1 - A1 * w2;
-  T[9]  = A2 * w3 * w2 + A1 * w1;
-  T[10] = ct_val + A2 * w3 * w3;
-
-  // --- t = V * u ---
-  // V = P*I + Q*W + R_c*W^2 = (P - R_c*theta2)*I + Q*W + R_c*ww^T
-  float diag = P_c - R_c * theta2;
-  // V*u  (3-component)
-  // V = diag*I + Q*skew(w) + R_c * w*w^T
-  float dot_wu = w1 * u1 + w2 * u2 + w3 * u3;
-  // cross w x u
-  float cx = w2 * u3 - w3 * u2;
-  float cy = w3 * u1 - w1 * u3;
-  float cz = w1 * u2 - w2 * u1;
-  float tx = diag * u1 + Q_c * cx + R_c * w1 * dot_wu;
-  float ty = diag * u2 + Q_c * cy + R_c * w2 * dot_wu;
-  float tz = diag * u3 + Q_c * cz + R_c * w3 * dot_wu;
-
-  T[3]  = tx;
-  T[7]  = ty;
-  T[11] = tz;
-
-  // --- Bottom row ---
-  float inv_s = expf(-lambda);
-  T[12] = 0.0f;
-  T[13] = 0.0f;
-  T[14] = 0.0f;
-  T[15] = inv_s;
-}
-
-/** @copydoc Similarity3StateBatch::ApplyUpdate */
-void Similarity3StateBatch::ApplyUpdate(const float* x,
-                                                 const float* delta,
-                                                 float* result,
-                                                 bool invert_delta,
-                                                 cudaStream_t stream) {
+void Similarity3StateBatch::ApplyUpdate(const float* x, const float* delta,
+                                        float* result,
+                                        bool invert_delta,
+                                        cudaStream_t stream) {
   size_t num_transforms = NumStateBlocks();
-
-  dvector<Matrix<4>> delta_transforms_(num_transforms);
-  dvector<float> tangents_(num_transforms * 7);
 
   auto tangents_ptr = reinterpret_cast<const float*>(tangents_.data());
   auto delta_transforms_ptr =
@@ -158,12 +65,14 @@ void Similarity3StateBatch::ApplyUpdate(const float* x,
                       tangents_device_ptr, thrust::negate<float>());
   }
 
-  constexpr int block_size = 256;
-  int num_blocks = (num_transforms + block_size - 1) / block_size;
-  ExpSim3Kernel<<<num_blocks, block_size, 0, stream>>>(
-      tangents_ptr, delta_transforms_ptr, num_transforms);
+  // Exp(delta): tangent vectors -> Sim(3) matrices
+  constexpr size_t kTangentStride = 7;
+  constexpr size_t kTransformStride = 16;
+  ComputeExpSim3(stream, tangents_ptr, kTangentStride, kTransformStride,
+                 num_transforms, delta_transforms_ptr);
 
-  auto handle = cublas_handle_.GetHandle(stream);
+  // result = x * Exp(delta) via batched matrix multiplication
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
   constexpr int mat_size = 4;
@@ -176,8 +85,8 @@ void Similarity3StateBatch::ApplyUpdate(const float* x,
 }
 
 void Similarity3StateBatch::Plus(const float* x, const float* delta,
-                                          float* x_plus_delta,
-                                          cudaStream_t stream) {
+                                 float* x_plus_delta,
+                                 cudaStream_t stream) {
   ApplyUpdate(x, delta, x_plus_delta, false, stream);
 }
 

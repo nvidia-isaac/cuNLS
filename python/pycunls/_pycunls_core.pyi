@@ -56,6 +56,13 @@ class SparseMatrixMultiplierType(enum.IntEnum):
     cuSPARSE = ...
     Fast = ...
 
+class ColumnScaling(enum.IntEnum):
+    """Diagonal scaling mode for the GN/LM normal equations."""
+
+    none = ...
+    hessian_diagonal = ...
+    jacobian_column_norm = ...
+
 # ===================================================================
 # Options and summary
 # ===================================================================
@@ -69,6 +76,7 @@ class MinimizerOptions:
     max_consecutive_rejected_steps: int
     sparse_linear_solver_type: SparseLinearSolverType
     sparse_square_multiplier_type: SparseMatrixMultiplierType
+    column_scaling: ColumnScaling
 
     def __init__(self) -> None: ...
 
@@ -454,6 +462,38 @@ class ReprojectionFactorBatch(FactorBatch):
     def residuals_size(self) -> int: ...
     def state_block_sizes(self) -> list[int]: ...
 
+class PnPFactorBatch(FactorBatch):
+    """PnP reprojection: fixed 3D points (constructor), pose-only Jacobian.
+
+    Residual=2, single SE3 state per factor. Observations normalized (K^-1).
+    """
+
+    @overload
+    def __init__(
+        self,
+        cublas_handle: CublasHandle,
+        observations: DevicePointer,
+        points_world: DevicePointer,
+        num_observations: int,
+        z_threshold: float = 1e-3,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        cublas_handle: CublasHandle,
+        observations: DevicePointer,
+        poses_camera_from_rig: DevicePointer,
+        points_world: DevicePointer,
+        num_observations: int,
+        z_threshold: float = 1e-3,
+    ) -> None: ...
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    @property
+    def num_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_block_sizes(self) -> list[int]: ...
+
 class SE3BetweenFactorBatch(FactorBatch):
     """Batched SE(3) between factor. Residual=6, States=[SE3(6), SE3(6)]."""
 
@@ -739,6 +779,37 @@ class SymmetricPointToPlaneFactorBatch(FactorBatch):
         np_observations: DevicePointer,
         nq_observations: DevicePointer,
         num_factors: int,
+    ) -> None: ...
+    @property
+    def num_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_block_sizes(self) -> list[int]: ...
+
+class InformationFactorBatch(FactorBatch):
+    """Wraps a factor with per-factor square-root information matrices (Python dynamic wrapper)."""
+
+    def __init__(
+        self,
+        cublas_handle: CublasHandle,
+        inner_factor: FactorBatch,
+        sqrt_information_matrices: DevicePointer,
+    ) -> None: ...
+    @property
+    def num_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_block_sizes(self) -> list[int]: ...
+
+class WeightedFactorBatch(FactorBatch):
+    """Wraps a factor with uniform or per-factor scalar weights (Python dynamic wrapper)."""
+
+    def __init__(
+        self,
+        inner_factor: FactorBatch,
+        *,
+        weight: float | None = None,
+        weights: DevicePointer | None = None,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...

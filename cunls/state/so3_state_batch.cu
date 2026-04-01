@@ -21,20 +21,32 @@
 #include <thrust/transform.h>
 
 #include "cunls/common/helper.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 #include "cunls/state/so3_state_batch.h"
 
 namespace cunls {
 
+SO3StateBatch::SO3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+                             size_t num_blocks)
+    : Base(device_ptr, num_blocks),
+      cublas_handle_(cublas_handle),
+      delta_rotations_(num_blocks),
+      twists_(num_blocks * 3) {}
+
+SO3StateBatch::SO3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+                             size_t num_blocks, const int* device_constant_state_ids,
+                             size_t num_const_state_blocks)
+    : Base(device_ptr, num_blocks, device_constant_state_ids,
+           num_const_state_blocks),
+      cublas_handle_(cublas_handle),
+      delta_rotations_(num_blocks),
+      twists_(num_blocks * 3) {}
+
 /** @copydoc SO3StateBatch::ApplyUpdate */
 void SO3StateBatch::ApplyUpdate(const float* x, const float* delta,
-                                         float* result, bool invert_delta,
-                                         cudaStream_t stream) {
+                              float* result, bool invert_delta,
+                              cudaStream_t stream) {
   size_t num_rotations = NumStateBlocks();
-
-  dvector<Matrix<3>> delta_rotations_(num_rotations);
-
-  dvector<float> twists_(num_rotations * 3);
 
   auto twists_ptr =
       reinterpret_cast<const float*>(twists_.data());
@@ -58,7 +70,7 @@ void SO3StateBatch::ApplyUpdate(const float* x, const float* delta,
   // Compute update matrices: delta_rotations = Exp(±delta)
   ComputeExpSO3(stream, twists_ptr, twist_stride, rotation_pitch, rotation_stride,
          num_rotations, delta_rotations_ptr);
-  auto handle = cublas_handle_.GetHandle(stream);
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
 
   // cuBLAS uses column-major storage, but our matrices are row-major
   constexpr float alpha = 1.0f;
@@ -95,7 +107,7 @@ void SO3StateBatch::ApplyUpdate(const float* x, const float* delta,
  * @param stream CUDA stream for asynchronous execution
  */
 void SO3StateBatch::Plus(const float* x, const float* delta,
-                                  float* x_plus_delta, cudaStream_t stream) {
+                         float* x_plus_delta, cudaStream_t stream) {
   ApplyUpdate(x, delta, x_plus_delta, false, stream);
 }
 

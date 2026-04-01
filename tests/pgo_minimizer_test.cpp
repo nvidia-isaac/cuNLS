@@ -232,7 +232,7 @@ class PgoMinimizerTestFixture : public ::testing::Test {
     info_factor_batch_ =
         std::make_unique<InformationFactorBatch<SE3BetweenFactorBatch>>(
             cublas_handle_, sqrt_info_device_.data(), n_deltas,
-            pose_deltas_device_.data(), n_deltas);
+            cublas_handle_, pose_deltas_device_.data(), n_deltas);
 
     // Wire each edge to its two pose state blocks
     state_pointers_.clear();

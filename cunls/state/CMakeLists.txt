@@ -4,6 +4,7 @@ add_library(cunls_state OBJECT
   se3_state_batch.cu
   similarity2_state_batch.cu
   similarity3_state_batch.cu
+  sl4_state_batch.cu
   so2_state_batch.cu
   so3_state_batch.cu
   vector_state_batch.cu

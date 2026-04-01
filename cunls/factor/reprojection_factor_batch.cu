@@ -217,6 +217,8 @@
  * =============================================================================
  */
 
+#include <cublas_v2.h>
+
 #include "cunls/factor/reprojection_factor_batch.h"
 
 namespace cunls {
@@ -355,6 +357,7 @@ __global__ void reprojection_cost_kernel(
 
     // Zero out Jacobians for invalid projections
     if (point_cam[2] < z_threshold) {
+#pragma unroll
       for (int i = 0; i < kJacobianBlockSize; i++) {
         jac_ptr[i] = 0.0f;
       }
@@ -510,7 +513,7 @@ bool ReprojectionFactorBatch::Evaluate(float* residuals, float* jacobians,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   if (poses_camera_from_rig_ != nullptr) {
-    auto handle = cublas_handle_.GetHandle(stream);
+    auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
     const size_t mat_size = 4;
     const size_t stride = 16;
     constexpr float alpha = 1.0f;

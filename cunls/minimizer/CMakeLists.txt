@@ -6,5 +6,7 @@ add_library(cunls_minimizer OBJECT
   problem.cpp
   residual_batch.cu
   sparse_matrix.cu
-  sparse_matrix_multiplication.cpp
+  cusparse_matrix_multiplier.cpp
+  sparse_matrix_multiplier.cpp
+  fast_matrix_multiplier.cu
 )

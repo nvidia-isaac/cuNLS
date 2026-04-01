@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#include <cublas_v2.h>
+#include <cusolverDn.h>
 #include <thrust/copy.h>
 #include <thrust/device_ptr.h>
 
@@ -22,6 +24,7 @@
 
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/cusolver_helper.h"
+#include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/math/dense_matrix_ops.h"
 
@@ -101,8 +104,8 @@ void ComputeSqrtMatrix(cuBLASHandle& cublas_handle, cudaStream_t stream,
   cuSolverHandle solver_handle;
   cuSolverInfo solver_info;
 
-  auto handle = solver_handle.GetHandle(stream);
-  auto params = solver_info.GetInfo();
+  auto handle = static_cast<cusolverDnHandle_t>(solver_handle.GetHandle(stream));
+  auto params = static_cast<syevjInfo_t>(solver_info.GetInfo());
 
   /// Temporary storage for eigenvector matrices (before scaling)
   dvector<float> temp_matrix(num_matrices * matrix_size * pitch);
@@ -161,7 +164,7 @@ void ComputeSqrtMatrix(cuBLASHandle& cublas_handle, cudaStream_t stream,
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
 
-  auto cublas_handle_ = cublas_handle.GetHandle(stream);
+  auto cublas_handle_ = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream));
   size_t stride = matrix_size * pitch;
 
   // Compute spd_matrix = temp_matrix * Q^T = (Q * D^{1/2}) * Q^T
@@ -169,6 +172,36 @@ void ComputeSqrtMatrix(cuBLASHandle& cublas_handle, cudaStream_t stream,
       cublas_handle_, CUBLAS_OP_N, CUBLAS_OP_T, matrix_size, matrix_size,
       matrix_size, &alpha, temp_matrix_ptr, pitch, stride, spd_matrix, pitch,
       stride, &beta, spd_matrix, pitch, stride, num_matrices));
+}
+
+__global__ void scatter_to_right_block_kernel(const float* src,
+                                              size_t block_dim,
+                                              size_t src_stride,
+                                              float* dst,
+                                              size_t dst_pitch,
+                                              size_t dst_stride,
+                                              size_t num_blocks_count) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= (int)num_blocks_count) {
+    return;
+  }
+  const float* S = src + tid * src_stride;
+  float* D = dst + tid * dst_stride;
+  for (int r = 0; r < (int)block_dim; ++r) {
+    for (int c = 0; c < (int)block_dim; ++c) {
+      D[r * dst_pitch + c] = S[r * block_dim + c];
+    }
+  }
+}
+
+void ScatterToRightBlock(cudaStream_t stream, const float* src,
+                         size_t block_dim, size_t src_stride, float* dst,
+                         size_t dst_pitch, size_t dst_stride,
+                         size_t num_blocks) {
+  size_t num_cuda_blocks = (num_blocks + block_size - 1) / block_size;
+  scatter_to_right_block_kernel<<<num_cuda_blocks, block_size, 0, stream>>>(
+      src, block_dim, src_stride, dst, dst_pitch, dst_stride, num_blocks);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace cunls

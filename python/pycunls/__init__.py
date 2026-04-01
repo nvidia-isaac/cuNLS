@@ -41,7 +41,8 @@ Typical workflow::
     problem.add_state_batch(sb)
     problem.add_factor_batch(fb, [sb.state_block_device_ptr(i) for i in range(num)])
 
-    # 4. Solve
+    # 4. Solve (optional: set ``MinimizerOptions.column_scaling`` for scaled
+    #    normal equations, or ``LevenbergMarquardtMinimizerOptions.base_options``)
     minimizer = pycunls.LevenbergMarquardtMinimizer()
     summary   = minimizer.minimize(stream, problem)
 
@@ -56,6 +57,7 @@ from pycunls._pycunls_core import (
     # --- Enumerations ---
     SparseLinearSolverType,
     SparseMatrixMultiplierType,
+    ColumnScaling,
     # --- Minimizer options & summary ---
     MinimizerOptions,
     MinimizerSummary,
@@ -80,6 +82,7 @@ from pycunls._pycunls_core import (
     SL4StateBatch,
     # --- Built-in factor batches ---
     ReprojectionFactorBatch,
+    PnPFactorBatch,
     SE3BetweenFactorBatch,
     SE2BetweenFactorBatch,
     SO2BetweenFactorBatch,
@@ -102,6 +105,9 @@ from pycunls._pycunls_core import (
     PointToPointFactorBatch,
     PointToPlaneFactorBatch,
     SymmetricPointToPlaneFactorBatch,
+    # --- Wrapper factor batches ---
+    InformationFactorBatch,
+    WeightedFactorBatch,
     # --- Custom state trampoline ---
     CustomStateBatch,
     # --- Custom factor trampoline ---
@@ -123,6 +129,7 @@ __all__ = [
     "CublasHandle",
     "SparseLinearSolverType",
     "SparseMatrixMultiplierType",
+    "ColumnScaling",
     "MinimizerOptions",
     "MinimizerSummary",
     "LevenbergMarquardtMinimizerOptions",
@@ -141,6 +148,7 @@ __all__ = [
     "Similarity3StateBatch",
     "SL4StateBatch",
     "ReprojectionFactorBatch",
+    "PnPFactorBatch",
     "SE3BetweenFactorBatch",
     "SE2BetweenFactorBatch",
     "SO2BetweenFactorBatch",
@@ -163,6 +171,8 @@ __all__ = [
     "PointToPointFactorBatch",
     "PointToPlaneFactorBatch",
     "SymmetricPointToPlaneFactorBatch",
+    "InformationFactorBatch",
+    "WeightedFactorBatch",
     "CustomStateBatch",
     "CustomFactorBatch",
     "TrivialLossFunctionBatch",

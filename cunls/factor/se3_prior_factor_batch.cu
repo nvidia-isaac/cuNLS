@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 
+#include <cublas_v2.h>
+
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/se3_prior_factor_batch.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
 
@@ -37,7 +39,9 @@ __global__ void collect_se3_transforms_kernel(float const* const* state_pointers
                                               size_t num_factors,
                                               SE3Transform* transforms) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_factors) {
+    return;
+  }
 
   auto transform_ptr = reinterpret_cast<const SE3Transform*>(state_pointers[tid]);
   transforms[tid] = *transform_ptr;
@@ -80,7 +84,7 @@ bool SE3PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   //   Result_row = (A_col * B_col)^T where A_col = T_current^T, B_col = T_inv^T
   //   cublas computes: T_current^T * T_inv^T = (T_inv * T_current)^T
   //   Result_row = T_inv * T_current  (exactly what we want)
-  auto handle = cublas_handle_.GetHandle(stream);
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
   constexpr int mat_size = 4;

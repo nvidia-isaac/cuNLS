@@ -15,10 +15,12 @@
  * limitations under the License.
  */
 
+#include <cublas_v2.h>
+
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/so3_prior_factor_batch.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
 
@@ -36,7 +38,9 @@ __global__ void collect_so3_rotations_kernel(float const* const* state_pointers,
                                              size_t num_factors,
                                              Matrix<3>* rotations) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_factors) {
+    return;
+  }
 
   auto rot_ptr = reinterpret_cast<const Matrix<3>*>(state_pointers[tid]);
   rotations[tid] = *rot_ptr;
@@ -70,7 +74,7 @@ bool SO3PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   // Result_row = Result_col^T = (A_row^T * B_row)^T = B_row^T * A_row
   // With A = R_current, B = R_target:
   //   Result_row = R_target^T * R_current  (exactly what we want)
-  auto handle = cublas_handle_.GetHandle(stream);
+  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
   constexpr int mat_size = 3;

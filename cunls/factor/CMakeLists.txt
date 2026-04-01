@@ -1,14 +1,25 @@
 add_library(cunls_factor OBJECT
+  information_factor_batch.cpp
   point_to_plane_factor_batch.cu
   point_to_point_factor_batch.cu
   prior_vector_factor_batch.cu
+  pnp_factor_batch.cu
   reprojection_factor_batch.cu
+  se2_between_factor_batch.cu
   se2_prior_factor_batch.cu
   se3_between_factor_batch.cu
   se3_prior_factor_batch.cu
+  similarity2_between_factor_batch.cu
   similarity2_prior_factor_batch.cu
+  similarity3_between_factor_batch.cu
   similarity3_prior_factor_batch.cu
+  sl4_between_factor_batch.cu
+  sl4_prior_factor_batch.cu
+  so2_between_factor_batch.cu
   so2_prior_factor_batch.cu
+  so3_between_factor_batch.cu
   so3_prior_factor_batch.cu
   symmetric_point_to_plane_factor_batch.cu
+  vector_between_factor_batch.cu
+  weighted_factor_batch.cu
 )

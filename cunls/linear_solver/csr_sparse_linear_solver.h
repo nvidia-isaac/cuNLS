@@ -24,16 +24,17 @@
 namespace cunls {
 
 /**
- * @brief Base class for sparse linear solvers operating on CSR matrices.
+ * @brief Base class for linear solvers operating on CSR matrices.
  *
- * Provides a common interface for solving sparse symmetric positive definite
- * (SPD) linear systems Ax = b where the matrix A is stored in CSR (Compressed
- * Sparse Row) format. Derived classes implement specific solver strategies.
+ * Provides a common interface for solving sparse symmetric linear systems
+ * Ax = b where the matrix A is stored in CSR (Compressed Sparse Row) format.
+ * Derived classes implement specific solver strategies (e.g. cuDSS direct
+ * factorization, dense pivoted LDLT).
  */
 class CSRSparseLinearSolver {
  public:
   /**
-   * @brief Performs setup work for the sparse linear system.
+   * @brief Performs setup work for the linear system.
    *
    * Typically runs symbolic analysis of the sparsity pattern; some modes may
    * also perform an initial numerical factorization. Must be called once
@@ -43,35 +44,33 @@ class CSRSparseLinearSolver {
    * elements as the number of rows in @p spd_matrix; the solver does not
    * resize them.
    *
-   * @param handle Opaque solver handle (e.g. cuDSSHandle_t). Caller provides
-   *               and owns the handle; it is used to store and pass solver
-   *               context across Initialize and Solve.
-   * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
-   *                   positive definite).
+   * @param stream CUDA stream for asynchronous GPU operations.
+   * @param spd_matrix The coefficient matrix A in CSR format.
    * @param rhs The right-hand side vector b (size must equal matrix rows).
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual bool Initialize(void* handle, const CSRSparseMatrix& spd_matrix,
+  virtual bool Initialize(cudaStream_t stream,
+                          const CSRSparseMatrix& spd_matrix,
                           const dvector<float>& rhs,
                           dvector<float>& result) = 0;
 
   /**
-   * @brief Solves a sparse SPD linear system Ax = b.
+   * @brief Solves a linear system Ax = b.
    *
    * Performs factorization and solve phases to compute the solution x.
    * Both @p rhs and @p result must be pre-allocated with the same number of
    * elements as the number of rows in @p spd_matrix; the solver does not
    * resize them.
    *
-   * @param handle Opaque solver handle (e.g. cuDSSHandle_t) from Initialize.
-   * @param spd_matrix The coefficient matrix A in CSR format (must be symmetric
-   *                   positive definite).
+   * @param stream CUDA stream for asynchronous GPU operations.
+   * @param spd_matrix The coefficient matrix A in CSR format.
    * @param rhs The right-hand side vector b (size must equal matrix rows).
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual bool Solve(void* handle, const CSRSparseMatrix& spd_matrix,
+  virtual bool Solve(cudaStream_t stream,
+                     const CSRSparseMatrix& spd_matrix,
                      const dvector<float>& rhs, dvector<float>& result) = 0;
 
   /** @brief Virtual destructor for proper cleanup of derived solver instances. */

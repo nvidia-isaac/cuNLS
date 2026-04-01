@@ -44,10 +44,9 @@ void LevenbergMarquardtMinimizer::BuildSystem(
     cudaStream_t stream, const Problem& problem,
     const MinimizerState& minimizer_state, CSRSparseMatrix& lhs,
     dvector<float>& rhs) {
-  GaussNewtonMinimizer::BuildSystem(stream, problem, minimizer_state, hessian_,
-                                    rhs);
-  ExtractDiagonal(stream, hessian_, diagonal_);
-  AddScaledDiagonal(stream, lambda_, diagonal_, hessian_, lhs);
+  GaussNewtonMinimizer::BuildSystem(stream, problem, minimizer_state, lhs, rhs);
+  ExtractDiagonal(stream, lhs, diagonal_);
+  AddScaledDiagonal(stream, lambda_, diagonal_, lhs, lhs);
 }
 
 /**
@@ -166,7 +165,7 @@ bool LevenbergMarquardtMinimizer::AcceptStep(float step_quality) {
  * @param problem The optimization problem to initialize for.
  */
 void LevenbergMarquardtMinimizer::Initialize(cudaStream_t stream,
-                                             const Problem& problem) {
+                                             Problem& problem) {
   GaussNewtonMinimizer::Initialize(stream, problem);
   lambda_ = options_.initial_lambda;
 }

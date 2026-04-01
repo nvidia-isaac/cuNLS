@@ -19,6 +19,13 @@ cuNLS is a CUDA/C++ library for solving nonlinear least-squares problems on the
 GPU. It is designed around batched factor evaluation, sparse Jacobian assembly,
 and sparse linear solvers tailored for large scale minimization problems.
 
+cuNLS also provides **pycunls**, a Python package that exposes the full C++
+API through CuPy-based GPU arrays (see :doc:`pycunls_installation`). For
+advanced extensibility, pycunls integrates with `NVIDIA Warp
+<https://developer.nvidia.com/warp-python>`_ to let users
+author custom factor and state kernels in Python (see
+:doc:`pycunls_tutorial`).
+
 ===============================================================================
 Nonlinear least-squares problems
 ===============================================================================
@@ -41,8 +48,11 @@ Using a square-root information matrix :math:`R_i` such that
 .. math::
    \left\|f_i(x)\right\|^2_{\Sigma_i} = \left\|R_i f_i(x)\right\|^2
 
-This is exactly why cuNLS has a dedicated `InformationFactorBatch`: it applies
-this whitening step directly to residuals and Jacobians.
+This is exactly why cuNLS has a dedicated ``InformationFactorBatch``: it applies
+this whitening step directly to residuals and Jacobians.  In C++, the template
+``InformationFactorBatch<T>`` inherits ``T::sized_layout`` (the same
+``SizedFactorBatch`` as the inner batch).  ``WeightedFactorBatch<T>`` does the
+same for scalar weighting.
 
 To solve the nonlinear problem, cuNLS linearizes around the current estimate
 :math:`x_0`:
@@ -150,5 +160,5 @@ Supported optimization patterns
 - ICP-like alignment (point-to-point / point-to-plane factors).
 - Custom user-defined factors through `FactorBatch` / `SizedFactorBatch`.
 
-See :doc:`tutorial` for complete working pipelines and :doc:`api/index` for
-class-level API details.
+See :doc:`tutorial` for complete C++ working pipelines, :doc:`pycunls_tutorial`
+for Python examples, and :doc:`api/index` for class-level API details.

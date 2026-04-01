@@ -38,4 +38,24 @@ void ComputeSqrtMatrix(cuBLASHandle& cublas_handle, cudaStream_t stream,
                        float* spd_matrix, size_t matrix_size, size_t pitch,
                        size_t num_matrices);
 
+/**
+ * @brief Scatter dense NxN blocks into the right half of Nx(2N) Jacobian rows.
+ *
+ * Copies src[r*N+c] -> dst[r*dst_pitch+c] for each block, where dst already
+ * points to the start of the right sub-block (offset by N from full row start).
+ *
+ * @param stream      CUDA stream.
+ * @param src         Source dense NxN blocks (device pointer).
+ * @param block_dim   Block dimension N.
+ * @param src_stride  Stride between consecutive source blocks.
+ * @param dst         Destination pointer (start of right sub-block).
+ * @param dst_pitch   Leading dimension (row stride) of the destination.
+ * @param dst_stride  Stride between consecutive destination blocks.
+ * @param num_blocks  Number of blocks in the batch.
+ */
+void ScatterToRightBlock(cudaStream_t stream, const float* src,
+                         size_t block_dim, size_t src_stride, float* dst,
+                         size_t dst_pitch, size_t dst_stride,
+                         size_t num_blocks);
+
 }  // namespace cunls

@@ -23,7 +23,6 @@
  * on the GPU, then verifies correctness by checking A*x against b.
  */
 
-#include "cunls/common/cudss_helper.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 
 #include <gtest/gtest.h>
@@ -181,25 +180,21 @@ TEST(SparseLinearSolverTest, Solve) {
       1,
       "",
   };
-  cuDSSHandle cudss_handle;
-  void* solver_handle = cudss_handle.GetHandle(stream.GetStream());
   {
     cuDSSLinearSolver solver(cudss_solver_options);
     {
-      // Warm up: Initialize the solver and solve the linear system
       profiler::ScopedRange range("Warm up");
-      solver.Initialize(solver_handle, input_matrix, rhs, result);
-      solver.Solve(solver_handle, input_matrix, rhs, result);
+      solver.Initialize(stream.GetStream(), input_matrix, rhs, result);
+      solver.Solve(stream.GetStream(), input_matrix, rhs, result);
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
 
     {
-      // Timed solve: Solve the linear system
       profiler::ScopedRange range("Solve");
-      solver.Solve(solver_handle, input_matrix, rhs, result);
+      solver.Solve(stream.GetStream(), input_matrix, rhs, result);
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
-  }  // solver destroyed before cudss_handle
+  }
 
   // Step 6: Copy solution back to host
   std::vector<float> cpu_result(matrix_size);

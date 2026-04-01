@@ -24,6 +24,7 @@
  * transforms converge to the expected deltas (identity or given offset).
  */
 
+#include <cublas_v2.h>
 #include <gtest/gtest.h>
 
 #include <random>
@@ -34,8 +35,9 @@
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/common/helper.h"
 #include "cunls/factor/information_factor_batch.h"
+#include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
-#include "cunls/math/lie_math.h"
+#include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/common/profiler.h"
 #include "cunls/factor/se3_between_factor_batch.h"
@@ -125,6 +127,72 @@ class SyntheticPGOTest : public ::testing::Test {
     }
   }
 
+  /**
+   * @brief After LM, checks Delta * T_left^{-1} * T_right ~= I for every pose.
+   *
+   * Matches ``SE3BetweenFactorBatch``: Log(Delta * T_left^{-1} * T_right) = 0
+   * implies Delta * T_left^{-1} * T_right = I. ``state_batch_set1`` is the left
+   * pose and ``state_batch_set2`` the right; the helper multiplies in that order
+   * using strided batched SGEMM with the same row-major / cuBLAS conventions as
+   * the surrounding tests.
+   */
+  void ExpectRelativeDeltaSatisfied(const SE3StateBatch& state_batch_set1,
+                                    const SE3StateBatch& state_batch_set2,
+                                    cudaStream_t stream) {
+    const float* opt_poses_set1_ptr = state_batch_set1.StateBlockDevicePtr(0);
+    const float* opt_poses_set2_ptr = state_batch_set2.StateBlockDevicePtr(0);
+
+    dvector<SE3Transform> poses_set1_inverse(this->num_poses_);
+    constexpr size_t transform_pitch = 4;
+    constexpr size_t transform_stride = 16;
+    auto poses_set1_inv_ptr =
+        reinterpret_cast<float*>(poses_set1_inverse.data());
+    ComputeInverseSE3(stream, opt_poses_set1_ptr, transform_pitch,
+                      transform_stride, transform_pitch, transform_stride,
+                      this->num_poses_, poses_set1_inv_ptr);
+
+    cuBLASHandle cublas_handle;
+    auto handle =
+        static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream));
+    constexpr float alpha = 1.0f;
+    constexpr float beta = 0.0f;
+    constexpr size_t mat_size = 4;
+
+    dvector<SE3Transform> results(this->num_poses_);
+    float* results_ptr = reinterpret_cast<float*>(results.data());
+
+    THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
+        opt_poses_set2_ptr, mat_size, transform_stride, poses_set1_inv_ptr,
+        mat_size, transform_stride, &beta, results_ptr, mat_size,
+        transform_stride, this->num_poses_));
+
+    dvector<SE3Transform> deltas(pose_deltas_);
+    float* deltas_ptr = reinterpret_cast<float*>(deltas.data());
+
+    THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
+        results_ptr, mat_size, transform_stride, deltas_ptr, mat_size,
+        transform_stride, &beta, results_ptr, mat_size, transform_stride,
+        this->num_poses_));
+
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+
+    hvector<SE3Transform> results_host(this->num_poses_);
+    results.CopyToHost(results_host.data(), this->num_poses_);
+
+    constexpr float tolerance = 1e-2f;
+    for (size_t i = 0; i < this->num_poses_; i++) {
+      const SE3Transform& rel = results_host[i];
+      for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+          ASSERT_NEAR(rel[row * 4 + col], (row == col) ? 1.0f : 0.0f,
+                      tolerance);
+        }
+      }
+    }
+  }
+
   const size_t num_poses_ = 10000;
   const uint32_t fixed_seed_ = 42;
   std::vector<SE3Transform> poses_set1_;
@@ -209,67 +277,8 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   ASSERT_LT(summary.final_cost, 1e-2f);
   ASSERT_GT(summary.num_iterations, 0);
 
-  // Get optimized poses from state blocks
-  const float* opt_poses_set1_ptr = state_batch_set1.StateBlockDevicePtr(0);
-  const float* opt_poses_set2_ptr = state_batch_set2.StateBlockDevicePtr(0);
-
-  // Compute inverse of poses_set1
-  dvector<SE3Transform> poses_set1_inverse(this->num_poses_);
-  constexpr size_t transform_pitch = 4;
-  constexpr size_t transform_stride = 16;
-  auto poses_set1_inv_ptr = reinterpret_cast<float*>(poses_set1_inverse.data());
-  ComputeInverseSE3(stream.GetStream(), opt_poses_set1_ptr, transform_pitch,
-             transform_stride, transform_pitch, transform_stride,
-             this->num_poses_, poses_set1_inv_ptr);
-
-  // Use cuBLAS for batch matrix multiplication
-  cuBLASHandle cublas_handle;
-  auto handle = cublas_handle.GetHandle(stream.GetStream());
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr size_t mat_size = 4;
-
-  dvector<SE3Transform> results(this->num_poses_);
-  float* results_ptr = reinterpret_cast<float*>(results.data());
-
-  // Multiply: relative = poses_set1_inv * poses_set2
-  // Note: cuBLAS uses column-major, but our matrices are row-major
-  // CUBLAS_OP_N for both means we compute the equivalent of row-major
-  // multiplication
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      opt_poses_set2_ptr, mat_size, transform_stride, poses_set1_inv_ptr, mat_size,
-      transform_stride, &beta, results_ptr, mat_size, transform_stride,
-      this->num_poses_));
-
-  dvector<SE3Transform> deltas(pose_deltas_);
-  float* deltas_ptr = reinterpret_cast<float*>(deltas.data());
-
-  // Compute results = delta @ poses_set1_inv @ poses_set2
-  // Note: cuBLAS uses column-major, but our matrices are row-major
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      results_ptr, mat_size, transform_stride, deltas_ptr, mat_size,
-      transform_stride, &beta, results_ptr, mat_size, transform_stride,
-      this->num_poses_));
-
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  // Copy results transforms to host for verification
-  hvector<SE3Transform> results_host(this->num_poses_);
-  results.CopyToHost(results_host.data(), this->num_poses_);
-
-  // Verify that relative transforms are identity matrices
-  constexpr float tolerance = 1e-2f;
-  for (size_t i = 0; i < this->num_poses_; i++) {
-    const SE3Transform& rel = results_host[i];
-
-    for (int row = 0; row < 4; row++) {
-      for (int col = 0; col < 4; col++) {
-        ASSERT_NEAR(rel[row * 4 + col], (row == col) ? 1.0f : 0.0f, tolerance);
-      }
-    }
-  }
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
+                               stream.GetStream());
 }
 
 /**
@@ -312,7 +321,7 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
   InformationFactorBatch<SE3BetweenFactorBatch>
       between_factor_batch(this->cublas_handle_, sqrt_information_matrices_device.data(),
-                            num_constraints,
+                            num_constraints, this->cublas_handle_,
                             pose_deltas_device.data(), num_constraints);
 
   // Create state pointers for set 1 constraints
@@ -358,67 +367,156 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   ASSERT_LT(summary.final_cost, 1e-2f);
   ASSERT_GT(summary.num_iterations, 0);
 
-  // Get optimized poses from state blocks
-  const float* opt_poses_set1_ptr = state_batch_set1.StateBlockDevicePtr(0);
-  const float* opt_poses_set2_ptr = state_batch_set2.StateBlockDevicePtr(0);
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
+                               stream.GetStream());
+}
 
-  // Compute inverse of poses_set1
-  dvector<SE3Transform> poses_set1_inverse(this->num_poses_);
-  constexpr size_t transform_pitch = 4;
-  constexpr size_t transform_stride = 16;
-  auto poses_set1_inv_ptr = reinterpret_cast<float*>(poses_set1_inverse.data());
-  ComputeInverseSE3(stream.GetStream(), opt_poses_set1_ptr, transform_pitch,
-                    transform_stride, transform_pitch, transform_stride,
-                    this->num_poses_, poses_set1_inv_ptr);
+/**
+ * @brief PGO with WeightedFactorBatch around InformationFactorBatch (identity
+ * sqrt-information, uniform weight).
+ */
+TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
+  auto test_range = this->profiler_domain_.CreateDomainRange(
+      "WeightedWrapsInformationBetweenFactorBatch");
 
-  // Use cuBLAS for batch matrix multiplication
-  cuBLASHandle cublas_handle;
-  auto handle = cublas_handle.GetHandle(stream.GetStream());
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr size_t mat_size = 4;
+  dvector<SE3Transform> poses_set1_device(this->poses_set1_);
+  dvector<SE3Transform> poses_set2_device(this->poses_set2_);
 
-  dvector<SE3Transform> results(this->num_poses_);
-  float* results_ptr = reinterpret_cast<float*>(results.data());
+  const float* poses_set1_ptr =
+      reinterpret_cast<const float*>(poses_set1_device.data());
+  const float* poses_set2_ptr =
+      reinterpret_cast<const float*>(poses_set2_device.data());
+  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr,
+                                 this->num_poses_);
+  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr,
+                                 this->num_poses_);
 
-  // Multiply: relative = poses_set1_inv * poses_set2
-  // Note: cuBLAS uses column-major, but our matrices are row-major
-  // CUBLAS_OP_N for both means we compute the equivalent of row-major
-  // multiplication
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      opt_poses_set2_ptr, mat_size, transform_stride, poses_set1_inv_ptr, mat_size,
-      transform_stride, &beta, results_ptr, mat_size, transform_stride,
-      this->num_poses_));
-
-  dvector<SE3Transform> deltas(pose_deltas_);
-  float* deltas_ptr = reinterpret_cast<float*>(deltas.data());
-
-  // Compute results = delta @ poses_set1_inv @ poses_set2
-  // Note: cuBLAS uses column-major, but our matrices are row-major
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      results_ptr, mat_size, transform_stride, deltas_ptr, mat_size,
-      transform_stride, &beta, results_ptr, mat_size, transform_stride,
-      this->num_poses_));
-
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  // Copy results transforms to host for verification
-  hvector<SE3Transform> results_host(this->num_poses_);
-  results.CopyToHost(results_host.data(), this->num_poses_);
-
-  // Verify that relative transforms are identity matrices
-  constexpr float tolerance = 1e-2f;
-  for (size_t i = 0; i < this->num_poses_; i++) {
-    const SE3Transform& rel = results_host[i];
-
-    for (int row = 0; row < 4; row++) {
-      for (int col = 0; col < 4; col++) {
-        ASSERT_NEAR(rel[row * 4 + col], (row == col) ? 1.0f : 0.0f, tolerance);
-      }
+  const size_t num_constraints = this->num_poses_;
+  std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
+  for (size_t i = 0; i < num_constraints; i++) {
+    sqrt_information_matrices_host[i].fill(0.0f);
+    for (int j = 0; j < 6; j++) {
+      sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
     }
   }
+  dvector<Matrix<6>> sqrt_information_matrices_device(
+      sqrt_information_matrices_host);
+  dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
+  WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>>
+      between_factor_batch(
+          2.0f, this->cublas_handle_, sqrt_information_matrices_device.data(),
+          num_constraints, this->cublas_handle_,
+          pose_deltas_device.data(), num_constraints);
+
+  std::vector<float*> state_pointers;
+  state_pointers.reserve(num_constraints * 2);
+  for (size_t i = 0; i < num_constraints; i++) {
+    state_pointers.push_back(state_batch_set1.StateBlockDevicePtr(i));
+    state_pointers.push_back(state_batch_set2.StateBlockDevicePtr(i));
+  }
+
+  Problem problem;
+  problem.AddStateBatch(&state_batch_set1);
+  problem.AddStateBatch(&state_batch_set2);
+  problem.AddFactorBatch(&between_factor_batch, state_pointers);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  CudaStream stream;
+  MinimizerOptions options;
+  options.max_num_iterations = 50;
+  options.state_tolerance = 1e-6f;
+  options.cost_tolerance = 1e-6f;
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = options;
+  lm_options.initial_lambda = 1e-3f;
+  LevenbergMarquardtMinimizer minimizer(lm_options);
+
+  MinimizerSummary summary;
+  {
+    auto minimize_range = this->profiler_domain_.CreateDomainRange("Minimize");
+    summary = minimizer.Minimize(stream.GetStream(), problem);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+
+  ASSERT_LT(summary.final_cost, 1e-2f);
+  ASSERT_GT(summary.num_iterations, 0);
+
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
+                               stream.GetStream());
+}
+
+/**
+ * @brief PGO with InformationFactorBatch around WeightedFactorBatch (identity
+ * sqrt-information, uniform weight).
+ */
+TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
+  auto test_range = this->profiler_domain_.CreateDomainRange(
+      "InformationWrapsWeightedBetweenFactorBatch");
+
+  dvector<SE3Transform> poses_set1_device(this->poses_set1_);
+  dvector<SE3Transform> poses_set2_device(this->poses_set2_);
+
+  const float* poses_set1_ptr =
+      reinterpret_cast<const float*>(poses_set1_device.data());
+  const float* poses_set2_ptr =
+      reinterpret_cast<const float*>(poses_set2_device.data());
+  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr,
+                                 this->num_poses_);
+  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr,
+                                 this->num_poses_);
+
+  const size_t num_constraints = this->num_poses_;
+  std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
+  for (size_t i = 0; i < num_constraints; i++) {
+    sqrt_information_matrices_host[i].fill(0.0f);
+    for (int j = 0; j < 6; j++) {
+      sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
+    }
+  }
+  dvector<Matrix<6>> sqrt_information_matrices_device(
+      sqrt_information_matrices_host);
+  dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
+  InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>>
+      between_factor_batch(
+          this->cublas_handle_, sqrt_information_matrices_device.data(),
+          num_constraints, 2.0f, this->cublas_handle_,
+          pose_deltas_device.data(), num_constraints);
+
+  std::vector<float*> state_pointers;
+  state_pointers.reserve(num_constraints * 2);
+  for (size_t i = 0; i < num_constraints; i++) {
+    state_pointers.push_back(state_batch_set1.StateBlockDevicePtr(i));
+    state_pointers.push_back(state_batch_set2.StateBlockDevicePtr(i));
+  }
+
+  Problem problem;
+  problem.AddStateBatch(&state_batch_set1);
+  problem.AddStateBatch(&state_batch_set2);
+  problem.AddFactorBatch(&between_factor_batch, state_pointers);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  CudaStream stream;
+  MinimizerOptions options;
+  options.max_num_iterations = 50;
+  options.state_tolerance = 1e-6f;
+  options.cost_tolerance = 1e-6f;
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = options;
+  lm_options.initial_lambda = 1e-3f;
+  LevenbergMarquardtMinimizer minimizer(lm_options);
+
+  MinimizerSummary summary;
+  {
+    auto minimize_range = this->profiler_domain_.CreateDomainRange("Minimize");
+    summary = minimizer.Minimize(stream.GetStream(), problem);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+
+  ASSERT_LT(summary.final_cost, 1e-2f);
+  ASSERT_GT(summary.num_iterations, 0);
+
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
+                               stream.GetStream());
 }
 
 }  // namespace cunls

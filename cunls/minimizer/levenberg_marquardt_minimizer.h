@@ -139,13 +139,14 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    *
    * Calls base class initialization and sets initial lambda value.
    */
-  void Initialize(cudaStream_t stream, const Problem& problem) override;
+  void Initialize(cudaStream_t stream, Problem& problem) override;
 
   /**
    * @brief Builds the Levenberg-Marquardt linear system.
    *
-   * Extends the Gauss-Newton system by adding lambda * diag(J^T J) to the
-   * diagonal of the Hessian: (J^T J + lambda * diag(J^T J)) dx = -J^T r
+   * Extends the Gauss-Newton system by adding lambda times the diagonal of the
+   * (possibly column-scaled) Hessian to lhs: (H_s + lambda * diag(H_s)) z = b_s
+   * with physical step dx = S z when column scaling is enabled; otherwise S = I.
    *
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
