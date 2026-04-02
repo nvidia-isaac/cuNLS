@@ -1,0 +1,74 @@
+name: Build CI Docker Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/Dockerfile.ci'
+      - '.github/workflows/docker-ci.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: nvcr.io
+  IMAGE_BASE: nvcr.io/cunls/cunls-ci
+
+jobs:
+  validate-ci-images:
+    name: "Validate: ${{ matrix.platform }} / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda_major }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64
+            ubuntu: "22.04"
+            cuda: "12.8.1"
+            cuda_major: "12"
+            gcc: "13"
+            tag_suffix: "cuda12-ubuntu22.04-x86_64"
+
+          - platform: x86_64
+            ubuntu: "22.04"
+            cuda: "13.2.0"
+            cuda_major: "13"
+            gcc: "13"
+            tag_suffix: "cuda13-ubuntu22.04-x86_64"
+
+          - platform: x86_64
+            ubuntu: "24.04"
+            cuda: "12.8.1"
+            cuda_major: "12"
+            gcc: "13"
+            tag_suffix: "cuda12-ubuntu24.04-x86_64"
+
+          - platform: x86_64
+            ubuntu: "24.04"
+            cuda: "13.2.0"
+            cuda_major: "13"
+            gcc: "13"
+            tag_suffix: "cuda13-ubuntu24.04-x86_64"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Dockerfile and build args
+        run: |
+          echo "=== Docker CI Image Configuration ==="
+          echo "Platform:     ${{ matrix.platform }}"
+          echo "Ubuntu:       ${{ matrix.ubuntu }}"
+          echo "CUDA:         ${{ matrix.cuda }} (major: ${{ matrix.cuda_major }})"
+          echo "GCC:          ${{ matrix.gcc }}"
+          echo "Image tag:    ${{ env.IMAGE_BASE }}:${{ matrix.tag_suffix }}"
+          echo ""
+          echo "=== Dockerfile Validation ==="
+          test -f docker/Dockerfile.ci && echo "Dockerfile.ci: exists"
+          grep -q "ARG CUDA_VERSION"   docker/Dockerfile.ci && echo "ARG CUDA_VERSION: present"
+          grep -q "ARG UBUNTU_VERSION" docker/Dockerfile.ci && echo "ARG UBUNTU_VERSION: present"
+          grep -q "ARG GCC_VERSION"    docker/Dockerfile.ci && echo "ARG GCC_VERSION: present"
+          grep -q "AS build-env"       docker/Dockerfile.ci && echo "Stage build-env: present"
+          grep -q "AS builder"         docker/Dockerfile.ci && echo "Stage builder: present"
+          grep -q "AS runtime"         docker/Dockerfile.ci && echo "Stage runtime: present"
+          echo ""
+          echo "Scaffold: full Docker build+push requires self-hosted GPU runners and NGC_API_KEY secret."

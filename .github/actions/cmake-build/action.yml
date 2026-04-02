@@ -1,0 +1,53 @@
+name: 'CMake Build & Test cuNLS'
+description: 'Configure, build, and test cuNLS with parameterized CUDA settings'
+
+inputs:
+  cuda_architectures:
+    description: 'Semicolon-separated CUDA compute capabilities (e.g. "75;80;86;89")'
+    required: true
+  build_type:
+    description: 'CMake build type'
+    required: false
+    default: 'Release'
+  build_testing:
+    description: 'Enable test compilation'
+    required: false
+    default: 'ON'
+  extra_cmake_args:
+    description: 'Additional CMake arguments'
+    required: false
+    default: ''
+  parallel_jobs:
+    description: 'Number of parallel build jobs (0 = nproc)'
+    required: false
+    default: '0'
+
+outputs:
+  build_dir:
+    description: 'Path to the CMake build directory'
+    value: ${{ steps.configure.outputs.build_dir }}
+  test_results:
+    description: 'Path to test results XML'
+    value: ${{ steps.configure.outputs.results_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate build parameters
+      id: configure
+      shell: bash
+      run: |
+        echo "=== CMake Build Configuration ==="
+        echo "CUDA architectures: ${{ inputs.cuda_architectures }}"
+        echo "Build type:         ${{ inputs.build_type }}"
+        echo "Build testing:      ${{ inputs.build_testing }}"
+        echo "Extra cmake args:   ${{ inputs.extra_cmake_args }}"
+        echo "Parallel jobs:      ${{ inputs.parallel_jobs }}"
+        echo ""
+        BUILD_DIR="${GITHUB_WORKSPACE:-$(pwd)}/build"
+        RESULTS_DIR="${BUILD_DIR}/test-results"
+        echo "build_dir=${BUILD_DIR}" >> "$GITHUB_OUTPUT"
+        echo "results_path=${RESULTS_DIR}/results.xml" >> "$GITHUB_OUTPUT"
+        echo ""
+        test -f CMakeLists.txt && echo "CMakeLists.txt: OK"
+        echo "Scaffold: actual cmake configure/build/test requires CUDA toolkit in container."

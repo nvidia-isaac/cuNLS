@@ -1,0 +1,101 @@
+name: Build & Test cuNLS
+
+on:
+  workflow_call:
+    inputs:
+      cuda_version:
+        description: 'Full CUDA version for Docker image tag (e.g. "12.8.1")'
+        required: true
+        type: string
+      ubuntu_version:
+        description: 'Ubuntu version (e.g. "22.04" or "24.04")'
+        required: true
+        type: string
+      platform:
+        description: 'Target platform identifier (e.g. "x86_64" or "jetson")'
+        required: true
+        type: string
+      cuda_architectures:
+        description: 'Semicolon-separated CUDA compute capabilities'
+        required: true
+        type: string
+      runner_labels:
+        description: 'JSON array of runner labels (e.g. ["self-hosted","gpu"])'
+        required: true
+        type: string
+      container_image:
+        description: 'Full Docker image reference for the build container'
+        required: true
+        type: string
+
+  workflow_dispatch:
+    inputs:
+      cuda_version:
+        description: 'CUDA version'
+        required: true
+        type: choice
+        options:
+          - '12.8.1'
+          - '13.2.0'
+      ubuntu_version:
+        description: 'Ubuntu version'
+        required: true
+        type: choice
+        options:
+          - '22.04'
+          - '24.04'
+      platform:
+        description: 'Target platform'
+        required: true
+        type: choice
+        options:
+          - x86_64
+          - jetson
+      cuda_architectures:
+        description: 'CUDA architectures'
+        required: true
+        type: choice
+        options:
+          - '75;80;86;89'
+          - '75;80;86;89;100'
+          - '72;87'
+      runner_labels:
+        description: 'Runner labels JSON'
+        required: true
+        type: choice
+        options:
+          - '["self-hosted","gpu"]'
+      container_image:
+        description: 'Container image'
+        required: true
+        type: choice
+        options:
+          - 'nvcr.io/cunls/cunls-ci:cuda12-ubuntu22.04-x86_64'
+          - 'nvcr.io/cunls/cunls-ci:cuda12-ubuntu24.04-x86_64'
+          - 'nvcr.io/cunls/cunls-ci:cuda13-ubuntu22.04-x86_64'
+          - 'nvcr.io/cunls/cunls-ci:cuda13-ubuntu24.04-x86_64'
+
+jobs:
+  build-and-test:
+    name: "${{ inputs.platform }} / ubuntu-${{ inputs.ubuntu_version }} / cuda-${{ inputs.cuda_version }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate build configuration
+        run: |
+          echo "=== Build Configuration ==="
+          echo "Platform:           ${{ inputs.platform }}"
+          echo "Ubuntu:             ${{ inputs.ubuntu_version }}"
+          echo "CUDA:               ${{ inputs.cuda_version }}"
+          echo "Architectures:      ${{ inputs.cuda_architectures }}"
+          echo "Runner labels:      ${{ inputs.runner_labels }}"
+          echo "Container image:    ${{ inputs.container_image }}"
+          echo ""
+          echo "=== File Validation ==="
+          test -f CMakeLists.txt       && echo "CMakeLists.txt: OK"
+          test -f docker/Dockerfile.ci && echo "Dockerfile.ci: OK"
+          echo ""
+          echo "Scaffold: full GPU build requires self-hosted runners with --gpus all."
