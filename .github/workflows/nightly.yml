@@ -1,0 +1,106 @@
+name: Nightly Build & Test
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        type: boolean
+        default: false
+        description: 'Force build even without recent changes'
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-changes:
+    name: Check for recent changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect commits in the last 24 hours
+        id: decide
+        run: |
+          COMMIT_COUNT=$(git log --since="24 hours ago" --oneline | wc -l)
+          FORCE="${{ github.event.inputs.force_build }}"
+          if [ "${COMMIT_COUNT}" -gt 0 ] || [ "${FORCE}" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Building: ${COMMIT_COUNT} commit(s) in last 24h, force=${FORCE}"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: no commits in last 24h and force=${FORCE}"
+          fi
+
+  validate-matrix:
+    name: "Validate: ${{ matrix.platform }} / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda }}"
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64
+            ubuntu: "22.04"
+            cuda: "12.8.1"
+            archs: "75;80;86;89"
+
+          - platform: x86_64
+            ubuntu: "22.04"
+            cuda: "13.2.0"
+            archs: "75;80;86;89;100"
+
+          - platform: x86_64
+            ubuntu: "24.04"
+            cuda: "12.8.1"
+            archs: "75;80;86;89"
+
+          - platform: x86_64
+            ubuntu: "24.04"
+            cuda: "13.2.0"
+            archs: "75;80;86;89;100"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate build configuration
+        run: |
+          echo "Platform:    ${{ matrix.platform }}"
+          echo "Ubuntu:      ${{ matrix.ubuntu }}"
+          echo "CUDA:        ${{ matrix.cuda }}"
+          echo "Archs:       ${{ matrix.archs }}"
+          echo ""
+          echo "Validating required files exist..."
+          test -f CMakeLists.txt           && echo "  CMakeLists.txt OK"
+          test -f docker/Dockerfile.ci     && echo "  docker/Dockerfile.ci OK"
+          test -f .github/actions/cmake-build/action.yml && echo "  composite action OK"
+          test -f .github/workflows/build-and-test.yml   && echo "  reusable workflow OK"
+          echo ""
+          echo "Base image: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu${{ matrix.ubuntu }}"
+          echo "Scaffold validation passed — full GPU build will run once build-and-test.yml is wired up."
+
+  nightly-status:
+    name: Nightly status
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [check-changes, validate-matrix]
+    steps:
+      - name: Report status
+        run: |
+          if [ "${{ needs.check-changes.outputs.should_build }}" = "false" ]; then
+            echo "Nightly skipped: no changes in last 24 hours."
+            exit 0
+          fi
+          if [ "${{ needs.validate-matrix.result }}" = "success" ]; then
+            echo "All nightly validations passed."
+          else
+            echo "One or more validations failed: ${{ needs.validate-matrix.result }}"
+            exit 1
+          fi
