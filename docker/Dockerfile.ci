@@ -1,73 +1,24 @@
-# cuNLS CI Multi-Stage Dockerfile
+# cuNLS CI Dockerfile
 #
-# Single parameterized Dockerfile serving all platform combinations:
-#   x86_64 / aarch64 (Jetson) x Ubuntu 22.04 / 24.04 x CUDA 12 / 13
-#
-# Stages:
-#   build-env  — CI container image (pushed to registry, used by GitHub Actions)
-#   builder    — compiles library + tests (for local Docker-only builds)
-#   runtime    — minimal image with just the shared library
+# Parameterized build environment for all platform combinations.
+# Uses the default GCC shipped with each Ubuntu version (11 for 22.04, 13 for 24.04).
+# Installs CMake from the Kitware APT repo to satisfy the >= 3.24 requirement on all Ubuntu versions.
 #
 # Usage:
-#   Build CI image:    docker build --target build-env --build-arg CUDA_VERSION=12.8.1 ...
-#   Full build:        docker build --target builder   --build-arg CUDA_ARCHITECTURES="75;80;86;89" ...
-#   Runtime artifact:  docker build --target runtime   ...
+#   docker build --build-arg CUDA_VERSION=12.8.1 --build-arg UBUNTU_VERSION=24.04 ...
 
 ARG CUDA_VERSION=12.8.1
 ARG UBUNTU_VERSION=24.04
 
-# =============================================================================
-# Stage 1: build-env — Build environment used as the GitHub Actions container
-# =============================================================================
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build-env
-
-ARG GCC_VERSION=13
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    g++-${GCC_VERSION} \
-    gcc-${GCC_VERSION} \
-    cmake \
-    git \
-    ca-certificates \
-    ccache \
-    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${GCC_VERSION} 100 \
-    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${GCC_VERSION} 100 \
+    ca-certificates gpg wget \
+    && wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ ${UBUNTU_CODENAME} main" > /etc/apt/sources.list.d/kitware.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       g++ gcc cmake git ccache \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-ENV CCACHE_DIR=/ccache
-ENV CMAKE_C_COMPILER_LAUNCHER=ccache
-ENV CMAKE_CXX_COMPILER_LAUNCHER=ccache
-ENV CMAKE_CUDA_COMPILER_LAUNCHER=ccache
-
 WORKDIR /workspace
-
-# =============================================================================
-# Stage 2: builder — Compiles library and tests inside Docker
-# =============================================================================
-FROM build-env AS builder
-
-COPY . /workspace
-
-ARG CUDA_ARCHITECTURES="75;80;86;89"
-ARG BUILD_TYPE=Release
-
-RUN cmake -B build \
-    -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-    -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-    -DBUILD_TESTING=ON \
-    -G "Unix Makefiles" \
-    && cmake --build build -j$(nproc)
-
-# =============================================================================
-# Stage 3: runtime — Minimal image with only the built library
-# =============================================================================
-ARG CUDA_VERSION=12.8.1
-ARG UBUNTU_VERSION=24.04
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runtime
-
-COPY --from=builder /workspace/build/bin/libcunls.so /usr/local/lib/
-COPY --from=builder /workspace/cunls/ /usr/local/include/cunls/
-RUN ldconfig
-
-LABEL org.opencontainers.image.source="https://github.com/cunls/cuNLS"
-LABEL org.opencontainers.image.description="cuNLS runtime image"

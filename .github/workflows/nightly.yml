@@ -16,9 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Gate: skip the entire pipeline when nothing changed in the last 24 hours
-  # ---------------------------------------------------------------------------
   check-changes:
     name: Check for recent changes
     runs-on: ubuntu-latest
@@ -42,100 +39,79 @@ jobs:
             echo "Skipping: no commits in last 24h and force=${FORCE}"
           fi
 
-  # ---------------------------------------------------------------------------
-  # x86_64 builds — runs on nvidia-isaac shared GPU runners (auto-scaling AWS)
-  # CUDA/Ubuntu version is controlled by the container image, not runner tags.
-  # Max 10 concurrent runners across the entire nvidia-isaac org; 4 jobs here
-  # is a reasonable share alongside nvblox and other repos.
-  # ---------------------------------------------------------------------------
   build-matrix:
-    name: "${{ matrix.platform }} / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda }}"
+    name: "x86_64 / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda }}"
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: x86_64
-            ubuntu: "22.04"
-            cuda: "12.8.1"
-            archs: "75;80;86;89"
-            runner: '["self-hosted","gpu"]'
-            image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu22.04-x86_64"
+          - { ubuntu: "22.04", cuda: "12.8.1", archs: "75;80;86;89" }
+          - { ubuntu: "22.04", cuda: "13.2.0", archs: "75;80;86;89;100" }
+          - { ubuntu: "24.04", cuda: "12.8.1", archs: "75;80;86;89" }
+          - { ubuntu: "24.04", cuda: "13.2.0", archs: "75;80;86;89;100" }
 
-          - platform: x86_64
-            ubuntu: "22.04"
-            cuda: "13.2.0"
-            archs: "75;80;86;89;100"
-            runner: '["self-hosted","gpu"]'
-            image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu22.04-x86_64"
+          # Jetson (aarch64) — DISABLED pending infra changes.
+          # To re-enable: add entries with archs: "72;87" and the confirmed
+          # Jetson runner labels from the RPT team.
 
-          - platform: x86_64
-            ubuntu: "24.04"
-            cuda: "12.8.1"
-            archs: "75;80;86;89"
-            runner: '["self-hosted","gpu"]'
-            image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu24.04-x86_64"
+    steps:
+      - name: Verify GPU
+        run: nvidia-smi
 
-          - platform: x86_64
-            ubuntu: "24.04"
-            cuda: "13.2.0"
-            archs: "75;80;86;89;100"
-            runner: '["self-hosted","gpu"]'
-            image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu24.04-x86_64"
+      - uses: actions/checkout@v5
 
-          # ------------------------------------------------------------------
-          # Jetson (aarch64) — DISABLED pending infra changes
-          #
-          # Jetson devices are static shared runners across nvidia-isaac org.
-          # Do not schedule long builds on them — they block other teams.
-          # Preferred pattern: build ARM64 Docker images on x86 runners, push
-          # to NGC, and run Jetson tests through Osmo on a nightly cadence.
-          #
-          # To re-enable: uncomment the entries below and set the runner labels
-          # to whatever the RPT team confirms after device onboarding.
-          # The build parameters (archs, cuda, ubuntu) are ready to use.
-          # ------------------------------------------------------------------
-          # - platform: jetson
-          #   ubuntu: "22.04"
-          #   cuda: "12.8.1"
-          #   archs: "72;87"
-          #   runner: 'TBD — set after RPT confirms Jetson runner labels'
-          #   image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu22.04-aarch64"
-          #
-          # - platform: jetson
-          #   ubuntu: "22.04"
-          #   cuda: "13.2.0"
-          #   archs: "72;87"
-          #   runner: 'TBD'
-          #   image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu22.04-aarch64"
-          #
-          # - platform: jetson
-          #   ubuntu: "24.04"
-          #   cuda: "12.8.1"
-          #   archs: "72;87"
-          #   runner: 'TBD'
-          #   image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu24.04-aarch64"
-          #
-          # - platform: jetson
-          #   ubuntu: "24.04"
-          #   cuda: "13.2.0"
-          #   archs: "72;87"
-          #   runner: 'TBD'
-          #   image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu24.04-aarch64"
+      - name: Build CI image
+        run: |
+          docker build \
+            --build-arg CUDA_VERSION=${{ matrix.cuda }} \
+            --build-arg UBUNTU_VERSION=${{ matrix.ubuntu }} \
+            -f docker/Dockerfile.ci -t cunls-ci:local .
 
-    uses: ./.github/workflows/build-and-test.yml
-    with:
-      cuda_version: ${{ matrix.cuda }}
-      ubuntu_version: ${{ matrix.ubuntu }}
-      platform: ${{ matrix.platform }}
-      cuda_architectures: ${{ matrix.archs }}
-      runner_labels: ${{ matrix.runner }}
-      container_image: ${{ matrix.image }}
+      - name: Build & Test
+        run: |
+          docker run --rm --gpus all \
+            -v "${{ github.workspace }}:/workspace" -w /workspace \
+            cunls-ci:local bash -c '
+              echo "::group::CMAKE CONFIGURE"
+              cmake -B build -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_CUDA_ARCHITECTURES="${{ matrix.archs }}" \
+                -DBUILD_TESTING=ON -G "Unix Makefiles"
+              echo "::endgroup::"
 
-  # ---------------------------------------------------------------------------
-  # Summary: single check that all matrix jobs succeeded
-  # ---------------------------------------------------------------------------
+              echo "::group::BUILD"
+              cmake --build build -j$(nproc)
+              echo "::endgroup::"
+
+              echo "::group::TEST"
+              cd build && mkdir -p test-results
+              ctest --output-on-failure --output-junit test-results/results.xml
+              echo "::endgroup::"
+            '
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: build/test-results/results.xml
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload library artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: cunls-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: |
+            build/bin/libcunls.so
+            build/bin/libcunls.a
+          retention-days: 30
+          if-no-files-found: warn
+
   nightly-status:
     name: Nightly status
     runs-on: ubuntu-latest
