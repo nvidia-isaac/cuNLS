@@ -2,6 +2,7 @@ name: Nightly Build & Test
 
 on:
   schedule:
+    # 2:30 AM UTC — offset from the hour to reduce contention on shared infrastructure
     - cron: '30 2 * * *'
   workflow_dispatch:
     inputs:
@@ -15,13 +16,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: skip the entire pipeline when nothing changed in the last 24 hours
+  # ---------------------------------------------------------------------------
   check-changes:
     name: Check for recent changes
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.decide.outputs.should_build }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -38,11 +42,16 @@ jobs:
             echo "Skipping: no commits in last 24h and force=${FORCE}"
           fi
 
-  validate-matrix:
-    name: "Validate: ${{ matrix.platform }} / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda }}"
+  # ---------------------------------------------------------------------------
+  # x86_64 builds — runs on nvidia-isaac shared GPU runners (auto-scaling AWS)
+  # CUDA/Ubuntu version is controlled by the container image, not runner tags.
+  # Max 10 concurrent runners across the entire nvidia-isaac org; 4 jobs here
+  # is a reasonable share alongside nvblox and other repos.
+  # ---------------------------------------------------------------------------
+  build-matrix:
+    name: "${{ matrix.platform }} / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda }}"
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -51,46 +60,87 @@ jobs:
             ubuntu: "22.04"
             cuda: "12.8.1"
             archs: "75;80;86;89"
+            runner: '["self-hosted","gpu"]'
+            image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu22.04-x86_64"
 
           - platform: x86_64
             ubuntu: "22.04"
             cuda: "13.2.0"
             archs: "75;80;86;89;100"
+            runner: '["self-hosted","gpu"]'
+            image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu22.04-x86_64"
 
           - platform: x86_64
             ubuntu: "24.04"
             cuda: "12.8.1"
             archs: "75;80;86;89"
+            runner: '["self-hosted","gpu"]'
+            image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu24.04-x86_64"
 
           - platform: x86_64
             ubuntu: "24.04"
             cuda: "13.2.0"
             archs: "75;80;86;89;100"
+            runner: '["self-hosted","gpu"]'
+            image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu24.04-x86_64"
 
-    steps:
-      - uses: actions/checkout@v4
+          # ------------------------------------------------------------------
+          # Jetson (aarch64) — DISABLED pending infra changes
+          #
+          # Jetson devices are static shared runners across nvidia-isaac org.
+          # Do not schedule long builds on them — they block other teams.
+          # Preferred pattern: build ARM64 Docker images on x86 runners, push
+          # to NGC, and run Jetson tests through Osmo on a nightly cadence.
+          #
+          # To re-enable: uncomment the entries below and set the runner labels
+          # to whatever the RPT team confirms after device onboarding.
+          # The build parameters (archs, cuda, ubuntu) are ready to use.
+          # ------------------------------------------------------------------
+          # - platform: jetson
+          #   ubuntu: "22.04"
+          #   cuda: "12.8.1"
+          #   archs: "72;87"
+          #   runner: 'TBD — set after RPT confirms Jetson runner labels'
+          #   image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu22.04-aarch64"
+          #
+          # - platform: jetson
+          #   ubuntu: "22.04"
+          #   cuda: "13.2.0"
+          #   archs: "72;87"
+          #   runner: 'TBD'
+          #   image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu22.04-aarch64"
+          #
+          # - platform: jetson
+          #   ubuntu: "24.04"
+          #   cuda: "12.8.1"
+          #   archs: "72;87"
+          #   runner: 'TBD'
+          #   image: "nvcr.io/cunls/cunls-ci:cuda12-ubuntu24.04-aarch64"
+          #
+          # - platform: jetson
+          #   ubuntu: "24.04"
+          #   cuda: "13.2.0"
+          #   archs: "72;87"
+          #   runner: 'TBD'
+          #   image: "nvcr.io/cunls/cunls-ci:cuda13-ubuntu24.04-aarch64"
 
-      - name: Validate build configuration
-        run: |
-          echo "Platform:    ${{ matrix.platform }}"
-          echo "Ubuntu:      ${{ matrix.ubuntu }}"
-          echo "CUDA:        ${{ matrix.cuda }}"
-          echo "Archs:       ${{ matrix.archs }}"
-          echo ""
-          echo "Validating required files exist..."
-          test -f CMakeLists.txt           && echo "  CMakeLists.txt OK"
-          test -f docker/Dockerfile.ci     && echo "  docker/Dockerfile.ci OK"
-          test -f .github/actions/cmake-build/action.yml && echo "  composite action OK"
-          test -f .github/workflows/build-and-test.yml   && echo "  reusable workflow OK"
-          echo ""
-          echo "Base image: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu${{ matrix.ubuntu }}"
-          echo "Scaffold validation passed — full GPU build will run once build-and-test.yml is wired up."
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      cuda_version: ${{ matrix.cuda }}
+      ubuntu_version: ${{ matrix.ubuntu }}
+      platform: ${{ matrix.platform }}
+      cuda_architectures: ${{ matrix.archs }}
+      runner_labels: ${{ matrix.runner }}
+      container_image: ${{ matrix.image }}
 
+  # ---------------------------------------------------------------------------
+  # Summary: single check that all matrix jobs succeeded
+  # ---------------------------------------------------------------------------
   nightly-status:
     name: Nightly status
     runs-on: ubuntu-latest
     if: always()
-    needs: [check-changes, validate-matrix]
+    needs: [check-changes, build-matrix]
     steps:
       - name: Report status
         run: |
@@ -98,9 +148,9 @@ jobs:
             echo "Nightly skipped: no changes in last 24 hours."
             exit 0
           fi
-          if [ "${{ needs.validate-matrix.result }}" = "success" ]; then
-            echo "All nightly validations passed."
+          if [ "${{ needs.build-matrix.result }}" = "success" ]; then
+            echo "All nightly builds passed."
           else
-            echo "One or more validations failed: ${{ needs.validate-matrix.result }}"
+            echo "One or more nightly builds failed: ${{ needs.build-matrix.result }}"
             exit 1
           fi

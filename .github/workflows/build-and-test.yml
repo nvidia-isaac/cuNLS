@@ -78,24 +78,64 @@ on:
 jobs:
   build-and-test:
     name: "${{ inputs.platform }} / ubuntu-${{ inputs.ubuntu_version }} / cuda-${{ inputs.cuda_version }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    container:
+      image: ${{ inputs.container_image }}
+      options: --gpus all
+    timeout-minutes: 120
+
+    env:
+      CCACHE_DIR: /ccache
+      CCACHE_MAXSIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: ccache
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Verify GPU access
+        run: nvidia-smi
 
-      - name: Validate build configuration
-        run: |
-          echo "=== Build Configuration ==="
-          echo "Platform:           ${{ inputs.platform }}"
-          echo "Ubuntu:             ${{ inputs.ubuntu_version }}"
-          echo "CUDA:               ${{ inputs.cuda_version }}"
-          echo "Architectures:      ${{ inputs.cuda_architectures }}"
-          echo "Runner labels:      ${{ inputs.runner_labels }}"
-          echo "Container image:    ${{ inputs.container_image }}"
-          echo ""
-          echo "=== File Validation ==="
-          test -f CMakeLists.txt       && echo "CMakeLists.txt: OK"
-          test -f docker/Dockerfile.ci && echo "Dockerfile.ci: OK"
-          echo ""
-          echo "Scaffold: full GPU build requires self-hosted runners with --gpus all."
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: /ccache
+          key: ccache-${{ inputs.platform }}-cuda${{ inputs.cuda_version }}-ubuntu${{ inputs.ubuntu_version }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ inputs.platform }}-cuda${{ inputs.cuda_version }}-ubuntu${{ inputs.ubuntu_version }}-
+
+      - name: Zero ccache stats
+        run: ccache --zero-stats --show-config || true
+
+      - name: Build & Test
+        uses: ./.github/actions/cmake-build
+        id: build
+        with:
+          cuda_architectures: ${{ inputs.cuda_architectures }}
+          build_type: Release
+          build_testing: 'ON'
+
+      - name: Print ccache stats
+        if: always()
+        run: ccache --show-stats || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ inputs.platform }}-cuda${{ inputs.cuda_version }}-ubuntu${{ inputs.ubuntu_version }}
+          path: ${{ steps.build.outputs.test_results }}
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload library artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cunls-${{ inputs.platform }}-cuda${{ inputs.cuda_version }}-ubuntu${{ inputs.ubuntu_version }}
+          path: |
+            build/bin/libcunls.so
+            build/bin/libcunls.a
+          retention-days: 30
+          if-no-files-found: warn
