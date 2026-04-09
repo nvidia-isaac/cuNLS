@@ -67,51 +67,67 @@ jobs:
 
       - uses: actions/checkout@v5
 
-      - name: Build CI image
+      - name: Build C++ libraries
         run: |
-          docker build \
-            --build-arg CUDA_VERSION=${{ matrix.cuda }} \
-            --build-arg UBUNTU_VERSION=${{ matrix.ubuntu }} \
-            -f docker/Dockerfile.ci -t cunls-ci:local .
+          CUDA_VERSION=${{ matrix.cuda }} \
+          UBUNTU_VERSION=${{ matrix.ubuntu }} \
+          EXTRA_CMAKE_ARGS="-DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.archs }}" \
+          ./scripts/build_cunls_in_docker.sh Release ./output
 
-      - name: Build & Test
+      - name: Run C++ tests
+        run: ./scripts/test_cunls_in_docker.sh ./output
+
+      - name: Build Python wheel
         run: |
-          docker run --rm --gpus all \
-            -v "${{ github.workspace }}:/workspace" -w /workspace \
-            cunls-ci:local bash -c '
-              echo "::group::CMAKE CONFIGURE"
-              cmake -B build -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_CUDA_ARCHITECTURES="${{ matrix.archs }}" \
-                -DBUILD_TESTING=ON -G "Unix Makefiles"
-              echo "::endgroup::"
+          CUDA_VERSION=${{ matrix.cuda }} \
+          UBUNTU_VERSION=${{ matrix.ubuntu }} \
+          ./scripts/build_pycunls_in_docker.sh ./output/wheel
 
-              echo "::group::BUILD"
-              cmake --build build -j$(nproc)
-              echo "::endgroup::"
+      - name: Run Python tests
+        run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
 
-              echo "::group::TEST"
-              cd build && mkdir -p test-results
-              ctest --output-on-failure --output-junit test-results/results.xml
-              echo "::endgroup::"
-            '
-
-      - name: Upload test results
+      - name: Upload C++ test results
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: test-results-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: build/test-results/results.xml
+          name: test-results-cpp-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: output/cpp-test-results.xml
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Upload library artifacts
+      - name: Upload Python test results
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: cunls-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: |
-            build/bin/libcunls.so
-            build/bin/libcunls.a
+          name: test-results-python-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: output/wheel/python-test-results.xml
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload shared library
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: cunls-shared-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: output/shared/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload static library
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: cunls-static-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: output/static/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload Python wheel
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: pycunls-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: output/wheel/*.whl
           retention-days: 30
           if-no-files-found: warn
 
@@ -156,7 +172,6 @@ jobs:
 
           mkdir -p release-assets
 
-          # Generate test summary table
           cat > release-notes.md << 'HEADER'
           ## Test Results
 
@@ -165,16 +180,44 @@ jobs:
           HEADER
           sed -i 's/^          //' release-notes.md
 
-          for dir in artifacts/test-results-*; do
+          for dir in artifacts/test-results-cpp-*; do
             [ -d "$dir" ] || continue
-            CONFIG=$(basename "$dir" | sed 's/test-results-//' | sed 's/-/ \/ /g' | sed 's/cuda/cuda-/' | sed 's/ubuntu/ubuntu-/')
-            XML="$dir/results.xml"
+            CONFIG=$(basename "$dir" | sed 's/test-results-cpp-//' | sed 's/-/ \/ /g' | sed 's/cuda/cuda-/' | sed 's/ubuntu/ubuntu-/')
+            XML=$(find "$dir" -name "*.xml" | head -1)
             if [ -f "$XML" ]; then
-              TESTS=$(grep -oP 'tests="\K[0-9]+' "$XML" | head -1 || echo "?")
-              FAILURES=$(grep -oP 'failures="\K[0-9]+' "$XML" | head -1 || echo "?")
-              TIME=$(grep -oP 'time="\K[0-9.]+' "$XML" | head -1 || echo "?")
-              PASSED=$((TESTS - FAILURES))
+              TESTS=$(grep -oP 'tests="\K[0-9]+' "$XML" | head -1)
+              FAILURES=$(grep -oP 'failures="\K[0-9]+' "$XML" | head -1)
+              TIME=$(grep -oP 'time="\K[0-9.]+' "$XML" | head -1)
+              TESTS=${TESTS:-"?"}
+              FAILURES=${FAILURES:-"?"}
+              TIME=${TIME:-"?"}
+              if [ "$TESTS" != "?" ] && [ "$FAILURES" != "?" ]; then
+                PASSED=$((TESTS - FAILURES))
+              else
+                PASSED="?"
+              fi
               echo "| ${CONFIG} | ${TESTS} | ${PASSED} | ${FAILURES} | ${TIME}s |" >> release-notes.md
+              cp "$XML" "release-assets/$(basename "$dir").xml"
+            fi
+          done
+
+          for dir in artifacts/test-results-python-*; do
+            [ -d "$dir" ] || continue
+            CONFIG=$(basename "$dir" | sed 's/test-results-python-//' | sed 's/-/ \/ /g' | sed 's/cuda/cuda-/' | sed 's/ubuntu/ubuntu-/')
+            XML=$(find "$dir" -name "*.xml" | head -1)
+            if [ -f "$XML" ]; then
+              TESTS=$(grep -oP 'tests="\K[0-9]+' "$XML" | head -1)
+              FAILURES=$(grep -oP 'failures="\K[0-9]+' "$XML" | head -1)
+              TIME=$(grep -oP 'time="\K[0-9.]+' "$XML" | head -1)
+              TESTS=${TESTS:-"?"}
+              FAILURES=${FAILURES:-"?"}
+              TIME=${TIME:-"?"}
+              if [ "$TESTS" != "?" ] && [ "$FAILURES" != "?" ]; then
+                PASSED=$((TESTS - FAILURES))
+              else
+                PASSED="?"
+              fi
+              echo "| ${CONFIG} (python) | ${TESTS} | ${PASSED} | ${FAILURES} | ${TIME}s |" >> release-notes.md
               cp "$XML" "release-assets/$(basename "$dir").xml"
             fi
           done
@@ -182,11 +225,18 @@ jobs:
           echo "" >> release-notes.md
           echo "Commit: ${{ github.sha }}" >> release-notes.md
 
-          # Package library artifacts into tarballs
-          for dir in artifacts/cunls-*; do
+          for dir in artifacts/cunls-shared-* artifacts/cunls-static-*; do
             [ -d "$dir" ] || continue
             NAME=$(basename "$dir")
             tar czf "release-assets/${NAME}.tar.gz" -C "$dir" .
+          done
+
+          for dir in artifacts/pycunls-*; do
+            [ -d "$dir" ] || continue
+            for whl in "$dir"/*.whl; do
+              [ -f "$whl" ] || continue
+              cp "$whl" "release-assets/$(basename "$dir")-$(basename "$whl")"
+            done
           done
 
           echo "=== Release Notes ==="
