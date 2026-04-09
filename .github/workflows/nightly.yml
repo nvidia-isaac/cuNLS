@@ -15,6 +15,9 @@ concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   check-changes:
     name: Check for recent changes
@@ -113,20 +116,90 @@ jobs:
           if-no-files-found: warn
 
   nightly-status:
-    name: Nightly status
+    name: Nightly status & release
     runs-on: ubuntu-latest
     if: always()
     needs: [check-changes, build-matrix]
+    permissions:
+      contents: write
     steps:
-      - name: Report status
+      - name: Check result
+        id: check
         run: |
           if [ "${{ needs.check-changes.outputs.should_build }}" = "false" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Nightly skipped: no changes in last 24 hours."
-            exit 0
-          fi
-          if [ "${{ needs.build-matrix.result }}" = "success" ]; then
-            echo "All nightly builds passed."
-          else
+          elif [ "${{ needs.build-matrix.result }}" != "success" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "One or more nightly builds failed: ${{ needs.build-matrix.result }}"
             exit 1
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "All nightly builds passed — creating release."
           fi
+
+      - uses: actions/checkout@v5
+        if: steps.check.outputs.skip == 'false'
+
+      - name: Download all artifacts
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: Generate release notes and package assets
+        if: steps.check.outputs.skip == 'false'
+        id: release-notes
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+
+          mkdir -p release-assets
+
+          # Generate test summary table
+          cat > release-notes.md << 'HEADER'
+          ## Test Results
+
+          | Configuration | Tests | Passed | Failed | Time |
+          |---|---|---|---|---|
+          HEADER
+          sed -i 's/^          //' release-notes.md
+
+          for dir in artifacts/test-results-*; do
+            [ -d "$dir" ] || continue
+            CONFIG=$(basename "$dir" | sed 's/test-results-//' | sed 's/-/ \/ /g' | sed 's/cuda/cuda-/' | sed 's/ubuntu/ubuntu-/')
+            XML="$dir/results.xml"
+            if [ -f "$XML" ]; then
+              TESTS=$(grep -oP 'tests="\K[0-9]+' "$XML" | head -1 || echo "?")
+              FAILURES=$(grep -oP 'failures="\K[0-9]+' "$XML" | head -1 || echo "?")
+              TIME=$(grep -oP 'time="\K[0-9.]+' "$XML" | head -1 || echo "?")
+              PASSED=$((TESTS - FAILURES))
+              echo "| ${CONFIG} | ${TESTS} | ${PASSED} | ${FAILURES} | ${TIME}s |" >> release-notes.md
+              cp "$XML" "release-assets/$(basename "$dir").xml"
+            fi
+          done
+
+          echo "" >> release-notes.md
+          echo "Commit: ${{ github.sha }}" >> release-notes.md
+
+          # Package library artifacts into tarballs
+          for dir in artifacts/cunls-*; do
+            [ -d "$dir" ] || continue
+            NAME=$(basename "$dir")
+            tar czf "release-assets/${NAME}.tar.gz" -C "$dir" .
+          done
+
+          echo "=== Release Notes ==="
+          cat release-notes.md
+          echo "=== Assets ==="
+          ls -lh release-assets/
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly-${{ steps.release-notes.outputs.date }}
+          name: "Nightly ${{ steps.release-notes.outputs.date }}"
+          body_path: release-notes.md
+          prerelease: true
+          files: release-assets/*
