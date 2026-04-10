@@ -20,9 +20,9 @@ TTY_FLAG=""
 
 docker run --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
-  -v "$OUTPUT_DIR:/output" \
+  -v "$OUTPUT_DIR:/cunls_install" \
   cunls:local bash -c '
-    cd /output/build_shared && mkdir -p test-results
+    cd /cunls_install/build_shared && mkdir -p test-results
     ctest --output-on-failure --output-junit test-results/results.xml
-    cp test-results/results.xml /output/cpp-test-results.xml
+    cp test-results/results.xml /cunls_install/cpp-test-results.xml
   '

@@ -17,12 +17,14 @@ fi
 TTY_FLAG=""
 [ -t 0 ] && TTY_FLAG="-it"
 
+# Container mounts:
+#   /cunls          (ro) — source tree
+#   /cunls_install  (rw) — wheel dir + test output (host: $WHEEL_DIR)
 docker run --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
-  -v "$WHEEL_DIR:/wheels:ro" \
-  -v "$WHEEL_DIR:/output" \
+  -v "$WHEEL_DIR:/cunls_install" \
   cunls:local bash -c '
-    pip install /wheels/*.whl "pycunls[test]"
+    pip install /cunls_install/*.whl "pycunls[test]"
     cd /cunls
-    python -m pytest python/tests/ --junitxml=/output/python-test-results.xml -v
+    python -m pytest python/tests/ --junitxml=/cunls_install/python-test-results.xml -v
   '

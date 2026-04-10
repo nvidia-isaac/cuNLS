@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs inside the Docker container to build the pycunls wheel.
 # Expected mounts:
-#   /cunls       (read-only)  — source tree
-#   /output      (read-write) — wheel output directory
+#   /cunls                    (read-only)  — source tree
+#   OUTPUT_DIR env or /output (read-write) — wheel output directory
 set -euo pipefail
 
 WHEEL_DIR=/tmp/pycunls_wheel
@@ -20,5 +20,6 @@ echo "  Wheel built successfully"
 echo "========================================="
 ls -lh "$WHEEL_DIR"/*.whl
 
-cp "$WHEEL_DIR"/*.whl /output/
-echo "Wheel copied to /output/"
+OUTPUT=${OUTPUT_DIR:-/output}
+cp "$WHEEL_DIR"/*.whl "$OUTPUT"/
+echo "Wheel copied to $OUTPUT/"

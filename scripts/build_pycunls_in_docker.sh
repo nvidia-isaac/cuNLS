@@ -20,11 +20,13 @@ docker build -f "$DOCKERFILE" . --network host $DOCKER_BUILD_ARGS --tag cunls:lo
 TTY_FLAG=""
 [ -t 0 ] && TTY_FLAG="-it"
 
-# Source is read-only; builds happen inside the container's local filesystem.
-# Only the final wheel output directory is mounted to the host.
+# Container mounts:
+#   /cunls          (ro) — source tree
+#   /cunls_install  (rw) — wheel output (host: $LOCAL_OUTPUT_DIR)
 docker run --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
-  -v "$LOCAL_OUTPUT_DIR:/output" \
+  -v "$LOCAL_OUTPUT_DIR:/cunls_install" \
+  -e OUTPUT_DIR=/cunls_install \
   cunls:local bash /cunls/scripts/build_pycunls.sh
 
 echo ""
