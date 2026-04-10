@@ -28,25 +28,29 @@ scripts/            # Build/test shell scripts + Dockerfile
   build_cunls_in_docker.sh   # Docker lifecycle for C++ build
   build_pycunls.sh           # pip wheel build (runs inside container)
   build_pycunls_in_docker.sh # Docker lifecycle for Python build
+  test_cunls_in_docker.sh    # Docker lifecycle for C++ tests
+  test_pycunls_in_docker.sh  # Docker lifecycle for Python tests
 cmake/              # CMake modules (AddCUDSS, AddSpdlog, BundleStaticDeps)
-.github/workflows/  # CI workflows (nightly, docker-ci, static_docs)
+.github/workflows/  # CI workflows (nightly, static_docs)
 ```
 
 ### Build and test locally
 
 ```bash
-# C++ build (shared + static)
+# C++ build (shared + static, installed to separate dirs)
 ./scripts/build_cunls_in_docker.sh Release
 
-# C++ tests
+# C++ tests (requires build output from above)
 ./scripts/test_cunls_in_docker.sh ./build_docker
 
 # Python wheel
 ./scripts/build_pycunls_in_docker.sh
 
-# Python tests
+# Python tests (requires wheel from above)
 ./scripts/test_pycunls_in_docker.sh ./dist
 ```
+
+CI runs the exact same 4 commands with `CUDA_VERSION` and `UBUNTU_VERSION` env vars for matrix parameterization.
 
 ---
 
@@ -112,4 +116,56 @@ Within a single job, steps share a host directory (e.g., `./output/`). Use GitHu
 
 ### 12. Every nightly produces a complete, dated release
 
-A nightly release tagged `nightly-YYYY-MM-DD` includes, per matrix entry: C++ libraries (shared `.so` + static `.a`), headers, a Python wheel, and JUnit test result XMLs. All attached as GitHub Release assets with filenames that include the CUDA version and Ubuntu version.
+A nightly release tagged `nightly-YYYY-MM-DD` includes, per matrix entry: C++ libraries (shared `.so` + static `.a` in separate tarballs with correct CMake configs), headers, a Python wheel, and JUnit test result XMLs. All attached as GitHub Release assets with filenames that include the CUDA version and Ubuntu version.
+
+---
+
+## Container Mount Convention
+
+All `_in_docker.sh` scripts mount the host output directory at `/cunls_install` inside the container. This path must be consistent across all scripts because:
+- CTest discovery generates include files with absolute container paths during the build
+- Test scripts run in a new `docker run` and must mount at the same path for CTest to find its generated files
+
+The source tree is always mounted read-only at `/cunls`.
+
+Inner scripts that need a configurable output path (e.g., `build_pycunls.sh`) use an env var with a default: `OUTPUT=${OUTPUT_DIR:-/output}`.
+
+---
+
+## Build Artifacts Layout
+
+`build_cunls_in_docker.sh` installs shared and static variants to separate directories to avoid CMake package config overwrites:
+
+```
+$OUTPUT_DIR/
+  shared/             # make install from shared build
+    lib/libcunls.so
+    lib/cmake/cunls/  # correct CMake config for shared
+    include/cunls/
+  static/             # make install from static build
+    lib/libcunls.a
+    lib/cmake/cunls/  # correct CMake config for static
+    include/cunls/
+  build_shared/       # cmake build directory (persists for ctest)
+  build_static/       # cmake build directory
+  cpp-test-results.xml
+```
+
+---
+
+## Common Pitfalls
+
+These are mistakes encountered during implementation. Avoid repeating them.
+
+| Pitfall | What happens | How to avoid |
+|---|---|---|
+| Hardcoding GCC version (e.g., `g++-13`) | Fails on Ubuntu 22.04 which doesn't ship GCC 13 | Use distro default `g++` -- C++17 works on GCC 11+ |
+| System CMake on Ubuntu 22.04 | Version 3.22, but project needs 3.24+ | Use Kitware APT repo for latest CMake |
+| `docker login -p $SECRET` | Exposes secret in process list | Use `env:` block + `echo "$VAR" \| docker login --password-stdin` |
+| `grep ... \| head -1 \|\| echo "?"` | `\|\|` applies to `head` (exit 0), not `grep` | Use `${VAR:-"?"}` after the pipeline |
+| Different container mount paths between build and test | CTest include files reference absolute paths from build container | Mount at `/cunls_install` in all scripts |
+| Same `CMAKE_INSTALL_PREFIX` for shared and static | CMake targets file gets overwritten by the second build | Install to `$DIR/shared` and `$DIR/static` |
+| `.dockerignore` in wrong directory | Docker reads it from build context root, not from Dockerfile directory | Place `.dockerignore` at repo root |
+| `actions/checkout@v4` and other v4 actions | Node.js 20 deprecation warnings | Use `@v5` and set `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` |
+| Creating reusable workflows for single consumers | Adds `workflow_call` input threading, secret forwarding, dual `workflow_dispatch` boilerplate | Inline until there are 2+ consumers |
+| NGC/private registry dependency for CI images | Adds auth complexity, fails without secrets | Build images locally from Dockerfile; Docker layer cache makes it fast |
