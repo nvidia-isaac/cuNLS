@@ -24,6 +24,7 @@ docker run --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
   -v "$WHEEL_DIR:/cunls_install" \
   cunls:local bash -c '
+    set -euo pipefail
     pip install /cunls_install/*.whl "pycunls[test]"
     cd /cunls
     python -m pytest python/tests/ --junitxml=/cunls_install/python-test-results.xml -v
