@@ -136,5 +136,9 @@ float3 TukeyLossCPU(float s, float a_squared) {
   return rho;
 }
 
+float3 ScaledLossCPU(float a, const float3& inner_rho) {
+  return {a * inner_rho.x, a * inner_rho.y, a * inner_rho.z};
+}
+
 }  // namespace test_utils
 }  // namespace cunls

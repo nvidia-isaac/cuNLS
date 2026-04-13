@@ -60,6 +60,7 @@ class TestGaussNewtonMinimizer:
 
         opts = pycunls.MinimizerOptions()
         opts.max_num_iterations = 10
+        opts.disable_safety_checks = False
         minimizer = pycunls.GaussNewtonMinimizer(opts)
         summary = minimizer.minimize(stream, problem)
 
@@ -75,6 +76,7 @@ class TestGaussNewtonMinimizer:
         opts = pycunls.MinimizerOptions()
         opts.max_num_iterations = 10
         opts.column_scaling = pycunls.ColumnScaling.hessian_diagonal
+        opts.disable_safety_checks = False
         minimizer = pycunls.GaussNewtonMinimizer(opts)
         summary = minimizer.minimize(stream, problem)
 
@@ -92,6 +94,7 @@ class TestLevenbergMarquardtMinimizer:
 
         lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
         lm_opts.base_options.max_num_iterations = 20
+        lm_opts.base_options.disable_safety_checks = False
         minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
         summary = minimizer.minimize(stream, problem)
 
@@ -114,6 +117,7 @@ class TestLevenbergMarquardtMinimizer:
         lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
         lm_opts.base_options.max_num_iterations = 20
         lm_opts.base_options.column_scaling = scaling
+        lm_opts.base_options.disable_safety_checks = False
         minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
         summary = minimizer.minimize(stream, problem)
 
@@ -166,6 +170,7 @@ class TestMinimizerOptions:
         assert opts.cost_tolerance == pytest.approx(1e-6)
         assert opts.sparse_linear_solver_type == pycunls.SparseLinearSolverType.cuDSS
         assert opts.column_scaling == pycunls.ColumnScaling.none
+        assert opts.disable_safety_checks is False
 
     def test_modification(self):
         opts = pycunls.MinimizerOptions()

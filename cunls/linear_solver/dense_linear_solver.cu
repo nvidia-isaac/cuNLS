@@ -108,26 +108,28 @@ __global__ void csr_to_dense_kernel(const int* __restrict__ row_offsets,
 ///
 /// The algorithm at each step k = 0 .. n-1:
 ///   1. **Diagonal pivoting**: find the row/column with the largest absolute
-///      diagonal element among indices [k, n).  If the best pivot is below
-///      kDiagonalEpsilonAbs the matrix is (near-)singular and the kernel
+///      diagonal element among indices [k, n).  When @p check_status is
+///      non-zero and the best pivot is below kDiagonalEpsilonAbs, the kernel
 ///      sets *status = 0 and returns early.
 ///   2. **Symmetric swap**: swap rows k and pk, then columns k and pk, and
 ///      record the permutation.
 ///   3. **Schur complement update**: divide column k below the diagonal by the
 ///      pivot, then rank-1 update the trailing (n-k-1) x (n-k-1) sub-matrix.
 ///
-/// On success *status is set to 1.  The factorized matrix is stored in @p ldlt
-/// where the strict lower triangle holds L (unit diagonal implied), and the
-/// diagonal holds D.
+/// On success *status is set to 1 (only written when @p check_status != 0).
 ///
 /// @param A        Dense row-major input matrix (n x n), read-only.
 /// @param n        Matrix dimension.
 /// @param ldlt     Output: L and D packed in one n x n buffer.
 /// @param permutation Output: permutation vector of length n.
-/// @param status   Output: 1 on success, 0 on singular pivot.
+/// @param status   Output: 1 on success, 0 on singular pivot (only when
+///                 @p check_status != 0).
+/// @param check_status  When non-zero, enable pivot-value checks and status
+///                      reporting; when zero, skip them for lower latency.
 __global__ void factorize_symmetric_pivoted_ldlt_kernel(
     const float* __restrict__ A, int n, float* __restrict__ ldlt,
-    int* __restrict__ permutation, int* __restrict__ status) {
+    int* __restrict__ permutation, int* __restrict__ status,
+    int check_status) {
   if (blockIdx.x != 0) {
     return;
   }
@@ -141,8 +143,6 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
   __shared__ float warp_vals[kMaxWarpsPerBlock];
   __shared__ int warp_idxs[kMaxWarpsPerBlock];
   __shared__ int pivot_index_sh;
-  /// Shared flag: 1 while factorization is proceeding normally; set to 0 by
-  /// thread 0 when a (near-)singular pivot is detected.
   __shared__ int factorization_ok;
 
   if (tid == 0) {
@@ -184,13 +184,13 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
       WarpReduceMaxAbs(v, ix);
       if (lane == 0) {
         pivot_index_sh = ix;
-        if (v <= kDiagonalEpsilonAbs) {
+        if (check_status && v <= kDiagonalEpsilonAbs) {
           factorization_ok = 0;
         }
       }
     }
     __syncthreads();
-    if (!factorization_ok) {
+    if (check_status && !factorization_ok) {
       if (tid == 0) {
         *status = 0;
       }
@@ -219,15 +219,16 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
       __syncthreads();
     }
 
-    // Post-swap sanity check on the actual pivot value.
     const float pivot = ldlt[k * n + k];
-    if (tid == 0 && fabsf(pivot) <= kDiagonalEpsilonAbs) {
-      factorization_ok = 0;
-    }
-    __syncthreads();
-    if (!factorization_ok) {
-      if (tid == 0) *status = 0;
-      return;
+    if (check_status) {
+      if (tid == 0 && fabsf(pivot) <= kDiagonalEpsilonAbs) {
+        factorization_ok = 0;
+      }
+      __syncthreads();
+      if (!factorization_ok) {
+        if (tid == 0) *status = 0;
+        return;
+      }
     }
 
     // --- Step 3: Schur complement update ---------------------------------
@@ -249,7 +250,7 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
     __syncthreads();
   }
 
-  if (tid == 0) {
+  if (check_status && tid == 0) {
     *status = 1;
   }
 }
@@ -264,12 +265,10 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
 /// this kernel performs:
 ///   1. Permute the RHS:  permuted_rhs = P * rhs.
 ///   2. Forward substitution:  L * y = permuted_rhs  (L has unit diagonal).
-///   3. Diagonal solve:  D * z = y  (checks for zero diagonals).
+///   3. Diagonal solve:  D * z = y  (when @p check_status != 0, checks for
+///      zero diagonals and sets *status = 0 / returns early).
 ///   4. Backward substitution:  L^T * x_p = z.
 ///   5. Un-permute:  solution[permutation[i]] = x_p[i].
-///
-/// If any diagonal element of D is below kDiagonalEpsilonAbs, the kernel
-/// sets *status = 0 and returns early.  On success *status = 1.
 ///
 /// @param ldlt        Factored matrix (L and D packed, n x n, row-major).
 /// @param permutation Pivot permutation vector of length n.
@@ -279,12 +278,16 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
 /// @param intermediate     Scratch buffer of length n (y, then z).
 /// @param permuted_sol     Scratch buffer of length n (x_p).
 /// @param solution         Output solution vector of length n.
-/// @param status           Output: 1 on success, 0 on zero diagonal.
+/// @param status           Output: 1 on success, 0 on zero diagonal (only
+///                         when @p check_status != 0).
+/// @param check_status  When non-zero, enable diagonal checks and status
+///                      reporting; when zero, skip them for lower latency.
 __global__ void solve_from_pivoted_ldlt_kernel(
     const float* __restrict__ ldlt, const int* __restrict__ permutation,
     const float* __restrict__ rhs, int n, float* __restrict__ permuted_rhs,
     float* __restrict__ intermediate, float* __restrict__ permuted_sol,
-    float* __restrict__ solution, int* __restrict__ status) {
+    float* __restrict__ solution, int* __restrict__ status,
+    int check_status) {
   if (blockIdx.x != 0) {
     return;
   }
@@ -296,8 +299,6 @@ __global__ void solve_from_pivoted_ldlt_kernel(
   const int num_warps = block_size / kWarpSize;
 
   __shared__ float warp_sums[kMaxWarpsPerBlock];
-  /// Shared flag: 1 while the solve is valid; set to 0 (via atomicExch) if
-  /// any thread detects a zero diagonal during step 3.
   __shared__ int valid_solve;
 
   if (tid == 0) {
@@ -312,8 +313,6 @@ __global__ void solve_from_pivoted_ldlt_kernel(
   __syncthreads();
 
   // Step 2: forward substitution  L y = P b.
-  // Each row i is processed sequentially (data dependency on y[0..i-1]),
-  // but the dot product within a row is parallelized across the block.
   for (int i = 0; i < n; ++i) {
     float partial = 0.0f;
     for (int j = tid; j < i; j += block_size) {
@@ -334,19 +333,20 @@ __global__ void solve_from_pivoted_ldlt_kernel(
     __syncthreads();
   }
 
-  // Step 3: diagonal solve  D z = y  (parallel over all rows).
-  // Use atomicExch so that any thread can signal failure without races.
-  for (int i = tid; i < n; i += block_size) {
-    if (fabsf(ldlt[i * n + i]) <= kDiagonalEpsilonAbs) {
-      atomicExch(&valid_solve, 0);
+  // Step 3: diagonal solve  D z = y.
+  if (check_status) {
+    for (int i = tid; i < n; i += block_size) {
+      if (fabsf(ldlt[i * n + i]) <= kDiagonalEpsilonAbs) {
+        atomicExch(&valid_solve, 0);
+      }
     }
-  }
-  __syncthreads();
-  if (valid_solve == 0) {
-    if (tid == 0) {
-      *status = 0;
+    __syncthreads();
+    if (valid_solve == 0) {
+      if (tid == 0) {
+        *status = 0;
+      }
+      return;
     }
-    return;
   }
 
   for (int i = tid; i < n; i += block_size) {
@@ -380,7 +380,7 @@ __global__ void solve_from_pivoted_ldlt_kernel(
     solution[permutation[i]] = permuted_sol[i];
   }
 
-  if (tid == 0) {
+  if (check_status && tid == 0) {
     *status = 1;
   }
 }
@@ -394,37 +394,44 @@ __global__ void solve_from_pivoted_ldlt_kernel(
 /// @brief Launches the pivoted LDLT factorization kernel on the given stream.
 ///
 /// @param status  Device pointer to a single int; set to 1 on success, 0 on
-///                failure (singular or near-singular pivot).
+///                failure (singular or near-singular pivot). Only written when
+///                @p check_status is true.
+/// @param check_status  When true, the kernel checks pivots for near-zero
+///                      values and reports status; when false, skips checks.
 void FactorizeSymmetricPivotedLDLT(cudaStream_t stream,
                                    const float* dense_symmetric_matrix, int n,
                                    float* ldlt_factor, int* permutation,
-                                   int* status) {
+                                   int* status, bool check_status) {
   if (n == 0) {
     return;
   }
 
   const int threads = SelectBlockSize(n);
   factorize_symmetric_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(
-      dense_symmetric_matrix, n, ldlt_factor, permutation, status);
+      dense_symmetric_matrix, n, ldlt_factor, permutation, status,
+      check_status ? 1 : 0);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /// @brief Launches the LDLT solve kernel on the given stream.
 ///
 /// @param status  Device pointer to a single int; set to 1 on success, 0 on
-///                failure (zero diagonal in D).
+///                failure (zero diagonal in D). Only written when
+///                @p check_status is true.
+/// @param check_status  When true, the kernel checks diagonal elements and
+///                      reports status; when false, skips checks.
 void SolveFromPivotedLDLT(cudaStream_t stream, const float* ldlt_factor,
                           const int* permutation, const float* rhs, int n,
                           float* permuted_rhs, float* intermediate_solution,
                           float* permuted_solution, float* solution,
-                          int* status) {
+                          int* status, bool check_status) {
   if (n == 0) {
     return;
   }
   const int threads = SelectBlockSize(n);
   solve_from_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(
       ldlt_factor, permutation, rhs, n, permuted_rhs, intermediate_solution,
-      permuted_solution, solution, status);
+      permuted_solution, solution, status, check_status ? 1 : 0);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -476,32 +483,30 @@ bool DenseLDLTSolver::Solve(cudaStream_t stream,
 
   const int n = static_cast<int>(matrix_size);
 
-  // Enqueue factorization; status_[0] will hold 1 (ok) or 0 (singular).
   FactorizeSymmetricPivotedLDLT(stream, dense_matrix_.data(), n,
                                 ldlt_factor_.data(), permutation_.data(),
-                                status_.data());
+                                status_.data(), safety_checks_enabled_);
 
-  // Enqueue solve; status_[1] will hold 1 (ok) or 0 (zero diagonal).
-  // Note: the solve kernel depends on the factorization output via same-stream
-  // ordering, so no explicit synchronization is needed between the two.
   SolveFromPivotedLDLT(stream, ldlt_factor_.data(), permutation_.data(),
                        rhs.data(), n, permuted_rhs_.data(),
                        intermediate_solution_.data(), permuted_solution_.data(),
-                       result.data(), status_.data() + 1);
+                       result.data(), status_.data() + 1,
+                       safety_checks_enabled_);
 
-  // Single async copy of both status flags from device to pinned host memory.
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
-      status_pinned_.data(), status_.data(),
-      kNumStatuses * sizeof(int), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  if (safety_checks_enabled_) {
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
+        status_pinned_.data(), status_.data(),
+        kNumStatuses * sizeof(int), cudaMemcpyDeviceToHost, stream));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
-  if (status_pinned_[0] == 0) {
-    LogError("LDLT factorization failed (singular or near-singular pivot)");
-    return false;
-  }
-  if (status_pinned_[1] == 0) {
-    LogError("LDLT solve failed (zero diagonal encountered)");
-    return false;
+    if (status_pinned_[0] == 0) {
+      LogError("LDLT factorization failed (singular or near-singular pivot)");
+      return false;
+    }
+    if (status_pinned_[1] == 0) {
+      LogError("LDLT solve failed (zero diagonal encountered)");
+      return false;
+    }
   }
   return true;
 }

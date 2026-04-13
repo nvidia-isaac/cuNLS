@@ -24,6 +24,7 @@
 // Problem.add_factor_batch() alongside a FactorBatch.
 
 #include "bindings.h"
+#include "py_factor_wrappers.h"
 
 #include "cunls/robustifier/loss_function_batch.h"
 #include "cunls/robustifier/trivial_loss_function_batch.h"
@@ -72,4 +73,12 @@ void bind_loss(nb::module_& m) {
         "TukeyLossFunctionBatch",
         "Tukey's biweight robust loss function.")
         .def(nb::init<float>(), nb::arg("a"));
+
+    nb::class_<PyScaledLossFunctionBatch, cunls::LossFunctionBatch>(m,
+        "ScaledLossFunctionBatch",
+        "Scales the output of another loss function by a positive scalar a: "
+        "rho_scaled(s) = a * f(s).")
+        .def(nb::init<cunls::LossFunctionBatch*, float>(),
+             nb::arg("loss_function"), nb::arg("a"),
+             nb::keep_alive<1, 2>());
 }

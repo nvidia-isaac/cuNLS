@@ -156,6 +156,35 @@ struct MinimizerOptions {
    * See ColumnScaling. Default: None.
    */
   ColumnScaling column_scaling = ColumnScaling::None;
+
+  /**
+   * @brief Disable runtime safety checks inside the minimizer.
+   *
+   * When false, the minimizer enables all optional runtime validation
+   * that can catch numerical problems early.  Currently this covers
+   * post-factorization checks in the linear solver:
+   *  - Cholesky: cuSOLVER devInfo after potrf and potrs (non-SPD or
+   *    invalid-parameter detection).
+   *  - QR: diagonal-of-R inspection for rank deficiency.
+   *  - LDLT: in-kernel pivot and diagonal checks during factorization
+   *    and solve.
+   *
+   * Future minimizer versions may add additional checks (e.g. NaN/Inf
+   * detection in the state update, cost-increase guards).
+   *
+   * On failure the solver's Solve() returns false and a diagnostic is
+   * emitted via LogError().  The minimizer treats a false return as a
+   * fatal error and throws std::runtime_error.
+   *
+   * When true, every check listed above is skipped: no device-to-host
+   * memcpy, no stream synchronization, and no in-kernel validation.
+   * This can noticeably reduce per-iteration latency for small systems
+   * but may produce silently incorrect results if the matrix is singular
+   * or ill-conditioned.
+   *
+   * Default: true (safety checks disabled).
+   */
+  bool disable_safety_checks = true;
 };
 
 /**

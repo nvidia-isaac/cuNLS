@@ -120,6 +120,7 @@ from pycunls._pycunls_core import (
     SoftLOneLossFunctionBatch,
     TolerantLossFunctionBatch,
     TukeyLossFunctionBatch,
+    ScaledLossFunctionBatch,
 )
 
 __version__ = "0.1.0"
@@ -182,4 +183,5 @@ __all__ = [
     "SoftLOneLossFunctionBatch",
     "TolerantLossFunctionBatch",
     "TukeyLossFunctionBatch",
+    "ScaledLossFunctionBatch",
 ]

@@ -17,7 +17,7 @@
 
 /** @file loss_function_test.cpp
  *  @brief Tests for robust loss functions (trivial, Huber, SoftLOne, Cauchy,
- *         Arctan, Tolerant, Tukey) evaluated on GPU.
+ *         Arctan, Tolerant, Tukey, Scaled) evaluated on GPU.
  */
 
 #include <gtest/gtest.h>
@@ -36,6 +36,7 @@
 #include "cunls/robustifier/soft_lone_loss_function_batch.h"
 #include "cunls/robustifier/tolerant_loss_function_batch.h"
 #include "cunls/robustifier/trivial_loss_function_batch.h"
+#include "cunls/robustifier/scaled_loss_function_batch.h"
 #include "cunls/robustifier/tukey_loss_function_batch.h"
 #include "tests/utils.h"
 
@@ -267,6 +268,61 @@ TEST_F(LossTest, TukeyLoss) {
     ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
     ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
     ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
+  }
+}
+
+/** @brief Verifies ScaledLoss wrapping Huber matches a * HuberCPU. */
+TEST_F(LossTest, ScaledHuberLoss) {
+  auto test_range = this->profiler_domain_.CreateDomainRange("ScaledHuberLoss");
+  CudaStream stream;
+
+  std::uniform_real_distribution<float> dist_a(0.1f, 10.0f);
+  std::uniform_real_distribution<float> dist_delta(0.5f, 20.0f);
+  float scale = dist_a(this->generator);
+  float delta = dist_delta(this->generator);
+
+  ScaledLossFunctionBatch<HuberLossFunctionBatch> loss(scale, delta);
+  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
+                stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> host_squared_errors(num_errors);
+  std::vector<float3> host_rho(num_errors);
+  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
+  this->rho.CopyToHost(host_rho.data(), num_errors);
+
+  for (size_t i = 0; i < this->num_errors; i++) {
+    auto inner = test_utils::HuberLossCPU(host_squared_errors[i], delta);
+    auto gt = test_utils::ScaledLossCPU(scale, inner);
+    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
+    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
+    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
+  }
+}
+
+/** @brief Verifies ScaledLoss wrapping TrivialLoss returns {a*s, a, 0}. */
+TEST_F(LossTest, ScaledTrivialLoss) {
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("ScaledTrivialLoss");
+  CudaStream stream;
+
+  std::uniform_real_distribution<float> dist_a(0.1f, 10.0f);
+  float scale = dist_a(this->generator);
+
+  ScaledLossFunctionBatch<TrivialLossFunctionBatch> loss(scale);
+  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
+                stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> host_squared_errors(num_errors);
+  std::vector<float3> host_rho(num_errors);
+  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
+  this->rho.CopyToHost(host_rho.data(), num_errors);
+
+  for (size_t i = 0; i < this->num_errors; i++) {
+    ASSERT_NEAR(host_rho[i].x, scale * host_squared_errors[i], 1e-4f);
+    ASSERT_NEAR(host_rho[i].y, scale, 1e-4f);
+    ASSERT_NEAR(host_rho[i].z, 0.0f, 1e-4f);
   }
 }
 }  // namespace cunls

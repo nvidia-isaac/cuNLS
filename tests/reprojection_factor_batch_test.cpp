@@ -592,6 +592,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
   options.max_num_iterations = 100;
   options.state_tolerance = 1e-8f;
   options.cost_tolerance = 1e-8f;
+  options.disable_safety_checks = false;
 
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -689,6 +690,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
   options.max_num_iterations = 100;
   options.state_tolerance = 1e-8f;
   options.cost_tolerance = 1e-8f;
+  options.disable_safety_checks = false;
 
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -770,6 +772,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeJoint) {
   options.max_num_iterations = 200;
   options.state_tolerance = 1e-8f;
   options.cost_tolerance = 1e-10f;
+  options.disable_safety_checks = false;
 
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -1102,6 +1105,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   options.max_num_iterations = 100;
   options.state_tolerance = 1e-8f;
   options.cost_tolerance = 1e-8f;
+  options.disable_safety_checks = false;
 
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;

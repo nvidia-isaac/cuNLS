@@ -18,12 +18,14 @@
 #include "py_factor_wrappers.h"
 
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 
 #include "bindings.h"
 
 #include "cunls/factor/information_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
+#include "cunls/robustifier/scaled_loss_function_batch.h"
 
 PyFactorBatch::PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes,
                              size_t num)
@@ -146,5 +148,30 @@ bool PyWeightedFactorBatch::Evaluate(float* residuals, float* jacobians,
     cunls::ApplyUniformWeightToJacobians(uniform_weight_, jacobians,
                                          nf * rsize * jpitch, stream);
   }
+  return true;
+}
+
+PyScaledLossFunctionBatch::PyScaledLossFunctionBatch(
+    cunls::LossFunctionBatch* inner, float a)
+    : inner_(inner), a_(a) {
+  if (inner == nullptr) {
+    throw std::invalid_argument(
+        "ScaledLossFunctionBatch: inner must not be null");
+  }
+  if (a_ <= 0.0f) {
+    std::stringstream ss;
+    ss << "ScaledLossFunctionBatch: scale factor a (" << a_
+       << ") must be positive";
+    throw std::invalid_argument(ss.str());
+  }
+}
+
+bool PyScaledLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+                                         cudaStream_t stream) const {
+  if (num_losses <= 0) {
+    return true;
+  }
+  inner_->Evaluate(s, out, num_losses, stream);
+  cunls::ApplyScaling(a_, out, num_losses, stream);
   return true;
 }

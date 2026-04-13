@@ -133,7 +133,7 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
   std::vector<VectorType> observations_;  ///< Target values for optimization.
   std::vector<VectorType> state_values_;  ///< Initial state values.
 
-  MinimizerOptions minimizer_options_;
+  MinimizerOptions minimizer_options_{.disable_safety_checks = false};
 
   profiler::Domain profiler_domain_{
       "GaussNewtonMinimizerTest"};  ///< Profiling domain.
@@ -398,6 +398,7 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   };
   opts.sparse_linear_solver_config = {.cudss_solver_options =
                                            cudss_solver_options};
+  opts.disable_safety_checks = false;
 
   CudaStream stream;
   GaussNewtonMinimizer minimizer(opts);

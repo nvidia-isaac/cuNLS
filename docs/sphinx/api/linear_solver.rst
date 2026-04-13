@@ -2,8 +2,9 @@
 Linear Solver API
 ################################################################################
 
-`cunls/linear_solver` hosts linear-system abstractions (cuDSS integration and
-a dense pivoted LDLT solver) behind a common CSR-based interface.
+`cunls/linear_solver` hosts linear-system abstractions (cuDSS integration,
+dense pivoted LDLT, dense Cholesky, and dense QR solvers) behind a common
+CSR-based interface.
 
 SparseLinearSolverType
 ----------------------
@@ -12,6 +13,8 @@ Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 
 - `cuDSS`
 - `DenseLDLT`
+- `DenseCholesky`
+- `DenseQR`
 
 SparseLinearSolverConfig
 ------------------------
@@ -20,7 +23,7 @@ Struct in `sparse_linear_solver.h`. Only the member corresponding to the
 chosen ``SparseLinearSolverType`` is used:
 
 - `cudss_solver_options` - [in] cuDSS-specific backend options (ignored when
-  using ``DenseLDLT``).
+  using ``DenseLDLT``, ``DenseCholesky``, or ``DenseQR``).
 
 CSRSparseLinearSolver
 ---------------------
@@ -58,6 +61,25 @@ Abstract base (`cunls/linear_solver/csr_sparse_linear_solver.h`).
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
   :returns: ``true`` on success; ``false`` if a dimension mismatch is detected.
+
+.. cpp:function:: void DisableSafetyChecks()
+
+  Disables runtime safety checks in the solver.  By default (safety checks
+  enabled), dense solvers validate every factorization and solve step:
+  Cholesky checks cuSOLVER ``devInfo`` after ``potrf`` and ``potrs``; QR
+  inspects the diagonal of ``R`` for rank deficiency; LDLT performs in-kernel
+  pivot and diagonal checks.  Failures cause ``Solve()`` to return ``false``
+  with a diagnostic via ``LogError()``.  Calling this method skips all of
+  the above (no device-to-host memcpy, no stream synchronization, no
+  in-kernel validation), which can noticeably reduce per-iteration latency
+  for small systems but may produce silently incorrect results for singular
+  or ill-conditioned matrices.  Normally called by the minimizer when
+  ``MinimizerOptions::disable_safety_checks`` is ``true``.
+
+.. cpp:function:: bool SafetyChecksEnabled() const
+
+  :returns: ``true`` when post-factorization safety checks are enabled
+    (the default).
 
 cuDSSLinearSolverMode
 ---------------------
@@ -142,6 +164,72 @@ Concrete implementation in `dense_linear_solver.h`.
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
   :returns: ``true`` on success; ``false`` on dimension mismatch, singular
     pivot during factorization, or zero diagonal during the solve phase.
+
+DenseCholeskySolver
+-------------------
+
+Concrete implementation in `dense_cholesky_solver.h`. Uses the cuSOLVER
+``cusolverDnSpotrf`` / ``cusolverDnSpotrs`` routines (Cholesky factorization
+``A = L L^T``). Requires the input matrix to be symmetric positive-definite.
+
+.. cpp:function:: bool DenseCholeskySolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Validates dimensions and pre-allocates internal dense buffers and the
+  cuSOLVER workspace for the given matrix size.
+
+  :param ``stream``: [in] CUDA stream used to query the cuSOLVER workspace size.
+  :param ``spd_matrix``: [in] SPD matrix in CSR format.
+  :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
+  :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
+  :returns: ``true`` on success; ``false`` if a dimension mismatch is detected.
+
+.. cpp:function:: bool DenseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Converts CSR to dense, performs Cholesky factorization via
+  ``cusolverDnSpotrf``, then solves via ``cusolverDnSpotrs``. When safety
+  checks are enabled, inspects cuSOLVER ``devInfo`` after both ``potrf``
+  and ``potrs``: returns ``false`` if the matrix is not positive-definite
+  (``devInfo > 0`` from ``potrf``) or if ``potrs`` reports an invalid
+  parameter (``devInfo < 0``).
+
+  :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
+  :param ``spd_matrix``: [in] SPD matrix in CSR format.
+  :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
+  :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
+  :returns: ``true`` on success; ``false`` on dimension mismatch,
+    non-positive-definite matrix, or invalid parameter from ``potrs``.
+
+DenseQRSolver
+-------------
+
+Concrete implementation in `dense_qr_solver.h`. Uses the cuSOLVER
+``cusolverDnSgeqrf`` / ``cusolverDnSormqr`` routines for QR factorization
+(``A = Q R``) followed by a cuBLAS ``cublasStrsm`` upper-triangular solve.
+Works for any non-singular square matrix (not limited to SPD).
+
+.. cpp:function:: bool DenseQRSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Validates dimensions and pre-allocates internal dense buffers, Householder
+  tau vector, and the cuSOLVER workspace for the given matrix size.
+
+  :param ``stream``: [in] CUDA stream used to query the cuSOLVER workspace size.
+  :param ``spd_matrix``: [in] Matrix in CSR format.
+  :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
+  :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
+  :returns: ``true`` on success; ``false`` if a dimension mismatch is detected.
+
+.. cpp:function:: bool DenseQRSolver::Solve(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Converts CSR to dense, performs QR factorization via ``cusolverDnSgeqrf``,
+  applies ``Q^T`` to the RHS via ``cusolverDnSormqr``, then solves the
+  upper-triangular system ``R x = Q^T b`` via ``cublasStrsm``.
+
+  :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
+  :param ``spd_matrix``: [in] Matrix in CSR format.
+  :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
+  :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
+  :returns: ``true`` on success; ``false`` on dimension mismatch or
+    singular matrix (cuSOLVER ``devInfo != 0``).
 
 .. cpp:function:: bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 

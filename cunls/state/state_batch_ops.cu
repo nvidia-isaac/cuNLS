@@ -77,7 +77,7 @@ void fill_binary_pattern(cudaStream_t stream, size_t tangent_dim,
                          const int* const_state_block_ids,
                          size_t num_const_state_blocks,
                          thrust::device_vector<bool>& binary_pattern) {
-  auto stream_policy = thrust::cuda::par.on(stream);
+  auto stream_policy = thrust::cuda::par_nosync.on(stream);
   // Fill pattern with trues
   thrust::fill(stream_policy, binary_pattern.begin(), binary_pattern.end(),
                true);
@@ -157,7 +157,7 @@ void StateBatchOps::InitMapping(
   map_.resize(state_updates_.size());
   thrust::device_ptr<int> map_ptr(map_.data());
   auto map_it = map_ptr;
-  auto stream_policy = thrust::cuda::par.on(stream);
+  auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
   num_reduced_states_ = 0;
   for (auto batch : state_batches) {
@@ -201,7 +201,7 @@ void StateBatchOps::Plus(cudaStream_t stream,
   assert(delta.size() == num_reduced_states_);
   assert(x_ptrs.size() == x_plus_delta_ptrs.size());
   assert(x_ptrs.size() == delta_ptrs_.size());
-  auto stream_policy = thrust::cuda::par.on(stream);
+  auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
   // Zero out the updates
   thrust::device_ptr<float> updates_ptr(state_updates_.data());

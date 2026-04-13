@@ -17,6 +17,7 @@ Implements GPU-batched robust losses applied to squared residual norms.
 - `soft_lone_loss_function_batch.h`
 - `tolerant_loss_function_batch.h`
 - `tukey_loss_function_batch.h`
+- `scaled_loss_function_batch.h`: templated decorator that scales any loss output by a scalar
 
 ## Semantics
 

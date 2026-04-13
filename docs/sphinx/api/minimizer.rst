@@ -131,9 +131,12 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
   in a row, the minimizer treats the current solution as converged. Set to 0 to
   disable. Default: 5.
 - **sparse_linear_solver_type** [in]: Linear backend; options are ``cuDSS``
-  (sparse direct solver via NVIDIA's cuDSS library) and ``DenseLDLT`` (converts
-  CSR to dense and solves with a custom CUDA pivoted LDLT factorization;
-  suitable for small-to-medium systems). Default: ``cuDSS``.
+  (sparse direct solver via NVIDIA's cuDSS library), ``DenseLDLT`` (converts
+  CSR to dense and solves with a custom CUDA pivoted LDLT factorization),
+  ``DenseCholesky`` (converts CSR to dense and solves via cuSOLVER Cholesky;
+  requires SPD matrix), and ``DenseQR`` (converts CSR to dense and solves
+  via cuSOLVER QR factorization; works for any non-singular matrix).
+  Default: ``cuDSS``.
 - **sparse_linear_solver_config** [in]: Backend-specific options. For cuDSS,
   contains :code:`cudss_solver_options` (mode, e.g. SlowInitFastSolve;
   :code:`nthreads`; optional :code:`threading_lib_path` for multi-threaded
@@ -145,6 +148,19 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
 - **column_scaling** [in]: Diagonal scaling of the normal equations; see the
   column-scaling note above. Values: ``None``, ``HessianDiagonal``,
   ``JacobianColumnNorm``. Default: ``None``.
+- **disable_safety_checks** [in]: When ``false``, the minimizer enables all
+  optional runtime validation.  Currently this covers post-factorization
+  checks in the linear solver: Cholesky checks cuSOLVER ``devInfo`` after
+  ``potrf`` and ``potrs``; QR inspects the diagonal of ``R`` for rank
+  deficiency; LDLT performs in-kernel pivot and diagonal checks.  Future
+  minimizer versions may add additional checks (e.g. NaN/Inf detection,
+  cost-increase guards).  Failures cause ``Solve()`` to return ``false``
+  with a diagnostic via ``LogError()``; the minimizer then throws
+  ``std::runtime_error``.  When ``true``, every check listed above is
+  skipped (no device-to-host memcpy, no stream synchronization, no in-kernel
+  validation), which can reduce per-iteration latency for small systems
+  but may produce silently incorrect results for singular or ill-conditioned
+  matrices. Default: ``true``.
 
 --------------------------------------------------------------------------------
 :code:`LevenbergMarquardtMinimizerOptions`
@@ -468,7 +484,9 @@ values and then override individual fields.
 - **sparse_linear_solver_type** (``SparseLinearSolverType``, default
   ``cuDSS``) — selects the linear-system backend.  ``cuDSS`` uses NVIDIA's
   sparse direct solver; ``DenseLDLT`` converts to dense and factorizes with
-  a custom pivoted LDLT kernel (suitable for small-to-medium systems).
+  a custom pivoted LDLT kernel; ``DenseCholesky`` converts to dense and uses
+  cuSOLVER Cholesky (requires SPD); ``DenseQR`` converts to dense and uses
+  cuSOLVER QR factorization (works for any non-singular matrix).
 - **sparse_square_multiplier_type** (``SparseMatrixMultiplierType``, default
   ``Fast``) — strategy for computing the approximate Hessian
   :math:`J^T J`.  ``cuSPARSE`` uses the cuSPARSE SpGEMM reuse API;
@@ -477,6 +495,19 @@ values and then override individual fields.
   optional diagonal scaling :math:`S` for the normal equations
   (:math:`S H S\, z = S b`, then :math:`\Delta x = S z`). See
   :ref:`py-column-scaling-label`.
+- **disable_safety_checks** (``bool``, default ``True``) — when ``False``,
+  the minimizer enables all optional runtime validation.  Currently this
+  covers post-factorization checks in the linear solver: Cholesky checks
+  cuSOLVER ``devInfo`` after ``potrf`` / ``potrs``; QR inspects the diagonal
+  of ``R`` for rank deficiency; LDLT performs in-kernel pivot and diagonal
+  checks.  Future versions may add further checks (e.g. NaN/Inf detection,
+  cost-increase guards).  Failures cause ``Solve()`` to return ``False`` and
+  the minimizer raises ``RuntimeError``.  When ``True``, every check listed
+  above is skipped (no device-to-host memcpy, no stream synchronization, no
+  in-kernel validation), which can reduce per-iteration latency but may
+  produce silently incorrect results for singular or ill-conditioned
+  matrices.  Only set to ``True`` for well-conditioned, pre-validated
+  systems where the extra overhead is a measurable bottleneck.
 
 **Example**
 
@@ -695,6 +726,10 @@ Integer enum selecting the linear-system backend.
 - ``SparseLinearSolverType.cuDSS`` — sparse direct solver via NVIDIA cuDSS.
 - ``SparseLinearSolverType.DenseLDLT`` — converts CSR to dense and solves
   with a custom CUDA pivoted LDLT kernel.
+- ``SparseLinearSolverType.DenseCholesky`` — converts CSR to dense and solves
+  via cuSOLVER Cholesky factorization (requires SPD matrix).
+- ``SparseLinearSolverType.DenseQR`` — converts CSR to dense and solves via
+  cuSOLVER QR factorization (works for any non-singular matrix).
 
 --------------------------------------------------------------------------------
 ``pycunls.SparseMatrixMultiplierType``

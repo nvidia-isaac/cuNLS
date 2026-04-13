@@ -94,7 +94,7 @@ class WeightedFactorBatchTest : public ::testing::Test {
   std::vector<VectorType> observations_;
   std::vector<VectorType> state_values_;
 
-  MinimizerOptions minimizer_options_;
+  MinimizerOptions minimizer_options_{.disable_safety_checks = false};
 };
 
 template <int VectorSize, int SolverId>

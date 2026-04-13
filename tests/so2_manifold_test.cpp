@@ -96,6 +96,7 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
   opts.max_num_iterations = 50;
   opts.state_tolerance = 1e-8f;
   opts.cost_tolerance = 1e-8f;
+  opts.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm_opts;
   lm_opts.base_options = opts;
   lm_opts.initial_lambda = 1e-3f;
@@ -168,6 +169,7 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
   opts.max_num_iterations = 80;
   opts.state_tolerance = 1e-7f;
   opts.cost_tolerance = 1e-7f;
+  opts.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm_opts;
   lm_opts.base_options = opts;
   lm_opts.initial_lambda = 1e-3f;

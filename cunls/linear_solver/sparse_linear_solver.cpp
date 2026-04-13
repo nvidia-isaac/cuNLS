@@ -30,6 +30,10 @@ SparseLinearSolverPtr CreateCSRSparseLinearSolver(
       return std::make_unique<cuDSSLinearSolver>(config.cudss_solver_options);
     case SparseLinearSolverType::DenseLDLT:
       return std::make_unique<DenseLDLTSolver>();
+    case SparseLinearSolverType::DenseCholesky:
+      return std::make_unique<DenseCholeskySolver>();
+    case SparseLinearSolverType::DenseQR:
+      return std::make_unique<DenseQRSolver>();
     default:
       throw std::invalid_argument("Invalid sparse linear solver type");
   }

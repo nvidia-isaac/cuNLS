@@ -260,6 +260,7 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
+  options.disable_safety_checks = false;
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -350,6 +351,7 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
+  options.disable_safety_checks = false;
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -426,6 +428,7 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
+  options.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -500,6 +503,7 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
+  options.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;

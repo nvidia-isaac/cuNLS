@@ -151,6 +151,8 @@ if(BUILD_TESTING)
     tests/fast_matrix_multiplier_test.cpp
     tests/sparse_linear_solver_test.cpp
     tests/dense_linear_solver_test.cpp
+    tests/dense_cholesky_solver_test.cpp
+    tests/dense_qr_solver_test.cpp
     tests/gauss_newton_test.cpp
     tests/so2_manifold_test.cpp
     tests/se2_manifold_test.cpp

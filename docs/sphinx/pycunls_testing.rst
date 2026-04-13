@@ -58,7 +58,7 @@ Test modules
        problems; verifies cost reduction and convergence.
    * - ``test_loss_functions.py``
      - All robust loss function batches (Huber, Cauchy, Arctan,
-       SoftLOne, Tolerant, Tukey, Trivial).
+       SoftLOne, Tolerant, Tukey, Trivial, Scaled).
    * - ``test_warp_factor.py``
      - Custom `WarpFactorBatch` subclass end-to-end test.
    * - ``test_warp_state.py``

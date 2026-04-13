@@ -73,7 +73,25 @@ class CSRSparseLinearSolver {
                      const CSRSparseMatrix& spd_matrix,
                      const dvector<float>& rhs, dvector<float>& result) = 0;
 
+  /**
+   * @brief Disables post-factorization safety checks.
+   *
+   * By default, dense solvers copy a device-side status flag back to the
+   * host after factorization and synchronize the stream to detect singular
+   * or non-positive-definite matrices.  Calling this method skips the extra
+   * device-to-host memcpy, stream synchronization, and (for the LDLT solver)
+   * in-kernel pivot/diagonal checks, which can be a significant fraction of
+   * the total solve time for small systems.
+   */
+  void DisableSafetyChecks() { safety_checks_enabled_ = false; }
+
+  /** @brief Returns whether post-factorization safety checks are enabled. */
+  bool SafetyChecksEnabled() const { return safety_checks_enabled_; }
+
   /** @brief Virtual destructor for proper cleanup of derived solver instances. */
   virtual ~CSRSparseLinearSolver() = default;
+
+ protected:
+  bool safety_checks_enabled_ = true;
 };
 }  // namespace cunls

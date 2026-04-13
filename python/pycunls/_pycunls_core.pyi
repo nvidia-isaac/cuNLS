@@ -51,6 +51,8 @@ class CublasHandle:
 class SparseLinearSolverType(enum.IntEnum):
     cuDSS = ...
     DenseLDLT = ...
+    DenseCholesky = ...
+    DenseQR = ...
 
 class SparseMatrixMultiplierType(enum.IntEnum):
     cuSPARSE = ...
@@ -77,6 +79,7 @@ class MinimizerOptions:
     sparse_linear_solver_type: SparseLinearSolverType
     sparse_square_multiplier_type: SparseMatrixMultiplierType
     column_scaling: ColumnScaling
+    disable_safety_checks: bool
 
     def __init__(self) -> None: ...
 
@@ -860,6 +863,11 @@ class TukeyLossFunctionBatch(LossFunctionBatch):
     """Tukey's biweight robust loss function."""
 
     def __init__(self, a: float) -> None: ...
+
+class ScaledLossFunctionBatch(LossFunctionBatch):
+    """Scales another loss function by a positive scalar: rho(s) = a * f(s)."""
+
+    def __init__(self, loss_function: LossFunctionBatch, a: float) -> None: ...
 
 # ===================================================================
 # Problem

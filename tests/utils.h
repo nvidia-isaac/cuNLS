@@ -129,6 +129,11 @@ float3 TolerantLossCPU(float s, float a, float b, float c);
  */
 float3 TukeyLossCPU(float s, float a_squared);
 
+/**
+ * @brief CPU reference for Scaled loss: multiplies inner rho triplet by scalar a.
+ */
+float3 ScaledLossCPU(float a, const float3& inner_rho);
+
 // ============================================================================
 // Vector factory functions
 // ============================================================================

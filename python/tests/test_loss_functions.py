@@ -53,3 +53,8 @@ class TestLossFunctions:
     def test_tukey(self):
         loss = pycunls.TukeyLossFunctionBatch(4.685)
         assert loss is not None
+
+    def test_scaled(self):
+        inner = pycunls.HuberLossFunctionBatch(1.0)
+        loss = pycunls.ScaledLossFunctionBatch(inner, 2.5)
+        assert loss is not None

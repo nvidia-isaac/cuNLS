@@ -39,6 +39,7 @@
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "cunls/common/types.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
 
 namespace cunls {
 namespace {
@@ -193,7 +194,7 @@ class PnPFactorBatchTest : public ::testing::Test {
   using Observation2D = Vector<2>;
 
   /** Full dataset size (LM test); other tests use the first n entries only. */
-  static constexpr size_t kMaxCorrespondences = 48;
+  static constexpr size_t kMaxCorrespondences = 10000;
   static constexpr float kZThr = 1e-3f;
 
   void SetUp() override {
@@ -321,6 +322,7 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   base.max_num_iterations = 100;
   base.state_tolerance = 1e-9f;
   base.cost_tolerance = 1e-9f;
+  base.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm;
   lm.base_options = base;
   lm.initial_lambda = 1e-2f;
@@ -332,5 +334,88 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   EXPECT_GT(summary.num_iterations, 0);
   EXPECT_LT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 5e-3f);
 }
+
+// ---------------------------------------------------------------------------
+// Parametrized LM convergence test over all solver backends
+// ---------------------------------------------------------------------------
+
+class PnPSolverTest
+    : public ::testing::TestWithParam<SparseLinearSolverType> {
+ protected:
+  static constexpr size_t kNumCorrespondences = 10000;
+  static constexpr float kZThr = 1e-3f;
+
+  void SetUp() override {
+    MakeSinglePosePnPDataset(kNumCorrespondences, gt_pose_, points_host_,
+                             obs_host_);
+    std::vector<SE3Transform> pose_host = {gt_pose_};
+    pose_device_ = dvector<SE3Transform>(pose_host);
+    points_device_ = dvector<Point3D>(points_host_);
+    obs_device_ = dvector<Observation2D>(obs_host_);
+  }
+
+  SE3Transform PoseOnHostFromDevice() const {
+    std::vector<SE3Transform> tmp(1);
+    pose_device_.CopyToHost(tmp.data(), 1);
+    return tmp[0];
+  }
+
+  cuBLASHandle cublas_handle_;
+  SE3Transform gt_pose_{};
+  std::vector<Point3D> points_host_;
+  std::vector<Observation2D> obs_host_;
+  dvector<SE3Transform> pose_device_;
+  dvector<Point3D> points_device_;
+  dvector<Observation2D> obs_device_;
+};
+
+TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
+  const size_t n = kNumCorrespondences;
+  DisturbPoseOnDevice(cublas_handle_, pose_device_.data(), 0.08f, 0.25f);
+  EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
+
+  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
+                     n, kZThr);
+  SE3StateBatch pose_state(cublas_handle_,
+                           reinterpret_cast<const float*>(pose_device_.data()), 1);
+
+  Problem problem;
+  RegisterPnPMinimizationProblem(problem, pnp, pose_state);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  CudaStream stream;
+  MinimizerOptions base;
+  base.max_num_iterations = 100;
+  base.state_tolerance = 1e-9f;
+  base.cost_tolerance = 1e-9f;
+  base.sparse_linear_solver_type = GetParam();
+  base.disable_safety_checks = false;
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = base;
+  lm.initial_lambda = 1e-2f;
+  LevenbergMarquardtMinimizer minimizer(lm);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  EXPECT_LT(summary.final_cost, 1e-4f);
+  EXPECT_GT(summary.num_iterations, 0);
+  EXPECT_LT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 5e-3f);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllSolvers, PnPSolverTest,
+    ::testing::Values(SparseLinearSolverType::cuDSS,
+                      SparseLinearSolverType::DenseLDLT,
+                      SparseLinearSolverType::DenseCholesky,
+                      SparseLinearSolverType::DenseQR),
+    [](const ::testing::TestParamInfo<SparseLinearSolverType>& info) {
+      switch (info.param) {
+        case SparseLinearSolverType::cuDSS: return std::string("cuDSS");
+        case SparseLinearSolverType::DenseLDLT: return std::string("DenseLDLT");
+        case SparseLinearSolverType::DenseCholesky: return std::string("DenseCholesky");
+        case SparseLinearSolverType::DenseQR: return std::string("DenseQR");
+        default: return std::string("Unknown");
+      }
+    });
 
 }  // namespace cunls

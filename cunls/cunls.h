@@ -52,4 +52,5 @@
 #include "cunls/state/so3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
+#include "cunls/robustifier/scaled_loss_function_batch.h"
 #include "cunls/robustifier/trivial_loss_function_batch.h"

@@ -65,7 +65,9 @@ void bind_types(nb::module_& m) {
 
     nb::enum_<cunls::SparseLinearSolverType>(m, "SparseLinearSolverType")
         .value("cuDSS", cunls::SparseLinearSolverType::cuDSS)
-        .value("DenseLDLT", cunls::SparseLinearSolverType::DenseLDLT);
+        .value("DenseLDLT", cunls::SparseLinearSolverType::DenseLDLT)
+        .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky)
+        .value("DenseQR", cunls::SparseLinearSolverType::DenseQR);
 
     nb::enum_<cunls::SparseMatrixMultiplierType>(m, "SparseMatrixMultiplierType")
         .value("cuSPARSE", cunls::SparseMatrixMultiplierType::cuSPARSE)
@@ -92,7 +94,22 @@ void bind_types(nb::module_& m) {
                  &cunls::MinimizerOptions::sparse_linear_solver_type)
         .def_rw("sparse_square_multiplier_type",
                  &cunls::MinimizerOptions::sparse_square_multiplier_type)
-        .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling);
+        .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
+        .def_rw("disable_safety_checks",
+                 &cunls::MinimizerOptions::disable_safety_checks,
+                 "When False, the minimizer enables all optional runtime "
+                 "validation.  Currently this covers post-factorization "
+                 "checks in the linear solver: pivot/diagonal checks "
+                 "(LDLT), devInfo inspection (Cholesky/QR).  Future "
+                 "versions may add further checks (e.g. NaN/Inf "
+                 "detection, cost-increase guards).  Failures are "
+                 "reported via Solve() returning False and a LogError "
+                 "diagnostic; the minimizer then raises RuntimeError.\n\n"
+                 "Set to True only for well-conditioned, pre-validated "
+                 "systems where the extra device-to-host copy and stream "
+                 "sync are a measurable bottleneck. With checks disabled, "
+                 "singular or ill-conditioned matrices may produce silently "
+                 "incorrect results.");
 
     nb::class_<cunls::MinimizerSummary>(m, "MinimizerSummary",
         "Summary of a minimization run.")

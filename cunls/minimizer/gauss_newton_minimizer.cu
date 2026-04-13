@@ -49,7 +49,11 @@ GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions& options)
           CreateCSRSparseLinearSolver(options_.sparse_linear_solver_type,
                                       options_.sparse_linear_solver_config)),
       gemm_(CreateSparseMatrixMultiplier(
-          options_.sparse_square_multiplier_type)) {}
+          options_.sparse_square_multiplier_type)) {
+  if (options_.disable_safety_checks) {
+    solver_->DisableSafetyChecks();
+  }
+}
 /**
  * @brief Initializes the residual vector to the correct size.
  *

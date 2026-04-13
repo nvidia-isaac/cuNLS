@@ -135,6 +135,7 @@ class TestWarpFactorBatch:
 
         opts = pycunls.MinimizerOptions()
         opts.max_num_iterations = 10
+        opts.disable_safety_checks = False
         minimizer = pycunls.GaussNewtonMinimizer(opts)
         summary = minimizer.minimize(stream, problem)
         cp.cuda.runtime.streamSynchronize(stream.get_stream())

@@ -21,6 +21,7 @@
 
 #include "cunls/common/cublas_helper.h"
 #include "cunls/factor/factor_batch.h"
+#include "cunls/robustifier/loss_function_batch.h"
 
 // Python trampoline for cunls::FactorBatch.
 //
@@ -93,4 +94,19 @@ class PyWeightedFactorBatch : public cunls::FactorBatch {
   cunls::FactorBatch* inner_;
   float uniform_weight_;
   const float* per_factor_weights_;
+};
+
+// Polymorphic wrapper that scales the output of any LossFunctionBatch.
+// Unlike the C++ template ScaledLossFunctionBatch<T>, this operates on the
+// LossFunctionBatch* interface so Python users never need to name specializations.
+class PyScaledLossFunctionBatch : public cunls::LossFunctionBatch {
+ public:
+  PyScaledLossFunctionBatch(cunls::LossFunctionBatch* inner, float a);
+
+  bool Evaluate(float* s, float3* out, int num_losses,
+                cudaStream_t stream) const override;
+
+ private:
+  cunls::LossFunctionBatch* inner_;
+  float a_;
 };

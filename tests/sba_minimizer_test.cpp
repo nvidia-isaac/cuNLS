@@ -369,6 +369,7 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
   options.max_num_iterations = 15;
   options.state_tolerance = 1e-8f;
   options.cost_tolerance = 1e4;
+  options.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;

@@ -201,6 +201,7 @@ TEST_F(DenseLDLTSolverTestFixture, SolvePnPWithDenseSolver) {
   options.max_num_iterations = 20;
   options.state_tolerance = 1e-10f;
   options.cost_tolerance = 1e-12f;
+  options.disable_safety_checks = false;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
   GaussNewtonMinimizer minimizer(options);
 
@@ -307,6 +308,7 @@ TEST_F(DenseLDLTSolverTestFixture,
   options.max_num_iterations = 20;
   options.state_tolerance = 1e-10f;
   options.cost_tolerance = 1e-12f;
+  options.disable_safety_checks = false;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
 
   // Reuse one minimizer instance across different PnP problem sizes.

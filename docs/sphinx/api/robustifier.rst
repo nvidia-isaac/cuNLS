@@ -225,6 +225,41 @@ Header: :code:`cunls/robustifier/tukey_loss_function_batch.h`
      0 & s > a^2
    \end{cases}.
 
+ScaledLossFunctionBatch
+-----------------------
+
+Header: :code:`cunls/robustifier/scaled_loss_function_batch.h`
+
+.. cpp:function:: template <class T> ScaledLossFunctionBatch(float a, Args&&... loss_args)
+
+  :param a: [in] Positive scale factor applied to all loss outputs.
+  :param loss_args: [in] Arguments forwarded to the wrapped loss function
+    constructor (e.g. ``delta`` when ``T`` is ``HuberLossFunctionBatch``).
+  :returns: Constructor has no return value.
+  :throws std\:\:invalid_argument: if ``a <= 0``.
+
+  ``T`` must derive from ``LossFunctionBatch``. The inner loss is owned by
+  value and constructed from the forwarded arguments, following the same
+  decorator pattern as ``InformationFactorBatch<T>``.
+
+**Formula**
+
+  Given an inner loss :math:`f(s)` and a positive scalar :math:`a`:
+
+.. math::
+
+   \rho(s) = a\,f(s),\qquad
+   \rho'(s) = a\,f'(s),\qquad
+   \rho''(s) = a\,f''(s).
+
+**C++ example**
+
+.. code-block:: cpp
+
+   // Scale Huber loss by 0.5 — the delta=1.0 argument is forwarded
+   // to the HuberLossFunctionBatch constructor.
+   cunls::ScaledLossFunctionBatch<cunls::HuberLossFunctionBatch> loss(0.5f, 1.0f);
+
 Theory — How robustifier outputs are used in optimization
 ==========================================================
 
@@ -327,3 +362,5 @@ the C++ versions above.  Pass a loss function instance to
      - ``TolerantLossFunctionBatch(a: float, b: float)``
    * - ``TukeyLossFunctionBatch``
      - ``TukeyLossFunctionBatch(a: float)``
+   * - ``ScaledLossFunctionBatch``
+     - ``ScaledLossFunctionBatch(loss_function: LossFunctionBatch, a: float)``

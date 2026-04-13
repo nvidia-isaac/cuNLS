@@ -292,6 +292,7 @@ TEST_F(PgoMinimizerTestFixture, Optimize) {
   options.max_num_iterations = 10;
   options.state_tolerance = 1e-10f;
   options.cost_tolerance = 1e-2f;
+  options.disable_safety_checks = false;
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1000.0;
