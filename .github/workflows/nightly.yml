@@ -68,8 +68,6 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Build C++ libraries
-        retry:
-          max-attempts: 2
         run: |
           CUDA_VERSION=${{ matrix.cuda }} \
           UBUNTU_VERSION=${{ matrix.ubuntu }} \
@@ -77,21 +75,15 @@ jobs:
           ./scripts/build_cunls_in_docker.sh Release ./output
 
       - name: Run C++ tests
-        retry:
-          max-attempts: 2
         run: ./scripts/test_cunls_in_docker.sh ./output
 
       - name: Build Python wheel
-        retry:
-          max-attempts: 2
         run: |
           CUDA_VERSION=${{ matrix.cuda }} \
           UBUNTU_VERSION=${{ matrix.ubuntu }} \
           ./scripts/build_pycunls_in_docker.sh ./output/wheel
 
       - name: Run Python tests
-        retry:
-          max-attempts: 2
         run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
 
       - name: Upload C++ test results
