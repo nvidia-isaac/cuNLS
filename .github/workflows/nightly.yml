@@ -104,21 +104,14 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Upload shared library
+      - name: Upload C++ libraries
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: cunls-shared-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: output/shared/
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload static library
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: cunls-static-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: output/static/
+          name: cunls-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
+          path: |
+            output/shared/
+            output/static/
           retention-days: 30
           if-no-files-found: warn
 
@@ -225,7 +218,7 @@ jobs:
           echo "" >> release-notes.md
           echo "Commit: ${{ github.sha }}" >> release-notes.md
 
-          for dir in artifacts/cunls-shared-* artifacts/cunls-static-*; do
+          for dir in artifacts/cunls-x86_64-*; do
             [ -d "$dir" ] || continue
             NAME=$(basename "$dir")
             tar czf "release-assets/${NAME}.tar.gz" -C "$dir" .

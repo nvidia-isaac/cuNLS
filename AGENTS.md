@@ -116,7 +116,7 @@ Within a single job, steps share a host directory (e.g., `./output/`). Use GitHu
 
 ### 12. Every nightly produces a complete, dated release
 
-A nightly release tagged `nightly-YYYY-MM-DD` includes, per matrix entry: C++ libraries (shared `.so` + static `.a` in separate tarballs with correct CMake configs), headers, a Python wheel, and JUnit test result XMLs. All attached as GitHub Release assets with filenames that include the CUDA version and Ubuntu version.
+A nightly release tagged `nightly-YYYY-MM-DD` includes, per matrix entry: a single C++ tarball containing both shared (`.so`) and static (`.a`) libraries with their respective CMake configs, headers, a Python wheel, and JUnit test result XMLs. All attached as GitHub Release assets with filenames that include the CUDA version and Ubuntu version.
 
 ---
 
@@ -134,22 +134,28 @@ Inner scripts that need a configurable output path (e.g., `build_pycunls.sh`) us
 
 ## Build Artifacts Layout
 
-`build_cunls_in_docker.sh` installs shared and static variants to separate directories to avoid CMake package config overwrites:
+`build_cunls_in_docker.sh` installs shared and static variants to separate directories to avoid CMake package config overwrites. CI packages both into a single tarball per matrix entry so users get one download per CUDA/Ubuntu combination:
 
 ```
-$OUTPUT_DIR/
-  shared/             # make install from shared build
+$OUTPUT_DIR/                    # host build output
+  shared/                       # make install from shared build
     lib/libcunls.so
-    lib/cmake/cunls/  # correct CMake config for shared
+    lib/cmake/cunls/            # CMake config for shared
     include/cunls/
-  static/             # make install from static build
+  static/                       # make install from static build
     lib/libcunls.a
-    lib/cmake/cunls/  # correct CMake config for static
+    lib/cmake/cunls/            # CMake config for static
     include/cunls/
-  build_shared/       # cmake build directory (persists for ctest)
-  build_static/       # cmake build directory
+  build_shared/                 # cmake build directory (persists for ctest)
+  build_static/                 # cmake build directory
   cpp-test-results.xml
+
+cunls-x86_64-cuda13.2.0-ubuntu24.04.tar.gz   # release asset
+  output/shared/                # set CMAKE_PREFIX_PATH here for .so
+  output/static/                # set CMAKE_PREFIX_PATH here for .a
 ```
+
+Headers are identical between shared and static. CMake configs differ (each references its own library file and link interface).
 
 ---
 
