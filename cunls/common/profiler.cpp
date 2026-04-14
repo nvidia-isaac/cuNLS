@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ namespace internal {
  * @param name The name to display in the profiler for this range
  * @param color The color for this range (ARGB format, default is 0)
  */
-DomainRange::DomainRange(void* handle, const std::string& name, uint32_t color)
+DomainRange::DomainRange(void *handle, const std::string &name, uint32_t color)
     : handle_(handle), name_(name) {
   nvtxMessageValue_t message_;
   message_.ascii = name_.c_str();
@@ -58,9 +58,9 @@ DomainRange::~DomainRange() {
     nvtxDomainRangePop((nvtxDomainHandle_t)handle_);
   }
 }
-}  // namespace internal
+} // namespace internal
 
-ScopedRange::ScopedRange(const std::string& name) : name_(name) {
+ScopedRange::ScopedRange(const std::string &name) : name_(name) {
   nvtxRangePushA(name_.c_str());
 };
 
@@ -73,7 +73,7 @@ ScopedRange::~ScopedRange() { nvtxRangePop(); }
  * @brief Constructs a new profiling domain with a random color
  * @param name The name of the domain (visible in profiling tools)
  */
-Domain::Domain(const std::string& name)
+Domain::Domain(const std::string &name)
     : name_(name), handle_(nvtxDomainCreateA(name_.c_str())) {
   std::random_device rd;
   std::mt19937 gen(rd());
@@ -92,7 +92,7 @@ Domain::~Domain() { nvtxDomainDestroy((nvtxDomainHandle_t)handle_); }
  * @param name The name for the range (visible in profiling tools)
  * @return A DomainRange object that will automatically close when destroyed
  */
-internal::DomainRange Domain::CreateDomainRange(const std::string& name) const {
+internal::DomainRange Domain::CreateDomainRange(const std::string &name) const {
   return {handle_, name, color_};
 }
 
@@ -104,16 +104,16 @@ namespace internal {
  * @param name The name to display in the profiler for this range
  * @param color The color for this range (ARGB format, default is 0)
  */
-DomainRange::DomainRange(void* handle, const std::string& name,
+DomainRange::DomainRange(void *handle, const std::string &name,
                          uint32_t color) {}
 
 /**
  * @brief Destructor that pops the range from the domain stack
  */
 DomainRange::~DomainRange() {}
-}  // namespace internal
+} // namespace internal
 
-ScopedRange::ScopedRange(const std::string& name) {}
+ScopedRange::ScopedRange(const std::string &name) {}
 
 /**
  * @brief Destructor that pops the range from the NVTX stack
@@ -124,7 +124,7 @@ ScopedRange::~ScopedRange() {}
  * @brief Constructs a new profiling domain with a random color
  * @param name The name of the domain (visible in profiling tools)
  */
-Domain::Domain(const std::string& name) {}
+Domain::Domain(const std::string &name) {}
 
 /**
  * @brief Destructor that destroys the NVTX domain
@@ -136,9 +136,9 @@ Domain::~Domain() {}
  * @param name The name for the range (visible in profiling tools)
  * @return A DomainRange object that will automatically close when destroyed
  */
-internal::DomainRange Domain::CreateDomainRange(const std::string& name) const {
+internal::DomainRange Domain::CreateDomainRange(const std::string &name) const {
   return {nullptr, name, 0};
 }
 
 #endif
-}  // namespace cunls::profiler
+} // namespace cunls::profiler

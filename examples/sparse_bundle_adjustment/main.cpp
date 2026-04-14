@@ -33,10 +33,10 @@
 #include "utils/se3_utils.h"
 #include "utils/validation.h"
 
+using cunls::dvector;
 using cunls::LogError;
 using cunls::SE3Transform;
 using cunls::Vector;
-using cunls::dvector;
 
 namespace {
 
@@ -47,7 +47,7 @@ constexpr float kZThreshold = 1e-3f;
 
 // Generate random camera poses biased so that the world origin is always
 // in front (positive tz ~ 8). This keeps synthetic points visible.
-void GenerateRandomPoses(size_t num_poses, std::vector<SE3Transform>& poses) {
+void GenerateRandomPoses(size_t num_poses, std::vector<SE3Transform> &poses) {
   std::mt19937 rng(1234);
   std::uniform_real_distribution<float> rot_dist(-0.2f, 0.2f);
   std::uniform_real_distribution<float> trans_dist(-1.0f, 1.0f);
@@ -65,7 +65,7 @@ void GenerateRandomPoses(size_t num_poses, std::vector<SE3Transform>& poses) {
   examples::TwistsToSE3(twists, poses);
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   try {
@@ -97,7 +97,7 @@ int main() {
         p[1] = point_dist(rng);
         p[2] = point_dist(rng);
         valid = true;
-        for (const auto& pose : gt_poses) {
+        for (const auto &pose : gt_poses) {
           if (examples::ComputeDepth(pose, p) < kMinDepth) {
             valid = false;
             break;
@@ -118,8 +118,8 @@ int main() {
     for (size_t pose_idx = 0; pose_idx < num_poses; ++pose_idx) {
       for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
         const size_t obs_idx = pose_idx * num_points + point_idx;
-        observations[obs_idx] =
-            examples::ProjectNormalized(gt_poses[pose_idx], gt_points[point_idx]);
+        observations[obs_idx] = examples::ProjectNormalized(
+            gt_poses[pose_idx], gt_points[point_idx]);
       }
     }
 
@@ -132,7 +132,8 @@ int main() {
     std::vector<SE3Transform> initial_poses(num_poses);
     initial_poses[0] = gt_poses[0];
     for (size_t i = 0; i < num_perturbed; ++i) {
-      initial_poses[i + 1] = examples::ComposeSE3(perturbations[i], gt_poses[i + 1]);
+      initial_poses[i + 1] =
+          examples::ComposeSE3(perturbations[i], gt_poses[i + 1]);
     }
 
     // Upload all data to device.
@@ -144,10 +145,10 @@ int main() {
     std::vector<int> const_pose_ids = {0};
     dvector<int> const_pose_ids_device(const_pose_ids);
 
-    const float* poses_ptr =
-        reinterpret_cast<const float*>(poses_device.data());
-    const float* points_ptr =
-        reinterpret_cast<const float*>(points_device.data());
+    const float *poses_ptr =
+        reinterpret_cast<const float *>(poses_device.data());
+    const float *points_ptr =
+        reinterpret_cast<const float *>(points_device.data());
 
     // Build state batches and factor batch.
     cunls::cuBLASHandle cublas_handle;
@@ -160,7 +161,7 @@ int main() {
 
     // Flatten factor connectivity:
     // for each observation, provide [pose_ptr, point_ptr].
-    std::vector<float*> state_pointers;
+    std::vector<float *> state_pointers;
     state_pointers.reserve(2 * num_observations);
     for (size_t pose_idx = 0; pose_idx < num_poses; ++pose_idx) {
       for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
@@ -220,12 +221,13 @@ int main() {
     std::cout << "  Pose MSE:     " << initial_pose_mse << " -> "
               << final_pose_mse << "\n";
 
-    if (summary.final_cost > 1e-3f || final_point_mse > initial_point_mse * 0.05f) {
+    if (summary.final_cost > 1e-3f ||
+        final_point_mse > initial_point_mse * 0.05f) {
       std::cerr << "Optimization quality check failed.\n";
       return 2;
     }
     return 0;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     std::cerr << "Exception: " << e.what() << "\n";
     return 3;
   }

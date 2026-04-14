@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,16 +54,16 @@ namespace {
  * @param csr_col_idx Output vector of column indices.
  * @param csr_row_offsets Output vector of row offsets (size = rows + 1).
  */
-void GenerateRandomSymmetricCSRMatrix(std::mt19937& rng, int rows,
-                                      std::vector<float>& csr_values,
-                                      std::vector<int>& csr_col_idx,
-                                      std::vector<int>& csr_row_offsets) {
+void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows,
+                                      std::vector<float> &csr_values,
+                                      std::vector<int> &csr_col_idx,
+                                      std::vector<int> &csr_row_offsets) {
   std::uniform_real_distribution<float> val_dist(-1, 1);
   std::uniform_real_distribution<float> prob_dist(0.0, 1.0);
 
   // Use a map-of-maps to store symmetric COO entries before converting to CSR
   std::unordered_map<int, std::unordered_map<int, float>> coo;
-  float sparsity = 1e-3;  // Probability of non-zero off-diagonal elements
+  float sparsity = 1e-3; // Probability of non-zero off-diagonal elements
 
   // Generate symmetric matrix entries
   for (int i = 0; i < rows; ++i) {
@@ -73,11 +73,11 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937& rng, int rows,
     // Generate off-diagonal elements and ensure symmetry
     for (int j = i + 1; j < rows; ++j) {
       if (prob_dist(rng) > sparsity) {
-        continue;  // Skip this entry (sparse matrix)
+        continue; // Skip this entry (sparse matrix)
       }
       float val = val_dist(rng);
-      coo[i][j] = val;  // Upper triangular
-      coo[j][i] = val;  // Lower triangular (ensure symmetry)
+      coo[i][j] = val; // Upper triangular
+      coo[j][i] = val; // Lower triangular (ensure symmetry)
     }
   }
 
@@ -87,14 +87,14 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937& rng, int rows,
   for (int i = 0; i < rows; ++i) {
     // Collect all entries in the current row
     std::vector<std::pair<int, float>> row_entries;
-    for (const auto& [j, val] : coo[i]) {
+    for (const auto &[j, val] : coo[i]) {
       row_entries.emplace_back(j, val);
     }
     // Sort by column index (required for CSR format)
     std::sort(row_entries.begin(), row_entries.end());
 
     // Add sorted entries to CSR arrays
-    for (const auto& [j, val] : row_entries) {
+    for (const auto &[j, val] : row_entries) {
       csr_col_idx.push_back(j);
       csr_values.push_back(val);
     }
@@ -114,11 +114,11 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937& rng, int rows,
  * @param x Input vector to multiply.
  * @param y Output vector to store the result.
  */
-void MultiplySymmetricCSRMatrixByVector(const std::vector<int>& row_ptr,
-                                        const std::vector<int>& col_ind,
-                                        const std::vector<float>& values,
-                                        const std::vector<float>& x,
-                                        std::vector<float>& y) {
+void MultiplySymmetricCSRMatrixByVector(const std::vector<int> &row_ptr,
+                                        const std::vector<int> &col_ind,
+                                        const std::vector<float> &values,
+                                        const std::vector<float> &x,
+                                        std::vector<float> &y) {
   size_t size = row_ptr.size() - 1;
   y.assign(size, 0.0);
 
@@ -133,7 +133,7 @@ void MultiplySymmetricCSRMatrixByVector(const std::vector<int>& row_ptr,
   }
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief Tests the sparse linear solver with a random symmetric matrix.
@@ -215,4 +215,4 @@ TEST(SparseLinearSolverTest, Solve) {
   ASSERT_NEAR(squared_error / matrix_size, 0, 1e-1);
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,16 +44,15 @@ namespace cunls {
 class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
   using Base = SizedFactorBatch<3, 3>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of SO(3) prior factors.
    *
-   * @param observations_ptr Pointer to GPU device memory containing target rotations.
-   *                         Must point to at least num_factors * 9 floats.
+   * @param observations_ptr Pointer to GPU device memory containing target
+   * rotations. Must point to at least num_factors * 9 floats.
    * @param num_factors Number of factors in the batch.
    */
-  SO3PriorFactorBatch(const Matrix<3>* observations_ptr,
-                            size_t num_factors);
+  SO3PriorFactorBatch(const Matrix<3> *observations_ptr, size_t num_factors);
 
   /**
    * @brief Evaluates SO(3) prior residuals and optionally Jacobians.
@@ -65,8 +64,8 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   /**
@@ -75,11 +74,11 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   SO3PriorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target rotations.
-  const Matrix<3>* observations_ptr_;
+  const Matrix<3> *observations_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
@@ -88,4 +87,4 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
   mutable DeviceVector<Matrix<3>> rotations_error_;
 };
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,8 @@ namespace cunls {
 namespace {
 
 /**
- * @brief CUDA kernel that performs element-wise vector addition per state block.
+ * @brief CUDA kernel that performs element-wise vector addition per state
+ * block.
  *
  * Each thread processes one state block, iterating over its Dim elements
  * and computing result[i] = x[i] + delta[i].
@@ -56,15 +57,16 @@ __global__ void vector_plus_kernel(const float *x, const float *delta,
 /** @brief Maximum CUDA block size for the vector_plus_kernel. */
 constexpr size_t kMaxBlockSize = 256;
 
-}  // namespace
+} // namespace
 
 /** @copydoc CalculateVectorPlus */
-void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta,
-                         size_t num_params, int dim, cudaStream_t stream) {
+void CalculateVectorPlus(const float *x, const float *delta,
+                         float *x_plus_delta, size_t num_params, int dim,
+                         cudaStream_t stream) {
   size_t num_cuda_blocks = (num_params + kMaxBlockSize - 1) / kMaxBlockSize;
   vector_plus_kernel<<<num_cuda_blocks, kMaxBlockSize, 0, stream>>>(
       x, delta, x_plus_delta, num_params, dim);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

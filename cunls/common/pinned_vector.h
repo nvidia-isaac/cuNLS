@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,9 +45,8 @@ namespace cunls {
  *
  * @tparam T Element type. Must be trivially copyable.
  */
-template <typename T>
-class PinnedVector {
- public:
+template <typename T> class PinnedVector {
+public:
   /** @brief Default constructor. Creates an empty vector with no allocation. */
   PinnedVector() : data_(nullptr), size_(0), capacity_(0) {}
 
@@ -75,15 +74,15 @@ class PinnedVector {
   }
 
   /** @brief Deleted copy constructor. */
-  PinnedVector(const PinnedVector&) = delete;
+  PinnedVector(const PinnedVector &) = delete;
   /** @brief Deleted copy assignment operator. */
-  PinnedVector& operator=(const PinnedVector&) = delete;
+  PinnedVector &operator=(const PinnedVector &) = delete;
 
   /**
    * @brief Move constructor. Transfers ownership of pinned memory.
    * @param other The vector to move from (left empty after the call).
    */
-  PinnedVector(PinnedVector&& other) noexcept
+  PinnedVector(PinnedVector &&other) noexcept
       : data_(other.data_), size_(other.size_), capacity_(other.capacity_) {
     other.data_ = nullptr;
     other.size_ = 0;
@@ -98,7 +97,7 @@ class PinnedVector {
    * @param other The vector to move from (left empty after the call).
    * @return Reference to this vector.
    */
-  PinnedVector& operator=(PinnedVector&& other) noexcept {
+  PinnedVector &operator=(PinnedVector &&other) noexcept {
     if (this != &other) {
       if (data_) {
         WARN_ON_CUDA_ERROR(cudaFreeHost(data_));
@@ -114,9 +113,9 @@ class PinnedVector {
   }
 
   /** @brief Returns a pointer to the pinned host memory. */
-  T* data() noexcept { return data_; }
+  T *data() noexcept { return data_; }
   /** @brief Returns a const pointer to the pinned host memory. */
-  const T* data() const noexcept { return data_; }
+  const T *data() const noexcept { return data_; }
   /** @brief Returns the number of elements currently stored. */
   size_t size() const noexcept { return size_; }
   /** @brief Returns the allocated capacity in number of elements. */
@@ -125,9 +124,9 @@ class PinnedVector {
   bool empty() const noexcept { return size_ == 0; }
 
   /** @brief Element access (no bounds checking). */
-  T& operator[](size_t i) { return data_[i]; }
+  T &operator[](size_t i) { return data_[i]; }
   /** @brief Const element access (no bounds checking). */
-  const T& operator[](size_t i) const { return data_[i]; }
+  const T &operator[](size_t i) const { return data_[i]; }
 
   /**
    * @brief Resizes the vector to the specified size.
@@ -146,7 +145,7 @@ class PinnedVector {
       return;
     }
 
-    T* new_data = nullptr;
+    T *new_data = nullptr;
     if (new_size > 0) {
       THROW_ON_CUDA_ERROR(cudaMallocHost(&new_data, new_size * sizeof(T)));
     }
@@ -164,10 +163,10 @@ class PinnedVector {
     size_ = new_size;
   }
 
- private:
-  T* data_;         ///< Pointer to page-locked host memory.
+private:
+  T *data_;         ///< Pointer to page-locked host memory.
   size_t size_;     ///< Number of elements stored.
   size_t capacity_; ///< Number of elements allocated.
 };
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,26 +29,26 @@ namespace cunls::profiler {
  * and non-movable to ensure one-to-one scope-to-range mapping.
  */
 class ScopedRange {
- public:
-  ScopedRange(const ScopedRange&) = delete;
-  ScopedRange& operator=(const ScopedRange&) = delete;
-  ScopedRange(ScopedRange&&) = delete;
-  ScopedRange& operator=(ScopedRange&&) = delete;
+public:
+  ScopedRange(const ScopedRange &) = delete;
+  ScopedRange &operator=(const ScopedRange &) = delete;
+  ScopedRange(ScopedRange &&) = delete;
+  ScopedRange &operator=(ScopedRange &&) = delete;
 
   /**
    * @brief Constructs a ScopedRange and pushes an NVTX range.
    *
    * @param name Human-readable label for the profiling range.
    */
-  ScopedRange(const std::string& name);
+  ScopedRange(const std::string &name);
 
   /**
    * @brief Destructor that pops the NVTX range.
    */
   ~ScopedRange();
 
- private:
-  std::string name_;  ///< Label for the profiling range.
+private:
+  std::string name_; ///< Label for the profiling range.
 };
 
 namespace internal {
@@ -60,11 +60,11 @@ namespace internal {
  * and ends it on destruction. Used internally by Domain::CreateDomainRange.
  */
 class DomainRange {
- public:
-  DomainRange(const DomainRange&) = delete;
-  DomainRange& operator=(const DomainRange&) = delete;
-  DomainRange(DomainRange&&) = delete;
-  DomainRange& operator=(DomainRange&&) = delete;
+public:
+  DomainRange(const DomainRange &) = delete;
+  DomainRange &operator=(const DomainRange &) = delete;
+  DomainRange(DomainRange &&) = delete;
+  DomainRange &operator=(DomainRange &&) = delete;
 
   /**
    * @brief Constructs a DomainRange and starts an NVTX range within the domain.
@@ -73,19 +73,19 @@ class DomainRange {
    * @param name   Human-readable label for the profiling range.
    * @param color  ARGB color for the range visualization (0 = default).
    */
-  DomainRange(void* handle, const std::string& name, uint32_t color = 0);
+  DomainRange(void *handle, const std::string &name, uint32_t color = 0);
 
   /**
    * @brief Destructor that ends the NVTX domain range.
    */
   ~DomainRange();
 
- private:
-  void* handle_ = nullptr;  ///< Handle to the NVTX domain.
-  std::string name_;         ///< Copy of the name string to ensure lifetime.
+private:
+  void *handle_ = nullptr; ///< Handle to the NVTX domain.
+  std::string name_;       ///< Copy of the name string to ensure lifetime.
 };
 
-}  // namespace internal
+} // namespace internal
 
 /**
  * @brief NVTX profiling domain with automatic color cycling.
@@ -97,18 +97,18 @@ class DomainRange {
  * Non-copyable and non-movable to ensure unique domain ownership.
  */
 class Domain {
- public:
-  Domain(const Domain&) = delete;
-  Domain& operator=(const Domain&) = delete;
-  Domain(Domain&&) = delete;
-  Domain& operator=(Domain&&) = delete;
+public:
+  Domain(const Domain &) = delete;
+  Domain &operator=(const Domain &) = delete;
+  Domain(Domain &&) = delete;
+  Domain &operator=(Domain &&) = delete;
 
   /**
    * @brief Constructs a named NVTX domain.
    *
    * @param name Human-readable name for the profiling domain.
    */
-  Domain(const std::string& name);
+  Domain(const std::string &name);
 
   /**
    * @brief Destroys the NVTX domain and releases its handle.
@@ -124,11 +124,11 @@ class Domain {
    * @param name Label for the range within this domain.
    * @return DomainRange RAII object that manages the range lifetime.
    */
-  internal::DomainRange CreateDomainRange(const std::string& name) const;
+  internal::DomainRange CreateDomainRange(const std::string &name) const;
 
- private:
-  std::string name_;         ///< Copy of the name string to ensure lifetime.
-  void* handle_ = nullptr;   ///< Handle to the NVTX domain.
-  uint32_t color_ = 0;       ///< Current color counter for range cycling.
+private:
+  std::string name_;       ///< Copy of the name string to ensure lifetime.
+  void *handle_ = nullptr; ///< Handle to the NVTX domain.
+  uint32_t color_ = 0;     ///< Current color counter for range cycling.
 };
-}  // namespace cunls::profiler
+} // namespace cunls::profiler

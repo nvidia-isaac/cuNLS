@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,8 +33,7 @@ namespace cunls {
  *
  * @tparam Dim Number of elements in the vector.
  */
-template <int Dim>
-using Vector = cuda::std::array<float, Dim>;
+template <int Dim> using Vector = cuda::std::array<float, Dim>;
 
 /**
  * @brief Fixed-size square matrix of floats stored in row-major order.
@@ -44,8 +43,7 @@ using Vector = cuda::std::array<float, Dim>;
  *
  * @tparam Dim Number of rows (and columns) in the square matrix.
  */
-template <int Dim>
-using Matrix = cuda::std::array<float, Dim * Dim>;
+template <int Dim> using Matrix = cuda::std::array<float, Dim * Dim>;
 
 /**
  * @brief SE(3) transformation matrix representation.
@@ -61,7 +59,8 @@ using Matrix = cuda::std::array<float, Dim * Dim>;
 using SE3Transform = Matrix<4>;
 
 /**
- * @brief SL(4) homogeneous matrix (4x4, row-major, det = 1 in exact arithmetic).
+ * @brief SL(4) homogeneous matrix (4x4, row-major, det = 1 in exact
+ * arithmetic).
  */
 using SL4Transform = Matrix<4>;
 
@@ -69,22 +68,19 @@ using SL4Transform = Matrix<4>;
  * @brief Alias for a device (GPU) vector.
  * @tparam T Element type (must be trivially copyable).
  */
-template <class T>
-using dvector = DeviceVector<T>;
+template <class T> using dvector = DeviceVector<T>;
 
 /**
  * @brief Alias for a host (CPU) vector (std::vector).
  * @tparam T Element type.
  */
-template <class T>
-using hvector = std::vector<T>;
+template <class T> using hvector = std::vector<T>;
 
 /**
  * @brief Alias for a pinned (CPU) vector (PinnedVector).
  * @tparam T Element type.
  */
-template <class T>
-using pvector = PinnedVector<T>;
+template <class T> using pvector = PinnedVector<T>;
 
 /**
  * @brief Compressed Sparse Row (CSR) matrix stored in GPU memory.
@@ -133,9 +129,9 @@ struct CSRMatrixDimensions {
  * - values: non-zero values (size = num_nonzeros).
  */
 struct CSRSparseMatrix {
-  dvector<int> row_offsets;   ///< Row offset array (num_rows + 1 entries).
-  dvector<int> col_ids;       ///< Column index array (num_nonzeros entries).
-  dvector<float> values;      ///< Non-zero value array (num_nonzeros entries).
+  dvector<int> row_offsets; ///< Row offset array (num_rows + 1 entries).
+  dvector<int> col_ids;     ///< Column index array (num_nonzeros entries).
+  dvector<float> values;    ///< Non-zero value array (num_nonzeros entries).
 
   /**
    * @brief Returns the number of rows in the matrix.
@@ -159,8 +155,8 @@ struct CSRSparseMatrix {
  * before conversion to CSR.
  */
 struct TripletSparseStructure {
-  dvector<int> row_ids;   ///< Row indices of non-zero entries.
-  dvector<int> col_ids;   ///< Column indices of non-zero entries.
+  dvector<int> row_ids; ///< Row indices of non-zero entries.
+  dvector<int> col_ids; ///< Column indices of non-zero entries.
 };
 
 /**
@@ -170,8 +166,8 @@ struct TripletSparseStructure {
  * non-zero values of the Jacobian.
  */
 struct SparseJacobian {
-  TripletSparseStructure structure;  ///< Row and column indices.
-  dvector<float> values;             ///< Non-zero Jacobian values.
+  TripletSparseStructure structure; ///< Row and column indices.
+  dvector<float> values;            ///< Non-zero Jacobian values.
 };
 
-}  // namespace cunls
+} // namespace cunls

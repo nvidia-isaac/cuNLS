@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ namespace detail {
  * @param factor_batch Pointer to the factor batch.
  * @return Total number of values in the Jacobian block.
  */
-size_t CalculateJacobianBlockSize(const FactorBatch* factor_batch) {
+size_t CalculateJacobianBlockSize(const FactorBatch *factor_batch) {
   size_t num_factors = factor_batch->NumFactors();
   size_t num_rows = num_factors * factor_batch->ResidualsSize();
 
@@ -59,10 +59,11 @@ size_t CalculateJacobianBlockSize(const FactorBatch* factor_batch) {
  * Sums the Jacobian block sizes across all factor batches.
  *
  * @param factor_batches Vector of factor batch pointers.
- * @return Total number of Jacobian values (including potential zeros for constant params).
+ * @return Total number of Jacobian values (including potential zeros for
+ * constant params).
  */
-size_t CalculateJacobianNonZeros(
-    const std::vector<FactorBatch*>& factor_batches) {
+size_t
+CalculateJacobianNonZeros(const std::vector<FactorBatch *> &factor_batches) {
   size_t size = 0;
   for (const auto batch : factor_batches) {
     size += CalculateJacobianBlockSize(batch);
@@ -83,17 +84,16 @@ struct StateBatchDescription {
    * @param pbatch Pointer to the state batch.
    * @param p_col_mapping Device pointer to column-ID mapping array.
    */
-  StateBatchDescription(const StateBatch* pbatch, const int* p_col_mapping)
-      : ptr(pbatch->StateBlockDevicePtr(0)),
-        tangent_dim(pbatch->TangentSize()),
+  StateBatchDescription(const StateBatch *pbatch, const int *p_col_mapping)
+      : ptr(pbatch->StateBlockDevicePtr(0)), tangent_dim(pbatch->TangentSize()),
         ambient_dim(pbatch->AmbientSize()),
-        num_blocks(pbatch->NumStateBlocks()),
-        col_ids(p_col_mapping) {}
-  const float* ptr;       ///< Base device pointer to the first state block.
-  size_t tangent_dim;     ///< Tangent (local) dimension of each state block.
-  size_t ambient_dim;     ///< Ambient dimension of each state block.
-  size_t num_blocks;      ///< Number of state blocks in the batch.
-  const int* col_ids;     ///< Column-ID mapping: block index -> starting column in reduced system.
+        num_blocks(pbatch->NumStateBlocks()), col_ids(p_col_mapping) {}
+  const float *ptr;   ///< Base device pointer to the first state block.
+  size_t tangent_dim; ///< Tangent (local) dimension of each state block.
+  size_t ambient_dim; ///< Ambient dimension of each state block.
+  size_t num_blocks;  ///< Number of state blocks in the batch.
+  const int *col_ids; ///< Column-ID mapping: block index -> starting column in
+                      ///< reduced system.
 };
 
 /**
@@ -109,7 +109,7 @@ struct JacobianBlockDescription {
    *
    * @param factor_batch Pointer to the factor batch.
    */
-  JacobianBlockDescription(const FactorBatch* factor_batch)
+  JacobianBlockDescription(const FactorBatch *factor_batch)
       : residual_dim(factor_batch->ResidualsSize()) {
     size_t num_factors = factor_batch->NumFactors();
     num_rows = num_factors * factor_batch->ResidualsSize();
@@ -118,10 +118,10 @@ struct JacobianBlockDescription {
     num_cols = std::accumulate(block_sizes.begin(), block_sizes.end(), 0);
     num_state_blocks_in_res = block_sizes.size();
   }
-  size_t num_rows;          ///< Total number of rows (num_factors * residual_dim).
-  size_t num_cols;  ///< Total number of columns (sum of state block sizes).
-  size_t residual_dim;      ///< Dimension of a single residual vector.
-  size_t num_state_blocks_in_res;  ///< Number of state blocks per residual.
+  size_t num_rows;     ///< Total number of rows (num_factors * residual_dim).
+  size_t num_cols;     ///< Total number of columns (sum of state block sizes).
+  size_t residual_dim; ///< Dimension of a single residual vector.
+  size_t num_state_blocks_in_res; ///< Number of state blocks per residual.
 };
 
 /**
@@ -138,7 +138,7 @@ struct JacobianBlockDescription {
  *
  * Grid: ((num_cols+7)/8, (num_rows+63)/64), Block: (8, 64).
  */
-__global__ void row_ids_kernel(int* start, size_t num_rows, size_t num_cols,
+__global__ void row_ids_kernel(int *start, size_t num_rows, size_t num_cols,
                                int offset) {
   int x = threadIdx.x + blockIdx.x * blockDim.x;
   int y = threadIdx.y + blockIdx.y * blockDim.y;
@@ -161,11 +161,11 @@ __global__ void row_ids_kernel(int* start, size_t num_rows, size_t num_cols,
  * @param[out] row_ids Output device vector of row indices.
  */
 void FillRowIds(cudaStream_t stream,
-                const std::vector<FactorBatch*>& factor_batches,
-                dvector<int>& row_ids) {
+                const std::vector<FactorBatch *> &factor_batches,
+                dvector<int> &row_ids) {
   dim3 block(8, 64);
 
-  int* ptr = row_ids.data();
+  int *ptr = row_ids.data();
   int offset = 0;
   for (auto batch : factor_batches) {
     JacobianBlockDescription j_desc(batch);
@@ -200,8 +200,8 @@ void FillRowIds(cudaStream_t stream,
  * Grid: ((tangent_dim+7)/8, (num_rows+63)/64), Block: (8, 64). Max 512 threads.
  */
 __launch_bounds__(512) __global__
-    void col_ids_kernel(int* __restrict__ start,
-                        float const* const* __restrict__ state_pointers,
+    void col_ids_kernel(int *__restrict__ start,
+                        float const *const *__restrict__ state_pointers,
                         int col_block_index, JacobianBlockDescription j_desc,
                         StateBatchDescription pb_desc) {
   int x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -215,7 +215,7 @@ __launch_bounds__(512) __global__
 
   int factor_id = y / j_desc.residual_dim;
 
-  float const* ptr = state_pointers[factor_id * j_desc.num_state_blocks_in_res +
+  float const *ptr = state_pointers[factor_id * j_desc.num_state_blocks_in_res +
                                     col_block_index];
 
   int pidx = (ptr - pb_desc.ptr) / pb_desc.ambient_dim;
@@ -242,9 +242,9 @@ __launch_bounds__(512) __global__
  * @param[out] col_ids Device vector of column IDs (one per state block).
  */
 void CreateStateColIdMapping(cudaStream_t stream, int offset,
-                             const StateBatch* state_batch,
-                             thrust::device_vector<int>& col_ids) {
-  const int* cparam_ids = state_batch->ConstStateIds();
+                             const StateBatch *state_batch,
+                             thrust::device_vector<int> &col_ids) {
+  const int *cparam_ids = state_batch->ConstStateIds();
   size_t num_const_params = state_batch->NumConstStateBlocks();
   size_t tangent_dim = state_batch->TangentSize();
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
@@ -285,13 +285,13 @@ void CreateStateColIdMapping(cudaStream_t stream, int offset,
  * @param param_ptr Device state pointers for this factor batch.
  * @param pb_desc State batch description with column-ID mapping.
  */
-void FillColIdsInJacobianBlock(cudaStream_t stream, int* start,
-                               const FactorBatch* factor_batch,
-                               const DeviceVector<float*>& param_ptr,
-                               const StateBatchDescription& pb_desc) {
+void FillColIdsInJacobianBlock(cudaStream_t stream, int *start,
+                               const FactorBatch *factor_batch,
+                               const DeviceVector<float *> &param_ptr,
+                               const StateBatchDescription &pb_desc) {
   auto block_sizes = factor_batch->StateBlockSizes();
 
-  float const* const* state_pointers = param_ptr.data();
+  float const *const *state_pointers = param_ptr.data();
 
   JacobianBlockDescription j_desc(factor_batch);
 
@@ -299,7 +299,7 @@ void FillColIdsInJacobianBlock(cudaStream_t stream, int* start,
   const dim3 grid((pb_desc.tangent_dim + block.x - 1) / block.x,
                   (j_desc.num_rows + block.y - 1) / block.y);
 
-  int* col_ptr = start;
+  int *col_ptr = start;
   for (size_t i = 0; i < block_sizes.size(); i++) {
     if (pb_desc.tangent_dim != block_sizes[i]) {
       // Mismatch in tangent dims, skip this col block
@@ -330,10 +330,10 @@ void FillColIdsInJacobianBlock(cudaStream_t stream, int* start,
  * @param[out] col_ids Output device vector of column indices.
  */
 void FillColIds(cudaStream_t stream,
-                const std::vector<FactorBatch*>& factor_batches,
-                const std::vector<DeviceVector<float*>>& state_pointers,
-                const std::vector<StateBatch*>& state_batches,
-                dvector<int>& col_ids) {
+                const std::vector<FactorBatch *> &factor_batches,
+                const std::vector<DeviceVector<float *>> &state_pointers,
+                const std::vector<StateBatch *> &state_batches,
+                dvector<int> &col_ids) {
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
   // Set all the column indices to be invalid, i.e. -1
@@ -349,11 +349,11 @@ void FillColIds(cudaStream_t stream,
     // state_pointers.
     CreateStateColIdMapping(stream, last_col_id, pbatch, pbatch_cols);
 
-    StateBatchDescription pb_desc(
-        pbatch, thrust::raw_pointer_cast(pbatch_cols.data()));
+    StateBatchDescription pb_desc(pbatch,
+                                  thrust::raw_pointer_cast(pbatch_cols.data()));
 
     // A pointer to the start of the jacobian block for each factor batch.
-    int* start = col_ids.data();
+    int *start = col_ids.data();
     for (size_t j = 0; j < factor_batches.size(); j++) {
       auto batch = factor_batches[j];
 
@@ -371,17 +371,17 @@ void FillColIds(cudaStream_t stream,
   }
 }
 
-}  // namespace detail
+} // namespace detail
 
 void MinimizerState::BuildTripletSparseStructure(
-    cudaStream_t stream, const Problem& problem,
-    TripletSparseStructure& structure) {
+    cudaStream_t stream, const Problem &problem,
+    TripletSparseStructure &structure) {
   CopyProblemStatePointersFromHost(problem);
 
-  std::vector<FactorBatch*> factor_batches;
+  std::vector<FactorBatch *> factor_batches;
   factor_batches.reserve(problem.GetResidualBatches().size());
 
-  for (const auto& rb : problem.GetResidualBatches()) {
+  for (const auto &rb : problem.GetResidualBatches()) {
     factor_batches.push_back(rb.GetFactorBatch());
   }
 
@@ -393,4 +393,4 @@ void MinimizerState::BuildTripletSparseStructure(
   detail::FillColIds(stream, factor_batches, problem_state_ptrs_device_,
                      problem.GetStateBatches(), structure.col_ids);
 }
-}  // namespace cunls
+} // namespace cunls

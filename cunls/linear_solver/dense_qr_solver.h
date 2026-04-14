@@ -43,7 +43,7 @@ namespace cunls {
  * via devInfo.
  */
 class DenseQRSolver : public CSRSparseLinearSolver {
- public:
+public:
   /**
    * @brief Validates dimensions and pre-allocates internal buffers.
    *
@@ -53,9 +53,8 @@ class DenseQRSolver : public CSRSparseLinearSolver {
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream,
-                  const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs,
-                  dvector<float>& result) final;
+  bool Initialize(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Converts CSR to dense and solves via QR factorization.
@@ -75,15 +74,14 @@ class DenseQRSolver : public CSRSparseLinearSolver {
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false on dimension mismatch or singular matrix.
    */
-  bool Solve(cudaStream_t stream,
-             const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs,
-             dvector<float>& result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+             const dvector<float> &rhs, dvector<float> &result) final;
 
- private:
+private:
   void EnsureBuffersSize(cudaStream_t stream, size_t n);
 
-  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                         dvector<float>& dense_matrix);
+  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                         dvector<float> &dense_matrix);
 
   cuSolverHandle cusolver_handle_;
   cuBLASHandle cublas_handle_;
@@ -96,4 +94,4 @@ class DenseQRSolver : public CSRSparseLinearSolver {
   size_t last_n_ = 0;
 };
 
-}  // namespace cunls
+} // namespace cunls

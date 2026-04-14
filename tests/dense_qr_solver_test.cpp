@@ -40,11 +40,11 @@ namespace cunls {
 namespace {
 
 void GenerateRandomSPDMatrix(int n, int seed, float value_abs_bound,
-                             std::vector<float>& matrix) {
+                             std::vector<float> &matrix) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> dist(-value_abs_bound, value_abs_bound);
   std::vector<float> m(static_cast<size_t>(n) * n);
-  for (float& v : m) {
+  for (float &v : m) {
     v = dist(rng);
   }
 
@@ -63,8 +63,8 @@ void GenerateRandomSPDMatrix(int n, int seed, float value_abs_bound,
   }
 }
 
-std::vector<float> MultiplyMatVec(const std::vector<float>& A,
-                                  const std::vector<float>& x, int n) {
+std::vector<float> MultiplyMatVec(const std::vector<float> &A,
+                                  const std::vector<float> &x, int n) {
   std::vector<float> out(n, 0.0f);
   for (int i = 0; i < n; ++i) {
     float sum = 0.0f;
@@ -76,9 +76,9 @@ std::vector<float> MultiplyMatVec(const std::vector<float>& A,
   return out;
 }
 
-void DenseToCSR(const std::vector<float>& dense, int n,
-                std::vector<int>& row_ptr, std::vector<int>& col_idx,
-                std::vector<float>& values, float zero_threshold = 0.0f) {
+void DenseToCSR(const std::vector<float> &dense, int n,
+                std::vector<int> &row_ptr, std::vector<int> &col_idx,
+                std::vector<float> &values, float zero_threshold = 0.0f) {
   row_ptr.clear();
   col_idx.clear();
   values.clear();
@@ -107,8 +107,7 @@ SE3Transform MakeIdentityPose() {
   return pose;
 }
 
-Vector<2> ProjectPoint(const SE3Transform& pose,
-                       const Vector<3>& point_world) {
+Vector<2> ProjectPoint(const SE3Transform &pose, const Vector<3> &point_world) {
   const float x = pose[0] * point_world[0] + pose[1] * point_world[1] +
                   pose[2] * point_world[2] + pose[3];
   const float y = pose[4] * point_world[0] + pose[5] * point_world[1] +
@@ -119,7 +118,7 @@ Vector<2> ProjectPoint(const SE3Transform& pose,
 }
 
 class DenseQRSolverTestFixture : public ::testing::Test {
- protected:
+protected:
   int spd_generation_seed_ = 7;
   float spd_value_abs_bound_ = 0.5f;
   std::vector<int> dense_solver_validation_sizes_ = {2, 3, 4, 8, 16, 24, 32};
@@ -167,17 +166,14 @@ TEST_F(DenseQRSolverTestFixture, SolveDenseSystemAcrossDifferentSizes) {
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(
-        solver.Initialize(stream_.GetStream(), matrix, rhs, result));
-    ASSERT_TRUE(
-        solver.Solve(stream_.GetStream(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
     std::vector<float> solved_host(n, 0.0f);
     result.CopyToHost(solved_host.data(), solved_host.size());
     for (int i = 0; i < n; ++i) {
-      ASSERT_NEAR(solved_host[i], x_true[i],
-                  linear_solver_solution_tolerance_);
+      ASSERT_NEAR(solved_host[i], x_true[i], linear_solver_solution_tolerance_);
     }
   }
 }
@@ -186,10 +182,8 @@ TEST_F(DenseQRSolverTestFixture, SolveSymmetricIndefiniteSystem) {
   DenseQRSolver solver;
   constexpr int n = 4;
   const std::vector<float> host_A = {
-      0.0f, 2.0f, 0.0f, 0.0f,
-      2.0f, 0.0f, 1.0f, 0.0f,
-      0.0f, 1.0f, 3.0f, 1.0f,
-      0.0f, 0.0f, 1.0f, 2.0f,
+      0.0f, 2.0f, 0.0f, 0.0f, 2.0f, 0.0f, 1.0f, 0.0f,
+      0.0f, 1.0f, 3.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f,
   };
 
   const std::vector<float> x_true = {1.0f, -2.0f, 0.5f, 3.0f};
@@ -205,16 +199,14 @@ TEST_F(DenseQRSolverTestFixture, SolveSymmetricIndefiniteSystem) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(
-      solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
   ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
   std::vector<float> solved_host(n, 0.0f);
   result.CopyToHost(solved_host.data(), solved_host.size());
   for (int i = 0; i < n; ++i) {
-    ASSERT_NEAR(solved_host[i], x_true[i],
-                linear_solver_solution_tolerance_);
+    ASSERT_NEAR(solved_host[i], x_true[i], linear_solver_solution_tolerance_);
   }
 }
 
@@ -244,9 +236,7 @@ TEST_F(DenseQRSolverTestFixture, SolveReturnsFalseForRankDeficientMatrix) {
   constexpr int n = 3;
 
   const std::vector<float> host_A = {
-      1.0f, 2.0f, 3.0f,
-      2.0f, 4.0f, 6.0f,
-      3.0f, 6.0f, 9.0f,
+      1.0f, 2.0f, 3.0f, 2.0f, 4.0f, 6.0f, 3.0f, 6.0f, 9.0f,
   };
   const std::vector<float> rhs_host = {1.0f, 2.0f, 3.0f};
 
@@ -311,8 +301,7 @@ TEST_F(DenseQRSolverTestFixture,
     std::vector<float> solved_host(n, 0.0f);
     result.CopyToHost(solved_host.data(), solved_host.size());
     for (int i = 0; i < n; ++i) {
-      ASSERT_NEAR(solved_host[i], x_true[i],
-                  linear_solver_solution_tolerance_);
+      ASSERT_NEAR(solved_host[i], x_true[i], linear_solver_solution_tolerance_);
     }
   }
 }
@@ -351,13 +340,14 @@ TEST_F(DenseQRSolverTestFixture, SolvePnPWithQRSolver) {
   dvector<int> point_const_ids_device(point_const_ids);
 
   SE3StateBatch pose_batch(
-      cublas_handle_, reinterpret_cast<const float*>(poses_device.data()), 1);
+      cublas_handle_, reinterpret_cast<const float *>(poses_device.data()), 1);
   VectorStateBatch<3> point_batch(
-      reinterpret_cast<const float*>(points_device.data()), num_points,
+      reinterpret_cast<const float *>(points_device.data()), num_points,
       point_const_ids_device.data(), point_const_ids.size());
-  ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
+  ReprojectionFactorBatch reprojection_factor(observations_device.data(),
+                                              num_points);
 
-  std::vector<float*> state_pointers;
+  std::vector<float *> state_pointers;
   state_pointers.reserve(num_points * 2);
   for (size_t i = 0; i < num_points; ++i) {
     state_pointers.push_back(pose_batch.StateBlockDevicePtr(0));
@@ -391,5 +381,5 @@ TEST_F(DenseQRSolverTestFixture, SolvePnPWithQRSolver) {
   ASSERT_NEAR(optimized_pose_host[0][11], true_pose[11], 5e-3f);
 }
 
-}  // namespace
-}  // namespace cunls
+} // namespace
+} // namespace cunls

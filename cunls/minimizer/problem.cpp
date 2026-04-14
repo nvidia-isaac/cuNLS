@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
+#include "cunls/minimizer/problem.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
-#include "cunls/minimizer/problem.h"
 namespace cunls {
 
 /**
@@ -29,9 +29,8 @@ namespace cunls {
  * @param factor_batch Pointer to the factor batch.
  * @param state_pointers Device pointers to state blocks.
  */
-void Problem::AddFactorBatch(
-    FactorBatch* factor_batch,
-    const std::vector<float*>& state_pointers) {
+void Problem::AddFactorBatch(FactorBatch *factor_batch,
+                             const std::vector<float *> &state_pointers) {
   state_pointers_.emplace_back(state_pointers);
   residual_batches_.emplace_back(factor_batch, nullptr);
 }
@@ -46,10 +45,9 @@ void Problem::AddFactorBatch(
  * @param loss_function_batch Pointer to the loss function batch.
  * @param state_pointers Device pointers to state blocks.
  */
-void Problem::AddFactorBatch(
-    FactorBatch* factor_batch,
-    LossFunctionBatch* loss_function_batch,
-    const std::vector<float*>& state_pointers) {
+void Problem::AddFactorBatch(FactorBatch *factor_batch,
+                             LossFunctionBatch *loss_function_batch,
+                             const std::vector<float *> &state_pointers) {
   state_pointers_.emplace_back(state_pointers);
   residual_batches_.emplace_back(factor_batch, loss_function_batch);
 }
@@ -59,7 +57,7 @@ void Problem::AddFactorBatch(
  *
  * @param state_batch Pointer to the state batch.
  */
-void Problem::AddStateBatch(StateBatch* state_batch) {
+void Problem::AddStateBatch(StateBatch *state_batch) {
   state_batches_.push_back(state_batch);
 }
 
@@ -74,7 +72,7 @@ void Problem::AddStateBatch(StateBatch* state_batch) {
  */
 bool Problem::CheckForValidInputs() const {
   // Check that provided state batch pointers are valid
-  for (const auto& param : state_batches_) {
+  for (const auto &param : state_batches_) {
     if (param == nullptr) {
       LogError("State batch is nullptr.");
       return false;
@@ -82,7 +80,7 @@ bool Problem::CheckForValidInputs() const {
   }
 
   // Check that provided factor batch pointers are valid
-  for (const auto& rg : residual_batches_) {
+  for (const auto &rg : residual_batches_) {
     if (rg.GetFactorBatch() == nullptr) {
       LogError("Factor batch is nullptr.");
       return false;
@@ -95,9 +93,9 @@ bool Problem::CheckForValidInputs() const {
   }
 
   for (size_t i = 0; i < residual_batches_.size(); i++) {
-    const auto& rb = residual_batches_[i];
-    const auto& param_ptr = state_pointers_[i];
-    const auto& factor_batch = rb.GetFactorBatch();
+    const auto &rb = residual_batches_[i];
+    const auto &param_ptr = state_pointers_[i];
+    const auto &factor_batch = rb.GetFactorBatch();
 
     size_t total_num_state_pointers =
         factor_batch->NumFactors() * factor_batch->StateBlockSizes().size();
@@ -126,10 +124,10 @@ bool Problem::CheckGraphConnectivity() const {
   // Create a lookup table for state block pointers.
   // For each pointer it contains bolean states whether the pointer has been
   // visited.
-  std::unordered_map<float*, bool> visited;
-  for (const auto& param_batch : state_batches_) {
+  std::unordered_map<float *, bool> visited;
+  for (const auto &param_batch : state_batches_) {
     for (size_t i = 0; i < param_batch->NumStateBlocks(); ++i) {
-      float* p = param_batch->StateBlockDevicePtr(i);
+      float *p = param_batch->StateBlockDevicePtr(i);
       if (visited.find(p) != visited.end()) {
         // Same pointer in different state blocks.
         LogError("Same pointer to a state in different state batches.");
@@ -140,7 +138,7 @@ bool Problem::CheckGraphConnectivity() const {
   }
 
   // Check whether factors are connected to valid state blocks.
-  for (const auto& host_param_ptrs : state_pointers_) {
+  for (const auto &host_param_ptrs : state_pointers_) {
     for (const auto p : host_param_ptrs) {
       auto it = visited.find(p);
       if (it == visited.end()) {
@@ -154,7 +152,7 @@ bool Problem::CheckGraphConnectivity() const {
 
   // Check that all the state blocks are constrained by at least one cost
   // function.
-  for (const auto& [p, state] : visited) {
+  for (const auto &[p, state] : visited) {
     if (!state) {
       // State block is not constrained by any factor.
       LogError("State block is not constrained by any factor.");
@@ -182,18 +180,18 @@ bool Problem::CheckConsistency() const {
 }
 
 /** @brief Gets the residual batches. */
-const std::vector<ResidualBatch>& Problem::GetResidualBatches() const {
+const std::vector<ResidualBatch> &Problem::GetResidualBatches() const {
   return residual_batches_;
 }
 
 /** @brief Gets the state batches. */
-const std::vector<StateBatch*>& Problem::GetStateBatches() const {
+const std::vector<StateBatch *> &Problem::GetStateBatches() const {
   return state_batches_;
 }
 
 /** @brief Gets the per-residual-batch state pointer arrays. */
-const std::vector<std::vector<float*>>& Problem::GetStatePointers() const {
+const std::vector<std::vector<float *>> &Problem::GetStatePointers() const {
   return state_pointers_;
 }
 
-}  // namespace cunls
+} // namespace cunls

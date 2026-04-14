@@ -53,10 +53,10 @@ namespace {
  * @param csr_col_idx Output column indices.
  * @param csr_row_offsets Output row offset array.
  */
-void GenerateRandomCSRMatrix(std::mt19937& rng, int rows,
-                             std::vector<float>& csr_values,
-                             std::vector<int>& csr_col_idx,
-                             std::vector<int>& csr_row_offsets) {
+void GenerateRandomCSRMatrix(std::mt19937 &rng, int rows,
+                             std::vector<float> &csr_values,
+                             std::vector<int> &csr_col_idx,
+                             std::vector<int> &csr_row_offsets) {
   const int cols = rows;
   // Value distribution: random floats between 0.1 and 1.0
   std::uniform_real_distribution<float> val_dist(0.1, 1.0);
@@ -114,18 +114,18 @@ void GenerateRandomCSRMatrix(std::mt19937& rng, int rows,
  * @param AtA_col_idx Output CSR column indices of A^T * A.
  * @param AtA_values Output CSR values of A^T * A.
  */
-void ComputeHessianCPU(const std::vector<int>& row_ptr,
-                       const std::vector<int>& col_idx,
-                       const std::vector<float>& values,
-                       std::vector<int>& AtA_row_ptr,
-                       std::vector<int>& AtA_col_idx,
-                       std::vector<float>& AtA_values) {
+void ComputeHessianCPU(const std::vector<int> &row_ptr,
+                       const std::vector<int> &col_idx,
+                       const std::vector<float> &values,
+                       std::vector<int> &AtA_row_ptr,
+                       std::vector<int> &AtA_col_idx,
+                       std::vector<float> &AtA_values) {
   int rows = row_ptr.size() - 1;
-  int cols = rows;  // Square matrix assumption
+  int cols = rows; // Square matrix assumption
 
   // Accumulate entries row-wise for A^T * A
   // row_acc[i][j] will store the (i,j) entry of A^T * A
-  std::vector<std::map<int, float>> row_acc(cols);  // A^T * A has 'cols' rows
+  std::vector<std::map<int, float>> row_acc(cols); // A^T * A has 'cols' rows
 
   // For each row of A
   for (int i = 0; i < rows; ++i) {
@@ -135,12 +135,12 @@ void ComputeHessianCPU(const std::vector<int>& row_ptr,
     // Compute outer product: row[i] * row[i]^T
     // This contributes to multiple entries of A^T * A
     for (int j = start; j < end; ++j) {
-      int col_j = col_idx[j];   // Column index in A
-      float val_j = values[j];  // Value A[i, col_j]
+      int col_j = col_idx[j];  // Column index in A
+      float val_j = values[j]; // Value A[i, col_j]
 
       for (int k = start; k < end; ++k) {
-        int col_k = col_idx[k];   // Another column index in A
-        float val_k = values[k];  // Value A[i, col_k]
+        int col_k = col_idx[k];  // Another column index in A
+        float val_k = values[k]; // Value A[i, col_k]
 
         // Add A[i, col_j] * A[i, col_k] to (A^T * A)[col_j, col_k]
         row_acc[col_j][col_k] += val_j * val_k;
@@ -156,7 +156,7 @@ void ComputeHessianCPU(const std::vector<int>& row_ptr,
   AtA_row_ptr.push_back(0);
   for (int i = 0; i < cols; ++i) {
     // Add all non-zero entries in row i of A^T * A
-    for (const auto& [col, val] : row_acc[i]) {
+    for (const auto &[col, val] : row_acc[i]) {
       if (val != 0.0) {
         AtA_col_idx.push_back(col);
         AtA_values.push_back(val);
@@ -167,7 +167,7 @@ void ComputeHessianCPU(const std::vector<int>& row_ptr,
   }
 }
 
-}  // namespace
+} // namespace
 
 /** @brief Verifies GPU A^T*A computation matches the CPU reference
  * implementation. */
@@ -242,4 +242,4 @@ TEST(cuSPARSESparseMatrixMultiplierTest, ComputeHessian) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

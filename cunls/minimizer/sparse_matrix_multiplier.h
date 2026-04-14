@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ namespace cunls {
  * reuse or custom CUDA kernels).
  */
 class SparseMatrixMultiplier {
- public:
+public:
   /** @brief Virtual destructor for proper cleanup of derived instances. */
   virtual ~SparseMatrixMultiplier() = default;
 
@@ -52,9 +52,9 @@ class SparseMatrixMultiplier {
    * @param input   Input sparse matrix A (typically the Jacobian in CSR).
    * @param[out] output Output sparse matrix A^T * A (structure allocated).
    */
-  virtual void Initialize(cudaStream_t stream, const Problem& problem,
-                          const CSRSparseMatrix& input,
-                          CSRSparseMatrix& output) = 0;
+  virtual void Initialize(cudaStream_t stream, const Problem &problem,
+                          const CSRSparseMatrix &input,
+                          CSRSparseMatrix &output) = 0;
 
   /**
    * @brief Computes A^T * A for a sparse matrix A.
@@ -67,19 +67,18 @@ class SparseMatrixMultiplier {
    * @param input   Input sparse matrix A (typically the Jacobian).
    * @param[out] output Output sparse matrix A^T * A.
    */
-  virtual void ComputeSquaredMatrix(cudaStream_t stream,
-                                    const Problem& problem,
-                                    const CSRSparseMatrix& input,
-                                    CSRSparseMatrix& output) = 0;
+  virtual void ComputeSquaredMatrix(cudaStream_t stream, const Problem &problem,
+                                    const CSRSparseMatrix &input,
+                                    CSRSparseMatrix &output) = 0;
 };
 
 /**
  * @brief Strategy for computing the approximate Hessian J^T * J.
  */
 enum class SparseMatrixMultiplierType {
-  cuSPARSE,  ///< cuSPARSE SpGEMM reuse API (transpose + multiply).
-  Fast,      ///< Fast warp-efficient CUDA kernels with bitmap pattern
-             ///< discovery.
+  cuSPARSE, ///< cuSPARSE SpGEMM reuse API (transpose + multiply).
+  Fast,     ///< Fast warp-efficient CUDA kernels with bitmap pattern
+            ///< discovery.
 };
 
 /**
@@ -93,7 +92,7 @@ using SparseMatrixMultiplierPtr = std::unique_ptr<SparseMatrixMultiplier>;
  * @param type The strategy to use for computing A^T * A.
  * @return A unique pointer to the created multiplier instance.
  */
-SparseMatrixMultiplierPtr CreateSparseMatrixMultiplier(
-    SparseMatrixMultiplierType type);
+SparseMatrixMultiplierPtr
+CreateSparseMatrixMultiplier(SparseMatrixMultiplierType type);
 
-}  // namespace cunls
+} // namespace cunls

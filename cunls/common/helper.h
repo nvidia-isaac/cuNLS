@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,31 +38,31 @@ namespace cunls {
  * @param is_throw     Compile-time boolean: if true, throws on error; if false,
  *                     only logs.
  */
-#define CHECK_CUDA_ERROR(status, to_string_fn, is_throw)                  \
-  do {                                                                    \
-    auto ret = (status);                                                  \
-    if (ret != 0) {                                                       \
-      std::stringstream msg;                                              \
-      msg << "[CUDA] error " << (to_string_fn)(ret) << "(" << ret << ")"; \
-      msg << " in " << LOCATION << std::endl;                             \
-      LogError(msg.str());                                                \
-      if constexpr (is_throw) {                                           \
-        throw std::runtime_error(msg.str());                              \
-      }                                                                   \
-    }                                                                     \
+#define CHECK_CUDA_ERROR(status, to_string_fn, is_throw)                       \
+  do {                                                                         \
+    auto ret = (status);                                                       \
+    if (ret != 0) {                                                            \
+      std::stringstream msg;                                                   \
+      msg << "[CUDA] error " << (to_string_fn)(ret) << "(" << ret << ")";      \
+      msg << " in " << LOCATION << std::endl;                                  \
+      LogError(msg.str());                                                     \
+      if constexpr (is_throw) {                                                \
+        throw std::runtime_error(msg.str());                                   \
+      }                                                                        \
+    }                                                                          \
   } while (0)
 
 /**
  * @brief Throws std::runtime_error on CUDA runtime API errors.
  * @param status cudaError_t value returned by a CUDA runtime call.
  */
-#define THROW_ON_CUDA_ERROR(status) \
+#define THROW_ON_CUDA_ERROR(status)                                            \
   CHECK_CUDA_ERROR(status, cudaGetErrorString, true)
 
 /**
  * @brief Logs a warning on CUDA runtime API errors without throwing.
  * @param status cudaError_t value returned by a CUDA runtime call.
  */
-#define WARN_ON_CUDA_ERROR(status) \
+#define WARN_ON_CUDA_ERROR(status)                                             \
   CHECK_CUDA_ERROR(status, cudaGetErrorString, false)
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,23 +29,23 @@ namespace cunls {
  *
  * @param d_partials Scratch buffer with at least ReducePartialCount(n) floats.
  */
-void ReduceSumToDevice(cudaStream_t stream, const float* input, size_t n,
-                       float* d_output, float* d_partials);
+void ReduceSumToDevice(cudaStream_t stream, const float *input, size_t n,
+                       float *d_output, float *d_partials);
 
 /**
  * Async dot product: d_output[0] = sum(a[i]*b[i]).
  * Result stays in device memory.
  */
-void DotProductToDevice(cudaStream_t stream, const float* a, const float* b,
-                        size_t n, float* d_output, float* d_partials);
+void DotProductToDevice(cudaStream_t stream, const float *a, const float *b,
+                        size_t n, float *d_output, float *d_partials);
 
 /**
  * Async weighted dot product: d_output[0] = sum(a[i]*w[i]*b[i]).
  * Result stays in device memory.
  */
-void WeightedDotProductToDevice(cudaStream_t stream, const float* a,
-                                const float* w, const float* b, size_t n,
-                                float* d_output, float* d_partials);
+void WeightedDotProductToDevice(cudaStream_t stream, const float *a,
+                                const float *w, const float *b, size_t n,
+                                float *d_output, float *d_partials);
 
 /**
  * Returns the number of floats needed for the partials scratch buffer
@@ -53,4 +53,4 @@ void WeightedDotProductToDevice(cudaStream_t stream, const float* a,
  */
 size_t ReducePartialCount(size_t n);
 
-}  // namespace cunls
+} // namespace cunls

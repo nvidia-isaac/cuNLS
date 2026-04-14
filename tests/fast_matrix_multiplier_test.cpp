@@ -51,19 +51,19 @@ namespace {
 // ============================================================================
 
 class MockFactorBatch : public FactorBatch {
- public:
+public:
   MockFactorBatch(size_t num_factors, size_t num_blocks_per_factor)
-      : num_factors_(num_factors),
-        sizes_(num_blocks_per_factor, 1) {}
+      : num_factors_(num_factors), sizes_(num_blocks_per_factor, 1) {}
 
-  bool Evaluate(float*, float*, float const* const*, cudaStream_t) const override {
+  bool Evaluate(float *, float *, float const *const *,
+                cudaStream_t) const override {
     return true;
   }
   size_t ResidualsSize() const override { return 1; }
   std::vector<size_t> StateBlockSizes() const override { return sizes_; }
   size_t NumFactors() const override { return num_factors_; }
 
- private:
+private:
   size_t num_factors_;
   std::vector<size_t> sizes_;
 };
@@ -92,9 +92,9 @@ struct TestProblemData {
  * nonzeros than the maximum are padded with pointers to a dummy constant
  * state block that the structure-aware path skips.
  */
-TestProblemData BuildProblemFromCSR(const std::vector<int>& csr_row_offsets,
-                                   const std::vector<int>& csr_col_idx,
-                                   int num_cols) {
+TestProblemData BuildProblemFromCSR(const std::vector<int> &csr_row_offsets,
+                                    const std::vector<int> &csr_col_idx,
+                                    int num_cols) {
   TestProblemData data;
   int num_rows = static_cast<int>(csr_row_offsets.size()) - 1;
 
@@ -113,11 +113,10 @@ TestProblemData BuildProblemFromCSR(const std::vector<int>& csr_row_offsets,
       data.state_data.data(), total_blocks, data.const_ids.data(),
       data.const_ids.size());
 
-  data.factor_batch =
-      std::make_unique<MockFactorBatch>(num_rows, max_nnz);
+  data.factor_batch = std::make_unique<MockFactorBatch>(num_rows, max_nnz);
 
-  float* dummy = data.state_batch->StateBlockDevicePtr(num_cols);
-  std::vector<float*> state_ptrs;
+  float *dummy = data.state_batch->StateBlockDevicePtr(num_cols);
+  std::vector<float *> state_ptrs;
   state_ptrs.reserve(static_cast<size_t>(num_rows) * max_nnz);
   for (int r = 0; r < num_rows; r++) {
     int start = csr_row_offsets[r];
@@ -141,10 +140,10 @@ TestProblemData BuildProblemFromCSR(const std::vector<int>& csr_row_offsets,
 // CSR generation and CPU reference
 // ============================================================================
 
-void GenerateRandomCSRMatrix(std::mt19937& rng, int rows, int cols,
-                             float sparsity, std::vector<float>& csr_values,
-                             std::vector<int>& csr_col_idx,
-                             std::vector<int>& csr_row_offsets) {
+void GenerateRandomCSRMatrix(std::mt19937 &rng, int rows, int cols,
+                             float sparsity, std::vector<float> &csr_values,
+                             std::vector<int> &csr_col_idx,
+                             std::vector<int> &csr_row_offsets) {
   std::uniform_real_distribution<float> val_dist(0.1f, 1.0f);
   std::uniform_int_distribution<int> col_dist(0, cols - 1);
 
@@ -173,12 +172,12 @@ void GenerateRandomCSRMatrix(std::mt19937& rng, int rows, int cols,
   }
 }
 
-void ComputeHessianCPU(const std::vector<int>& row_ptr,
-                       const std::vector<int>& col_idx,
-                       const std::vector<float>& values, int num_cols,
-                       std::vector<int>& AtA_row_ptr,
-                       std::vector<int>& AtA_col_idx,
-                       std::vector<float>& AtA_values) {
+void ComputeHessianCPU(const std::vector<int> &row_ptr,
+                       const std::vector<int> &col_idx,
+                       const std::vector<float> &values, int num_cols,
+                       std::vector<int> &AtA_row_ptr,
+                       std::vector<int> &AtA_col_idx,
+                       std::vector<float> &AtA_values) {
   int rows = row_ptr.size() - 1;
 
   std::vector<std::map<int, float>> row_acc(num_cols);
@@ -205,7 +204,7 @@ void ComputeHessianCPU(const std::vector<int>& row_ptr,
   AtA_row_ptr.push_back(0);
 
   for (int i = 0; i < num_cols; ++i) {
-    for (const auto& [col, val] : row_acc[i]) {
+    for (const auto &[col, val] : row_acc[i]) {
       if (val != 0.0f) {
         AtA_col_idx.push_back(col);
         AtA_values.push_back(val);
@@ -215,10 +214,10 @@ void ComputeHessianCPU(const std::vector<int>& row_ptr,
   }
 }
 
-void VerifyHessian(const CSRSparseMatrix& hessian,
-                   const std::vector<int>& ref_row_ptr,
-                   const std::vector<int>& ref_col_idx,
-                   const std::vector<float>& ref_values) {
+void VerifyHessian(const CSRSparseMatrix &hessian,
+                   const std::vector<int> &ref_row_ptr,
+                   const std::vector<int> &ref_col_idx,
+                   const std::vector<float> &ref_values) {
   std::vector<int> hessian_row_offsets(hessian.row_offsets.size());
   hessian.row_offsets.CopyToHost(hessian_row_offsets.data(),
                                  hessian_row_offsets.size());
@@ -237,7 +236,7 @@ void VerifyHessian(const CSRSparseMatrix& hessian,
   }
 }
 
-}  // namespace
+} // namespace
 
 TEST(FastSparseMatrixMultiplierTest, SquareMatrix) {
   profiler::ScopedRange range("SymmetricSquare_SquareMatrix");
@@ -372,7 +371,8 @@ TEST(FastSparseMatrixMultiplierTest, ValueReuseAfterInitialize) {
 
   // Generate new values (same structure) and recompute without re-initializing.
   std::uniform_real_distribution<float> val_dist(0.1f, 1.0f);
-  for (auto& v : csr_values) v = val_dist(gen);
+  for (auto &v : csr_values)
+    v = val_dist(gen);
   input_matrix.values = dvector<float>(csr_values);
 
   smm.ComputeSquaredMatrix(stream.GetStream(), test_data.problem, input_matrix,
@@ -518,4 +518,4 @@ TEST(FastSparseMatrixMultiplierTest, PerformanceBenchmark) {
   THROW_ON_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
-}  // namespace cunls
+} // namespace cunls

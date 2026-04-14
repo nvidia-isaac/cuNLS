@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,7 +89,8 @@
  * =============================================================================
  *
  * Input: States Array
- *     state_pointers[i] -> SE3Transform for correspondence i (16 floats, row-major)
+ *     state_pointers[i] -> SE3Transform for correspondence i (16 floats,
+ * row-major)
  *
  * SE3Transform storage (row-major 4x4):
  *     [ R00  R01  R02  tx  ]     indices: [0]  [1]  [2]  [3]
@@ -118,7 +119,8 @@
 
 namespace cunls {
 
-/// Number of threads per CUDA block for symmetric point-to-plane kernel launches.
+/// Number of threads per CUDA block for symmetric point-to-plane kernel
+/// launches.
 constexpr size_t kBlockSize = 256;
 
 /**
@@ -145,9 +147,9 @@ constexpr size_t kBlockSize = 256;
  * @note Launch configuration: <<<ceil(num / kBlockSize), kBlockSize>>>
  */
 __global__ void symmetric_point_to_plane_cost_kernel(
-    const float* p_observations, const float* q_observations,
-    const float* np_observations, const float* nq_observations,
-    float const* const* state_pointers, float* residuals, float* jacobians,
+    const float *p_observations, const float *q_observations,
+    const float *np_observations, const float *nq_observations,
+    float const *const *state_pointers, float *residuals, float *jacobians,
     int num_correspondences) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_correspondences) {
@@ -162,10 +164,10 @@ __global__ void symmetric_point_to_plane_cost_kernel(
   assert(param_ptr != nullptr);
 
   // Read observation points and normals
-  const float* p = p_observations + tid * kDim;
-  const float* q = q_observations + tid * kDim;
-  const float* np_obs = np_observations + tid * kDim;
-  const float* nq = nq_observations + tid * kDim;
+  const float *p = p_observations + tid * kDim;
+  const float *q = q_observations + tid * kDim;
+  const float *np_obs = np_observations + tid * kDim;
+  const float *nq = nq_observations + tid * kDim;
 
   // Extract rotation matrix R and translation t from the SE3 transform
   // SE3Transform is row-major 4x4: [R(3x3) | t(3x1); 0 | 1]
@@ -232,7 +234,7 @@ __global__ void symmetric_point_to_plane_cost_kernel(
       }
     }
 
-    float* jac_ptr = jacobians + tid * kTangentDim;
+    float *jac_ptr = jacobians + tid * kTangentDim;
 
     // Rotation Jacobian: dr/d(omega) = -n_R^T * [p]_x - N^T * [v]_x
     //
@@ -245,12 +247,9 @@ __global__ void symmetric_point_to_plane_cost_kernel(
     //   col 0: N[1]*v[2] - N[2]*v[1]
     //   col 1: N[2]*v[0] - N[0]*v[2]
     //   col 2: N[0]*v[1] - N[1]*v[0]
-    jac_ptr[0] = -(n_R[1] * p[2] - n_R[2] * p[1]) -
-                  (N[1] * v[2] - N[2] * v[1]);
-    jac_ptr[1] = -(n_R[2] * p[0] - n_R[0] * p[2]) -
-                  (N[2] * v[0] - N[0] * v[2]);
-    jac_ptr[2] = -(n_R[0] * p[1] - n_R[1] * p[0]) -
-                  (N[0] * v[1] - N[1] * v[0]);
+    jac_ptr[0] = -(n_R[1] * p[2] - n_R[2] * p[1]) - (N[1] * v[2] - N[2] * v[1]);
+    jac_ptr[1] = -(n_R[2] * p[0] - n_R[0] * p[2]) - (N[2] * v[0] - N[0] * v[2]);
+    jac_ptr[2] = -(n_R[0] * p[1] - n_R[1] * p[0]) - (N[0] * v[1] - N[1] * v[0]);
 
     // Translation Jacobian: dr/d(rho) = n_R^T + N^T
     jac_ptr[3] = n_R[0] + N[0];
@@ -260,21 +259,21 @@ __global__ void symmetric_point_to_plane_cost_kernel(
 }
 
 bool SymmetricPointToPlaneFactorBatch::Evaluate(
-    float* residuals, float* jacobians, float const* const* state_pointers,
+    float *residuals, float *jacobians, float const *const *state_pointers,
     cudaStream_t stream) const {
-  auto p_data_ptr = reinterpret_cast<const float*>(p_observations_ptr_);
-  auto q_data_ptr = reinterpret_cast<const float*>(q_observations_ptr_);
-  auto np_data_ptr = reinterpret_cast<const float*>(np_observations_ptr_);
-  auto nq_data_ptr = reinterpret_cast<const float*>(nq_observations_ptr_);
+  auto p_data_ptr = reinterpret_cast<const float *>(p_observations_ptr_);
+  auto q_data_ptr = reinterpret_cast<const float *>(q_observations_ptr_);
+  auto np_data_ptr = reinterpret_cast<const float *>(np_observations_ptr_);
+  auto nq_data_ptr = reinterpret_cast<const float *>(nq_observations_ptr_);
   size_t num_factors = NumFactors();
 
   size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
   symmetric_point_to_plane_cost_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      p_data_ptr, q_data_ptr, np_data_ptr, nq_data_ptr, state_pointers, residuals,
-      jacobians, num_factors);
+      p_data_ptr, q_data_ptr, np_data_ptr, nq_data_ptr, state_pointers,
+      residuals, jacobians, num_factors);
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

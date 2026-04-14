@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,19 +25,20 @@ namespace {
 constexpr int kBlockSize = 256;
 
 /**
- * Fused SE(3) Plus: out[i] = x[i] * Exp(delta[i]) with 4x4 matrices in row-major
- * (16 floats per matrix). Exp uses the SO(3) left Jacobian for translation and
- * Rodrigues for rotation, matching the former ComputeExpSE3 + batched GEMM path.
+ * Fused SE(3) Plus: out[i] = x[i] * Exp(delta[i]) with 4x4 matrices in
+ * row-major (16 floats per matrix). Exp uses the SO(3) left Jacobian for
+ * translation and Rodrigues for rotation, matching the former ComputeExpSE3 +
+ * batched GEMM path.
  */
-__global__ void se3_plus_fused_kernel(const float* __restrict__ x,
-                                      const float* __restrict__ delta,
-                                      float* __restrict__ out, int n) {
+__global__ void se3_plus_fused_kernel(const float *__restrict__ x,
+                                      const float *__restrict__ delta,
+                                      float *__restrict__ out, int n) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= n) {
     return;
   }
 
-  const float* d = delta + tid * 6;
+  const float *d = delta + tid * 6;
   float w0 = d[0], w1 = d[1], w2 = d[2];
   float v0 = d[3], v1 = d[4], v2 = d[5];
 
@@ -79,8 +80,8 @@ __global__ void se3_plus_fused_kernel(const float* __restrict__ x,
   const float r21 = B * w1 * w2 + A * w0;
   const float r22 = 1.0f - B * (w0 * w0 + w1 * w1);
 
-  const float* xm = x + tid * 16;
-  float* om = out + tid * 16;
+  const float *xm = x + tid * 16;
+  float *om = out + tid * 16;
 
 #pragma unroll
   for (int r = 0; r < 4; ++r) {
@@ -95,26 +96,24 @@ __global__ void se3_plus_fused_kernel(const float* __restrict__ x,
   }
 }
 
-}  // namespace
+} // namespace
 
-SE3StateBatch::SE3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      twists_(num_blocks * 6) {}
+SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle,
+                             const float *device_ptr, size_t num_blocks)
+    : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks), twists_(num_blocks * 6) {}
 
-SE3StateBatch::SE3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                             size_t num_blocks, const int* device_constant_state_ids,
+SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle,
+                             const float *device_ptr, size_t num_blocks,
+                             const int *device_constant_state_ids,
                              size_t num_const_state_blocks)
     : Base(device_ptr, num_blocks, device_constant_state_ids,
            num_const_state_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
+      cublas_handle_(cublas_handle), delta_transforms_(num_blocks),
       twists_(num_blocks * 6) {}
 
-void SE3StateBatch::Plus(const float* x, const float* delta, float* x_plus_delta,
-                         cudaStream_t stream) {
+void SE3StateBatch::Plus(const float *x, const float *delta,
+                         float *x_plus_delta, cudaStream_t stream) {
   const int num_transforms = static_cast<int>(NumStateBlocks());
   const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
   se3_plus_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, x_plus_delta,
@@ -123,4 +122,4 @@ void SE3StateBatch::Plus(const float* x, const float* delta, float* x_plus_delta
   static_cast<void>(cublas_handle_);
 }
 
-}  // namespace cunls
+} // namespace cunls

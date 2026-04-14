@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ namespace {
 
 constexpr int kBlockSize = 256;
 
-__global__ void UniformScaleKernel(float weight, float* data,
+__global__ void UniformScaleKernel(float weight, float *data,
                                    size_t total_elements) {
   const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < total_elements) {
@@ -34,8 +34,8 @@ __global__ void UniformScaleKernel(float weight, float* data,
   }
 }
 
-__global__ void PerFactorScaleResidualsKernel(const float* weights,
-                                              float* residuals,
+__global__ void PerFactorScaleResidualsKernel(const float *weights,
+                                              float *residuals,
                                               size_t residual_size,
                                               size_t num_factors) {
   const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -46,9 +46,8 @@ __global__ void PerFactorScaleResidualsKernel(const float* weights,
   }
 }
 
-__global__ void PerFactorScaleJacobiansKernel(const float* weights,
-                                              float* jacobians,
-                                              size_t stride,
+__global__ void PerFactorScaleJacobiansKernel(const float *weights,
+                                              float *jacobians, size_t stride,
                                               size_t num_factors) {
   const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   const size_t total = num_factors * stride;
@@ -58,27 +57,25 @@ __global__ void PerFactorScaleJacobiansKernel(const float* weights,
   }
 }
 
-}  // namespace
+} // namespace
 
-void ApplyUniformWeightToResiduals(float weight, float* residuals,
-                                   size_t total_elements,
-                                   cudaStream_t stream) {
+void ApplyUniformWeightToResiduals(float weight, float *residuals,
+                                   size_t total_elements, cudaStream_t stream) {
   const int num_blocks = (total_elements + kBlockSize - 1) / kBlockSize;
-  UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      weight, residuals, total_elements);
+  UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(weight, residuals,
+                                                            total_elements);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ApplyUniformWeightToJacobians(float weight, float* jacobians,
-                                   size_t total_elements,
-                                   cudaStream_t stream) {
+void ApplyUniformWeightToJacobians(float weight, float *jacobians,
+                                   size_t total_elements, cudaStream_t stream) {
   const int num_blocks = (total_elements + kBlockSize - 1) / kBlockSize;
-  UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      weight, jacobians, total_elements);
+  UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(weight, jacobians,
+                                                            total_elements);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ApplyPerFactorWeightToResiduals(const float* weights, float* residuals,
+void ApplyPerFactorWeightToResiduals(const float *weights, float *residuals,
                                      size_t residual_size, size_t num_factors,
                                      cudaStream_t stream) {
   const size_t total = num_factors * residual_size;
@@ -88,7 +85,7 @@ void ApplyPerFactorWeightToResiduals(const float* weights, float* residuals,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ApplyPerFactorWeightToJacobians(const float* weights, float* jacobians,
+void ApplyPerFactorWeightToJacobians(const float *weights, float *jacobians,
                                      size_t residual_size,
                                      size_t jacobian_pitch, size_t num_factors,
                                      cudaStream_t stream) {
@@ -100,4 +97,4 @@ void ApplyPerFactorWeightToJacobians(const float* weights, float* jacobians,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

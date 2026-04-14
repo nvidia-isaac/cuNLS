@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@
 
 #include <memory>
 
+#include "cunls/linear_solver/csr_sparse_linear_solver.h"
+#include "cunls/linear_solver/cudss_sparse_linear_solver.h"
 #include "cunls/linear_solver/dense_cholesky_solver.h"
 #include "cunls/linear_solver/dense_linear_solver.h"
 #include "cunls/linear_solver/dense_qr_solver.h"
-#include "cunls/linear_solver/csr_sparse_linear_solver.h"
-#include "cunls/linear_solver/cudss_sparse_linear_solver.h"
 
 namespace cunls {
 
@@ -33,15 +33,15 @@ namespace cunls {
  * @brief Selects the linear solver backend for the Gauss-Newton system.
  */
 enum class SparseLinearSolverType {
-  cuDSS,           ///< Sparse direct solver using NVIDIA's cuDSS library.
-  DenseLDLT,       ///< Converts CSR to dense and solves with a custom CUDA
-                   ///< pivoted LDLT kernel.
-  DenseCholesky,   ///< Converts CSR to dense and solves with cuSOLVER Cholesky
-                   ///< factorization (cusolverDnSpotrf / cusolverDnSpotrs).
-                   ///< Requires SPD matrix.
-  DenseQR,         ///< Converts CSR to dense and solves with cuSOLVER QR
-                   ///< factorization (cusolverDnSgeqrf / cusolverDnSormqr /
-                   ///< cublasStrsm). Works for any non-singular square matrix.
+  cuDSS,         ///< Sparse direct solver using NVIDIA's cuDSS library.
+  DenseLDLT,     ///< Converts CSR to dense and solves with a custom CUDA
+                 ///< pivoted LDLT kernel.
+  DenseCholesky, ///< Converts CSR to dense and solves with cuSOLVER Cholesky
+                 ///< factorization (cusolverDnSpotrf / cusolverDnSpotrs).
+                 ///< Requires SPD matrix.
+  DenseQR,       ///< Converts CSR to dense and solves with cuSOLVER QR
+                 ///< factorization (cusolverDnSgeqrf / cusolverDnSormqr /
+                 ///< cublasStrsm). Works for any non-singular square matrix.
 };
 
 /**
@@ -71,7 +71,8 @@ using SparseLinearSolverPtr = std::unique_ptr<CSRSparseLinearSolver>;
  * @param config Solver-specific configuration options.
  * @return A unique pointer to the created solver instance.
  */
-SparseLinearSolverPtr CreateCSRSparseLinearSolver(
-    SparseLinearSolverType type, const SparseLinearSolverConfig& config);
+SparseLinearSolverPtr
+CreateCSRSparseLinearSolver(SparseLinearSolverType type,
+                            const SparseLinearSolverConfig &config);
 
-}  // namespace cunls
+} // namespace cunls

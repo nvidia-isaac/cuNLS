@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ namespace cunls {
  * @param num_losses Number of triplets.
  * @param stream     CUDA stream for asynchronous execution.
  */
-void ApplyScaling(float a, float3* out, int num_losses, cudaStream_t stream);
+void ApplyScaling(float a, float3 *out, int num_losses, cudaStream_t stream);
 
 /**
  * @brief Wrapper loss function that scales the output of another loss function.
@@ -60,7 +60,7 @@ void ApplyScaling(float a, float3* out, int num_losses, cudaStream_t stream);
 template <class T, typename std::enable_if_t<
                        std::is_base_of_v<LossFunctionBatch, T>, int> = 0>
 class ScaledLossFunctionBatch : public LossFunctionBatch {
- public:
+public:
   /**
    * @brief Constructs a ScaledLossFunctionBatch wrapper.
    *
@@ -71,7 +71,7 @@ class ScaledLossFunctionBatch : public LossFunctionBatch {
    * @throws std::invalid_argument if a <= 0.
    */
   template <class... Args>
-  ScaledLossFunctionBatch(float a, Args&&... loss_args)
+  ScaledLossFunctionBatch(float a, Args &&...loss_args)
       : a_(a), loss_function_(std::forward<Args>(loss_args)...) {
     if (a_ <= 0.0f) {
       std::stringstream ss;
@@ -90,7 +90,7 @@ class ScaledLossFunctionBatch : public LossFunctionBatch {
    *
    * @copydetails LossFunctionBatch::Evaluate
    */
-  bool Evaluate(float* s, float3* out, int num_losses,
+  bool Evaluate(float *s, float3 *out, int num_losses,
                 cudaStream_t stream) const override {
     if (num_losses <= 0) {
       return true;
@@ -100,9 +100,9 @@ class ScaledLossFunctionBatch : public LossFunctionBatch {
     return true;
   }
 
- private:
-  T loss_function_;  ///< Wrapped loss function, owned by value.
-  float a_;          ///< Positive scale factor.
+private:
+  T loss_function_; ///< Wrapped loss function, owned by value.
+  float a_;         ///< Positive scale factor.
 };
 
-}  // namespace cunls
+} // namespace cunls

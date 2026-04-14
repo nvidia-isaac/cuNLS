@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,8 +50,8 @@ namespace cunls {
  * The number of columns is determined by finding the maximum column index + 1.
  * Requires matrix to have at least one row and one non-zero element.
  */
-void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                           int& num_rows, int& num_cols, int& num_nonzeros) {
+void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                           int &num_rows, int &num_cols, int &num_nonzeros) {
   num_rows = matrix.row_offsets.size() - 1;
   assert(num_rows > 0);
 
@@ -60,9 +60,8 @@ void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix& matrix,
 
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
   thrust::device_ptr<const int> col_ids_ptr(matrix.col_ids.data());
-  auto max_col_idx_it =
-      thrust::max_element(stream_policy, col_ids_ptr,
-                          col_ids_ptr + num_nonzeros);
+  auto max_col_idx_it = thrust::max_element(stream_policy, col_ids_ptr,
+                                            col_ids_ptr + num_nonzeros);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   num_cols = *max_col_idx_it + 1;
   assert(num_cols > 0);
@@ -74,9 +73,8 @@ void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix& matrix,
  * indicates missing or invalid elements (e.g., due to constant states in
  * Jacobians).
  */
-template <int Value>
-struct NotEqualOperator {
-  __host__ __device__ bool operator()(const int& x) { return x != Value; }
+template <int Value> struct NotEqualOperator {
+  __host__ __device__ bool operator()(const int &x) { return x != Value; }
 };
 
 /**
@@ -92,17 +90,17 @@ struct NotEqualOperator {
  * Thread organization: Each warp processes one row, with threads cooperating
  * to search for the diagonal element. Uses warp shuffles for reduction.
  */
-__global__ void extract_diagonal_kernel(const int* __restrict__ row_ptr,
-                                        const int* __restrict__ col_ind,
-                                        const float* __restrict__ values,
-                                        float* __restrict__ diag,
+__global__ void extract_diagonal_kernel(const int *__restrict__ row_ptr,
+                                        const int *__restrict__ col_ind,
+                                        const float *__restrict__ values,
+                                        float *__restrict__ diag,
                                         int num_rows) {
-  int row = blockIdx.x * blockDim.y + threadIdx.y;  // warp-level row assignment
+  int row = blockIdx.x * blockDim.y + threadIdx.y; // warp-level row assignment
   if (row >= num_rows) {
     return;
   }
 
-  int lane = threadIdx.x;  // thread within warp
+  int lane = threadIdx.x; // thread within warp
   int start = row_ptr[row];
   int end = row_ptr[row + 1];
 
@@ -138,11 +136,11 @@ __global__ void extract_diagonal_kernel(const int* __restrict__ row_ptr,
  * 32 lanes simultaneously checking different positions. For rows with <= 32
  * non-zeros, no iteration is needed. Uses ballot_sync for uniform warp exit.
  */
-__global__ void add_scaled_diagonal_kernel(const int* __restrict__ row_offsets,
-                                           const int* __restrict__ col_indices,
-                                           float* __restrict__ values,
+__global__ void add_scaled_diagonal_kernel(const int *__restrict__ row_offsets,
+                                           const int *__restrict__ col_indices,
+                                           float *__restrict__ values,
                                            float scale,
-                                           const float* __restrict__ diagonal,
+                                           const float *__restrict__ diagonal,
                                            int num_rows) {
   // One warp per row: warp_id identifies the row, lane_id is the thread within
   // warp
@@ -175,7 +173,7 @@ __global__ void add_scaled_diagonal_kernel(const int* __restrict__ row_offsets,
       if (is_diag) {
         values[idx] += scale * diagonal[row];
       }
-      return;  // All lanes exit together (uniform control flow)
+      return; // All lanes exit together (uniform control flow)
     }
   }
 }
@@ -194,10 +192,10 @@ __global__ void add_scaled_diagonal_kernel(const int* __restrict__ row_offsets,
  * invalid
  */
 __global__ void build_triplet_to_csr_mapping_kernel(
-    const int* __restrict__ triplet_row_ids,
-    const int* __restrict__ triplet_col_ids, int num_triplets,
-    const int* __restrict__ csr_row_offsets,
-    const int* __restrict__ csr_col_ids, int* __restrict__ mapping) {
+    const int *__restrict__ triplet_row_ids,
+    const int *__restrict__ triplet_col_ids, int num_triplets,
+    const int *__restrict__ csr_row_offsets,
+    const int *__restrict__ csr_col_ids, int *__restrict__ mapping) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_triplets) {
     return;
@@ -235,9 +233,10 @@ __global__ void build_triplet_to_csr_mapping_kernel(
  * @param num_triplets Total number of triplet entries
  * @param csr_values Destination CSR values array
  */
-__global__ void scatter_triplet_values_kernel(
-    const float* __restrict__ triplet_values, const int* __restrict__ mapping,
-    int num_triplets, float* __restrict__ csr_values) {
+__global__ void
+scatter_triplet_values_kernel(const float *__restrict__ triplet_values,
+                              const int *__restrict__ mapping, int num_triplets,
+                              float *__restrict__ csr_values) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_triplets) {
     return;
@@ -260,8 +259,8 @@ __global__ void scatter_triplet_values_kernel(
  * (values, column indices, row offsets). Uses thrust::copy for efficient GPU
  * memory transfer.
  */
-void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
-                         CSRSparseMatrix& output) {
+void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix &input,
+                         CSRSparseMatrix &output) {
   if (&input == &output) {
     return;
   }
@@ -276,17 +275,18 @@ void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
 
   thrust::device_ptr<const float> in_values_ptr(input.values.data());
   thrust::device_ptr<float> out_values_ptr(output.values.data());
-  thrust::copy(stream_policy, in_values_ptr, in_values_ptr + input.values.size(),
-               out_values_ptr);
+  thrust::copy(stream_policy, in_values_ptr,
+               in_values_ptr + input.values.size(), out_values_ptr);
 
   thrust::device_ptr<const int> in_col_ids_ptr(input.col_ids.data());
   thrust::device_ptr<int> out_col_ids_ptr(output.col_ids.data());
-  thrust::copy(stream_policy, in_col_ids_ptr, in_col_ids_ptr + input.col_ids.size(),
-               out_col_ids_ptr);
+  thrust::copy(stream_policy, in_col_ids_ptr,
+               in_col_ids_ptr + input.col_ids.size(), out_col_ids_ptr);
 
   thrust::device_ptr<const int> in_row_offsets_ptr(input.row_offsets.data());
   thrust::device_ptr<int> out_row_offsets_ptr(output.row_offsets.data());
-  thrust::copy(stream_policy, in_row_offsets_ptr, in_row_offsets_ptr + input.row_offsets.size(),
+  thrust::copy(stream_policy, in_row_offsets_ptr,
+               in_row_offsets_ptr + input.row_offsets.size(),
                out_row_offsets_ptr);
 }
 
@@ -295,8 +295,8 @@ void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
  * One CUDA warp per row; lanes stride over that row's nnz for coalesced access.
  */
 __global__ void scale_symmetric_csr_rows_kernel(
-    const int* __restrict__ row_offsets, const int* __restrict__ col_ids,
-    float* __restrict__ values, const float* __restrict__ scale, int num_rows) {
+    const int *__restrict__ row_offsets, const int *__restrict__ col_ids,
+    float *__restrict__ values, const float *__restrict__ scale, int num_rows) {
   int row = blockIdx.x * blockDim.y + threadIdx.y;
   if (row >= num_rows) {
     return;
@@ -311,8 +311,8 @@ __global__ void scale_symmetric_csr_rows_kernel(
   }
 }
 
-void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix& matrix,
-                       const dvector<float>& scale) {
+void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix &matrix,
+                       const dvector<float> &scale) {
   int num_rows = static_cast<int>(matrix.row_offsets.size() - 1);
   assert(static_cast<int>(scale.size()) == num_rows);
   dim3 block(WARP_SIZE, 8);
@@ -323,7 +323,7 @@ void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix& matrix,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-__global__ void inv_sqrt_floor_kernel(float* __restrict__ v, int n,
+__global__ void inv_sqrt_floor_kernel(float *__restrict__ v, int n,
                                       float floor_value) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) {
@@ -336,7 +336,7 @@ __global__ void inv_sqrt_floor_kernel(float* __restrict__ v, int n,
   v[i] = rsqrtf(x);
 }
 
-void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
+void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float> &v,
                                 float floor_value) {
   int n = static_cast<int>(v.size());
   if (n == 0) {
@@ -353,9 +353,10 @@ void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
  * Per-column sum of squares ||J_{:,j}||_2^2 from CSR Jacobian entries.
  * One CUDA thread per nonzero; uses atomicAdd (O(nnz), no sort / no Thrust).
  */
-__global__ void jacobian_accum_col_sq_atomic_kernel(
-    const int* __restrict__ col_ids, const float* __restrict__ values, int nnz,
-    float* __restrict__ col_sums) {
+__global__ void
+jacobian_accum_col_sq_atomic_kernel(const int *__restrict__ col_ids,
+                                    const float *__restrict__ values, int nnz,
+                                    float *__restrict__ col_sums) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= nnz) {
     return;
@@ -364,7 +365,7 @@ __global__ void jacobian_accum_col_sq_atomic_kernel(
   atomicAdd(col_sums + col_ids[i], t * t);
 }
 
-__global__ void col_sq_to_inv_norm_kernel(float* __restrict__ col_sums,
+__global__ void col_sq_to_inv_norm_kernel(float *__restrict__ col_sums,
                                           int num_cols, float eps) {
   int j = blockIdx.x * blockDim.x + threadIdx.x;
   if (j >= num_cols) {
@@ -378,14 +379,14 @@ __global__ void col_sq_to_inv_norm_kernel(float* __restrict__ col_sums,
 }
 
 void ComputeJacobianColumnScaling(cudaStream_t stream,
-                                  const CSRSparseMatrix& jacobian,
-                                  int num_cols, int num_nonzeros,
-                                  dvector<float>& column_scale) {
+                                  const CSRSparseMatrix &jacobian, int num_cols,
+                                  int num_nonzeros,
+                                  dvector<float> &column_scale) {
   column_scale.resize(static_cast<size_t>(num_cols));
 
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(
-      column_scale.data(), 0,
-      static_cast<size_t>(num_cols) * sizeof(float), stream));
+  THROW_ON_CUDA_ERROR(
+      cudaMemsetAsync(column_scale.data(), 0,
+                      static_cast<size_t>(num_cols) * sizeof(float), stream));
 
   constexpr int block_size = 256;
   int grid_nnz = (num_nonzeros + block_size - 1) / block_size;
@@ -412,17 +413,15 @@ void ComputeJacobianColumnScaling(cudaStream_t stream,
  * Each warp processes one row, searching for the diagonal element (where row ==
  * col).
  */
-void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                     dvector<float>& diagonal) {
+void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                     dvector<float> &diagonal) {
   size_t num_rows = matrix.row_offsets.size() - 1;
 
   diagonal.resize(num_rows);
   dim3 block(32, 4);
   dim3 grid((num_rows + block.y - 1) / block.y);
   extract_diagonal_kernel<<<grid, block, 0, stream>>>(
-      matrix.row_offsets.data(),
-      matrix.col_ids.data(),
-      matrix.values.data(),
+      matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(),
       diagonal.data(), num_rows);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
@@ -442,24 +441,28 @@ void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix& matrix,
  * Uses cuSPARSE SpMV (Sparse Matrix-Vector multiplication) with preprocessing
  * for optimal performance. Buffer is automatically resized as needed.
  */
-static void SpMVImpl(
-    cudaStream_t stream, void* handle, const CSRSparseMatrix& matrix,
-    int num_rows, int num_cols, int num_nonzeros,
-    bool transpose_matrix, const dvector<float>& x, dvector<float>& result,
-    dvector<uint8_t>& buffer) {
+static void SpMVImpl(cudaStream_t stream, void *handle,
+                     const CSRSparseMatrix &matrix, int num_rows, int num_cols,
+                     int num_nonzeros, bool transpose_matrix,
+                     const dvector<float> &x, dvector<float> &result,
+                     dvector<uint8_t> &buffer) {
   auto cusparse_handle = static_cast<cusparseHandle_t>(handle);
 
   result.resize(transpose_matrix ? num_cols : num_rows);
-  assert(x.size() == static_cast<size_t>(transpose_matrix ? num_rows : num_cols));
+  assert(x.size() ==
+         static_cast<size_t>(transpose_matrix ? num_rows : num_cols));
 
   cuSPARSEMatrixDescription matrix_description(num_rows, num_cols, num_nonzeros,
                                                matrix);
   cuSPARSEVectorDescription vec_x_description(x);
   cuSPARSEVectorDescription vec_result_description(result);
 
-  auto matA = static_cast<cusparseSpMatDescr_t>(matrix_description.GetDescription());
-  auto vecX = static_cast<cusparseDnVecDescr_t>(vec_x_description.GetDescription());
-  auto vecY = static_cast<cusparseDnVecDescr_t>(vec_result_description.GetDescription());
+  auto matA =
+      static_cast<cusparseSpMatDescr_t>(matrix_description.GetDescription());
+  auto vecX =
+      static_cast<cusparseDnVecDescr_t>(vec_x_description.GetDescription());
+  auto vecY = static_cast<cusparseDnVecDescr_t>(
+      vec_result_description.GetDescription());
 
   constexpr float alpha = 1;
   constexpr float beta = 0;
@@ -481,15 +484,17 @@ static void SpMVImpl(
       cusparse_handle, operation, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
       CUSPARSE_SPMV_ALG_DEFAULT, buffer_ptr));
 
-  THROW_ON_CUSPARSE_ERROR(cusparseSpMV(cusparse_handle, operation, &alpha,
-                                       matA, vecX, &beta, vecY, CUDA_R_32F,
+  THROW_ON_CUSPARSE_ERROR(cusparseSpMV(cusparse_handle, operation, &alpha, matA,
+                                       vecX, &beta, vecY, CUDA_R_32F,
                                        CUSPARSE_SPMV_ALG_DEFAULT, buffer_ptr));
 }
 
-void MultiplySparseMatrixByDenseVector(
-    cudaStream_t stream, void* handle, const CSRSparseMatrix& matrix,
-    bool transpose_matrix, const dvector<float>& x, dvector<float>& result,
-    dvector<uint8_t>& buffer) {
+void MultiplySparseMatrixByDenseVector(cudaStream_t stream, void *handle,
+                                       const CSRSparseMatrix &matrix,
+                                       bool transpose_matrix,
+                                       const dvector<float> &x,
+                                       dvector<float> &result,
+                                       dvector<uint8_t> &buffer) {
   int num_rows, num_cols, num_nonzeros;
   ExtractMatrixMetadata(stream, matrix, num_rows, num_cols, num_nonzeros);
   SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros,
@@ -511,22 +516,20 @@ void MultiplySparseMatrixByDenseVector(
  * diagonal elements to the existing diagonal entries of the matrix.
  */
 void AddScaledDiagonal(cudaStream_t stream, float scale,
-                       const dvector<float>& diagonal,
-                       const CSRSparseMatrix& matrix, CSRSparseMatrix& result) {
+                       const dvector<float> &diagonal,
+                       const CSRSparseMatrix &matrix, CSRSparseMatrix &result) {
   int num_rows = diagonal.size();
   assert(num_rows + 1 == matrix.row_offsets.size());
 
   CopyCSRSparseMatrix(stream, matrix, result);
 
   // Launch one warp (32 threads) per row for warp-cooperative diagonal search
-  constexpr int block_size = 256;  // Must be multiple of WARP_SIZE
+  constexpr int block_size = 256; // Must be multiple of WARP_SIZE
   const int total_threads = num_rows * WARP_SIZE;
   const int blocks = (total_threads + block_size - 1) / block_size;
   add_scaled_diagonal_kernel<<<blocks, block_size, 0, stream>>>(
-      result.row_offsets.data(),
-      result.col_ids.data(),
-      result.values.data(), scale,
-      diagonal.data(), num_rows);
+      result.row_offsets.data(), result.col_ids.data(), result.values.data(),
+      scale, diagonal.data(), num_rows);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -543,15 +546,15 @@ void AddScaledDiagonal(cudaStream_t stream, float scale,
  * @param mapping Output mapping: mapping[triplet_idx] = csr_idx, or -1
  * @param buffer Temporary buffer for intermediate computations
  */
-void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
-                                  const TripletSparseStructure& structure,
-                                  CSRSparseMatrix& csr, dvector<int>& mapping,
-                                  dvector<uint8_t>& buffer) {
+void ConvertTripletStructureToCSR(cudaStream_t stream, void *handle,
+                                  const TripletSparseStructure &structure,
+                                  CSRSparseMatrix &csr, dvector<int> &mapping,
+                                  dvector<uint8_t> &buffer) {
   auto cusparse_handle = static_cast<cusparseHandle_t>(handle);
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
-  const auto& col_ids = structure.col_ids;
-  const auto& row_ids = structure.row_ids;
+  const auto &col_ids = structure.col_ids;
+  const auto &row_ids = structure.row_ids;
   size_t num_triplets = col_ids.size();
 
   if (num_triplets == 0) {
@@ -591,22 +594,22 @@ void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
     buffer.resize(buffer_size_in_bytes);
   }
 
-  auto coo_row_ids_ptr = reinterpret_cast<int*>(buffer.data());
+  auto coo_row_ids_ptr = reinterpret_cast<int *>(buffer.data());
 
   {
-    auto input_begin = thrust::make_zip_iterator(thrust::make_tuple(
-        thrust::device_pointer_cast(row_ids.data()),
-        thrust::device_pointer_cast(col_ids.data())));
-    auto output_begin = thrust::make_zip_iterator(thrust::make_tuple(
-        thrust::device_pointer_cast(coo_row_ids_ptr),
-        thrust::device_pointer_cast(csr.col_ids.data())));
+    auto input_begin = thrust::make_zip_iterator(
+        thrust::make_tuple(thrust::device_pointer_cast(row_ids.data()),
+                           thrust::device_pointer_cast(col_ids.data())));
+    auto output_begin = thrust::make_zip_iterator(
+        thrust::make_tuple(thrust::device_pointer_cast(coo_row_ids_ptr),
+                           thrust::device_pointer_cast(csr.col_ids.data())));
     thrust::device_ptr<const int> stencil(col_ids.data());
 
     thrust::copy_if(stream_policy, input_begin, input_begin + num_triplets,
                     stencil, output_begin, NotEqualOperator<-1>());
 
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(csr.values.data(), 0,
-        number_of_nonzeros * sizeof(float), stream));
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(
+        csr.values.data(), 0, number_of_nonzeros * sizeof(float), stream));
   }
 
   // Convert COO row indices to CSR row offsets
@@ -640,9 +643,9 @@ void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
  * @param csr CSR sparse matrix with precomputed structure (values updated)
  */
 void ConvertTripletToCSRValues(cudaStream_t stream,
-                               const SparseJacobian& jacobian,
-                               const dvector<int>& mapping,
-                               CSRSparseMatrix& csr) {
+                               const SparseJacobian &jacobian,
+                               const dvector<int> &mapping,
+                               CSRSparseMatrix &csr) {
   assert(jacobian.values.size() == jacobian.structure.col_ids.size());
   assert(jacobian.values.size() == jacobian.structure.row_ids.size());
   assert(jacobian.values.size() == mapping.size());
@@ -673,51 +676,54 @@ void ConvertTripletToCSRValues(cudaStream_t stream,
  * First computes J^T * r using sparse matrix-vector multiplication,
  * then negates the result to get -J^T * r.
  */
-__global__ void negate_kernel(float* __restrict__ data, int n) {
+__global__ void negate_kernel(float *__restrict__ data, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) data[i] = -data[i];
+  if (i < n)
+    data[i] = -data[i];
 }
 
-void NegateVector(cudaStream_t stream, float* data, size_t n) {
-  if (n == 0) return;
+void NegateVector(cudaStream_t stream, float *data, size_t n) {
+  if (n == 0)
+    return;
   constexpr int kBlock = 256;
   int grid = static_cast<int>((n + kBlock - 1) / kBlock);
   negate_kernel<<<grid, kBlock, 0, stream>>>(data, static_cast<int>(n));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-__global__ void elementwise_multiply_kernel(float* __restrict__ a,
-                                            const float* __restrict__ b,
+__global__ void elementwise_multiply_kernel(float *__restrict__ a,
+                                            const float *__restrict__ b,
                                             int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) a[i] *= b[i];
+  if (i < n)
+    a[i] *= b[i];
 }
 
-void ElementwiseMultiplyInPlace(cudaStream_t stream, float* a,
-                                const float* b, size_t n) {
-  if (n == 0) return;
+void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b,
+                                size_t n) {
+  if (n == 0)
+    return;
   constexpr int kBlock = 256;
   int grid = static_cast<int>((n + kBlock - 1) / kBlock);
-  elementwise_multiply_kernel<<<grid, kBlock, 0, stream>>>(
-      a, b, static_cast<int>(n));
+  elementwise_multiply_kernel<<<grid, kBlock, 0, stream>>>(a, b,
+                                                           static_cast<int>(n));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeRHS(cudaStream_t stream, void* handle,
-                const CSRSparseMatrix& jacobian,
-                const dvector<float>& residuals, dvector<float>& rhs,
-                dvector<uint8_t>& buffer) {
+void ComputeRHS(cudaStream_t stream, void *handle,
+                const CSRSparseMatrix &jacobian,
+                const dvector<float> &residuals, dvector<float> &rhs,
+                dvector<uint8_t> &buffer) {
   constexpr bool transpose_matrix = true;
   MultiplySparseMatrixByDenseVector(stream, handle, jacobian, transpose_matrix,
                                     residuals, rhs, buffer);
   NegateVector(stream, rhs.data(), rhs.size());
 }
 
-void ComputeRHS(cudaStream_t stream, void* handle,
-                const CSRSparseMatrix& jacobian,
-                int num_rows, int num_cols, int num_nonzeros,
-                const dvector<float>& residuals, dvector<float>& rhs,
-                dvector<uint8_t>& buffer) {
+void ComputeRHS(cudaStream_t stream, void *handle,
+                const CSRSparseMatrix &jacobian, int num_rows, int num_cols,
+                int num_nonzeros, const dvector<float> &residuals,
+                dvector<float> &rhs, dvector<uint8_t> &buffer) {
   constexpr bool transpose_matrix = true;
   SpMVImpl(stream, handle, jacobian, num_rows, num_cols, num_nonzeros,
            transpose_matrix, residuals, rhs, buffer);
@@ -739,23 +745,23 @@ void ComputeRHS(cudaStream_t stream, void* handle,
  * Used in trust region methods and optimization algorithms.
  */
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream,
-                                     const dvector<float>& weights,
-                                     const dvector<float>& step,
-                                     float* d_out, float* d_partials) {
+                                     const dvector<float> &weights,
+                                     const dvector<float> &step, float *d_out,
+                                     float *d_partials) {
   assert(step.size() == weights.size());
   WeightedDotProductToDevice(stream, step.data(), weights.data(), step.data(),
                              step.size(), d_out, d_partials);
 }
 
 float ComputeWeightedSquaredStep(cudaStream_t stream,
-                                 const dvector<float>& weights,
-                                 const dvector<float>& step,
-                                 dvector<uint8_t>& buffer) {
+                                 const dvector<float> &weights,
+                                 const dvector<float> &step,
+                                 dvector<uint8_t> &buffer) {
   assert(step.size() == weights.size());
   size_t partials_count = ReducePartialCount(step.size());
   buffer.resize((partials_count + 1) * sizeof(float));
-  float* d_out = reinterpret_cast<float*>(buffer.data());
-  float* d_partials = d_out + 1;
+  float *d_out = reinterpret_cast<float *>(buffer.data());
+  float *d_partials = d_out + 1;
 
   WeightedDotProductToDevice(stream, step.data(), weights.data(), step.data(),
                              step.size(), d_out, d_partials);
@@ -786,10 +792,9 @@ float ComputeWeightedSquaredStep(cudaStream_t stream,
 static thread_local dvector<float> g_spmv_result;
 
 static void WeightedSquaredStepSparseAsyncImpl(
-    cudaStream_t stream, void* handle, const CSRSparseMatrix& matrix,
-    int num_rows, int num_cols, int num_nonzeros,
-    const dvector<float>& step, dvector<uint8_t>& buffer,
-    float* d_out, float* d_partials) {
+    cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
+    int num_rows, int num_cols, int num_nonzeros, const dvector<float> &step,
+    dvector<uint8_t> &buffer, float *d_out, float *d_partials) {
   constexpr bool transpose_matrix = false;
   SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros,
            transpose_matrix, step, g_spmv_result, buffer);
@@ -797,29 +802,26 @@ static void WeightedSquaredStepSparseAsyncImpl(
                      g_spmv_result.size(), d_out, d_partials);
 }
 
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void* handle,
-                                     const CSRSparseMatrix& matrix,
-                                     int num_rows, int num_cols,
-                                     int num_nonzeros,
-                                     const dvector<float>& step,
-                                     dvector<uint8_t>& buffer,
-                                     float* d_out, float* d_partials) {
+void ComputeWeightedSquaredStepAsync(
+    cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
+    int num_rows, int num_cols, int num_nonzeros, const dvector<float> &step,
+    dvector<uint8_t> &buffer, float *d_out, float *d_partials) {
   WeightedSquaredStepSparseAsyncImpl(stream, handle, matrix, num_rows, num_cols,
                                      num_nonzeros, step, buffer, d_out,
                                      d_partials);
 }
 
-float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
-                                 const CSRSparseMatrix& matrix,
-                                 const dvector<float>& step,
-                                 dvector<uint8_t>& buffer) {
+float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle,
+                                 const CSRSparseMatrix &matrix,
+                                 const dvector<float> &step,
+                                 dvector<uint8_t> &buffer) {
   int num_rows, num_cols, num_nonzeros;
   ExtractMatrixMetadata(stream, matrix, num_rows, num_cols, num_nonzeros);
 
   size_t partials_count = ReducePartialCount(step.size());
   dvector<float> d_scratch(partials_count + 1);
-  float* d_out = d_scratch.data();
-  float* d_partials = d_out + 1;
+  float *d_out = d_scratch.data();
+  float *d_partials = d_out + 1;
 
   WeightedSquaredStepSparseAsyncImpl(stream, handle, matrix, num_rows, num_cols,
                                      num_nonzeros, step, buffer, d_out,
@@ -833,15 +835,15 @@ float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
   return result;
 }
 
-float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
-                                 const CSRSparseMatrix& matrix,
-                                 int num_rows, int num_cols, int num_nonzeros,
-                                 const dvector<float>& step,
-                                 dvector<uint8_t>& buffer) {
+float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle,
+                                 const CSRSparseMatrix &matrix, int num_rows,
+                                 int num_cols, int num_nonzeros,
+                                 const dvector<float> &step,
+                                 dvector<uint8_t> &buffer) {
   size_t partials_count = ReducePartialCount(step.size());
   dvector<float> d_scratch(partials_count + 1);
-  float* d_out = d_scratch.data();
-  float* d_partials = d_out + 1;
+  float *d_out = d_scratch.data();
+  float *d_partials = d_out + 1;
 
   WeightedSquaredStepSparseAsyncImpl(stream, handle, matrix, num_rows, num_cols,
                                      num_nonzeros, step, buffer, d_out,
@@ -862,17 +864,17 @@ float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
  * @param step Step vector.
  * @return The squared L2 norm (scalar value).
  */
-void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float>& step,
-                             float* d_out, float* d_partials) {
+void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float> &step,
+                             float *d_out, float *d_partials) {
   DotProductToDevice(stream, step.data(), step.data(), step.size(), d_out,
                      d_partials);
 }
 
-float ComputeSquaredStep(cudaStream_t stream, const dvector<float>& step) {
+float ComputeSquaredStep(cudaStream_t stream, const dvector<float> &step) {
   size_t partials_count = ReducePartialCount(step.size());
   dvector<float> d_scratch(partials_count + 1);
-  float* d_out = d_scratch.data();
-  float* d_partials = d_out + 1;
+  float *d_out = d_scratch.data();
+  float *d_partials = d_out + 1;
 
   DotProductToDevice(stream, step.data(), step.data(), step.size(), d_out,
                      d_partials);
@@ -884,4 +886,4 @@ float ComputeSquaredStep(cudaStream_t stream, const dvector<float>& step) {
   assert(result >= 0);
   return result;
 }
-}  // namespace cunls
+} // namespace cunls

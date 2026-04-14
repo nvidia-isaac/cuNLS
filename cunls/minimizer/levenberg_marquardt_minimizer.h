@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,31 +122,32 @@ struct LevenbergMarquardtMinimizerOptions {
  * while often converging faster than gradient descent.
  */
 class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
- public:
+public:
   /**
    * @brief Constructs a Levenberg-Marquardt optimizer.
    *
    * @param options Configuration options. Defaults to standard LM options.
    */
   LevenbergMarquardtMinimizer(
-      const LevenbergMarquardtMinimizerOptions& options =
+      const LevenbergMarquardtMinimizerOptions &options =
           LevenbergMarquardtMinimizerOptions())
       : GaussNewtonMinimizer(options.base_options), options_(options) {}
 
- private:
+private:
   /**
    * @brief Initializes LM-specific data structures.
    *
    * Calls base class initialization and sets initial lambda value.
    */
-  void Initialize(cudaStream_t stream, Problem& problem) override;
+  void Initialize(cudaStream_t stream, Problem &problem) override;
 
   /**
    * @brief Builds the Levenberg-Marquardt linear system.
    *
    * Extends the Gauss-Newton system by adding lambda times the diagonal of the
    * (possibly column-scaled) Hessian to lhs: (H_s + lambda * diag(H_s)) z = b_s
-   * with physical step dx = S z when column scaling is enabled; otherwise S = I.
+   * with physical step dx = S z when column scaling is enabled; otherwise S =
+   * I.
    *
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
@@ -154,9 +155,9 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    * @param[out] lhs Output left-hand side matrix (H + lambda * diag(H)).
    * @param[out] rhs Output right-hand side vector (-J^T r).
    */
-  void BuildSystem(cudaStream_t stream, const Problem& problem,
-                   const MinimizerState& minimizer_state, CSRSparseMatrix& lhs,
-                   dvector<float>& rhs) override;
+  void BuildSystem(cudaStream_t stream, const Problem &problem,
+                   const MinimizerState &minimizer_state, CSRSparseMatrix &lhs,
+                   dvector<float> &rhs) override;
 
   /**
    * @brief Checks convergence using LM-specific criteria.
@@ -173,8 +174,8 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    * @return True if converged, false otherwise.
    */
   bool CheckConvergence(cudaStream_t stream, float updated_cost,
-                        float current_cost, const dvector<float>& step,
-                        float& step_quality) override;
+                        float current_cost, const dvector<float> &step,
+                        float &step_quality) override;
 
   /**
    * @brief Fused cost + LM convergence with a single D2H + sync.
@@ -182,11 +183,12 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    * Batches cost reduction, squared step norm, diag-weighted step norm,
    * and sparse-weighted step norm into one memcpy and one sync.
    */
-  bool EvaluateAndCheckConvergence(
-      cudaStream_t stream, const Problem& problem,
-      const MinimizerState& updated_state, float current_cost,
-      const dvector<float>& step, float& updated_cost,
-      float& step_quality) override;
+  bool EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
+                                   const MinimizerState &updated_state,
+                                   float current_cost,
+                                   const dvector<float> &step,
+                                   float &updated_cost,
+                                   float &step_quality) override;
 
   /**
    * @brief Determines if a step should be accepted (LM version).
@@ -210,11 +212,11 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    */
   bool RejectStep(float step_quality) override;
 
-  const LevenbergMarquardtMinimizerOptions options_;  ///< LM-specific options.
+  const LevenbergMarquardtMinimizerOptions options_; ///< LM-specific options.
 
-  dvector<float> diagonal_;  ///< Diagonal of the Hessian matrix (J^T J).
+  dvector<float> diagonal_; ///< Diagonal of the Hessian matrix (J^T J).
 
-  float lambda_;  ///< Current damping factor.
+  float lambda_; ///< Current damping factor.
 };
 
-}  // namespace cunls
+} // namespace cunls

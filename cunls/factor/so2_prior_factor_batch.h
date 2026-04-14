@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,8 @@ namespace cunls {
  * Computes the angular residual between a current SO(2) rotation and a target:
  *   residual = Log(R_target^T * R_current)
  *
- * Since SO(2) is abelian, the Jacobian w.r.t. the tangent space (angle delta) is
- * always the identity (scalar 1.0).
+ * Since SO(2) is abelian, the Jacobian w.r.t. the tangent space (angle delta)
+ * is always the identity (scalar 1.0).
  *
  * The factor has:
  * - 1 residual (angular error in radians)
@@ -44,18 +44,16 @@ namespace cunls {
 class SO2PriorFactorBatch : public SizedFactorBatch<1, 1> {
   using Base = SizedFactorBatch<1, 1>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of SO(2) prior factors.
    *
-   * @param observations_ptr Pointer to GPU device memory containing target rotations.
-   *                         Must point to at least num_factors * 4 floats.
+   * @param observations_ptr Pointer to GPU device memory containing target
+   * rotations. Must point to at least num_factors * 4 floats.
    * @param num_factors Number of factors in the batch.
    */
-  SO2PriorFactorBatch(const Matrix<2>* observations_ptr,
-                            size_t num_factors)
-      : observations_ptr_(observations_ptr),
-        num_factors_(num_factors) {}
+  SO2PriorFactorBatch(const Matrix<2> *observations_ptr, size_t num_factors)
+      : observations_ptr_(observations_ptr), num_factors_(num_factors) {}
 
   /**
    * @brief Evaluates SO(2) prior residuals and optionally Jacobians.
@@ -67,8 +65,8 @@ class SO2PriorFactorBatch : public SizedFactorBatch<1, 1> {
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   /**
@@ -77,14 +75,14 @@ class SO2PriorFactorBatch : public SizedFactorBatch<1, 1> {
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   SO2PriorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target rotations.
-  const Matrix<2>* observations_ptr_;
+  const Matrix<2> *observations_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
 };
 
-}  // namespace cunls
+} // namespace cunls

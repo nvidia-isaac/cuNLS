@@ -1,12 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file sim3_manifold_test.cpp
- * @brief Unified Sim(3) manifold tests: state batch dimensions, prior and between
- *        factor LM convergence.
+ * @brief Unified Sim(3) manifold tests: state batch dimensions, prior and
+ * between factor LM convergence.
  */
 
 #include <gtest/gtest.h>
@@ -34,8 +34,8 @@ namespace {
  *
  * Uses Rodrigues for R, V-matrix for translation, exp(lambda) for scale.
  */
-Matrix<4> MakeSim3(float w1, float w2, float w3,
-                   float u1, float u2, float u3, float lambda) {
+Matrix<4> MakeSim3(float w1, float w2, float w3, float u1, float u2, float u3,
+                   float lambda) {
   float theta2 = w1 * w1 + w2 * w2 + w3 * w3;
   float theta = std::sqrt(theta2);
 
@@ -104,7 +104,7 @@ Matrix<4> MakeSim3Identity() {
   return T;
 }
 
-Matrix<4> MatMul4x4(const Matrix<4>& A, const Matrix<4>& B) {
+Matrix<4> MatMul4x4(const Matrix<4> &A, const Matrix<4> &B) {
   Matrix<4> C;
   for (int r = 0; r < 4; ++r) {
     for (int c = 0; c < 4; ++c) {
@@ -118,7 +118,7 @@ Matrix<4> MatMul4x4(const Matrix<4>& A, const Matrix<4>& B) {
   return C;
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -131,7 +131,7 @@ TEST(Sim3ManifoldTest, StateDimensions) {
 
   cuBLASHandle cublas;
   Similarity3StateBatch states(
-      cublas, reinterpret_cast<const float*>(transforms_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), 7u);
   EXPECT_EQ(states.AmbientSize(), 16u);
@@ -154,12 +154,12 @@ TEST(Sim3ManifoldTest, PriorLMConvergence) {
 
   hvector<Matrix<4>> targets(kN), initials(kN);
   for (size_t i = 0; i < kN; ++i) {
-    targets[i] = MakeSim3(rot_dist(rng), rot_dist(rng), rot_dist(rng),
-                           trans_dist(rng), trans_dist(rng), trans_dist(rng),
-                           scale_dist(rng));
-    Matrix<4> pert = MakeSim3(pert_rot(rng), pert_rot(rng), pert_rot(rng),
-                               pert_trans(rng), pert_trans(rng), pert_trans(rng),
-                               pert_scale(rng));
+    targets[i] =
+        MakeSim3(rot_dist(rng), rot_dist(rng), rot_dist(rng), trans_dist(rng),
+                 trans_dist(rng), trans_dist(rng), scale_dist(rng));
+    Matrix<4> pert =
+        MakeSim3(pert_rot(rng), pert_rot(rng), pert_rot(rng), pert_trans(rng),
+                 pert_trans(rng), pert_trans(rng), pert_scale(rng));
     initials[i] = MatMul4x4(targets[i], pert);
   }
 
@@ -167,10 +167,10 @@ TEST(Sim3ManifoldTest, PriorLMConvergence) {
 
   cuBLASHandle cublas;
   Similarity3StateBatch state_batch(
-      cublas, reinterpret_cast<const float*>(initials_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
   Similarity3PriorFactorBatch factor_batch(targets_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_batch.StateBlockDevicePtr(i));
@@ -192,8 +192,7 @@ TEST(Sim3ManifoldTest, PriorLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, 1e-2f);
@@ -201,10 +200,9 @@ TEST(Sim3ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<4>> optimized(kN), target_host(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(),
-                                 state_batch.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<4>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<4>), cudaMemcpyDeviceToHost));
   targets_dev.CopyToHost(target_host.data(), kN);
 
   for (size_t i = 0; i < kN; ++i) {
@@ -229,11 +227,11 @@ TEST(Sim3ManifoldTest, BetweenLMConvergence) {
   hvector<Matrix<4>> poses_left(kN), poses_right(kN);
   for (size_t i = 0; i < kN; ++i) {
     poses_left[i] = MakeSim3(rot_dist(rng1), rot_dist(rng1), rot_dist(rng1),
-                              trans_dist(rng1), trans_dist(rng1),
-                              trans_dist(rng1), scale_dist(rng1));
+                             trans_dist(rng1), trans_dist(rng1),
+                             trans_dist(rng1), scale_dist(rng1));
     poses_right[i] = MakeSim3(rot_dist(rng2), rot_dist(rng2), rot_dist(rng2),
-                               trans_dist(rng2), trans_dist(rng2),
-                               trans_dist(rng2), scale_dist(rng2));
+                              trans_dist(rng2), trans_dist(rng2),
+                              trans_dist(rng2), scale_dist(rng2));
   }
 
   dvector<Matrix<4>> left_dev(poses_left), right_dev(poses_right);
@@ -242,12 +240,12 @@ TEST(Sim3ManifoldTest, BetweenLMConvergence) {
 
   cuBLASHandle cublas;
   Similarity3StateBatch state_left(
-      cublas, reinterpret_cast<const float*>(left_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
   Similarity3StateBatch state_right(
-      cublas, reinterpret_cast<const float*>(right_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
   Similarity3BetweenFactorBatch factor_batch(cublas, deltas_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_left.StateBlockDevicePtr(i));
@@ -271,22 +269,19 @@ TEST(Sim3ManifoldTest, BetweenLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, summary.initial_cost);
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<4>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(),
-                                 state_left.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<4>),
-                                 cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(),
-                                 state_right.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<4>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<4>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<4>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 16; ++j) {
@@ -296,4 +291,4 @@ TEST(Sim3ManifoldTest, BetweenLMConvergence) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,8 +31,7 @@ namespace cunls {
  */
 struct DerivedFromAnySizedFactorBatchHelper {
   template <int Dim, int... StateBlockSizes>
-  static std::true_type test(
-      const SizedFactorBatch<Dim, StateBlockSizes...>*);
+  static std::true_type test(const SizedFactorBatch<Dim, StateBlockSizes...> *);
 
   /// Fallback overload for types that don't derive from SizedFactorBatch
   static std::false_type test(...);
@@ -47,6 +46,6 @@ struct DerivedFromAnySizedFactorBatchHelper {
 template <class T>
 struct IsDerivedFromAnySizedFactorBatch
     : decltype(DerivedFromAnySizedFactorBatchHelper::test(
-          std::declval<T*>())){};
+          std::declval<T *>())){};
 
-}  // namespace cunls
+} // namespace cunls

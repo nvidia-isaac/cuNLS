@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,9 +43,8 @@ namespace cunls {
  * Inherits from StateBatchOps to test internal mapping and update logic
  * across multiple state batches of different dimensions.
  */
-class StateBatchOpsTest : public StateBatchOps,
-                                   public ::testing::Test {
- protected:
+class StateBatchOpsTest : public StateBatchOps, public ::testing::Test {
+protected:
   /**
    * @brief Verifies that state values are correct after a Plus update.
    *
@@ -55,7 +54,7 @@ class StateBatchOpsTest : public StateBatchOps,
    * @param state_batch The state batch to verify.
    */
   template <int Dim>
-  void TestStateValues(const VectorStateBatch<Dim>& state_batch) {
+  void TestStateValues(const VectorStateBatch<Dim> &state_batch) {
     auto values = test_utils::CopyStateToHost(state_batch);
 
     for (size_t i = 0; i < values.size(); i++) {
@@ -73,7 +72,8 @@ class StateBatchOpsTest : public StateBatchOps,
   profiler::Domain profiler_domain_{"StateBatchOpsTest"};
 };
 
-/** @brief Verifies that Preprocess builds the correct reduced-state index mapping. */
+/** @brief Verifies that Preprocess builds the correct reduced-state index
+ * mapping. */
 TEST_F(StateBatchOpsTest, Map) {
   auto test_range = this->profiler_domain_.CreateDomainRange("Map");
   // Check that the mapping in correct
@@ -90,8 +90,8 @@ TEST_F(StateBatchOpsTest, Map) {
       test_utils::MakeZeroVectors<5>(this->num_vectors_), const_ids);
 
   // Create the set on state batches
-  std::vector<StateBatch*> state_batches = {
-      points_2d.ptr(), points_3d.ptr(), points_4d.ptr(), points_5d.ptr()};
+  std::vector<StateBatch *> state_batches = {points_2d.ptr(), points_3d.ptr(),
+                                             points_4d.ptr(), points_5d.ptr()};
 
   // Build the mapping
   {
@@ -129,7 +129,8 @@ TEST_F(StateBatchOpsTest, Map) {
   }
 }
 
-/** @brief Verifies that the Plus operation correctly applies a delta to non-constant states. */
+/** @brief Verifies that the Plus operation correctly applies a delta to
+ * non-constant states. */
 TEST_F(StateBatchOpsTest, Plus) {
   auto test_range = this->profiler_domain_.CreateDomainRange("PlusTest");
   // Check the Plus operation works right
@@ -146,12 +147,12 @@ TEST_F(StateBatchOpsTest, Plus) {
       test_utils::MakeZeroVectors<5>(this->num_vectors_), const_ids);
 
   // Create the set on state batches
-  std::vector<StateBatch*> state_batches = {
-      points_2d.ptr(), points_3d.ptr(), points_4d.ptr(), points_5d.ptr()};
+  std::vector<StateBatch *> state_batches = {points_2d.ptr(), points_3d.ptr(),
+                                             points_4d.ptr(), points_5d.ptr()};
 
   // Collect the pointers for state batches
-  std::vector<const float*> input_pointers;
-  std::vector<float*> output_pointers;
+  std::vector<const float *> input_pointers;
+  std::vector<float *> output_pointers;
   for (auto pbatch : state_batches) {
     auto ptr = pbatch->StateBlockDevicePtr(0);
     input_pointers.push_back(ptr);
@@ -178,4 +179,4 @@ TEST_F(StateBatchOpsTest, Plus) {
   this->TestStateValues(points_4d.get());
   this->TestStateValues(points_5d.get());
 }
-}  // namespace cunls
+} // namespace cunls

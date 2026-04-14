@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,37 +57,33 @@ class PointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
   using Base = SizedFactorBatch<1, 6>;
   using Vector3 = Vector<3>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of point-to-plane factors.
    *
-   * @param p_observations_ptr Pointer to GPU device memory containing target points.
-   *                           Must point to at least num_factors * 3 floats
-   *                           of allocated memory.
-   * @param q_observations_ptr Pointer to GPU device memory containing source points.
-   *                           Must point to at least num_factors * 3 floats
-   *                           of allocated memory.
-   * @param nq_observations_ptr Pointer to GPU device memory containing normal vectors
-   *                            at each source point (in the source/q frame).
-   *                            Must point to at least num_factors * 3 floats
-   *                            of allocated memory.
+   * @param p_observations_ptr Pointer to GPU device memory containing target
+   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * @param q_observations_ptr Pointer to GPU device memory containing source
+   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * @param nq_observations_ptr Pointer to GPU device memory containing normal
+   * vectors at each source point (in the source/q frame). Must point to at
+   * least num_factors * 3 floats of allocated memory.
    * @param num_factors Number of factors in the batch.
    */
-  PointToPlaneFactorBatch(const Vector3* p_observations_ptr,
-                                const Vector3* q_observations_ptr,
-                                const Vector3* nq_observations_ptr,
-                                size_t num_factors)
+  PointToPlaneFactorBatch(const Vector3 *p_observations_ptr,
+                          const Vector3 *q_observations_ptr,
+                          const Vector3 *nq_observations_ptr,
+                          size_t num_factors)
       : p_observations_ptr_(p_observations_ptr),
         q_observations_ptr_(q_observations_ptr),
-        nq_observations_ptr_(nq_observations_ptr),
-        num_factors_(num_factors) {}
+        nq_observations_ptr_(nq_observations_ptr), num_factors_(num_factors) {}
 
   /**
    * @brief Evaluates point-to-plane residuals and optionally Jacobians.
    *
-   * Computes residual = Nq^T * (p - T @ q) for each correspondence in the batch.
-   * If jacobians is not nullptr, also computes the 1x6 Jacobian with respect
-   * to the SE(3) tangent space.
+   * Computes residual = Nq^T * (p - T @ q) for each correspondence in the
+   * batch. If jacobians is not nullptr, also computes the 1x6 Jacobian with
+   * respect to the SE(3) tangent space.
    *
    * @param residuals Output device pointer for residuals (1 float per
    *                  factor). Can be nullptr to skip residual computation.
@@ -98,8 +94,8 @@ class PointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   /**
@@ -108,20 +104,20 @@ class PointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   PointToPlaneFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target points (p).
-  const Vector3* p_observations_ptr_;
+  const Vector3 *p_observations_ptr_;
 
   /// Pointer to user-managed device memory containing source points (q).
-  const Vector3* q_observations_ptr_;
+  const Vector3 *q_observations_ptr_;
 
   /// Pointer to user-managed device memory containing normal vectors (Nq).
-  const Vector3* nq_observations_ptr_;
+  const Vector3 *nq_observations_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
 };
 
-}  // namespace cunls
+} // namespace cunls

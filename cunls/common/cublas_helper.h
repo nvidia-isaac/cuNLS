@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ namespace cunls {
  * @param status cuBLAS status code to convert
  * @return C-string containing the error message
  */
-const char* cublasGetErrorString(int status);
+const char *cublasGetErrorString(int status);
 
 /**
  * @brief Macro to throw an exception on cuBLAS errors.
@@ -38,7 +38,7 @@ const char* cublasGetErrorString(int status);
  * If the cuBLAS status indicates an error, throws an exception with
  * a descriptive error message.
  */
-#define THROW_ON_CUBLAS_ERROR(status) \
+#define THROW_ON_CUBLAS_ERROR(status)                                          \
   CHECK_CUDA_ERROR(status, cublasGetErrorString, true)
 
 /**
@@ -47,7 +47,7 @@ const char* cublasGetErrorString(int status);
  * If the cuBLAS status indicates an error, logs a warning message
  * but does not throw an exception.
  */
-#define WARN_ON_CUBLAS_ERROR(status) \
+#define WARN_ON_CUBLAS_ERROR(status)                                           \
   CHECK_CUDA_ERROR(status, cublasGetErrorString, false)
 
 /**
@@ -61,11 +61,11 @@ const char* cublasGetErrorString(int status);
  * Non-copyable: Prevents accidental handle duplication.
  */
 class cuBLASHandle {
- public:
+public:
   cuBLASHandle() = default;
 
-  cuBLASHandle(const cuBLASHandle&) = delete;
-  cuBLASHandle& operator=(const cuBLASHandle&) = delete;
+  cuBLASHandle(const cuBLASHandle &) = delete;
+  cuBLASHandle &operator=(const cuBLASHandle &) = delete;
 
   /**
    * @brief Destructor that releases the cuBLAS handle if initialized.
@@ -87,11 +87,11 @@ class cuBLASHandle {
    * @return An opaque pointer to the cuBLAS handle associated with the stream.
    * @throws std::invalid_argument if stream is nullptr
    */
-  void* GetHandle(cudaStream_t stream);
+  void *GetHandle(cudaStream_t stream);
 
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
-  void* handle_ = nullptr;         ///< The cuBLAS handle.
+private:
+  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream.
+  void *handle_ = nullptr;        ///< The cuBLAS handle.
 };
 
-}  // namespace cunls
+} // namespace cunls

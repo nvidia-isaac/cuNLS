@@ -20,13 +20,13 @@
 #include <cassert>
 #include <cstring>
 
-#include <cudss.h>
 #include "cunls/common/log.h"
+#include <cudss.h>
 
 namespace cunls {
 
 /** @copydoc cudssGetErrorString */
-const char* cudssGetErrorString(int status) {
+const char *cudssGetErrorString(int status) {
   if (status == CUDSS_STATUS_SUCCESS) {
     return "CUDSS_STATUS_SUCCESS";
   } else if (status == CUDSS_STATUS_NOT_INITIALIZED) {
@@ -46,14 +46,14 @@ const char* cudssGetErrorString(int status) {
 }
 
 cuDSSDeviceMemPool::~cuDSSDeviceMemPool() {
-  for (auto& block : blocks_) {
+  for (auto &block : blocks_) {
     if (block.ptr != nullptr) {
       WARN_ON_CUDA_ERROR(cudaFree(block.ptr));
     }
   }
 }
 
-int cuDSSDeviceMemPool::Alloc(void** ptr, size_t size, cudaStream_t stream) {
+int cuDSSDeviceMemPool::Alloc(void **ptr, size_t size, cudaStream_t stream) {
   (void)stream;
   if (ptr == nullptr) {
     return cudaErrorInvalidValue;
@@ -67,7 +67,7 @@ int cuDSSDeviceMemPool::Alloc(void** ptr, size_t size, cudaStream_t stream) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   // Reuse any available block that already has enough capacity.
-  for (auto& block : blocks_) {
+  for (auto &block : blocks_) {
     if (!block.in_use && block.capacity >= size) {
       block.in_use = true;
       *ptr = block.ptr;
@@ -76,7 +76,7 @@ int cuDSSDeviceMemPool::Alloc(void** ptr, size_t size, cudaStream_t stream) {
   }
 
   // Grow the first available block when requested size does not fit.
-  for (auto& block : blocks_) {
+  for (auto &block : blocks_) {
     if (!block.in_use) {
       if (block.ptr != nullptr) {
         auto free_status = cudaFreeAsync(block.ptr, stream);
@@ -110,7 +110,7 @@ int cuDSSDeviceMemPool::Alloc(void** ptr, size_t size, cudaStream_t stream) {
   return cudaSuccess;
 }
 
-int cuDSSDeviceMemPool::Dealloc(void* ptr, size_t size, cudaStream_t stream) {
+int cuDSSDeviceMemPool::Dealloc(void *ptr, size_t size, cudaStream_t stream) {
   (void)size;
   (void)stream;
   if (ptr == nullptr) {
@@ -118,7 +118,7 @@ int cuDSSDeviceMemPool::Dealloc(void* ptr, size_t size, cudaStream_t stream) {
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  for (auto& block : blocks_) {
+  for (auto &block : blocks_) {
     if (block.ptr == ptr) {
       block.in_use = false;
       return cudaSuccess;
@@ -128,30 +128,31 @@ int cuDSSDeviceMemPool::Dealloc(void* ptr, size_t size, cudaStream_t stream) {
   return cudaErrorInvalidDevicePointer;
 }
 
-int cuDSSDeviceMemPoolAlloc(void* ctx, void** ptr, size_t size,
+int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size,
                             cudaStream_t stream) {
   if (ctx == nullptr) {
     return cudaErrorInvalidResourceHandle;
   }
-  return reinterpret_cast<cuDSSDeviceMemPool*>(ctx)->Alloc(ptr, size, stream);
+  return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Alloc(ptr, size, stream);
 }
 
-int cuDSSDeviceMemPoolDealloc(void* ctx, void* ptr, size_t size,
+int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size,
                               cudaStream_t stream) {
   if (ctx == nullptr) {
     return cudaErrorInvalidResourceHandle;
   }
-  return reinterpret_cast<cuDSSDeviceMemPool*>(ctx)->Dealloc(ptr, size, stream);
+  return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Dealloc(ptr, size,
+                                                              stream);
 }
 
-void SetcuDSSDeviceMemHandler(void* handle, cuDSSDeviceMemPool& pool,
-                              const char* handler_name) {
+void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool,
+                              const char *handler_name) {
   if (handle == nullptr) {
     return;
   }
 
   cudssDeviceMemHandler_t handler{};
-  handler.ctx = reinterpret_cast<void*>(&pool);
+  handler.ctx = reinterpret_cast<void *>(&pool);
   handler.device_alloc = cuDSSDeviceMemPoolAlloc;
   handler.device_free = cuDSSDeviceMemPoolDealloc;
   std::strncpy(handler.name,
@@ -167,7 +168,7 @@ void SetcuDSSDeviceMemHandler(void* handle, cuDSSDeviceMemPool& pool,
       reinterpret_cast<cudssHandle_t>(handle), &handler));
 }
 
-void DetachcuDSSDeviceMemHandler(void* handle) {
+void DetachcuDSSDeviceMemHandler(void *handle) {
   if (handle == nullptr) {
     return;
   }
@@ -188,7 +189,7 @@ cuDSSHandle::~cuDSSHandle() {
 }
 
 /** @copydoc cuDSSHandle::GetHandle */
-void* cuDSSHandle::GetHandle(cudaStream_t stream) {
+void *cuDSSHandle::GetHandle(cudaStream_t stream) {
   // Validate input stream
   if (stream == nullptr) {
     const std::string msg = "cuDSSHandle received invalid CUDA stream.";
@@ -213,7 +214,7 @@ void* cuDSSHandle::GetHandle(cudaStream_t stream) {
   cudssHandle_t h = nullptr;
   THROW_ON_CUDSS_ERROR(cudssCreate(&h));
   THROW_ON_CUDSS_ERROR(cudssSetStream(h, stream_));
-  handle_ = reinterpret_cast<void*>(h);
+  handle_ = reinterpret_cast<void *>(h);
   return handle_;
 }
 
@@ -225,16 +226,16 @@ void* cuDSSHandle::GetHandle(cudaStream_t stream) {
  *
  * @param symmetric_matrix The CSR sparse matrix to wrap. Must be symmetric.
  */
-cuDSSDescription::cuDSSDescription(const CSRSparseMatrix& symmetric_matrix) {
+cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   // Extract matrix dimensions from CSR format
   size_t matrix_size = symmetric_matrix.NumRows();
   size_t num_nonzeros = symmetric_matrix.NumNonZeros();
 
   // Get raw device pointers from thrust vectors
   // const_cast is required by cuDSS API but data is not modified
-  auto rows_ptr = const_cast<int*>(symmetric_matrix.row_offsets.data());
-  auto cols_ptr = const_cast<int*>(symmetric_matrix.col_ids.data());
-  auto values_ptr = const_cast<float*>(symmetric_matrix.values.data());
+  auto rows_ptr = const_cast<int *>(symmetric_matrix.row_offsets.data());
+  auto cols_ptr = const_cast<int *>(symmetric_matrix.col_ids.data());
+  auto values_ptr = const_cast<float *>(symmetric_matrix.values.data());
 
   cudssMatrix_t mat = nullptr;
   // Create cuDSS CSR matrix descriptor
@@ -251,7 +252,7 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix& symmetric_matrix) {
       CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
 #endif
 
-  matrix_ = reinterpret_cast<void*>(mat);
+  matrix_ = reinterpret_cast<void *>(mat);
 }
 
 /**
@@ -263,18 +264,18 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix& symmetric_matrix) {
  *
  * @param vector The dense vector to wrap.
  */
-cuDSSDescription::cuDSSDescription(const dvector<float>& vector) {
+cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
   size_t size = vector.size();
   // Get raw device pointer from thrust vector
   // const_cast is required by cuDSS API but data is not modified
-  auto ptr = const_cast<float*>(vector.data());
+  auto ptr = const_cast<float *>(vector.data());
   // Create dense matrix descriptor with dimensions (size x 1) to represent a
   // vector
 
   cudssMatrix_t mat = nullptr;
   THROW_ON_CUDSS_ERROR(cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F,
                                            CUDSS_LAYOUT_COL_MAJOR));
-  matrix_ = reinterpret_cast<void*>(mat);
+  matrix_ = reinterpret_cast<void *>(mat);
 }
 
 /**
@@ -317,7 +318,7 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
   THROW_ON_CUDSS_ERROR(
       cudssConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
-  config_ = reinterpret_cast<void*>(cfg);
+  config_ = reinterpret_cast<void *>(cfg);
 }
 
 /**
@@ -334,7 +335,7 @@ cuDSSConfig::~cuDSSConfig() {
 }
 
 /** @copydoc cuDSSData::GetData */
-void* cuDSSData::GetData(void* handle) {
+void *cuDSSData::GetData(void *handle) {
   assert(handle != nullptr);
   // Return existing data object if already associated with the requested handle
   if (handle == handle_ && data_ != nullptr) {
@@ -350,7 +351,7 @@ void* cuDSSData::GetData(void* handle) {
   handle_ = handle;
   cudssData_t cudss_data = nullptr;
   THROW_ON_CUDSS_ERROR(cudssDataCreate((cudssHandle_t)handle_, &cudss_data));
-  data_ = reinterpret_cast<void*>(cudss_data);
+  data_ = reinterpret_cast<void *>(cudss_data);
   return data_;
 }
 
@@ -367,4 +368,4 @@ cuDSSData::~cuDSSData() {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

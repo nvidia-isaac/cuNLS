@@ -32,11 +32,11 @@ constexpr int kWarpSize = 32;
 // for symmetric matrices (the Gauss-Newton Hessian J^T J), for which
 // row-major == column-major (A == A^T).  Do NOT use this kernel for
 // non-symmetric inputs without first transposing the layout.
-__global__ void csr_to_dense_kernel(const int* __restrict__ row_offsets,
-                                    const int* __restrict__ col_ids,
-                                    const float* __restrict__ values,
+__global__ void csr_to_dense_kernel(const int *__restrict__ row_offsets,
+                                    const int *__restrict__ col_ids,
+                                    const float *__restrict__ values,
                                     int num_rows,
-                                    float* __restrict__ dense_matrix) {
+                                    float *__restrict__ dense_matrix) {
   const int row = (blockIdx.x * blockDim.x + threadIdx.x) / kWarpSize;
   if (row >= num_rows) {
     return;
@@ -44,18 +44,18 @@ __global__ void csr_to_dense_kernel(const int* __restrict__ row_offsets,
   const int lane = threadIdx.x % kWarpSize;
   const int row_start = row_offsets[row];
   const int row_end = row_offsets[row + 1];
-  float* const dense_row = dense_matrix + row * num_rows;
+  float *const dense_row = dense_matrix + row * num_rows;
   for (int idx = row_start + lane; idx < row_end; idx += kWarpSize) {
     dense_row[col_ids[idx]] = values[idx];
   }
 }
 
-}  // namespace
+} // namespace
 
 bool DenseCholeskySolver::Initialize(cudaStream_t stream,
-                                     const CSRSparseMatrix& spd_matrix,
-                                     const dvector<float>& rhs,
-                                     dvector<float>& result) {
+                                     const CSRSparseMatrix &spd_matrix,
+                                     const dvector<float> &rhs,
+                                     dvector<float> &result) {
   const size_t matrix_size = spd_matrix.NumRows();
   if (matrix_size != rhs.size()) {
     LogError("LHS size: {} does not match RHS size: {}", matrix_size,
@@ -72,9 +72,9 @@ bool DenseCholeskySolver::Initialize(cudaStream_t stream,
 }
 
 bool DenseCholeskySolver::Solve(cudaStream_t stream,
-                                const CSRSparseMatrix& spd_matrix,
-                                const dvector<float>& rhs,
-                                dvector<float>& result) {
+                                const CSRSparseMatrix &spd_matrix,
+                                const dvector<float> &rhs,
+                                dvector<float> &result) {
   const size_t matrix_size = spd_matrix.NumRows();
   if (matrix_size != rhs.size()) {
     LogError("LHS size: {} does not match RHS size: {}", matrix_size,
@@ -97,10 +97,10 @@ bool DenseCholeskySolver::Solve(cudaStream_t stream,
   auto handle =
       static_cast<cusolverDnHandle_t>(cusolver_handle_.GetHandle(stream));
 
-  THROW_ON_CUSOLVER_ERROR(cusolverDnSpotrf(
-      handle, CUBLAS_FILL_MODE_LOWER, n, dense_matrix_.data(), n,
-      workspace_.data(), static_cast<int>(workspace_.size()),
-      dev_info_.data()));
+  THROW_ON_CUSOLVER_ERROR(
+      cusolverDnSpotrf(handle, CUBLAS_FILL_MODE_LOWER, n, dense_matrix_.data(),
+                       n, workspace_.data(),
+                       static_cast<int>(workspace_.size()), dev_info_.data()));
 
   if (safety_checks_enabled_) {
     // Check devInfo from potrf before proceeding to potrs, since potrs would
@@ -108,8 +108,8 @@ bool DenseCholeskySolver::Solve(cudaStream_t stream,
     // not positive-definite; devInfo < 0 means the devInfo-th parameter was
     // invalid.
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(dev_info_pinned_.data(),
-                                         dev_info_.data(), sizeof(int),
-                                         cudaMemcpyDeviceToHost, stream));
+                                        dev_info_.data(), sizeof(int),
+                                        cudaMemcpyDeviceToHost, stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
     if (dev_info_pinned_[0] != 0) {
@@ -122,17 +122,17 @@ bool DenseCholeskySolver::Solve(cudaStream_t stream,
 
   // potrs solves in-place on the RHS buffer, so copy rhs -> result first.
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(result.data(), rhs.data(),
-                                       n * sizeof(float),
-                                       cudaMemcpyDeviceToDevice, stream));
+                                      n * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, stream));
 
-  THROW_ON_CUSOLVER_ERROR(cusolverDnSpotrs(
-      handle, CUBLAS_FILL_MODE_LOWER, n, 1, dense_matrix_.data(), n,
-      result.data(), n, dev_info_.data()));
+  THROW_ON_CUSOLVER_ERROR(cusolverDnSpotrs(handle, CUBLAS_FILL_MODE_LOWER, n, 1,
+                                           dense_matrix_.data(), n,
+                                           result.data(), n, dev_info_.data()));
 
   if (safety_checks_enabled_) {
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(dev_info_pinned_.data(),
-                                         dev_info_.data(), sizeof(int),
-                                         cudaMemcpyDeviceToHost, stream));
+                                        dev_info_.data(), sizeof(int),
+                                        cudaMemcpyDeviceToHost, stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
     if (dev_info_pinned_[0] < 0) {
@@ -141,8 +141,7 @@ bool DenseCholeskySolver::Solve(cudaStream_t stream,
       return false;
     }
     if (dev_info_pinned_[0] > 0) {
-      LogError("cusolverDnSpotrs failed (devInfo = {}).",
-               dev_info_pinned_[0]);
+      LogError("cusolverDnSpotrs failed (devInfo = {}).", dev_info_pinned_[0]);
       return false;
     }
   }
@@ -173,8 +172,8 @@ void DenseCholeskySolver::EnsureBuffersSize(cudaStream_t stream, size_t n) {
 }
 
 void DenseCholeskySolver::ConvertCSRToDense(cudaStream_t stream,
-                                            const CSRSparseMatrix& matrix,
-                                            dvector<float>& dense_matrix) {
+                                            const CSRSparseMatrix &matrix,
+                                            dvector<float> &dense_matrix) {
   const int num_rows = static_cast<int>(matrix.NumRows());
   if (num_rows == 0) {
     return;
@@ -192,4 +191,4 @@ void DenseCholeskySolver::ConvertCSRToDense(cudaStream_t stream,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,10 +33,10 @@
 #include "cunls/robustifier/arctan_loss_function_batch.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
+#include "cunls/robustifier/scaled_loss_function_batch.h"
 #include "cunls/robustifier/soft_lone_loss_function_batch.h"
 #include "cunls/robustifier/tolerant_loss_function_batch.h"
 #include "cunls/robustifier/trivial_loss_function_batch.h"
-#include "cunls/robustifier/scaled_loss_function_batch.h"
 #include "cunls/robustifier/tukey_loss_function_batch.h"
 #include "tests/utils.h"
 
@@ -45,10 +45,11 @@ namespace cunls {
 /**
  * @brief Test fixture for loss function evaluation on GPU.
  *
- * Generates random squared errors on device and provides buffers for rho output.
+ * Generates random squared errors on device and provides buffers for rho
+ * output.
  */
 class LossTest : public ::testing::Test {
- protected:
+protected:
   /** @brief Initializes device vectors with random squared error values. */
   void SetUp() override {
     squared_errors.resize(num_errors);
@@ -71,7 +72,8 @@ class LossTest : public ::testing::Test {
   profiler::Domain profiler_domain_{"LossTest"};
 };
 
-/** @brief Verifies that the trivial loss returns identity-like rho values (rho=[s, 1, 0]). */
+/** @brief Verifies that the trivial loss returns identity-like rho values
+ * (rho=[s, 1, 0]). */
 TEST_F(LossTest, TrivialLoss) {
   auto test_range = this->profiler_domain_.CreateDomainRange("TrivialLoss");
   CudaStream stream;
@@ -100,7 +102,8 @@ TEST_F(LossTest, TrivialLoss) {
   }
 }
 
-/** @brief Verifies that the Huber loss GPU output matches the CPU reference for a random delta. */
+/** @brief Verifies that the Huber loss GPU output matches the CPU reference for
+ * a random delta. */
 TEST_F(LossTest, HuberLoss) {
   auto test_range = this->profiler_domain_.CreateDomainRange("HuberLoss");
   CudaStream stream;
@@ -325,4 +328,4 @@ TEST_F(LossTest, ScaledTrivialLoss) {
     ASSERT_NEAR(host_rho[i].z, 0.0f, 1e-4f);
   }
 }
-}  // namespace cunls
+} // namespace cunls

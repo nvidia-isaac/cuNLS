@@ -24,16 +24,16 @@
 
 namespace cunls {
 
-SparseMatrixMultiplierPtr CreateSparseMatrixMultiplier(
-    SparseMatrixMultiplierType type) {
+SparseMatrixMultiplierPtr
+CreateSparseMatrixMultiplier(SparseMatrixMultiplierType type) {
   switch (type) {
-    case SparseMatrixMultiplierType::cuSPARSE:
-      return std::make_unique<cuSPARSESparseMatrixMultiplier>();
-    case SparseMatrixMultiplierType::Fast:
-      return std::make_unique<FastSparseMatrixMultiplier>();
-    default:
-      throw std::invalid_argument("Invalid sparse square multiplier type");
+  case SparseMatrixMultiplierType::cuSPARSE:
+    return std::make_unique<cuSPARSESparseMatrixMultiplier>();
+  case SparseMatrixMultiplierType::Fast:
+    return std::make_unique<FastSparseMatrixMultiplier>();
+  default:
+    throw std::invalid_argument("Invalid sparse square multiplier type");
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

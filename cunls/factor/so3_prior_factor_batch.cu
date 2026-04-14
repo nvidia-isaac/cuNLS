@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,15 +33,17 @@ constexpr size_t kSO3BlockSize = 256;
  * the per-thread inline multiply is ~50x faster than cuBLAS due to eliminated
  * launch overhead and register pressure.
  */
-__global__ void collect_and_multiply_so3_kernel(
-    float const* const* state_pointers, const Matrix<3>* targets,
-    size_t num_factors, Matrix<3>* errors) {
+__global__ void
+collect_and_multiply_so3_kernel(float const *const *state_pointers,
+                                const Matrix<3> *targets, size_t num_factors,
+                                Matrix<3> *errors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_factors)
+    return;
 
-  const float* __restrict__ C = state_pointers[tid];
-  const float* __restrict__ T = targets[tid].data();
-  float* __restrict__ out = errors[tid].data();
+  const float *__restrict__ C = state_pointers[tid];
+  const float *__restrict__ T = targets[tid].data();
+  float *__restrict__ out = errors[tid].data();
 
   // Load both 3x3 matrices into registers
   const float c0 = C[0], c1 = C[1], c2 = C[2];
@@ -64,31 +66,29 @@ __global__ void collect_and_multiply_so3_kernel(
   out[8] = t2 * c2 + t5 * c5 + t8 * c8;
 }
 
-SO3PriorFactorBatch::SO3PriorFactorBatch(const Matrix<3>* observations_ptr,
+SO3PriorFactorBatch::SO3PriorFactorBatch(const Matrix<3> *observations_ptr,
                                          size_t num_factors)
-    : observations_ptr_(observations_ptr),
-      num_factors_(num_factors),
+    : observations_ptr_(observations_ptr), num_factors_(num_factors),
       rotations_error_(num_factors) {}
 
-bool SO3PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
-                                         float const* const* state_pointers,
-                                         cudaStream_t stream) const {
+bool SO3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                   float const *const *state_pointers,
+                                   cudaStream_t stream) const {
   size_t num_factors = NumFactors();
 
   // Fused collect + R_target^T * R_current in one kernel launch
   size_t num_blocks = (num_factors + kSO3BlockSize - 1) / kSO3BlockSize;
   collect_and_multiply_so3_kernel<<<num_blocks, kSO3BlockSize, 0, stream>>>(
-      state_pointers, observations_ptr_, num_factors,
-      rotations_error_.data());
+      state_pointers, observations_ptr_, num_factors, rotations_error_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Compute residual = Log(R_error)
   constexpr size_t rotation_pitch = 3;
   constexpr size_t rotation_stride = 9;
   constexpr size_t twist_stride = 3;
-  ComputeLogSO3(stream, reinterpret_cast<const float*>(rotations_error_.data()),
-                rotation_pitch, rotation_stride, twist_stride, num_factors,
-                residuals);
+  ComputeLogSO3(
+      stream, reinterpret_cast<const float *>(rotations_error_.data()),
+      rotation_pitch, rotation_stride, twist_stride, num_factors, residuals);
 
   if (jacobians != nullptr) {
     constexpr size_t jacobian_pitch = 3;
@@ -101,4 +101,4 @@ bool SO3PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

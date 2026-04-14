@@ -1,12 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file so2_manifold_test.cpp
- * @brief Unified SO(2) manifold tests: state batch dimensions, prior and between
- *        factor LM convergence.
+ * @brief Unified SO(2) manifold tests: state batch dimensions, prior and
+ * between factor LM convergence.
  */
 
 #include <gtest/gtest.h>
@@ -36,7 +36,7 @@ Matrix<2> MakeSO2(float theta) {
 
 Matrix<2> MakeSO2Identity() { return {1.0f, 0.0f, 0.0f, 1.0f}; }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -48,8 +48,8 @@ TEST(SO2ManifoldTest, StateDimensions) {
   dvector<Matrix<2>> rots_dev(rots);
 
   cuBLASHandle cublas;
-  SO2StateBatch states(cublas,
-                       reinterpret_cast<const float*>(rots_dev.data()), kN);
+  SO2StateBatch states(cublas, reinterpret_cast<const float *>(rots_dev.data()),
+                       kN);
 
   EXPECT_EQ(states.TangentSize(), 1u);
   EXPECT_EQ(states.AmbientSize(), 4u);
@@ -63,8 +63,8 @@ TEST(SO2ManifoldTest, StateDimensions) {
 TEST(SO2ManifoldTest, PriorLMConvergence) {
   constexpr size_t kN = 10000;
   std::mt19937 rng(42);
-  std::uniform_real_distribution<float> angle_dist(
-      -static_cast<float>(M_PI), static_cast<float>(M_PI));
+  std::uniform_real_distribution<float> angle_dist(-static_cast<float>(M_PI),
+                                                   static_cast<float>(M_PI));
   std::uniform_real_distribution<float> pert_dist(-0.3f, 0.3f);
 
   hvector<Matrix<2>> targets(kN), initials(kN);
@@ -78,10 +78,10 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
 
   cuBLASHandle cublas;
   SO2StateBatch state_batch(
-      cublas, reinterpret_cast<const float*>(initials_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
   SO2PriorFactorBatch factor_batch(targets_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_batch.StateBlockDevicePtr(i));
@@ -103,8 +103,7 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, 1e-4f);
@@ -112,10 +111,9 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<2>> optimized(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(),
-                                 state_batch.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<2>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 4; ++j) {
@@ -132,8 +130,8 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
 TEST(SO2ManifoldTest, BetweenLMConvergence) {
   constexpr size_t kN = 2000;
   std::mt19937 rng1(60), rng2(61);
-  std::uniform_real_distribution<float> angle_dist(
-      -static_cast<float>(M_PI), static_cast<float>(M_PI));
+  std::uniform_real_distribution<float> angle_dist(-static_cast<float>(M_PI),
+                                                   static_cast<float>(M_PI));
 
   hvector<Matrix<2>> rots_left(kN), rots_right(kN);
   for (size_t i = 0; i < kN; ++i) {
@@ -147,12 +145,12 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
 
   cuBLASHandle cublas;
   SO2StateBatch state_left(
-      cublas, reinterpret_cast<const float*>(left_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
   SO2StateBatch state_right(
-      cublas, reinterpret_cast<const float*>(right_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
   SO2BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_left.StateBlockDevicePtr(i));
@@ -176,22 +174,19 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, summary.initial_cost);
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<2>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(),
-                                 state_left.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<2>),
-                                 cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(),
-                                 state_right.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<2>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 4; ++j) {
@@ -201,4 +196,4 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

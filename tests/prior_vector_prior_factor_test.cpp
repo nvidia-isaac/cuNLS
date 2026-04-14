@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,9 +43,8 @@ namespace cunls {
  *
  * @tparam VectorSize Compile-time vector dimension.
  */
-template <class VectorSize>
-class PriorVectorCostTest : public ::testing::Test {
- public:
+template <class VectorSize> class PriorVectorCostTest : public ::testing::Test {
+public:
   static constexpr int kDim = VectorSize::size;
 
   /** @brief Allocates device buffers for residuals and Jacobians. */
@@ -67,7 +66,8 @@ typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>,
     VectorSizes;
 TYPED_TEST_CASE(PriorVectorCostTest, VectorSizes);
 
-/** @brief Verifies that residual evaluation produces correct (state - observation) values. */
+/** @brief Verifies that residual evaluation produces correct (state -
+ * observation) values. */
 TYPED_TEST(PriorVectorCostTest, Residual) {
   auto test_range = this->profiler_domain_.CreateDomainRange("ResidualTest");
   CudaStream stream;
@@ -75,19 +75,19 @@ TYPED_TEST(PriorVectorCostTest, Residual) {
   auto seq_vecs =
       test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors_);
   test_utils::VectorStateData<TestFixture::kDim> states_data(seq_vecs);
-  auto& states = states_data.get();
+  auto &states = states_data.get();
   auto state_pointers = test_utils::CollectStatePointersDevice(states);
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors_, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(
-      obs_vecs);
-  auto& factor_batch = factor_data.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
+  auto &factor_batch = factor_data.get();
 
-  float* residuals_ptr = this->residuals_.data();
-  float** state_ptrs = state_pointers.data();
+  float *residuals_ptr = this->residuals_.data();
+  float **state_ptrs = state_pointers.data();
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Residual");
-    factor_batch.Evaluate(residuals_ptr, nullptr, state_ptrs, stream.GetStream());
+    factor_batch.Evaluate(residuals_ptr, nullptr, state_ptrs,
+                          stream.GetStream());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -105,20 +105,21 @@ TYPED_TEST(PriorVectorCostTest, Residual) {
   }
 }
 
-/** @brief Verifies that StateBlockSizes() reports the correct single block size. */
+/** @brief Verifies that StateBlockSizes() reports the correct single block
+ * size. */
 TYPED_TEST(PriorVectorCostTest, StateBlockSizes) {
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors_, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(
-      obs_vecs);
-  auto& factor_batch = factor_data.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
+  auto &factor_batch = factor_data.get();
 
   auto state_block_sizes = factor_batch.StateBlockSizes();
   ASSERT_EQ(state_block_sizes.size(), 1);
   ASSERT_EQ(state_block_sizes[0], TypeParam::size);
 }
 
-/** @brief Verifies that Jacobian evaluation produces the expected identity matrix per block. */
+/** @brief Verifies that Jacobian evaluation produces the expected identity
+ * matrix per block. */
 TYPED_TEST(PriorVectorCostTest, Jacobian) {
   auto test_range = this->profiler_domain_.CreateDomainRange("JacobianTest");
   CudaStream stream;
@@ -126,16 +127,15 @@ TYPED_TEST(PriorVectorCostTest, Jacobian) {
   auto seq_vecs =
       test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors_);
   test_utils::VectorStateData<TestFixture::kDim> states_data(seq_vecs);
-  auto& states = states_data.get();
+  auto &states = states_data.get();
   auto state_pointers = test_utils::CollectStatePointersDevice(states);
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors_, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(
-      obs_vecs);
-  auto& factor_batch = factor_data.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
+  auto &factor_batch = factor_data.get();
 
-  float* jac_ptr = this->jacobians_.data();
-  float** state_ptrs = state_pointers.data();
+  float *jac_ptr = this->jacobians_.data();
+  float **state_ptrs = state_pointers.data();
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Jacobian");
     factor_batch.Evaluate(nullptr, jac_ptr, state_ptrs, stream.GetStream());
@@ -157,4 +157,4 @@ TYPED_TEST(PriorVectorCostTest, Jacobian) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

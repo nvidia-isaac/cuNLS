@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,8 @@
 
 /**
  * @file sparse_matrix_test.cpp
- * @brief Unit tests for sparse matrix operations (COO-to-CSR, diagonal, copy, SpMV, RHS).
+ * @brief Unit tests for sparse matrix operations (COO-to-CSR, diagonal, copy,
+ * SpMV, RHS).
  *
  * Tests GPU implementations of triplet-to-CSR conversion, diagonal extraction,
  * scaled diagonal addition, matrix copy, weighted squared step norms, and
@@ -63,12 +64,12 @@ struct Triplet {
  * @param csr_col_indices Output CSR column indices.
  * @param csr_row_pointers Output CSR row pointers.
  */
-void ConvertTripletToCSRCPU(const std::vector<float>& coo_values,
-                            const std::vector<int>& coo_col_indices,
-                            const std::vector<int>& coo_row_indices,
-                            std::vector<float>& csr_values,
-                            std::vector<int>& csr_col_indices,
-                            std::vector<int>& csr_row_pointers) {
+void ConvertTripletToCSRCPU(const std::vector<float> &coo_values,
+                            const std::vector<int> &coo_col_indices,
+                            const std::vector<int> &coo_row_indices,
+                            std::vector<float> &csr_values,
+                            std::vector<int> &csr_col_indices,
+                            std::vector<int> &csr_row_pointers) {
   // Create triplet representation for easier sorting
   std::vector<Triplet> triplets;
   triplets.reserve(coo_values.size());
@@ -78,7 +79,7 @@ void ConvertTripletToCSRCPU(const std::vector<float>& coo_values,
 
   // Sort triplets, moving invalid entries (col_id == -1) to the end
   std::stable_sort(triplets.begin(), triplets.end(),
-                   [](const Triplet& left, const Triplet& right) {
+                   [](const Triplet &left, const Triplet &right) {
                      return right.col_id < 0;
                    });
 
@@ -94,7 +95,7 @@ void ConvertTripletToCSRCPU(const std::vector<float>& coo_values,
   // Step 1: Count non-zeros per row
   std::vector<int> row_counts(num_rows, 0);
   for (size_t i = 0; i < num_nonzeros; i++) {
-    const Triplet& triplet = triplets[i];
+    const Triplet &triplet = triplets[i];
     row_counts[triplet.row_id]++;
   }
 
@@ -113,13 +114,12 @@ void ConvertTripletToCSRCPU(const std::vector<float>& coo_values,
   // Track the current position for each row as we fill the arrays
   std::vector<int> current_row_positions = csr_row_pointers;
   for (size_t i = 0; i < num_nonzeros; i++) {
-    const Triplet& triplet = triplets[i];
+    const Triplet &triplet = triplets[i];
     int target_index = current_row_positions[triplet.row_id];
     csr_values[target_index] = triplet.value;
     csr_col_indices[target_index] = triplet.col_id;
     current_row_positions[triplet.row_id]++;
   }
-
 }
 
 /**
@@ -131,11 +131,11 @@ void ConvertTripletToCSRCPU(const std::vector<float>& coo_values,
  * @param x Input vector.
  * @param y Output result vector.
  */
-void MultiplyCSRMatrixByVector(const std::vector<int>& row_ptr,
-                               const std::vector<int>& col_idx,
-                               const std::vector<float>& values,
-                               const std::vector<float>& x,
-                               std::vector<float>& y) {
+void MultiplyCSRMatrixByVector(const std::vector<int> &row_ptr,
+                               const std::vector<int> &col_idx,
+                               const std::vector<float> &values,
+                               const std::vector<float> &x,
+                               std::vector<float> &y) {
   int rows = row_ptr.size() - 1;
   y.assign(rows, 0.0);
 
@@ -156,14 +156,14 @@ void MultiplyCSRMatrixByVector(const std::vector<int>& row_ptr,
  * @param x Input vector.
  * @param y Output result vector.
  */
-void ComputeRHSonCPU(const std::vector<int>& row_ptr,
-                     const std::vector<int>& col_idx,
-                     const std::vector<float>& values,
-                     const std::vector<float>& x, std::vector<float>& y) {
+void ComputeRHSonCPU(const std::vector<int> &row_ptr,
+                     const std::vector<int> &col_idx,
+                     const std::vector<float> &values,
+                     const std::vector<float> &x, std::vector<float> &y) {
   int rows = row_ptr.size() - 1;
   int cols = rows;
 
-  y.assign(cols, 0.0);  // A^T * x has size equal to number of columns in A
+  y.assign(cols, 0.0); // A^T * x has size equal to number of columns in A
 
   // For transpose multiplication, iterate through rows but accumulate into
   // columns
@@ -171,7 +171,7 @@ void ComputeRHSonCPU(const std::vector<int>& row_ptr,
     float xi = x[i];
     for (int j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
       int col = col_idx[j];
-      y[col] -= values[j] * xi;  // Note: negative sign
+      y[col] -= values[j] * xi; // Note: negative sign
     }
   }
 }
@@ -184,10 +184,10 @@ void ComputeRHSonCPU(const std::vector<int>& row_ptr,
  * @param values CSR values.
  * @param diagonal Output diagonal vector.
  */
-void ExtractDiagonalCPU(const std::vector<int>& row_ptr,
-                        const std::vector<int>& col_idx,
-                        const std::vector<float>& values,
-                        std::vector<float>& diagonal) {
+void ExtractDiagonalCPU(const std::vector<int> &row_ptr,
+                        const std::vector<int> &col_idx,
+                        const std::vector<float> &values,
+                        std::vector<float> &diagonal) {
   size_t rows = row_ptr.size() - 1;
 
   diagonal.clear();
@@ -198,7 +198,7 @@ void ExtractDiagonalCPU(const std::vector<int>& row_ptr,
     for (int j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
       if (col_idx[j] == i) {
         diagonal[i] = values[j];
-        break;  // Found diagonal element for this row
+        break; // Found diagonal element for this row
       }
     }
   }
@@ -213,22 +213,22 @@ void ExtractDiagonalCPU(const std::vector<int>& row_ptr,
  * @param scale Scalar multiplier for the diagonal.
  * @param diagonal Diagonal vector to add.
  */
-void AddScaledDiagonalCPU(const std::vector<int>& row_ptr,
-                          const std::vector<int>& col_idx,
-                          std::vector<float>& values, float scale,
-                          const std::vector<float>& diagonal) {
+void AddScaledDiagonalCPU(const std::vector<int> &row_ptr,
+                          const std::vector<int> &col_idx,
+                          std::vector<float> &values, float scale,
+                          const std::vector<float> &diagonal) {
   // For each row, find and update the diagonal element
   for (size_t i = 0; i < diagonal.size(); ++i) {
     for (int j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
       if (col_idx[j] == i) {
         values[j] += scale * diagonal[i];
-        break;  // Found and updated diagonal element for this row
+        break; // Found and updated diagonal element for this row
       }
     }
   }
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief Test fixture for sparse matrix operations.
@@ -237,7 +237,7 @@ void AddScaledDiagonalCPU(const std::vector<int>& row_ptr,
  * for use across multiple test cases.
  */
 class SparseMatrixTest : public ::testing::Test {
- public:
+public:
   /**
    * @brief Generates a random sparse matrix in COO (triplet) format.
    *
@@ -247,7 +247,7 @@ class SparseMatrixTest : public ::testing::Test {
    * @param rng Random number generator.
    * @param rows Number of rows (and columns) in the square matrix.
    */
-  void GenerateRandomTripletMatrix(std::mt19937& rng, int rows) {
+  void GenerateRandomTripletMatrix(std::mt19937 &rng, int rows) {
     int cols = rows;
     std::uniform_real_distribution<float> val_dist(0.1, 1.0);
     std::uniform_int_distribution<int> col_dist(0, cols - 1);
@@ -259,7 +259,7 @@ class SparseMatrixTest : public ::testing::Test {
     for (int i = 0; i < rows; ++i) {
       // Each row has at least the diagonal element plus ~10% of columns
       int nnz_in_row = 1 + static_cast<int>(cols * sparsity);
-      std::unordered_set<int> used_cols{i};  // Start with diagonal
+      std::unordered_set<int> used_cols{i}; // Start with diagonal
 
       // Generate random column indices for this row
       while (used_cols.size() < nnz_in_row) {
@@ -309,7 +309,8 @@ class SparseMatrixTest : public ::testing::Test {
   profiler::Domain profiler_domain_{"SparseMatrixTest"};
 };
 
-/** @brief Verifies GPU two-step COO-to-CSR conversion matches the CPU reference. */
+/** @brief Verifies GPU two-step COO-to-CSR conversion matches the CPU
+ * reference. */
 TEST_F(SparseMatrixTest, ConvertTripletToCSR) {
   auto test_range =
       this->profiler_domain_.CreateDomainRange("ConvertTripletToCSRTest");
@@ -322,8 +323,10 @@ TEST_F(SparseMatrixTest, ConvertTripletToCSR) {
   sp_jacobian.values.resize(num_nonzeros);
 
   // Copy COO data to device memory
-  sp_jacobian.structure.row_ids.CopyFromHost(triplet_row_idx.data(), triplet_row_idx.size());
-  sp_jacobian.structure.col_ids.CopyFromHost(triplet_col_idx.data(), triplet_col_idx.size());
+  sp_jacobian.structure.row_ids.CopyFromHost(triplet_row_idx.data(),
+                                             triplet_row_idx.size());
+  sp_jacobian.structure.col_ids.CopyFromHost(triplet_col_idx.data(),
+                                             triplet_col_idx.size());
   sp_jacobian.values.CopyFromHost(triplet_values.data(), triplet_values.size());
 
   // Step 1: Convert structure to CSR and build mapping
@@ -354,15 +357,18 @@ TEST_F(SparseMatrixTest, ConvertTripletToCSR) {
   hvector<float> csr_values_host(csr_matrix.values.size());
   csr_matrix.values.CopyToHost(csr_values_host.data(), csr_values_host.size());
   hvector<int> csr_row_offsets_host(csr_matrix.row_offsets.size());
-  csr_matrix.row_offsets.CopyToHost(csr_row_offsets_host.data(), csr_row_offsets_host.size());
+  csr_matrix.row_offsets.CopyToHost(csr_row_offsets_host.data(),
+                                    csr_row_offsets_host.size());
   hvector<int> csr_col_ids_host(csr_matrix.col_ids.size());
-  csr_matrix.col_ids.CopyToHost(csr_col_ids_host.data(), csr_col_ids_host.size());
+  csr_matrix.col_ids.CopyToHost(csr_col_ids_host.data(),
+                                csr_col_ids_host.size());
   ASSERT_EQ(csr_values_host, csr_values);
   ASSERT_EQ(csr_row_offsets_host, csr_row_offsets);
   ASSERT_EQ(csr_col_ids_host, csr_col_idx);
 }
 
-/** @brief Verifies GPU diagonal extraction from a CSR matrix matches the CPU reference. */
+/** @brief Verifies GPU diagonal extraction from a CSR matrix matches the CPU
+ * reference. */
 TEST_F(SparseMatrixTest, ExtractDiagonal) {
   auto test_range = this->profiler_domain_.CreateDomainRange("ExtractDiagonal");
   // Prepare GPU matrix
@@ -386,11 +392,13 @@ TEST_F(SparseMatrixTest, ExtractDiagonal) {
 
   // Verify GPU result matches CPU reference
   hvector<float> device_diagonal_host(device_diagonal.size());
-  device_diagonal.CopyToHost(device_diagonal_host.data(), device_diagonal_host.size());
+  device_diagonal.CopyToHost(device_diagonal_host.data(),
+                             device_diagonal_host.size());
   ASSERT_EQ(device_diagonal_host, diagonal);
 }
 
-/** @brief Verifies GPU AddScaledDiagonal (A + scale * diag(d)) matches the CPU reference. */
+/** @brief Verifies GPU AddScaledDiagonal (A + scale * diag(d)) matches the CPU
+ * reference. */
 TEST_F(SparseMatrixTest, AddScaledDiagonal) {
   auto test_range =
       this->profiler_domain_.CreateDomainRange("AddScaledDiagonalTest");
@@ -423,9 +431,11 @@ TEST_F(SparseMatrixTest, AddScaledDiagonal) {
 
   // Verify structure is preserved
   hvector<int> result_row_offsets_host(result_matrix.row_offsets.size());
-  result_matrix.row_offsets.CopyToHost(result_row_offsets_host.data(), result_row_offsets_host.size());
+  result_matrix.row_offsets.CopyToHost(result_row_offsets_host.data(),
+                                       result_row_offsets_host.size());
   hvector<int> result_col_ids_host(result_matrix.col_ids.size());
-  result_matrix.col_ids.CopyToHost(result_col_ids_host.data(), result_col_ids_host.size());
+  result_matrix.col_ids.CopyToHost(result_col_ids_host.data(),
+                                   result_col_ids_host.size());
   ASSERT_EQ(result_row_offsets_host, csr_row_offsets);
   ASSERT_EQ(result_col_ids_host, csr_col_idx);
 
@@ -457,9 +467,11 @@ TEST_F(SparseMatrixTest, Copy) {
 
   // Verify structure is preserved
   hvector<int> result_row_offsets_host(result_matrix.row_offsets.size());
-  result_matrix.row_offsets.CopyToHost(result_row_offsets_host.data(), result_row_offsets_host.size());
+  result_matrix.row_offsets.CopyToHost(result_row_offsets_host.data(),
+                                       result_row_offsets_host.size());
   hvector<int> result_col_ids_host(result_matrix.col_ids.size());
-  result_matrix.col_ids.CopyToHost(result_col_ids_host.data(), result_col_ids_host.size());
+  result_matrix.col_ids.CopyToHost(result_col_ids_host.data(),
+                                   result_col_ids_host.size());
   ASSERT_EQ(result_row_offsets_host, csr_row_offsets);
   ASSERT_EQ(result_col_ids_host, csr_col_idx);
 
@@ -472,7 +484,8 @@ TEST_F(SparseMatrixTest, Copy) {
   }
 }
 
-/** @brief Verifies GPU vector-form weighted squared step norm: sum(steps[i]^2 * weights[i]). */
+/** @brief Verifies GPU vector-form weighted squared step norm: sum(steps[i]^2 *
+ * weights[i]). */
 TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepFirst) {
   auto test_range = this->profiler_domain_.CreateDomainRange(
       "ComputeWeightedSquaredStepFirstTest");
@@ -507,7 +520,8 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepFirst) {
   ASSERT_NEAR(result, gt_value, 1e-3);
 }
 
-/** @brief Verifies GPU matrix-form weighted squared step norm: steps^T * A * steps. */
+/** @brief Verifies GPU matrix-form weighted squared step norm: steps^T * A *
+ * steps. */
 TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
   auto test_range = this->profiler_domain_.CreateDomainRange(
       "ComputeWeightedSquaredStepSecondTest");
@@ -552,7 +566,8 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
   ASSERT_NEAR(result, gt_value, 1e-3);
 }
 
-/** @brief Verifies GPU RHS computation (y = -A^T * x) matches the CPU reference. */
+/** @brief Verifies GPU RHS computation (y = -A^T * x) matches the CPU
+ * reference. */
 TEST_F(SparseMatrixTest, ComputeRHS) {
   auto test_range = this->profiler_domain_.CreateDomainRange("ComputeRHSTest");
   // Generate random input vector
@@ -598,7 +613,8 @@ TEST(SparseMatrixColumnScaling, SymmetricScaling2x2) {
   std::vector<float> csr_values = {4.f, 1.f, 1.f, 9.f};
 
   CSRSparseMatrix h;
-  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, h);
+  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values,
+                                    h);
 
   std::vector<float> host_scale = {0.5f, 1.f / 3.f};
   dvector<float> scale(host_scale);
@@ -615,4 +631,4 @@ TEST(SparseMatrixColumnScaling, SymmetricScaling2x2) {
   ASSERT_NEAR(out[3], 1.f, 1e-4f);
 }
 
-}  // namespace cunls
+} // namespace cunls

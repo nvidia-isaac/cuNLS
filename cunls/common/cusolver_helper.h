@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ namespace cunls {
  * @param status The cuSolver status code to convert
  * @return C-string containing the error message
  */
-const char* cusolverGetErrorString(int status);
+const char *cusolverGetErrorString(int status);
 
 /**
  * @brief Macro that throws an exception if cuSolver operation fails.
@@ -38,7 +38,7 @@ const char* cusolverGetErrorString(int status);
  * Checks the cuSolver status and throws std::runtime_error with a descriptive
  * message if the status indicates an error.
  */
-#define THROW_ON_CUSOLVER_ERROR(status) \
+#define THROW_ON_CUSOLVER_ERROR(status)                                        \
   CHECK_CUDA_ERROR(status, cusolverGetErrorString, true)
 
 /**
@@ -47,7 +47,7 @@ const char* cusolverGetErrorString(int status);
  * Checks the cuSolver status and logs a warning message if the status indicates
  * an error, but does not throw an exception.
  */
-#define WARN_ON_CUSOLVER_ERROR(status) \
+#define WARN_ON_CUSOLVER_ERROR(status)                                         \
   CHECK_CUDA_ERROR(status, cusolverGetErrorString, false)
 
 /**
@@ -58,20 +58,20 @@ const char* cusolverGetErrorString(int status);
  * a specific CUDA stream when GetHandle is called.
  */
 class cuSolverHandle {
- public:
+public:
   /// Constructs a cuSolver handle (handle is created lazily on first GetHandle
   /// call)
   cuSolverHandle();
   /// Destroys the cuSolver handle
   ~cuSolverHandle();
 
-  cuSolverHandle(const cuSolverHandle&) = delete;
+  cuSolverHandle(const cuSolverHandle &) = delete;
 
-  cuSolverHandle& operator=(const cuSolverHandle&) = delete;
+  cuSolverHandle &operator=(const cuSolverHandle &) = delete;
 
-  cuSolverHandle(cuSolverHandle&&) = delete;
+  cuSolverHandle(cuSolverHandle &&) = delete;
 
-  cuSolverHandle& operator=(cuSolverHandle&&) = delete;
+  cuSolverHandle &operator=(cuSolverHandle &&) = delete;
 
   /**
    * @brief Gets or creates a cuSolver handle associated with the given stream.
@@ -82,14 +82,15 @@ class cuSolverHandle {
    *
    * @param stream CUDA stream to associate the handle with (must not be
    * nullptr)
-   * @return An opaque pointer to the cuSolver handle associated with the stream.
+   * @return An opaque pointer to the cuSolver handle associated with the
+   * stream.
    * @throws std::invalid_argument if stream is nullptr
    */
-  void* GetHandle(cudaStream_t stream);
+  void *GetHandle(cudaStream_t stream);
 
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
-  void* handle_ = nullptr;         ///< cuSolver handle
+private:
+  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream
+  void *handle_ = nullptr;        ///< cuSolver handle
 };
 
 /**
@@ -99,29 +100,29 @@ class cuSolverHandle {
  * symmetric eigenvalue decomposition.
  */
 class cuSolverInfo {
- public:
+public:
   /// Constructs a cuSolver info object
   cuSolverInfo();
   /// Destroys the cuSolver info object
   ~cuSolverInfo();
 
-  cuSolverInfo(const cuSolverInfo&) = delete;
+  cuSolverInfo(const cuSolverInfo &) = delete;
 
-  cuSolverInfo& operator=(const cuSolverInfo&) = delete;
+  cuSolverInfo &operator=(const cuSolverInfo &) = delete;
 
-  cuSolverInfo(cuSolverInfo&&) = delete;
+  cuSolverInfo(cuSolverInfo &&) = delete;
 
-  cuSolverInfo& operator=(cuSolverInfo&&) = delete;
+  cuSolverInfo &operator=(cuSolverInfo &&) = delete;
 
   /**
    * @brief Gets the underlying info handle.
    *
    * @return An opaque pointer to the cuSolver info handle
    */
-  void* GetInfo() const { return info_; }
+  void *GetInfo() const { return info_; }
 
- private:
-  void* info_ = nullptr;  ///< cuSolver eigenvalue solver info handle
+private:
+  void *info_ = nullptr; ///< cuSolver eigenvalue solver info handle
 };
 
-}  // namespace cunls
+} // namespace cunls

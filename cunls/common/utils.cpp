@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,14 +25,15 @@
 namespace cunls {
 
 /** @copydoc DumpCSRSparseMatrixToFile */
-void DumpCSRSparseMatrixToFile(const std::string& filename,
-                               const CSRSparseMatrix& matrix) {
+void DumpCSRSparseMatrixToFile(const std::string &filename,
+                               const CSRSparseMatrix &matrix) {
   // Copy device vectors to host vectors
   hvector<int> host_row_offsets(matrix.row_offsets.size());
   hvector<int> host_col_ids(matrix.col_ids.size());
   hvector<float> host_values(matrix.values.size());
 
-  matrix.row_offsets.CopyToHost(host_row_offsets.data(), host_row_offsets.size());
+  matrix.row_offsets.CopyToHost(host_row_offsets.data(),
+                                host_row_offsets.size());
   matrix.col_ids.CopyToHost(host_col_ids.data(), host_col_ids.size());
   matrix.values.CopyToHost(host_values.data(), host_values.size());
 
@@ -57,33 +58,33 @@ void DumpCSRSparseMatrixToFile(const std::string& filename,
   uint32_t num_cols_u32 = static_cast<uint32_t>(num_cols);
   uint32_t num_nonzeros_u32 = static_cast<uint32_t>(num_nonzeros);
 
-  file.write(reinterpret_cast<const char*>(&num_rows_u32), sizeof(uint32_t));
-  file.write(reinterpret_cast<const char*>(&num_cols_u32), sizeof(uint32_t));
-  file.write(reinterpret_cast<const char*>(&num_nonzeros_u32),
+  file.write(reinterpret_cast<const char *>(&num_rows_u32), sizeof(uint32_t));
+  file.write(reinterpret_cast<const char *>(&num_cols_u32), sizeof(uint32_t));
+  file.write(reinterpret_cast<const char *>(&num_nonzeros_u32),
              sizeof(uint32_t));
 
   // Convert and write row_offsets (int -> uint32_t)
   for (size_t i = 0; i < host_row_offsets.size(); ++i) {
     uint32_t offset = static_cast<uint32_t>(host_row_offsets[i]);
-    file.write(reinterpret_cast<const char*>(&offset), sizeof(uint32_t));
+    file.write(reinterpret_cast<const char *>(&offset), sizeof(uint32_t));
   }
 
   // Convert and write col_ids (int -> uint32_t)
   for (size_t i = 0; i < num_nonzeros; ++i) {
     uint32_t col_id = static_cast<uint32_t>(host_col_ids[i]);
-    file.write(reinterpret_cast<const char*>(&col_id), sizeof(uint32_t));
+    file.write(reinterpret_cast<const char *>(&col_id), sizeof(uint32_t));
   }
 
   // Write values (float)
-  file.write(reinterpret_cast<const char*>(host_values.data()),
+  file.write(reinterpret_cast<const char *>(host_values.data()),
              num_nonzeros * sizeof(float));
 
   file.close();
 }
 
 /** @copydoc DumpVectorToFile */
-void DumpVectorToFile(const std::string& filename,
-                      const dvector<float>& vector) {
+void DumpVectorToFile(const std::string &filename,
+                      const dvector<float> &vector) {
   // Copy device vector to host vector
   hvector<float> host_vector(vector.size());
   vector.CopyToHost(host_vector.data(), host_vector.size());
@@ -96,11 +97,11 @@ void DumpVectorToFile(const std::string& filename,
 
   // Write binary data according to the format
   uint32_t size = static_cast<uint32_t>(vector.size());
-  file.write(reinterpret_cast<const char*>(&size), sizeof(uint32_t));
-  file.write(reinterpret_cast<const char*>(host_vector.data()),
+  file.write(reinterpret_cast<const char *>(&size), sizeof(uint32_t));
+  file.write(reinterpret_cast<const char *>(host_vector.data()),
              size * sizeof(float));
 
   file.close();
 }
 
-}  // namespace cunls
+} // namespace cunls

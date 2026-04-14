@@ -41,7 +41,7 @@ namespace cunls {
  * reports a non-zero devInfo from potrf).
  */
 class DenseCholeskySolver : public CSRSparseLinearSolver {
- public:
+public:
   /**
    * @brief Validates dimensions and pre-allocates internal buffers.
    *
@@ -51,9 +51,8 @@ class DenseCholeskySolver : public CSRSparseLinearSolver {
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream,
-                  const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs,
-                  dvector<float>& result) final;
+  bool Initialize(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Converts CSR to dense and solves via Cholesky factorization.
@@ -74,15 +73,14 @@ class DenseCholeskySolver : public CSRSparseLinearSolver {
    *         (devInfo > 0 from potrf), or invalid parameter from potrs
    *         (devInfo < 0).
    */
-  bool Solve(cudaStream_t stream,
-             const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs,
-             dvector<float>& result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+             const dvector<float> &rhs, dvector<float> &result) final;
 
- private:
+private:
   void EnsureBuffersSize(cudaStream_t stream, size_t n);
 
-  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                         dvector<float>& dense_matrix);
+  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                         dvector<float> &dense_matrix);
 
   cuSolverHandle cusolver_handle_;
   dvector<float> dense_matrix_;
@@ -92,4 +90,4 @@ class DenseCholeskySolver : public CSRSparseLinearSolver {
   size_t last_n_ = 0;
 };
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ namespace cunls {
  * @param status The cuDSS status code to convert.
  * @return A string describing the status code.
  */
-const char* cudssGetErrorString(int status);
+const char *cudssGetErrorString(int status);
 
 /**
  * @brief Macro to check cuDSS status and throw an exception on error.
@@ -42,7 +42,7 @@ const char* cudssGetErrorString(int status);
  * If the status indicates an error, this macro will throw an exception with
  * a descriptive error message.
  */
-#define THROW_ON_CUDSS_ERROR(status) \
+#define THROW_ON_CUDSS_ERROR(status)                                           \
   CHECK_CUDA_ERROR(status, cudssGetErrorString, true)
 
 /**
@@ -51,7 +51,7 @@ const char* cudssGetErrorString(int status);
  * If the status indicates an error, this macro will log a warning but will
  * not throw an exception.
  */
-#define WARN_ON_CUDSS_ERROR(status) \
+#define WARN_ON_CUDSS_ERROR(status)                                            \
   CHECK_CUDA_ERROR(status, cudssGetErrorString, false)
 
 /**
@@ -62,11 +62,11 @@ const char* cudssGetErrorString(int status);
  * the retained capacity of an available block.
  */
 class cuDSSDeviceMemPool {
- public:
+public:
   cuDSSDeviceMemPool() = default;
 
-  cuDSSDeviceMemPool(const cuDSSDeviceMemPool&) = delete;
-  cuDSSDeviceMemPool& operator=(const cuDSSDeviceMemPool&) = delete;
+  cuDSSDeviceMemPool(const cuDSSDeviceMemPool &) = delete;
+  cuDSSDeviceMemPool &operator=(const cuDSSDeviceMemPool &) = delete;
 
   /** @brief Releases all retained device allocations. */
   ~cuDSSDeviceMemPool();
@@ -79,7 +79,7 @@ class cuDSSDeviceMemPool {
    * @param stream CUDA stream (currently unused by this pool).
    * @return cudaSuccess on success, CUDA runtime error otherwise.
    */
-  int Alloc(void** ptr, size_t size, cudaStream_t stream);
+  int Alloc(void **ptr, size_t size, cudaStream_t stream);
 
   /**
    * @brief Marks a previously allocated block as free for reuse.
@@ -89,11 +89,11 @@ class cuDSSDeviceMemPool {
    * @param stream CUDA stream (currently unused by this pool).
    * @return cudaSuccess on success, CUDA runtime error otherwise.
    */
-  int Dealloc(void* ptr, size_t size, cudaStream_t stream);
+  int Dealloc(void *ptr, size_t size, cudaStream_t stream);
 
- private:
+private:
   struct Block {
-    void* ptr = nullptr;
+    void *ptr = nullptr;
     size_t capacity = 0;
     bool in_use = false;
   };
@@ -105,13 +105,13 @@ class cuDSSDeviceMemPool {
 /**
  * @brief C callback wrapper for cuDSS device allocation.
  */
-int cuDSSDeviceMemPoolAlloc(void* ctx, void** ptr, size_t size,
+int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size,
                             cudaStream_t stream);
 
 /**
  * @brief C callback wrapper for cuDSS device deallocation.
  */
-int cuDSSDeviceMemPoolDealloc(void* ctx, void* ptr, size_t size,
+int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size,
                               cudaStream_t stream);
 
 /**
@@ -121,15 +121,15 @@ int cuDSSDeviceMemPoolDealloc(void* ctx, void* ptr, size_t size,
  * @param pool Pool object that must outlive handle usage.
  * @param handler_name Optional allocator name shown by cuDSS.
  */
-void SetcuDSSDeviceMemHandler(void* handle, cuDSSDeviceMemPool& pool,
-                              const char* handler_name = "cunls device pool");
+void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool,
+                              const char *handler_name = "cunls device pool");
 
 /**
  * @brief Detaches the cuDSS memory handler from the given handle.
  *
  * @param handle Opaque cuDSS handle (cudssHandle_t).
  */
-void DetachcuDSSDeviceMemHandler(void* handle);
+void DetachcuDSSDeviceMemHandler(void *handle);
 
 /**
  * @brief RAII wrapper for cuDSS handle with stream management.
@@ -139,11 +139,11 @@ void DetachcuDSSDeviceMemHandler(void* handle);
  * and automatically destroyed in the destructor.
  */
 class cuDSSHandle {
- public:
+public:
   cuDSSHandle() = default;
 
-  cuDSSHandle(const cuDSSHandle&) = delete;
-  cuDSSHandle& operator=(const cuDSSHandle&) = delete;
+  cuDSSHandle(const cuDSSHandle &) = delete;
+  cuDSSHandle &operator=(const cuDSSHandle &) = delete;
 
   /** @brief Destructor that releases the cuDSS handle if initialized. */
   ~cuDSSHandle();
@@ -159,11 +159,11 @@ class cuDSSHandle {
    * @return An opaque pointer to the cuDSS handle associated with the stream.
    * @throws std::invalid_argument if stream is nullptr.
    */
-  void* GetHandle(cudaStream_t stream);
+  void *GetHandle(cudaStream_t stream);
 
- private:
-  cudaStream_t stream_ = nullptr;   ///< Currently associated CUDA stream.
-  void* handle_ = nullptr;          ///< The cuDSS handle.
+private:
+  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream.
+  void *handle_ = nullptr;        ///< The cuDSS handle.
 };
 
 /**
@@ -173,7 +173,7 @@ class cuDSSHandle {
  * or a dense vector and manages its lifecycle.
  */
 class cuDSSDescription {
- public:
+public:
   /**
    * @brief Constructs a cuDSS matrix descriptor from a CSR sparse matrix.
    *
@@ -182,14 +182,14 @@ class cuDSSDescription {
    *
    * @param matrix The CSR sparse matrix to wrap.
    */
-  cuDSSDescription(const CSRSparseMatrix& matrix);
+  cuDSSDescription(const CSRSparseMatrix &matrix);
 
   /**
    * @brief Constructs a cuDSS vector descriptor from a dense vector.
    *
    * @param vector The dense vector to wrap.
    */
-  cuDSSDescription(const dvector<float>& vector);
+  cuDSSDescription(const dvector<float> &vector);
 
   /** @brief Destructor that releases the cuDSS matrix/vector descriptor. */
   ~cuDSSDescription();
@@ -198,10 +198,10 @@ class cuDSSDescription {
    * @brief Gets the underlying cuDSS matrix/vector descriptor.
    * @return An opaque pointer to the cuDSS matrix descriptor.
    */
-  void* GetDescription() { return matrix_; }
+  void *GetDescription() { return matrix_; }
 
- private:
-  void* matrix_;  ///< The cuDSS matrix descriptor.
+private:
+  void *matrix_; ///< The cuDSS matrix descriptor.
 };
 
 /**
@@ -211,7 +211,7 @@ class cuDSSDescription {
  * parameters and options.
  */
 class cuDSSConfig {
- public:
+public:
   /** @brief Constructor that creates a cuDSS configuration object. */
   cuDSSConfig(int reordering_algorithm = 0, int nthreads = 1);
 
@@ -222,10 +222,10 @@ class cuDSSConfig {
    * @brief Gets the underlying cuDSS configuration object.
    * @return An opaque pointer to the cuDSS configuration object.
    */
-  void* GetData() const { return config_; }
+  void *GetData() const { return config_; }
 
- private:
-  void* config_ = nullptr;  ///< The cuDSS configuration handle.
+private:
+  void *config_ = nullptr; ///< The cuDSS configuration handle.
 };
 
 /**
@@ -235,7 +235,7 @@ class cuDSSConfig {
  * and working memory during the factorization and solve phases.
  */
 class cuDSSData {
- public:
+public:
   cuDSSData() = default;
 
   /** @brief Destructor that releases the cuDSS data object. */
@@ -251,11 +251,11 @@ class cuDSSData {
    * @param handle The cuDSS handle to associate with the data object.
    * @return The cuDSS data object associated with the handle.
    */
-  void* GetData(void* handle);
+  void *GetData(void *handle);
 
- private:
-  void* handle_ = nullptr;  ///< Associated cuDSS handle.
-  void* data_ = nullptr;    ///< The cuDSS data handle.
+private:
+  void *handle_ = nullptr; ///< Associated cuDSS handle.
+  void *data_ = nullptr;   ///< The cuDSS data handle.
 };
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 /**
@@ -44,7 +44,7 @@ static Matrix<4> MakeSim3Identity() {
   return T;
 }
 
-}  // namespace
+} // namespace
 
 TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
   constexpr size_t kN = 128;
@@ -55,17 +55,17 @@ TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
   std::vector<Matrix<3>> poses(kN + 1);
   for (size_t i = 0; i <= kN; ++i) {
     float th = ang(rng);
-    poses[i] = {cosf(th), -sinf(th), t(rng), sinf(th), cosf(th), t(rng),
-                0.0f,     0.0f,       1.0f};
+    poses[i] = {cosf(th), -sinf(th), t(rng), sinf(th), cosf(th),
+                t(rng),   0.0f,      0.0f,   1.0f};
   }
 
   DeviceVector<Matrix<3>> poses_dev(poses);
-  std::vector<const float*> ptrs(2 * kN);
+  std::vector<const float *> ptrs(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float*>(poses_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float*>(poses_dev.data() + i);
+    ptrs[2 * i] = reinterpret_cast<const float *>(poses_dev.data() + (i + 1));
+    ptrs[2 * i + 1] = reinterpret_cast<const float *>(poses_dev.data() + i);
   }
-  DeviceVector<const float*> state_ptrs_dev(ptrs);
+  DeviceVector<const float *> state_ptrs_dev(ptrs);
 
   Matrix<3> I{};
   I[0] = I[4] = I[8] = 1.0f;
@@ -75,9 +75,9 @@ TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
   DeviceVector<float> res(3 * kN);
   DeviceVector<float> jac(18 * kN);
   SE2BetweenFactorBatch fb(deltas_dev.data(), kN);
-CudaStream stream;
+  CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
+              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -94,12 +94,12 @@ TEST(LieBetweenFactorsSmoke, SO2BetweenEvaluate) {
   }
 
   DeviceVector<Matrix<2>> poses_dev(poses);
-  std::vector<const float*> ptrs(2 * kN);
+  std::vector<const float *> ptrs(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float*>(poses_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float*>(poses_dev.data() + i);
+    ptrs[2 * i] = reinterpret_cast<const float *>(poses_dev.data() + (i + 1));
+    ptrs[2 * i + 1] = reinterpret_cast<const float *>(poses_dev.data() + i);
   }
-  DeviceVector<const float*> state_ptrs_dev(ptrs);
+  DeviceVector<const float *> state_ptrs_dev(ptrs);
 
   Matrix<2> I{};
   I[0] = I[3] = 1.0f;
@@ -109,9 +109,9 @@ TEST(LieBetweenFactorsSmoke, SO2BetweenEvaluate) {
   DeviceVector<float> res(kN);
   DeviceVector<float> jac(2 * kN);
   SO2BetweenFactorBatch fb(deltas_dev.data(), kN);
-CudaStream stream;
+  CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
+              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -135,17 +135,17 @@ TEST(LieBetweenFactorsSmoke, SO3BetweenEvaluate) {
   constexpr size_t rot_pitch = 3;
   constexpr size_t rot_stride = 9;
   ComputeExpSO3(stream.GetStream(),
-                reinterpret_cast<const float*>(twists_dev.data()), twist_stride,
-                rot_pitch, rot_stride, kN + 1,
-                reinterpret_cast<float*>(poses_dev.data()));
+                reinterpret_cast<const float *>(twists_dev.data()),
+                twist_stride, rot_pitch, rot_stride, kN + 1,
+                reinterpret_cast<float *>(poses_dev.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
-  std::vector<const float*> ptrs(2 * kN);
+  std::vector<const float *> ptrs(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float*>(poses_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float*>(poses_dev.data() + i);
+    ptrs[2 * i] = reinterpret_cast<const float *>(poses_dev.data() + (i + 1));
+    ptrs[2 * i + 1] = reinterpret_cast<const float *>(poses_dev.data() + i);
   }
-  DeviceVector<const float*> state_ptrs_dev(ptrs);
+  DeviceVector<const float *> state_ptrs_dev(ptrs);
 
   Matrix<3> I{};
   I[0] = I[4] = I[8] = 1.0f;
@@ -155,8 +155,8 @@ TEST(LieBetweenFactorsSmoke, SO3BetweenEvaluate) {
   DeviceVector<float> res(3 * kN);
   DeviceVector<float> jac(18 * kN);
   SO3BetweenFactorBatch fb(deltas_dev.data(), kN);
-fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
+  fb.Evaluate(res.data(), jac.data(),
+              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -174,12 +174,12 @@ TEST(LieBetweenFactorsSmoke, Similarity2BetweenEvaluate) {
   }
 
   DeviceVector<Matrix<3>> poses_dev(poses);
-  std::vector<const float*> ptrs(2 * kN);
+  std::vector<const float *> ptrs(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float*>(poses_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float*>(poses_dev.data() + i);
+    ptrs[2 * i] = reinterpret_cast<const float *>(poses_dev.data() + (i + 1));
+    ptrs[2 * i + 1] = reinterpret_cast<const float *>(poses_dev.data() + i);
   }
-  DeviceVector<const float*> state_ptrs_dev(ptrs);
+  DeviceVector<const float *> state_ptrs_dev(ptrs);
 
   Matrix<3> I = MakeSim2Matrix(0.0f, 0.0f, 0.0f, 1.0f);
   std::vector<Matrix<3>> deltas(kN, I);
@@ -188,9 +188,9 @@ TEST(LieBetweenFactorsSmoke, Similarity2BetweenEvaluate) {
   DeviceVector<float> res(4 * kN);
   DeviceVector<float> jac(32 * kN);
   Similarity2BetweenFactorBatch fb(deltas_dev.data(), kN);
-CudaStream stream;
+  CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
+              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -199,12 +199,12 @@ TEST(LieBetweenFactorsSmoke, Similarity3BetweenEvaluate) {
   constexpr size_t kN = 128;
   std::vector<Matrix<4>> poses(kN + 1, MakeSim3Identity());
   DeviceVector<Matrix<4>> poses_dev(poses);
-  std::vector<const float*> ptrs(2 * kN);
+  std::vector<const float *> ptrs(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float*>(poses_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float*>(poses_dev.data() + i);
+    ptrs[2 * i] = reinterpret_cast<const float *>(poses_dev.data() + (i + 1));
+    ptrs[2 * i + 1] = reinterpret_cast<const float *>(poses_dev.data() + i);
   }
-  DeviceVector<const float*> state_ptrs_dev(ptrs);
+  DeviceVector<const float *> state_ptrs_dev(ptrs);
 
   Matrix<4> I = MakeSim3Identity();
   std::vector<Matrix<4>> deltas(kN, I);
@@ -214,9 +214,9 @@ TEST(LieBetweenFactorsSmoke, Similarity3BetweenEvaluate) {
   DeviceVector<float> jac(98 * kN);
   cuBLASHandle h;
   Similarity3BetweenFactorBatch fb(h, deltas_dev.data(), kN);
-CudaStream stream;
+  CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
+              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -232,12 +232,12 @@ TEST(LieBetweenFactorsSmoke, VectorBetweenEvaluate) {
   DeviceVector<Vector<3>> left_dev(left);
   DeviceVector<Vector<3>> right_dev(right);
 
-  std::vector<const float*> ptrs(2 * kN);
+  std::vector<const float *> ptrs(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float*>(left_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float*>(right_dev.data() + i);
+    ptrs[2 * i] = reinterpret_cast<const float *>(left_dev.data() + (i + 1));
+    ptrs[2 * i + 1] = reinterpret_cast<const float *>(right_dev.data() + i);
   }
-  DeviceVector<const float*> state_ptrs_dev(ptrs);
+  DeviceVector<const float *> state_ptrs_dev(ptrs);
 
   Vector<3> delta{};
   std::vector<Vector<3>> deltas(kN, delta);
@@ -248,9 +248,9 @@ TEST(LieBetweenFactorsSmoke, VectorBetweenEvaluate) {
   VectorBetweenFactorBatch<3> fb(deltas_dev.data(), kN);
   CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
+              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,8 @@ namespace cunls {
 constexpr size_t block_size = 256;
 
 /**
- * @brief CUDA kernel that computes the trivial (identity) loss for each squared residual.
+ * @brief CUDA kernel that computes the trivial (identity) loss for each squared
+ * residual.
  *
  * Sets out[tid] = {s[tid], 1.0, 0} for each thread, representing
  * rho(s) = s, rho'(s) = 1, rho''(s) = 0.
@@ -37,7 +38,7 @@ constexpr size_t block_size = 256;
  *
  * Grid/block: launched with ceil(num_losses / 256) blocks of 256 threads.
  */
-__global__ void trivial_loss_kernel(float* s, float3* out, int num_losses) {
+__global__ void trivial_loss_kernel(float *s, float3 *out, int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
     return;
@@ -47,7 +48,7 @@ __global__ void trivial_loss_kernel(float* s, float3* out, int num_losses) {
 }
 
 /** @copydoc TrivialLossFunctionBatch::Evaluate */
-bool TrivialLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool TrivialLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                         cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;
@@ -59,4 +60,4 @@ bool TrivialLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
-}  // namespace cunls
+} // namespace cunls

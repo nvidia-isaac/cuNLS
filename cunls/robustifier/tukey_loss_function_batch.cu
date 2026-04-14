@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ namespace cunls {
 
 constexpr size_t kTukeyBlockSize = 256;
 
-__global__ void tukey_loss_kernel(float a_squared, float* s, float3* out,
+__global__ void tukey_loss_kernel(float a_squared, float *s, float3 *out,
                                   int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
@@ -30,7 +30,7 @@ __global__ void tukey_loss_kernel(float a_squared, float* s, float3* out,
   }
 
   const float sq_error = s[tid];
-  float3& rho = out[tid];
+  float3 &rho = out[tid];
 
   if (sq_error <= a_squared) {
     const float value = 1.0f - sq_error / a_squared;
@@ -45,10 +45,9 @@ __global__ void tukey_loss_kernel(float a_squared, float* s, float3* out,
   }
 }
 
-TukeyLossFunctionBatch::TukeyLossFunctionBatch(float a)
-    : a_squared_(a * a) {}
+TukeyLossFunctionBatch::TukeyLossFunctionBatch(float a) : a_squared_(a * a) {}
 
-bool TukeyLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool TukeyLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                       cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;
@@ -60,4 +59,4 @@ bool TukeyLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,20 +22,19 @@ namespace cunls {
 
 constexpr size_t kScaledBlockSize = 256;
 
-__global__ void scaled_loss_apply_kernel(float a, float3* out,
-                                         int num_losses) {
+__global__ void scaled_loss_apply_kernel(float a, float3 *out, int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
     return;
   }
 
-  float3& rho = out[tid];
+  float3 &rho = out[tid];
   rho.x *= a;
   rho.y *= a;
   rho.z *= a;
 }
 
-void ApplyScaling(float a, float3* out, int num_losses, cudaStream_t stream) {
+void ApplyScaling(float a, float3 *out, int num_losses, cudaStream_t stream) {
   if (num_losses <= 0) {
     return;
   }
@@ -45,4 +44,4 @@ void ApplyScaling(float a, float3* out, int num_losses, cudaStream_t stream) {
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

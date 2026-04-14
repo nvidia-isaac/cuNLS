@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,11 +29,11 @@ namespace cunls {
  * (possibly non-Euclidean) manifold with a tangent space used for optimization
  * updates and an ambient space used for storage.
  *
- * Derived classes must implement the Plus() operation that applies a tangent-space
- * update to the state blocks according to the manifold structure.
+ * Derived classes must implement the Plus() operation that applies a
+ * tangent-space update to the state blocks according to the manifold structure.
  */
 class StateBatch {
- public:
+public:
   /** @brief Virtual destructor. */
   virtual ~StateBatch() = default;
 
@@ -59,8 +59,8 @@ class StateBatch {
    * @brief Applies a tangent-space update to the state blocks.
    *
    * Computes x_plus_delta = x (+) delta, where (+) is the manifold Plus
-   * operation (e.g., vector addition for Euclidean spaces, or right-multiplication
-   * by the exponential map for Lie groups).
+   * operation (e.g., vector addition for Euclidean spaces, or
+   * right-multiplication by the exponential map for Lie groups).
    *
    * @param x           Device pointer to the current state values
    *                    (NumStateBlocks * AmbientSize floats).
@@ -70,31 +70,34 @@ class StateBatch {
    *                    (NumStateBlocks * AmbientSize floats).
    * @param stream      CUDA stream for asynchronous execution.
    */
-  virtual void Plus(const float* x, const float* delta, float* x_plus_delta,
+  virtual void Plus(const float *x, const float *delta, float *x_plus_delta,
                     cudaStream_t stream) = 0;
 
   /**
    * @brief Returns a mutable device pointer to a specific state block.
    *
    * @param state_block_idx Zero-based index of the state block.
-   * @return Device pointer to the state block data, or nullptr if out of bounds.
+   * @return Device pointer to the state block data, or nullptr if out of
+   * bounds.
    */
-  virtual float* StateBlockDevicePtr(size_t state_block_idx) = 0;
+  virtual float *StateBlockDevicePtr(size_t state_block_idx) = 0;
 
   /**
    * @brief Returns a const device pointer to a specific state block.
    *
    * @param state_block_idx Zero-based index of the state block.
-   * @return Const device pointer to the state block data, or nullptr if out of bounds.
+   * @return Const device pointer to the state block data, or nullptr if out of
+   * bounds.
    */
-  virtual const float* StateBlockDevicePtr(
-      size_t state_block_idx) const = 0;
+  virtual const float *StateBlockDevicePtr(size_t state_block_idx) const = 0;
 
   /**
-   * @brief Returns a device pointer to the array of constant state block indices.
-   * @return Device pointer to integer indices of constant blocks, or nullptr if none.
+   * @brief Returns a device pointer to the array of constant state block
+   * indices.
+   * @return Device pointer to integer indices of constant blocks, or nullptr if
+   * none.
    */
-  virtual const int* ConstStateIds() const = 0;
+  virtual const int *ConstStateIds() const = 0;
 
   /**
    * @brief Returns the number of state blocks marked as constant.
@@ -103,4 +106,4 @@ class StateBatch {
   virtual size_t NumConstStateBlocks() const = 0;
 };
 
-}  // namespace cunls
+} // namespace cunls

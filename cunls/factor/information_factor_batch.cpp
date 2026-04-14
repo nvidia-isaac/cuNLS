@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,9 @@
 
 namespace cunls {
 
-void ApplyInformationToResiduals(void* cublas_handle,
-                                 const float* sqrt_information,
-                                 float* residuals, size_t residual_size,
+void ApplyInformationToResiduals(void *cublas_handle,
+                                 const float *sqrt_information,
+                                 float *residuals, size_t residual_size,
                                  size_t num_factors) {
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
@@ -37,9 +37,9 @@ void ApplyInformationToResiduals(void* cublas_handle,
       inc, residual_size, &beta, residuals, inc, residual_size, num_factors));
 }
 
-void ApplyInformationToJacobians(void* cublas_handle,
-                                 const float* sqrt_information,
-                                 float* jacobians, size_t residual_size,
+void ApplyInformationToJacobians(void *cublas_handle,
+                                 const float *sqrt_information,
+                                 float *jacobians, size_t residual_size,
                                  size_t jacobian_pitch, size_t num_factors) {
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
@@ -54,4 +54,4 @@ void ApplyInformationToJacobians(void* cublas_handle,
       num_factors));
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,14 +55,6 @@
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
-#include "cunls/state/se2_state_batch.h"
-#include "cunls/state/se3_state_batch.h"
-#include "cunls/state/similarity2_state_batch.h"
-#include "cunls/state/similarity3_state_batch.h"
-#include "cunls/state/sl4_state_batch.h"
-#include "cunls/state/so2_state_batch.h"
-#include "cunls/state/so3_state_batch.h"
-#include "cunls/state/vector_state_batch.h"
 #include "cunls/robustifier/arctan_loss_function_batch.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
@@ -71,3 +63,11 @@
 #include "cunls/robustifier/tolerant_loss_function_batch.h"
 #include "cunls/robustifier/trivial_loss_function_batch.h"
 #include "cunls/robustifier/tukey_loss_function_batch.h"
+#include "cunls/state/se2_state_batch.h"
+#include "cunls/state/se3_state_batch.h"
+#include "cunls/state/similarity2_state_batch.h"
+#include "cunls/state/similarity3_state_batch.h"
+#include "cunls/state/sl4_state_batch.h"
+#include "cunls/state/so2_state_batch.h"
+#include "cunls/state/so3_state_batch.h"
+#include "cunls/state/vector_state_batch.h"

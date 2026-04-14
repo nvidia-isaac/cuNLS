@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
+#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/common/types.h"
 #include "cunls/minimizer/device_reduction.h"
-#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
 
@@ -42,9 +42,9 @@ namespace cunls {
  * @param[out] rhs Output right-hand side vector (-J^T r).
  */
 void LevenbergMarquardtMinimizer::BuildSystem(
-    cudaStream_t stream, const Problem& problem,
-    const MinimizerState& minimizer_state, CSRSparseMatrix& lhs,
-    dvector<float>& rhs) {
+    cudaStream_t stream, const Problem &problem,
+    const MinimizerState &minimizer_state, CSRSparseMatrix &lhs,
+    dvector<float> &rhs) {
   GaussNewtonMinimizer::BuildSystem(stream, problem, minimizer_state, lhs, rhs);
   ExtractDiagonal(stream, lhs, diagonal_);
   AddScaledDiagonal(stream, lambda_, diagonal_, lhs, lhs);
@@ -73,11 +73,13 @@ void LevenbergMarquardtMinimizer::BuildSystem(
 bool LevenbergMarquardtMinimizer::CheckConvergence(cudaStream_t stream,
                                                    float updated_cost,
                                                    float current_cost,
-                                                   const dvector<float>& step,
-                                                   float& step_quality) {
+                                                   const dvector<float> &step,
+                                                   float &step_quality) {
   constexpr size_t kSlots = 3;
-  if (d_scalars_.size() < kSlots) d_scalars_.resize(kSlots);
-  if (h_scalars_.size() < kSlots) h_scalars_.resize(kSlots);
+  if (d_scalars_.size() < kSlots)
+    d_scalars_.resize(kSlots);
+  if (h_scalars_.size() < kSlots)
+    h_scalars_.resize(kSlots);
   size_t partials_needed = ReducePartialCount(step_.size());
   if (d_reduce_partials_.size() < partials_needed) {
     d_reduce_partials_.resize(partials_needed);
@@ -90,12 +92,10 @@ bool LevenbergMarquardtMinimizer::CheckConvergence(cudaStream_t stream,
                                   d_scalars_.data() + 1,
                                   d_reduce_partials_.data());
   auto handle = cusparse_handle_.GetHandle(stream);
-  ComputeWeightedSquaredStepAsync(stream, handle, hessian_,
-                                  hessian_dims_.num_rows,
-                                  hessian_dims_.num_cols,
-                                  hessian_dims_.num_nonzeros, step_, buffer_,
-                                  d_scalars_.data() + 2,
-                                  d_reduce_partials_.data());
+  ComputeWeightedSquaredStepAsync(
+      stream, handle, hessian_, hessian_dims_.num_rows, hessian_dims_.num_cols,
+      hessian_dims_.num_nonzeros, step_, buffer_, d_scalars_.data() + 2,
+      d_reduce_partials_.data());
 
   // Single D2H + single sync
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
@@ -128,13 +128,15 @@ bool LevenbergMarquardtMinimizer::CheckConvergence(cudaStream_t stream,
 }
 
 bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
-    cudaStream_t stream, const Problem& problem,
-    const MinimizerState& updated_state, float current_cost,
-    const dvector<float>& step, float& updated_cost, float& step_quality) {
+    cudaStream_t stream, const Problem &problem,
+    const MinimizerState &updated_state, float current_cost,
+    const dvector<float> &step, float &updated_cost, float &step_quality) {
   // 4 slots: [0]=cost, [1]=step_sq_norm, [2]=diag_weight, [3]=matrix_weight
   constexpr size_t kSlots = 4;
-  if (d_scalars_.size() < kSlots) d_scalars_.resize(kSlots);
-  if (h_scalars_.size() < kSlots) h_scalars_.resize(kSlots);
+  if (d_scalars_.size() < kSlots)
+    d_scalars_.resize(kSlots);
+  if (h_scalars_.size() < kSlots)
+    h_scalars_.resize(kSlots);
 
   // Enqueue cost reduction
   ComputeCostAsync(stream, problem, updated_state, d_scalars_.data());
@@ -155,12 +157,10 @@ bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
 
   // Enqueue sparse-weighted step norm (SpMV + dot, all on stream)
   auto handle = cusparse_handle_.GetHandle(stream);
-  ComputeWeightedSquaredStepAsync(stream, handle, hessian_,
-                                  hessian_dims_.num_rows,
-                                  hessian_dims_.num_cols,
-                                  hessian_dims_.num_nonzeros, step_, buffer_,
-                                  d_scalars_.data() + 3,
-                                  d_reduce_partials_.data());
+  ComputeWeightedSquaredStepAsync(
+      stream, handle, hessian_, hessian_dims_.num_rows, hessian_dims_.num_cols,
+      hessian_dims_.num_nonzeros, step_, buffer_, d_scalars_.data() + 3,
+      d_reduce_partials_.data());
 
   // Single D2H + single sync for all 4 scalars
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
@@ -185,7 +185,8 @@ bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
   step_quality = rho;
 
   return (step_sq_norm < options_.base_options.state_tolerance ||
-          predicted_relative_reduction < options_.relative_reduction_tolerance ||
+          predicted_relative_reduction <
+              options_.relative_reduction_tolerance ||
           updated_cost < options_.base_options.cost_tolerance);
 }
 
@@ -246,8 +247,8 @@ bool LevenbergMarquardtMinimizer::AcceptStep(float step_quality) {
  * @param problem The optimization problem to initialize for.
  */
 void LevenbergMarquardtMinimizer::Initialize(cudaStream_t stream,
-                                             Problem& problem) {
+                                             Problem &problem) {
   GaussNewtonMinimizer::Initialize(stream, problem);
   lambda_ = options_.initial_lambda;
 }
-}  // namespace cunls
+} // namespace cunls

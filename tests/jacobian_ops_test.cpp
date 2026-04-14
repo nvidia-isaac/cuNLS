@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,12 +47,12 @@ namespace cunls {
  *
  * @tparam VectorSize Compile-time vector dimension.
  */
-template <class VectorSize>
-class JacobianOpsTest : public ::testing::Test {
- public:
+template <class VectorSize> class JacobianOpsTest : public ::testing::Test {
+public:
   static constexpr int kDim = VectorSize::size;
 
-  /** @brief Generates a randomly-sized optimization problem with ~20% constant states. */
+  /** @brief Generates a randomly-sized optimization problem with ~20% constant
+   * states. */
   void SetUp() override {
     unsigned int fixed_seed = 0;
     std::mt19937 gen(fixed_seed);
@@ -92,14 +92,12 @@ TYPED_TEST(JacobianOpsTest, BuildTripletSparseStructure) {
       test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data(
       seq_vecs, this->constant_state_ids);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(
-      obs_vecs);
-  auto& factor_batch = factor_data.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
+  auto &factor_batch = factor_data.get();
 
   // Build the optimization problem
   Problem problem;
@@ -145,4 +143,4 @@ TYPED_TEST(JacobianOpsTest, BuildTripletSparseStructure) {
     ASSERT_EQ(col_ids[i], col_ids_b[i]);
   }
 }
-}  // namespace cunls
+} // namespace cunls

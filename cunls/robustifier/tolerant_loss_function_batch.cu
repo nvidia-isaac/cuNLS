@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@ namespace cunls {
 constexpr size_t kTolerantBlockSize = 256;
 constexpr float kLog2Pow53 = 36.7f;
 
-__global__ void tolerant_loss_kernel(float a, float b, float c, float* s,
-                                     float3* out, int num_losses) {
+__global__ void tolerant_loss_kernel(float a, float b, float c, float *s,
+                                     float3 *out, int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
     return;
@@ -35,7 +35,7 @@ __global__ void tolerant_loss_kernel(float a, float b, float c, float* s,
   const float sq_error = s[tid];
   const float x = (sq_error - a) / b;
 
-  float3& rho = out[tid];
+  float3 &rho = out[tid];
 
   if (x > kLog2Pow53) {
     rho.x = sq_error - a - c;
@@ -53,7 +53,7 @@ __global__ void tolerant_loss_kernel(float a, float b, float c, float* s,
 TolerantLossFunctionBatch::TolerantLossFunctionBatch(float a, float b)
     : a_(a), b_(b), c_(b * logf(1.0f + expf(-a / b))) {}
 
-bool TolerantLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool TolerantLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                          cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;
@@ -66,4 +66,4 @@ bool TolerantLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

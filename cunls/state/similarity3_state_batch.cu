@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,16 +26,16 @@ constexpr int kBlockSize = 256;
 
 /** Fused Sim(3) Exp + row-major multiply: result = x * Exp(xi), layout matches
  *  exp_sim3_kernel + former strided batched GEMM. */
-__global__ void sim3_apply_update_fused_kernel(const float* __restrict__ x,
-                                               const float* __restrict__ delta,
-                                               float* __restrict__ result, int n,
-                                               bool negate_delta) {
+__global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
+                                               const float *__restrict__ delta,
+                                               float *__restrict__ result,
+                                               int n, bool negate_delta) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= n) {
     return;
   }
 
-  const float* xi = delta + tid * 7;
+  const float *xi = delta + tid * 7;
   float w1 = xi[0], w2 = xi[1], w3 = xi[2];
   float u1 = xi[3], u2 = xi[4], u3 = xi[5];
   float lambda = xi[6];
@@ -105,8 +105,8 @@ __global__ void sim3_apply_update_fused_kernel(const float* __restrict__ x,
 
   const float e33 = expf(-lambda);
 
-  const float* xm = x + tid * 16;
-  float* rm = result + tid * 16;
+  const float *xm = x + tid * 16;
+  float *rm = result + tid * 16;
 
 #pragma unroll
   for (int r = 0; r < 4; ++r) {
@@ -121,27 +121,24 @@ __global__ void sim3_apply_update_fused_kernel(const float* __restrict__ x,
   }
 }
 
-}  // namespace
+} // namespace
 
-Similarity3StateBatch::Similarity3StateBatch(cuBLASHandle& cublas_handle,
-                                           const float* device_ptr,
-                                           size_t num_blocks)
-    : Base(device_ptr, num_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      tangents_(num_blocks * 7) {}
+Similarity3StateBatch::Similarity3StateBatch(cuBLASHandle &cublas_handle,
+                                             const float *device_ptr,
+                                             size_t num_blocks)
+    : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks), tangents_(num_blocks * 7) {}
 
 Similarity3StateBatch::Similarity3StateBatch(
-    cuBLASHandle& cublas_handle, const float* device_ptr, size_t num_blocks,
-    const int* device_constant_state_ids, size_t num_const_state_blocks)
+    cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
+    const int *device_constant_state_ids, size_t num_const_state_blocks)
     : Base(device_ptr, num_blocks, device_constant_state_ids,
            num_const_state_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
+      cublas_handle_(cublas_handle), delta_transforms_(num_blocks),
       tangents_(num_blocks * 7) {}
 
-void Similarity3StateBatch::ApplyUpdate(const float* x, const float* delta,
-                                        float* result, bool invert_delta,
+void Similarity3StateBatch::ApplyUpdate(const float *x, const float *delta,
+                                        float *result, bool invert_delta,
                                         cudaStream_t stream) {
   const int num_transforms = static_cast<int>(NumStateBlocks());
   const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
@@ -151,9 +148,9 @@ void Similarity3StateBatch::ApplyUpdate(const float* x, const float* delta,
   static_cast<void>(cublas_handle_);
 }
 
-void Similarity3StateBatch::Plus(const float* x, const float* delta,
-                                 float* x_plus_delta, cudaStream_t stream) {
+void Similarity3StateBatch::Plus(const float *x, const float *delta,
+                                 float *x_plus_delta, cudaStream_t stream) {
   ApplyUpdate(x, delta, x_plus_delta, false, stream);
 }
 
-}  // namespace cunls
+} // namespace cunls

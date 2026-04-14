@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -23,30 +23,32 @@ namespace cunls {
  *       right Jacobians are omitted.
  */
 
-void ComputeExpSL4(cudaStream_t stream, const float* twist,
+void ComputeExpSL4(cudaStream_t stream, const float *twist,
                    const size_t twist_stride, const size_t transform_pitch,
                    const size_t transform_stride, size_t size,
-                   float* transform);
+                   float *transform);
 
-void ComputeLogSL4(cudaStream_t stream, const float* transform,
+void ComputeLogSL4(cudaStream_t stream, const float *transform,
                    const size_t transform_pitch, const size_t transform_stride,
-                   const size_t twist_stride, size_t size, float* twist);
+                   const size_t twist_stride, size_t size, float *twist);
 
-void ComputeInverseSL4(cudaStream_t stream, const float* transform,
-                       const size_t transform_pitch, const size_t transform_stride,
+void ComputeInverseSL4(cudaStream_t stream, const float *transform,
+                       const size_t transform_pitch,
+                       const size_t transform_stride,
                        const size_t inverse_pitch, const size_t inverse_stride,
-                       size_t size, float* inverse_transform);
+                       size_t size, float *inverse_transform);
 
-void ComputeAdjointSL4(cudaStream_t stream, const float* transform,
-                       const size_t transform_pitch, const size_t transform_stride,
+void ComputeAdjointSL4(cudaStream_t stream, const float *transform,
+                       const size_t transform_pitch,
+                       const size_t transform_stride,
                        const size_t adjoint_pitch, const size_t adjoint_stride,
-                       size_t size, float* adjoint);
+                       size_t size, float *adjoint);
 
-void ComputeNegateMatrix15x15(cudaStream_t stream, const float* matrix,
-                              const size_t pitch, const size_t stride, size_t size,
-                              float* out);
+void ComputeNegateMatrix15x15(cudaStream_t stream, const float *matrix,
+                              const size_t pitch, const size_t stride,
+                              size_t size, float *out);
 
-void FillIdentity15x15(cudaStream_t stream, size_t size, float* matrices,
+void FillIdentity15x15(cudaStream_t stream, size_t size, float *matrices,
                        const size_t pitch, const size_t stride);
 
-}  // namespace cunls
+} // namespace cunls

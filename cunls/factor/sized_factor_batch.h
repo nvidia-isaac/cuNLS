@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,9 +35,10 @@ namespace cunls {
  */
 template <int kResidualSize, int... kStateBlockSizes>
 class SizedFactorBatch : public FactorBatch {
- public:
+public:
   /**
-   * @brief Same SizedFactorBatch specialization as this base (for wrapper types).
+   * @brief Same SizedFactorBatch specialization as this base (for wrapper
+   * types).
    *
    * Enables patterns like ``class Wrapper<T> : public T::sized_layout`` so
    * wrappers share the compile-time residual and state-block layout of T.
@@ -61,4 +62,4 @@ class SizedFactorBatch : public FactorBatch {
   /** @brief Compile-time constant for the residual dimension. */
   static constexpr size_t residual_size_ = kResidualSize;
 };
-}  // namespace cunls
+} // namespace cunls
