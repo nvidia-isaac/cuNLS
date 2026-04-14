@@ -375,9 +375,13 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 
-  Problem problem;
-  RegisterPnPMinimizationProblem(problem, pnp, pose_state);
-  ASSERT_TRUE(problem.CheckConsistency());
+  Problem problem_1;
+  RegisterPnPMinimizationProblem(problem_1, pnp, pose_state);
+  ASSERT_TRUE(problem_1.CheckConsistency());
+
+  Problem problem_2;
+  RegisterPnPMinimizationProblem(problem_2, pnp, pose_state);
+  ASSERT_TRUE(problem_2.CheckConsistency());
 
   CudaStream stream;
   MinimizerOptions base;
@@ -390,7 +394,11 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   lm.base_options = base;
   lm.initial_lambda = 1e-2f;
   LevenbergMarquardtMinimizer minimizer(lm);
-  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem_1);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  MinimizerSummary summary_2 =
+      minimizer.Minimize(stream.GetStream(), problem_2);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, 1e-4f);

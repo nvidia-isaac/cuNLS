@@ -83,7 +83,7 @@ def main():
         cublas, poses_gpu, num_poses, const_ids_gpu, 1)
 
     between_factor = pycunls.SE3BetweenFactorBatch(
-        cublas, deltas_gpu, num_constraints)
+        deltas_gpu, num_constraints)
 
     state_pointers = []
     for i in range(num_constraints):

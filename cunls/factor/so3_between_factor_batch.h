@@ -34,10 +34,6 @@ class SO3BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
  private:
   SO3BetweenFactorBatch() = default;
   void ComputeDeltaAdjoints(cudaStream_t stream);
-  void ComputeLeftPoseJacobian(cudaStream_t stream, const float* residuals,
-                               float* jacobians) const;
-  void ComputeRightPoseJacobian(cudaStream_t stream, const float* residuals,
-                                float* jacobians) const;
 
   const Matrix<3>* pose_deltas_ptr_;
   size_t num_factors_;

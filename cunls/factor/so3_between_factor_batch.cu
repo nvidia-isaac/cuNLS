@@ -70,40 +70,83 @@ __global__ void collect_and_compute_so3_between_error_kernel(
   out[8] = m6*d6 + m7*d7 + m8*d8;
 }
 
-/**
- * @brief Fused kernel: compute left Jacobian block with delta adjoint multiply.
- *
- * Reads -J_l^{-1}(residual) from the left 3x3 block of jacobians (pitch 6),
- * computes D * J in-place. Fully unrolled.
- */
-__global__ void apply_delta_adjoint_to_left_jacobian_kernel(
-    const Matrix<3>* delta_adjoints, float* jacobians,
-    size_t num_factors) {
+// Compute one row of J_l^{-1}(phi) via the Rodrigues formula:
+//   k1*I + k2*[phi]_x + k3*(phi * phi^T)
+// with k1 = half_theta/tan(half_theta), k2 = -half_theta/theta,
+//      k3 = (1 - k1)/theta^2, k4 = -0.5 for small-angle fallback.
+__device__ __forceinline__ void so3_jl_inv_row(const float* phi, int r,
+                                                float* row) {
+  float theta = norm3df(phi[0], phi[1], phi[2]);
+  float th2 = theta * theta;
+  if (theta < 1e-5f) {
+    float sx, sy, sz;
+    if (r == 0)      { sx = 0.f;      sy = -phi[2]; sz =  phi[1]; }
+    else if (r == 1) { sx = phi[2];   sy = 0.f;     sz = -phi[0]; }
+    else             { sx = -phi[1];  sy = phi[0];   sz = 0.f;     }
+    row[0] = (r == 0 ? 1.f : 0.f) - 0.5f * sx;
+    row[1] = (r == 1 ? 1.f : 0.f) - 0.5f * sy;
+    row[2] = (r == 2 ? 1.f : 0.f) - 0.5f * sz;
+    return;
+  }
+  float half = 0.5f * theta;
+  float k1 = half / tanf(half);
+  float k2 = -half / theta;
+  float k3 = (1.0f - k1) / th2;
+  float pr = phi[r];
+  float sx, sy, sz;
+  if (r == 0)      { sx = 0.f;      sy = -phi[2]; sz =  phi[1]; }
+  else if (r == 1) { sx = phi[2];   sy = 0.f;     sz = -phi[0]; }
+  else             { sx = -phi[1];  sy = phi[0];   sz = 0.f;     }
+  row[0] = (r == 0 ? k1 : 0.f) + k2 * sx + k3 * pr * phi[0];
+  row[1] = (r == 1 ? k1 : 0.f) + k2 * sy + k3 * pr * phi[1];
+  row[2] = (r == 2 ? k1 : 0.f) + k2 * sz + k3 * pr * phi[2];
+}
+
+// Fused kernel: computes BOTH left and right SO(3) Jacobians in one pass.
+// Left  Jacobian (cols 0..2): -D * J_l^{-1}(r)  where D = Ad(Delta)
+// Right Jacobian (cols 3..5):  J_r^{-1}(r) = J_l^{-1}(-r)
+// 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
+__global__ void __launch_bounds__(256, 8)
+    so3_between_fused_jacobians_kernel(
+    const float* __restrict__ residuals,
+    const Matrix<3>* __restrict__ delta_adjoints,
+    int num_factors,
+    float* __restrict__ jacobians) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= num_factors) return;
 
-  const float* __restrict__ D = delta_adjoints[tid].data();
-  float* __restrict__ J = &jacobians[tid * 18];
+  const float* r = residuals + tid * kTwistStride;
+  float phi[3] = {r[0], r[1], r[2]};
 
-  const float d0 = D[0], d1 = D[1], d2 = D[2];
-  const float d3 = D[3], d4 = D[4], d5 = D[5];
-  const float d6 = D[6], d7 = D[7], d8 = D[8];
+  const float* D = delta_adjoints[tid].data();
+  float* J = jacobians + tid * 18;
 
-  // Load the left 3x3 block (columns 0-2 at pitch 6)
-  const float j00 = J[0],  j01 = J[1],  j02 = J[2];
-  const float j10 = J[6],  j11 = J[7],  j12 = J[8];
-  const float j20 = J[12], j21 = J[13], j22 = J[14];
+  // Compute J_l^{-1}(phi) rows, multiply by -D, write left block (pitch 6)
+  float jl[9];
+#pragma unroll
+  for (int row = 0; row < 3; ++row) {
+    so3_jl_inv_row(phi, row, &jl[row * 3]);
+  }
 
-  // result = D * src  (27 FMAs)
-  J[0]  = d0*j00 + d1*j10 + d2*j20;
-  J[1]  = d0*j01 + d1*j11 + d2*j21;
-  J[2]  = d0*j02 + d1*j12 + d2*j22;
-  J[6]  = d3*j00 + d4*j10 + d5*j20;
-  J[7]  = d3*j01 + d4*j11 + d5*j21;
-  J[8]  = d3*j02 + d4*j12 + d5*j22;
-  J[12] = d6*j00 + d7*j10 + d8*j20;
-  J[13] = d6*j01 + d7*j11 + d8*j21;
-  J[14] = d6*j02 + d7*j12 + d8*j22;
+  // Left block: -D * J_l_inv
+#pragma unroll
+  for (int row = 0; row < 3; ++row) {
+    float d0 = D[row * 3], d1 = D[row * 3 + 1], d2 = D[row * 3 + 2];
+    J[row * 6 + 0] = -(d0 * jl[0] + d1 * jl[3] + d2 * jl[6]);
+    J[row * 6 + 1] = -(d0 * jl[1] + d1 * jl[4] + d2 * jl[7]);
+    J[row * 6 + 2] = -(d0 * jl[2] + d1 * jl[5] + d2 * jl[8]);
+  }
+
+  // Right block: J_r^{-1}(phi) = J_l^{-1}(-phi)
+  float neg_phi[3] = {-phi[0], -phi[1], -phi[2]};
+#pragma unroll
+  for (int row = 0; row < 3; ++row) {
+    float jr[3];
+    so3_jl_inv_row(neg_phi, row, jr);
+    J[row * 6 + 3] = jr[0];
+    J[row * 6 + 4] = jr[1];
+    J[row * 6 + 5] = jr[2];
+  }
 }
 
 SO3BetweenFactorBatch::SO3BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr,
@@ -145,45 +188,12 @@ bool SO3BetweenFactorBatch::Evaluate(float* residuals, float* jacobians,
                 residuals);
 
   if (jacobians != nullptr) {
-    ComputeLeftPoseJacobian(stream, residuals, jacobians);
-    ComputeRightPoseJacobian(stream, residuals, &jacobians[3]);
+    so3_between_fused_jacobians_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
+        residuals, delta_adjoints_.data(), num_factors, jacobians);
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
   return true;
-}
-
-void SO3BetweenFactorBatch::ComputeLeftPoseJacobian(cudaStream_t stream,
-                                                    const float* residuals,
-                                                    float* jacobians) const {
-  constexpr size_t jacobian_block_size = 3;
-  constexpr size_t jacobian_pitch = 6;
-  constexpr size_t jacobian_stride = 18;
-  size_t num_factors = NumFactors();
-
-  // J_left = -delta^T * J_l^{-1}(residual)
-  ComputeJacobianLeftInverseSO3(stream, residuals, kTwistStride, jacobian_pitch,
-                                jacobian_stride, num_factors, jacobians);
-  ComputeNegateMatrix(stream, jacobians, jacobian_block_size, jacobian_block_size,
-                      jacobian_pitch, jacobian_stride, num_factors, jacobians);
-
-  // Fused: multiply delta_adjoint * J_block in-place (replaces cuBLAS GEMM)
-  size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
-  apply_delta_adjoint_to_left_jacobian_kernel<<<num_blocks, kBlockSize, 0,
-                                                stream>>>(
-      delta_adjoints_.data(), jacobians, num_factors);
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void SO3BetweenFactorBatch::ComputeRightPoseJacobian(cudaStream_t stream,
-                                                     const float* residuals,
-                                                     float* jacobians) const {
-  size_t num_factors = NumFactors();
-  constexpr size_t jacobian_pitch = 6;
-  constexpr size_t jacobian_stride = 18;
-
-  // J_right = J_r^{-1}(residual)
-  ComputeJacobianRightInverseSO3(stream, residuals, kTwistStride, jacobian_pitch,
-                                 jacobian_stride, num_factors, jacobians);
 }
 
 }  // namespace cunls

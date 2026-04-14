@@ -23,7 +23,6 @@
 
 namespace cunls {
 
-/// Number of threads per CUDA block.
 constexpr size_t kSE3PriorBlockSize = 256;
 
 /**

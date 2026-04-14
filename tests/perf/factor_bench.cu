@@ -231,7 +231,7 @@ TEST(FactorBench, SE3BetweenFactor) {
                            reinterpret_cast<const float*>(left.data()), N);
   SE3StateBatch right_batch(cublas,
                             reinterpret_cast<const float*>(right.data()), N);
-  SE3BetweenFactorBatch factor(cublas, deltas.data(), N);
+  SE3BetweenFactorBatch factor(deltas.data(), N);
   auto ptrs = perf::MakeBetweenStatePointers(left_batch, right_batch);
   RunFactorBench("SE3BetweenFactor", factor, ptrs, 6, 12);
 }

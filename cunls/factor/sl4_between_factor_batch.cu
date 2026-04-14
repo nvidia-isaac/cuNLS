@@ -94,37 +94,37 @@ __global__ void collect_sl4_left_poses_kernel(
       *reinterpret_cast<const SL4Transform*>(state_pointers[2 * tid]);
 }
 
-__global__ void sl4_between_left_jacobian_kernel(const float* neg_adjoint,
-                                                 float* jacobians,
-                                                 size_t num_factors) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) {
-    return;
-  }
-  const float* A = neg_adjoint + tid * 225;
-  float* J = jacobians + tid * 450;
-#pragma unroll
-  for (int r = 0; r < 15; ++r) {
-#pragma unroll
-    for (int c = 0; c < 15; ++c) {
-      J[r * 30 + c] = A[r * 15 + c];
-    }
-  }
-}
+// Fused kernel: writes the full 15x30 Jacobian with 15 threads per factor.
+// Each thread owns one row of the output:
+//   Left block (cols 0-14):  copy from negated adjoint
+//   Right block (cols 15-29): identity row
+// 30 stores per thread instead of 450. Much better coalescing.
+constexpr size_t kSL4CoopThreads = 15;
 
-__global__ void sl4_between_right_jacobian_identity_kernel(float* jacobians,
-                                                           size_t num_factors) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) {
-    return;
+__global__ void __launch_bounds__(240, 4)
+    sl4_between_fused_jacobian_kernel(
+    const float* __restrict__ neg_adjoint,
+    float* __restrict__ jacobians,
+    int num_factors) {
+  const int global_tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const int factor_id = global_tid / kSL4CoopThreads;
+  const int row = global_tid % kSL4CoopThreads;
+
+  if (factor_id >= num_factors) return;
+
+  const float* A = neg_adjoint + factor_id * 225 + row * 15;
+  float* J = jacobians + factor_id * 450 + row * 30;
+
+  // Left block: copy one row of the negated adjoint
+#pragma unroll
+  for (int c = 0; c < 15; ++c) {
+    J[c] = A[c];
   }
-  float* J = jacobians + tid * 450;
+
+  // Right block: identity row
 #pragma unroll
-  for (int r = 0; r < 15; ++r) {
-#pragma unroll
-    for (int c = 0; c < 15; ++c) {
-      J[r * 30 + 15 + c] = (r == c) ? 1.f : 0.f;
-    }
+  for (int c = 0; c < 15; ++c) {
+    J[15 + c] = (c == row) ? 1.0f : 0.0f;
   }
 }
 
@@ -183,12 +183,12 @@ bool SL4BetweenFactorBatch::Evaluate(float* residuals, float* jacobians,
                 pitch, stride, twist_stride, num_factors, residuals);
 
   if (jacobians != nullptr) {
-    sl4_between_left_jacobian_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
+    constexpr size_t kCoopBlockSize = 240;
+    size_t total_threads = num_factors * kSL4CoopThreads;
+    size_t coop_blocks = (total_threads + kCoopBlockSize - 1) / kCoopBlockSize;
+    sl4_between_fused_jacobian_kernel<<<coop_blocks, kCoopBlockSize, 0,
+                                        stream>>>(
         delta_adjoints_.data(), jacobians, num_factors);
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-    sl4_between_right_jacobian_identity_kernel<<<num_blocks, kBlockSize, 0,
-                                                 stream>>>(jacobians,
-                                                           num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 

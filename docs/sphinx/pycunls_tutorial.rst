@@ -295,7 +295,7 @@ except the anchor are perturbed.
 .. code-block:: python
 
    between_factor = pycunls.SE3BetweenFactorBatch(
-       cublas, deltas_gpu, num_constraints)
+       deltas_gpu, num_constraints)
 
 **Step 4 — Wire state pointers and assemble the problem.**
 Each between factor reads two state blocks: ``[T_i, T_{i+1}]``.

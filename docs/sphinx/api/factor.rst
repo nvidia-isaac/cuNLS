@@ -308,9 +308,8 @@ Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closu
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two poses (state blocks). State: two blocks from :code:`SE3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SE3BetweenFactorBatch(cuBLASHandle& cublas_handle, const SE3Transform* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: SE3BetweenFactorBatch(const SE3Transform* pose_deltas_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms.
   :param ``num_factors``: [in] Number of between constraints.
   :returns: Constructor has no return value.
@@ -1002,10 +1001,8 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SE3BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.SE3BetweenFactorBatch(deltas, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **deltas** (``DevicePointer``) — ``num_factors × 16`` floats holding
   row-major 4×4 measured relative transforms :math:`\Delta`.
 - **num_factors** (``int``) — number of between constraints.
@@ -1330,7 +1327,7 @@ per-factor square-root information matrices
 
 .. code-block:: python
 
-   inner = pycunls.SE3BetweenFactorBatch(cublas, deltas, N)
+   inner = pycunls.SE3BetweenFactorBatch(deltas, N)
    info  = pycunls.InformationFactorBatch(cublas, inner, sqrt_info_gpu)
 
    problem.add_factor_batch(info, state_pointers)

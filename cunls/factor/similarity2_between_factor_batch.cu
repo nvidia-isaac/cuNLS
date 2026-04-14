@@ -93,11 +93,12 @@ __global__ void collect_sim2_left_poses_kernel(
  *         [0 0, 1, 0],
  *         [0 0, 0, 1]]
  */
-__global__ void sim2_between_jacobian_kernel(const float* residuals,
-                                             const float* deltas,
-                                             size_t delta_stride,
-                                             float* jacobians,
-                                             size_t num_factors) {
+__global__ void __launch_bounds__(256, 6)
+    sim2_between_jacobian_kernel(const float* __restrict__ residuals,
+                                 const float* __restrict__ deltas,
+                                 size_t delta_stride,
+                                 float* __restrict__ jacobians,
+                                 size_t num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_factors) {
     return;
@@ -106,48 +107,40 @@ __global__ void sim2_between_jacobian_kernel(const float* residuals,
   const float* r = residuals + tid * 4;
   float u1 = r[0], u2 = r[1], w = r[2], lam = r[3];
 
-  // Read Delta: [[c,-s,tx],[s,c,ty],[0,0,1/scale]]  (row-major 3x3)
   const float* D = deltas + tid * delta_stride;
   float dc = D[0], ds = D[3], dtx = D[2], dty = D[5];
   float scale = 1.0f / D[8];
 
-  // Ad(Delta) 4x4
-  float Ad[16];
-  Ad[0]  = scale * dc;   Ad[1]  = -scale * ds;
-  Ad[2]  = scale * dty;  Ad[3]  = -scale * dtx;
-  Ad[4]  = scale * ds;   Ad[5]  = scale * dc;
-  Ad[6]  = -scale * dtx; Ad[7]  = -scale * dty;
-  Ad[8]  = 0.0f;         Ad[9]  = 0.0f;  Ad[10] = 1.0f; Ad[11] = 0.0f;
-  Ad[12] = 0.0f;         Ad[13] = 0.0f;  Ad[14] = 0.0f; Ad[15] = 1.0f;
+  // Ad(Delta) -- sparse: rows 2,3 are [0,0,1,0] and [0,0,0,1]
+  float a00 = scale * dc,  a01 = -scale * ds;
+  float a02 = scale * dty, a03 = -scale * dtx;
+  float a10 = scale * ds,  a11 = scale * dc;
+  float a12 = -scale * dtx, a13 = -scale * dty;
 
-  float Jr[16], Jl[16];
+  // Compute Jr and Jl in one pass: Jr = J_r^{-1}(r), Jl = J_r^{-1}(-r)
+  float Jr[16];
   Sim2JrInv(u1, u2, w, lam, Jr);
+
+  float Jl[16];
   Sim2JrInv(-u1, -u2, -w, -lam, Jl);
 
-  // Write 4x8 Jacobian: [H_left | H_right]
   float* J = jacobians + tid * 32;
 
-  // H_left = -Jl * Ad  (4x4 * 4x4)
+  // H_left = -(Jl * Ad), exploit Ad sparsity: Ad rows 2-3 = identity rows
 #pragma unroll
   for (int i = 0; i < 4; ++i) {
-#pragma unroll
-    for (int j = 0; j < 4; ++j) {
-      float s = 0.0f;
-#pragma unroll
-      for (int k = 0; k < 4; ++k) {
-        s += Jl[i * 4 + k] * Ad[k * 4 + j];
-      }
-      J[i * 8 + j] = -s;
-    }
+    float l0 = Jl[i*4], l1 = Jl[i*4+1], l2 = Jl[i*4+2], l3 = Jl[i*4+3];
+    J[i*8+0] = -(l0*a00 + l1*a10);
+    J[i*8+1] = -(l0*a01 + l1*a11);
+    J[i*8+2] = -(l0*a02 + l1*a12 + l2);
+    J[i*8+3] = -(l0*a03 + l1*a13 + l3);
   }
 
   // H_right = Jr
 #pragma unroll
   for (int i = 0; i < 4; ++i) {
-#pragma unroll
-    for (int j = 0; j < 4; ++j) {
-      J[i * 8 + 4 + j] = Jr[i * 4 + j];
-    }
+    J[i*8+4] = Jr[i*4];   J[i*8+5] = Jr[i*4+1];
+    J[i*8+6] = Jr[i*4+2]; J[i*8+7] = Jr[i*4+3];
   }
 }
 

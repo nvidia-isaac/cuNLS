@@ -170,13 +170,12 @@ void bind_factor(nb::module_& m) {
         "SE3BetweenFactorBatch",
         "Batched SE(3) between factor. Residual=6, States=[SE3(6), SE3(6)].")
         .def("__init__", [](cunls::SE3BetweenFactorBatch* self,
-                            cunls::cuBLASHandle& cublas,
                             nb::handle deltas, size_t num_factors) {
             auto ptr = reinterpret_cast<const cunls::SE3Transform*>(
                 extract_device_ptr(deltas));
-            new (self) cunls::SE3BetweenFactorBatch(cublas, ptr, num_factors);
-        }, nb::arg("cublas_handle"), nb::arg("deltas"), nb::arg("num_factors"),
-           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
+            new (self) cunls::SE3BetweenFactorBatch(ptr, num_factors);
+        }, nb::arg("deltas"), nb::arg("num_factors"),
+           nb::keep_alive<1, 2>())
         .def_prop_ro("num_factors", &cunls::SE3BetweenFactorBatch::NumFactors)
         .def_prop_ro("residuals_size", &cunls::SE3BetweenFactorBatch::ResidualsSize)
         .def("state_block_sizes", &cunls::SE3BetweenFactorBatch::StateBlockSizes);

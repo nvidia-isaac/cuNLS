@@ -74,7 +74,7 @@ class TestSE3BetweenFactorBatch:
     def test_creation(self, cublas):
         num = 50
         deltas = cp.zeros(num * 16, dtype=cp.float32)
-        fb = pycunls.SE3BetweenFactorBatch(cublas, deltas, num)
+        fb = pycunls.SE3BetweenFactorBatch(deltas, num)
         assert fb.num_factors == num
         assert fb.residuals_size == 6
         assert fb.state_block_sizes() == [6, 6]
@@ -186,7 +186,7 @@ class TestInformationFactorBatch:
     def test_wraps_se3_between(self, cublas):
         num = 10
         deltas = cp.zeros(num * 16, dtype=cp.float32)
-        inner = pycunls.SE3BetweenFactorBatch(cublas, deltas, num)
+        inner = pycunls.SE3BetweenFactorBatch(deltas, num)
         sqrt_info = cp.eye(6, dtype=cp.float32).reshape(-1)
         sqrt_info = cp.tile(sqrt_info, num)
         fb = pycunls.InformationFactorBatch(cublas, inner, sqrt_info)
@@ -234,7 +234,7 @@ class TestWeightedFactorBatch:
     def test_wraps_se3_between(self, cublas):
         num = 10
         deltas = cp.zeros(num * 16, dtype=cp.float32)
-        inner = pycunls.SE3BetweenFactorBatch(cublas, deltas, num)
+        inner = pycunls.SE3BetweenFactorBatch(deltas, num)
         fb = pycunls.WeightedFactorBatch(inner, weight=0.5)
         assert fb.num_factors == num
         assert fb.residuals_size == 6

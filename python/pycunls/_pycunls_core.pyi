@@ -499,7 +499,6 @@ class SE3BetweenFactorBatch(FactorBatch):
 
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         deltas: DevicePointer,
         num_factors: int,
     ) -> None: ...

@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -51,16 +50,14 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
   /**
    * @brief Constructs a batch of SE(3) between factors.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param pose_deltas_ptr Pointer to GPU device memory containing pose deltas.
    *                        Must point to at least num_factors * 16 floats of allocated memory.
    *                        Each delta represents the constraint Delta = T_right^{-1} * T_left
    *                        for some true transforms T_left and T_right.
    * @param num_factors Number of factors in the batch.
    */
-  SE3BetweenFactorBatch(cuBLASHandle& cublas_handle,
-                              const SE3Transform* pose_deltas_ptr,
-                              size_t num_factors);
+  SE3BetweenFactorBatch(const SE3Transform* pose_deltas_ptr,
+                        size_t num_factors);
 
   /**
    * @brief Evaluates the factor and optionally computes Jacobians.
@@ -101,47 +98,16 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
    */
   void ComputeDeltaAdjoints(cudaStream_t stream);
 
-  /**
-   * @brief Computes the Jacobian with respect to the left pose state block.
-   *
-   * @param stream CUDA stream for asynchronous execution
-   * @param residuals Current residual values (device pointer)
-   * @param jacobians Output Jacobian matrix (device pointer, modified in-place)
-   */
-  void ComputeLeftPoseJacobian(cudaStream_t stream, const float* residuals,
-                               float* jacobians) const;
-
-  /**
-   * @brief Computes the Jacobian with respect to the right pose state
-   * block.
-   *
-   * @param stream CUDA stream for asynchronous execution
-   * @param residuals Current residual values (device pointer)
-   * @param jacobians Output Jacobian matrix (device pointer, modified in-place)
-   */
-  void ComputeRightPoseJacobian(cudaStream_t stream, const float* residuals,
-                                float* jacobians) const;
-
   /// Pointer to user-managed device memory containing pose deltas.
-  /// Each pose delta specifies the constraint between two poses, s.t. Delta =
-  /// T_right^{-1} * T_left for some true transform T_left and T_right.
   const SE3Transform* pose_deltas_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
 
-  /// SE3 adjoints of the pose deltas (internally managed)
+  /// SE3 adjoints of the pose deltas (precomputed once at construction)
   DeviceVector<Matrix<6>> delta_adjoints_;
 
-  cuBLASHandle& cublas_handle_;  ///< cuBLAS handle for matrix operations
-
-  /// Preallocated memory for left poses (speeds up evaluation ~2x)
-  mutable DeviceVector<SE3Transform> poses_left_;
-
-  /// Preallocated memory for right poses
-  mutable DeviceVector<SE3Transform> poses_right_;
-
-  /// Preallocated memory for inverse of left poses
+  /// Scratch buffer reused for error = Delta * T_left^{-1} * T_right
   mutable DeviceVector<SE3Transform> poses_left_inverse_;
 };
 
