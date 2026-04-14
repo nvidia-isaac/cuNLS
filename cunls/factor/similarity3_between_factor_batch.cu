@@ -19,7 +19,6 @@ constexpr size_t kBlockSize = 256;
 
 constexpr size_t kSim3TransformStride = 16;
 constexpr size_t kSim3TangentStride = 7;
-constexpr size_t kSim3TangentDim = 7;
 constexpr size_t kSim3AdjointStride = 49;
 constexpr size_t kSim3JacobianPitch = 14;
 constexpr size_t kSim3JacobianStride = 98;

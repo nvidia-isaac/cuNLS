@@ -204,7 +204,7 @@ __global__ void inverse_sim2_kernel(const float* transforms,
   Ti[6] = 0.0f;  Ti[7] = 0.0f;  Ti[8] = s;
 }
 
-__global__ void __launch_bounds__(256, 8)
+__global__ void __launch_bounds__(256, 4)
     jacobian_right_inverse_sim2_kernel(
     const float* tangent, size_t tangent_stride, float* jacobians,
     size_t jacobian_stride, size_t size) {

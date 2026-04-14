@@ -93,7 +93,7 @@ __global__ void collect_sim2_left_poses_kernel(
  *         [0 0, 1, 0],
  *         [0 0, 0, 1]]
  */
-__global__ void __launch_bounds__(256, 6)
+__global__ void __launch_bounds__(256, 4)
     sim2_between_jacobian_kernel(const float* __restrict__ residuals,
                                  const float* __restrict__ deltas,
                                  size_t delta_stride,
