@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,8 +40,8 @@ namespace cunls {
  * @param filename Path to the output binary file (created or appended to).
  * @param matrix   The CSR sparse matrix to dump.
  */
-void DumpCSRSparseMatrixToFile(const std::string& filename,
-                               const CSRSparseMatrix& matrix);
+void DumpCSRSparseMatrixToFile(const std::string &filename,
+                               const CSRSparseMatrix &matrix);
 
 /**
  * @brief Dumps a device vector to a binary file for debugging/analysis.
@@ -56,7 +56,7 @@ void DumpCSRSparseMatrixToFile(const std::string& filename,
  * @param filename Path to the output binary file (created or appended to).
  * @param vector   The device vector to dump.
  */
-void DumpVectorToFile(const std::string& filename,
-                      const dvector<float>& vector);
+void DumpVectorToFile(const std::string &filename,
+                      const dvector<float> &vector);
 
-}  // namespace cunls
+} // namespace cunls

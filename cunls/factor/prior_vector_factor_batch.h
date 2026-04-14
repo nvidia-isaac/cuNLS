@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
  */
 
 #pragma once
-
 
 #include <cuda/std/array>
 
@@ -37,10 +36,10 @@ namespace cunls {
  * @param num_vectors Number of vectors to process
  * @param stream CUDA stream for kernel execution
  */
-void LaunchPriorVectorFactorKernel(const float* observations,
-                                 float const* const* state_pointers,
-                                 float* residuals, float* jacobians, int dim,
-                                 int num_vectors, cudaStream_t stream);
+void LaunchPriorVectorFactorKernel(const float *observations,
+                                   float const *const *state_pointers,
+                                   float *residuals, float *jacobians, int dim,
+                                   int num_vectors, cudaStream_t stream);
 
 /**
  * @brief Batch factor for prior vector constraints.
@@ -59,18 +58,17 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
   using Base = SizedFactorBatch<Dim, Dim>;
   using VectorType = Vector<Dim>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of prior vector factors.
    *
-   * @param observations_ptr Pointer to GPU device memory containing observations.
-   *                         Must point to at least num_factors * Dim floats of allocated memory.
+   * @param observations_ptr Pointer to GPU device memory containing
+   * observations. Must point to at least num_factors * Dim floats of allocated
+   * memory.
    * @param num_factors Number of factors in the batch.
    */
-  PriorVectorFactorBatch(const VectorType* observations_ptr,
-                               size_t num_factors)
-      : observations_ptr_(observations_ptr),
-        num_factors_(num_factors) {}
+  PriorVectorFactorBatch(const VectorType *observations_ptr, size_t num_factors)
+      : observations_ptr_(observations_ptr), num_factors_(num_factors) {}
 
   /**
    * @brief Evaluates prior vector residuals and optionally Jacobians.
@@ -87,14 +85,14 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final {
-    auto data_ptr = reinterpret_cast<const float*>(observations_ptr_);
+    auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
     size_t num_factors = this->NumFactors();
 
-    LaunchPriorVectorFactorKernel(data_ptr, state_pointers, residuals, jacobians, Dim,
-                                num_factors, stream);
+    LaunchPriorVectorFactorKernel(data_ptr, state_pointers, residuals,
+                                  jacobians, Dim, num_factors, stream);
     return true;
   }
 
@@ -104,14 +102,14 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   PriorVectorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing observations.
-  const VectorType* observations_ptr_;
+  const VectorType *observations_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
 };
 
-}  // namespace cunls
+} // namespace cunls

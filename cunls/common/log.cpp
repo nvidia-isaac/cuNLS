@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,31 +39,31 @@ namespace {
 spdlog::level::level_enum GetLogLevel(Verbosity verbosity) {
   spdlog::level::level_enum log_level;
   switch (verbosity) {
-    case Verbosity::Error:
-      log_level = spdlog::level::err;
-      break;
-    case Verbosity::Warning:
-      log_level = spdlog::level::warn;
-      break;
-    case Verbosity::Message:
-      log_level = spdlog::level::info;
-      break;
-    case Verbosity::Debug:
-      log_level = spdlog::level::debug;
-      break;
-    case Verbosity::Silent:
-      log_level = spdlog::level::off;
-      break;
-    default:
-      log_level = spdlog::level::off;
-      break;
+  case Verbosity::Error:
+    log_level = spdlog::level::err;
+    break;
+  case Verbosity::Warning:
+    log_level = spdlog::level::warn;
+    break;
+  case Verbosity::Message:
+    log_level = spdlog::level::info;
+    break;
+  case Verbosity::Debug:
+    log_level = spdlog::level::debug;
+    break;
+  case Verbosity::Silent:
+    log_level = spdlog::level::off;
+    break;
+  default:
+    log_level = spdlog::level::off;
+    break;
   }
   return log_level;
 }
-}  // namespace
+} // namespace
 
 /** @copydoc SetLoggerOptions */
-void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string& path) {
+void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string &path) {
   is_logger_initialized.store(true, std::memory_order_release);
   spdlog::level::level_enum log_level = GetLogLevel(verbosity);
   if (sink == Sink::Console) {
@@ -124,4 +124,4 @@ void LogMessage(std::string_view msg) { Log(Verbosity::Message, msg); }
 
 /** @copydoc LogDebug(std::string_view) */
 void LogDebug(std::string_view msg) { Log(Verbosity::Debug, msg); }
-}  // namespace cunls
+} // namespace cunls

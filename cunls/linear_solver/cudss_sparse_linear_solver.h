@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,9 +32,9 @@ namespace cunls {
  * Controls the trade-off between initialization time and solve time.
  */
 enum class cuDSSLinearSolverMode {
-  SlowInitFastSolve,  ///< Slower initialization, faster subsequent solves.
-  FastInitSlowSolve,  ///< Faster initialization, slower subsequent solves (uses
-                      ///< refactorization).
+  SlowInitFastSolve, ///< Slower initialization, faster subsequent solves.
+  FastInitSlowSolve, ///< Faster initialization, slower subsequent solves (uses
+                     ///< refactorization).
 };
 
 /**
@@ -45,11 +45,11 @@ enum class cuDSSLinearSolverMode {
  */
 struct cuDSSLinearSolverOptions {
   cuDSSLinearSolverMode mode =
-      cuDSSLinearSolverMode::SlowInitFastSolve;  ///< Solver mode controlling
-                                                  ///< the init/solve trade-off.
-  int nthreads = 1;  ///< Number of threads for host-side operations.
+      cuDSSLinearSolverMode::SlowInitFastSolve; ///< Solver mode controlling
+                                                ///< the init/solve trade-off.
+  int nthreads = 1; ///< Number of threads for host-side operations.
   std::string threading_lib_path =
-      "";  ///< Path to the threading library (empty disables multi-threading).
+      ""; ///< Path to the threading library (empty disables multi-threading).
 };
 
 /**
@@ -60,7 +60,7 @@ struct cuDSSLinearSolverOptions {
  * library for GPU-accelerated direct factorization.
  */
 class cuDSSLinearSolver : public CSRSparseLinearSolver {
- public:
+public:
   /**
    * @brief Constructs a cuDSS linear solver.
    *
@@ -92,10 +92,8 @@ class cuDSSLinearSolver : public CSRSparseLinearSolver {
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream,
-                  const CSRSparseMatrix& spd_matrix,
-                  const dvector<float>& rhs,
-                  dvector<float>& result) final;
+  bool Initialize(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
@@ -117,17 +115,17 @@ class cuDSSLinearSolver : public CSRSparseLinearSolver {
    *               (size must equal matrix rows).
    * @return true on success, false if any dimension mismatch is detected.
    */
-  bool Solve(cudaStream_t stream,
-             const CSRSparseMatrix& spd_matrix,
-             const dvector<float>& rhs, dvector<float>& result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+             const dvector<float> &rhs, dvector<float> &result) final;
 
- private:
-  cuDSSLinearSolverOptions options_;  ///< Solver configuration.
+private:
+  cuDSSLinearSolverOptions options_; ///< Solver configuration.
 
-  cuDSSHandle cudss_handle_;  ///< Owns the cuDSS handle used for all solver phases.
-  cuDSSDeviceMemPool device_mem_pool_;  ///< Reusable pool for cuDSS allocations.
-  cuDSSData cudss_data_;  ///< cuDSS data object storing internal solver state.
+  cuDSSHandle
+      cudss_handle_; ///< Owns the cuDSS handle used for all solver phases.
+  cuDSSDeviceMemPool device_mem_pool_; ///< Reusable pool for cuDSS allocations.
+  cuDSSData cudss_data_; ///< cuDSS data object storing internal solver state.
 
-  cuDSSConfig cudss_config_;  ///< cuDSS configuration for solver parameters.
+  cuDSSConfig cudss_config_; ///< cuDSS configuration for solver parameters.
 };
-}  // namespace cunls
+} // namespace cunls

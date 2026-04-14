@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ namespace cunls {
 
 constexpr size_t kSoftLOneBlockSize = 256;
 
-__global__ void soft_lone_loss_kernel(float b, float c, float* s, float3* out,
+__global__ void soft_lone_loss_kernel(float b, float c, float *s, float3 *out,
                                       int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
@@ -35,7 +35,7 @@ __global__ void soft_lone_loss_kernel(float b, float c, float* s, float3* out,
   const float sum = 1.0f + sq_error * c;
   const float tmp = sqrtf(sum);
 
-  float3& rho = out[tid];
+  float3 &rho = out[tid];
   rho.x = 2.0f * b * (tmp - 1.0f);
   rho.y = fmaxf(cuda::std::numeric_limits<float>::min(), 1.0f / tmp);
   rho.z = -(c * rho.y) / (2.0f * sum);
@@ -44,16 +44,17 @@ __global__ void soft_lone_loss_kernel(float b, float c, float* s, float3* out,
 SoftLOneLossFunctionBatch::SoftLOneLossFunctionBatch(float b, float c)
     : b_(b), c_(c) {}
 
-bool SoftLOneLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool SoftLOneLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                          cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;
   }
-  size_t num_blocks = (num_losses + kSoftLOneBlockSize - 1) / kSoftLOneBlockSize;
+  size_t num_blocks =
+      (num_losses + kSoftLOneBlockSize - 1) / kSoftLOneBlockSize;
   soft_lone_loss_kernel<<<num_blocks, kSoftLOneBlockSize, 0, stream>>>(
       b_, c_, s, out, num_losses);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -24,22 +24,22 @@ namespace cunls {
 class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
   using Base = SizedFactorBatch<15, 15>;
 
- public:
-  SL4PriorFactorBatch(const SL4Transform* observations_ptr, size_t num_factors);
+public:
+  SL4PriorFactorBatch(const SL4Transform *observations_ptr, size_t num_factors);
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   SL4PriorFactorBatch() = default;
 
-  const SL4Transform* observations_ptr_;
+  const SL4Transform *observations_ptr_;
   size_t num_factors_;
   DeviceVector<SL4Transform> observations_inverse_;
   mutable DeviceVector<SL4Transform> transforms_error_;
 };
 
-}  // namespace cunls
+} // namespace cunls

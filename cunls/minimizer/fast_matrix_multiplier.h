@@ -31,26 +31,26 @@ namespace cunls {
  * during compute. Requires a Problem with at least one residual batch.
  */
 class FastSparseMatrixMultiplier : public SparseMatrixMultiplier {
- public:
-  void Initialize(cudaStream_t stream, const Problem& problem,
-                  const CSRSparseMatrix& input,
-                  CSRSparseMatrix& output) override;
+public:
+  void Initialize(cudaStream_t stream, const Problem &problem,
+                  const CSRSparseMatrix &input,
+                  CSRSparseMatrix &output) override;
 
-  void ComputeSquaredMatrix(cudaStream_t stream, const Problem& problem,
-                            const CSRSparseMatrix& input,
-                            CSRSparseMatrix& output) override;
+  void ComputeSquaredMatrix(cudaStream_t stream, const Problem &problem,
+                            const CSRSparseMatrix &input,
+                            CSRSparseMatrix &output) override;
 
- private:
-  void ComputeOutputStructure(cudaStream_t stream, const Problem& problem,
-                              CSRSparseMatrix& output, int num_cols);
+private:
+  void ComputeOutputStructure(cudaStream_t stream, const Problem &problem,
+                              CSRSparseMatrix &output, int num_cols);
 
   int max_nnz_per_row_ = 0;
-  dvector<int> position_map_;  ///< Precomputed output positions, indexed as
-                               ///< [input_nnz_idx * max_nnz_per_row + b].
-  dvector<int> buffer_;        ///< Reusable scratch buffer for initialization.
-  pvector<int> pinned_buf_;    ///< Reusable pinned buffer for D2H readbacks.
+  dvector<int> position_map_; ///< Precomputed output positions, indexed as
+                              ///< [input_nnz_idx * max_nnz_per_row + b].
+  dvector<int> buffer_;       ///< Reusable scratch buffer for initialization.
+  pvector<int> pinned_buf_;   ///< Reusable pinned buffer for D2H readbacks.
   profiler::Domain profiler_domain_{
-      "FastSparseMatrixMultiplier"};  ///< Profiling domain.
+      "FastSparseMatrixMultiplier"}; ///< Profiling domain.
 };
 
-}  // namespace cunls
+} // namespace cunls

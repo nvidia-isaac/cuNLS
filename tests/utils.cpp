@@ -27,10 +27,10 @@
 namespace cunls {
 namespace test_utils {
 
-void CreateCSRSparseMatrix(const std::vector<int>& row_ptr,
-                           const std::vector<int>& col_idx,
-                           const std::vector<float>& values,
-                           CSRSparseMatrix& matrix) {
+void CreateCSRSparseMatrix(const std::vector<int> &row_ptr,
+                           const std::vector<int> &col_idx,
+                           const std::vector<float> &values,
+                           CSRSparseMatrix &matrix) {
   size_t rows = row_ptr.size() - 1;
   size_t num_nonzeros = values.size();
 
@@ -45,7 +45,7 @@ void CreateCSRSparseMatrix(const std::vector<int>& row_ptr,
   matrix.values.CopyFromHost(values.data(), values.size());
 }
 
-void GenerateRandomVector(size_t size, std::vector<float>& values) {
+void GenerateRandomVector(size_t size, std::vector<float> &values) {
   unsigned int fixed_seed = 0;
   std::mt19937 rng(fixed_seed);
   std::uniform_real_distribution<float> val_dist(0.1, 1.0);
@@ -136,9 +136,9 @@ float3 TukeyLossCPU(float s, float a_squared) {
   return rho;
 }
 
-float3 ScaledLossCPU(float a, const float3& inner_rho) {
+float3 ScaledLossCPU(float a, const float3 &inner_rho) {
   return {a * inner_rho.x, a * inner_rho.y, a * inner_rho.z};
 }
 
-}  // namespace test_utils
-}  // namespace cunls
+} // namespace test_utils
+} // namespace cunls

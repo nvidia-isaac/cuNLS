@@ -1,12 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file se2_manifold_test.cpp
- * @brief Unified SE(2) manifold tests: state batch dimensions, prior and between
- *        factor LM convergence.
+ * @brief Unified SE(2) manifold tests: state batch dimensions, prior and
+ * between factor LM convergence.
  */
 
 #include <gtest/gtest.h>
@@ -38,7 +38,7 @@ Matrix<3> MakeSE2Identity() {
   return {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -50,9 +50,8 @@ TEST(SE2ManifoldTest, StateDimensions) {
   dvector<Matrix<3>> transforms_dev(transforms);
 
   cuBLASHandle cublas;
-  SE2StateBatch states(cublas,
-                       reinterpret_cast<const float*>(transforms_dev.data()),
-                       kN);
+  SE2StateBatch states(
+      cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), 3u);
   EXPECT_EQ(states.AmbientSize(), 9u);
@@ -66,8 +65,8 @@ TEST(SE2ManifoldTest, StateDimensions) {
 TEST(SE2ManifoldTest, PriorLMConvergence) {
   constexpr size_t kN = 10000;
   std::mt19937 rng(42);
-  std::uniform_real_distribution<float> angle_dist(
-      -static_cast<float>(M_PI), static_cast<float>(M_PI));
+  std::uniform_real_distribution<float> angle_dist(-static_cast<float>(M_PI),
+                                                   static_cast<float>(M_PI));
   std::uniform_real_distribution<float> trans_dist(-2.0f, 2.0f);
   std::uniform_real_distribution<float> pert_angle(-0.3f, 0.3f);
   std::uniform_real_distribution<float> pert_trans(-0.3f, 0.3f);
@@ -77,19 +76,18 @@ TEST(SE2ManifoldTest, PriorLMConvergence) {
     float theta = angle_dist(rng);
     float tx = trans_dist(rng), ty = trans_dist(rng);
     targets[i] = MakeSE2(theta, tx, ty);
-    initials[i] = MakeSE2(theta + pert_angle(rng),
-                           tx + pert_trans(rng),
-                           ty + pert_trans(rng));
+    initials[i] = MakeSE2(theta + pert_angle(rng), tx + pert_trans(rng),
+                          ty + pert_trans(rng));
   }
 
   dvector<Matrix<3>> targets_dev(targets), initials_dev(initials);
 
   cuBLASHandle cublas;
   SE2StateBatch state_batch(
-      cublas, reinterpret_cast<const float*>(initials_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
   SE2PriorFactorBatch factor_batch(targets_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_batch.StateBlockDevicePtr(i));
@@ -111,8 +109,7 @@ TEST(SE2ManifoldTest, PriorLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, 1e-4f);
@@ -120,10 +117,9 @@ TEST(SE2ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<3>> optimized(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(),
-                                 state_batch.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<3>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 9; ++j) {
@@ -157,12 +153,12 @@ TEST(SE2ManifoldTest, BetweenLMConvergence) {
 
   cuBLASHandle cublas;
   SE2StateBatch state_left(
-      cublas, reinterpret_cast<const float*>(left_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
   SE2StateBatch state_right(
-      cublas, reinterpret_cast<const float*>(right_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
   SE2BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_left.StateBlockDevicePtr(i));
@@ -186,22 +182,19 @@ TEST(SE2ManifoldTest, BetweenLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, summary.initial_cost);
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<3>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(),
-                                 state_left.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<3>),
-                                 cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(),
-                                 state_right.StateBlockDevicePtr(0),
-                                 kN * sizeof(Matrix<3>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 9; ++j) {
@@ -211,4 +204,4 @@ TEST(SE2ManifoldTest, BetweenLMConvergence) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

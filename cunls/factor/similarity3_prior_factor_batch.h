@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,26 +39,26 @@ namespace cunls {
  * - 1 state block with tangent dimension 7 (transform stored as 4x4 matrix)
  *
  * @note The observations_ptr must point to GPU device memory containing target
- *       transformation matrices and remain valid for the lifetime of this object.
- *       Memory layout: [T0: 16 floats][T1: 16 floats]...[TN-1: 16 floats]
+ *       transformation matrices and remain valid for the lifetime of this
+ * object. Memory layout: [T0: 16 floats][T1: 16 floats]...[TN-1: 16 floats]
  *       Each Sim(3) matrix is stored row-major as:
  *       [R00 R01 R02 tx, R10 R11 R12 ty, R20 R21 R22 tz, 0 0 0 1/s]
  */
 class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
   using Base = SizedFactorBatch<7, 7>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of Sim(3) prior factors.
    *
    * Pre-computes T_target^{-1} for all targets during construction.
    *
-   * @param observations_ptr Pointer to GPU device memory containing target transforms.
-   *                         Must point to at least num_factors * 16 floats.
+   * @param observations_ptr Pointer to GPU device memory containing target
+   * transforms. Must point to at least num_factors * 16 floats.
    * @param num_factors Number of factors in the batch.
    */
-  Similarity3PriorFactorBatch(const Matrix<4>* observations_ptr,
-                                    size_t num_factors);
+  Similarity3PriorFactorBatch(const Matrix<4> *observations_ptr,
+                              size_t num_factors);
 
   /**
    * @brief Evaluates Sim(3) prior residuals and optionally Jacobians.
@@ -70,8 +70,8 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   /**
@@ -80,13 +80,13 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   Similarity3PriorFactorBatch() = default;
 
-  const Matrix<4>* observations_ptr_;
+  const Matrix<4> *observations_ptr_;
   size_t num_factors_;
   DeviceVector<Matrix<4>> observations_inverse_;
   mutable DeviceVector<Matrix<4>> transforms_error_;
 };
 
-}  // namespace cunls
+} // namespace cunls

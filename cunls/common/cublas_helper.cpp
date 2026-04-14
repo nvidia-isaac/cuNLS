@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 
 namespace cunls {
 
-const char* cublasGetErrorString(int status) {
+const char *cublasGetErrorString(int status) {
   auto s = static_cast<cublasStatus_t>(status);
   if (s == CUBLAS_STATUS_SUCCESS)
     return "CUBLAS_STATUS_SUCCESS";
@@ -50,12 +50,11 @@ const char* cublasGetErrorString(int status) {
 
 cuBLASHandle::~cuBLASHandle() {
   if (handle_ != nullptr) {
-    WARN_ON_CUBLAS_ERROR(
-        cublasDestroy(static_cast<cublasHandle_t>(handle_)));
+    WARN_ON_CUBLAS_ERROR(cublasDestroy(static_cast<cublasHandle_t>(handle_)));
   }
 }
 
-void* cuBLASHandle::GetHandle(cudaStream_t stream) {
+void *cuBLASHandle::GetHandle(cudaStream_t stream) {
   if (stream == nullptr) {
     const std::string msg = "cuBLASHandle received invalid CUDA stream.";
     LogError(msg);
@@ -67,16 +66,15 @@ void* cuBLASHandle::GetHandle(cudaStream_t stream) {
   }
 
   if (handle_ != nullptr) {
-    THROW_ON_CUBLAS_ERROR(
-        cublasDestroy(static_cast<cublasHandle_t>(handle_)));
+    THROW_ON_CUBLAS_ERROR(cublasDestroy(static_cast<cublasHandle_t>(handle_)));
   }
 
   stream_ = stream;
   cublasHandle_t h = nullptr;
   THROW_ON_CUBLAS_ERROR(cublasCreate(&h));
   THROW_ON_CUBLAS_ERROR(cublasSetStream(h, stream_));
-  handle_ = static_cast<void*>(h);
+  handle_ = static_cast<void *>(h);
   return handle_;
 }
 
-}  // namespace cunls
+} // namespace cunls

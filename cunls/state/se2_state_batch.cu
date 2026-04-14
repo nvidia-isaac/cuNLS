@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,15 +24,15 @@ namespace {
 
 constexpr int kBlockSize = 256;
 
-__global__ void fused_se2_plus_kernel(const float* __restrict__ x,
-                                      const float* __restrict__ delta,
-                                      float* __restrict__ result, int n,
+__global__ void fused_se2_plus_kernel(const float *__restrict__ x,
+                                      const float *__restrict__ delta,
+                                      float *__restrict__ result, int n,
                                       bool negate_delta) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= n) {
     return;
   }
-  const float* d = delta + tid * 3;
+  const float *d = delta + tid * 3;
   float vx = d[0];
   float vy = d[1];
   float w = d[2];
@@ -55,8 +55,8 @@ __global__ void fused_se2_plus_kernel(const float* __restrict__ x,
     ty = vx * cw + vy * sw;
   }
 
-  const float* X = x + tid * 9;
-  float* R = result + tid * 9;
+  const float *X = x + tid * 9;
+  float *R = result + tid * 9;
   float x0 = X[0];
   float x1 = X[1];
   float x2 = X[2];
@@ -78,45 +78,43 @@ __global__ void fused_se2_plus_kernel(const float* __restrict__ x,
   R[8] = x6 * tx + x7 * ty + x8;
 }
 
-void LaunchFusedSe2Plus(cudaStream_t stream, const float* x, const float* delta,
-                        float* result, size_t num_blocks, bool negate_delta) {
+void LaunchFusedSe2Plus(cudaStream_t stream, const float *x, const float *delta,
+                        float *result, size_t num_blocks, bool negate_delta) {
   int n = static_cast<int>(num_blocks);
   if (n <= 0) {
     return;
   }
   int grid = (n + kBlockSize - 1) / kBlockSize;
-  fused_se2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(
-      x, delta, result, n, negate_delta);
+  fused_se2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n,
+                                                         negate_delta);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace
+} // namespace
 
-SE2StateBatch::SE2StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      tangents_(num_blocks * 3) {}
+SE2StateBatch::SE2StateBatch(cuBLASHandle &cublas_handle,
+                             const float *device_ptr, size_t num_blocks)
+    : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks), tangents_(num_blocks * 3) {}
 
-SE2StateBatch::SE2StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                             size_t num_blocks, const int* device_constant_state_ids,
+SE2StateBatch::SE2StateBatch(cuBLASHandle &cublas_handle,
+                             const float *device_ptr, size_t num_blocks,
+                             const int *device_constant_state_ids,
                              size_t num_const_state_blocks)
     : Base(device_ptr, num_blocks, device_constant_state_ids,
            num_const_state_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
+      cublas_handle_(cublas_handle), delta_transforms_(num_blocks),
       tangents_(num_blocks * 3) {}
 
-void SE2StateBatch::ApplyUpdate(const float* x, const float* delta,
-                                float* result, bool invert_delta,
+void SE2StateBatch::ApplyUpdate(const float *x, const float *delta,
+                                float *result, bool invert_delta,
                                 cudaStream_t stream) {
   LaunchFusedSe2Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
 }
 
-void SE2StateBatch::Plus(const float* x, const float* delta,
-                         float* x_plus_delta, cudaStream_t stream) {
+void SE2StateBatch::Plus(const float *x, const float *delta,
+                         float *x_plus_delta, cudaStream_t stream) {
   LaunchFusedSe2Plus(stream, x, delta, x_plus_delta, NumStateBlocks(), false);
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -26,13 +26,13 @@
 
 namespace examples {
 
+using cunls::dvector;
 using cunls::LogError;
 using cunls::SE3Transform;
 using cunls::Vector;
-using cunls::dvector;
 
 // Generic 4x4 matrix multiply used for SE(3) composition on the host.
-inline SE3Transform ComposeSE3(const SE3Transform& a, const SE3Transform& b) {
+inline SE3Transform ComposeSE3(const SE3Transform &a, const SE3Transform &b) {
   SE3Transform out;
   out.fill(0.0f);
   for (int row = 0; row < 4; ++row) {
@@ -47,7 +47,7 @@ inline SE3Transform ComposeSE3(const SE3Transform& a, const SE3Transform& b) {
 
 // Host-side inverse of an SE(3) homogeneous transform:
 // [R t; 0 1]^{-1} = [R^T  -R^T t; 0  1]
-inline SE3Transform InverseSE3(const SE3Transform& pose) {
+inline SE3Transform InverseSE3(const SE3Transform &pose) {
   SE3Transform inv;
   inv.fill(0.0f);
 
@@ -69,16 +69,15 @@ inline SE3Transform InverseSE3(const SE3Transform& pose) {
 
 // Apply the SE(3) exponential map to a batch of twist vectors on the GPU.
 // Low-level building block: callers supply pre-built twists.
-inline void TwistsToSE3(const std::vector<Vector<6>>& twists,
-                         std::vector<SE3Transform>& poses) {
+inline void TwistsToSE3(const std::vector<Vector<6>> &twists,
+                        std::vector<SE3Transform> &poses) {
   const size_t n = twists.size();
   dvector<Vector<6>> twists_device(twists);
   dvector<SE3Transform> poses_device(n);
   cunls::CudaStream stream;
-  cunls::ComputeExpSE3(stream.GetStream(),
-                       reinterpret_cast<const float*>(twists_device.data()), 6,
-                       4, 16, n,
-                       reinterpret_cast<float*>(poses_device.data()));
+  cunls::ComputeExpSE3(
+      stream.GetStream(), reinterpret_cast<const float *>(twists_device.data()),
+      6, 4, 16, n, reinterpret_cast<float *>(poses_device.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   poses.resize(n);
@@ -87,10 +86,10 @@ inline void TwistsToSE3(const std::vector<Vector<6>>& twists,
 
 // Generate random SE(3) transforms by sampling twists from uniform
 // distributions and applying the exponential map on the GPU.
-inline void GenerateRandomSE3(size_t n, std::mt19937& rng,
-                               std::vector<SE3Transform>& poses,
-                               float rot_range = 0.4f,
-                               float trans_range = 2.0f) {
+inline void GenerateRandomSE3(size_t n, std::mt19937 &rng,
+                              std::vector<SE3Transform> &poses,
+                              float rot_range = 0.4f,
+                              float trans_range = 2.0f) {
   std::uniform_real_distribution<float> rot_dist(-rot_range, rot_range);
   std::uniform_real_distribution<float> trans_dist(-trans_range, trans_range);
 
@@ -107,4 +106,4 @@ inline void GenerateRandomSE3(size_t n, std::mt19937& rng,
   TwistsToSE3(twists, poses);
 }
 
-}  // namespace examples
+} // namespace examples

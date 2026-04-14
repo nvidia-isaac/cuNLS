@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,12 +36,13 @@ namespace cunls {
  * - states_: One device vector per state batch containing all state values
  *            flattened into a single vector.
  * - state_pointers_: One device vector per residual batch containing pointers
- *                   to state blocks, remapped to point into the copied state storage.
+ *                   to state blocks, remapped to point into the copied state
+ * storage.
  * - problem_state_ptrs_device_: Device copy of host problem pointer lists for
  *   Jacobian structure and remap kernels.
  */
 class MinimizerState {
- public:
+public:
   MinimizerState() = default;
 
   /**
@@ -53,14 +54,15 @@ class MinimizerState {
    * @param stream CUDA stream for GPU operations.
    * @param problem The problem to create a state snapshot from.
    */
-  MinimizerState(cudaStream_t stream, const Problem& problem) {
+  MinimizerState(cudaStream_t stream, const Problem &problem) {
     Create(stream, problem);
   }
 
   /**
-   * @brief Refreshes storage from the problem (realloc only when capacity is insufficient).
+   * @brief Refreshes storage from the problem (realloc only when capacity is
+   * insufficient).
    */
-  void Recreate(cudaStream_t stream, const Problem& problem) {
+  void Recreate(cudaStream_t stream, const Problem &problem) {
     Create(stream, problem);
   }
 
@@ -73,23 +75,21 @@ class MinimizerState {
    * @param stream CUDA stream for GPU operations.
    * @param other Source state to copy from.
    */
-  void Copy(cudaStream_t stream, const std::vector<dvector<float>>& other);
+  void Copy(cudaStream_t stream, const std::vector<dvector<float>> &other);
 
   /**
    * @brief Gets the state value vectors.
    *
    * @return Reference to vector of state value vectors (one per batch).
    */
-  std::vector<dvector<float>>& GetStates() { return states_; }
+  std::vector<dvector<float>> &GetStates() { return states_; }
 
   /**
    * @brief Gets the state value vectors (const version).
    *
    * @return Const reference to vector of state value vectors.
    */
-  const std::vector<dvector<float>>& GetStates() const {
-    return states_;
-  }
+  const std::vector<dvector<float>> &GetStates() const { return states_; }
 
   /**
    * @brief Gets the state pointer vectors.
@@ -100,16 +100,14 @@ class MinimizerState {
    * @return Reference to vector of state pointer vectors (one per residual
    * batch).
    */
-  std::vector<dvector<float*>>& GetStatePointers() {
-    return state_pointers_;
-  }
+  std::vector<dvector<float *>> &GetStatePointers() { return state_pointers_; }
 
   /**
    * @brief Gets the state pointer vectors (const version).
    *
    * @return Const reference to vector of state pointer vectors.
    */
-  const std::vector<dvector<float*>>& GetStatePointers() const {
+  const std::vector<dvector<float *>> &GetStatePointers() const {
     return state_pointers_;
   }
 
@@ -122,35 +120,36 @@ class MinimizerState {
    * @param problem The optimization problem.
    * @param[out] structure Output row and column index arrays.
    */
-  void BuildTripletSparseStructure(cudaStream_t stream, const Problem& problem,
-                                   TripletSparseStructure& structure);
+  void BuildTripletSparseStructure(cudaStream_t stream, const Problem &problem,
+                                   TripletSparseStructure &structure);
 
- private:
+private:
   /**
    * @brief Creates minimizer state from a problem.
    *
    * Allocates storage, copies state values, and remaps pointers.
    */
-  void Create(cudaStream_t stream, const Problem& problem);
+  void Create(cudaStream_t stream, const Problem &problem);
 
   /**
    * @brief Allocates state storage vectors.
    *
    * Creates one device vector per state batch with appropriate size.
    */
-  void CreateStates(const Problem& problem);
+  void CreateStates(const Problem &problem);
 
   /**
    * @brief Allocates state pointer vectors.
    *
    * Creates one device vector per residual batch for storing state pointers.
    */
-  void CreateStatePointers(const Problem& problem);
+  void CreateStatePointers(const Problem &problem);
 
   /**
-   * @brief Copies problem state pointer lists from host to problem_state_ptrs_device_.
+   * @brief Copies problem state pointer lists from host to
+   * problem_state_ptrs_device_.
    */
-  void CopyProblemStatePointersFromHost(const Problem& problem);
+  void CopyProblemStatePointersFromHost(const Problem &problem);
 
   /**
    * @brief State value storage.
@@ -167,10 +166,11 @@ class MinimizerState {
    * blocks. These pointers are remapped to point into states_ storage
    * rather than the original problem's state storage.
    */
-  std::vector<dvector<float*>> state_pointers_;
+  std::vector<dvector<float *>> state_pointers_;
 
-  /// Device copy of problem.GetStatePointers() for Jacobian FillColIds and remap.
-  std::vector<dvector<float*>> problem_state_ptrs_device_;
+  /// Device copy of problem.GetStatePointers() for Jacobian FillColIds and
+  /// remap.
+  std::vector<dvector<float *>> problem_state_ptrs_device_;
 };
 
 /**
@@ -184,5 +184,5 @@ class MinimizerState {
  * @param state Source minimizer state.
  * @param[out] problem Destination problem to update.
  */
-void Copy(cudaStream_t stream, const MinimizerState& state, Problem& problem);
-}  // namespace cunls
+void Copy(cudaStream_t stream, const MinimizerState &state, Problem &problem);
+} // namespace cunls

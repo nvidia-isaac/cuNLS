@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,24 +39,23 @@ namespace cunls {
  * - 1 state block with tangent dimension 6 (transform stored as 4x4 matrix)
  *
  * @note The observations_ptr must point to GPU device memory containing target
- *       transformation matrices and remain valid for the lifetime of this object.
- *       Memory layout: [T0: 16 floats][T1: 16 floats]...[TN-1: 16 floats]
+ *       transformation matrices and remain valid for the lifetime of this
+ * object. Memory layout: [T0: 16 floats][T1: 16 floats]...[TN-1: 16 floats]
  */
 class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
   using Base = SizedFactorBatch<6, 6>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of SE(3) prior factors.
    *
    * Pre-computes T_target^{-1} for all targets during construction.
    *
-   * @param observations_ptr Pointer to GPU device memory containing target transforms.
-   *                         Must point to at least num_factors * 16 floats.
+   * @param observations_ptr Pointer to GPU device memory containing target
+   * transforms. Must point to at least num_factors * 16 floats.
    * @param num_factors Number of factors in the batch.
    */
-  SE3PriorFactorBatch(const SE3Transform* observations_ptr,
-                            size_t num_factors);
+  SE3PriorFactorBatch(const SE3Transform *observations_ptr, size_t num_factors);
 
   /**
    * @brief Evaluates SE(3) prior residuals and optionally Jacobians.
@@ -68,8 +67,8 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   /**
@@ -78,11 +77,11 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   SE3PriorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target transforms.
-  const SE3Transform* observations_ptr_;
+  const SE3Transform *observations_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
@@ -94,4 +93,4 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
   mutable DeviceVector<SE3Transform> transforms_error_;
 };
 
-}  // namespace cunls
+} // namespace cunls

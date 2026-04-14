@@ -31,7 +31,7 @@ namespace cunls {
  * input via CSR-to-CSC conversion and then multiplies A^T * A.
  */
 class cuSPARSESparseMatrixMultiplier : public SparseMatrixMultiplier {
- public:
+public:
   /** @brief Constructs and initializes the cuSPARSE GEMM descriptor. */
   cuSPARSESparseMatrixMultiplier();
 
@@ -51,9 +51,9 @@ class cuSPARSESparseMatrixMultiplier : public SparseMatrixMultiplier {
    * @param input   Input sparse matrix A (typically the Jacobian in CSR).
    * @param[out] output Output sparse matrix A^T * A (structure allocated).
    */
-  void Initialize(cudaStream_t stream, const Problem& problem,
-                  const CSRSparseMatrix& input,
-                  CSRSparseMatrix& output) override;
+  void Initialize(cudaStream_t stream, const Problem &problem,
+                  const CSRSparseMatrix &input,
+                  CSRSparseMatrix &output) override;
 
   /**
    * @brief Computes A^T * A for a sparse matrix A.
@@ -66,21 +66,21 @@ class cuSPARSESparseMatrixMultiplier : public SparseMatrixMultiplier {
    * @param input   Input sparse matrix A (typically the Jacobian).
    * @param[out] output Output sparse matrix A^T * A.
    */
-  void ComputeSquaredMatrix(cudaStream_t stream, const Problem& problem,
-                            const CSRSparseMatrix& input,
-                            CSRSparseMatrix& output) override;
+  void ComputeSquaredMatrix(cudaStream_t stream, const Problem &problem,
+                            const CSRSparseMatrix &input,
+                            CSRSparseMatrix &output) override;
 
- private:
-  void Transpose(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                 CSRSparseMatrix& transposed);
-  void EstimateWork(void* handle);
-  void ReuseNonzeros(void* handle);
-  void ReuseCopy(void* handle);
+private:
+  void Transpose(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                 CSRSparseMatrix &transposed);
+  void EstimateWork(void *handle);
+  void ReuseNonzeros(void *handle);
+  void ReuseCopy(void *handle);
 
   cuSPARSEHandle handle_;
   CSRSparseMatrix temp_matrix_;
 
-  void* gemm_description_ = nullptr;
+  void *gemm_description_ = nullptr;
 
   cuSPARSEMatrixDescription descrA_, descrB_, descrC_;
 
@@ -91,4 +91,4 @@ class cuSPARSESparseMatrixMultiplier : public SparseMatrixMultiplier {
   dvector<uint8_t> buffer5;
 };
 
-}  // namespace cunls
+} // namespace cunls

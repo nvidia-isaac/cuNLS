@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #include "cunls/common/helper.h"
@@ -23,7 +23,8 @@ constexpr size_t kSimMathBlockSize = 256;
  *
  * The coefficients X and Y interpolate between two regimes:
  *   - Pure rotation (|lambda| small): X = sin(theta)/theta, Y = (1-cos)/theta^2
- *   - Mixed rotation+scale: uses a blending parameter alpha = lambda^2/(lambda^2+theta^2)
+ *   - Mixed rotation+scale: uses a blending parameter alpha =
+ * lambda^2/(lambda^2+theta^2)
  *
  * Reference: Eade, "Lie Groups for 2D and 3D Transformations", Sec. 3.
  *
@@ -32,8 +33,8 @@ constexpr size_t kSimMathBlockSize = 256;
  * @param[out] X Diagonal element of V
  * @param[out] thetaY Off-diagonal magnitude (theta * Y)
  */
-static __device__ void ComputeVCoeffsSim2(float theta, float lambda,
-                                          float& X, float& thetaY) {
+static __device__ void ComputeVCoeffsSim2(float theta, float lambda, float &X,
+                                          float &thetaY) {
   const float lambda2 = lambda * lambda;
   const float theta2 = theta * theta;
 
@@ -87,7 +88,8 @@ static __device__ void ComputeVCoeffsSim2(float theta, float lambda,
 // ============================================================================
 
 /**
- * @brief Sim(2) exponential map: tangent [u_x, u_y, theta, lambda] -> 3x3 matrix.
+ * @brief Sim(2) exponential map: tangent [u_x, u_y, theta, lambda] -> 3x3
+ * matrix.
  *
  * Computes:
  *   T = [[cos(theta), -sin(theta), tx],
@@ -97,15 +99,15 @@ static __device__ void ComputeVCoeffsSim2(float theta, float lambda,
  * where [tx, ty] = V(theta, lambda) * [u_x, u_y] and
  * V = [[X, -theta*Y], [theta*Y, X]] is the Sim(2) V-matrix.
  */
-__global__ void exp_sim2_kernel(const float* tangent, size_t tangent_stride,
-                                float* transforms, size_t transform_stride,
+__global__ void exp_sim2_kernel(const float *tangent, size_t tangent_stride,
+                                float *transforms, size_t transform_stride,
                                 size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* xi = tangent + idx * tangent_stride;
+  const float *xi = tangent + idx * tangent_stride;
   float ux = xi[0];
   float uy = xi[1];
   float theta = xi[2];
@@ -121,10 +123,16 @@ __global__ void exp_sim2_kernel(const float* tangent, size_t tangent_stride,
   float tx = X * ux - thetaY * uy;
   float ty = thetaY * ux + X * uy;
 
-  float* T = transforms + idx * transform_stride;
-  T[0] = c;     T[1] = -s;    T[2] = tx;
-  T[3] = s;     T[4] = c;     T[5] = ty;
-  T[6] = 0.0f;  T[7] = 0.0f;  T[8] = inv_scale;
+  float *T = transforms + idx * transform_stride;
+  T[0] = c;
+  T[1] = -s;
+  T[2] = tx;
+  T[3] = s;
+  T[4] = c;
+  T[5] = ty;
+  T[6] = 0.0f;
+  T[7] = 0.0f;
+  T[8] = inv_scale;
 }
 
 /**
@@ -135,16 +143,16 @@ __global__ void exp_sim2_kernel(const float* tangent, size_t tangent_stride,
  *
  * V^{-1} = [[X, thetaY], [-thetaY, X]] / (X^2 + (thetaY)^2).
  */
-__global__ void log_sim2_kernel(const float* transforms,
-                                size_t transform_stride, float* tangent,
+__global__ void log_sim2_kernel(const float *transforms,
+                                size_t transform_stride, float *tangent,
                                 size_t tangent_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* T = transforms + idx * transform_stride;
-  float* xi = tangent + idx * tangent_stride;
+  const float *T = transforms + idx * transform_stride;
+  float *xi = tangent + idx * tangent_stride;
 
   float c = T[0];
   float s = T[3];
@@ -180,41 +188,48 @@ __global__ void log_sim2_kernel(const float* transforms,
  * @brief Sim(2) inverse: T^{-1} = [R^T, -s*R^T*t; 0, s].
  *
  * For T = [R t; 0 0 1/s], the inverse is [R^T, -s*R^T*t; 0 0 s].
- * Note: unlike SE(2), the translation block includes the scale factor s = 1/(1/s).
+ * Note: unlike SE(2), the translation block includes the scale factor s =
+ * 1/(1/s).
  */
-__global__ void inverse_sim2_kernel(const float* transforms,
+__global__ void inverse_sim2_kernel(const float *transforms,
                                     size_t transform_stride,
-                                    float* inverse_transforms,
+                                    float *inverse_transforms,
                                     size_t inverse_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* T = transforms + idx * transform_stride;
-  float* Ti = inverse_transforms + idx * inverse_stride;
+  const float *T = transforms + idx * transform_stride;
+  float *Ti = inverse_transforms + idx * inverse_stride;
 
   float r00 = T[0], r01 = T[1], tx = T[2];
   float r10 = T[3], r11 = T[4], ty = T[5];
   float inv_s = T[8];
   float s = 1.0f / inv_s;
 
-  Ti[0] = r00;   Ti[1] = r10;   Ti[2] = -s * (r00 * tx + r10 * ty);
-  Ti[3] = r01;   Ti[4] = r11;   Ti[5] = -s * (r01 * tx + r11 * ty);
-  Ti[6] = 0.0f;  Ti[7] = 0.0f;  Ti[8] = s;
+  Ti[0] = r00;
+  Ti[1] = r10;
+  Ti[2] = -s * (r00 * tx + r10 * ty);
+  Ti[3] = r01;
+  Ti[4] = r11;
+  Ti[5] = -s * (r01 * tx + r11 * ty);
+  Ti[6] = 0.0f;
+  Ti[7] = 0.0f;
+  Ti[8] = s;
 }
 
 __global__ void __launch_bounds__(256, 4)
-    jacobian_right_inverse_sim2_kernel(
-    const float* tangent, size_t tangent_stride, float* jacobians,
-    size_t jacobian_stride, size_t size) {
+    jacobian_right_inverse_sim2_kernel(const float *tangent,
+                                       size_t tangent_stride, float *jacobians,
+                                       size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* xi = tangent + idx * tangent_stride;
-  float* J = jacobians + idx * jacobian_stride;
+  const float *xi = tangent + idx * tangent_stride;
+  float *J = jacobians + idx * jacobian_stride;
   Sim2JrInv(xi[0], xi[1], xi[2], xi[3], J);
 }
 
@@ -222,37 +237,37 @@ __global__ void __launch_bounds__(256, 4)
 // Sim(2) Host wrappers
 // ============================================================================
 
-void ComputeExpSim2(cudaStream_t stream, const float* tangent,
-                    size_t tangent_stride, size_t transform_stride,
-                    size_t size, float* transforms) {
+void ComputeExpSim2(cudaStream_t stream, const float *tangent,
+                    size_t tangent_stride, size_t transform_stride, size_t size,
+                    float *transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   exp_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       tangent, tangent_stride, transforms, transform_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSim2(cudaStream_t stream, const float* transforms,
-                    size_t transform_stride, size_t tangent_stride,
-                    size_t size, float* tangent) {
+void ComputeLogSim2(cudaStream_t stream, const float *transforms,
+                    size_t transform_stride, size_t tangent_stride, size_t size,
+                    float *tangent) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   log_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, tangent, tangent_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeInverseSim2(cudaStream_t stream, const float* transforms,
+void ComputeInverseSim2(cudaStream_t stream, const float *transforms,
                         size_t transform_stride, size_t inverse_stride,
-                        size_t size, float* inverse_transforms) {
+                        size_t size, float *inverse_transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   inverse_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, inverse_transforms, inverse_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeJacobianRightInverseSim2(cudaStream_t stream, const float* tangent,
+void ComputeJacobianRightInverseSim2(cudaStream_t stream, const float *tangent,
                                      size_t tangent_stride,
                                      size_t jacobian_stride, size_t size,
-                                     float* jacobians) {
+                                     float *jacobians) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   jacobian_right_inverse_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0,
                                        stream>>>(
@@ -265,9 +280,9 @@ void ComputeJacobianRightInverseSim2(cudaStream_t stream, const float* tangent,
 // ============================================================================
 
 /// C = A * B (3x3, row-major)
-static __device__ void mat3_mul(const float* __restrict__ A,
-                                const float* __restrict__ B,
-                                float* __restrict__ C) {
+static __device__ void mat3_mul(const float *__restrict__ A,
+                                const float *__restrict__ B,
+                                float *__restrict__ C) {
 #pragma unroll
   for (int r = 0; r < 3; ++r) {
 #pragma unroll
@@ -283,9 +298,9 @@ static __device__ void mat3_mul(const float* __restrict__ A,
 }
 
 /// out = M * v (3x3 * 3x1)
-static __device__ void mat3_vec(const float* __restrict__ M,
-                                const float* __restrict__ v,
-                                float* __restrict__ out) {
+static __device__ void mat3_vec(const float *__restrict__ M,
+                                const float *__restrict__ v,
+                                float *__restrict__ out) {
 #pragma unroll
   for (int r = 0; r < 3; ++r) {
     float s = 0.0f;
@@ -298,8 +313,8 @@ static __device__ void mat3_vec(const float* __restrict__ M,
 }
 
 /// Invert a 3x3 matrix via cofactors. Returns false if singular.
-static __device__ bool mat3_inv(const float* __restrict__ M,
-                                float* __restrict__ Minv) {
+static __device__ bool mat3_inv(const float *__restrict__ M,
+                                float *__restrict__ Minv) {
   float c0 = M[4] * M[8] - M[5] * M[7];
   float c1 = -(M[3] * M[8] - M[5] * M[6]);
   float c2 = M[3] * M[7] - M[4] * M[6];
@@ -321,10 +336,16 @@ static __device__ bool mat3_inv(const float* __restrict__ M,
 }
 
 /// Build skew-symmetric matrix from 3-vector: S = [v]_x
-static __device__ void skew3(const float* v, float* S) {
-  S[0] = 0.0f;   S[1] = -v[2];  S[2] = v[1];
-  S[3] = v[2];   S[4] = 0.0f;   S[5] = -v[0];
-  S[6] = -v[1];  S[7] = v[0];   S[8] = 0.0f;
+static __device__ void skew3(const float *v, float *S) {
+  S[0] = 0.0f;
+  S[1] = -v[2];
+  S[2] = v[1];
+  S[3] = v[2];
+  S[4] = 0.0f;
+  S[5] = -v[0];
+  S[6] = -v[1];
+  S[7] = v[0];
+  S[8] = 0.0f;
 }
 
 // ============================================================================
@@ -332,7 +353,8 @@ static __device__ void skew3(const float* v, float* S) {
 // ============================================================================
 
 /**
- * @brief Sim(3) exponential map: tangent [w1,w2,w3, u1,u2,u3, lambda] -> 4x4 matrix.
+ * @brief Sim(3) exponential map: tangent [w1,w2,w3, u1,u2,u3, lambda] -> 4x4
+ * matrix.
  *
  * Computes:
  *   T = [R, t; 0, 1/s]
@@ -345,15 +367,15 @@ static __device__ void skew3(const float* v, float* S) {
  * using a blending between the SE(3)-like and pure-scale regimes
  * (Eade, "Lie Groups for 2D and 3D Transformations").
  */
-__global__ void exp_sim3_kernel(const float* tangent, size_t tangent_stride,
-                                float* transforms, size_t transform_stride,
+__global__ void exp_sim3_kernel(const float *tangent, size_t tangent_stride,
+                                float *transforms, size_t transform_stride,
                                 size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* xi = tangent + idx * tangent_stride;
+  const float *xi = tangent + idx * tangent_stride;
   float w1 = xi[0], w2 = xi[1], w3 = xi[2];
   float u1 = xi[3], u2 = xi[4], u3 = xi[5];
   float lambda = xi[6];
@@ -393,15 +415,15 @@ __global__ void exp_sim3_kernel(const float* tangent, size_t tangent_stride,
   }
 
   float ct_val = 1.0f - A2 * theta2;
-  float* T = transforms + idx * transform_stride;
-  T[0]  = ct_val + A2 * w1 * w1;
-  T[1]  = A2 * w1 * w2 - A1 * w3;
-  T[2]  = A2 * w1 * w3 + A1 * w2;
-  T[4]  = A2 * w2 * w1 + A1 * w3;
-  T[5]  = ct_val + A2 * w2 * w2;
-  T[6]  = A2 * w2 * w3 - A1 * w1;
-  T[8]  = A2 * w3 * w1 - A1 * w2;
-  T[9]  = A2 * w3 * w2 + A1 * w1;
+  float *T = transforms + idx * transform_stride;
+  T[0] = ct_val + A2 * w1 * w1;
+  T[1] = A2 * w1 * w2 - A1 * w3;
+  T[2] = A2 * w1 * w3 + A1 * w2;
+  T[4] = A2 * w2 * w1 + A1 * w3;
+  T[5] = ct_val + A2 * w2 * w2;
+  T[6] = A2 * w2 * w3 - A1 * w1;
+  T[8] = A2 * w3 * w1 - A1 * w2;
+  T[9] = A2 * w3 * w2 + A1 * w1;
   T[10] = ct_val + A2 * w3 * w3;
 
   float diag = P_c - R_c * theta2;
@@ -409,8 +431,8 @@ __global__ void exp_sim3_kernel(const float* tangent, size_t tangent_stride,
   float cx = w2 * u3 - w3 * u2;
   float cy = w3 * u1 - w1 * u3;
   float cz = w1 * u2 - w2 * u1;
-  T[3]  = diag * u1 + Q_c * cx + R_c * w1 * dot_wu;
-  T[7]  = diag * u2 + Q_c * cy + R_c * w2 * dot_wu;
+  T[3] = diag * u1 + Q_c * cx + R_c * w1 * dot_wu;
+  T[7] = diag * u2 + Q_c * cy + R_c * w2 * dot_wu;
   T[11] = diag * u3 + Q_c * cz + R_c * w3 * dot_wu;
 
   float inv_s = expf(-lambda);
@@ -430,16 +452,16 @@ __global__ void exp_sim3_kernel(const float* tangent, size_t tangent_stride,
  * V is assembled as V = diag*I + Q*[w]_x + R_c*w*w^T, then inverted
  * via cofactor expansion of the resulting 3x3 matrix.
  */
-__global__ void log_sim3_kernel(const float* transforms,
-                                size_t transform_stride, float* tangent,
+__global__ void log_sim3_kernel(const float *transforms,
+                                size_t transform_stride, float *tangent,
                                 size_t tangent_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* T = transforms + idx * transform_stride;
-  float* xi = tangent + idx * tangent_stride;
+  const float *T = transforms + idx * transform_stride;
+  float *xi = tangent + idx * tangent_stride;
 
   float R[9] = {T[0], T[1], T[2], T[4], T[5], T[6], T[8], T[9], T[10]};
   float t[3] = {T[3], T[7], T[11]};
@@ -513,16 +535,24 @@ __global__ void log_sim3_kernel(const float* transforms,
 
   float Vinv[9];
   if (!mat3_inv(V, Vinv)) {
-    xi[0] = w[0]; xi[1] = w[1]; xi[2] = w[2];
-    xi[3] = t[0]; xi[4] = t[1]; xi[5] = t[2];
+    xi[0] = w[0];
+    xi[1] = w[1];
+    xi[2] = w[2];
+    xi[3] = t[0];
+    xi[4] = t[1];
+    xi[5] = t[2];
     xi[6] = lambda;
     return;
   }
   float u[3];
   mat3_vec(Vinv, t, u);
 
-  xi[0] = w[0]; xi[1] = w[1]; xi[2] = w[2];
-  xi[3] = u[0]; xi[4] = u[1]; xi[5] = u[2];
+  xi[0] = w[0];
+  xi[1] = w[1];
+  xi[2] = w[2];
+  xi[3] = u[0];
+  xi[4] = u[1];
+  xi[5] = u[2];
   xi[6] = lambda;
 }
 
@@ -531,17 +561,17 @@ __global__ void log_sim3_kernel(const float* transforms,
  *
  * For T = [R t; 0 0 0 1/s], the inverse is [R^T, -s*R^T*t; 0 0 0 s].
  */
-__global__ void inverse_sim3_kernel(const float* transforms,
+__global__ void inverse_sim3_kernel(const float *transforms,
                                     size_t transform_stride,
-                                    float* inverse_transforms,
+                                    float *inverse_transforms,
                                     size_t inverse_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* T = transforms + idx * transform_stride;
-  float* Ti = inverse_transforms + idx * inverse_stride;
+  const float *T = transforms + idx * transform_stride;
+  float *Ti = inverse_transforms + idx * inverse_stride;
 
   float r00 = T[0], r01 = T[1], r02 = T[2], tx = T[3];
   float r10 = T[4], r11 = T[5], r12 = T[6], ty = T[7];
@@ -549,13 +579,22 @@ __global__ void inverse_sim3_kernel(const float* transforms,
   float inv_s = T[15];
   float s = 1.0f / inv_s;
 
-  Ti[0]  = r00;   Ti[1]  = r10;   Ti[2]  = r20;
-  Ti[3]  = -s * (r00 * tx + r10 * ty + r20 * tz);
-  Ti[4]  = r01;   Ti[5]  = r11;   Ti[6]  = r21;
-  Ti[7]  = -s * (r01 * tx + r11 * ty + r21 * tz);
-  Ti[8]  = r02;   Ti[9]  = r12;   Ti[10] = r22;
+  Ti[0] = r00;
+  Ti[1] = r10;
+  Ti[2] = r20;
+  Ti[3] = -s * (r00 * tx + r10 * ty + r20 * tz);
+  Ti[4] = r01;
+  Ti[5] = r11;
+  Ti[6] = r21;
+  Ti[7] = -s * (r01 * tx + r11 * ty + r21 * tz);
+  Ti[8] = r02;
+  Ti[9] = r12;
+  Ti[10] = r22;
   Ti[11] = -s * (r02 * tx + r12 * ty + r22 * tz);
-  Ti[12] = 0.0f;  Ti[13] = 0.0f;  Ti[14] = 0.0f;  Ti[15] = s;
+  Ti[12] = 0.0f;
+  Ti[13] = 0.0f;
+  Ti[14] = 0.0f;
+  Ti[15] = s;
 }
 
 /**
@@ -573,8 +612,9 @@ __global__ void inverse_sim3_kernel(const float* transforms,
  *
  * J_r^{-1} = I + Sum_{n=1}^{6} (B_n^+/n!) * ad^n is computed in blocks:
  *
- * Block(0,0) = J_r^{-1}_SO3(w): closed-form using Rodrigues-derived coefficients
- *   a0*I + a1*W + a2*W^2 where a1 = 1/2, a2 = 1/theta^2 - (1+cos)/(2*theta*sin).
+ * Block(0,0) = J_r^{-1}_SO3(w): closed-form using Rodrigues-derived
+ * coefficients a0*I + a1*W + a2*W^2 where a1 = 1/2, a2 = 1/theta^2 -
+ * (1+cos)/(2*theta*sin).
  *
  * Block(1,1) = I + Sum c_n * (M^n decomposed as a_n*I + b_n*W + c_n*W^2)
  *   where M = W + lambda*I and M^n uses the recurrence
@@ -593,16 +633,16 @@ __global__ void inverse_sim3_kernel(const float* transforms,
 constexpr size_t kSim3JacBlockSize = 128;
 
 __global__ void __launch_bounds__(128, 5)
-    jacobian_right_inverse_sim3_kernel(
-    const float* tangent, size_t tangent_stride, float* jacobians,
-    size_t jacobian_stride, size_t size) {
+    jacobian_right_inverse_sim3_kernel(const float *tangent,
+                                       size_t tangent_stride, float *jacobians,
+                                       size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
 
-  const float* xi = tangent + idx * tangent_stride;
-  float* J = jacobians + idx * jacobian_stride;
+  const float *xi = tangent + idx * tangent_stride;
+  float *J = jacobians + idx * jacobian_stride;
 
   float w[3] = {xi[0], xi[1], xi[2]};
   float u[3] = {xi[3], xi[4], xi[5]};
@@ -614,19 +654,37 @@ __global__ void __launch_bounds__(128, 5)
     for (int i = 0; i < 49; ++i) {
       J[i] = 0.0f;
     }
-    J[0] = 1.0f; J[8] = 1.0f; J[16] = 1.0f;
-    J[24] = 1.0f; J[32] = 1.0f; J[40] = 1.0f;
+    J[0] = 1.0f;
+    J[8] = 1.0f;
+    J[16] = 1.0f;
+    J[24] = 1.0f;
+    J[32] = 1.0f;
+    J[40] = 1.0f;
     J[48] = 1.0f;
-    J[1]  += -0.5f * w[2];  J[2]  +=  0.5f * w[1];
-    J[7]  +=  0.5f * w[2];  J[9]  += -0.5f * w[0];
-    J[14] += -0.5f * w[1];  J[15] +=  0.5f * w[0];
-    J[24] += 0.5f * lam;    J[25] += -0.5f * w[2];  J[26] +=  0.5f * w[1];
-    J[31] += 0.5f * w[2];   J[32] += 0.5f * lam;    J[33] += -0.5f * w[0];
-    J[38] += -0.5f * w[1];  J[39] +=  0.5f * w[0];  J[40] += 0.5f * lam;
-    J[21] += -0.5f * u[2];  J[22] +=  0.5f * u[1];
-    J[28] +=  0.5f * u[2];  J[30] += -0.5f * u[0];
-    J[35] += -0.5f * u[1];  J[36] +=  0.5f * u[0];
-    J[27] = -0.5f * u[0];  J[34] = -0.5f * u[1];  J[41] = -0.5f * u[2];
+    J[1] += -0.5f * w[2];
+    J[2] += 0.5f * w[1];
+    J[7] += 0.5f * w[2];
+    J[9] += -0.5f * w[0];
+    J[14] += -0.5f * w[1];
+    J[15] += 0.5f * w[0];
+    J[24] += 0.5f * lam;
+    J[25] += -0.5f * w[2];
+    J[26] += 0.5f * w[1];
+    J[31] += 0.5f * w[2];
+    J[32] += 0.5f * lam;
+    J[33] += -0.5f * w[0];
+    J[38] += -0.5f * w[1];
+    J[39] += 0.5f * w[0];
+    J[40] += 0.5f * lam;
+    J[21] += -0.5f * u[2];
+    J[22] += 0.5f * u[1];
+    J[28] += 0.5f * u[2];
+    J[30] += -0.5f * u[0];
+    J[35] += -0.5f * u[1];
+    J[36] += 0.5f * u[0];
+    J[27] = -0.5f * u[0];
+    J[34] = -0.5f * u[1];
+    J[41] = -0.5f * u[2];
     return;
   }
 
@@ -647,14 +705,16 @@ __global__ void __launch_bounds__(128, 5)
   mat3_mul(U_mat, W, UW);
   mat3_mul(U_mat, W2, UW2);
 
-  float wu_cross[3] = {w[1]*u[2]-w[2]*u[1], w[2]*u[0]-w[0]*u[2], w[0]*u[1]-w[1]*u[0]};
-  float dot_wu = w[0]*u[0] + w[1]*u[1] + w[2]*u[2];
-  float W2u[3] = {w[0]*dot_wu - theta2*u[0],
-                   w[1]*dot_wu - theta2*u[1],
-                   w[2]*dot_wu - theta2*u[2]};
+  float wu_cross[3] = {w[1] * u[2] - w[2] * u[1], w[2] * u[0] - w[0] * u[2],
+                       w[0] * u[1] - w[1] * u[0]};
+  float dot_wu = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
+  float W2u[3] = {w[0] * dot_wu - theta2 * u[0], w[1] * dot_wu - theta2 * u[1],
+                  w[2] * dot_wu - theta2 * u[2]};
 
-  constexpr float c1 = 0.5f, c2 = 1.0f/12.0f, c4 = -1.0f/720.0f, c6 = 1.0f/30240.0f;
-  constexpr float d0 = 0.5f, d1 = 1.0f/12.0f, d3 = -1.0f/720.0f, d5 = 1.0f/30240.0f;
+  constexpr float c1 = 0.5f, c2 = 1.0f / 12.0f, c4 = -1.0f / 720.0f,
+                  c6 = 1.0f / 30240.0f;
+  constexpr float d0 = 0.5f, d1 = 1.0f / 12.0f, d3 = -1.0f / 720.0f,
+                  d5 = 1.0f / 30240.0f;
 
   float ma = lam, mb = 1.0f, mc = 0.0f;
 
@@ -664,83 +724,197 @@ __global__ void __launch_bounds__(128, 5)
 
   float Bn[9], SB[9];
 #pragma unroll
-  for (int i = 0; i < 9; ++i) { Bn[i] = U_mat[i]; SB[i] = 0.0f; }
+  for (int i = 0; i < 9; ++i) {
+    Bn[i] = U_mat[i];
+    SB[i] = 0.0f;
+  }
 
-  sa += c1 * ma; sb += c1 * mb; sc += c1 * mc;
+  sa += c1 * ma;
+  sb += c1 * mb;
+  sc += c1 * mc;
 #pragma unroll
-  for (int i = 0; i < 9; ++i) { SB[i] += c1 * Bn[i]; }
+  for (int i = 0; i < 9; ++i) {
+    SB[i] += c1 * Bn[i];
+  }
 
-  { float na = lam*ma; float nb = lam*mb + ma - theta2*mc; float nc = lam*mc + mb;
-    ma = na; mb = nb; mc = nc; }
+  {
+    float na = lam * ma;
+    float nb = lam * mb + ma - theta2 * mc;
+    float nc = lam * mc + mb;
+    ma = na;
+    mb = nb;
+    mc = nc;
+  }
   float wa_cur = 0.0f, wb_cur = 1.0f, wc_cur = 0.0f;
-  { float UWn[9]; float WB[9];
+  {
+    float UWn[9];
+    float WB[9];
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { UWn[i] = wa_cur * U_mat[i] + wb_cur * UW[i] + wc_cur * UW2[i]; }
+    for (int i = 0; i < 9; ++i) {
+      UWn[i] = wa_cur * U_mat[i] + wb_cur * UW[i] + wc_cur * UW2[i];
+    }
     mat3_mul(W, Bn, WB);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { Bn[i] = UWn[i] + lam * Bn[i] + WB[i]; }
-    wa_prev = wa_cur; wb_prev = wb_cur; wc_prev = wc_cur;
-    wa_cur = 0.0f; wb_cur = 0.0f; wc_cur = 1.0f; }
+    for (int i = 0; i < 9; ++i) {
+      Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
+    }
+    wa_prev = wa_cur;
+    wb_prev = wb_cur;
+    wc_prev = wc_cur;
+    wa_cur = 0.0f;
+    wb_cur = 0.0f;
+    wc_cur = 1.0f;
+  }
 
-  sa += c2 * ma; sb += c2 * mb; sc += c2 * mc;
+  sa += c2 * ma;
+  sb += c2 * mb;
+  sc += c2 * mc;
 #pragma unroll
-  for (int i = 0; i < 9; ++i) { SB[i] += c2 * Bn[i]; }
+  for (int i = 0; i < 9; ++i) {
+    SB[i] += c2 * Bn[i];
+  }
 
-  { float na = lam*ma; float nb = lam*mb + ma - theta2*mc; float nc = lam*mc + mb;
-    ma = na; mb = nb; mc = nc; }
-  { wa_prev = wa_cur; wb_prev = wb_cur; wc_prev = wc_cur;
-    wa_cur = 0.0f; wb_cur = -theta2; wc_cur = 0.0f; }
-  { float UWn[9]; float WB[9];
+  {
+    float na = lam * ma;
+    float nb = lam * mb + ma - theta2 * mc;
+    float nc = lam * mc + mb;
+    ma = na;
+    mb = nb;
+    mc = nc;
+  }
+  {
+    wa_prev = wa_cur;
+    wb_prev = wb_cur;
+    wc_prev = wc_cur;
+    wa_cur = 0.0f;
+    wb_cur = -theta2;
+    wc_cur = 0.0f;
+  }
+  {
+    float UWn[9];
+    float WB[9];
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i]; }
+    for (int i = 0; i < 9; ++i) {
+      UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i];
+    }
     mat3_mul(W, Bn, WB);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { Bn[i] = UWn[i] + lam * Bn[i] + WB[i]; } }
+    for (int i = 0; i < 9; ++i) {
+      Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
+    }
+  }
 
-  { float na = lam*ma; float nb = lam*mb + ma - theta2*mc; float nc = lam*mc + mb;
-    ma = na; mb = nb; mc = nc; }
-  { wa_prev = wa_cur; wb_prev = wb_cur; wc_prev = wc_cur;
-    wa_cur = 0.0f; wb_cur = 0.0f; wc_cur = -theta2; }
-  { float UWn[9]; float WB[9];
+  {
+    float na = lam * ma;
+    float nb = lam * mb + ma - theta2 * mc;
+    float nc = lam * mc + mb;
+    ma = na;
+    mb = nb;
+    mc = nc;
+  }
+  {
+    wa_prev = wa_cur;
+    wb_prev = wb_cur;
+    wc_prev = wc_cur;
+    wa_cur = 0.0f;
+    wb_cur = 0.0f;
+    wc_cur = -theta2;
+  }
+  {
+    float UWn[9];
+    float WB[9];
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i]; }
+    for (int i = 0; i < 9; ++i) {
+      UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i];
+    }
     mat3_mul(W, Bn, WB);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { Bn[i] = UWn[i] + lam * Bn[i] + WB[i]; } }
+    for (int i = 0; i < 9; ++i) {
+      Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
+    }
+  }
 
-  sa += c4 * ma; sb += c4 * mb; sc += c4 * mc;
+  sa += c4 * ma;
+  sb += c4 * mb;
+  sc += c4 * mc;
 #pragma unroll
-  for (int i = 0; i < 9; ++i) { SB[i] += c4 * Bn[i]; }
+  for (int i = 0; i < 9; ++i) {
+    SB[i] += c4 * Bn[i];
+  }
 
-  { float na = lam*ma; float nb = lam*mb + ma - theta2*mc; float nc = lam*mc + mb;
-    ma = na; mb = nb; mc = nc; }
-  { wa_prev = wa_cur; wb_prev = wb_cur; wc_prev = wc_cur;
-    float t4 = theta2*theta2;
-    wa_cur = 0.0f; wb_cur = t4; wc_cur = 0.0f; }
-  { float UWn[9]; float WB[9];
+  {
+    float na = lam * ma;
+    float nb = lam * mb + ma - theta2 * mc;
+    float nc = lam * mc + mb;
+    ma = na;
+    mb = nb;
+    mc = nc;
+  }
+  {
+    wa_prev = wa_cur;
+    wb_prev = wb_cur;
+    wc_prev = wc_cur;
+    float t4 = theta2 * theta2;
+    wa_cur = 0.0f;
+    wb_cur = t4;
+    wc_cur = 0.0f;
+  }
+  {
+    float UWn[9];
+    float WB[9];
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i]; }
+    for (int i = 0; i < 9; ++i) {
+      UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i];
+    }
     mat3_mul(W, Bn, WB);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { Bn[i] = UWn[i] + lam * Bn[i] + WB[i]; } }
+    for (int i = 0; i < 9; ++i) {
+      Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
+    }
+  }
 
-  { float na = lam*ma; float nb = lam*mb + ma - theta2*mc; float nc = lam*mc + mb;
-    ma = na; mb = nb; mc = nc; }
-  { wa_prev = wa_cur; wb_prev = wb_cur; wc_prev = wc_cur;
-    float t4 = theta2*theta2;
-    wa_cur = 0.0f; wb_cur = 0.0f; wc_cur = t4; }
-  { float UWn[9]; float WB[9];
+  {
+    float na = lam * ma;
+    float nb = lam * mb + ma - theta2 * mc;
+    float nc = lam * mc + mb;
+    ma = na;
+    mb = nb;
+    mc = nc;
+  }
+  {
+    wa_prev = wa_cur;
+    wb_prev = wb_cur;
+    wc_prev = wc_cur;
+    float t4 = theta2 * theta2;
+    wa_cur = 0.0f;
+    wb_cur = 0.0f;
+    wc_cur = t4;
+  }
+  {
+    float UWn[9];
+    float WB[9];
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i]; }
+    for (int i = 0; i < 9; ++i) {
+      UWn[i] = wa_prev * U_mat[i] + wb_prev * UW[i] + wc_prev * UW2[i];
+    }
     mat3_mul(W, Bn, WB);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) { Bn[i] = UWn[i] + lam * Bn[i] + WB[i]; } }
+    for (int i = 0; i < 9; ++i) {
+      Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
+    }
+  }
 
-  sa += c6 * ma; sb += c6 * mb; sc += c6 * mc;
+  sa += c6 * ma;
+  sb += c6 * mb;
+  sc += c6 * mc;
 #pragma unroll
-  for (int i = 0; i < 9; ++i) { SB[i] += c6 * Bn[i]; }
+  for (int i = 0; i < 9; ++i) {
+    SB[i] += c6 * Bn[i];
+  }
 
-  for (int i = 0; i < 49; ++i) { J[i] = 0.0f; }
+  for (int i = 0; i < 49; ++i) {
+    J[i] = 0.0f;
+  }
 
 #pragma unroll
   for (int r = 0; r < 3; ++r) {
@@ -748,7 +922,9 @@ __global__ void __launch_bounds__(128, 5)
     for (int c = 0; c < 3; ++c) {
       int ij = r * 3 + c;
       float val = a1 * W[ij] + a2 * W2[ij];
-      if (r == c) { val += a0; }
+      if (r == c) {
+        val += a0;
+      }
       J[r * 7 + c] = val;
     }
   }
@@ -759,7 +935,9 @@ __global__ void __launch_bounds__(128, 5)
     for (int c = 0; c < 3; ++c) {
       int ij = r * 3 + c;
       float val = sb * W[ij] + sc * W2[ij];
-      if (r == c) { val += 1.0f + sa; }
+      if (r == c) {
+        val += 1.0f + sa;
+      }
       J[(r + 3) * 7 + (c + 3)] = val;
     }
   }
@@ -773,17 +951,21 @@ __global__ void __launch_bounds__(128, 5)
   }
 
   float ma_s[6], mb_s[6], mc_s[6];
-  ma_s[0] = 1.0f; mb_s[0] = 0.0f; mc_s[0] = 0.0f;
-  ma_s[1] = lam;  mb_s[1] = 1.0f; mc_s[1] = 0.0f;
+  ma_s[0] = 1.0f;
+  mb_s[0] = 0.0f;
+  mc_s[0] = 0.0f;
+  ma_s[1] = lam;
+  mb_s[1] = 1.0f;
+  mc_s[1] = 0.0f;
 #pragma unroll
   for (int n = 1; n < 5; ++n) {
-    ma_s[n+1] = lam * ma_s[n];
-    mb_s[n+1] = lam * mb_s[n] + ma_s[n] - theta2 * mc_s[n];
-    mc_s[n+1] = lam * mc_s[n] + mb_s[n];
+    ma_s[n + 1] = lam * ma_s[n];
+    mb_s[n + 1] = lam * mb_s[n] + ma_s[n] - theta2 * mc_s[n];
+    mc_s[n + 1] = lam * mc_s[n] + mb_s[n];
   }
-  float sd_a = d0*ma_s[0] + d1*ma_s[1] + d3*ma_s[3] + d5*ma_s[5];
-  float sd_b = d0*mb_s[0] + d1*mb_s[1] + d3*mb_s[3] + d5*mb_s[5];
-  float sd_c = d0*mc_s[0] + d1*mc_s[1] + d3*mc_s[3] + d5*mc_s[5];
+  float sd_a = d0 * ma_s[0] + d1 * ma_s[1] + d3 * ma_s[3] + d5 * ma_s[5];
+  float sd_b = d0 * mb_s[0] + d1 * mb_s[1] + d3 * mb_s[3] + d5 * mb_s[5];
+  float sd_c = d0 * mc_s[0] + d1 * mc_s[1] + d3 * mc_s[3] + d5 * mc_s[5];
 
   J[3 * 7 + 6] = -(sd_a * u[0] + sd_b * wu_cross[0] + sd_c * W2u[0]);
   J[4 * 7 + 6] = -(sd_a * u[1] + sd_b * wu_cross[1] + sd_c * W2u[1]);
@@ -803,9 +985,9 @@ __global__ void __launch_bounds__(128, 5)
  *
  * where [t]_x is the skew-symmetric matrix of t.
  */
-__global__ void compute_adjoint_sim3_kernel(const float* transforms,
+__global__ void compute_adjoint_sim3_kernel(const float *transforms,
                                             size_t transform_stride,
-                                            float* adjoints,
+                                            float *adjoints,
                                             size_t adjoint_stride,
                                             size_t num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -813,8 +995,8 @@ __global__ void compute_adjoint_sim3_kernel(const float* transforms,
     return;
   }
 
-  const float* T = transforms + tid * transform_stride;
-  float* Ad = adjoints + tid * adjoint_stride;
+  const float *T = transforms + tid * transform_stride;
+  float *Ad = adjoints + tid * adjoint_stride;
 
   float R00 = T[0], R01 = T[1], R02 = T[2];
   float R10 = T[4], R11 = T[5], R12 = T[6];
@@ -834,61 +1016,96 @@ __global__ void compute_adjoint_sim3_kernel(const float* transforms,
   float A22 = s * (-ty * R02 + tx * R12);
 
   // Row 0-2: [R | 0 | 0]
-  Ad[0] = R00; Ad[1] = R01; Ad[2] = R02;
-  Ad[3] = 0;   Ad[4] = 0;   Ad[5] = 0;   Ad[6] = 0;
-  Ad[7] = R10; Ad[8] = R11; Ad[9] = R12;
-  Ad[10] = 0;  Ad[11] = 0;  Ad[12] = 0;  Ad[13] = 0;
-  Ad[14] = R20; Ad[15] = R21; Ad[16] = R22;
-  Ad[17] = 0;   Ad[18] = 0;   Ad[19] = 0;  Ad[20] = 0;
+  Ad[0] = R00;
+  Ad[1] = R01;
+  Ad[2] = R02;
+  Ad[3] = 0;
+  Ad[4] = 0;
+  Ad[5] = 0;
+  Ad[6] = 0;
+  Ad[7] = R10;
+  Ad[8] = R11;
+  Ad[9] = R12;
+  Ad[10] = 0;
+  Ad[11] = 0;
+  Ad[12] = 0;
+  Ad[13] = 0;
+  Ad[14] = R20;
+  Ad[15] = R21;
+  Ad[16] = R22;
+  Ad[17] = 0;
+  Ad[18] = 0;
+  Ad[19] = 0;
+  Ad[20] = 0;
 
   // Row 3-5: [A | sR | -s*t]
-  Ad[21] = A00; Ad[22] = A01; Ad[23] = A02;
-  Ad[24] = s * R00; Ad[25] = s * R01; Ad[26] = s * R02; Ad[27] = -s * tx;
-  Ad[28] = A10; Ad[29] = A11; Ad[30] = A12;
-  Ad[31] = s * R10; Ad[32] = s * R11; Ad[33] = s * R12; Ad[34] = -s * ty;
-  Ad[35] = A20; Ad[36] = A21; Ad[37] = A22;
-  Ad[38] = s * R20; Ad[39] = s * R21; Ad[40] = s * R22; Ad[41] = -s * tz;
+  Ad[21] = A00;
+  Ad[22] = A01;
+  Ad[23] = A02;
+  Ad[24] = s * R00;
+  Ad[25] = s * R01;
+  Ad[26] = s * R02;
+  Ad[27] = -s * tx;
+  Ad[28] = A10;
+  Ad[29] = A11;
+  Ad[30] = A12;
+  Ad[31] = s * R10;
+  Ad[32] = s * R11;
+  Ad[33] = s * R12;
+  Ad[34] = -s * ty;
+  Ad[35] = A20;
+  Ad[36] = A21;
+  Ad[37] = A22;
+  Ad[38] = s * R20;
+  Ad[39] = s * R21;
+  Ad[40] = s * R22;
+  Ad[41] = -s * tz;
 
   // Row 6: [0 0 0 0 0 0 1]
-  Ad[42] = 0; Ad[43] = 0; Ad[44] = 0;
-  Ad[45] = 0; Ad[46] = 0; Ad[47] = 0; Ad[48] = 1;
+  Ad[42] = 0;
+  Ad[43] = 0;
+  Ad[44] = 0;
+  Ad[45] = 0;
+  Ad[46] = 0;
+  Ad[47] = 0;
+  Ad[48] = 1;
 }
 
 // ============================================================================
 // Sim(3) Host wrappers
 // ============================================================================
 
-void ComputeExpSim3(cudaStream_t stream, const float* tangent,
-                    size_t tangent_stride, size_t transform_stride,
-                    size_t size, float* transforms) {
+void ComputeExpSim3(cudaStream_t stream, const float *tangent,
+                    size_t tangent_stride, size_t transform_stride, size_t size,
+                    float *transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   exp_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       tangent, tangent_stride, transforms, transform_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSim3(cudaStream_t stream, const float* transforms,
-                    size_t transform_stride, size_t tangent_stride,
-                    size_t size, float* tangent) {
+void ComputeLogSim3(cudaStream_t stream, const float *transforms,
+                    size_t transform_stride, size_t tangent_stride, size_t size,
+                    float *tangent) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   log_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, tangent, tangent_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeInverseSim3(cudaStream_t stream, const float* transforms,
+void ComputeInverseSim3(cudaStream_t stream, const float *transforms,
                         size_t transform_stride, size_t inverse_stride,
-                        size_t size, float* inverse_transforms) {
+                        size_t size, float *inverse_transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   inverse_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, inverse_transforms, inverse_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeJacobianRightInverseSim3(cudaStream_t stream, const float* tangent,
+void ComputeJacobianRightInverseSim3(cudaStream_t stream, const float *tangent,
                                      size_t tangent_stride,
                                      size_t jacobian_stride, size_t size,
-                                     float* jacobians) {
+                                     float *jacobians) {
   size_t num_blocks = (size + kSim3JacBlockSize - 1) / kSim3JacBlockSize;
   jacobian_right_inverse_sim3_kernel<<<num_blocks, kSim3JacBlockSize, 0,
                                        stream>>>(
@@ -896,13 +1113,13 @@ void ComputeJacobianRightInverseSim3(cudaStream_t stream, const float* tangent,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeAdjointSim3(cudaStream_t stream, const float* transforms,
-                         size_t transform_stride, float* adjoints,
-                         size_t adjoint_stride, size_t size) {
+void ComputeAdjointSim3(cudaStream_t stream, const float *transforms,
+                        size_t transform_stride, float *adjoints,
+                        size_t adjoint_stride, size_t size) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   compute_adjoint_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, adjoints, adjoint_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

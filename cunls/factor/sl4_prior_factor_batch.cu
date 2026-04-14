@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #include "cunls/common/cuda_stream.h"
@@ -56,24 +56,22 @@ __global__ void collect_and_multiply_sl4_prior_kernel(
   out[15] = i12 * c3 + i13 * c7 + i14 * c11 + i15 * c15;
 }
 
-SL4PriorFactorBatch::SL4PriorFactorBatch(const SL4Transform* observations_ptr,
+SL4PriorFactorBatch::SL4PriorFactorBatch(const SL4Transform *observations_ptr,
                                          size_t num_factors)
-    : observations_ptr_(observations_ptr),
-      num_factors_(num_factors),
-      observations_inverse_(num_factors),
-      transforms_error_(num_factors) {
+    : observations_ptr_(observations_ptr), num_factors_(num_factors),
+      observations_inverse_(num_factors), transforms_error_(num_factors) {
   CudaStream stream;
   constexpr size_t pitch = 4;
   constexpr size_t stride = 16;
   ComputeInverseSL4(stream.GetStream(),
-                    reinterpret_cast<const float*>(observations_ptr_), pitch,
+                    reinterpret_cast<const float *>(observations_ptr_), pitch,
                     stride, pitch, stride, num_factors_,
-                    reinterpret_cast<float*>(observations_inverse_.data()));
+                    reinterpret_cast<float *>(observations_inverse_.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
 
-bool SL4PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
-                                   float const* const* state_pointers,
+bool SL4PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                   float const *const *state_pointers,
                                    cudaStream_t stream) const {
   size_t num_factors = NumFactors();
   size_t num_blocks =
@@ -88,10 +86,9 @@ bool SL4PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   constexpr size_t transform_pitch = 4;
   constexpr size_t transform_stride = 16;
   constexpr size_t twist_stride = 15;
-  ComputeLogSL4(stream,
-                reinterpret_cast<const float*>(transforms_error_.data()),
-                transform_pitch, transform_stride, twist_stride, num_factors,
-                residuals);
+  ComputeLogSL4(
+      stream, reinterpret_cast<const float *>(transforms_error_.data()),
+      transform_pitch, transform_stride, twist_stride, num_factors, residuals);
 
   if (jacobians != nullptr) {
     constexpr size_t jacobian_pitch = 15;
@@ -103,4 +100,4 @@ bool SL4PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ namespace cunls {
  */
 template <class TestParam>
 class GaussNewtonMinimizerTest : public ::testing::Test {
- public:
+public:
   static constexpr int kDim = TestParam::vector_size;
   using StatesType = VectorStateBatch<kDim>;
   using VectorType = Vector<kDim>;
@@ -97,21 +97,21 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
    *
    * @param states Optimized state batch to verify.
    */
-  void CheckConvergence(const StatesType& states,
-                        const std::vector<int>& const_state_ids = {}) {
+  void CheckConvergence(const StatesType &states,
+                        const std::vector<int> &const_state_ids = {}) {
     size_t num_blocks = states.NumStateBlocks();
-    auto ptr = reinterpret_cast<const VectorType*>(
-        states.StateBlockDevicePtr(0));
+    auto ptr =
+        reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
 
     std::vector<VectorType> host_states(num_blocks);
     THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr,
-                                    num_blocks * sizeof(VectorType),
-                                    cudaMemcpyDeviceToHost));
+                                   num_blocks * sizeof(VectorType),
+                                   cudaMemcpyDeviceToHost));
 
     ASSERT_EQ(host_states.size(), observations_.size());
     for (size_t i = 0; i < num_blocks; i++) {
-      const auto& obs = observations_[i];
-      const auto& state_vals = host_states[i];
+      const auto &obs = observations_[i];
+      const auto &state_vals = host_states[i];
       auto const_state_it =
           std::find(const_state_ids.begin(), const_state_ids.end(), i);
       if (const_state_it != const_state_ids.end()) {
@@ -128,15 +128,15 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
     }
   }
 
-  const size_t num_vectors_ = 10000;  ///< Number of state blocks in test.
+  const size_t num_vectors_ = 10000; ///< Number of state blocks in test.
 
-  std::vector<VectorType> observations_;  ///< Target values for optimization.
-  std::vector<VectorType> state_values_;  ///< Initial state values.
+  std::vector<VectorType> observations_; ///< Target values for optimization.
+  std::vector<VectorType> state_values_; ///< Initial state values.
 
   MinimizerOptions minimizer_options_{.disable_safety_checks = false};
 
   profiler::Domain profiler_domain_{
-      "GaussNewtonMinimizerTest"};  ///< Profiling domain.
+      "GaussNewtonMinimizerTest"}; ///< Profiling domain.
 };
 
 /**
@@ -144,8 +144,7 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
  *
  * @tparam Value Vector dimension (1, 2, 3, or 4).
  */
-template <int VectorSize, int SolverId>
-struct TestParam {
+template <int VectorSize, int SolverId> struct TestParam {
   static constexpr int vector_size = VectorSize;
   static constexpr int solver_id = SolverId;
 };
@@ -166,11 +165,10 @@ TYPED_TEST_CASE(GaussNewtonMinimizerTest, TestParams);
 TYPED_TEST(GaussNewtonMinimizerTest, SimpleGN) {
   auto test_range = this->profiler_domain_.CreateDomainRange("SimpleGNTest");
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -179,7 +177,8 @@ TYPED_TEST(GaussNewtonMinimizerTest, SimpleGN) {
   CudaStream stream;
   GaussNewtonMinimizer minimizer(this->minimizer_options_);
   auto range = this->profiler_domain_.CreateDomainRange("GN Minimize");
-  // User-owned pool path: pre-attach before Minimize (minimizer skips auto-attach).
+  // User-owned pool path: pre-attach before Minimize (minimizer skips
+  // auto-attach).
   minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
@@ -199,11 +198,10 @@ TYPED_TEST(GaussNewtonMinimizerTest, GNWithConstantStates) {
   std::vector<int> const_state_ids = {0, 9, 99, 999};
   typename TestFixture::StateData state_data(this->state_values_,
                                              const_state_ids);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -228,11 +226,10 @@ TYPED_TEST(GaussNewtonMinimizerTest, GNWithConstantStates) {
 TYPED_TEST(GaussNewtonMinimizerTest, SimpleLM) {
   auto test_range = this->profiler_domain_.CreateDomainRange("SimpleLM");
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -261,11 +258,10 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
   std::vector<int> const_state_ids = {0, 9, 99, 999};
   typename TestFixture::StateData state_data(this->state_values_,
                                              const_state_ids);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -286,14 +282,13 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
  * @brief Levenberg-Marquardt with Hessian-diagonal column scaling.
  */
 TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("LMColumnScalingHessianDiagonal");
+  auto test_range = this->profiler_domain_.CreateDomainRange(
+      "LMColumnScalingHessianDiagonal");
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -314,14 +309,13 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
  * @brief Levenberg-Marquardt with Jacobian column-norm scaling.
  */
 TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingJacobianColumnNorm) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("LMColumnScalingJacobianColumnNorm");
+  auto test_range = this->profiler_domain_.CreateDomainRange(
+      "LMColumnScalingJacobianColumnNorm");
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -342,14 +336,13 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingJacobianColumnNorm) {
  * @brief Gauss-Newton with column scaling (shared MinimizerOptions path).
  */
 TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("GNColumnScalingHessianDiagonal");
+  auto test_range = this->profiler_domain_.CreateDomainRange(
+      "GNColumnScalingHessianDiagonal");
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -366,9 +359,9 @@ TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {
 }
 
 /**
- * @brief Two Minimize calls on the same problem with the same minimizer instance
- *        should yield identical summaries after resetting the state (regression
- *        for persistent lhs/rhs and MinimizerState buffers).
+ * @brief Two Minimize calls on the same problem with the same minimizer
+ * instance should yield identical summaries after resetting the state
+ * (regression for persistent lhs/rhs and MinimizerState buffers).
  */
 TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   constexpr size_t n = 32;
@@ -379,9 +372,9 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
     state_values[i][0] = static_cast<float>(i);
   }
   test_utils::VectorStateData<1> state_data(state_values);
-  auto& vector_states = state_data.get();
+  auto &vector_states = state_data.get();
   test_utils::PriorFactorData<1> factor_data(observations);
-  auto& factor_batch = factor_data.get();
+  auto &factor_batch = factor_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
   Problem problem;
@@ -397,13 +390,13 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
       .threading_lib_path = "",
   };
   opts.sparse_linear_solver_config = {.cudss_solver_options =
-                                           cudss_solver_options};
+                                          cudss_solver_options};
   opts.disable_safety_checks = false;
 
   CudaStream stream;
   GaussNewtonMinimizer minimizer(opts);
 
-  float* state_base = vector_states.StateBlockDevicePtr(0);
+  float *state_base = vector_states.StateBlockDevicePtr(0);
   const size_t num_floats = n * 1;
   std::vector<float> initial_host(num_floats);
   THROW_ON_CUDA_ERROR(cudaMemcpy(initial_host.data(), state_base,
@@ -425,4 +418,4 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   EXPECT_NEAR(s1.initial_cost, s2.initial_cost, 1e-4f);
 }
 
-}  // namespace cunls
+} // namespace cunls

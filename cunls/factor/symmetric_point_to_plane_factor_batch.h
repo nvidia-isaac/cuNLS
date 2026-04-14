@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,44 +55,39 @@ namespace cunls {
  *       for the lifetime of this object. The memory layout for each is:
  *       [vec0: 3 floats][vec1: 3 floats]...[vecN-1: 3 floats]
  */
-class SymmetricPointToPlaneFactorBatch
-    : public SizedFactorBatch<1, 6> {
+class SymmetricPointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
   using Base = SizedFactorBatch<1, 6>;
   using Vector3 = Vector<3>;
 
- public:
+public:
   /**
    * @brief Constructs a batch of symmetric point-to-plane factors.
    *
-   * @param p_observations_ptr Pointer to GPU device memory containing target points.
-   *                           Must point to at least num_factors * 3 floats
-   *                           of allocated memory.
-   * @param q_observations_ptr Pointer to GPU device memory containing source points.
-   *                           Must point to at least num_factors * 3 floats
-   *                           of allocated memory.
-   * @param np_observations_ptr Pointer to GPU device memory containing normal vectors
-   *                            at each target point (in the p frame).
-   *                            Must point to at least num_factors * 3 floats
-   *                            of allocated memory.
-   * @param nq_observations_ptr Pointer to GPU device memory containing normal vectors
-   *                            at each source point (in the q frame).
-   *                            Must point to at least num_factors * 3 floats
-   *                            of allocated memory.
+   * @param p_observations_ptr Pointer to GPU device memory containing target
+   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * @param q_observations_ptr Pointer to GPU device memory containing source
+   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * @param np_observations_ptr Pointer to GPU device memory containing normal
+   * vectors at each target point (in the p frame). Must point to at least
+   * num_factors * 3 floats of allocated memory.
+   * @param nq_observations_ptr Pointer to GPU device memory containing normal
+   * vectors at each source point (in the q frame). Must point to at least
+   * num_factors * 3 floats of allocated memory.
    * @param num_factors Number of factors in the batch.
    */
-  SymmetricPointToPlaneFactorBatch(const Vector3* p_observations_ptr,
-                                         const Vector3* q_observations_ptr,
-                                         const Vector3* np_observations_ptr,
-                                         const Vector3* nq_observations_ptr,
-                                         size_t num_factors)
+  SymmetricPointToPlaneFactorBatch(const Vector3 *p_observations_ptr,
+                                   const Vector3 *q_observations_ptr,
+                                   const Vector3 *np_observations_ptr,
+                                   const Vector3 *nq_observations_ptr,
+                                   size_t num_factors)
       : p_observations_ptr_(p_observations_ptr),
         q_observations_ptr_(q_observations_ptr),
         np_observations_ptr_(np_observations_ptr),
-        nq_observations_ptr_(nq_observations_ptr),
-        num_factors_(num_factors) {}
+        nq_observations_ptr_(nq_observations_ptr), num_factors_(num_factors) {}
 
   /**
-   * @brief Evaluates symmetric point-to-plane residuals and optionally Jacobians.
+   * @brief Evaluates symmetric point-to-plane residuals and optionally
+   * Jacobians.
    *
    * Computes residual = (T@p - T^{-1}@q) . (Nq + Np) for each correspondence
    * in the batch. If jacobians is not nullptr, also computes the 1x6 Jacobian
@@ -107,8 +102,8 @@ class SymmetricPointToPlaneFactorBatch
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   /**
@@ -118,23 +113,23 @@ class SymmetricPointToPlaneFactorBatch
    */
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   SymmetricPointToPlaneFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target points (p).
-  const Vector3* p_observations_ptr_;
+  const Vector3 *p_observations_ptr_;
 
   /// Pointer to user-managed device memory containing source points (q).
-  const Vector3* q_observations_ptr_;
+  const Vector3 *q_observations_ptr_;
 
   /// Pointer to user-managed device memory containing target normals (Np).
-  const Vector3* np_observations_ptr_;
+  const Vector3 *np_observations_ptr_;
 
   /// Pointer to user-managed device memory containing source normals (Nq).
-  const Vector3* nq_observations_ptr_;
+  const Vector3 *nq_observations_ptr_;
 
   /// Number of factors in the batch.
   size_t num_factors_;
 };
 
-}  // namespace cunls
+} // namespace cunls

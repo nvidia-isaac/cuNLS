@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 
 namespace cunls {
 
-const char* cusolverGetErrorString(int status) {
+const char *cusolverGetErrorString(int status) {
   auto s = static_cast<cusolverStatus_t>(status);
   if (s == CUSOLVER_STATUS_SUCCESS) {
     return "CUSOLVER_STATUS_SUCCESS";
@@ -64,8 +64,7 @@ const char* cusolverGetErrorString(int status) {
     return "CUSOLVER_STATUS_IRS_NOT_SUPPORTED";
   } else if (s == CUSOLVER_STATUS_IRS_OUT_OF_RANGE) {
     return "CUSOLVER_STATUS_IRS_OUT_OF_RANGE";
-  } else if (s ==
-             CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES) {
+  } else if (s == CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES) {
     return "CUSOLVER_STATUS_IRS_NRHS_NOT_SUPPORTED_FOR_REFINE_GMRES";
   } else if (s == CUSOLVER_STATUS_IRS_INFOS_NOT_INITIALIZED) {
     return "CUSOLVER_STATUS_IRS_INFOS_NOT_INITIALIZED";
@@ -82,7 +81,7 @@ const char* cusolverGetErrorString(int status) {
 cuSolverHandle::cuSolverHandle() {
   cusolverDnHandle_t h = nullptr;
   THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&h));
-  handle_ = static_cast<void*>(h);
+  handle_ = static_cast<void *>(h);
 }
 
 cuSolverHandle::~cuSolverHandle() {
@@ -90,7 +89,7 @@ cuSolverHandle::~cuSolverHandle() {
       cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
 }
 
-void* cuSolverHandle::GetHandle(cudaStream_t stream) {
+void *cuSolverHandle::GetHandle(cudaStream_t stream) {
   if (stream == nullptr) {
     const std::string msg = "cuSolverHandle received invalid CUDA stream.";
     LogError(msg);
@@ -110,14 +109,14 @@ void* cuSolverHandle::GetHandle(cudaStream_t stream) {
   cusolverDnHandle_t h = nullptr;
   THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&h));
   THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(h, stream_));
-  handle_ = static_cast<void*>(h);
+  handle_ = static_cast<void *>(h);
   return handle_;
 }
 
 cuSolverInfo::cuSolverInfo() {
   syevjInfo_t info = nullptr;
   THROW_ON_CUSOLVER_ERROR(cusolverDnCreateSyevjInfo(&info));
-  info_ = static_cast<void*>(info);
+  info_ = static_cast<void *>(info);
 }
 
 cuSolverInfo::~cuSolverInfo() {
@@ -125,4 +124,4 @@ cuSolverInfo::~cuSolverInfo() {
       cusolverDnDestroySyevjInfo(static_cast<syevjInfo_t>(info_)));
 }
 
-}  // namespace cunls
+} // namespace cunls

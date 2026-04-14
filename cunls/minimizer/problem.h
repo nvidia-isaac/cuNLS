@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@
 
 #include "cunls/factor/factor_batch.h"
 #include "cunls/minimizer/residual_batch.h"
-#include "cunls/state/state_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
+#include "cunls/state/state_batch.h"
 
 namespace cunls {
 
@@ -40,7 +40,7 @@ namespace cunls {
  * instance to its corresponding state blocks on the GPU.
  */
 class Problem {
- public:
+public:
   /**
    * @brief Adds a factor batch without a loss function.
    *
@@ -49,13 +49,12 @@ class Problem {
    * A trivial (identity) loss function is used.
    *
    * @param factor_batch Pointer to the factor batch (not owned).
-   * @param state_pointers Host-side list of device pointers to state blocks for each
-   *                      factor instance, flattened in row-major
-   *                      order: [cf0_state0, cf0_state1, ..., cfN_stateM].
-   *                      The problem stores a copy on the host.
+   * @param state_pointers Host-side list of device pointers to state blocks for
+   * each factor instance, flattened in row-major order: [cf0_state0,
+   * cf0_state1, ..., cfN_stateM]. The problem stores a copy on the host.
    */
-  void AddFactorBatch(FactorBatch* factor_batch,
-                            const std::vector<float*>& state_pointers);
+  void AddFactorBatch(FactorBatch *factor_batch,
+                      const std::vector<float *> &state_pointers);
 
   /**
    * @brief Adds a factor batch with a robust loss function.
@@ -66,14 +65,13 @@ class Problem {
    *
    * @param factor_batch Pointer to the factor batch (not owned).
    * @param loss_function_batch Pointer to the loss function batch (not owned).
-   * @param state_pointers Host-side list of device pointers to state blocks for each
-   *                      factor instance, flattened in row-major
-   *                      order: [cf0_state0, cf0_state1, ..., cfN_stateM].
-   *                      The problem stores a copy on the host.
+   * @param state_pointers Host-side list of device pointers to state blocks for
+   * each factor instance, flattened in row-major order: [cf0_state0,
+   * cf0_state1, ..., cfN_stateM]. The problem stores a copy on the host.
    */
-  void AddFactorBatch(FactorBatch* factor_batch,
-                            LossFunctionBatch* loss_function_batch,
-                            const std::vector<float*>& state_pointers);
+  void AddFactorBatch(FactorBatch *factor_batch,
+                      LossFunctionBatch *loss_function_batch,
+                      const std::vector<float *> &state_pointers);
 
   /**
    * @brief Adds a state batch to the problem.
@@ -84,7 +82,7 @@ class Problem {
    *
    * @param state_batch Pointer to the state batch (not owned).
    */
-  void AddStateBatch(StateBatch* state_batch);
+  void AddStateBatch(StateBatch *state_batch);
 
   /**
    * @brief Validates the problem structure.
@@ -103,14 +101,14 @@ class Problem {
    *
    * @return Const reference to the vector of residual batches.
    */
-  const std::vector<ResidualBatch>& GetResidualBatches() const;
+  const std::vector<ResidualBatch> &GetResidualBatches() const;
 
   /**
    * @brief Gets the state batches.
    *
    * @return Const reference to the vector of state batch pointers.
    */
-  const std::vector<StateBatch*>& GetStateBatches() const;
+  const std::vector<StateBatch *> &GetStateBatches() const;
 
   /**
    * @brief Gets the state pointer arrays.
@@ -121,9 +119,9 @@ class Problem {
    *
    * @return Const reference to the vector of per-batch host pointer lists.
    */
-  const std::vector<std::vector<float*>>& GetStatePointers() const;
+  const std::vector<std::vector<float *>> &GetStatePointers() const;
 
- private:
+private:
   /**
    * @brief Validates that all inputs are non-null and sizes are consistent.
    *
@@ -141,10 +139,13 @@ class Problem {
    */
   bool CheckGraphConnectivity() const;
 
- private:
-  std::vector<ResidualBatch> residual_batches_;         ///< Registered residual batches.
-  std::vector<StateBatch*> state_batches_;  ///< Registered state batches.
-  std::vector<std::vector<float*>> state_pointers_; ///< Host copies of per-residual-batch state pointer lists.
+private:
+  std::vector<ResidualBatch>
+      residual_batches_;                    ///< Registered residual batches.
+  std::vector<StateBatch *> state_batches_; ///< Registered state batches.
+  std::vector<std::vector<float *>>
+      state_pointers_; ///< Host copies of per-residual-batch state pointer
+                       ///< lists.
 };
 
-}  // namespace cunls
+} // namespace cunls

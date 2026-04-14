@@ -64,24 +64,24 @@
 namespace cunls {
 
 #ifndef CUNLS_TEST_DATA_DIR
-#error \
+#error                                                                         \
     "CUNLS_TEST_DATA_DIR must be defined by CMake (target_compile_definitions)"
 #endif
 /// Directory containing test data files; set by CMake.
-constexpr const char* kTestDataDir = CUNLS_TEST_DATA_DIR;
+constexpr const char *kTestDataDir = CUNLS_TEST_DATA_DIR;
 
 // =============================================================================
 // Binary I/O helpers
 // =============================================================================
 
-bool ReadInt32(std::istream& in, int32_t* out) {
+bool ReadInt32(std::istream &in, int32_t *out) {
   return static_cast<bool>(
-      in.read(reinterpret_cast<char*>(out), sizeof(int32_t)));
+      in.read(reinterpret_cast<char *>(out), sizeof(int32_t)));
 }
 
-bool ReadFloats(std::istream& in, float* ptr, size_t count) {
+bool ReadFloats(std::istream &in, float *ptr, size_t count) {
   return static_cast<bool>(
-      in.read(reinterpret_cast<char*>(ptr), count * sizeof(float)));
+      in.read(reinterpret_cast<char *>(ptr), count * sizeof(float)));
 }
 
 // =============================================================================
@@ -95,16 +95,16 @@ bool ReadFloats(std::istream& in, float* ptr, size_t count) {
  * connectivity (pose1/pose2 ids), and the set of fixed (anchored) pose indices.
  */
 struct PgoProblemHost {
-  int32_t Nposes = 0;   ///< Number of SE3 poses.
-  int32_t Ndeltas = 0;  ///< Number of relative-pose constraints.
-  int32_t NFixed = 0;   ///< Number of fixed (anchored) poses.
+  int32_t Nposes = 0;  ///< Number of SE3 poses.
+  int32_t Ndeltas = 0; ///< Number of relative-pose constraints.
+  int32_t NFixed = 0;  ///< Number of fixed (anchored) poses.
 
-  std::vector<SE3Transform> poses;            ///< Initial SE3 poses.
-  std::vector<SE3Transform> pose_deltas;      ///< Relative-pose measurements.
-  std::vector<Matrix<6>> sqrt_info_matrices;  ///< Per-edge 6×6 sqrt-info.
-  std::vector<int32_t> pose1_ids;             ///< Source pose per edge.
-  std::vector<int32_t> pose2_ids;             ///< Target pose per edge.
-  std::vector<int32_t> fixed_pose_ids;        ///< Indices of anchored poses.
+  std::vector<SE3Transform> poses;           ///< Initial SE3 poses.
+  std::vector<SE3Transform> pose_deltas;     ///< Relative-pose measurements.
+  std::vector<Matrix<6>> sqrt_info_matrices; ///< Per-edge 6×6 sqrt-info.
+  std::vector<int32_t> pose1_ids;            ///< Source pose per edge.
+  std::vector<int32_t> pose2_ids;            ///< Target pose per edge.
+  std::vector<int32_t> fixed_pose_ids;       ///< Indices of anchored poses.
 };
 
 /**
@@ -116,7 +116,7 @@ struct PgoProblemHost {
  * @param[out] out  Populated on success; partially written on failure.
  * @return true if a complete problem was read, false on EOF or read error.
  */
-bool ReadOnePgoProblem(std::istream& in, PgoProblemHost& out) {
+bool ReadOnePgoProblem(std::istream &in, PgoProblemHost &out) {
   // -- Header: three int32 dimensions --
   if (!ReadInt32(in, &out.Nposes) || !ReadInt32(in, &out.Ndeltas) ||
       !ReadInt32(in, &out.NFixed)) {
@@ -132,7 +132,7 @@ bool ReadOnePgoProblem(std::istream& in, PgoProblemHost& out) {
 
   // -- Poses: Nposes × 16 floats (4×4 SE3 matrices) --
   out.poses.resize(n_poses);
-  if (!ReadFloats(in, reinterpret_cast<float*>(out.poses.data()),
+  if (!ReadFloats(in, reinterpret_cast<float *>(out.poses.data()),
                   n_poses * 16)) {
     return false;
   }
@@ -144,16 +144,21 @@ bool ReadOnePgoProblem(std::istream& in, PgoProblemHost& out) {
   out.pose2_ids.resize(n_deltas);
 
   for (size_t i = 0; i < n_deltas; i++) {
-    if (!ReadFloats(in, out.pose_deltas[i].data(), 16)) return false;
-    if (!ReadFloats(in, out.sqrt_info_matrices[i].data(), 36)) return false;
-    if (!ReadInt32(in, &out.pose1_ids[i])) return false;
-    if (!ReadInt32(in, &out.pose2_ids[i])) return false;
+    if (!ReadFloats(in, out.pose_deltas[i].data(), 16))
+      return false;
+    if (!ReadFloats(in, out.sqrt_info_matrices[i].data(), 36))
+      return false;
+    if (!ReadInt32(in, &out.pose1_ids[i]))
+      return false;
+    if (!ReadInt32(in, &out.pose2_ids[i]))
+      return false;
   }
 
   // -- Fixed pose indices --
   out.fixed_pose_ids.resize(n_fixed);
   for (size_t i = 0; i < n_fixed; i++) {
-    if (!ReadInt32(in, &out.fixed_pose_ids[i])) return false;
+    if (!ReadInt32(in, &out.fixed_pose_ids[i]))
+      return false;
   }
 
   // Validate that all indices are within bounds
@@ -193,7 +198,7 @@ bool ReadOnePgoProblem(std::istream& in, PgoProblemHost& out) {
  * a cunls::Problem suitable for LevenbergMarquardtMinimizer.
  */
 class PgoMinimizerTestFixture : public ::testing::Test {
- protected:
+protected:
   /**
    * @brief Builds a cunls::Problem from a host PGO problem.
    *
@@ -206,7 +211,7 @@ class PgoMinimizerTestFixture : public ::testing::Test {
    * @param host    Host-side problem data read from the binary file.
    * @param[out] problem  Empty Problem to populate.
    */
-  void BuildProblemFromHost(const PgoProblemHost& host, Problem* problem) {
+  void BuildProblemFromHost(const PgoProblemHost &host, Problem *problem) {
     const auto n_poses = static_cast<size_t>(host.Nposes);
     const auto n_deltas = static_cast<size_t>(host.Ndeltas);
 
@@ -219,8 +224,8 @@ class PgoMinimizerTestFixture : public ::testing::Test {
     pose_deltas_device_ = dvector<SE3Transform>(host.pose_deltas);
     fixed_pose_ids_device_ = dvector<int32_t>(host.fixed_pose_ids);
 
-    const float* poses_ptr =
-        reinterpret_cast<const float*>(poses_device_.data());
+    const float *poses_ptr =
+        reinterpret_cast<const float *>(poses_device_.data());
 
     // SE3StateBatch: one 4×4 block per pose; fixed poses are anchored
     pose_batch_ = std::make_unique<SE3StateBatch>(
@@ -254,7 +259,7 @@ class PgoMinimizerTestFixture : public ::testing::Test {
   dvector<SE3Transform> pose_deltas_device_;
   dvector<Matrix<6>> sqrt_info_device_;
   dvector<int32_t> fixed_pose_ids_device_;
-  std::vector<float*> state_pointers_;
+  std::vector<float *> state_pointers_;
 
   // -- Factor and state batches ----------------------------------------------
   std::unique_ptr<SE3StateBatch> pose_batch_;
@@ -335,4 +340,4 @@ TEST_F(PgoMinimizerTestFixture, Optimize) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

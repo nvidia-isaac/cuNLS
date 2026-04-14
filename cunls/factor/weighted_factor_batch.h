@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,12 +34,12 @@ namespace cunls {
  *
  * @param weight Scalar weight to apply.
  * @param residuals Residual vectors, modified in-place (device).
- * @param total_elements Total number of float elements (num_factors * residual_size).
+ * @param total_elements Total number of float elements (num_factors *
+ * residual_size).
  * @param stream CUDA stream for asynchronous execution.
  */
-void ApplyUniformWeightToResiduals(float weight, float* residuals,
-                                   size_t total_elements,
-                                   cudaStream_t stream);
+void ApplyUniformWeightToResiduals(float weight, float *residuals,
+                                   size_t total_elements, cudaStream_t stream);
 
 /**
  * @brief Applies a uniform scalar weight to batched Jacobian matrices.
@@ -52,9 +52,8 @@ void ApplyUniformWeightToResiduals(float weight, float* residuals,
  *        (num_factors * residual_size * jacobian_pitch).
  * @param stream CUDA stream for asynchronous execution.
  */
-void ApplyUniformWeightToJacobians(float weight, float* jacobians,
-                                   size_t total_elements,
-                                   cudaStream_t stream);
+void ApplyUniformWeightToJacobians(float weight, float *jacobians,
+                                   size_t total_elements, cudaStream_t stream);
 
 /**
  * @brief Applies per-factor scalar weights to batched residual vectors.
@@ -67,7 +66,7 @@ void ApplyUniformWeightToJacobians(float weight, float* jacobians,
  * @param num_factors Number of factors in the batch.
  * @param stream CUDA stream for asynchronous execution.
  */
-void ApplyPerFactorWeightToResiduals(const float* weights, float* residuals,
+void ApplyPerFactorWeightToResiduals(const float *weights, float *residuals,
                                      size_t residual_size, size_t num_factors,
                                      cudaStream_t stream);
 
@@ -80,11 +79,12 @@ void ApplyPerFactorWeightToResiduals(const float* weights, float* residuals,
  * @param weights Device pointer to per-factor weights (num_factors floats).
  * @param jacobians Jacobian matrices, modified in-place (device).
  * @param residual_size Row dimension of the Jacobian.
- * @param jacobian_pitch Column dimension (total state-block width) of each Jacobian.
+ * @param jacobian_pitch Column dimension (total state-block width) of each
+ * Jacobian.
  * @param num_factors Number of factors in the batch.
  * @param stream CUDA stream for asynchronous execution.
  */
-void ApplyPerFactorWeightToJacobians(const float* weights, float* jacobians,
+void ApplyPerFactorWeightToJacobians(const float *weights, float *jacobians,
                                      size_t residual_size,
                                      size_t jacobian_pitch, size_t num_factors,
                                      cudaStream_t stream);
@@ -110,7 +110,7 @@ void ApplyPerFactorWeightToJacobians(const float* weights, float* jacobians,
 template <class T, typename std::enable_if_t<
                        IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
 class WeightedFactorBatch : public T::sized_layout {
- public:
+public:
   /**
    * @brief Constructs a WeightedFactorBatch with a uniform scalar weight.
    *
@@ -123,10 +123,9 @@ class WeightedFactorBatch : public T::sized_layout {
    *        factor batch constructor.
    */
   template <class... Args>
-  WeightedFactorBatch(float weight, Args&&... sized_factor_batch_args)
+  WeightedFactorBatch(float weight, Args &&...sized_factor_batch_args)
       : factor_batch_(std::forward<Args>(sized_factor_batch_args)...),
-        uniform_weight_(weight),
-        per_factor_weights_(nullptr) {}
+        uniform_weight_(weight), per_factor_weights_(nullptr) {}
 
   /**
    * @brief Constructs a WeightedFactorBatch with per-factor weights.
@@ -141,11 +140,10 @@ class WeightedFactorBatch : public T::sized_layout {
    *        factor batch constructor.
    */
   template <class... Args>
-  WeightedFactorBatch(const float* per_factor_weights, size_t num_weights,
-                      Args&&... sized_factor_batch_args)
+  WeightedFactorBatch(const float *per_factor_weights, size_t num_weights,
+                      Args &&...sized_factor_batch_args)
       : factor_batch_(std::forward<Args>(sized_factor_batch_args)...),
-        uniform_weight_(0.0f),
-        per_factor_weights_(per_factor_weights) {
+        uniform_weight_(0.0f), per_factor_weights_(per_factor_weights) {
     if (per_factor_weights_ == nullptr) {
       std::stringstream ss;
       ss << "WeightedFactorBatch: per_factor_weights must not be null";
@@ -180,8 +178,8 @@ class WeightedFactorBatch : public T::sized_layout {
    * @param stream CUDA stream for asynchronous execution
    * @return true if evaluation succeeded, false otherwise
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final {
     factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream);
 
@@ -216,12 +214,12 @@ class WeightedFactorBatch : public T::sized_layout {
     return true;
   }
 
- private:
+private:
   T factor_batch_;
 
   float uniform_weight_;
 
-  const float* per_factor_weights_;
+  const float *per_factor_weights_;
 };
 
-}  // namespace cunls
+} // namespace cunls

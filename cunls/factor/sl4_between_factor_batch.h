@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -17,26 +17,28 @@ namespace cunls {
  *
  * residual = Vee(Log(Delta * T_left^{-1} * T_right))  (15-vector).
  *
- * Jacobians use Ad(Delta) for the left pose and identity for the right (approximate
- * inverse left/right Jacobians of Exp, consistent with small-residual linearization).
+ * Jacobians use Ad(Delta) for the left pose and identity for the right
+ * (approximate inverse left/right Jacobians of Exp, consistent with
+ * small-residual linearization).
  */
 class SL4BetweenFactorBatch : public SizedFactorBatch<15, 15, 15> {
   using Base = SizedFactorBatch<15, 15, 15>;
 
- public:
-  SL4BetweenFactorBatch(const SL4Transform* pose_deltas_ptr, size_t num_factors);
+public:
+  SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr,
+                        size_t num_factors);
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   SL4BetweenFactorBatch() = default;
   void ComputeDeltaAdjoints(cudaStream_t stream);
 
-  const SL4Transform* pose_deltas_ptr_;
+  const SL4Transform *pose_deltas_ptr_;
   size_t num_factors_;
   DeviceVector<float> delta_adjoints_;
   mutable DeviceVector<SL4Transform> poses_left_;
@@ -44,4 +46,4 @@ class SL4BetweenFactorBatch : public SizedFactorBatch<15, 15, 15> {
   mutable DeviceVector<SL4Transform> poses_left_inverse_;
 };
 
-}  // namespace cunls
+} // namespace cunls

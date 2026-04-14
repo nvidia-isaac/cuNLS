@@ -26,8 +26,8 @@ namespace examples {
 
 // Mean squared error between two equally-sized vectors of cunls::Vector<N>.
 template <size_t N>
-float ComputeVectorMSE(const std::vector<cunls::Vector<N>>& a,
-                       const std::vector<cunls::Vector<N>>& b) {
+float ComputeVectorMSE(const std::vector<cunls::Vector<N>> &a,
+                       const std::vector<cunls::Vector<N>> &b) {
   float mse = 0.0f;
   for (size_t i = 0; i < a.size(); ++i) {
     for (size_t j = 0; j < N; ++j) {
@@ -40,8 +40,8 @@ float ComputeVectorMSE(const std::vector<cunls::Vector<N>>& a,
 
 // Mean squared Frobenius error between two equally-sized vectors of SE(3)
 // transforms, measuring element-wise deviation of 4x4 matrices.
-inline float ComputePoseMSE(const std::vector<SE3Transform>& a,
-                            const std::vector<SE3Transform>& b) {
+inline float ComputePoseMSE(const std::vector<SE3Transform> &a,
+                            const std::vector<SE3Transform> &b) {
   float mse = 0.0f;
   for (size_t i = 0; i < a.size(); ++i) {
     for (size_t j = 0; j < 16; ++j) {
@@ -56,8 +56,8 @@ inline float ComputePoseMSE(const std::vector<SE3Transform>& a,
 // For each consecutive pair (T_i, T_{i+1}), compute
 //   T_res = delta_i * T_i^{-1} * T_{i+1}
 // and measure the mean squared distance to the identity matrix.
-inline float ChainConstraintError(const std::vector<SE3Transform>& poses,
-                                  const std::vector<SE3Transform>& deltas) {
+inline float ChainConstraintError(const std::vector<SE3Transform> &poses,
+                                  const std::vector<SE3Transform> &deltas) {
   float mse = 0.0f;
   const size_t num_constraints = deltas.size();
   for (size_t i = 0; i < num_constraints; ++i) {
@@ -78,4 +78,4 @@ inline float ChainConstraintError(const std::vector<SE3Transform>& poses,
   return mse / static_cast<float>(num_constraints);
 }
 
-}  // namespace examples
+} // namespace examples

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,28 +15,29 @@
  * limitations under the License.
  */
 
-#include "cunls/common/cudss_helper.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
+#include "cunls/common/cudss_helper.h"
 
 namespace cunls {
 
 /** @copydoc CreateCSRSparseLinearSolver
  * @throws std::invalid_argument If an unsupported solver type is specified.
  */
-SparseLinearSolverPtr CreateCSRSparseLinearSolver(
-    SparseLinearSolverType type, const SparseLinearSolverConfig& config) {
+SparseLinearSolverPtr
+CreateCSRSparseLinearSolver(SparseLinearSolverType type,
+                            const SparseLinearSolverConfig &config) {
   switch (type) {
-    case SparseLinearSolverType::cuDSS:
-      return std::make_unique<cuDSSLinearSolver>(config.cudss_solver_options);
-    case SparseLinearSolverType::DenseLDLT:
-      return std::make_unique<DenseLDLTSolver>();
-    case SparseLinearSolverType::DenseCholesky:
-      return std::make_unique<DenseCholeskySolver>();
-    case SparseLinearSolverType::DenseQR:
-      return std::make_unique<DenseQRSolver>();
-    default:
-      throw std::invalid_argument("Invalid sparse linear solver type");
+  case SparseLinearSolverType::cuDSS:
+    return std::make_unique<cuDSSLinearSolver>(config.cudss_solver_options);
+  case SparseLinearSolverType::DenseLDLT:
+    return std::make_unique<DenseLDLTSolver>();
+  case SparseLinearSolverType::DenseCholesky:
+    return std::make_unique<DenseCholeskySolver>();
+  case SparseLinearSolverType::DenseQR:
+    return std::make_unique<DenseQRSolver>();
+  default:
+    throw std::invalid_argument("Invalid sparse linear solver type");
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

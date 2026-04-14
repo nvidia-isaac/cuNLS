@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ namespace cunls {
 
 template <class TestParam>
 class WeightedFactorBatchTest : public ::testing::Test {
- public:
+public:
   static constexpr int kDim = TestParam::vector_size;
   using StatesType = VectorStateBatch<kDim>;
   using VectorType = Vector<kDim>;
@@ -69,20 +69,20 @@ class WeightedFactorBatchTest : public ::testing::Test {
                                                           cudss_solver_options};
   }
 
-  void CheckConvergence(const StatesType& states) {
+  void CheckConvergence(const StatesType &states) {
     size_t num_blocks = states.NumStateBlocks();
-    auto ptr = reinterpret_cast<const VectorType*>(
-        states.StateBlockDevicePtr(0));
+    auto ptr =
+        reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
 
     std::vector<VectorType> host_states(num_blocks);
     THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr,
-                                    num_blocks * sizeof(VectorType),
-                                    cudaMemcpyDeviceToHost));
+                                   num_blocks * sizeof(VectorType),
+                                   cudaMemcpyDeviceToHost));
 
     ASSERT_EQ(host_states.size(), observations_.size());
     for (size_t i = 0; i < num_blocks; i++) {
-      const auto& obs = observations_[i];
-      const auto& state_vals = host_states[i];
+      const auto &obs = observations_[i];
+      const auto &state_vals = host_states[i];
       for (size_t j = 0; j < TestParam::vector_size; j++) {
         ASSERT_NEAR(obs[j], state_vals[j], 1e-3);
       }
@@ -97,8 +97,7 @@ class WeightedFactorBatchTest : public ::testing::Test {
   MinimizerOptions minimizer_options_{.disable_safety_checks = false};
 };
 
-template <int VectorSize, int SolverId>
-struct TestParam {
+template <int VectorSize, int SolverId> struct TestParam {
   static constexpr int vector_size = VectorSize;
   static constexpr int solver_id = SolverId;
 };
@@ -120,7 +119,7 @@ TYPED_TEST(WeightedFactorBatchTest, UniformWeightLM) {
   using WeightedType = WeightedFactorBatch<FactorType>;
 
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
+  auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
   DeviceVector<typename TestFixture::VectorType> obs_device(
@@ -158,7 +157,7 @@ TYPED_TEST(WeightedFactorBatchTest, PerFactorWeightLM) {
   using WeightedType = WeightedFactorBatch<FactorType>;
 
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
+  auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
   DeviceVector<typename TestFixture::VectorType> obs_device(
@@ -205,7 +204,7 @@ TYPED_TEST(WeightedFactorBatchTest, UnitWeightMatchesUnweighted) {
   // Run with weight = 1.0
   {
     typename TestFixture::StateData state_data(this->state_values_);
-    auto& vector_states = state_data.get();
+    auto &vector_states = state_data.get();
     auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
     WeightedType weighted_factor(1.0f, obs_device.data(), this->num_vectors_);
@@ -234,7 +233,7 @@ TYPED_TEST(WeightedFactorBatchTest, LargeUniformWeightConverges) {
   using WeightedType = WeightedFactorBatch<FactorType>;
 
   typename TestFixture::StateData state_data(this->state_values_);
-  auto& vector_states = state_data.get();
+  auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
   DeviceVector<typename TestFixture::VectorType> obs_device(
@@ -289,10 +288,9 @@ TEST(WeightedFactorBatchValidation, NullPerFactorWeightsThrows) {
   std::vector<Vector<2>> obs_host = {{1.f, 2.f}, {3.f, 4.f}};
   DeviceVector<Vector<2>> obs_device(obs_host);
 
-  ASSERT_THROW(
-      WeightedType(static_cast<const float*>(nullptr), 2,
-                   obs_device.data(), size_t{2}),
-      std::invalid_argument);
+  ASSERT_THROW(WeightedType(static_cast<const float *>(nullptr), 2,
+                            obs_device.data(), size_t{2}),
+               std::invalid_argument);
 }
 
-}  // namespace cunls
+} // namespace cunls

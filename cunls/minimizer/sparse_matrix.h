@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@ namespace cunls {
  * @param[out] num_cols Number of columns in the matrix.
  * @param[out] num_nonzeros Number of nonzero elements.
  */
-void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                           int& num_rows, int& num_cols, int& num_nonzeros);
+void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                           int &num_rows, int &num_cols, int &num_nonzeros);
 
 /**
  * @brief Extracts the diagonal elements from a CSR sparse matrix.
@@ -49,8 +49,8 @@ void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix& matrix,
  * @param matrix CSR sparse matrix to extract diagonal from.
  * @param[out] diagonal Output vector of diagonal elements.
  */
-void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                     dvector<float>& diagonal);
+void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                     dvector<float> &diagonal);
 
 /**
  * @brief Adds a scaled diagonal to a sparse matrix.
@@ -65,8 +65,8 @@ void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix& matrix,
  * @param[out] result Output CSR sparse matrix (may alias matrix for in-place).
  */
 void AddScaledDiagonal(cudaStream_t stream, float scale,
-                       const dvector<float>& diagonal,
-                       const CSRSparseMatrix& matrix, CSRSparseMatrix& result);
+                       const dvector<float> &diagonal,
+                       const CSRSparseMatrix &matrix, CSRSparseMatrix &result);
 
 /**
  * @brief Creates a deep copy of a CSR sparse matrix.
@@ -78,8 +78,8 @@ void AddScaledDiagonal(cudaStream_t stream, float scale,
  * @param input Source CSR sparse matrix.
  * @param[out] output Destination CSR sparse matrix.
  */
-void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
-                         CSRSparseMatrix& output);
+void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix &input,
+                         CSRSparseMatrix &output);
 
 /**
  * @brief Symmetric diagonal scaling of a CSR matrix: A_ij *= scale[i] *
@@ -89,15 +89,15 @@ void CopyCSRSparseMatrix(cudaStream_t stream, const CSRSparseMatrix& input,
  * @param[in,out] matrix CSR matrix updated in-place.
  * @param scale Length must match matrix row/column dimension (square H).
  */
-void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix& matrix,
-                       const dvector<float>& scale);
+void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix &matrix,
+                       const dvector<float> &scale);
 
 /**
  * @brief Sets v[i] = 1 / sqrt(max(v[i], floor_value)) for all i (in-place).
  *
  * Used after ExtractDiagonal when building S from Hessian diagonal.
  */
-void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
+void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float> &v,
                                 float floor_value = 1e-12f);
 
 /**
@@ -111,9 +111,9 @@ void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
  * @param[out] column_scale Per-column scaling; length = number of columns of J.
  */
 void ComputeJacobianColumnScaling(cudaStream_t stream,
-                                  const CSRSparseMatrix& jacobian,
-                                  int num_cols, int num_nonzeros,
-                                  dvector<float>& column_scale);
+                                  const CSRSparseMatrix &jacobian, int num_cols,
+                                  int num_nonzeros,
+                                  dvector<float> &column_scale);
 
 /**
  * @brief Converts a triplet sparse structure to CSR format with index mapping.
@@ -131,10 +131,10 @@ void ComputeJacobianColumnScaling(cudaStream_t stream,
  * -1.
  * @param[out] buffer Temporary buffer for intermediate computations.
  */
-void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
-                                  const TripletSparseStructure& structure,
-                                  CSRSparseMatrix& csr, dvector<int>& mapping,
-                                  dvector<uint8_t>& buffer);
+void ConvertTripletStructureToCSR(cudaStream_t stream, void *handle,
+                                  const TripletSparseStructure &structure,
+                                  CSRSparseMatrix &csr, dvector<int> &mapping,
+                                  dvector<uint8_t> &buffer);
 
 /**
  * @brief Scatters Jacobian values from triplet format into CSR format.
@@ -149,9 +149,9 @@ void ConvertTripletStructureToCSR(cudaStream_t stream, void* handle,
  * @param[out] csr CSR sparse matrix whose values are updated.
  */
 void ConvertTripletToCSRValues(cudaStream_t stream,
-                               const SparseJacobian& jacobian,
-                               const dvector<int>& mapping,
-                               CSRSparseMatrix& csr);
+                               const SparseJacobian &jacobian,
+                               const dvector<int> &mapping,
+                               CSRSparseMatrix &csr);
 
 /**
  * @brief Computes the right-hand side of the normal equations: rhs = -J^T * r.
@@ -166,16 +166,15 @@ void ConvertTripletToCSRValues(cudaStream_t stream,
  * @param[out] rhs Output right-hand side vector (-J^T * r).
  * @param[out] buffer Temporary buffer for cuSPARSE operations.
  */
-void ComputeRHS(cudaStream_t stream, void* handle,
-                const CSRSparseMatrix& jacobian,
-                const dvector<float>& residuals, dvector<float>& rhs,
-                dvector<uint8_t>& buffer);
+void ComputeRHS(cudaStream_t stream, void *handle,
+                const CSRSparseMatrix &jacobian,
+                const dvector<float> &residuals, dvector<float> &rhs,
+                dvector<uint8_t> &buffer);
 
-void ComputeRHS(cudaStream_t stream, void* handle,
-                const CSRSparseMatrix& jacobian,
-                int num_rows, int num_cols, int num_nonzeros,
-                const dvector<float>& residuals, dvector<float>& rhs,
-                dvector<uint8_t>& buffer);
+void ComputeRHS(cudaStream_t stream, void *handle,
+                const CSRSparseMatrix &jacobian, int num_rows, int num_cols,
+                int num_nonzeros, const dvector<float> &residuals,
+                dvector<float> &rhs, dvector<uint8_t> &buffer);
 
 /**
  * @brief Computes the squared L2 norm of a step vector.
@@ -186,7 +185,7 @@ void ComputeRHS(cudaStream_t stream, void* handle,
  * @param step Step vector.
  * @return The squared L2 norm (scalar value).
  */
-float ComputeSquaredStep(cudaStream_t stream, const dvector<float>& step);
+float ComputeSquaredStep(cudaStream_t stream, const dvector<float> &step);
 
 /**
  * @brief Computes a diagonally-weighted squared step norm.
@@ -201,9 +200,9 @@ float ComputeSquaredStep(cudaStream_t stream, const dvector<float>& step);
  * @return The weighted squared norm (scalar value).
  */
 float ComputeWeightedSquaredStep(cudaStream_t stream,
-                                 const dvector<float>& weights,
-                                 const dvector<float>& step,
-                                 dvector<uint8_t>& buffer);
+                                 const dvector<float> &weights,
+                                 const dvector<float> &step,
+                                 dvector<uint8_t> &buffer);
 
 /**
  * @brief Computes a sparse-matrix-weighted squared step norm.
@@ -219,58 +218,55 @@ float ComputeWeightedSquaredStep(cudaStream_t stream,
  * @param[out] buffer Temporary buffer for cuSPARSE operations.
  * @return The weighted squared norm (scalar value).
  */
-float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
-                                 const CSRSparseMatrix& matrix,
-                                 const dvector<float>& step,
-                                 dvector<uint8_t>& buffer);
+float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle,
+                                 const CSRSparseMatrix &matrix,
+                                 const dvector<float> &step,
+                                 dvector<uint8_t> &buffer);
 
-float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
-                                 const CSRSparseMatrix& matrix,
-                                 int num_rows, int num_cols, int num_nonzeros,
-                                 const dvector<float>& step,
-                                 dvector<uint8_t>& buffer);
+float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle,
+                                 const CSRSparseMatrix &matrix, int num_rows,
+                                 int num_cols, int num_nonzeros,
+                                 const dvector<float> &step,
+                                 dvector<uint8_t> &buffer);
 
 // ---- Async variants: write scalar result to device memory, no D2H or sync --
 
 /**
  * @brief Async squared step norm: d_out[0] = step^T * step.
  *
- * @param d_partials Scratch buffer with at least ReducePartialCount(step.size())
- *                   floats (from device_reduction.h).
+ * @param d_partials Scratch buffer with at least
+ * ReducePartialCount(step.size()) floats (from device_reduction.h).
  */
-void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float>& step,
-                             float* d_out, float* d_partials);
+void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float> &step,
+                             float *d_out, float *d_partials);
 
 /**
  * @brief Async diag-weighted squared step: d_out[0] = step^T diag(w) step.
  */
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream,
-                                     const dvector<float>& weights,
-                                     const dvector<float>& step,
-                                     float* d_out, float* d_partials);
+                                     const dvector<float> &weights,
+                                     const dvector<float> &step, float *d_out,
+                                     float *d_partials);
 
 /**
  * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
  *
  * Performs SpMV (A*step) then dot(step, A*step) into d_out, all on the stream.
  */
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void* handle,
-                                     const CSRSparseMatrix& matrix,
-                                     int num_rows, int num_cols,
-                                     int num_nonzeros,
-                                     const dvector<float>& step,
-                                     dvector<uint8_t>& buffer,
-                                     float* d_out, float* d_partials);
+void ComputeWeightedSquaredStepAsync(
+    cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
+    int num_rows, int num_cols, int num_nonzeros, const dvector<float> &step,
+    dvector<uint8_t> &buffer, float *d_out, float *d_partials);
 
 /**
  * @brief Elementwise vector negation: out[i] = -in[i].
  */
-void NegateVector(cudaStream_t stream, float* data, size_t n);
+void NegateVector(cudaStream_t stream, float *data, size_t n);
 
 /**
  * @brief Elementwise multiply: out[i] = a[i] * b[i].
  */
-void ElementwiseMultiplyInPlace(cudaStream_t stream, float* a,
-                                const float* b, size_t n);
+void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b,
+                                size_t n);
 
-}  // namespace cunls
+} // namespace cunls

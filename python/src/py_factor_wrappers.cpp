@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,20 +29,19 @@
 
 PyFactorBatch::PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes,
                              size_t num)
-    : residual_size_(res_size),
-      state_block_sizes_(std::move(block_sizes)),
+    : residual_size_(res_size), state_block_sizes_(std::move(block_sizes)),
       num_factors_(num) {}
 
-bool PyFactorBatch::Evaluate(float* residuals, float* jacobians,
-                             float const* const* state_pointers,
+bool PyFactorBatch::Evaluate(float *residuals, float *jacobians,
+                             float const *const *state_pointers,
                              cudaStream_t stream) const {
   nb::gil_scoped_acquire gil;
   nb::object self_obj = nb::find(this);
-  nb::object result = self_obj.attr("evaluate")(
-      reinterpret_cast<uintptr_t>(residuals),
-      reinterpret_cast<uintptr_t>(jacobians),
-      reinterpret_cast<uintptr_t>(state_pointers),
-      reinterpret_cast<uintptr_t>(stream));
+  nb::object result =
+      self_obj.attr("evaluate")(reinterpret_cast<uintptr_t>(residuals),
+                                reinterpret_cast<uintptr_t>(jacobians),
+                                reinterpret_cast<uintptr_t>(state_pointers),
+                                reinterpret_cast<uintptr_t>(stream));
   return nb::cast<bool>(result);
 }
 
@@ -55,10 +54,9 @@ std::vector<size_t> PyFactorBatch::StateBlockSizes() const {
 size_t PyFactorBatch::NumFactors() const { return num_factors_; }
 
 PyInformationFactorBatch::PyInformationFactorBatch(
-    cunls::cuBLASHandle& cublas_handle, cunls::FactorBatch* inner,
-    const float* sqrt_information_matrices_ptr)
-    : cublas_handle_(cublas_handle),
-      inner_(inner),
+    cunls::cuBLASHandle &cublas_handle, cunls::FactorBatch *inner,
+    const float *sqrt_information_matrices_ptr)
+    : cublas_handle_(cublas_handle), inner_(inner),
       sqrt_info_ptr_(sqrt_information_matrices_ptr) {}
 
 size_t PyInformationFactorBatch::ResidualsSize() const {
@@ -73,9 +71,9 @@ std::vector<size_t> PyInformationFactorBatch::StateBlockSizes() const {
   return inner_->StateBlockSizes();
 }
 
-bool PyInformationFactorBatch::Evaluate(
-    float* residuals, float* jacobians, float const* const* state_pointers,
-    cudaStream_t stream) const {
+bool PyInformationFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                        float const *const *state_pointers,
+                                        cudaStream_t stream) const {
   inner_->Evaluate(residuals, jacobians, state_pointers, stream);
 
   auto handle = cublas_handle_.GetHandle(stream);
@@ -84,7 +82,8 @@ bool PyInformationFactorBatch::Evaluate(
 
   cunls::ApplyInformationToResiduals(handle, sqrt_info_ptr_, residuals, rsize,
                                      nf);
-  if (jacobians == nullptr) return true;
+  if (jacobians == nullptr)
+    return true;
 
   auto sbs = inner_->StateBlockSizes();
   const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
@@ -93,14 +92,13 @@ bool PyInformationFactorBatch::Evaluate(
   return true;
 }
 
-PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch* inner,
+PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner,
                                              float weight)
     : inner_(inner), uniform_weight_(weight), per_factor_weights_(nullptr) {}
 
-PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch* inner,
-                                             const float* per_factor_weights)
-    : inner_(inner),
-      uniform_weight_(0.0f),
+PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner,
+                                             const float *per_factor_weights)
+    : inner_(inner), uniform_weight_(0.0f),
       per_factor_weights_(per_factor_weights) {
   if (per_factor_weights_ == nullptr) {
     throw std::invalid_argument(
@@ -120,8 +118,8 @@ std::vector<size_t> PyWeightedFactorBatch::StateBlockSizes() const {
   return inner_->StateBlockSizes();
 }
 
-bool PyWeightedFactorBatch::Evaluate(float* residuals, float* jacobians,
-                                     float const* const* state_pointers,
+bool PyWeightedFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                     float const *const *state_pointers,
                                      cudaStream_t stream) const {
   inner_->Evaluate(residuals, jacobians, state_pointers, stream);
 
@@ -132,11 +130,12 @@ bool PyWeightedFactorBatch::Evaluate(float* residuals, float* jacobians,
     cunls::ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals,
                                            rsize, nf, stream);
   } else {
-    cunls::ApplyUniformWeightToResiduals(uniform_weight_, residuals,
-                                         nf * rsize, stream);
+    cunls::ApplyUniformWeightToResiduals(uniform_weight_, residuals, nf * rsize,
+                                         stream);
   }
 
-  if (jacobians == nullptr) return true;
+  if (jacobians == nullptr)
+    return true;
 
   auto sbs = inner_->StateBlockSizes();
   const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
@@ -152,7 +151,7 @@ bool PyWeightedFactorBatch::Evaluate(float* residuals, float* jacobians,
 }
 
 PyScaledLossFunctionBatch::PyScaledLossFunctionBatch(
-    cunls::LossFunctionBatch* inner, float a)
+    cunls::LossFunctionBatch *inner, float a)
     : inner_(inner), a_(a) {
   if (inner == nullptr) {
     throw std::invalid_argument(
@@ -166,7 +165,7 @@ PyScaledLossFunctionBatch::PyScaledLossFunctionBatch(
   }
 }
 
-bool PyScaledLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool PyScaledLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                          cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;

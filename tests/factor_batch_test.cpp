@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,13 +24,14 @@
 #include <cuda/std/array>
 
 #include "cunls/common/device_vector.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/prior_vector_factor_batch.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
 
-/** @brief Verifies that PriorVectorFactorBatch and VectorStateBatch report correct sizes. */
+/** @brief Verifies that PriorVectorFactorBatch and VectorStateBatch report
+ * correct sizes. */
 TEST(FactorBatchTest, Simple) {
   constexpr size_t num_vectors = 100;
 
@@ -42,8 +43,7 @@ TEST(FactorBatchTest, Simple) {
   }
 
   DeviceVector<Vector<2>> vectors(host_vectors);
-  const float* data_ptr =
-      reinterpret_cast<const float*>(vectors.data());
+  const float *data_ptr = reinterpret_cast<const float *>(vectors.data());
   VectorStateBatch<2> vector_states(data_ptr, num_vectors);
 
   std::vector<Vector<2>> observations_host;
@@ -54,10 +54,10 @@ TEST(FactorBatchTest, Simple) {
   DeviceVector<Vector<2>> observations_device(observations_host);
 
   PriorVectorFactorBatch<2> factor_batch(observations_device.data(),
-                                                  observations_host.size());
+                                         observations_host.size());
 
   ASSERT_EQ(factor_batch.NumFactors(), num_vectors - 1);
   ASSERT_EQ(vector_states.NumStateBlocks(), num_vectors);
 }
 
-}  // namespace cunls
+} // namespace cunls

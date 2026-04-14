@@ -1,12 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file se3_manifold_test.cpp
- * @brief Unified SE(3) manifold tests: state batch dimensions, prior and between
- *        factor LM convergence.
+ * @brief Unified SE(3) manifold tests: state batch dimensions, prior and
+ * between factor LM convergence.
  */
 
 #include <cublas_v2.h>
@@ -38,8 +38,8 @@ SE3Transform MakeSE3Identity() {
   return I;
 }
 
-dvector<SE3Transform> GenerateRandomSE3(size_t n, uint32_t seed,
-                                         float rot_mag, float trans_mag) {
+dvector<SE3Transform> GenerateRandomSE3(size_t n, uint32_t seed, float rot_mag,
+                                        float trans_mag) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> rot_dist(-rot_mag, rot_mag);
   std::uniform_real_distribution<float> trans_dist(-trans_mag, trans_mag);
@@ -58,15 +58,15 @@ dvector<SE3Transform> GenerateRandomSE3(size_t n, uint32_t seed,
   dvector<SE3Transform> out(n);
   CudaStream stream;
   ComputeExpSE3(stream.GetStream(),
-                reinterpret_cast<const float*>(twists_dev.data()),
-                6, 4, 16, n, reinterpret_cast<float*>(out.data()));
+                reinterpret_cast<const float *>(twists_dev.data()), 6, 4, 16, n,
+                reinterpret_cast<float *>(out.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   return out;
 }
 
-dvector<SE3Transform> PerturbSE3(const dvector<SE3Transform>& targets,
-                                  size_t n, uint32_t seed, float rot_mag,
-                                  float trans_mag, cuBLASHandle& cublas) {
+dvector<SE3Transform> PerturbSE3(const dvector<SE3Transform> &targets, size_t n,
+                                 uint32_t seed, float rot_mag, float trans_mag,
+                                 cuBLASHandle &cublas) {
   dvector<SE3Transform> perturbations =
       GenerateRandomSE3(n, seed, rot_mag, trans_mag);
   dvector<SE3Transform> result(n);
@@ -79,14 +79,14 @@ dvector<SE3Transform> PerturbSE3(const dvector<SE3Transform>& targets,
 
   THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
       handle, CUBLAS_OP_N, CUBLAS_OP_N, 4, 4, 4, &alpha,
-      reinterpret_cast<const float*>(perturbations.data()), 4, 16,
-      reinterpret_cast<const float*>(targets.data()), 4, 16, &beta,
-      reinterpret_cast<float*>(result.data()), 4, 16, n));
+      reinterpret_cast<const float *>(perturbations.data()), 4, 16,
+      reinterpret_cast<const float *>(targets.data()), 4, 16, &beta,
+      reinterpret_cast<float *>(result.data()), 4, 16, n));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   return result;
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -99,7 +99,7 @@ TEST(SE3ManifoldTest, StateDimensions) {
 
   cuBLASHandle cublas;
   SE3StateBatch states(
-      cublas, reinterpret_cast<const float*>(transforms_dev.data()), kN);
+      cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), 6u);
   EXPECT_EQ(states.AmbientSize(), 16u);
@@ -119,10 +119,10 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
       PerturbSE3(targets, kN, 43, 0.1f, 0.3f, cublas);
 
   SE3StateBatch state_batch(
-      cublas, reinterpret_cast<const float*>(initials.data()), kN);
+      cublas, reinterpret_cast<const float *>(initials.data()), kN);
   SE3PriorFactorBatch factor_batch(targets.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_batch.StateBlockDevicePtr(i));
@@ -144,8 +144,7 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, 1e-2f);
@@ -153,10 +152,9 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SE3Transform> optimized(kN), target_host(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(),
-                                 state_batch.StateBlockDevicePtr(0),
-                                 kN * sizeof(SE3Transform),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
   targets.CopyToHost(target_host.data(), kN);
 
   for (size_t i = 0; i < kN; ++i) {
@@ -182,12 +180,12 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
 
   cuBLASHandle cublas;
   SE3StateBatch state_left(
-      cublas, reinterpret_cast<const float*>(poses_left.data()), kN);
+      cublas, reinterpret_cast<const float *>(poses_left.data()), kN);
   SE3StateBatch state_right(
-      cublas, reinterpret_cast<const float*>(poses_right.data()), kN);
+      cublas, reinterpret_cast<const float *>(poses_right.data()), kN);
   SE3BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
-  std::vector<float*> ptrs;
+  std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
     ptrs.push_back(state_left.StateBlockDevicePtr(i));
@@ -211,22 +209,19 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
 
   CudaStream stream;
   LevenbergMarquardtMinimizer minimizer(lm_opts);
-  MinimizerSummary summary =
-      minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, summary.initial_cost);
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SE3Transform> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(),
-                                 state_left.StateBlockDevicePtr(0),
-                                 kN * sizeof(SE3Transform),
-                                 cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(),
-                                 state_right.StateBlockDevicePtr(0),
-                                 kN * sizeof(SE3Transform),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 16; ++j) {
@@ -236,4 +231,4 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

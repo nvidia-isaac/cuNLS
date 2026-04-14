@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,15 +33,17 @@ constexpr size_t kSO2BlockSize = 256;
  *   - residual[i] = atan2(sin(error), cos(error))  (Log map for SO(2))
  *   - jacobian[i] = 1.0  (SO(2) is abelian, so the Jacobian is always 1)
  *
- * @param observations Target rotation matrices (4 floats each, row-major: [c, -s, s, c])
- * @param state_pointers Array of state block pointers (each points to a 2x2 rotation)
+ * @param observations Target rotation matrices (4 floats each, row-major: [c,
+ * -s, s, c])
+ * @param state_pointers Array of state block pointers (each points to a 2x2
+ * rotation)
  * @param residuals Output residuals (1 float per factor), or nullptr to skip
  * @param jacobians Output Jacobians (1 float per factor), or nullptr to skip
  * @param num_factors Number of factors to process
  */
-__global__ void so2_prior_cost_kernel(const float* observations,
-                                      float const* const* state_pointers,
-                                      float* residuals, float* jacobians,
+__global__ void so2_prior_cost_kernel(const float *observations,
+                                      float const *const *state_pointers,
+                                      float *residuals, float *jacobians,
                                       int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_factors) {
@@ -49,13 +51,13 @@ __global__ void so2_prior_cost_kernel(const float* observations,
   }
 
   // Read current rotation matrix [c, -s, s, c]
-  const float* R = state_pointers[tid];
+  const float *R = state_pointers[tid];
   assert(R != nullptr);
   float c_curr = R[0];
   float s_curr = R[2];
 
   // Read target rotation matrix
-  const float* R_target = observations + tid * 4;
+  const float *R_target = observations + tid * 4;
   float c_tgt = R_target[0];
   float s_tgt = R_target[2];
 
@@ -75,10 +77,10 @@ __global__ void so2_prior_cost_kernel(const float* observations,
   }
 }
 
-bool SO2PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
-                                         float const* const* state_pointers,
-                                         cudaStream_t stream) const {
-  auto data_ptr = reinterpret_cast<const float*>(observations_ptr_);
+bool SO2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                   float const *const *state_pointers,
+                                   cudaStream_t stream) const {
+  auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
   int num_factors = static_cast<int>(NumFactors());
 
   size_t num_blocks = (num_factors + kSO2BlockSize - 1) / kSO2BlockSize;
@@ -89,4 +91,4 @@ bool SO2PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

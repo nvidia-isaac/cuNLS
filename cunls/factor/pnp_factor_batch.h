@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,36 +37,35 @@ namespace cunls {
  *   - 6: SE(3) pose tangent
  */
 class PnPFactorBatch : public SizedFactorBatch<2, 6> {
- public:
+public:
   /**
    * @brief Constructs with identity camera-from-rig extrinsics.
    */
-  PnPFactorBatch(const Vector<2>* observations,
-                 const Vector<3>* points_world, size_t num_observations,
-                 float z_threshold = 1e-3f);
+  PnPFactorBatch(const Vector<2> *observations, const Vector<3> *points_world,
+                 size_t num_observations, float z_threshold = 1e-3f);
 
   /**
    * @brief Constructs with per-correspondence camera-from-rig transforms.
    */
-  PnPFactorBatch(const Vector<2>* observations,
-                 const SE3Transform* poses_camera_from_rig,
-                 const Vector<3>* points_world, size_t num_observations,
+  PnPFactorBatch(const Vector<2> *observations,
+                 const SE3Transform *poses_camera_from_rig,
+                 const Vector<3> *points_world, size_t num_observations,
                  float z_threshold = 1e-3f);
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   size_t NumFactors() const final { return num_observations_; }
 
- private:
+private:
   PnPFactorBatch() = delete;
 
-  const Vector<2>* observations_;
-  const Vector<3>* points_world_;
-  const SE3Transform* poses_camera_from_rig_ = nullptr;
+  const Vector<2> *observations_;
+  const Vector<3> *points_world_;
+  const SE3Transform *poses_camera_from_rig_ = nullptr;
   size_t num_observations_;
   float z_threshold_ = 1e-3f;
 };
 
-}  // namespace cunls
+} // namespace cunls

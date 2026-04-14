@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ namespace cunls {
  *      state block sizes at compile time.
  */
 class FactorBatch {
- public:
+public:
   /**
    * @brief Evaluates residuals and optionally Jacobians for all factors
    *        in the batch.
@@ -51,8 +51,8 @@ class FactorBatch {
    * @param stream CUDA stream for asynchronous execution.
    * @return true if evaluation succeeded, false otherwise.
    */
-  virtual bool Evaluate(float* residuals, float* jacobians,
-                        float const* const* state_pointers,
+  virtual bool Evaluate(float *residuals, float *jacobians,
+                        float const *const *state_pointers,
                         cudaStream_t stream) const = 0;
 
   /** @brief Virtual destructor for safe polymorphic deletion. */
@@ -77,4 +77,4 @@ class FactorBatch {
   virtual size_t NumFactors() const = 0;
 };
 
-}  // namespace cunls
+} // namespace cunls

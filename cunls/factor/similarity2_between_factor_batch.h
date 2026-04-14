@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -24,24 +24,24 @@ namespace cunls {
 class Similarity2BetweenFactorBatch : public SizedFactorBatch<4, 4, 4> {
   using Base = SizedFactorBatch<4, 4, 4>;
 
- public:
-  Similarity2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr,
-                              size_t num_factors);
+public:
+  Similarity2BetweenFactorBatch(const Matrix<3> *pose_deltas_ptr,
+                                size_t num_factors);
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
   size_t NumFactors() const final { return num_factors_; }
 
- private:
+private:
   Similarity2BetweenFactorBatch() = default;
 
-  const Matrix<3>* pose_deltas_ptr_;
+  const Matrix<3> *pose_deltas_ptr_;
   size_t num_factors_;
   mutable DeviceVector<Matrix<3>> poses_left_;
   mutable DeviceVector<Matrix<3>> poses_right_;
   mutable DeviceVector<Matrix<3>> poses_left_inverse_;
 };
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -215,7 +215,7 @@ std::string vformat_to(std::string_view fmt_str, Args &&...args) {
 
   return result.str();
 }
-}  // namespace
+} // namespace
 
 /**
  * @brief Logs a formatted message at the given verbosity level (C++17 path).
@@ -281,4 +281,4 @@ template <typename... Args>
 inline void LogDebug(std::string_view fmt, Args &&...args) {
   Log(Verbosity::Debug, fmt, std::forward<Args>(args)...);
 }
-}  // namespace cunls
+} // namespace cunls

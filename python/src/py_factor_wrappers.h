@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,79 +34,81 @@
 // can wrap them with CuPy or Warp arrays without any C++ <-> Python type
 // conversion overhead.
 class PyFactorBatch : public cunls::FactorBatch {
- public:
-    size_t residual_size_;
-    std::vector<size_t> state_block_sizes_;
-    size_t num_factors_;
+public:
+  size_t residual_size_;
+  std::vector<size_t> state_block_sizes_;
+  size_t num_factors_;
 
-    PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t num);
+  PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t num);
 
-    bool Evaluate(float* residuals, float* jacobians,
-                  float const* const* state_pointers,
-                  cudaStream_t stream) const override;
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
+                cudaStream_t stream) const override;
 
-    size_t ResidualsSize() const override;
-    std::vector<size_t> StateBlockSizes() const override;
-    size_t NumFactors() const override;
+  size_t ResidualsSize() const override;
+  std::vector<size_t> StateBlockSizes() const override;
+  size_t NumFactors() const override;
 };
 
-// Polymorphic wrapper that applies sqrt-information matrices to any FactorBatch.
-// Unlike the C++ template InformationFactorBatch<T>, this operates on the
-// FactorBatch* interface so Python users never need to name specializations.
+// Polymorphic wrapper that applies sqrt-information matrices to any
+// FactorBatch. Unlike the C++ template InformationFactorBatch<T>, this operates
+// on the FactorBatch* interface so Python users never need to name
+// specializations.
 class PyInformationFactorBatch : public cunls::FactorBatch {
- public:
-  PyInformationFactorBatch(cunls::cuBLASHandle& cublas_handle,
-                           cunls::FactorBatch* inner,
-                           const float* sqrt_information_matrices_ptr);
+public:
+  PyInformationFactorBatch(cunls::cuBLASHandle &cublas_handle,
+                           cunls::FactorBatch *inner,
+                           const float *sqrt_information_matrices_ptr);
 
   size_t ResidualsSize() const override;
   size_t NumFactors() const override;
   std::vector<size_t> StateBlockSizes() const override;
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const override;
 
- private:
-  cunls::cuBLASHandle& cublas_handle_;
-  cunls::FactorBatch* inner_;
-  const float* sqrt_info_ptr_;
+private:
+  cunls::cuBLASHandle &cublas_handle_;
+  cunls::FactorBatch *inner_;
+  const float *sqrt_info_ptr_;
 };
 
 // Polymorphic wrapper that applies scalar weights to any FactorBatch.
 // Supports uniform (single float) and per-factor (device array) weights.
 class PyWeightedFactorBatch : public cunls::FactorBatch {
- public:
-  PyWeightedFactorBatch(cunls::FactorBatch* inner, float weight);
+public:
+  PyWeightedFactorBatch(cunls::FactorBatch *inner, float weight);
 
-  PyWeightedFactorBatch(cunls::FactorBatch* inner,
-                        const float* per_factor_weights);
+  PyWeightedFactorBatch(cunls::FactorBatch *inner,
+                        const float *per_factor_weights);
 
   size_t ResidualsSize() const override;
   size_t NumFactors() const override;
   std::vector<size_t> StateBlockSizes() const override;
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const override;
 
- private:
-  cunls::FactorBatch* inner_;
+private:
+  cunls::FactorBatch *inner_;
   float uniform_weight_;
-  const float* per_factor_weights_;
+  const float *per_factor_weights_;
 };
 
 // Polymorphic wrapper that scales the output of any LossFunctionBatch.
 // Unlike the C++ template ScaledLossFunctionBatch<T>, this operates on the
-// LossFunctionBatch* interface so Python users never need to name specializations.
+// LossFunctionBatch* interface so Python users never need to name
+// specializations.
 class PyScaledLossFunctionBatch : public cunls::LossFunctionBatch {
- public:
-  PyScaledLossFunctionBatch(cunls::LossFunctionBatch* inner, float a);
+public:
+  PyScaledLossFunctionBatch(cunls::LossFunctionBatch *inner, float a);
 
-  bool Evaluate(float* s, float3* out, int num_losses,
+  bool Evaluate(float *s, float3 *out, int num_losses,
                 cudaStream_t stream) const override;
 
- private:
-  cunls::LossFunctionBatch* inner_;
+private:
+  cunls::LossFunctionBatch *inner_;
   float a_;
 };

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ namespace cunls {
  * factorization, dense pivoted LDLT).
  */
 class CSRSparseLinearSolver {
- public:
+public:
   /**
    * @brief Performs setup work for the linear system.
    *
@@ -51,9 +51,9 @@ class CSRSparseLinearSolver {
    * @return true on success, false if a dimension mismatch is detected.
    */
   virtual bool Initialize(cudaStream_t stream,
-                          const CSRSparseMatrix& spd_matrix,
-                          const dvector<float>& rhs,
-                          dvector<float>& result) = 0;
+                          const CSRSparseMatrix &spd_matrix,
+                          const dvector<float> &rhs,
+                          dvector<float> &result) = 0;
 
   /**
    * @brief Solves a linear system Ax = b.
@@ -69,9 +69,8 @@ class CSRSparseLinearSolver {
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual bool Solve(cudaStream_t stream,
-                     const CSRSparseMatrix& spd_matrix,
-                     const dvector<float>& rhs, dvector<float>& result) = 0;
+  virtual bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                     const dvector<float> &rhs, dvector<float> &result) = 0;
 
   /**
    * @brief Disables post-factorization safety checks.
@@ -88,10 +87,11 @@ class CSRSparseLinearSolver {
   /** @brief Returns whether post-factorization safety checks are enabled. */
   bool SafetyChecksEnabled() const { return safety_checks_enabled_; }
 
-  /** @brief Virtual destructor for proper cleanup of derived solver instances. */
+  /** @brief Virtual destructor for proper cleanup of derived solver instances.
+   */
   virtual ~CSRSparseLinearSolver() = default;
 
- protected:
+protected:
   bool safety_checks_enabled_ = true;
 };
-}  // namespace cunls
+} // namespace cunls

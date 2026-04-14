@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,33 +36,36 @@ namespace cunls {
  * for efficient batch processing of multiple rotations.
  */
 class SO3StateBatch : public SizedStateBatch<9, 3> {
- public:
+public:
   using Base = SizedStateBatch<9, 3>;
 
   /**
    * @brief Constructs a batch of SO(3) state blocks.
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
-   * @param device_ptr Pointer to GPU device memory containing the SO(3) rotation matrices.
-   *                   Must point to at least num_blocks * 9 floats of allocated memory.
+   * @param device_ptr Pointer to GPU device memory containing the SO(3)
+   * rotation matrices. Must point to at least num_blocks * 9 floats of
+   * allocated memory.
    * @param num_blocks The number of SO(3) state blocks in this batch.
    */
-  SO3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+  SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
                 size_t num_blocks);
 
   /**
-   * @brief Constructs a batch of SO(3) state blocks with constant state constraints.
+   * @brief Constructs a batch of SO(3) state blocks with constant state
+   * constraints.
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
-   * @param device_ptr Pointer to GPU device memory containing the SO(3) rotation matrices.
-   *                   Must point to at least num_blocks * 9 floats of allocated memory.
+   * @param device_ptr Pointer to GPU device memory containing the SO(3)
+   * rotation matrices. Must point to at least num_blocks * 9 floats of
+   * allocated memory.
    * @param num_blocks The number of SO(3) state blocks in this batch.
-   * @param device_constant_state_ids Pointer to GPU device memory containing the indices
-   *                                       of state blocks that should remain constant.
+   * @param device_constant_state_ids Pointer to GPU device memory containing
+   * the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
-  SO3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                size_t num_blocks, const int* device_constant_state_ids,
+  SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
+                size_t num_blocks, const int *device_constant_state_ids,
                 size_t num_const_state_blocks);
 
   /**
@@ -76,11 +79,11 @@ class SO3StateBatch : public SizedStateBatch<9, 3> {
    * @param x_plus_delta Output rotation matrices (device pointer)
    * @param stream CUDA stream for asynchronous execution
    */
-  void Plus(const float* x, const float* delta, float* x_plus_delta,
+  void Plus(const float *x, const float *delta, float *x_plus_delta,
             cudaStream_t stream) override;
 
- private:
-  cuBLASHandle& cublas_handle_;  ///< cuBLAS handle for matrix operations
+private:
+  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
 
   mutable dvector<Matrix<3>> delta_rotations_;
   mutable dvector<float> twists_;
@@ -107,7 +110,7 @@ class SO3StateBatch : public SizedStateBatch<9, 3> {
    * Exp(skew(delta))
    * @param stream CUDA stream for asynchronous execution
    */
-  void ApplyUpdate(const float* x, const float* delta, float* result,
+  void ApplyUpdate(const float *x, const float *delta, float *result,
                    bool invert_delta, cudaStream_t stream);
 };
-}  // namespace cunls
+} // namespace cunls

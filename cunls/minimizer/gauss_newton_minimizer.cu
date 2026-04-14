@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,11 +38,10 @@ namespace cunls {
  *
  * @param options Configuration options for the optimizer.
  */
-GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions& options)
-    : options_(options),
-      solver_(
-          CreateCSRSparseLinearSolver(options_.sparse_linear_solver_type,
-                                      options_.sparse_linear_solver_config)),
+GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions &options)
+    : options_(options), solver_(CreateCSRSparseLinearSolver(
+                             options_.sparse_linear_solver_type,
+                             options_.sparse_linear_solver_config)),
       gemm_(CreateSparseMatrixMultiplier(
           options_.sparse_square_multiplier_type)) {
   if (options_.disable_safety_checks) {
@@ -58,12 +57,13 @@ GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions& options)
  * @param problem The optimization problem.
  * @param[out] residuals Residual vector to initialize.
  */
-void InitializeResiduals(const Problem& problem, dvector<float>& residuals) {
+void InitializeResiduals(const Problem &problem, dvector<float> &residuals) {
   size_t residuals_size = 0;
-  const auto& residual_batches = problem.GetResidualBatches();
-  for (const auto& rb : residual_batches) {
-    const auto& factor_batch = rb.GetFactorBatch();
-    residuals_size += factor_batch->NumFactors() * factor_batch->ResidualsSize();
+  const auto &residual_batches = problem.GetResidualBatches();
+  for (const auto &rb : residual_batches) {
+    const auto &factor_batch = rb.GetFactorBatch();
+    residuals_size +=
+        factor_batch->NumFactors() * factor_batch->ResidualsSize();
   }
   if (residuals.size() != residuals_size) {
     residuals.resize(residuals_size);
@@ -71,7 +71,7 @@ void InitializeResiduals(const Problem& problem, dvector<float>& residuals) {
 }
 
 void GaussNewtonMinimizer::InitializeJacobian(cudaStream_t stream,
-                                              const Problem& problem) {
+                                              const Problem &problem) {
   current_state_.BuildTripletSparseStructure(stream, problem,
                                              sparse_jacobian_.structure);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
@@ -95,21 +95,21 @@ void GaussNewtonMinimizer::InitializeJacobian(cudaStream_t stream,
  * @return Total cost (sum of squared residuals from all factors).
  */
 void GaussNewtonMinimizer::ComputeCostAsync(
-    cudaStream_t stream, const Problem& problem,
-    const MinimizerState& minimizer_state, float* d_cost_out) {
+    cudaStream_t stream, const Problem &problem,
+    const MinimizerState &minimizer_state, float *d_cost_out) {
   auto range = profiler_domain_.CreateDomainRange("ComputeCost");
-  const auto& state_pointers = minimizer_state.GetStatePointers();
+  const auto &state_pointers = minimizer_state.GetStatePointers();
 
-  const auto& residual_batches = problem.GetResidualBatches();
+  const auto &residual_batches = problem.GetResidualBatches();
   size_t max_residual_dim = 0;
   size_t total_num_cost_elements = 0;
   size_t max_workspace_floats = 0;
-  for (const auto& rb : residual_batches) {
-    const auto& factor_batch = rb.GetFactorBatch();
+  for (const auto &rb : residual_batches) {
+    const auto &factor_batch = rb.GetFactorBatch();
     size_t n = factor_batch->NumFactors();
     total_num_cost_elements += n;
-    max_residual_dim = std::max(
-        n * factor_batch->ResidualsSize(), max_residual_dim);
+    max_residual_dim =
+        std::max(n * factor_batch->ResidualsSize(), max_residual_dim);
     max_workspace_floats =
         std::max(max_workspace_floats, ResidualBatchWorkspaceNumFloats(n));
   }
@@ -119,15 +119,16 @@ void GaussNewtonMinimizer::ComputeCostAsync(
   if (buffer_.size() < buffer_floats * sizeof(float)) {
     buffer_.resize(buffer_floats * sizeof(float));
   }
-  float* cost_ptr = reinterpret_cast<float*>(buffer_.data());
-  float* residuals_ptr = reinterpret_cast<float*>(buffer_.data()) + total_num_cost_elements;
-  float* workspace_ptr = residuals_ptr + max_residual_dim;
+  float *cost_ptr = reinterpret_cast<float *>(buffer_.data());
+  float *residuals_ptr =
+      reinterpret_cast<float *>(buffer_.data()) + total_num_cost_elements;
+  float *workspace_ptr = residuals_ptr + max_residual_dim;
 
   for (size_t i = 0; i < residual_batches.size(); i++) {
-    const auto& rb = residual_batches[i];
+    const auto &rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
     rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, cost_ptr, nullptr);
-    const auto& factor_batch = rb.GetFactorBatch();
+    const auto &factor_batch = rb.GetFactorBatch();
     cost_ptr += factor_batch->NumFactors();
   }
 
@@ -136,20 +137,21 @@ void GaussNewtonMinimizer::ComputeCostAsync(
     if (d_reduce_partials_.size() < partials_needed) {
       d_reduce_partials_.resize(partials_needed);
     }
-    ReduceSumToDevice(stream, reinterpret_cast<float*>(buffer_.data()),
+    ReduceSumToDevice(stream, reinterpret_cast<float *>(buffer_.data()),
                       total_num_cost_elements, d_cost_out,
                       d_reduce_partials_.data());
   } else {
-    THROW_ON_CUDA_ERROR(
-        cudaMemsetAsync(d_cost_out, 0, sizeof(float), stream));
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_cost_out, 0, sizeof(float), stream));
   }
 }
 
 float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
-                                        const Problem& problem,
-                                        const MinimizerState& minimizer_state) {
-  if (d_scalars_.size() < 1) d_scalars_.resize(1);
-  if (h_scalars_.size() < 1) h_scalars_.resize(1);
+                                        const Problem &problem,
+                                        const MinimizerState &minimizer_state) {
+  if (d_scalars_.size() < 1)
+    d_scalars_.resize(1);
+  if (h_scalars_.size() < 1)
+    h_scalars_.resize(1);
 
   ComputeCostAsync(stream, problem, minimizer_state, d_scalars_.data());
 
@@ -173,34 +175,34 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
  * @param[out] residuals Output residual vector.
  * @param[out] coo_jacobian Output Jacobian in COO format.
  */
-void ComputeResidualAndJacobian(cudaStream_t stream, const Problem& problem,
-                                const MinimizerState& minimizer_state,
-                                dvector<float>& residuals,
-                                SparseJacobian& coo_jacobian,
-                                dvector<uint8_t>& buffer) {
-  const auto& state_pointers = minimizer_state.GetStatePointers();
-  const auto& residual_batches = problem.GetResidualBatches();
+void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
+                                const MinimizerState &minimizer_state,
+                                dvector<float> &residuals,
+                                SparseJacobian &coo_jacobian,
+                                dvector<uint8_t> &buffer) {
+  const auto &state_pointers = minimizer_state.GetStatePointers();
+  const auto &residual_batches = problem.GetResidualBatches();
   size_t max_n = 0;
-  for (const auto& rb : residual_batches) {
+  for (const auto &rb : residual_batches) {
     max_n = std::max(max_n, rb.GetFactorBatch()->NumFactors());
   }
   size_t ws_floats = ResidualBatchWorkspaceNumFloats(max_n);
   if (buffer.size() < ws_floats * sizeof(float)) {
     buffer.resize(ws_floats * sizeof(float));
   }
-  float* workspace_ptr = reinterpret_cast<float*>(buffer.data());
+  float *workspace_ptr = reinterpret_cast<float *>(buffer.data());
 
-  float* residuals_ptr = residuals.data();
-  float* jacobian_ptr = coo_jacobian.values.data();
+  float *residuals_ptr = residuals.data();
+  float *jacobian_ptr = coo_jacobian.values.data();
 
   for (size_t i = 0; i < residual_batches.size(); i++) {
-    const auto& rb = residual_batches[i];
+    const auto &rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
 
     rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, nullptr,
                 jacobian_ptr);
 
-    const auto& factor_batch = rb.GetFactorBatch();
+    const auto &factor_batch = rb.GetFactorBatch();
     size_t num_residuals =
         factor_batch->NumFactors() * factor_batch->ResidualsSize();
     residuals_ptr += num_residuals;
@@ -228,7 +230,7 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem& problem,
  * @param[out] rhs Output right-hand side vector (-J^T r).
  */
 void GaussNewtonMinimizer::ApplyColumnScalingToNormalEquations(
-    cudaStream_t stream, CSRSparseMatrix& lhs, dvector<float>& rhs) {
+    cudaStream_t stream, CSRSparseMatrix &lhs, dvector<float> &rhs) {
   if (options_.column_scaling == ColumnScaling::None) {
     return;
   }
@@ -237,9 +239,8 @@ void GaussNewtonMinimizer::ApplyColumnScalingToNormalEquations(
     ExtractDiagonal(stream, hessian_, column_scale_);
     InvertSqrtWithFloorInPlace(stream, column_scale_);
   } else {
-    ComputeJacobianColumnScaling(stream, csr_jacobian_,
-                                  jacobian_dims_.num_cols,
-                                  jacobian_dims_.num_nonzeros, column_scale_);
+    ComputeJacobianColumnScaling(stream, csr_jacobian_, jacobian_dims_.num_cols,
+                                 jacobian_dims_.num_nonzeros, column_scale_);
   }
 
   ScaleSymmetricCSR(stream, lhs, column_scale_);
@@ -248,7 +249,7 @@ void GaussNewtonMinimizer::ApplyColumnScalingToNormalEquations(
 }
 
 void GaussNewtonMinimizer::MapScaledLinearSolutionToTangentStep(
-    cudaStream_t stream, dvector<float>& step) {
+    cudaStream_t stream, dvector<float> &step) {
   if (options_.column_scaling == ColumnScaling::None || step.empty()) {
     return;
   }
@@ -257,10 +258,10 @@ void GaussNewtonMinimizer::MapScaledLinearSolutionToTangentStep(
 }
 
 void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
-                                       const Problem& problem,
-                                       const MinimizerState& minimizer_state,
-                                       CSRSparseMatrix& lhs,
-                                       dvector<float>& rhs) {
+                                       const Problem &problem,
+                                       const MinimizerState &minimizer_state,
+                                       CSRSparseMatrix &lhs,
+                                       dvector<float> &rhs) {
   auto range = profiler_domain_.CreateDomainRange("BuildSystem");
   ComputeResidualAndJacobian(stream, problem, minimizer_state, residuals_,
                              sparse_jacobian_, buffer_);
@@ -273,9 +274,9 @@ void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
   gemm_->ComputeSquaredMatrix(stream, problem, csr_jacobian_, hessian_);
   CopyCSRSparseMatrix(stream, hessian_, lhs);
   auto handle = cusparse_handle_.GetHandle(stream);
-  ComputeRHS(stream, handle, csr_jacobian_,
-             jacobian_dims_.num_rows, jacobian_dims_.num_cols,
-             jacobian_dims_.num_nonzeros, residuals_, rhs, buffer_);
+  ComputeRHS(stream, handle, csr_jacobian_, jacobian_dims_.num_rows,
+             jacobian_dims_.num_cols, jacobian_dims_.num_nonzeros, residuals_,
+             rhs, buffer_);
 
   ApplyColumnScalingToNormalEquations(stream, lhs, rhs);
 }
@@ -293,17 +294,17 @@ void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
  * @param[out] updated_state Output minimizer state after applying step.
  */
 void GaussNewtonMinimizer::UpdateStates(cudaStream_t stream,
-                                        const MinimizerState& curr_state,
-                                        const dvector<float>& step,
-                                        MinimizerState& updated_state) {
+                                        const MinimizerState &curr_state,
+                                        const dvector<float> &step,
+                                        MinimizerState &updated_state) {
   auto range = profiler_domain_.CreateDomainRange("UpdateStates");
-  std::vector<const float*> x_ptrs;
-  for (const auto& params : curr_state.GetStates()) {
+  std::vector<const float *> x_ptrs;
+  for (const auto &params : curr_state.GetStates()) {
     x_ptrs.push_back(params.data());
   }
 
-  std::vector<float*> x_plus_delta_ptrs;
-  for (auto& params : updated_state.GetStates()) {
+  std::vector<float *> x_plus_delta_ptrs;
+  for (auto &params : updated_state.GetStates()) {
     x_plus_delta_ptrs.push_back(params.data());
   }
 
@@ -320,8 +321,7 @@ void GaussNewtonMinimizer::UpdateStates(cudaStream_t stream,
  * @param stream CUDA stream for GPU operations.
  * @param problem The optimization problem to initialize for.
  */
-void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
-                                      Problem& problem) {
+void GaussNewtonMinimizer::Initialize(cudaStream_t stream, Problem &problem) {
   auto range = profiler_domain_.CreateDomainRange("Initialize");
   jacobian_dims_.Invalidate();
   hessian_dims_.Invalidate();
@@ -374,12 +374,14 @@ void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
 bool GaussNewtonMinimizer::CheckConvergence(cudaStream_t stream,
                                             float updated_cost,
                                             float current_cost,
-                                            const dvector<float>& step,
-                                            float& step_quality) {
+                                            const dvector<float> &step,
+                                            float &step_quality) {
   auto range = profiler_domain_.CreateDomainRange("CheckConvergence");
 
-  if (d_scalars_.size() < 1) d_scalars_.resize(1);
-  if (h_scalars_.size() < 1) h_scalars_.resize(1);
+  if (d_scalars_.size() < 1)
+    d_scalars_.resize(1);
+  if (h_scalars_.size() < 1)
+    h_scalars_.resize(1);
   size_t partials_needed = ReducePartialCount(step.size());
   if (d_reduce_partials_.size() < partials_needed) {
     d_reduce_partials_.resize(partials_needed);
@@ -407,14 +409,17 @@ bool GaussNewtonMinimizer::CheckConvergence(cudaStream_t stream,
 }
 
 bool GaussNewtonMinimizer::EvaluateAndCheckConvergence(
-    cudaStream_t stream, const Problem& problem,
-    const MinimizerState& updated_state, float current_cost,
-    const dvector<float>& step, float& updated_cost, float& step_quality) {
-  auto range = profiler_domain_.CreateDomainRange("EvaluateAndCheckConvergence");
+    cudaStream_t stream, const Problem &problem,
+    const MinimizerState &updated_state, float current_cost,
+    const dvector<float> &step, float &updated_cost, float &step_quality) {
+  auto range =
+      profiler_domain_.CreateDomainRange("EvaluateAndCheckConvergence");
 
-  constexpr size_t kSlots = 2;  // [0] = cost, [1] = squared_step
-  if (d_scalars_.size() < kSlots) d_scalars_.resize(kSlots);
-  if (h_scalars_.size() < kSlots) h_scalars_.resize(kSlots);
+  constexpr size_t kSlots = 2; // [0] = cost, [1] = squared_step
+  if (d_scalars_.size() < kSlots)
+    d_scalars_.resize(kSlots);
+  if (h_scalars_.size() < kSlots)
+    h_scalars_.resize(kSlots);
 
   // Enqueue cost reduction (async, result stays on device)
   ComputeCostAsync(stream, problem, updated_state, d_scalars_.data());
@@ -453,7 +458,7 @@ bool GaussNewtonMinimizer::EvaluateAndCheckConvergence(
  * @return True if step should be accepted (cost reduced), false otherwise.
  */
 bool GaussNewtonMinimizer::AcceptStep(float step_quality) {
-  return step_quality < 1.f;  // Cost was reduced
+  return step_quality < 1.f; // Cost was reduced
 }
 
 /**
@@ -490,7 +495,7 @@ bool GaussNewtonMinimizer::RejectStep(float step_quality) {
  * @return Summary containing iteration count and cost statistics.
  */
 MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
-                                                Problem& problem) {
+                                                Problem &problem) {
   auto range = profiler_domain_.CreateDomainRange("Minimize");
   MinimizerSummary summary;
 
@@ -609,4 +614,4 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
   return summary;
 }
-}  // namespace cunls
+} // namespace cunls

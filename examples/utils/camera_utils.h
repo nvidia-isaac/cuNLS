@@ -25,7 +25,7 @@ using cunls::SE3Transform;
 using cunls::Vector;
 
 // Depth of a world point in a camera frame (positive means in front).
-inline float ComputeDepth(const SE3Transform& pose, const Vector<3>& point) {
+inline float ComputeDepth(const SE3Transform &pose, const Vector<3> &point) {
   float depth = pose[2 * 4 + 3];
   for (int j = 0; j < 3; ++j) {
     depth += pose[2 * 4 + j] * point[j];
@@ -35,8 +35,8 @@ inline float ComputeDepth(const SE3Transform& pose, const Vector<3>& point) {
 
 // Project a world point to normalized image coordinates through pose T:
 //   p_cam = T * p_world,  obs = (p_cam.x / p_cam.z,  p_cam.y / p_cam.z)
-inline Vector<2> ProjectNormalized(const SE3Transform& pose,
-                                   const Vector<3>& point) {
+inline Vector<2> ProjectNormalized(const SE3Transform &pose,
+                                   const Vector<3> &point) {
   float point_cam[3];
   point_cam[0] = pose[3];
   point_cam[1] = pose[7];
@@ -54,4 +54,4 @@ inline Vector<2> ProjectNormalized(const SE3Transform& pose,
   return obs;
 }
 
-}  // namespace examples
+} // namespace examples

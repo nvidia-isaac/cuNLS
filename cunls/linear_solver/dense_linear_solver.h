@@ -41,7 +41,7 @@ namespace cunls {
  * accurate bool return from Solve().
  */
 class DenseLDLTSolver : public CSRSparseLinearSolver {
- public:
+public:
   /**
    * @brief Allocates internal dense buffers for the given matrix size.
    *
@@ -56,9 +56,8 @@ class DenseLDLTSolver : public CSRSparseLinearSolver {
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream,
-                  const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs,
-                  dvector<float>& result) final;
+  bool Initialize(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Converts CSR to dense and solves via pivoted LDLT factorization.
@@ -84,11 +83,10 @@ class DenseLDLTSolver : public CSRSparseLinearSolver {
    * @return true on success, false on dimension mismatch, singular pivot,
    *         or zero diagonal.
    */
-  bool Solve(cudaStream_t stream,
-             const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs,
-             dvector<float>& result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+             const dvector<float> &rhs, dvector<float> &result) final;
 
- private:
+private:
   /**
    * @brief Ensures all internal buffers are (re-)allocated for an n x n system.
    *
@@ -110,15 +108,15 @@ class DenseLDLTSolver : public CSRSparseLinearSolver {
    * @param matrix Input CSR matrix.
    * @param dense_matrix Output dense buffer (must be pre-allocated to n*n).
    */
-  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix& matrix,
-                         dvector<float>& dense_matrix);
+  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                         dvector<float> &dense_matrix);
 
-  dvector<float> dense_matrix_;           ///< Dense row-major copy of A.
-  dvector<float> ldlt_factor_;            ///< In-place LDLT factor storage.
-  dvector<int> permutation_;              ///< Pivot permutation vector.
-  dvector<float> permuted_rhs_;           ///< P * b scratch vector.
-  dvector<float> permuted_solution_;      ///< Permuted solution scratch.
-  dvector<float> intermediate_solution_;  ///< Intermediate solve scratch.
+  dvector<float> dense_matrix_;          ///< Dense row-major copy of A.
+  dvector<float> ldlt_factor_;           ///< In-place LDLT factor storage.
+  dvector<int> permutation_;             ///< Pivot permutation vector.
+  dvector<float> permuted_rhs_;          ///< P * b scratch vector.
+  dvector<float> permuted_solution_;     ///< Permuted solution scratch.
+  dvector<float> intermediate_solution_; ///< Intermediate solve scratch.
 
   /// Device-side kernel status flags (index 0 = factorize, index 1 = solve).
   /// Each kernel writes 1 on success or 0 on failure.
@@ -130,4 +128,4 @@ class DenseLDLTSolver : public CSRSparseLinearSolver {
   pvector<int> status_pinned_;
 };
 
-}  // namespace cunls
+} // namespace cunls

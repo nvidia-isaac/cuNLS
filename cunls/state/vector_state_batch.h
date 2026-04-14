@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,8 +33,9 @@ namespace cunls {
  * @param dim Dimension of each vector.
  * @param stream CUDA stream for async execution.
  */
-void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta,
-                         size_t num_params, int dim, cudaStream_t stream);
+void CalculateVectorPlus(const float *x, const float *delta,
+                         float *x_plus_delta, size_t num_params, int dim,
+                         cudaStream_t stream);
 
 /**
  * @brief Batch of Euclidean vector state blocks with compile-time dimension.
@@ -45,34 +46,36 @@ void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta
  *
  * @tparam Dim The dimension of each vector state block.
  */
-template <int Dim>
-class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
- public:
+template <int Dim> class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
+public:
   using Base = SizedStateBatch<Dim, Dim>;
 
   /**
    * @brief Constructs a batch of vector state blocks.
    *
    * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least num_blocks * Dim floats of allocated memory.
+   *                   Must point to at least num_blocks * Dim floats of
+   * allocated memory.
    * @param num_blocks The number of vector state blocks in this batch.
    */
   VectorStateBatch(const float *device_ptr, size_t num_blocks)
       : Base(device_ptr, num_blocks) {}
 
   /**
-   * @brief Constructs a batch of vector state blocks with constant state constraints.
+   * @brief Constructs a batch of vector state blocks with constant state
+   * constraints.
    *
    * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least num_blocks * Dim floats of allocated memory.
+   *                   Must point to at least num_blocks * Dim floats of
+   * allocated memory.
    * @param num_blocks The number of vector state blocks in this batch.
-   * @param device_constant_state_ids Pointer to GPU device memory containing the indices
-   *                                       of state blocks that should remain constant.
+   * @param device_constant_state_ids Pointer to GPU device memory containing
+   * the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
   VectorStateBatch(const float *device_ptr, size_t num_blocks,
-                       const int *device_constant_state_ids,
-                       size_t num_const_state_blocks)
+                   const int *device_constant_state_ids,
+                   size_t num_const_state_blocks)
       : Base(device_ptr, num_blocks, device_constant_state_ids,
              num_const_state_blocks) {}
 
@@ -89,9 +92,9 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
     CalculateVectorPlus(x, delta, x_plus_delta, this->num_blocks_, Dim, stream);
   }
 
- private:
+private:
   /** @brief Default constructor (private, not for external use). */
   VectorStateBatch() = default;
 };
 
-}  // namespace cunls
+} // namespace cunls

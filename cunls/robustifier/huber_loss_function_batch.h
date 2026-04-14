@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +17,18 @@
 
 #pragma once
 
-#include <cuda_runtime.h>
 #include "cunls/robustifier/loss_function_batch.h"
+#include <cuda_runtime.h>
 
 namespace cunls {
 
 /**
  * @brief GPU-batched Huber loss function.
  *
- * The Huber loss is a robust loss function that is quadratic for small residuals
- * (inlier region, s <= delta^2) and linear for large residuals (outlier region,
- * s > delta^2). This provides robustness against outliers while preserving
- * the efficiency of least-squares for inliers.
+ * The Huber loss is a robust loss function that is quadratic for small
+ * residuals (inlier region, s <= delta^2) and linear for large residuals
+ * (outlier region, s > delta^2). This provides robustness against outliers
+ * while preserving the efficiency of least-squares for inliers.
  *
  * For squared error s:
  *   - Inlier (s <= delta^2):  rho(s) = s,  rho'(s) = 1,  rho''(s) = 0
@@ -37,7 +37,7 @@ namespace cunls {
  *                              rho''(s) = -delta / (2*s^(3/2))
  */
 class HuberLossFunctionBatch : public LossFunctionBatch {
- public:
+public:
   /**
    * @brief Constructs a Huber loss function with the given threshold.
    * @param delta The Huber threshold. Residuals with sqrt(s) > delta are
@@ -52,7 +52,7 @@ class HuberLossFunctionBatch : public LossFunctionBatch {
   bool Evaluate(float *s, float3 *out, int num_losses,
                 cudaStream_t stream) const override;
 
- private:
-  float delta_;  ///< Huber threshold separating inlier and outlier regions.
+private:
+  float delta_; ///< Huber threshold separating inlier and outlier regions.
 };
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,10 +37,10 @@ __device__ __forceinline__ float warp_reduce_sum(float val) {
 //   Mode=2 : weighted dot a[i]*w[i]*b[i]
 // ---------------------------------------------------------------------------
 template <int Mode>
-__global__ void reduce_pass1_kernel(const float* __restrict__ a,
-                                    const float* __restrict__ b,
-                                    const float* __restrict__ w, int n,
-                                    float* __restrict__ partials) {
+__global__ void reduce_pass1_kernel(const float *__restrict__ a,
+                                    const float *__restrict__ b,
+                                    const float *__restrict__ w, int n,
+                                    float *__restrict__ partials) {
   __shared__ float smem[kReduceBlockSize / kWarpSize];
 
   int tid = threadIdx.x;
@@ -62,14 +62,16 @@ __global__ void reduce_pass1_kernel(const float* __restrict__ a,
 
   int lane = tid & (kWarpSize - 1);
   int warp_id = tid / kWarpSize;
-  if (lane == 0) smem[warp_id] = sum;
+  if (lane == 0)
+    smem[warp_id] = sum;
   __syncthreads();
 
   constexpr int num_warps = kReduceBlockSize / kWarpSize;
   if (tid < num_warps) {
     sum = smem[tid];
     sum = warp_reduce_sum(sum);
-    if (tid == 0) partials[blockIdx.x] = sum;
+    if (tid == 0)
+      partials[blockIdx.x] = sum;
   }
 }
 
@@ -77,9 +79,9 @@ __global__ void reduce_pass1_kernel(const float* __restrict__ a,
 // Pass 2: reduce the partial sums from pass 1 into a single scalar.
 // Launched with 1 block.
 // ---------------------------------------------------------------------------
-__global__ void reduce_pass2_kernel(const float* __restrict__ partials,
+__global__ void reduce_pass2_kernel(const float *__restrict__ partials,
                                     int num_partials,
-                                    float* __restrict__ output) {
+                                    float *__restrict__ output) {
   __shared__ float smem[kReduceBlockSize / kWarpSize];
 
   int tid = threadIdx.x;
@@ -91,14 +93,16 @@ __global__ void reduce_pass2_kernel(const float* __restrict__ partials,
 
   int lane = tid & (kWarpSize - 1);
   int warp_id = tid / kWarpSize;
-  if (lane == 0) smem[warp_id] = sum;
+  if (lane == 0)
+    smem[warp_id] = sum;
   __syncthreads();
 
   constexpr int num_warps = kReduceBlockSize / kWarpSize;
   if (tid < num_warps) {
     sum = smem[tid];
     sum = warp_reduce_sum(sum);
-    if (tid == 0) *output = sum;
+    if (tid == 0)
+      *output = sum;
   }
 }
 
@@ -112,53 +116,50 @@ size_t ReducePartialCount(size_t n) {
   return static_cast<size_t>(ComputeGridSize(n));
 }
 
-void ReduceSumToDevice(cudaStream_t stream, const float* input, size_t n,
-                       float* d_output, float* d_partials) {
+void ReduceSumToDevice(cudaStream_t stream, const float *input, size_t n,
+                       float *d_output, float *d_partials) {
   if (n == 0) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_output, 0, sizeof(float), stream));
     return;
   }
   int grid = ComputeGridSize(n);
-  reduce_pass1_kernel<0>
-      <<<grid, kReduceBlockSize, 0, stream>>>(input, nullptr, nullptr,
-                                              static_cast<int>(n), d_partials);
+  reduce_pass1_kernel<0><<<grid, kReduceBlockSize, 0, stream>>>(
+      input, nullptr, nullptr, static_cast<int>(n), d_partials);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   reduce_pass2_kernel<<<1, kReduceBlockSize, 0, stream>>>(d_partials, grid,
                                                           d_output);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void DotProductToDevice(cudaStream_t stream, const float* a, const float* b,
-                        size_t n, float* d_output, float* d_partials) {
+void DotProductToDevice(cudaStream_t stream, const float *a, const float *b,
+                        size_t n, float *d_output, float *d_partials) {
   if (n == 0) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_output, 0, sizeof(float), stream));
     return;
   }
   int grid = ComputeGridSize(n);
-  reduce_pass1_kernel<1>
-      <<<grid, kReduceBlockSize, 0, stream>>>(a, b, nullptr,
-                                              static_cast<int>(n), d_partials);
+  reduce_pass1_kernel<1><<<grid, kReduceBlockSize, 0, stream>>>(
+      a, b, nullptr, static_cast<int>(n), d_partials);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   reduce_pass2_kernel<<<1, kReduceBlockSize, 0, stream>>>(d_partials, grid,
                                                           d_output);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void WeightedDotProductToDevice(cudaStream_t stream, const float* a,
-                                const float* w, const float* b, size_t n,
-                                float* d_output, float* d_partials) {
+void WeightedDotProductToDevice(cudaStream_t stream, const float *a,
+                                const float *w, const float *b, size_t n,
+                                float *d_output, float *d_partials) {
   if (n == 0) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_output, 0, sizeof(float), stream));
     return;
   }
   int grid = ComputeGridSize(n);
-  reduce_pass1_kernel<2>
-      <<<grid, kReduceBlockSize, 0, stream>>>(a, w, b, static_cast<int>(n),
-                                              d_partials);
+  reduce_pass1_kernel<2><<<grid, kReduceBlockSize, 0, stream>>>(
+      a, w, b, static_cast<int>(n), d_partials);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   reduce_pass2_kernel<<<1, kReduceBlockSize, 0, stream>>>(d_partials, grid,
                                                           d_output);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

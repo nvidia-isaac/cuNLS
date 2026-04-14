@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,13 +33,13 @@
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
+#include "cunls/common/types.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
-#include "cunls/common/types.h"
-#include "cunls/linear_solver/sparse_linear_solver.h"
 
 namespace cunls {
 namespace {
@@ -49,8 +49,8 @@ using Observation2D = Vector<2>;
 
 constexpr uint32_t kSeed = 4242u;
 
-void TransformWorldToCamera(const SE3Transform& pose, const Point3D& x,
-                            Point3D& y) {
+void TransformWorldToCamera(const SE3Transform &pose, const Point3D &x,
+                            Point3D &y) {
   for (int i = 0; i < 3; i++) {
     y[i] = pose[i * 4 + 3];
     for (int j = 0; j < 3; j++) {
@@ -59,19 +59,19 @@ void TransformWorldToCamera(const SE3Transform& pose, const Point3D& x,
   }
 }
 
-void ProjectNormalized(const Point3D& p_cam, Observation2D& obs) {
+void ProjectNormalized(const Point3D &p_cam, Observation2D &obs) {
   float inv_z = 1.0f / p_cam[2];
   obs[0] = p_cam[0] * inv_z;
   obs[1] = p_cam[1] * inv_z;
 }
 
 /**
- * @brief Builds one ground-truth world-to-camera pose and N visible world points
- *        with matching normalized observations.
+ * @brief Builds one ground-truth world-to-camera pose and N visible world
+ * points with matching normalized observations.
  */
-void MakeSinglePosePnPDataset(size_t num_points, SE3Transform& world_to_cam,
-                              std::vector<Point3D>& points_world,
-                              std::vector<Observation2D>& observations) {
+void MakeSinglePosePnPDataset(size_t num_points, SE3Transform &world_to_cam,
+                              std::vector<Point3D> &points_world,
+                              std::vector<Observation2D> &observations) {
   std::mt19937 rng(kSeed);
   std::uniform_real_distribution<float> rot_small(-0.25f, 0.25f);
   std::uniform_real_distribution<float> trans_small(-0.4f, 0.4f);
@@ -88,8 +88,8 @@ void MakeSinglePosePnPDataset(size_t num_points, SE3Transform& world_to_cam,
   dvector<Vector<6>> twist_d(twist);
   dvector<SE3Transform> pose_d(1);
   ComputeExpSE3(stream.GetStream(),
-                reinterpret_cast<const float*>(twist_d.data()), 6, 4, 16, 1,
-                reinterpret_cast<float*>(pose_d.data()));
+                reinterpret_cast<const float *>(twist_d.data()), 6, 4, 16, 1,
+                reinterpret_cast<float *>(pose_d.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<SE3Transform> pose_h(1);
@@ -118,8 +118,9 @@ void MakeSinglePosePnPDataset(size_t num_points, SE3Transform& world_to_cam,
   }
 }
 
-/** T_dist = exp(delta) * T on the GPU (same pattern as BA reprojection tests). */
-void DisturbPoseOnDevice(cuBLASHandle& cublas, SE3Transform* pose_device,
+/** T_dist = exp(delta) * T on the GPU (same pattern as BA reprojection tests).
+ */
+void DisturbPoseOnDevice(cuBLASHandle &cublas, SE3Transform *pose_device,
                          float rot_noise, float trans_noise) {
   std::mt19937 rng(kSeed + 7);
   std::uniform_real_distribution<float> r(-rot_noise, rot_noise);
@@ -137,8 +138,8 @@ void DisturbPoseOnDevice(cuBLASHandle& cublas, SE3Transform* pose_device,
   dvector<Vector<6>> delta_d(delta);
   dvector<SE3Transform> exp_d(1);
   ComputeExpSE3(stream.GetStream(),
-                reinterpret_cast<const float*>(delta_d.data()), 6, 4, 16, 1,
-                reinterpret_cast<float*>(exp_d.data()));
+                reinterpret_cast<const float *>(delta_d.data()), 6, 4, 16, 1,
+                reinterpret_cast<float *>(exp_d.data()));
 
   auto handle =
       static_cast<cublasHandle_t>(cublas.GetHandle(stream.GetStream()));
@@ -150,16 +151,16 @@ void DisturbPoseOnDevice(cuBLASHandle& cublas, SE3Transform* pose_device,
   dvector<SE3Transform> out(1);
   THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
       handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<float*>(pose_device), mat_size, stride,
-      reinterpret_cast<float*>(exp_d.data()), mat_size, stride, &beta,
-      reinterpret_cast<float*>(out.data()), mat_size, stride, 1));
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pose_device, out.data(), sizeof(SE3Transform),
-                                      cudaMemcpyDeviceToDevice,
-                                      stream.GetStream()));
+      reinterpret_cast<float *>(pose_device), mat_size, stride,
+      reinterpret_cast<float *>(exp_d.data()), mat_size, stride, &beta,
+      reinterpret_cast<float *>(out.data()), mat_size, stride, 1));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpyAsync(pose_device, out.data(), sizeof(SE3Transform),
+                      cudaMemcpyDeviceToDevice, stream.GetStream()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
 
-float PoseFrobeniusSq(const SE3Transform& a, const SE3Transform& b) {
+float PoseFrobeniusSq(const SE3Transform &a, const SE3Transform &b) {
   float s = 0.0f;
   for (int i = 0; i < 16; i++) {
     float d = a[i] - b[i];
@@ -168,19 +169,19 @@ float PoseFrobeniusSq(const SE3Transform& a, const SE3Transform& b) {
   return s;
 }
 
-}  // namespace
+} // namespace
 
 /**
- * @brief Registers a single optimized pose with N PnP factors (same pose pointer
- *        for every correspondence). Caller constructs `pnp_batch` and
+ * @brief Registers a single optimized pose with N PnP factors (same pose
+ * pointer for every correspondence). Caller constructs `pnp_batch` and
  *        `pose_state_batch` first; this only wires `Problem`.
  */
-void RegisterPnPMinimizationProblem(Problem& problem, PnPFactorBatch& pnp_batch,
-                                    SE3StateBatch& pose_state_batch) {
+void RegisterPnPMinimizationProblem(Problem &problem, PnPFactorBatch &pnp_batch,
+                                    SE3StateBatch &pose_state_batch) {
   const size_t n = pnp_batch.NumFactors();
-  std::vector<float*> state_ptrs;
+  std::vector<float *> state_ptrs;
   state_ptrs.reserve(n);
-  float* pose_block = pose_state_batch.StateBlockDevicePtr(0);
+  float *pose_block = pose_state_batch.StateBlockDevicePtr(0);
   for (size_t i = 0; i < n; ++i) {
     state_ptrs.push_back(pose_block);
   }
@@ -189,7 +190,7 @@ void RegisterPnPMinimizationProblem(Problem& problem, PnPFactorBatch& pnp_batch,
 }
 
 class PnPFactorBatchTest : public ::testing::Test {
- protected:
+protected:
   using Point3D = Vector<3>;
   using Observation2D = Vector<2>;
 
@@ -225,36 +226,35 @@ TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
   const size_t n = 6;
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   ReprojectionFactorBatch reproj(obs_device_.data(), n, kZThr);
-  VectorStateBatch<3> point_batch(reinterpret_cast<float*>(points_device_.data()),
-                                  n);
-  SE3StateBatch pose_state(cublas_handle_,
-                           reinterpret_cast<const float*>(pose_device_.data()), 1);
+  VectorStateBatch<3> point_batch(
+      reinterpret_cast<float *>(points_device_.data()), n);
+  SE3StateBatch pose_state(
+      cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
 
-  std::vector<const float*> sp_reproj;
+  std::vector<const float *> sp_reproj;
   sp_reproj.reserve(2 * n);
-  std::vector<const float*> sp_pnp;
+  std::vector<const float *> sp_pnp;
   sp_pnp.reserve(n);
   for (size_t i = 0; i < n; i++) {
     sp_reproj.push_back(
-        reinterpret_cast<const float*>(pose_state.StateBlockDevicePtr(0)));
+        reinterpret_cast<const float *>(pose_state.StateBlockDevicePtr(0)));
     sp_reproj.push_back(
-        reinterpret_cast<const float*>(point_batch.StateBlockDevicePtr(i)));
+        reinterpret_cast<const float *>(point_batch.StateBlockDevicePtr(i)));
     sp_pnp.push_back(
-        reinterpret_cast<const float*>(pose_state.StateBlockDevicePtr(0)));
+        reinterpret_cast<const float *>(pose_state.StateBlockDevicePtr(0)));
   }
 
   dvector<float> r_pnp(n * 2);
   dvector<float> j_pnp(n * 12);
   dvector<float> j_r(n * 18);
-  dvector<const float*> dev_reproj(sp_reproj);
-  dvector<const float*> dev_pnp(sp_pnp);
+  dvector<const float *> dev_reproj(sp_reproj);
+  dvector<const float *> dev_pnp(sp_pnp);
 
   CudaStream stream;
   ASSERT_TRUE(pnp.Evaluate(r_pnp.data(), j_pnp.data(), dev_pnp.data(),
                            stream.GetStream()));
-  ASSERT_TRUE(
-      reproj.Evaluate(r_pnp.data(), j_r.data(), dev_reproj.data(),
-                      stream.GetStream()));
+  ASSERT_TRUE(reproj.Evaluate(r_pnp.data(), j_r.data(), dev_reproj.data(),
+                              stream.GetStream()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> hj_pnp(n * 12);
@@ -275,19 +275,19 @@ TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
 TEST_F(PnPFactorBatchTest, EvaluateNearZeroAtGroundTruth) {
   const size_t n = 20;
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  SE3StateBatch pose_state(cublas_handle_,
-                           reinterpret_cast<const float*>(pose_device_.data()), 1);
+  SE3StateBatch pose_state(
+      cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
 
-  std::vector<const float*> sp;
+  std::vector<const float *> sp;
   sp.reserve(n);
   for (size_t i = 0; i < n; i++) {
     sp.push_back(
-        reinterpret_cast<const float*>(pose_state.StateBlockDevicePtr(0)));
+        reinterpret_cast<const float *>(pose_state.StateBlockDevicePtr(0)));
   }
-  dvector<const float*> dev_sp(sp);
+  dvector<const float *> dev_sp(sp);
 
   dvector<float> residuals(n * 2);
-CudaStream stream;
+  CudaStream stream;
   ASSERT_TRUE(pnp.Evaluate(residuals.data(), nullptr, dev_sp.data(),
                            stream.GetStream()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
@@ -307,8 +307,8 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  SE3StateBatch pose_state(cublas_handle_,
-                           reinterpret_cast<const float*>(pose_device_.data()), 1);
+  SE3StateBatch pose_state(
+      cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
 
   Problem problem;
   RegisterPnPMinimizationProblem(problem, pnp, pose_state);
@@ -336,9 +336,8 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
 // Parametrized LM convergence test over all solver backends
 // ---------------------------------------------------------------------------
 
-class PnPSolverTest
-    : public ::testing::TestWithParam<SparseLinearSolverType> {
- protected:
+class PnPSolverTest : public ::testing::TestWithParam<SparseLinearSolverType> {
+protected:
   static constexpr size_t kNumCorrespondences = 10000;
   static constexpr float kZThr = 1e-3f;
 
@@ -372,8 +371,8 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  SE3StateBatch pose_state(cublas_handle_,
-                           reinterpret_cast<const float*>(pose_device_.data()), 1);
+  SE3StateBatch pose_state(
+      cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
 
   Problem problem_1;
   RegisterPnPMinimizationProblem(problem_1, pnp, pose_state);
@@ -412,14 +411,19 @@ INSTANTIATE_TEST_SUITE_P(
                       SparseLinearSolverType::DenseLDLT,
                       SparseLinearSolverType::DenseCholesky,
                       SparseLinearSolverType::DenseQR),
-    [](const ::testing::TestParamInfo<SparseLinearSolverType>& info) {
+    [](const ::testing::TestParamInfo<SparseLinearSolverType> &info) {
       switch (info.param) {
-        case SparseLinearSolverType::cuDSS: return std::string("cuDSS");
-        case SparseLinearSolverType::DenseLDLT: return std::string("DenseLDLT");
-        case SparseLinearSolverType::DenseCholesky: return std::string("DenseCholesky");
-        case SparseLinearSolverType::DenseQR: return std::string("DenseQR");
-        default: return std::string("Unknown");
+      case SparseLinearSolverType::cuDSS:
+        return std::string("cuDSS");
+      case SparseLinearSolverType::DenseLDLT:
+        return std::string("DenseLDLT");
+      case SparseLinearSolverType::DenseCholesky:
+        return std::string("DenseCholesky");
+      case SparseLinearSolverType::DenseQR:
+        return std::string("DenseQR");
+      default:
+        return std::string("Unknown");
       }
     });
 
-}  // namespace cunls
+} // namespace cunls

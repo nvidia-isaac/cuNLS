@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -192,14 +192,14 @@ struct MinimizerOptions {
  * @brief Gauss-Newton nonlinear least-squares optimizer.
  */
 class GaussNewtonMinimizer {
- public:
+public:
   /**
    * @brief Constructs a Gauss-Newton optimizer.
    *
    * @param options Configuration options for the optimizer. Defaults to
    *                MinimizerOptions with standard values.
    */
-  GaussNewtonMinimizer(const MinimizerOptions& options = MinimizerOptions());
+  GaussNewtonMinimizer(const MinimizerOptions &options = MinimizerOptions());
 
   /**
    * @brief Virtual destructor for proper cleanup in derived classes.
@@ -209,22 +209,22 @@ class GaussNewtonMinimizer {
   /**
    * @brief Deleted copy constructor
    */
-  GaussNewtonMinimizer(const GaussNewtonMinimizer&) = delete;
+  GaussNewtonMinimizer(const GaussNewtonMinimizer &) = delete;
 
   /**
    * @brief Deleted assigment operator
    */
-  GaussNewtonMinimizer& operator=(const GaussNewtonMinimizer&) = delete;
+  GaussNewtonMinimizer &operator=(const GaussNewtonMinimizer &) = delete;
 
   /**
    * @brief Deleted move constructor
    */
-  GaussNewtonMinimizer(GaussNewtonMinimizer&&) = delete;
+  GaussNewtonMinimizer(GaussNewtonMinimizer &&) = delete;
 
   /**
    * @brief Deleted move assigment operator
    */
-  GaussNewtonMinimizer& operator=(GaussNewtonMinimizer&&) = delete;
+  GaussNewtonMinimizer &operator=(GaussNewtonMinimizer &&) = delete;
 
   /**
    * @brief Solves the optimization problem.
@@ -237,9 +237,9 @@ class GaussNewtonMinimizer {
    *                modified in-place during optimization.
    * @return Summary containing iteration count and cost statistics.
    */
-  MinimizerSummary Minimize(cudaStream_t stream, Problem& problem);
+  MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
- protected:
+protected:
   /**
    * @brief Checks if convergence criteria are satisfied.
    *
@@ -256,8 +256,8 @@ class GaussNewtonMinimizer {
    * @return True if converged, false otherwise.
    */
   virtual bool CheckConvergence(cudaStream_t stream, float updated_cost,
-                                float current_cost, const dvector<float>& step,
-                                float& step_quality);
+                                float current_cost, const dvector<float> &step,
+                                float &step_quality);
 
   /**
    * @brief Fused cost evaluation + convergence check with a single D2H + sync.
@@ -275,10 +275,11 @@ class GaussNewtonMinimizer {
    * @param[out] step_quality Step quality metric.
    * @return True if converged.
    */
-  virtual bool EvaluateAndCheckConvergence(
-      cudaStream_t stream, const Problem& problem,
-      const MinimizerState& updated_state, float current_cost,
-      const dvector<float>& step, float& updated_cost, float& step_quality);
+  virtual bool
+  EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
+                              const MinimizerState &updated_state,
+                              float current_cost, const dvector<float> &step,
+                              float &updated_cost, float &step_quality);
 
   /**
    * @brief Determines if a step should be accepted.
@@ -309,7 +310,7 @@ class GaussNewtonMinimizer {
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem to initialize for.
    */
-  virtual void Initialize(cudaStream_t stream, Problem& problem);
+  virtual void Initialize(cudaStream_t stream, Problem &problem);
 
   /**
    * @brief Builds the Gauss-Newton linear system.
@@ -325,9 +326,9 @@ class GaussNewtonMinimizer {
    * @param[out] lhs Output left-hand side matrix (H = J^T J).
    * @param[out] rhs Output right-hand side vector (-J^T r).
    */
-  virtual void BuildSystem(cudaStream_t stream, const Problem& problem,
-                           const MinimizerState& minimizer_state,
-                           CSRSparseMatrix& lhs, dvector<float>& rhs);
+  virtual void BuildSystem(cudaStream_t stream, const Problem &problem,
+                           const MinimizerState &minimizer_state,
+                           CSRSparseMatrix &lhs, dvector<float> &rhs);
 
   /**
    * @brief Updates states with the computed step.
@@ -340,9 +341,8 @@ class GaussNewtonMinimizer {
    * @param step State update step.
    * @param[out] updated_state Output minimizer state after applying step.
    */
-  void UpdateStates(cudaStream_t stream, const MinimizerState& curr_state,
-                        const dvector<float>& step,
-                        MinimizerState& updated_state);
+  void UpdateStates(cudaStream_t stream, const MinimizerState &curr_state,
+                    const dvector<float> &step, MinimizerState &updated_state);
 
   /**
    * @brief Computes the total cost for the current state values.
@@ -352,18 +352,18 @@ class GaussNewtonMinimizer {
    * @param minimizer_state Current minimizer state.
    * @return Total cost (sum of per-factor costs from all residual batches).
    */
-  float ComputeCost(cudaStream_t stream, const Problem& problem,
-                    const MinimizerState& minimizer_state);
+  float ComputeCost(cudaStream_t stream, const Problem &problem,
+                    const MinimizerState &minimizer_state);
 
   /**
    * @brief Async version: enqueues cost reduction writing result to d_cost_out.
    * Caller must copy and sync to read the scalar.
    */
-  void ComputeCostAsync(cudaStream_t stream, const Problem& problem,
-                        const MinimizerState& minimizer_state,
-                        float* d_cost_out);
+  void ComputeCostAsync(cudaStream_t stream, const Problem &problem,
+                        const MinimizerState &minimizer_state,
+                        float *d_cost_out);
 
- private:
+private:
   /**
    * @brief Applies diagonal column scaling to the normal-equation system.
    *
@@ -373,56 +373,59 @@ class GaussNewtonMinimizer {
    * None, returns immediately (hessian_ is unchanged and already separate).
    *
    * @param stream CUDA stream for GPU work.
-   * @param[in,out] lhs Approximate Hessian H = J^T J (scaled in-place when enabled).
+   * @param[in,out] lhs Approximate Hessian H = J^T J (scaled in-place when
+   * enabled).
    * @param[in,out] rhs Right-hand side b (elementwise-scaled when enabled).
    */
   void ApplyColumnScalingToNormalEquations(cudaStream_t stream,
-                                           CSRSparseMatrix& lhs,
-                                           dvector<float>& rhs);
+                                           CSRSparseMatrix &lhs,
+                                           dvector<float> &rhs);
 
   /**
-   * @brief Maps the scaled linear unknown z to the manifold tangent step dx = S z.
+   * @brief Maps the scaled linear unknown z to the manifold tangent step dx = S
+   * z.
    *
    * The direct solver produces z from (S H S + damping) z = S b. This
    * multiplies step in-place by column_scale_. No-op when column scaling
    * is disabled or step is empty.
    *
    * @param stream CUDA stream for GPU work.
-   * @param[in,out] step Solution vector from the linear solver; overwritten by dx.
+   * @param[in,out] step Solution vector from the linear solver; overwritten by
+   * dx.
    */
   void MapScaledLinearSolutionToTangentStep(cudaStream_t stream,
-                                            dvector<float>& step);
+                                            dvector<float> &step);
 
   /**
    * @brief Builds Jacobian COO structure and resizes value buffer.
    */
-  void InitializeJacobian(cudaStream_t stream, const Problem& problem);
+  void InitializeJacobian(cudaStream_t stream, const Problem &problem);
 
- protected:
-  const MinimizerOptions options_;  ///< Optimizer configuration options.
+protected:
+  const MinimizerOptions options_; ///< Optimizer configuration options.
 
-  SparseLinearSolverPtr solver_;     ///< Linear solver for Gauss-Newton system.
-  SparseMatrixMultiplierPtr gemm_;   ///< Matrix multiplication for H = J^T J.
-  cuSPARSEHandle cusparse_handle_;   ///< cuSPARSE handle for sparse operations.
+  SparseLinearSolverPtr solver_;   ///< Linear solver for Gauss-Newton system.
+  SparseMatrixMultiplierPtr gemm_; ///< Matrix multiplication for H = J^T J.
+  cuSPARSEHandle cusparse_handle_; ///< cuSPARSE handle for sparse operations.
 
-  StateBatchOps state_ops_;  ///< Operations on state batches.
+  StateBatchOps state_ops_; ///< Operations on state batches.
 
-  dvector<float> residuals_;  ///< Residual vector storage.
+  dvector<float> residuals_; ///< Residual vector storage.
 
   SparseJacobian sparse_jacobian_;    ///< Jacobian in COO (triplet) format.
   CSRSparseMatrix csr_jacobian_;      ///< Jacobian in CSR format.
   CSRMatrixDimensions jacobian_dims_; ///< Cached Jacobian dimensions.
   dvector<int> csr_mapping_;          ///< Mapping from triplet to CSR indices.
 
-  CSRSparseMatrix hessian_;           ///< Approximate Hessian H = J^T J.
-  CSRMatrixDimensions hessian_dims_;  ///< Cached Hessian dimensions.
+  CSRSparseMatrix hessian_;          ///< Approximate Hessian H = J^T J.
+  CSRMatrixDimensions hessian_dims_; ///< Cached Hessian dimensions.
 
   /// Diagonal S when column_scaling is enabled; size = number of tangent DOFs.
   dvector<float> column_scale_;
 
-  dvector<float> step_;  ///< State update step vector.
+  dvector<float> step_; ///< State update step vector.
 
-  dvector<uint8_t> buffer_;  ///< Temporary buffer for sparse operations.
+  dvector<uint8_t> buffer_; ///< Temporary buffer for sparse operations.
 
   /// Device staging buffer for async scalar reductions (cost, step norm, etc.).
   dvector<float> d_scalars_;
@@ -439,7 +442,7 @@ class GaussNewtonMinimizer {
   MinimizerState updated_state_;
 
   profiler::Domain profiler_domain_{
-      "GaussNewtonMinimizer"};  ///< Profiling domain.
+      "GaussNewtonMinimizer"}; ///< Profiling domain.
 };
 
-}  // namespace cunls
+} // namespace cunls

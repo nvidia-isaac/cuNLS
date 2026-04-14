@@ -33,7 +33,7 @@ namespace cunls {
 // Device helpers
 // ============================================================================
 
-__device__ __forceinline__ int BinarySearchDevice(const int* __restrict__ arr,
+__device__ __forceinline__ int BinarySearchDevice(const int *__restrict__ arr,
                                                   int lo, int hi, int target) {
   while (lo < hi) {
     int mid = lo + ((hi - lo) >> 1);
@@ -56,21 +56,23 @@ __device__ __forceinline__ int BinarySearchDevice(const int* __restrict__ arr,
  *
  * Layout: position_map[(start + a) * max_nnz_per_row + b] = output flat index.
  */
-__global__ void PrecomputePositionsKernel(
-    const int* __restrict__ input_row_offsets,
-    const int* __restrict__ input_col_ids, int num_input_rows,
-    const int* __restrict__ output_row_offsets,
-    const int* __restrict__ output_col_ids, int* __restrict__ position_map,
-    int max_nnz_per_row) {
+__global__ void
+PrecomputePositionsKernel(const int *__restrict__ input_row_offsets,
+                          const int *__restrict__ input_col_ids,
+                          int num_input_rows,
+                          const int *__restrict__ output_row_offsets,
+                          const int *__restrict__ output_col_ids,
+                          int *__restrict__ position_map, int max_nnz_per_row) {
   extern __shared__ int s_cols[];
 
   int warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
   int lane = threadIdx.x & (WARP_SIZE - 1);
   int warp_in_block = threadIdx.x / WARP_SIZE;
 
-  if (warp_id >= num_input_rows) return;
+  if (warp_id >= num_input_rows)
+    return;
 
-  int* my_cols = s_cols + warp_in_block * max_nnz_per_row;
+  int *my_cols = s_cols + warp_in_block * max_nnz_per_row;
 
   int start = input_row_offsets[warp_id];
   int end = input_row_offsets[warp_id + 1];
@@ -107,11 +109,11 @@ __global__ void PrecomputePositionsKernel(
  * Shared memory layout (per block):
  *   [warp0_vals ... warpN_vals]
  */
-__global__ void ComputeJtJKernel(const int* __restrict__ input_row_offsets,
-                                 const float* __restrict__ input_values,
+__global__ void ComputeJtJKernel(const int *__restrict__ input_row_offsets,
+                                 const float *__restrict__ input_values,
                                  int num_input_rows,
-                                 const int* __restrict__ position_map,
-                                 float* __restrict__ output_values,
+                                 const int *__restrict__ position_map,
+                                 float *__restrict__ output_values,
                                  int max_nnz_per_row) {
   extern __shared__ float s_vals[];
 
@@ -119,9 +121,10 @@ __global__ void ComputeJtJKernel(const int* __restrict__ input_row_offsets,
   int lane = threadIdx.x & (WARP_SIZE - 1);
   int warp_in_block = threadIdx.x / WARP_SIZE;
 
-  if (warp_id >= num_input_rows) return;
+  if (warp_id >= num_input_rows)
+    return;
 
-  float* my_vals = s_vals + warp_in_block * max_nnz_per_row;
+  float *my_vals = s_vals + warp_in_block * max_nnz_per_row;
 
   int start = input_row_offsets[warp_id];
   int end = input_row_offsets[warp_id + 1];
@@ -147,20 +150,21 @@ __global__ void ComputeJtJKernel(const int* __restrict__ input_row_offsets,
 // Host helpers
 // ============================================================================
 
-static int GetMaxNnzPerRow(const Problem& problem) {
+static int GetMaxNnzPerRow(const Problem &problem) {
   int max_nnz = 0;
-  for (const auto& batch : problem.GetResidualBatches()) {
+  for (const auto &batch : problem.GetResidualBatches()) {
     auto sizes = batch.GetFactorBatch()->StateBlockSizes();
     int nnz = 0;
-    for (auto s : sizes) nnz += static_cast<int>(s);
+    for (auto s : sizes)
+      nnz += static_cast<int>(s);
     max_nnz = std::max(max_nnz, nnz);
   }
   return max_nnz;
 }
 
 static void ComputeBlockConfig(int max_nnz_per_row, int smem_per_element,
-                               int& warps_per_block, int& block_size,
-                               size_t& smem_bytes) {
+                               int &warps_per_block, int &block_size,
+                               size_t &smem_bytes) {
   constexpr int kMaxSharedMem = 48 * 1024;
   int smem_per_warp = max_nnz_per_row * smem_per_element;
   warps_per_block =
@@ -186,11 +190,12 @@ struct ExpandPair {
  * One thread per block pair.  Atomically increments per-row non-zero counts
  * for all rows spanned by the block pair.
  */
-__global__ void ComputeBlockRowCountsKernel(
-    const ExpandPair* __restrict__ pairs, int num_pairs,
-    int* __restrict__ row_counts) {
+__global__ void
+ComputeBlockRowCountsKernel(const ExpandPair *__restrict__ pairs, int num_pairs,
+                            int *__restrict__ row_counts) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_pairs) return;
+  if (idx >= num_pairs)
+    return;
   auto p = pairs[idx];
   for (int i = 0; i < p.row_tangent; i++) {
     atomicAdd(&row_counts[p.row_offset + i], p.col_tangent);
@@ -202,12 +207,13 @@ __global__ void ComputeBlockRowCountsKernel(
  * sub-block into the CSR col_ids array using precomputed row offsets and
  * per-pair write offsets.
  */
-__global__ void ExpandBlockPairsKernel(const ExpandPair* __restrict__ pairs,
+__global__ void ExpandBlockPairsKernel(const ExpandPair *__restrict__ pairs,
                                        int num_pairs,
-                                       const int* __restrict__ row_offsets,
-                                       int* __restrict__ col_ids) {
+                                       const int *__restrict__ row_offsets,
+                                       int *__restrict__ col_ids) {
   int pair_idx = blockIdx.x;
-  if (pair_idx >= num_pairs) return;
+  if (pair_idx >= num_pairs)
+    return;
   auto p = pairs[pair_idx];
   int total = p.row_tangent * p.col_tangent;
   for (int k = threadIdx.x; k < total; k += blockDim.x) {
@@ -226,9 +232,10 @@ __global__ void ExpandBlockPairsKernel(const ExpandPair* __restrict__ pairs,
  *
  * Uses buffer_ as scratch space to avoid runtime GPU memory allocation.
  */
-void FastSparseMatrixMultiplier::ComputeOutputStructure(
-    cudaStream_t stream, const Problem& problem,
-    CSRSparseMatrix& output, int num_cols) {
+void FastSparseMatrixMultiplier::ComputeOutputStructure(cudaStream_t stream,
+                                                        const Problem &problem,
+                                                        CSRSparseMatrix &output,
+                                                        int num_cols) {
   struct BlockInfo {
     int col_offset;
     int tangent_size;
@@ -236,19 +243,19 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
 
   // Per-batch descriptor for O(1) pointer → column lookup via arithmetic.
   struct BatchDesc {
-    const float* base;
+    const float *base;
     int ambient_size;
     int tangent_size;
     int num_blocks;
-    std::vector<int> col_offsets;  // [block_idx] → column, -1 if constant
+    std::vector<int> col_offsets; // [block_idx] → column, -1 if constant
   };
 
-  const auto& state_batches = problem.GetStateBatches();
+  const auto &state_batches = problem.GetStateBatches();
   std::vector<BatchDesc> batch_descs;
   batch_descs.reserve(state_batches.size());
   int last_col = 0;
 
-  for (auto* batch : state_batches) {
+  for (auto *batch : state_batches) {
     BatchDesc bd;
     bd.base = batch->StateBlockDevicePtr(0);
     bd.ambient_size = static_cast<int>(batch->AmbientSize());
@@ -262,10 +269,9 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
       if (pinned_buf_.size() < num_const) {
         pinned_buf_.resize(num_const);
       }
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(),
-                                          batch->ConstStateIds(),
-                                          num_const * sizeof(int),
-                                          cudaMemcpyDeviceToHost, stream));
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
+          pinned_buf_.data(), batch->ConstStateIds(), num_const * sizeof(int),
+          cudaMemcpyDeviceToHost, stream));
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
       const_ids.insert(pinned_buf_.data(), pinned_buf_.data() + num_const);
     }
@@ -282,14 +288,15 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
   }
 
   // Lambda: resolve device pointer → BlockInfo via pointer arithmetic.
-  auto resolve_ptr = [&](const float* ptr) -> BlockInfo {
-    for (const auto& bd : batch_descs) {
+  auto resolve_ptr = [&](const float *ptr) -> BlockInfo {
+    for (const auto &bd : batch_descs) {
       auto diff = ptr - bd.base;
       if (diff >= 0 &&
           diff < static_cast<ptrdiff_t>(bd.num_blocks) * bd.ambient_size) {
         int idx = static_cast<int>(diff / bd.ambient_size);
         int col = bd.col_offsets[idx];
-        if (col >= 0) return {col, bd.tangent_size};
+        if (col >= 0)
+          return {col, bd.tangent_size};
         return {-1, 0};
       }
     }
@@ -302,21 +309,22 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
     int col_offset;
     int row_tangent;
     int col_tangent;
-    bool operator<(const BlockPair& o) const {
-      if (row_offset != o.row_offset) return row_offset < o.row_offset;
+    bool operator<(const BlockPair &o) const {
+      if (row_offset != o.row_offset)
+        return row_offset < o.row_offset;
       return col_offset < o.col_offset;
     }
-    bool operator==(const BlockPair& o) const {
+    bool operator==(const BlockPair &o) const {
       return row_offset == o.row_offset && col_offset == o.col_offset;
     }
   };
 
-  const auto& res_batches = problem.GetResidualBatches();
-  const auto& state_ptrs = problem.GetStatePointers();
+  const auto &res_batches = problem.GetResidualBatches();
+  const auto &state_ptrs = problem.GetStatePointers();
 
   size_t total_pair_estimate = 0;
   for (size_t rb = 0; rb < res_batches.size(); rb++) {
-    auto* factor = res_batches[rb].GetFactorBatch();
+    auto *factor = res_batches[rb].GetFactorBatch();
     size_t nb = factor->StateBlockSizes().size();
     total_pair_estimate += factor->NumFactors() * nb * nb;
   }
@@ -325,10 +333,10 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
   pairs.reserve(total_pair_estimate);
 
   std::vector<BlockInfo> factor_blocks;
-  std::vector<float*> h_ptrs;
+  std::vector<float *> h_ptrs;
 
   for (size_t rb = 0; rb < res_batches.size(); rb++) {
-    auto* factor = res_batches[rb].GetFactorBatch();
+    auto *factor = res_batches[rb].GetFactorBatch();
     size_t nf = factor->NumFactors();
     size_t nb = factor->StateBlockSizes().size();
 
@@ -339,7 +347,8 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
       int nblocks = 0;
       for (size_t b = 0; b < nb; b++) {
         auto info = resolve_ptr(h_ptrs[f * nb + b]);
-        if (info.col_offset >= 0) factor_blocks[nblocks++] = info;
+        if (info.col_offset >= 0)
+          factor_blocks[nblocks++] = info;
       }
       for (int a = 0; a < nblocks; a++) {
         for (int b = 0; b < nblocks; b++) {
@@ -375,8 +384,8 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
   size_t pairs_ints = static_cast<size_t>(num_pairs) * 5;
 
   buffer_.resize(pairs_ints + num_cols);
-  auto* d_pairs = reinterpret_cast<ExpandPair*>(buffer_.data());
-  int* row_counts = buffer_.data() + pairs_ints;
+  auto *d_pairs = reinterpret_cast<ExpandPair *>(buffer_.data());
+  int *row_counts = buffer_.data() + pairs_ints;
 
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_pairs, gpu_pairs.data(),
                                       num_pairs * sizeof(ExpandPair),
@@ -407,10 +416,9 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
   if (pinned_buf_.size() < 1) {
     pinned_buf_.resize(1);
   }
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(),
-                                      output.row_offsets.data() + num_cols,
-                                      sizeof(int), cudaMemcpyDeviceToHost,
-                                      stream));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpyAsync(pinned_buf_.data(), output.row_offsets.data() + num_cols,
+                      sizeof(int), cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   int total_nnz = pinned_buf_[0];
 
@@ -420,8 +428,7 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
   {
     constexpr int kBlockSize = 256;
     ExpandBlockPairsKernel<<<num_pairs, kBlockSize, 0, stream>>>(
-        d_pairs, num_pairs, output.row_offsets.data(),
-        output.col_ids.data());
+        d_pairs, num_pairs, output.row_offsets.data(), output.col_ids.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 }
@@ -431,9 +438,9 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(
 // ============================================================================
 
 void FastSparseMatrixMultiplier::Initialize(cudaStream_t stream,
-                                            const Problem& problem,
-                                            const CSRSparseMatrix& input,
-                                            CSRSparseMatrix& output) {
+                                            const Problem &problem,
+                                            const CSRSparseMatrix &input,
+                                            CSRSparseMatrix &output) {
   if (input.row_offsets.size() <= 1 || input.values.empty()) {
     max_nnz_per_row_ = 0;
     return;
@@ -452,8 +459,7 @@ void FastSparseMatrixMultiplier::Initialize(cudaStream_t stream,
   // Precompute output positions for every input (a, b) pair so
   // that ComputeSquaredMatrix avoids binary searches entirely.
   {
-    size_t map_size =
-        static_cast<size_t>(num_nonzeros) * max_nnz_per_row_;
+    size_t map_size = static_cast<size_t>(num_nonzeros) * max_nnz_per_row_;
     position_map_.resize(map_size);
 
     int warps_per_block, block_size;
@@ -464,15 +470,15 @@ void FastSparseMatrixMultiplier::Initialize(cudaStream_t stream,
 
     PrecomputePositionsKernel<<<grid, block_size, smem, stream>>>(
         input.row_offsets.data(), input.col_ids.data(), num_rows,
-        output.row_offsets.data(), output.col_ids.data(),
-        position_map_.data(), max_nnz_per_row_);
+        output.row_offsets.data(), output.col_ids.data(), position_map_.data(),
+        max_nnz_per_row_);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 }
 
 void FastSparseMatrixMultiplier::ComputeSquaredMatrix(
-    cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& input,
-    CSRSparseMatrix& output) {
+    cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &input,
+    CSRSparseMatrix &output) {
   int num_input_rows = static_cast<int>(input.row_offsets.size()) - 1;
   if (num_input_rows <= 0 || max_nnz_per_row_ == 0 || output.values.empty()) {
     return;
@@ -493,4 +499,4 @@ void FastSparseMatrixMultiplier::ComputeSquaredMatrix(
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -57,7 +57,7 @@ constexpr float kMinPointDepth = 1.0f;
  * use a prefix of the full point / observation arrays.
  */
 class DecreasingScaleMinimizerTest : public ::testing::Test {
- public:
+public:
   using Point3D = Vector<3>;
   using Observation2D = Vector<2>;
 
@@ -75,12 +75,12 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     GenerateObservations(max_num_points_);
   }
 
- protected:
+protected:
   // ------------------------------------------------------------------
   // Data generation helpers (same logic as ReprojectionFactorBatchTest)
   // ------------------------------------------------------------------
 
-  float ComputePointDepth(const SE3Transform& pose, const Point3D& point) {
+  float ComputePointDepth(const SE3Transform &pose, const Point3D &point) {
     float depth = pose[2 * 4 + 3];
     for (int j = 0; j < 3; j++) {
       depth += pose[2 * 4 + j] * point[j];
@@ -104,14 +104,14 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     }
   }
 
-  void GenerateRandomPoses(
-      size_t num_poses, std::mt19937& rng,
-      std::uniform_real_distribution<float>& rotation_dist,
-      std::uniform_real_distribution<float>& translation_dist,
-      std::vector<SE3Transform>& poses) {
+  void
+  GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
+                      std::uniform_real_distribution<float> &rotation_dist,
+                      std::uniform_real_distribution<float> &translation_dist,
+                      std::vector<SE3Transform> &poses) {
     hvector<Vector<6>> twists(num_poses);
     for (size_t i = 0; i < num_poses; i++) {
-      Vector<6>& twist = twists[i];
+      Vector<6> &twist = twists[i];
       twist[0] = rotation_dist(rng);
       twist[1] = rotation_dist(rng);
       twist[2] = rotation_dist(rng);
@@ -128,8 +128,8 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     dvector<Vector<6>> twists_device(twists);
     dvector<SE3Transform> poses_device(num_poses);
 
-    auto twists_ptr = reinterpret_cast<const float*>(twists_device.data());
-    auto poses_ptr = reinterpret_cast<float*>(poses_device.data());
+    auto twists_ptr = reinterpret_cast<const float *>(twists_device.data());
+    auto poses_ptr = reinterpret_cast<float *>(poses_device.data());
 
     ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch,
                   transform_stride, num_poses, poses_ptr);
@@ -140,9 +140,9 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
   }
 
   void GenerateRandomPointsVisibleFromAllCameras(
-      size_t num_points, std::mt19937& rng,
-      std::uniform_real_distribution<float>& point_dist,
-      std::vector<Point3D>& points) {
+      size_t num_points, std::mt19937 &rng,
+      std::uniform_real_distribution<float> &point_dist,
+      std::vector<Point3D> &points) {
     points.resize(num_points);
     for (size_t i = 0; i < num_points; i++) {
       points[i][0] = point_dist(rng);
@@ -151,7 +151,7 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     }
   }
 
-  Observation2D ProjectPoint(const SE3Transform& pose, const Point3D& point) {
+  Observation2D ProjectPoint(const SE3Transform &pose, const Point3D &point) {
     float point_cam[3];
     point_cam[0] = pose[0 * 4 + 3];
     point_cam[1] = pose[1 * 4 + 3];
@@ -180,11 +180,11 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     }
   }
 
-  void DisturbPoints(std::vector<Point3D>& points, float noise_magnitude) {
+  void DisturbPoints(std::vector<Point3D> &points, float noise_magnitude) {
     std::mt19937 rng(fixed_seed_ + 1);
     std::uniform_real_distribution<float> noise_dist(-noise_magnitude,
                                                      noise_magnitude);
-    for (auto& point : points) {
+    for (auto &point : points) {
       Point3D disturbed;
       bool valid = false;
       for (int attempt = 0; attempt < 100 && !valid; attempt++) {
@@ -192,7 +192,7 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
         disturbed[1] = point[1] + noise_dist(rng);
         disturbed[2] = point[2] + noise_dist(rng);
         valid = true;
-        for (const auto& pose : ground_truth_poses_) {
+        for (const auto &pose : ground_truth_poses_) {
           if (ComputePointDepth(pose, disturbed) < kMinPointDepth) {
             valid = false;
             break;
@@ -224,10 +224,11 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     return subset;
   }
 
-  std::vector<float*> CreateStatePointers(
-      SE3StateBatch& state_batch_poses, VectorStateBatch<3>& state_batch_points,
-      size_t num_points) {
-    std::vector<float*> state_pointers;
+  std::vector<float *>
+  CreateStatePointers(SE3StateBatch &state_batch_poses,
+                      VectorStateBatch<3> &state_batch_points,
+                      size_t num_points) {
+    std::vector<float *> state_pointers;
     state_pointers.reserve(2 * num_poses_ * num_points);
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points; point_idx++) {
@@ -240,8 +241,8 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     return state_pointers;
   }
 
-  float ComputePointMSE(const std::vector<Point3D>& points_a,
-                        const std::vector<Point3D>& points_b, size_t count) {
+  float ComputePointMSE(const std::vector<Point3D> &points_a,
+                        const std::vector<Point3D> &points_b, size_t count) {
     float mse = 0.0f;
     for (size_t i = 0; i < count; i++) {
       float dx = points_a[i][0] - points_b[i][0];
@@ -302,9 +303,9 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
                  std::to_string(num_points) + " points");
 
     // Prepare a disturbed copy of the first num_points ground truth points.
-    std::vector<Point3D> disturbed_points(
-        ground_truth_points_.begin(),
-        ground_truth_points_.begin() + num_points);
+    std::vector<Point3D> disturbed_points(ground_truth_points_.begin(),
+                                          ground_truth_points_.begin() +
+                                              num_points);
     DisturbPoints(disturbed_points, 0.5f);
 
     float initial_mse =
@@ -326,19 +327,19 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
     }
     dvector<int> const_pose_ids_device(const_pose_ids);
 
-    const float* poses_ptr =
-        reinterpret_cast<const float*>(poses_device.data());
-    const float* points_ptr =
-        reinterpret_cast<const float*>(points_device.data());
+    const float *poses_ptr =
+        reinterpret_cast<const float *>(poses_device.data());
+    const float *points_ptr =
+        reinterpret_cast<const float *>(points_device.data());
 
     SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_,
                                     const_pose_ids_device.data(), num_poses_);
     VectorStateBatch<3> state_batch_points(points_ptr, num_points);
 
-    ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
-                                         kZThreshold);
+    ReprojectionFactorBatch factor_batch(observations_device.data(),
+                                         num_observations, kZThreshold);
 
-    std::vector<float*> state_pointers =
+    std::vector<float *> state_pointers =
         CreateStatePointers(state_batch_poses, state_batch_points, num_points);
 
     Problem problem;
@@ -369,4 +370,4 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

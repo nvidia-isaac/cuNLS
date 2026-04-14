@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@ namespace cunls {
 
 constexpr size_t kCauchyBlockSize = 256;
 
-__global__ void cauchy_loss_kernel(float b, float c, float* s, float3* out,
-                                    int num_losses) {
+__global__ void cauchy_loss_kernel(float b, float c, float *s, float3 *out,
+                                   int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
     return;
@@ -35,7 +35,7 @@ __global__ void cauchy_loss_kernel(float b, float c, float* s, float3* out,
   const float sum = 1.0f + sq_error * c;
   const float inv = 1.0f / sum;
 
-  float3& rho = out[tid];
+  float3 &rho = out[tid];
   rho.x = b * logf(sum);
   rho.y = fmaxf(cuda::std::numeric_limits<float>::min(), inv);
   rho.z = -c * (inv * inv);
@@ -44,7 +44,7 @@ __global__ void cauchy_loss_kernel(float b, float c, float* s, float3* out,
 CauchyLossFunctionBatch::CauchyLossFunctionBatch(float b, float c)
     : b_(b), c_(c) {}
 
-bool CauchyLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool CauchyLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                        cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;
@@ -56,4 +56,4 @@ bool CauchyLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

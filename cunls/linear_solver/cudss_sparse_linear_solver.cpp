@@ -41,12 +41,12 @@ namespace cunls {
  */
 int GetOrderingType(cuDSSLinearSolverMode mode) {
   switch (mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      return static_cast<int>(CUDSS_ALG_DEFAULT);
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      return static_cast<int>(CUDSS_ALG_1);
-    default:
-      return static_cast<int>(CUDSS_ALG_DEFAULT);
+  case cuDSSLinearSolverMode::SlowInitFastSolve:
+    return static_cast<int>(CUDSS_ALG_DEFAULT);
+  case cuDSSLinearSolverMode::FastInitSlowSolve:
+    return static_cast<int>(CUDSS_ALG_1);
+  default:
+    return static_cast<int>(CUDSS_ALG_DEFAULT);
   }
 }
 
@@ -57,9 +57,9 @@ cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
 
 /** @copydoc cuDSSLinearSolver::Initialize */
 bool cuDSSLinearSolver::Initialize(cudaStream_t stream,
-                                   const CSRSparseMatrix& spd_matrix,
-                                   const dvector<float>& rhs,
-                                   dvector<float>& result) {
+                                   const CSRSparseMatrix &spd_matrix,
+                                   const dvector<float> &rhs,
+                                   dvector<float> &result) {
   size_t matrix_size = spd_matrix.NumRows();
   if (matrix_size != rhs.size()) {
     LogError("LHS size: {} does not match RHS size: {}", matrix_size,
@@ -105,12 +105,12 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream,
   // For FastInitSlowSolve, also perform initial factorization during
   // initialization
   switch (options_.mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      break;
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      THROW_ON_CUDSS_ERROR(cudssExecute(dss_handle, CUDSS_PHASE_FACTORIZATION,
-                                        cfg, cudss_data, desc_m, desc_result,
-                                        desc_rhs));
+  case cuDSSLinearSolverMode::SlowInitFastSolve:
+    break;
+  case cuDSSLinearSolverMode::FastInitSlowSolve:
+    THROW_ON_CUDSS_ERROR(cudssExecute(dss_handle, CUDSS_PHASE_FACTORIZATION,
+                                      cfg, cudss_data, desc_m, desc_result,
+                                      desc_rhs));
   }
 
   return true;
@@ -118,9 +118,9 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream,
 
 /** @copydoc cuDSSLinearSolver::Solve */
 bool cuDSSLinearSolver::Solve(cudaStream_t stream,
-                              const CSRSparseMatrix& spd_matrix,
-                              const dvector<float>& rhs,
-                              dvector<float>& result) {
+                              const CSRSparseMatrix &spd_matrix,
+                              const dvector<float> &rhs,
+                              dvector<float> &result) {
   size_t matrix_size = spd_matrix.NumRows();
 
   if (matrix_size != rhs.size()) {
@@ -159,13 +159,13 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream,
   // Determine factorization phase based on solver configuration
   cudssPhase_t phase = CUDSS_PHASE_FACTORIZATION;
   switch (options_.mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      // Standard factorization
-      break;
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      // Use refactorization for improved numerical stability
-      phase = CUDSS_PHASE_REFACTORIZATION;
-      break;
+  case cuDSSLinearSolverMode::SlowInitFastSolve:
+    // Standard factorization
+    break;
+  case cuDSSLinearSolverMode::FastInitSlowSolve:
+    // Use refactorization for improved numerical stability
+    phase = CUDSS_PHASE_REFACTORIZATION;
+    break;
   }
 
   cudssConfig_t cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
@@ -180,4 +180,4 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream,
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

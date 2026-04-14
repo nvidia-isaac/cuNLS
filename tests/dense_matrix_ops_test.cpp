@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,8 @@
  */
 
 /** @file dense_matrix_ops_test.cpp
- *  @brief Tests for dense matrix operations, including matrix square root computation.
+ *  @brief Tests for dense matrix operations, including matrix square root
+ * computation.
  */
 
 #include "cunls/math/dense_matrix_ops.h"
@@ -47,7 +48,7 @@ namespace cunls {
  * @param size Matrix size
  * @param rng Random number generator
  */
-void GenerateRandomSPDMatrix(float* matrix, size_t size, std::mt19937& rng) {
+void GenerateRandomSPDMatrix(float *matrix, size_t size, std::mt19937 &rng) {
   std::uniform_real_distribution<float> eig_dist(1.f, 10.0f);
 
   // Generate random eigenvalues (positive for SPD)
@@ -133,7 +134,7 @@ void GenerateRandomSPDMatrix(float* matrix, size_t size, std::mt19937& rng) {
  */
 template <class MatrixSize>
 class ComputeSqrtMatrixTest : public ::testing::Test {
- public:
+public:
   void SetUp() override {
     // Initialize random number generator with fixed seed for reproducibility
     std::mt19937 rng(42);
@@ -151,7 +152,7 @@ class ComputeSqrtMatrixTest : public ::testing::Test {
     matrices_device_ = DeviceVector<float>(matrices_host_);
   }
 
- protected:
+protected:
   const size_t num_matrices_ = 10000;
   dvector<float> matrices_device_;
   hvector<float> matrices_host_;
@@ -165,7 +166,8 @@ using MatrixSizes = ::testing::Types<test_utils::SizeT<2>, test_utils::SizeT<3>,
 
 TYPED_TEST_SUITE(ComputeSqrtMatrixTest, MatrixSizes);
 
-/** @brief Verifies that squaring the matrix square root recovers the original SPD matrix. */
+/** @brief Verifies that squaring the matrix square root recovers the original
+ * SPD matrix. */
 TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
   auto test_range = this->profiler_domain_.CreateDomainRange("PowerHalf");
   constexpr float tolerance = 1e-3f;
@@ -174,32 +176,33 @@ TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
   size_t size = this->matrix_size_;
 
   // Get device pointer
-  float* matrices_ptr = this->matrices_device_.data();
+  float *matrices_ptr = this->matrices_device_.data();
 
   // Make a copy for verification (device-to-device copy)
   dvector<float> matrices_copy(this->matrices_device_.size());
-  THROW_ON_CUDA_ERROR(cudaMemcpy(matrices_copy.data(), this->matrices_device_.data(),
-                                  this->matrices_device_.size() * sizeof(float),
-                                  cudaMemcpyDeviceToDevice));
-  float* matrices_copy_ptr = matrices_copy.data();
+  THROW_ON_CUDA_ERROR(cudaMemcpy(
+      matrices_copy.data(), this->matrices_device_.data(),
+      this->matrices_device_.size() * sizeof(float), cudaMemcpyDeviceToDevice));
+  float *matrices_copy_ptr = matrices_copy.data();
 
-  {  // Compute matrix square root on GPU
+  { // Compute matrix square root on GPU
     auto range = this->profiler_domain_.CreateDomainRange("ComputeSqrtMatrix");
     cuBLASHandle cublas_handle;
-    ComputeSqrtMatrix(cublas_handle, stream.GetStream(), matrices_ptr, size, size,
-                      this->num_matrices_);
+    ComputeSqrtMatrix(cublas_handle, stream.GetStream(), matrices_ptr, size,
+                      size, this->num_matrices_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
   // Verify: (A^0.5)^2 should equal A
   // Compute (A^0.5)^2 using matrix multiplication
   cuBLASHandle cublas_handle;
-  auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
+  auto handle =
+      static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
 
   dvector<float> squared_result(this->num_matrices_ * size * size);
-  float* squared_result_ptr = squared_result.data();
+  float *squared_result_ptr = squared_result.data();
 
   // Compute squared_result = result * result (matrix multiplication)
   size_t stride = size * size;
@@ -224,4 +227,4 @@ TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
   }
 }
 
-}  // namespace cunls
+} // namespace cunls

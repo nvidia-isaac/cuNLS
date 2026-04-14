@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,33 +29,35 @@ constexpr int kWarpSize = 32;
 
 namespace {
 
-void MapRobustWorkspace(float* workspace, size_t num_residuals, float** sq_err_out,
-                        float3** rho_out) {
+void MapRobustWorkspace(float *workspace, size_t num_residuals,
+                        float **sq_err_out, float3 **rho_out) {
   *sq_err_out = workspace;
   const size_t sq_bytes = num_residuals * sizeof(float);
   const size_t align = alignof(float3);
   const size_t rho_byte_offset = (sq_bytes + align - 1u) / align * align;
-  *rho_out = reinterpret_cast<float3*>(reinterpret_cast<uint8_t*>(workspace) +
+  *rho_out = reinterpret_cast<float3 *>(reinterpret_cast<uint8_t *>(workspace) +
                                         rho_byte_offset);
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // Device helpers
 // ============================================================================
 
 __device__ __forceinline__ float jacobian_scaling_alpha(float sq_norm,
-                                                        const float3& rho) {
-  if ((sq_norm == 0.0f) || (rho.z <= 0.0f)) return 0.0f;
+                                                        const float3 &rho) {
+  if ((sq_norm == 0.0f) || (rho.z <= 0.0f))
+    return 0.0f;
   const float D = 1.0f + 2.0f * sq_norm * rho.z / rho.y;
   return (1.0f - sqrtf(D)) / sq_norm;
 }
 
 __device__ __forceinline__ float residual_scaling(float sq_norm,
-                                                   const float3& rho) {
+                                                  const float3 &rho) {
   float sqrt_rho1 = sqrtf(rho.y);
-  if ((sq_norm == 0.0f) || (rho.z <= 0.0f)) return sqrt_rho1;
+  if ((sq_norm == 0.0f) || (rho.z <= 0.0f))
+    return sqrt_rho1;
   const float D = 1.0f + 2.0f * sq_norm * rho.z / rho.y;
   return sqrt_rho1 / (1.0f - (1.0f - sqrtf(D)));
 }
@@ -68,13 +70,14 @@ __device__ __forceinline__ float residual_scaling(float sq_norm,
 // residual_dim), writes rho = {s, 1, 0}, and optionally cost = 0.5*s.
 
 __global__ void fused_trivial_sq_error_cost_kernel(
-    const float* __restrict__ residuals, float* __restrict__ sq_err,
-    float3* __restrict__ rho, float* __restrict__ cost, int num_residuals,
+    const float *__restrict__ residuals, float *__restrict__ sq_err,
+    float3 *__restrict__ rho, float *__restrict__ cost, int num_residuals,
     int residual_dim) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_residuals) return;
+  if (tid >= num_residuals)
+    return;
 
-  const float* r = residuals + tid * residual_dim;
+  const float *r = residuals + tid * residual_dim;
   float sum = 0.0f;
   for (int i = 0; i < residual_dim; ++i) {
     float v = r[i];
@@ -82,7 +85,8 @@ __global__ void fused_trivial_sq_error_cost_kernel(
   }
   sq_err[tid] = sum;
   rho[tid] = {sum, 1.0f, 0.0f};
-  if (cost != nullptr) cost[tid] = 0.5f * sum;
+  if (cost != nullptr)
+    cost[tid] = 0.5f * sum;
 }
 
 // ============================================================================
@@ -92,13 +96,15 @@ __global__ void fused_trivial_sq_error_cost_kernel(
 // For typical NLS problems (residual dim 1-15), this eliminates 95%+ of
 // wasted warp lanes.
 
-__global__ void square_error_thread_kernel(
-    const float* __restrict__ residuals, float* __restrict__ squared_error,
-    int num_residuals, int residual_dim) {
+__global__ void square_error_thread_kernel(const float *__restrict__ residuals,
+                                           float *__restrict__ squared_error,
+                                           int num_residuals,
+                                           int residual_dim) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_residuals) return;
+  if (tid >= num_residuals)
+    return;
 
-  const float* r = residuals + tid * residual_dim;
+  const float *r = residuals + tid * residual_dim;
   float sum = 0.0f;
   for (int i = 0; i < residual_dim; ++i) {
     float v = r[i];
@@ -115,13 +121,14 @@ __global__ void square_error_thread_kernel(
 // overhead and wasted lanes for small residual dims.
 
 __global__ void scale_residuals_thread_kernel(
-    float* __restrict__ residuals, const float* __restrict__ squared_error,
-    const float3* __restrict__ rho, int num_residuals, int residual_dim) {
+    float *__restrict__ residuals, const float *__restrict__ squared_error,
+    const float3 *__restrict__ rho, int num_residuals, int residual_dim) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_residuals) return;
+  if (tid >= num_residuals)
+    return;
 
   float scaling = residual_scaling(squared_error[tid], rho[tid]);
-  float* r = residuals + tid * residual_dim;
+  float *r = residuals + tid * residual_dim;
   for (int i = 0; i < residual_dim; ++i) {
     r[i] *= scaling;
   }
@@ -140,16 +147,19 @@ __global__ void scale_residuals_thread_kernel(
 // <= 32 (covers all practical NLS problems), the dot product r'*J_col is
 // computed via warp shuffle reduction, eliminating shared memory entirely.
 
-__global__ void scale_jacobians_warp_kernel(
-    const float* __restrict__ residuals, float* __restrict__ jacobians,
-    const float* __restrict__ squared_error, const float3* __restrict__ rho_coeffs,
-    int num_residuals, int residual_dim, int num_cols) {
+__global__ void
+scale_jacobians_warp_kernel(const float *__restrict__ residuals,
+                            float *__restrict__ jacobians,
+                            const float *__restrict__ squared_error,
+                            const float3 *__restrict__ rho_coeffs,
+                            int num_residuals, int residual_dim, int num_cols) {
   const int warp_id = (threadIdx.x + blockIdx.x * blockDim.x) / kWarpSize;
   const int lane = threadIdx.x % kWarpSize;
-  if (warp_id >= num_residuals) return;
+  if (warp_id >= num_residuals)
+    return;
 
   const int row_offset = warp_id * residual_dim;
-  const float* res_base = residuals + row_offset;
+  const float *res_base = residuals + row_offset;
 
   float sqrt_rho1, alpha;
   {
@@ -181,11 +191,12 @@ __global__ void scale_jacobians_warp_kernel(
 // ============================================================================
 // Kernel 5: Extract cost
 // ============================================================================
-__global__ void extract_cost_kernel(float* __restrict__ cost,
-                                    const float3* __restrict__ rho,
+__global__ void extract_cost_kernel(float *__restrict__ cost,
+                                    const float3 *__restrict__ rho,
                                     int num_residuals) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_residuals) return;
+  if (tid >= num_residuals)
+    return;
   cost[tid] = 0.5f * rho[tid].x;
 }
 
@@ -193,13 +204,14 @@ __global__ void extract_cost_kernel(float* __restrict__ cost,
 // ResidualBatch implementation
 // ============================================================================
 
-ResidualBatch::ResidualBatch(FactorBatch* factor_batch,
-                             LossFunctionBatch* loss_function)
+ResidualBatch::ResidualBatch(FactorBatch *factor_batch,
+                             LossFunctionBatch *loss_function)
     : factor_batch_(factor_batch), loss_function_(loss_function) {}
 
-bool ResidualBatch::Evaluate(cudaStream_t stream, float* workspace,
-                             float* residuals, float const* const* state_pointers,
-                             float* cost, float* jacobians) const {
+bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace,
+                             float *residuals,
+                             float const *const *state_pointers, float *cost,
+                             float *jacobians) const {
   assert(residuals != nullptr);
   assert(state_pointers != nullptr);
 
@@ -208,18 +220,21 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float* workspace,
   int num_residuals = static_cast<int>(factor_batch_->NumFactors());
   int residual_dim = static_cast<int>(factor_batch_->ResidualsSize());
 
-  if (num_residuals == 0) return true;
+  if (num_residuals == 0)
+    return true;
   assert(workspace != nullptr);
 
-  float* sq_err_ptr = nullptr;
-  float3* rho_ptr = nullptr;
+  float *sq_err_ptr = nullptr;
+  float3 *rho_ptr = nullptr;
   MapRobustWorkspace(workspace, num_residuals, &sq_err_ptr, &rho_ptr);
 
   int num_thread_blocks = (num_residuals + kBlockSize - 1) / kBlockSize;
 
   if (loss_function_ == nullptr) {
-    // Fast path: trivial loss. Fuse sq_error + trivial_loss + cost into 1 kernel.
-    fused_trivial_sq_error_cost_kernel<<<num_thread_blocks, kBlockSize, 0, stream>>>(
+    // Fast path: trivial loss. Fuse sq_error + trivial_loss + cost into 1
+    // kernel.
+    fused_trivial_sq_error_cost_kernel<<<num_thread_blocks, kBlockSize, 0,
+                                         stream>>>(
         residuals, sq_err_ptr, rho_ptr, cost, num_residuals, residual_dim);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return true;
@@ -234,14 +249,15 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float* workspace,
 
   if (jacobians != nullptr) {
     int num_cols = 0;
-    for (const auto& d : factor_batch_->StateBlockSizes()) num_cols += d;
+    for (const auto &d : factor_batch_->StateBlockSizes())
+      num_cols += d;
 
     int warps_per_block = kBlockSize / kWarpSize;
     int jac_blocks = (num_residuals + warps_per_block - 1) / warps_per_block;
 
     scale_jacobians_warp_kernel<<<jac_blocks, kBlockSize, 0, stream>>>(
-        residuals, jacobians, sq_err_ptr, rho_ptr,
-        num_residuals, residual_dim, num_cols);
+        residuals, jacobians, sq_err_ptr, rho_ptr, num_residuals, residual_dim,
+        num_cols);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
@@ -258,4 +274,4 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float* workspace,
 
   return true;
 }
-}  // namespace cunls
+} // namespace cunls

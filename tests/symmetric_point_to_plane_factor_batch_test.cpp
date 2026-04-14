@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,12 +37,12 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
+#include "cunls/common/profiler.h"
+#include "cunls/common/types.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
-#include "cunls/common/profiler.h"
 #include "cunls/state/se3_state_batch.h"
-#include "cunls/common/types.h"
 
 namespace cunls {
 
@@ -59,7 +59,7 @@ namespace cunls {
  * regardless of the normals.
  */
 class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
- public:
+public:
   using Point3D = Vector<3>;
 
   void SetUp() override {
@@ -127,10 +127,10 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
     ground_truth_pose_device_.resize(1);
 
     ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float*>(twist_device.data()),
+                  reinterpret_cast<const float *>(twist_device.data()),
                   /*twist_stride=*/6, /*transform_pitch=*/4,
                   /*transform_stride=*/16, /*size=*/1,
-                  reinterpret_cast<float*>(ground_truth_pose_device_.data()));
+                  reinterpret_cast<float *>(ground_truth_pose_device_.data()));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     // Copy pose to host
@@ -148,14 +148,15 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
     }
   }
 
- protected:
+protected:
   /**
-   * @brief Transforms a 3D point by an SE(3) matrix on CPU: result = R*point + t.
+   * @brief Transforms a 3D point by an SE(3) matrix on CPU: result = R*point +
+   * t.
    */
-  void TransformPoint(const SE3Transform& pose, const Point3D& point,
-                      Point3D& result) {
+  void TransformPoint(const SE3Transform &pose, const Point3D &point,
+                      Point3D &result) {
     for (int i = 0; i < 3; i++) {
-      result[i] = pose[i * 4 + 3];  // translation
+      result[i] = pose[i * 4 + 3]; // translation
       for (int j = 0; j < 3; j++) {
         result[i] += pose[i * 4 + j] * point[j];
       }
@@ -167,7 +168,7 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
    *
    * T^{-1} = [R^T, -R^T*t; 0, 1]
    */
-  void InvertPose(const SE3Transform& pose, SE3Transform& inv) {
+  void InvertPose(const SE3Transform &pose, SE3Transform &inv) {
     inv.fill(0.0f);
     // R^T
     for (int i = 0; i < 3; i++) {
@@ -188,8 +189,8 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
   /**
    * @brief Multiplies two 4x4 matrices on CPU: C = A * B.
    */
-  void MatMul4x4(const SE3Transform& A, const SE3Transform& B,
-                 SE3Transform& C) {
+  void MatMul4x4(const SE3Transform &A, const SE3Transform &B,
+                 SE3Transform &C) {
     C.fill(0.0f);
     for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 4; j++) {
@@ -216,7 +217,7 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
   /**
    * @brief Computes the dot product of two 3D vectors on CPU.
    */
-  float Dot3(const Point3D& a, const Point3D& b) {
+  float Dot3(const Point3D &a, const Point3D &b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   }
 
@@ -229,7 +230,7 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
    * @param delta The 6D tangent vector perturbation
    * @return The perturbed SE3 transform
    */
-  SE3Transform PerturbPose(const SE3Transform& pose, const Vector<6>& delta) {
+  SE3Transform PerturbPose(const SE3Transform &pose, const Vector<6> &delta) {
     CudaStream stream;
 
     dvector<Vector<6>> delta_device({delta});
@@ -237,10 +238,10 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
 
     // Compute Exp(delta)
     ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float*>(delta_device.data()),
+                  reinterpret_cast<const float *>(delta_device.data()),
                   /*twist_stride=*/6, /*transform_pitch=*/4,
                   /*transform_stride=*/16, /*size=*/1,
-                  reinterpret_cast<float*>(exp_delta_device.data()));
+                  reinterpret_cast<float *>(exp_delta_device.data()));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     SE3Transform exp_delta;
@@ -257,16 +258,16 @@ class SymmetricPointToPlaneFactorBatchTest : public ::testing::Test {
   const uint32_t fixed_seed_ = 42;
 
   // Data
-  std::vector<Point3D> p_points_;                ///< Target points
-  std::vector<Point3D> q_points_;                ///< Source points (q = T^2 @ p)
-  std::vector<Point3D> np_normals_;              ///< Normal vectors at target points
-  std::vector<Point3D> nq_normals_;              ///< Normal vectors at source points
-  std::vector<Vector<6>> ground_truth_twist_;    ///< Ground truth twist
-  std::vector<SE3Transform> ground_truth_pose_;  ///< Ground truth pose (host)
-  dvector<SE3Transform> ground_truth_pose_device_;  ///< Ground truth pose (device)
+  std::vector<Point3D> p_points_;   ///< Target points
+  std::vector<Point3D> q_points_;   ///< Source points (q = T^2 @ p)
+  std::vector<Point3D> np_normals_; ///< Normal vectors at target points
+  std::vector<Point3D> nq_normals_; ///< Normal vectors at source points
+  std::vector<Vector<6>> ground_truth_twist_;   ///< Ground truth twist
+  std::vector<SE3Transform> ground_truth_pose_; ///< Ground truth pose (host)
+  dvector<SE3Transform>
+      ground_truth_pose_device_; ///< Ground truth pose (device)
 
-  profiler::Domain profiler_domain_{
-      "SymmetricPointToPlaneFactorBatchTest"};
+  profiler::Domain profiler_domain_{"SymmetricPointToPlaneFactorBatchTest"};
 };
 
 /**
@@ -309,14 +310,15 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, ResidualIdentity) {
       p_device.data(), q_device.data(), np_device.data(), nq_device.data(),
       num_correspondences_);
 
-  std::vector<const float*> param_ptrs(num_correspondences_,
-      reinterpret_cast<const float*>(pose_device.data()));
-  dvector<const float*> param_ptrs_device(param_ptrs);
+  std::vector<const float *> param_ptrs(
+      num_correspondences_,
+      reinterpret_cast<const float *>(pose_device.data()));
+  dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_);
 
-  factor_batch.Evaluate(residuals.data(), nullptr,
-                         param_ptrs_device.data(), stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(),
+                        stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_residuals(num_correspondences_);
@@ -360,14 +362,15 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, ResidualGroundTruth) {
       p_device.data(), q_device.data(), np_device.data(), nq_device.data(),
       num_correspondences_);
 
-  std::vector<const float*> param_ptrs(num_correspondences_,
-      reinterpret_cast<const float*>(ground_truth_pose_device_.data()));
-  dvector<const float*> param_ptrs_device(param_ptrs);
+  std::vector<const float *> param_ptrs(
+      num_correspondences_,
+      reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
+  dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_);
 
-  factor_batch.Evaluate(residuals.data(), nullptr,
-                         param_ptrs_device.data(), stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(),
+                        stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_residuals(num_correspondences_);
@@ -404,24 +407,25 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, JacobianIdentity) {
       p_device.data(), q_device.data(), np_device.data(), nq_device.data(),
       num_correspondences_);
 
-  std::vector<const float*> param_ptrs(num_correspondences_,
-      reinterpret_cast<const float*>(pose_device.data()));
-  dvector<const float*> param_ptrs_device(param_ptrs);
+  std::vector<const float *> param_ptrs(
+      num_correspondences_,
+      reinterpret_cast<const float *>(pose_device.data()));
+  dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_);
   dvector<float> jacobians(num_correspondences_ * 6);
 
   factor_batch.Evaluate(residuals.data(), jacobians.data(),
-                         param_ptrs_device.data(), stream.GetStream());
+                        param_ptrs_device.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_jacobians(num_correspondences_ * 6);
   jacobians.CopyToHost(host_jacobians.data(), host_jacobians.size());
 
   for (size_t i = 0; i < num_correspondences_; i++) {
-    const float* jac = host_jacobians.data() + i * 6;
-    const auto& pp = p_points_[i];
-    const auto& qq = q_points_[i];
+    const float *jac = host_jacobians.data() + i * 6;
+    const auto &pp = p_points_[i];
+    const auto &qq = q_points_[i];
 
     // Combined normal N = Np + Nq
     float N[3];
@@ -490,15 +494,16 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, NumericalJacobian) {
       p_device.data(), q_device.data(), np_device.data(), nq_device.data(),
       num_test_points);
 
-  std::vector<const float*> param_ptrs(num_test_points,
-      reinterpret_cast<const float*>(ground_truth_pose_device_.data()));
-  dvector<const float*> param_ptrs_device(param_ptrs);
+  std::vector<const float *> param_ptrs(
+      num_test_points,
+      reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
+  dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_test_points);
   dvector<float> jacobians(num_test_points * 6);
 
   factor_batch.Evaluate(residuals.data(), jacobians.data(),
-                         param_ptrs_device.data(), stream.GetStream());
+                        param_ptrs_device.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_jacobians(num_test_points * 6);
@@ -521,21 +526,23 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, NumericalJacobian) {
     dvector<SE3Transform> pose_plus_device({pose_plus});
     dvector<SE3Transform> pose_minus_device({pose_minus});
 
-    std::vector<const float*> ptrs_plus(num_test_points,
-        reinterpret_cast<const float*>(pose_plus_device.data()));
-    std::vector<const float*> ptrs_minus(num_test_points,
-        reinterpret_cast<const float*>(pose_minus_device.data()));
+    std::vector<const float *> ptrs_plus(
+        num_test_points,
+        reinterpret_cast<const float *>(pose_plus_device.data()));
+    std::vector<const float *> ptrs_minus(
+        num_test_points,
+        reinterpret_cast<const float *>(pose_minus_device.data()));
 
-    dvector<const float*> ptrs_plus_device(ptrs_plus);
-    dvector<const float*> ptrs_minus_device(ptrs_minus);
+    dvector<const float *> ptrs_plus_device(ptrs_plus);
+    dvector<const float *> ptrs_minus_device(ptrs_minus);
 
     dvector<float> residuals_plus(num_test_points);
     dvector<float> residuals_minus(num_test_points);
 
     factor_batch.Evaluate(residuals_plus.data(), nullptr,
-                           ptrs_plus_device.data(), stream.GetStream());
+                          ptrs_plus_device.data(), stream.GetStream());
     factor_batch.Evaluate(residuals_minus.data(), nullptr,
-                           ptrs_minus_device.data(), stream.GetStream());
+                          ptrs_minus_device.data(), stream.GetStream());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     std::vector<float> host_res_plus(num_test_points);
@@ -549,10 +556,9 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, NumericalJacobian) {
       float analytical = host_jacobians[i * kTangentDim + k];
 
       EXPECT_NEAR(analytical, numerical, 1e-2f)
-          << "Jacobian mismatch at correspondence " << i
-          << ", col " << k
-          << " (analytical=" << analytical
-          << ", numerical=" << numerical << ")";
+          << "Jacobian mismatch at correspondence " << i << ", col " << k
+          << " (analytical=" << analytical << ", numerical=" << numerical
+          << ")";
     }
   }
 }
@@ -574,15 +580,15 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, EvaluateWithoutJacobians) {
       p_device.data(), q_device.data(), np_device.data(), nq_device.data(),
       num_correspondences_);
 
-  std::vector<const float*> param_ptrs(num_correspondences_,
-      reinterpret_cast<const float*>(ground_truth_pose_device_.data()));
-  dvector<const float*> param_ptrs_device(param_ptrs);
+  std::vector<const float *> param_ptrs(
+      num_correspondences_,
+      reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
+  dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_);
 
-  bool result = factor_batch.Evaluate(residuals.data(), nullptr,
-                                       param_ptrs_device.data(),
-                                       stream.GetStream());
+  bool result = factor_batch.Evaluate(
+      residuals.data(), nullptr, param_ptrs_device.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_TRUE(result);
@@ -604,12 +610,12 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, OptimizeDisturbedPose) {
 
   // Create a disturbed pose: T_init = T_gt * Exp(small_delta)
   Vector<6> disturbance;
-  disturbance[0] = 0.05f;   // rotation x
-  disturbance[1] = -0.03f;  // rotation y
-  disturbance[2] = 0.04f;   // rotation z
-  disturbance[3] = 0.3f;    // translation x
-  disturbance[4] = -0.2f;   // translation y
-  disturbance[5] = 0.15f;   // translation z
+  disturbance[0] = 0.05f;  // rotation x
+  disturbance[1] = -0.03f; // rotation y
+  disturbance[2] = 0.04f;  // rotation z
+  disturbance[3] = 0.3f;   // translation x
+  disturbance[4] = -0.2f;  // translation y
+  disturbance[5] = 0.15f;  // translation z
 
   SE3Transform disturbed_pose = PerturbPose(ground_truth_pose_[0], disturbance);
 
@@ -629,7 +635,7 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, OptimizeDisturbedPose) {
   dvector<Point3D> nq_device(nq_normals_);
 
   // Create state batch
-  const float* pose_ptr = reinterpret_cast<const float*>(pose_device.data());
+  const float *pose_ptr = reinterpret_cast<const float *>(pose_device.data());
   cuBLASHandle cublas_handle;
   SE3StateBatch state_batch(cublas_handle, pose_ptr, 1);
 
@@ -639,8 +645,8 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, OptimizeDisturbedPose) {
       num_correspondences_);
 
   // All correspondences share the same pose (state block 0)
-  std::vector<float*> state_pointers(num_correspondences_,
-      state_batch.StateBlockDevicePtr(0));
+  std::vector<float *> state_pointers(num_correspondences_,
+                                      state_batch.StateBlockDevicePtr(0));
 
   // Build problem
   Problem problem;
@@ -687,4 +693,4 @@ TEST_F(SymmetricPointToPlaneFactorBatchTest, OptimizeDisturbedPose) {
       << "Final error should be much smaller than initial";
 }
 
-}  // namespace cunls
+} // namespace cunls

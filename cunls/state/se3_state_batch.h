@@ -36,7 +36,7 @@ namespace cunls {
  * for efficient batch processing of multiple transformations.
  */
 class SE3StateBatch : public SizedStateBatch<16, 6> {
- public:
+public:
   using Base = SizedStateBatch<16, 6>;
 
   /**
@@ -48,7 +48,7 @@ class SE3StateBatch : public SizedStateBatch<16, 6> {
    * memory.
    * @param num_blocks The number of SE(3) state blocks in this batch.
    */
-  SE3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+  SE3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
                 size_t num_blocks);
 
   /**
@@ -64,8 +64,8 @@ class SE3StateBatch : public SizedStateBatch<16, 6> {
    * containing the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
-  SE3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                size_t num_blocks, const int* device_constant_state_ids,
+  SE3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
+                size_t num_blocks, const int *device_constant_state_ids,
                 size_t num_const_state_blocks);
 
   /**
@@ -79,13 +79,13 @@ class SE3StateBatch : public SizedStateBatch<16, 6> {
    * @param x_plus_delta Output transformation matrices (device pointer)
    * @param stream CUDA stream for asynchronous execution
    */
-  void Plus(const float* x, const float* delta, float* x_plus_delta,
+  void Plus(const float *x, const float *delta, float *x_plus_delta,
             cudaStream_t stream) override;
 
- private:
-  cuBLASHandle& cublas_handle_;  ///< cuBLAS handle for matrix operations
+private:
+  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
 
   mutable dvector<SE3Transform> delta_transforms_;
   mutable dvector<float> twists_;
 };
-}  // namespace cunls
+} // namespace cunls

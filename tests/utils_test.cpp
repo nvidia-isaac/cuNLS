@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ namespace {
  *
  * @param matrix Output CSRSparseMatrix populated with a known 3x3 matrix.
  */
-void CreateTestCSRMatrix(CSRSparseMatrix& matrix) {
+void CreateTestCSRMatrix(CSRSparseMatrix &matrix) {
   // Create a simple 3x3 matrix:
   // [1.0  2.0  0.0]
   // [0.0  3.0  4.0]
@@ -56,7 +56,6 @@ void CreateTestCSRMatrix(CSRSparseMatrix& matrix) {
   matrix.row_offsets.resize(row_offsets.size());
   matrix.col_ids.resize(col_ids.size());
   matrix.values.resize(values.size());
-
 
   matrix.row_offsets.CopyFromHost(row_offsets.data(), row_offsets.size());
   matrix.col_ids.CopyFromHost(col_ids.data(), col_ids.size());
@@ -74,27 +73,27 @@ void CreateTestCSRMatrix(CSRSparseMatrix& matrix) {
  * @param num_cols Output number of columns.
  * @param num_nonzeros Output number of non-zero elements.
  */
-void ReadCSRSparseMatrixFromFile(const std::string& filename,
-                                 std::vector<uint32_t>& row_offsets,
-                                 std::vector<uint32_t>& col_ids,
-                                 std::vector<float>& values, uint32_t& num_rows,
-                                 uint32_t& num_cols, uint32_t& num_nonzeros) {
+void ReadCSRSparseMatrixFromFile(const std::string &filename,
+                                 std::vector<uint32_t> &row_offsets,
+                                 std::vector<uint32_t> &col_ids,
+                                 std::vector<float> &values, uint32_t &num_rows,
+                                 uint32_t &num_cols, uint32_t &num_nonzeros) {
   std::ifstream file(filename, std::ios::binary);
   ASSERT_TRUE(file.is_open()) << "Failed to open file: " << filename;
 
-  file.read(reinterpret_cast<char*>(&num_rows), sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(&num_cols), sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(&num_nonzeros), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_rows), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_cols), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_nonzeros), sizeof(uint32_t));
 
   row_offsets.resize(num_rows + 1);
   col_ids.resize(num_nonzeros);
   values.resize(num_nonzeros);
 
-  file.read(reinterpret_cast<char*>(row_offsets.data()),
+  file.read(reinterpret_cast<char *>(row_offsets.data()),
             (num_rows + 1) * sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(col_ids.data()),
+  file.read(reinterpret_cast<char *>(col_ids.data()),
             num_nonzeros * sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(values.data()),
+  file.read(reinterpret_cast<char *>(values.data()),
             num_nonzeros * sizeof(float));
 
   ASSERT_TRUE(file.good()) << "Error reading file: " << filename;
@@ -107,23 +106,24 @@ void ReadCSRSparseMatrixFromFile(const std::string& filename,
  * @param values Output value vector.
  * @param size Output vector size.
  */
-void ReadVectorFromFile(const std::string& filename, std::vector<float>& values,
-                        uint32_t& size) {
+void ReadVectorFromFile(const std::string &filename, std::vector<float> &values,
+                        uint32_t &size) {
   std::ifstream file(filename, std::ios::binary);
   ASSERT_TRUE(file.is_open()) << "Failed to open file: " << filename;
 
-  file.read(reinterpret_cast<char*>(&size), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&size), sizeof(uint32_t));
   values.resize(size);
-  file.read(reinterpret_cast<char*>(values.data()), size * sizeof(float));
+  file.read(reinterpret_cast<char *>(values.data()), size * sizeof(float));
 
   ASSERT_TRUE(file.good()) << "Error reading file: " << filename;
 }
 
-}  // namespace
+} // namespace
 
-/** @brief Test fixture for utility function tests, managing temp file lifecycle. */
+/** @brief Test fixture for utility function tests, managing temp file
+ * lifecycle. */
 class UtilsTest : public ::testing::Test {
- protected:
+protected:
   void SetUp() override {
     // Create temporary file names
     matrix_filename_ = "/tmp/test_matrix.bin";
@@ -144,7 +144,8 @@ class UtilsTest : public ::testing::Test {
   std::string vector_filename_;
 };
 
-/** @brief Tests that DumpCSRSparseMatrixToFile writes the correct binary format. */
+/** @brief Tests that DumpCSRSparseMatrixToFile writes the correct binary
+ * format. */
 TEST_F(UtilsTest, DumpCSRSparseMatrixToFile) {
   // Create a test CSR matrix
   CSRSparseMatrix matrix;
@@ -223,18 +224,18 @@ TEST_F(UtilsTest, DumpCSRSparseMatrixToFileAppends) {
 
   // Read first matrix
   uint32_t num_rows1, num_cols1, num_nonzeros1;
-  file.read(reinterpret_cast<char*>(&num_rows1), sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(&num_cols1), sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(&num_nonzeros1), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_rows1), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_cols1), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_nonzeros1), sizeof(uint32_t));
 
   std::vector<uint32_t> row_offsets1(num_rows1 + 1);
   std::vector<uint32_t> col_ids1(num_nonzeros1);
   std::vector<float> values1(num_nonzeros1);
-  file.read(reinterpret_cast<char*>(row_offsets1.data()),
+  file.read(reinterpret_cast<char *>(row_offsets1.data()),
             (num_rows1 + 1) * sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(col_ids1.data()),
+  file.read(reinterpret_cast<char *>(col_ids1.data()),
             num_nonzeros1 * sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(values1.data()),
+  file.read(reinterpret_cast<char *>(values1.data()),
             num_nonzeros1 * sizeof(float));
 
   // Verify first matrix
@@ -244,18 +245,18 @@ TEST_F(UtilsTest, DumpCSRSparseMatrixToFileAppends) {
 
   // Read second matrix
   uint32_t num_rows2, num_cols2, num_nonzeros2;
-  file.read(reinterpret_cast<char*>(&num_rows2), sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(&num_cols2), sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(&num_nonzeros2), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_rows2), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_cols2), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&num_nonzeros2), sizeof(uint32_t));
 
   std::vector<uint32_t> row_offsets2_read(num_rows2 + 1);
   std::vector<uint32_t> col_ids2_read(num_nonzeros2);
   std::vector<float> values2_read(num_nonzeros2);
-  file.read(reinterpret_cast<char*>(row_offsets2_read.data()),
+  file.read(reinterpret_cast<char *>(row_offsets2_read.data()),
             (num_rows2 + 1) * sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(col_ids2_read.data()),
+  file.read(reinterpret_cast<char *>(col_ids2_read.data()),
             num_nonzeros2 * sizeof(uint32_t));
-  file.read(reinterpret_cast<char*>(values2_read.data()),
+  file.read(reinterpret_cast<char *>(values2_read.data()),
             num_nonzeros2 * sizeof(float));
 
   // Verify second matrix
@@ -314,9 +315,9 @@ TEST_F(UtilsTest, DumpVectorToFileAppends) {
 
   // Read first vector
   uint32_t size1;
-  file.read(reinterpret_cast<char*>(&size1), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&size1), sizeof(uint32_t));
   std::vector<float> values1(size1);
-  file.read(reinterpret_cast<char*>(values1.data()), size1 * sizeof(float));
+  file.read(reinterpret_cast<char *>(values1.data()), size1 * sizeof(float));
 
   // Verify first vector
   EXPECT_EQ(size1, 3u);
@@ -326,9 +327,9 @@ TEST_F(UtilsTest, DumpVectorToFileAppends) {
 
   // Read second vector
   uint32_t size2;
-  file.read(reinterpret_cast<char*>(&size2), sizeof(uint32_t));
+  file.read(reinterpret_cast<char *>(&size2), sizeof(uint32_t));
   std::vector<float> values2(size2);
-  file.read(reinterpret_cast<char*>(values2.data()), size2 * sizeof(float));
+  file.read(reinterpret_cast<char *>(values2.data()), size2 * sizeof(float));
 
   // Verify second vector
   EXPECT_EQ(size2, 2u);
@@ -336,7 +337,8 @@ TEST_F(UtilsTest, DumpVectorToFileAppends) {
   EXPECT_FLOAT_EQ(values2[1], 5.0f);
 }
 
-/** @brief Tests that DumpCSRSparseMatrixToFile handles an empty (0x0) matrix. */
+/** @brief Tests that DumpCSRSparseMatrixToFile handles an empty (0x0) matrix.
+ */
 TEST_F(UtilsTest, DumpCSRSparseMatrixToFileEmptyMatrix) {
   // Create an empty matrix (0x0)
   CSRSparseMatrix matrix;
@@ -384,4 +386,4 @@ TEST_F(UtilsTest, DumpVectorToFileEmptyVector) {
   EXPECT_EQ(read_values.size(), 0u);
 }
 
-}  // namespace cunls
+} // namespace cunls

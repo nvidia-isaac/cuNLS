@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 
 namespace cunls {
 
-const char* cusparseGetErrorString(int status) {
+const char *cusparseGetErrorString(int status) {
   return ::cusparseGetErrorString(static_cast<cusparseStatus_t>(status));
 }
 
@@ -36,7 +36,7 @@ cuSPARSEHandle::~cuSPARSEHandle() {
 }
 
 /** @copydoc cuSPARSEHandle::GetHandle */
-void* cuSPARSEHandle::GetHandle(cudaStream_t stream) {
+void *cuSPARSEHandle::GetHandle(cudaStream_t stream) {
   if (stream == nullptr) {
     const std::string msg = "cuSPARSEHandle recieved invalid CUDA stream.";
     LogError(msg);
@@ -56,13 +56,14 @@ void* cuSPARSEHandle::GetHandle(cudaStream_t stream) {
   cusparseHandle_t h = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreate(&h));
   THROW_ON_CUSPARSE_ERROR(cusparseSetStream(h, stream_));
-  handle_ = static_cast<void*>(h);
+  handle_ = static_cast<void *>(h);
   return handle_;
 }
 
-/** @copydoc cuSPARSEMatrixDescription::operator=(cuSPARSEMatrixDescription&&) */
-cuSPARSEMatrixDescription& cuSPARSEMatrixDescription::operator=(
-    cuSPARSEMatrixDescription&& other) noexcept {
+/** @copydoc cuSPARSEMatrixDescription::operator=(cuSPARSEMatrixDescription&&)
+ */
+cuSPARSEMatrixDescription &cuSPARSEMatrixDescription::operator=(
+    cuSPARSEMatrixDescription &&other) noexcept {
   if (this == &other) {
     return *this;
   }
@@ -76,34 +77,32 @@ cuSPARSEMatrixDescription& cuSPARSEMatrixDescription::operator=(
   return *this;
 }
 
-/** @copydoc cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int,int,const CSRSparseMatrix&) */
+/** @copydoc
+ * cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int,int,const
+ * CSRSparseMatrix&) */
 cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(
     int num_rows, int num_cols, int num_nonzeros,
-    const CSRSparseMatrix& matrix) {
-  auto rows_ptr =
-      const_cast<int*>(matrix.row_offsets.data());
-  auto cols_ptr =
-      const_cast<int*>(matrix.col_ids.data());
-  auto values_ptr =
-      const_cast<float*>(matrix.values.data());
+    const CSRSparseMatrix &matrix) {
+  auto rows_ptr = const_cast<int *>(matrix.row_offsets.data());
+  auto cols_ptr = const_cast<int *>(matrix.col_ids.data());
+  auto values_ptr = const_cast<float *>(matrix.values.data());
 
   cusparseSpMatDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(
-      &descr, num_rows, num_cols, num_nonzeros, rows_ptr, cols_ptr,
-      values_ptr, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
-  description_ = static_cast<void*>(descr);
+      &descr, num_rows, num_cols, num_nonzeros, rows_ptr, cols_ptr, values_ptr,
+      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+      CUDA_R_32F));
+  description_ = static_cast<void *>(descr);
 };
 
 /** @copydoc cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int) */
 cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows,
                                                      int num_cols) {
   cusparseSpMatDescr_t descr = nullptr;
-  THROW_ON_CUSPARSE_ERROR(
-      cusparseCreateCsr(&descr, num_rows, num_cols, 0, NULL, NULL, NULL,
-                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
-  description_ = static_cast<void*>(descr);
+  THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(
+      &descr, num_rows, num_cols, 0, NULL, NULL, NULL, CUSPARSE_INDEX_32I,
+      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+  description_ = static_cast<void *>(descr);
 };
 
 /** @copydoc cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription */
@@ -115,47 +114,39 @@ cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription() {
 }
 
 /** @copydoc cuSPARSEMatrixDescription::UpdatePointers */
-void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix& matrix) {
-  auto rows_ptr =
-      const_cast<int*>(matrix.row_offsets.data());
-  auto cols_ptr =
-      const_cast<int*>(matrix.col_ids.data());
-  auto values_ptr =
-      const_cast<float*>(matrix.values.data());
+void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix &matrix) {
+  auto rows_ptr = const_cast<int *>(matrix.row_offsets.data());
+  auto cols_ptr = const_cast<int *>(matrix.col_ids.data());
+  auto values_ptr = const_cast<float *>(matrix.values.data());
 
-  THROW_ON_CUSPARSE_ERROR(cusparseCsrSetPointers(
-      static_cast<cusparseSpMatDescr_t>(description_),
-      rows_ptr, cols_ptr, values_ptr));
+  THROW_ON_CUSPARSE_ERROR(
+      cusparseCsrSetPointers(static_cast<cusparseSpMatDescr_t>(description_),
+                             rows_ptr, cols_ptr, values_ptr));
 }
 
 /** @copydoc cuSPARSEMatrixDescription::GetDescription */
-void* cuSPARSEMatrixDescription::GetDescription() {
-  return description_;
-}
+void *cuSPARSEMatrixDescription::GetDescription() { return description_; }
 
 /** @copydoc cuSPARSEVectorDescription::cuSPARSEVectorDescription */
 cuSPARSEVectorDescription::cuSPARSEVectorDescription(
-    const dvector<float>& vec) {
-  auto ptr = const_cast<float*>(vec.data());
+    const dvector<float> &vec) {
+  auto ptr = const_cast<float *>(vec.data());
 
   cusparseDnVecDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(
       cusparseCreateDnVec(&descr, vec.size(), ptr, CUDA_R_32F));
-  description_ = static_cast<void*>(descr);
+  description_ = static_cast<void *>(descr);
 };
 
 /** @copydoc cuSPARSEVectorDescription::~cuSPARSEVectorDescription */
 cuSPARSEVectorDescription::~cuSPARSEVectorDescription() {
   if (description_) {
     WARN_ON_CUSPARSE_ERROR(
-        cusparseDestroyDnVec(
-            static_cast<cusparseDnVecDescr_t>(description_)));
+        cusparseDestroyDnVec(static_cast<cusparseDnVecDescr_t>(description_)));
   }
 }
 
 /** @copydoc cuSPARSEVectorDescription::GetDescription */
-void* cuSPARSEVectorDescription::GetDescription() {
-  return description_;
-}
+void *cuSPARSEVectorDescription::GetDescription() { return description_; }
 
-}  // namespace cunls
+} // namespace cunls

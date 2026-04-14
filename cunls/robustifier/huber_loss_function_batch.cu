@@ -40,7 +40,7 @@ constexpr size_t block_size = 256;
  *
  * Grid/block: launched with ceil(num_losses / 256) blocks of 256 threads.
  */
-__global__ void huber_loss_kernel(float delta, float* s, float3* out,
+__global__ void huber_loss_kernel(float delta, float *s, float3 *out,
                                   int num_losses) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_losses) {
@@ -49,7 +49,7 @@ __global__ void huber_loss_kernel(float delta, float* s, float3* out,
 
   float delta_squared_ = delta * delta;
 
-  float3& rho = out[tid];
+  float3 &rho = out[tid];
   float sq_error = s[tid];
 
   if (sq_error > delta_squared_) {
@@ -69,7 +69,7 @@ __global__ void huber_loss_kernel(float delta, float* s, float3* out,
 HuberLossFunctionBatch::HuberLossFunctionBatch(float delta) : delta_(delta) {}
 
 /** @copydoc HuberLossFunctionBatch::Evaluate */
-bool HuberLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
+bool HuberLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
                                       cudaStream_t stream) const {
   if (num_losses <= 0) {
     return true;
@@ -81,4 +81,4 @@ bool HuberLossFunctionBatch::Evaluate(float* s, float3* out, int num_losses,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
-}  // namespace cunls
+} // namespace cunls

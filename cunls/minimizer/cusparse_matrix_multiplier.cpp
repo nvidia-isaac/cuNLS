@@ -33,7 +33,7 @@ constexpr cusparseOperation_t operation = CUSPARSE_OPERATION_NON_TRANSPOSE;
 cuSPARSESparseMatrixMultiplier::cuSPARSESparseMatrixMultiplier() {
   cusparseSpGEMMDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMM_createDescr(&descr));
-  gemm_description_ = static_cast<void*>(descr);
+  gemm_description_ = static_cast<void *>(descr);
 }
 
 cuSPARSESparseMatrixMultiplier::~cuSPARSESparseMatrixMultiplier() {
@@ -42,8 +42,8 @@ cuSPARSESparseMatrixMultiplier::~cuSPARSESparseMatrixMultiplier() {
 }
 
 void cuSPARSESparseMatrixMultiplier::Transpose(cudaStream_t stream,
-                                               const CSRSparseMatrix& matrix,
-                                               CSRSparseMatrix& transposed) {
+                                               const CSRSparseMatrix &matrix,
+                                               CSRSparseMatrix &transposed) {
   int num_rows, num_cols, num_nonzeros;
   ExtractMatrixMetadata(stream, matrix, num_rows, num_cols, num_nonzeros);
 
@@ -65,8 +65,8 @@ void cuSPARSESparseMatrixMultiplier::Transpose(cudaStream_t stream,
   size_t bufferSize = 0;
 
   THROW_ON_CUSPARSE_ERROR(cusparseCsr2cscEx2_bufferSize(
-      cusparse_handle, num_rows, num_cols, num_nonzeros,
-      matrix.values.data(), matrix.row_offsets.data(), matrix.col_ids.data(),
+      cusparse_handle, num_rows, num_cols, num_nonzeros, matrix.values.data(),
+      matrix.row_offsets.data(), matrix.col_ids.data(),
       transposed.values.data(), transposed.row_offsets.data(),
       transposed.col_ids.data(), CUDA_R_32F, CUSPARSE_ACTION_NUMERIC,
       CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG_DEFAULT, &bufferSize));
@@ -78,17 +78,17 @@ void cuSPARSESparseMatrixMultiplier::Transpose(cudaStream_t stream,
   }
 
   THROW_ON_CUSPARSE_ERROR(cusparseCsr2cscEx2(
-      cusparse_handle, num_rows, num_cols, num_nonzeros,
-      matrix.values.data(), matrix.row_offsets.data(), matrix.col_ids.data(),
+      cusparse_handle, num_rows, num_cols, num_nonzeros, matrix.values.data(),
+      matrix.row_offsets.data(), matrix.col_ids.data(),
       transposed.values.data(), transposed.row_offsets.data(),
       transposed.col_ids.data(), CUDA_R_32F, CUSPARSE_ACTION_NUMERIC,
       CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG_DEFAULT, buffer1.data()));
 }
 
 void cuSPARSESparseMatrixMultiplier::Initialize(cudaStream_t stream,
-                                                const Problem& /*problem*/,
-                                                const CSRSparseMatrix& input,
-                                                CSRSparseMatrix& output) {
+                                                const Problem & /*problem*/,
+                                                const CSRSparseMatrix &input,
+                                                CSRSparseMatrix &output) {
   Transpose(stream, input, temp_matrix_);
 
   auto handle = handle_.GetHandle(stream);
@@ -110,8 +110,8 @@ void cuSPARSESparseMatrixMultiplier::Initialize(cudaStream_t stream,
 
   int64_t C_num_rows, C_num_cols, C_nnz;
   THROW_ON_CUSPARSE_ERROR(cusparseSpMatGetSize(
-      static_cast<cusparseSpMatDescr_t>(descrC_.GetDescription()),
-      &C_num_rows, &C_num_cols, &C_nnz));
+      static_cast<cusparseSpMatDescr_t>(descrC_.GetDescription()), &C_num_rows,
+      &C_num_cols, &C_nnz));
 
   output.row_offsets.resize(C_num_rows + 1);
   output.col_ids.resize(C_nnz);
@@ -124,8 +124,8 @@ void cuSPARSESparseMatrixMultiplier::Initialize(cudaStream_t stream,
 }
 
 void cuSPARSESparseMatrixMultiplier::ComputeSquaredMatrix(
-    cudaStream_t stream, const Problem& /*problem*/,
-    const CSRSparseMatrix& input, CSRSparseMatrix& output) {
+    cudaStream_t stream, const Problem & /*problem*/,
+    const CSRSparseMatrix &input, CSRSparseMatrix &output) {
   Transpose(stream, input, temp_matrix_);
 
   auto handle = static_cast<cusparseHandle_t>(handle_.GetHandle(stream));
@@ -141,7 +141,7 @@ void cuSPARSESparseMatrixMultiplier::ComputeSquaredMatrix(
       static_cast<cusparseSpGEMMDescr_t>(gemm_description_)));
 }
 
-void cuSPARSESparseMatrixMultiplier::EstimateWork(void* handle) {
+void cuSPARSESparseMatrixMultiplier::EstimateWork(void *handle) {
   auto h = static_cast<cusparseHandle_t>(handle);
   size_t bufferSize1 = 0;
 
@@ -151,17 +151,17 @@ void cuSPARSESparseMatrixMultiplier::EstimateWork(void* handle) {
   auto gemm = static_cast<cusparseSpGEMMDescr_t>(gemm_description_);
 
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_workEstimation(
-      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT,
-      gemm, &bufferSize1, NULL));
+      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT, gemm,
+      &bufferSize1, NULL));
 
   buffer1.resize(bufferSize1);
 
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_workEstimation(
-      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT,
-      gemm, &bufferSize1, buffer1.data()));
+      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT, gemm,
+      &bufferSize1, buffer1.data()));
 }
 
-void cuSPARSESparseMatrixMultiplier::ReuseNonzeros(void* handle) {
+void cuSPARSESparseMatrixMultiplier::ReuseNonzeros(void *handle) {
   auto h = static_cast<cusparseHandle_t>(handle);
   size_t bufferSize2 = 0;
   size_t bufferSize3 = 0;
@@ -173,21 +173,20 @@ void cuSPARSESparseMatrixMultiplier::ReuseNonzeros(void* handle) {
   auto gemm = static_cast<cusparseSpGEMMDescr_t>(gemm_description_);
 
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_nnz(
-      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT,
-      gemm, &bufferSize2, NULL, &bufferSize3, NULL, &bufferSize4,
-      NULL));
+      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT, gemm,
+      &bufferSize2, NULL, &bufferSize3, NULL, &bufferSize4, NULL));
 
   buffer2.resize(bufferSize2);
   buffer3.resize(bufferSize3);
   buffer4.resize(bufferSize4);
 
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_nnz(
-      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT,
-      gemm, &bufferSize2, buffer2.data(), &bufferSize3,
-      buffer3.data(), &bufferSize4, buffer4.data()));
+      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT, gemm,
+      &bufferSize2, buffer2.data(), &bufferSize3, buffer3.data(), &bufferSize4,
+      buffer4.data()));
 }
 
-void cuSPARSESparseMatrixMultiplier::ReuseCopy(void* handle) {
+void cuSPARSESparseMatrixMultiplier::ReuseCopy(void *handle) {
   auto h = static_cast<cusparseHandle_t>(handle);
   size_t bufferSize5 = 0;
 
@@ -197,14 +196,14 @@ void cuSPARSESparseMatrixMultiplier::ReuseCopy(void* handle) {
   auto gemm = static_cast<cusparseSpGEMMDescr_t>(gemm_description_);
 
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_copy(
-      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT,
-      gemm, &bufferSize5, NULL));
+      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT, gemm,
+      &bufferSize5, NULL));
 
   buffer5.resize(bufferSize5);
 
   THROW_ON_CUSPARSE_ERROR(cusparseSpGEMMreuse_copy(
-      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT,
-      gemm, &bufferSize5, buffer5.data()));
+      h, operation, operation, dA, dB, dC, CUSPARSE_SPGEMM_DEFAULT, gemm,
+      &bufferSize5, buffer5.data()));
 }
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,8 @@
  */
 
 /** @file problem_test.cpp
- *  @brief Tests for Problem consistency checking with various state/cost configurations.
+ *  @brief Tests for Problem consistency checking with various state/cost
+ * configurations.
  */
 
 #include "cunls/minimizer/problem.h"
@@ -45,7 +46,7 @@ namespace cunls {
  */
 template <class VectorSize>
 class ProblemConsistencyTest : public ::testing::Test {
- public:
+public:
   static constexpr int kDim = VectorSize::size;
 
   const size_t num_vectors = 100;
@@ -57,19 +58,18 @@ typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>,
     VectorSizes;
 TYPED_TEST_CASE(ProblemConsistencyTest, VectorSizes);
 
-/** @brief Verifies that a problem is inconsistent without states and consistent once added. */
+/** @brief Verifies that a problem is inconsistent without states and consistent
+ * once added. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencySimple) {
   auto seq_vecs =
       test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data(seq_vecs);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(
-      obs_vecs);
-  auto& factor_batch = factor_data.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, device_pointers);
@@ -82,22 +82,20 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencySimple) {
   ASSERT_TRUE(problem.CheckConsistency());
 }
 
-/** @brief Verifies consistency with one state batch and multiple factor batches. */
+/** @brief Verifies consistency with one state batch and multiple factor
+ * batches. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencyOneToMany) {
   auto seq_vecs =
       test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data(seq_vecs);
-  auto& vector_states = state_data.get();
-  auto device_pointers =
-      test_utils::CollectStatePointers(vector_states);
+  auto &vector_states = state_data.get();
+  auto device_pointers = test_utils::CollectStatePointers(vector_states);
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data_1(
-      obs_vecs);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data_2(
-      obs_vecs);
-  auto& factor_batch_1 = factor_data_1.get();
-  auto& factor_batch_2 = factor_data_2.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data_1(obs_vecs);
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data_2(obs_vecs);
+  auto &factor_batch_1 = factor_data_1.get();
+  auto &factor_batch_2 = factor_data_2.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch_1, device_pointers);
@@ -108,9 +106,8 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyOneToMany) {
   ASSERT_TRUE(problem.CheckConsistency());
 
   auto obs_vecs_3 = test_utils::MakeConstantVectors<TestFixture::kDim>(1, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data_3(
-      obs_vecs_3);
-  auto& factor_batch_3 = factor_data_3.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data_3(obs_vecs_3);
+  auto &factor_batch_3 = factor_data_3.get();
   problem.AddFactorBatch(&factor_batch_3, {nullptr});
 
   auto test_range =
@@ -118,25 +115,25 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyOneToMany) {
   ASSERT_FALSE(problem.CheckConsistency());
 }
 
-/** @brief Verifies consistency with multiple state batches linked to one factor batch. */
+/** @brief Verifies consistency with multiple state batches linked to one factor
+ * batch. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencyManyToOne) {
   auto seq_vecs =
       test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data_1(seq_vecs);
   test_utils::VectorStateData<TestFixture::kDim> state_data_2(seq_vecs);
-  auto& state_batch_1 = state_data_1.get();
-  auto& state_batch_2 = state_data_2.get();
+  auto &state_batch_1 = state_data_1.get();
+  auto &state_batch_2 = state_data_2.get();
 
-  std::vector<float*> state_pointers;
+  std::vector<float *> state_pointers;
   for (size_t i = 0; i < this->num_vectors; i++) {
     state_pointers.push_back(state_batch_1.StateBlockDevicePtr(i));
     state_pointers.push_back(state_batch_2.StateBlockDevicePtr(i));
   }
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
       this->num_vectors * 2, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(
-      obs_vecs);
-  auto& factor_batch = factor_data.get();
+  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
+  auto &factor_batch = factor_data.get();
 
   Problem problem;
   problem.AddFactorBatch(&factor_batch, state_pointers);
@@ -151,4 +148,4 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyManyToOne) {
   ASSERT_TRUE(problem.CheckConsistency());
 }
 
-}  // namespace cunls
+} // namespace cunls

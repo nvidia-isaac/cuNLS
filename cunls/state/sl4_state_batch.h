@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -22,23 +22,23 @@ namespace cunls {
  * with Exp the matrix exponential and projection to det = 1. *
  */
 class SL4StateBatch : public SizedStateBatch<16, 15> {
- public:
+public:
   using Base = SizedStateBatch<16, 15>;
 
-  SL4StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
+  SL4StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
                 size_t num_blocks);
 
-  SL4StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
-                size_t num_blocks, const int* device_constant_state_ids,
+  SL4StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
+                size_t num_blocks, const int *device_constant_state_ids,
                 size_t num_const_state_blocks);
 
-  void Plus(const float* x, const float* delta, float* x_plus_delta,
+  void Plus(const float *x, const float *delta, float *x_plus_delta,
             cudaStream_t stream) override;
 
- private:
-  cuBLASHandle& cublas_handle_;
+private:
+  cuBLASHandle &cublas_handle_;
   mutable dvector<SL4Transform> delta_transforms_;
   mutable dvector<float> twists_;
 };
 
-}  // namespace cunls
+} // namespace cunls

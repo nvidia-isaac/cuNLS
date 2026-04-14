@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 
 #pragma once
 
-#include <cuda_runtime.h>
 #include "cunls/robustifier/loss_function_batch.h"
+#include <cuda_runtime.h>
 
 namespace cunls {
 
@@ -35,7 +35,7 @@ namespace cunls {
  * slowly with residual magnitude.
  */
 class SoftLOneLossFunctionBatch : public LossFunctionBatch {
- public:
+public:
   /**
    * @brief Constructs a SoftLOne loss with the given parameters.
    * @param b Scale parameter (b > 0).
@@ -47,12 +47,12 @@ class SoftLOneLossFunctionBatch : public LossFunctionBatch {
    * @brief Evaluates the SoftLOne loss for a batch of squared residuals.
    * @copydetails LossFunctionBatch::Evaluate
    */
-  bool Evaluate(float* s, float3* out, int num_losses,
+  bool Evaluate(float *s, float3 *out, int num_losses,
                 cudaStream_t stream) const override;
 
- private:
+private:
   float b_;
   float c_;
 };
 
-}  // namespace cunls
+} // namespace cunls

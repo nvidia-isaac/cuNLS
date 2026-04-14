@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ namespace cunls {
  * Non-copyable to prevent accidental sharing of stream ownership.
  */
 class CudaStream {
- public:
+public:
   /**
    * @brief Constructs a new CUDA stream.
    *
@@ -55,8 +55,8 @@ class CudaStream {
    */
   cudaStream_t &GetStream();
 
- private:
-  cudaStream_t stream;       ///< The underlying CUDA stream handle.
-  bool sync_on_destroy_;     ///< Whether to synchronize on destruction.
+private:
+  cudaStream_t stream;   ///< The underlying CUDA stream handle.
+  bool sync_on_destroy_; ///< Whether to synchronize on destruction.
 };
-}  // namespace cunls
+} // namespace cunls

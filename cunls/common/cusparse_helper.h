@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ namespace cunls {
  * @param status The cuSPARSE status code to convert.
  * @return A string describing the status code.
  */
-const char* cusparseGetErrorString(int status);
+const char *cusparseGetErrorString(int status);
 
 /**
  * @brief Macro to check cuSPARSE status and throw an exception on error
@@ -39,7 +39,7 @@ const char* cusparseGetErrorString(int status);
  * fails. It uses the cusparseGetErrorString function to provide detailed error
  * messages.
  */
-#define THROW_ON_CUSPARSE_ERROR(status) \
+#define THROW_ON_CUSPARSE_ERROR(status)                                        \
   CHECK_CUDA_ERROR(status, cusparseGetErrorString, true)
 
 /**
@@ -49,7 +49,7 @@ const char* cusparseGetErrorString(int status);
  * throwing. Useful for cleanup operations where exceptions should not be
  * thrown.
  */
-#define WARN_ON_CUSPARSE_ERROR(status) \
+#define WARN_ON_CUSPARSE_ERROR(status)                                         \
   CHECK_CUDA_ERROR(status, cusparseGetErrorString, false)
 
 /**
@@ -63,7 +63,7 @@ const char* cusparseGetErrorString(int status);
  * requested.
  */
 class cuSPARSEHandle {
- public:
+public:
   /**
    * @brief Default constructor
    *
@@ -92,11 +92,11 @@ class cuSPARSEHandle {
    * @return An opaque pointer to the cuSPARSE handle ready for use.
    * @throws Runtime error if handle creation or stream association fails
    */
-  void* GetHandle(cudaStream_t stream);
+  void *GetHandle(cudaStream_t stream);
 
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
-  void* handle_ = nullptr;         ///< The cuSPARSE handle object
+private:
+  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream
+  void *handle_ = nullptr;        ///< The cuSPARSE handle object
 };
 
 /**
@@ -109,7 +109,7 @@ class cuSPARSEHandle {
  * descriptor.
  */
 class cuSPARSEMatrixDescription {
- public:
+public:
   /**
    * @brief Default constructor
    *
@@ -132,7 +132,7 @@ class cuSPARSEMatrixDescription {
    * @throws Runtime error if descriptor creation fails
    */
   cuSPARSEMatrixDescription(int num_rows, int num_cols, int num_nonzeros,
-                            const CSRSparseMatrix& matrix);
+                            const CSRSparseMatrix &matrix);
 
   /**
    * @brief Constructor for empty matrices
@@ -155,8 +155,8 @@ class cuSPARSEMatrixDescription {
    * @param other The source object to move from
    * @return Reference to this object
    */
-  cuSPARSEMatrixDescription& operator=(
-      cuSPARSEMatrixDescription&& other) noexcept;
+  cuSPARSEMatrixDescription &
+  operator=(cuSPARSEMatrixDescription &&other) noexcept;
 
   /**
    * @brief Destructor
@@ -176,7 +176,7 @@ class cuSPARSEMatrixDescription {
    * @param matrix The CSR sparse matrix with updated data pointers
    * @throws Runtime error if pointer update fails
    */
-  void UpdatePointers(const CSRSparseMatrix& matrix);
+  void UpdatePointers(const CSRSparseMatrix &matrix);
 
   /**
    * @brief Get the cuSPARSE matrix descriptor
@@ -186,10 +186,10 @@ class cuSPARSEMatrixDescription {
    *
    * @return An opaque pointer to the matrix descriptor.
    */
-  void* GetDescription();
+  void *GetDescription();
 
- private:
-  void* description_ = nullptr;  ///< The cuSPARSE matrix descriptor
+private:
+  void *description_ = nullptr; ///< The cuSPARSE matrix descriptor
 };
 
 /**
@@ -201,7 +201,7 @@ class cuSPARSEMatrixDescription {
  * of float values and is commonly used in sparse matrix-vector operations.
  */
 class cuSPARSEVectorDescription {
- public:
+public:
   /**
    * @brief Constructor from device vector
    *
@@ -211,7 +211,7 @@ class cuSPARSEVectorDescription {
    * @param vec The device vector containing float values
    * @throws Runtime error if descriptor creation fails
    */
-  cuSPARSEVectorDescription(const dvector<float>& vec);
+  cuSPARSEVectorDescription(const dvector<float> &vec);
 
   /**
    * @brief Destructor
@@ -229,10 +229,10 @@ class cuSPARSEVectorDescription {
    *
    * @return An opaque pointer to the vector descriptor.
    */
-  void* GetDescription();
+  void *GetDescription();
 
- private:
-  void* description_ = nullptr;  ///< The cuSPARSE vector descriptor
+private:
+  void *description_ = nullptr; ///< The cuSPARSE vector descriptor
 };
 
-}  // namespace cunls
+} // namespace cunls

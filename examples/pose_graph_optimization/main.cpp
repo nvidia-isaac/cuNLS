@@ -81,8 +81,8 @@ int main() {
     std::vector<int> const_ids = {0};
     dvector<int> const_ids_device(const_ids);
 
-    const float* poses_ptr =
-        reinterpret_cast<const float*>(poses_device.data());
+    const float *poses_ptr =
+        reinterpret_cast<const float *>(poses_device.data());
 
     // Single state batch for the entire chain, with T_0 fixed.
     cunls::cuBLASHandle cublas_handle;
@@ -90,12 +90,12 @@ int main() {
                                      const_ids_device.data(), 1);
 
     // Build SE(3) between factor batch for consecutive constraints.
-    cunls::SE3BetweenFactorBatch between_factor(cublas_handle, deltas_device.data(),
-                                                num_constraints);
+    cunls::SE3BetweenFactorBatch between_factor(
+        cublas_handle, deltas_device.data(), num_constraints);
 
     // Flatten factor-to-state connectivity:
     // [T_0, T_1, T_1, T_2, ..., T_{N-2}, T_{N-1}]
-    std::vector<float*> state_pointers;
+    std::vector<float *> state_pointers;
     state_pointers.reserve(2 * num_constraints);
     for (size_t i = 0; i < num_constraints; ++i) {
       state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
@@ -150,7 +150,7 @@ int main() {
       return 2;
     }
     return 0;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     std::cerr << "Exception: " << e.what() << "\n";
     return 3;
   }

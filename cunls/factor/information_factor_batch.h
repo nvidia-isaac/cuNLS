@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,9 +41,9 @@ namespace cunls {
  * @param residual_size Dimension of each residual / information matrix.
  * @param num_factors Number of factors in the batch.
  */
-void ApplyInformationToResiduals(void* cublas_handle,
-                                 const float* sqrt_information,
-                                 float* residuals, size_t residual_size,
+void ApplyInformationToResiduals(void *cublas_handle,
+                                 const float *sqrt_information,
+                                 float *residuals, size_t residual_size,
                                  size_t num_factors);
 
 /**
@@ -56,12 +56,13 @@ void ApplyInformationToResiduals(void* cublas_handle,
  * @param sqrt_information Batched square-root information matrices (device).
  * @param jacobians Jacobian matrices, modified in-place (device).
  * @param residual_size Row dimension of the Jacobian / information matrix.
- * @param jacobian_pitch Column dimension (total state-block width) of each Jacobian.
+ * @param jacobian_pitch Column dimension (total state-block width) of each
+ * Jacobian.
  * @param num_factors Number of factors in the batch.
  */
-void ApplyInformationToJacobians(void* cublas_handle,
-                                 const float* sqrt_information,
-                                 float* jacobians, size_t residual_size,
+void ApplyInformationToJacobians(void *cublas_handle,
+                                 const float *sqrt_information,
+                                 float *jacobians, size_t residual_size,
                                  size_t jacobian_pitch, size_t num_factors);
 
 /**
@@ -77,14 +78,14 @@ void ApplyInformationToJacobians(void* cublas_handle,
  * @tparam T The wrapped factor type, must derive from
  * SizedFactorBatch
  *
- * @note The sqrt_information_matrices_ptr must point to GPU device memory and remain
- *       valid for the lifetime of this object. The memory layout is:
- *       [mat0: residual_size^2 floats][mat1: residual_size^2 floats]...
+ * @note The sqrt_information_matrices_ptr must point to GPU device memory and
+ * remain valid for the lifetime of this object. The memory layout is: [mat0:
+ * residual_size^2 floats][mat1: residual_size^2 floats]...
  */
 template <class T, typename std::enable_if_t<
                        IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
 class InformationFactorBatch : public T::sized_layout {
- public:
+public:
   using InformationMatrix = Matrix<T::residual_size_>;
 
   /**
@@ -100,13 +101,13 @@ class InformationFactorBatch : public T::sized_layout {
    * factor batch constructor verbatim (same order as ``T``'s constructor;
    * e.g. ``SE3BetweenFactorBatch`` and ``Similarity3BetweenFactorBatch``
    * still take a leading ``cuBLASHandle``, while factors such as
-   * ``ReprojectionFactorBatch`` do not. For ``WeightedFactorBatch<U>``, pass ``weight`` (or
-   * per-factor weights) then ``U``'s constructor arguments).
+   * ``ReprojectionFactorBatch`` do not. For ``WeightedFactorBatch<U>``, pass
+   * ``weight`` (or per-factor weights) then ``U``'s constructor arguments).
    */
   template <class... Args>
-  InformationFactorBatch(cuBLASHandle& cublas_handle,
-                         const InformationMatrix* sqrt_information_matrices_ptr,
-                         size_t num_matrices, Args&&... sized_factor_batch_args)
+  InformationFactorBatch(cuBLASHandle &cublas_handle,
+                         const InformationMatrix *sqrt_information_matrices_ptr,
+                         size_t num_matrices, Args &&...sized_factor_batch_args)
       : cublas_handle_(cublas_handle),
         sqrt_information_matrices_ptr_(sqrt_information_matrices_ptr),
         num_matrices_(num_matrices),
@@ -144,14 +145,14 @@ class InformationFactorBatch : public T::sized_layout {
    * @param stream CUDA stream for asynchronous execution
    * @return true if evaluation succeeded, false otherwise
    */
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final {
     factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream);
 
     auto handle = cublas_handle_.GetHandle(stream);
-    auto info_ptr = reinterpret_cast<const float*>(
-        sqrt_information_matrices_ptr_);
+    auto info_ptr =
+        reinterpret_cast<const float *>(sqrt_information_matrices_ptr_);
     const size_t rsize = T::residual_size_;
     const size_t num_factors = factor_batch_.NumFactors();
 
@@ -163,8 +164,8 @@ class InformationFactorBatch : public T::sized_layout {
     }
 
     auto state_block_sizes = this->StateBlockSizes();
-    const size_t jacobian_pitch = std::accumulate(
-        state_block_sizes.begin(), state_block_sizes.end(), 0);
+    const size_t jacobian_pitch =
+        std::accumulate(state_block_sizes.begin(), state_block_sizes.end(), 0);
 
     ApplyInformationToJacobians(handle, info_ptr, jacobians, rsize,
                                 jacobian_pitch, num_factors);
@@ -172,16 +173,17 @@ class InformationFactorBatch : public T::sized_layout {
     return true;
   }
 
- private:
-  T factor_batch_;  ///< Wrapped factor batch
+private:
+  T factor_batch_; ///< Wrapped factor batch
 
-  /// Pointer to user-managed device memory containing square-root information matrices.
-  const InformationMatrix* sqrt_information_matrices_ptr_;
+  /// Pointer to user-managed device memory containing square-root information
+  /// matrices.
+  const InformationMatrix *sqrt_information_matrices_ptr_;
 
   /// Number of per-factor square-root information matrices (equals batch size).
   size_t num_matrices_;
 
-  cuBLASHandle& cublas_handle_;  ///< cuBLAS handle for matrix operations
+  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
 };
 
-}  // namespace cunls
+} // namespace cunls

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,7 +65,8 @@
  * =============================================================================
  *
  * Input: States Array
- *     state_pointers[i] -> SE3Transform for correspondence i (16 floats, row-major)
+ *     state_pointers[i] -> SE3Transform for correspondence i (16 floats,
+ * row-major)
  *
  * SE3Transform storage (row-major 4x4):
  *     [ R00  R01  R02  tx  ]     indices: [0]  [1]  [2]  [3]
@@ -109,22 +110,26 @@ constexpr size_t kBlockSize = 256;
  *
  * Each thread processes one correspondence independently.
  *
- * @param p_observations Flattened array of target points (num_correspondences * 3 floats).
- * @param q_observations Flattened array of source points (num_correspondences * 3 floats).
- * @param state_pointers     Array of device pointers, one per correspondence, each pointing
- *                       to an SE3Transform (16 floats).
- * @param residuals      Output array for residuals (num_correspondences * 3 floats),
- *                       or nullptr to skip.
- * @param jacobians      Output array for Jacobians (num_correspondences * 18 floats,
- *                       row-major 3x6 per correspondence), or nullptr to skip.
- * @param num_correspondences Number of point correspondences (one thread per correspondence).
+ * @param p_observations Flattened array of target points (num_correspondences *
+ * 3 floats).
+ * @param q_observations Flattened array of source points (num_correspondences *
+ * 3 floats).
+ * @param state_pointers     Array of device pointers, one per correspondence,
+ * each pointing to an SE3Transform (16 floats).
+ * @param residuals      Output array for residuals (num_correspondences * 3
+ * floats), or nullptr to skip.
+ * @param jacobians      Output array for Jacobians (num_correspondences * 18
+ * floats, row-major 3x6 per correspondence), or nullptr to skip.
+ * @param num_correspondences Number of point correspondences (one thread per
+ * correspondence).
  *
- * @note Launch configuration: <<<ceil(num_correspondences / kBlockSize), kBlockSize>>>
+ * @note Launch configuration: <<<ceil(num_correspondences / kBlockSize),
+ * kBlockSize>>>
  */
-__global__ void point_to_point_cost_kernel(const float* p_observations,
-                                           const float* q_observations,
-                                           float const* const* state_pointers,
-                                           float* residuals, float* jacobians,
+__global__ void point_to_point_cost_kernel(const float *p_observations,
+                                           const float *q_observations,
+                                           float const *const *state_pointers,
+                                           float *residuals, float *jacobians,
                                            int num_correspondences) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_correspondences) {
@@ -139,8 +144,8 @@ __global__ void point_to_point_cost_kernel(const float* p_observations,
   assert(param_ptr != nullptr);
 
   // Read observation points
-  const float* p = p_observations + tid * kDim;
-  const float* q = q_observations + tid * kDim;
+  const float *p = p_observations + tid * kDim;
+  const float *q = q_observations + tid * kDim;
 
   // Extract rotation matrix R and translation t from the SE3 transform
   // SE3Transform is row-major 4x4: [R(3x3) | t(3x1); 0 | 1]
@@ -180,7 +185,7 @@ __global__ void point_to_point_cost_kernel(const float* p_observations,
     //         [ q[2]   0   -q[0] ]
     //         [-q[1]  q[0]   0   ]
 
-    float* jac_ptr = jacobians + tid * kDim * kTangentDim;
+    float *jac_ptr = jacobians + tid * kDim * kTangentDim;
 
     // Compute R * [q]_x for columns 0-2.
     // Row i of R * [q]_x:
@@ -202,19 +207,20 @@ __global__ void point_to_point_cost_kernel(const float* p_observations,
   }
 }
 
-bool PointToPointFactorBatch::Evaluate(float* residuals, float* jacobians,
-                                             float const* const* state_pointers,
-                                             cudaStream_t stream) const {
-  auto p_data_ptr = reinterpret_cast<const float*>(p_observations_ptr_);
-  auto q_data_ptr = reinterpret_cast<const float*>(q_observations_ptr_);
+bool PointToPointFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                       float const *const *state_pointers,
+                                       cudaStream_t stream) const {
+  auto p_data_ptr = reinterpret_cast<const float *>(p_observations_ptr_);
+  auto q_data_ptr = reinterpret_cast<const float *>(q_observations_ptr_);
   size_t num_factors = NumFactors();
 
   size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
   point_to_point_cost_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      p_data_ptr, q_data_ptr, state_pointers, residuals, jacobians, num_factors);
+      p_data_ptr, q_data_ptr, state_pointers, residuals, jacobians,
+      num_factors);
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-}  // namespace cunls
+} // namespace cunls

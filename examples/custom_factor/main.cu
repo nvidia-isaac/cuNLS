@@ -30,9 +30,9 @@
 #include "cunls/state/vector_state_batch.h"
 #include "utils/validation.h"
 
+using cunls::dvector;
 using cunls::LogError;
 using cunls::Vector;
-using cunls::dvector;
 
 namespace {
 
@@ -49,18 +49,17 @@ namespace {
 // Jacobian layout is row-major per factor. Since residual dimension is 1 and
 // state sizes are [1, 1], each factor contributes two Jacobian values:
 //   [dr/dx_i, dr/dx_{i+1}] = [-1, +1]
-__global__ void ScalarDifferenceKernel(const float* measurements,
-                                       float const* const* state_pointers,
-                                       float* residuals,
-                                       float* jacobians,
+__global__ void ScalarDifferenceKernel(const float *measurements,
+                                       float const *const *state_pointers,
+                                       float *residuals, float *jacobians,
                                        size_t num_factors) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= num_factors) {
     return;
   }
 
-  const float* left = state_pointers[idx * 2];
-  const float* right = state_pointers[idx * 2 + 1];
+  const float *left = state_pointers[idx * 2];
+  const float *right = state_pointers[idx * 2 + 1];
   const float residual = (right[0] - left[0]) - measurements[idx];
 
   if (residuals != nullptr) {
@@ -84,15 +83,16 @@ __global__ void ScalarDifferenceKernel(const float* measurements,
 // the kernel in Evaluate(). cuNLS handles assembly and optimization using
 // the residuals/Jacobians we provide here.
 class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
- public:
-  ScalarDifferenceFactorBatch(const float* measurements, size_t num_factors)
+public:
+  ScalarDifferenceFactorBatch(const float *measurements, size_t num_factors)
       : measurements_(measurements), num_factors_(num_factors) {}
 
-  bool Evaluate(float* residuals, float* jacobians,
-                float const* const* state_pointers,
+  bool Evaluate(float *residuals, float *jacobians,
+                float const *const *state_pointers,
                 cudaStream_t stream) const final {
     constexpr int kBlockSize = 256;
-    const int grid_size = static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
+    const int grid_size =
+        static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceKernel<<<grid_size, kBlockSize, 0, stream>>>(
         measurements_, state_pointers, residuals, jacobians, num_factors_);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -101,12 +101,12 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
 
   size_t NumFactors() const final { return num_factors_; }
 
- private:
-  const float* measurements_;
+private:
+  const float *measurements_;
   size_t num_factors_;
 };
 
-}  // namespace
+} // namespace
 
 int main() {
   try {
@@ -154,7 +154,8 @@ int main() {
     dvector<Vector<1>> anchor_observation_device(anchor_observation);
 
     // Build a single state batch containing all scalar states.
-    const float* states_ptr = reinterpret_cast<const float*>(states_device.data());
+    const float *states_ptr =
+        reinterpret_cast<const float *>(states_device.data());
     cunls::VectorStateBatch<1> state_batch(states_ptr, num_states);
 
     // Build:
@@ -162,10 +163,11 @@ int main() {
     // - one prior factor anchoring x_0
     ScalarDifferenceFactorBatch difference_factor(measurements_device.data(),
                                                   num_diff_factors);
-    cunls::PriorVectorFactorBatch<1> anchor_factor(anchor_observation_device.data(), 1);
+    cunls::PriorVectorFactorBatch<1> anchor_factor(
+        anchor_observation_device.data(), 1);
 
     // Create state pointer map for all custom factors.
-    std::vector<float*> diff_state_pointers;
+    std::vector<float *> diff_state_pointers;
     diff_state_pointers.reserve(2 * num_diff_factors);
     for (size_t i = 0; i < num_diff_factors; ++i) {
       diff_state_pointers.push_back(state_batch.StateBlockDevicePtr(i));
@@ -173,7 +175,8 @@ int main() {
     }
 
     // State pointer map for the anchor factor: just x_0.
-    std::vector<float*> anchor_state_pointers = {state_batch.StateBlockDevicePtr(0)};
+    std::vector<float *> anchor_state_pointers = {
+        state_batch.StateBlockDevicePtr(0)};
 
     // Assemble the optimization problem graph.
     cunls::Problem problem;
@@ -206,21 +209,24 @@ int main() {
     std::vector<Vector<1>> optimized_states(num_states);
     states_device.CopyToHost(optimized_states.data(), num_states);
 
-    const float initial_mse = examples::ComputeVectorMSE(initial_states, gt_states);
-    const float final_mse = examples::ComputeVectorMSE(optimized_states, gt_states);
+    const float initial_mse =
+        examples::ComputeVectorMSE(initial_states, gt_states);
+    const float final_mse =
+        examples::ComputeVectorMSE(optimized_states, gt_states);
 
     std::cout << "Custom Factor Example\n";
     std::cout << "  Initial cost: " << summary.initial_cost << "\n";
     std::cout << "  Final cost:   " << summary.final_cost << "\n";
     std::cout << "  Iterations:   " << summary.num_iterations << "\n";
-    std::cout << "  State MSE:    " << initial_mse << " -> " << final_mse << "\n";
+    std::cout << "  State MSE:    " << initial_mse << " -> " << final_mse
+              << "\n";
 
     if (summary.final_cost > 1e-5f || final_mse > initial_mse * 0.02f) {
       std::cerr << "Optimization quality check failed.\n";
       return 2;
     }
     return 0;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     std::cerr << "Exception: " << e.what() << "\n";
     return 3;
   }
