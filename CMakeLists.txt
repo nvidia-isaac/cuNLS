@@ -197,23 +197,11 @@ if(BUILD_TESTING)
   include(GoogleTest)
   gtest_discover_tests(nls_tests)
 
-  add_executable(nls_perf_tests
-    tests/perf/factor_bench.cu
-    tests/perf/state_bench.cu
-    tests/perf/loss_bench.cu
-    tests/perf/residual_batch_bench.cu
-  )
-  set_target_properties(nls_perf_tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-  )
-  target_link_libraries(nls_perf_tests PRIVATE ${TEST_LIBS})
-  gtest_discover_tests(nls_perf_tests)
 endif()
 
 if(ENABLE_PROFILING)
   if(BUILD_TESTING)
     target_compile_definitions(nls_tests PRIVATE ENABLE_PROFILING)
-    target_compile_definitions(nls_perf_tests PRIVATE ENABLE_PROFILING)
   endif()
 endif(ENABLE_PROFILING)
 
