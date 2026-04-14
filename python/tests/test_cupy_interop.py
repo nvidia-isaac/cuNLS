@@ -78,8 +78,8 @@ class TestCuPyRoundTrip:
         result = cp.asnumpy(states_gpu)
         np.testing.assert_allclose(result, target, atol=1e-3)
 
-    def test_factor_accepts_cupy(self, cublas):
+    def test_factor_accepts_cupy(self):
         """Factor constructors should accept CuPy arrays directly."""
         obs = cp.zeros(20, dtype=cp.float32)
-        fb = pycunls.ReprojectionFactorBatch(cublas, obs, 10)
+        fb = pycunls.ReprojectionFactorBatch(obs, 10)
         assert fb.num_factors == 10

@@ -15,16 +15,54 @@
  * limitations under the License.
  */
 
-#include <cublas_v2.h>
-#include <thrust/copy.h>
-#include <thrust/device_ptr.h>
-#include <thrust/transform.h>
-
 #include "cunls/common/helper.h"
-#include "cunls/math/so_se_lie_math.h"
 #include "cunls/state/so2_state_batch.h"
 
 namespace cunls {
+
+namespace {
+
+constexpr int kBlockSize = 256;
+
+__global__ void fused_so2_plus_kernel(const float* __restrict__ x,
+                                      const float* __restrict__ delta,
+                                      float* __restrict__ result, int n,
+                                      bool negate_delta) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= n) {
+    return;
+  }
+  float theta = delta[tid];
+  if (negate_delta) {
+    theta = -theta;
+  }
+  float c = cosf(theta);
+  float s = sinf(theta);
+  const float* X = x + tid * 4;
+  float* R = result + tid * 4;
+  float x0 = X[0];
+  float x1 = X[1];
+  float x2 = X[2];
+  float x3 = X[3];
+  R[0] = x0 * c + x1 * s;
+  R[1] = x0 * (-s) + x1 * c;
+  R[2] = x2 * c + x3 * s;
+  R[3] = x2 * (-s) + x3 * c;
+}
+
+void LaunchFusedSo2Plus(cudaStream_t stream, const float* x, const float* delta,
+                        float* result, size_t num_blocks, bool negate_delta) {
+  int n = static_cast<int>(num_blocks);
+  if (n <= 0) {
+    return;
+  }
+  int grid = (n + kBlockSize - 1) / kBlockSize;
+  fused_so2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(
+      x, delta, result, n, negate_delta);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+}  // namespace
 
 SO2StateBatch::SO2StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
                              size_t num_blocks)
@@ -45,45 +83,12 @@ SO2StateBatch::SO2StateBatch(cuBLASHandle& cublas_handle, const float* device_pt
 void SO2StateBatch::ApplyUpdate(const float* x, const float* delta,
                                 float* result, bool invert_delta,
                                 cudaStream_t stream) {
-  size_t num_rotations = NumStateBlocks();
-
-  auto angles_ptr = reinterpret_cast<const float*>(angles_.data());
-  auto delta_rotations_ptr =
-      reinterpret_cast<float*>(delta_rotations_.data());
-
-  thrust::device_ptr<const float> ptr = thrust::device_pointer_cast(delta);
-  thrust::device_ptr<float> angles_device_ptr(angles_.data());
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-  thrust::copy(stream_policy, ptr, ptr + num_rotations, angles_device_ptr);
-
-  if (invert_delta) {
-    thrust::transform(stream_policy, angles_device_ptr,
-                      angles_device_ptr + angles_.size(),
-                      angles_device_ptr, thrust::negate<float>());
-  }
-
-  // Exp(delta): angles -> SO(2) rotation matrices
-  constexpr size_t kAngleStride = 1;
-  constexpr size_t kRotationStride = 4;
-  ComputeExpSO2(stream, angles_ptr, kAngleStride, kRotationStride,
-                num_rotations, delta_rotations_ptr);
-
-  // result = x * Exp(delta) via batched matrix multiplication
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr int mat_size = 2;
-  constexpr int stride = 4;
-
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      delta_rotations_ptr, mat_size, stride, x, mat_size, stride, &beta,
-      result, mat_size, stride, num_rotations));
+  LaunchFusedSo2Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
 }
 
 void SO2StateBatch::Plus(const float* x, const float* delta,
                          float* x_plus_delta, cudaStream_t stream) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream);
+  LaunchFusedSo2Plus(stream, x, delta, x_plus_delta, NumStateBlocks(), false);
 }
 
 }  // namespace cunls

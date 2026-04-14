@@ -335,8 +335,8 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
                                     const_pose_ids_device.data(), num_poses_);
     VectorStateBatch<3> state_batch_points(points_ptr, num_points);
 
-    ReprojectionFactorBatch factor_batch(cublas_handle_, observations_device.data(),
-                                         num_observations, kZThreshold);
+    ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                         kZThreshold);
 
     std::vector<float*> state_pointers =
         CreateStatePointers(state_batch_poses, state_batch_points, num_points);

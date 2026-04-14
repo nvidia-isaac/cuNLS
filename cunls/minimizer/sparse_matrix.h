@@ -112,6 +112,7 @@ void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float>& v,
  */
 void ComputeJacobianColumnScaling(cudaStream_t stream,
                                   const CSRSparseMatrix& jacobian,
+                                  int num_cols, int num_nonzeros,
                                   dvector<float>& column_scale);
 
 /**
@@ -170,6 +171,12 @@ void ComputeRHS(cudaStream_t stream, void* handle,
                 const dvector<float>& residuals, dvector<float>& rhs,
                 dvector<uint8_t>& buffer);
 
+void ComputeRHS(cudaStream_t stream, void* handle,
+                const CSRSparseMatrix& jacobian,
+                int num_rows, int num_cols, int num_nonzeros,
+                const dvector<float>& residuals, dvector<float>& rhs,
+                dvector<uint8_t>& buffer);
+
 /**
  * @brief Computes the squared L2 norm of a step vector.
  *
@@ -216,5 +223,54 @@ float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
                                  const CSRSparseMatrix& matrix,
                                  const dvector<float>& step,
                                  dvector<uint8_t>& buffer);
+
+float ComputeWeightedSquaredStep(cudaStream_t stream, void* handle,
+                                 const CSRSparseMatrix& matrix,
+                                 int num_rows, int num_cols, int num_nonzeros,
+                                 const dvector<float>& step,
+                                 dvector<uint8_t>& buffer);
+
+// ---- Async variants: write scalar result to device memory, no D2H or sync --
+
+/**
+ * @brief Async squared step norm: d_out[0] = step^T * step.
+ *
+ * @param d_partials Scratch buffer with at least ReducePartialCount(step.size())
+ *                   floats (from device_reduction.h).
+ */
+void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float>& step,
+                             float* d_out, float* d_partials);
+
+/**
+ * @brief Async diag-weighted squared step: d_out[0] = step^T diag(w) step.
+ */
+void ComputeWeightedSquaredStepAsync(cudaStream_t stream,
+                                     const dvector<float>& weights,
+                                     const dvector<float>& step,
+                                     float* d_out, float* d_partials);
+
+/**
+ * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
+ *
+ * Performs SpMV (A*step) then dot(step, A*step) into d_out, all on the stream.
+ */
+void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void* handle,
+                                     const CSRSparseMatrix& matrix,
+                                     int num_rows, int num_cols,
+                                     int num_nonzeros,
+                                     const dvector<float>& step,
+                                     dvector<uint8_t>& buffer,
+                                     float* d_out, float* d_partials);
+
+/**
+ * @brief Elementwise vector negation: out[i] = -in[i].
+ */
+void NegateVector(cudaStream_t stream, float* data, size_t n);
+
+/**
+ * @brief Elementwise multiply: out[i] = a[i] * b[i].
+ */
+void ElementwiseMultiplyInPlace(cudaStream_t stream, float* a,
+                                const float* b, size_t n);
 
 }  // namespace cunls

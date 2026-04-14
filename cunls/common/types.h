@@ -95,6 +95,43 @@ using pvector = PinnedVector<T>;
  * - col_ids: column indices of non-zero entries (size = num_nonzeros).
  * - values: non-zero values (size = num_nonzeros).
  */
+/**
+ * @brief Cached sparse matrix dimensions.
+ *
+ * Stores num_rows, num_cols, and num_nonzeros so that repeated GPU scans
+ * (e.g. thrust::max_element + cudaStreamSynchronize) can be avoided in
+ * hot loops. Populated once during initialization via ExtractMatrixMetadata
+ * and reused thereafter.
+ */
+struct CSRMatrixDimensions {
+  int num_rows = -1;
+  int num_cols = -1;
+  int num_nonzeros = -1;
+
+  bool IsValid() const { return num_rows >= 0; }
+
+  void Set(int rows, int cols, int nnz) {
+    num_rows = rows;
+    num_cols = cols;
+    num_nonzeros = nnz;
+  }
+
+  void Invalidate() {
+    num_rows = -1;
+    num_cols = -1;
+    num_nonzeros = -1;
+  }
+};
+
+/**
+ * @brief Compressed Sparse Row (CSR) matrix stored in GPU memory.
+ *
+ * Represents a sparse matrix using three arrays:
+ * - row_offsets: indices into col_ids/values for the start of each row
+ *   (size = num_rows + 1).
+ * - col_ids: column indices of non-zero entries (size = num_nonzeros).
+ * - values: non-zero values (size = num_nonzeros).
+ */
 struct CSRSparseMatrix {
   dvector<int> row_offsets;   ///< Row offset array (num_rows + 1 entries).
   dvector<int> col_ids;       ///< Column index array (num_nonzeros entries).

@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -52,13 +51,11 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
    *
    * Pre-computes T_target^{-1} for all targets during construction.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param observations_ptr Pointer to GPU device memory containing target transforms.
    *                         Must point to at least num_factors * 16 floats.
    * @param num_factors Number of factors in the batch.
    */
-  SE3PriorFactorBatch(cuBLASHandle& cublas_handle,
-                            const SE3Transform* observations_ptr,
+  SE3PriorFactorBatch(const SE3Transform* observations_ptr,
                             size_t num_factors);
 
   /**
@@ -92,12 +89,6 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
 
   /// Pre-computed inverse of target transforms T_target^{-1}.
   DeviceVector<SE3Transform> observations_inverse_;
-
-  /// cuBLAS handle for batched matrix operations.
-  cuBLASHandle& cublas_handle_;
-
-  /// Preallocated memory for current transforms collected from state pointers.
-  mutable DeviceVector<SE3Transform> transforms_current_;
 
   /// Preallocated memory for transform error T_target^{-1} * T_current.
   mutable DeviceVector<SE3Transform> transforms_error_;

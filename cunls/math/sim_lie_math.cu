@@ -204,7 +204,8 @@ __global__ void inverse_sim2_kernel(const float* transforms,
   Ti[6] = 0.0f;  Ti[7] = 0.0f;  Ti[8] = s;
 }
 
-__global__ void jacobian_right_inverse_sim2_kernel(
+__global__ void __launch_bounds__(256, 8)
+    jacobian_right_inverse_sim2_kernel(
     const float* tangent, size_t tangent_stride, float* jacobians,
     size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -589,7 +590,10 @@ __global__ void inverse_sim3_kernel(const float* transforms,
  * B_n^+/n! are the shifted Bernoulli coefficients:
  *   n=1: 1/2, n=2: 1/12, n=3: 0, n=4: -1/720, n=5: 0, n=6: 1/30240.
  */
-__global__ void jacobian_right_inverse_sim3_kernel(
+constexpr size_t kSim3JacBlockSize = 128;
+
+__global__ void __launch_bounds__(128, 5)
+    jacobian_right_inverse_sim3_kernel(
     const float* tangent, size_t tangent_stride, float* jacobians,
     size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -885,8 +889,8 @@ void ComputeJacobianRightInverseSim3(cudaStream_t stream, const float* tangent,
                                      size_t tangent_stride,
                                      size_t jacobian_stride, size_t size,
                                      float* jacobians) {
-  size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
-  jacobian_right_inverse_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0,
+  size_t num_blocks = (size + kSim3JacBlockSize - 1) / kSim3JacBlockSize;
+  jacobian_right_inverse_sim3_kernel<<<num_blocks, kSim3JacBlockSize, 0,
                                        stream>>>(
       tangent, tangent_stride, jacobians, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());

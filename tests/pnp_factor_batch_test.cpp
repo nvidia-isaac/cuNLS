@@ -223,9 +223,8 @@ class PnPFactorBatchTest : public ::testing::Test {
 
 TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
   const size_t n = 6;
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
-  ReprojectionFactorBatch reproj(cublas_handle_, obs_device_.data(), n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
+  ReprojectionFactorBatch reproj(obs_device_.data(), n, kZThr);
   VectorStateBatch<3> point_batch(reinterpret_cast<float*>(points_device_.data()),
                                   n);
   SE3StateBatch pose_state(cublas_handle_,
@@ -275,8 +274,7 @@ TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
 
 TEST_F(PnPFactorBatchTest, EvaluateNearZeroAtGroundTruth) {
   const size_t n = 20;
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 
@@ -308,8 +306,7 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   DisturbPoseOnDevice(cublas_handle_, pose_device_.data(), 0.08f, 0.25f);
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 
@@ -374,14 +371,17 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   DisturbPoseOnDevice(cublas_handle_, pose_device_.data(), 0.08f, 0.25f);
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 
-  Problem problem;
-  RegisterPnPMinimizationProblem(problem, pnp, pose_state);
-  ASSERT_TRUE(problem.CheckConsistency());
+  Problem problem_1;
+  RegisterPnPMinimizationProblem(problem_1, pnp, pose_state);
+  ASSERT_TRUE(problem_1.CheckConsistency());
+
+  Problem problem_2;
+  RegisterPnPMinimizationProblem(problem_2, pnp, pose_state);
+  ASSERT_TRUE(problem_2.CheckConsistency());
 
   CudaStream stream;
   MinimizerOptions base;
@@ -394,7 +394,11 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   lm.base_options = base;
   lm.initial_lambda = 1e-2f;
   LevenbergMarquardtMinimizer minimizer(lm);
-  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
+  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem_1);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  MinimizerSummary summary_2 =
+      minimizer.Minimize(stream.GetStream(), problem_2);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_LT(summary.final_cost, 1e-4f);

@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cublas_v2.h>
-
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/so2_between_factor_batch.h"
@@ -19,18 +17,38 @@ constexpr size_t kSO2RotationStride = 4;
 constexpr size_t kSO2AngleStride = 1;
 
 /**
- * @brief Gather left and right SO(2) rotations from state pointers.
+ * @brief Fused kernel: collect L/R SO(2) rotations, compute
+ *        R_error = (R_L^T * R_R) * Delta^{-1} in one pass.
+ *
+ * SO(2) is 2x2 so everything is done with scalar ops -- zero loops.
+ * Replaces: collect + TransposeSO2 + 2x cuBLAS 2x2 GEMM.
  */
-__global__ void collect_so2_poses_kernel(float const* const* state_pointers,
-                                       size_t num_factors, Matrix<2>* pose_left,
-                                       Matrix<2>* pose_right) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) {
-    return;
-  }
-  pose_left[tid] = *reinterpret_cast<const Matrix<2>*>(state_pointers[2 * tid]);
-  pose_right[tid] =
-      *reinterpret_cast<const Matrix<2>*>(state_pointers[2 * tid + 1]);
+__global__ void collect_and_compute_so2_between_error_kernel(
+    float const* const* state_pointers, const Matrix<2>* deltas,
+    size_t num_factors, Matrix<2>* errors) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= (int)num_factors) return;
+
+  const float* __restrict__ L = state_pointers[2 * tid];
+  const float* __restrict__ R = state_pointers[2 * tid + 1];
+  const float* __restrict__ D = deltas[tid].data();
+  float* __restrict__ out = errors[tid].data();
+
+  // L^T * R  (L is orthogonal 2x2)
+  const float l0=L[0], l1=L[1], l2=L[2], l3=L[3];
+  const float r0=R[0], r1=R[1], r2=R[2], r3=R[3];
+
+  const float m0 = l0*r0 + l2*r2;
+  const float m1 = l0*r1 + l2*r3;
+  const float m2 = l1*r0 + l3*r2;
+  const float m3 = l1*r1 + l3*r3;
+
+  // (L^T*R) * D  (D stores delta^{-1} in the cuBLAS convention)
+  const float d0=D[0], d1=D[1], d2=D[2], d3=D[3];
+  out[0] = m0*d0 + m1*d2;
+  out[1] = m0*d1 + m1*d3;
+  out[2] = m2*d0 + m3*d2;
+  out[3] = m2*d1 + m3*d3;
 }
 
 /**
@@ -52,12 +70,10 @@ __global__ void so2_between_jacobian_kernel(float* jacobians,
   J[1] = 1.f;
 }
 
-SO2BetweenFactorBatch::SO2BetweenFactorBatch(cuBLASHandle& cublas_handle,
-                                             const Matrix<2>* pose_deltas_ptr,
+SO2BetweenFactorBatch::SO2BetweenFactorBatch(const Matrix<2>* pose_deltas_ptr,
                                              size_t num_factors)
     : pose_deltas_ptr_(pose_deltas_ptr),
       num_factors_(num_factors),
-      cublas_handle_(cublas_handle),
       poses_left_(num_factors),
       poses_right_(num_factors),
       poses_left_inverse_(num_factors) {}
@@ -68,38 +84,12 @@ bool SO2BetweenFactorBatch::Evaluate(float* residuals, float* jacobians,
   size_t num_factors = NumFactors();
   size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
 
-  // Step 1: Gather left and right rotations
-  collect_so2_poses_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, num_factors, poses_left_.data(), poses_right_.data());
+  // Fused: collect L/R + compute (L^T * R) * D in one kernel
+  collect_and_compute_so2_between_error_kernel<<<num_blocks, kBlockSize, 0,
+                                                 stream>>>(
+      state_pointers, pose_deltas_ptr_, num_factors,
+      poses_left_inverse_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  // Step 2: Compute R_left^T (= R_left^{-1} for orthogonal matrices)
-  ComputeTransposeSO2(stream,
-                      reinterpret_cast<const float*>(poses_left_.data()),
-                      kSO2RotationStride, kSO2RotationStride, num_factors,
-                      reinterpret_cast<float*>(poses_left_inverse_.data()));
-
-  // Step 3: Compute R_left^T * R_right via batched GEMM
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr int mat_size = 2;
-  constexpr int stride = 4;
-
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<const float*>(poses_right_.data()), mat_size, stride,
-      reinterpret_cast<const float*>(poses_left_inverse_.data()), mat_size,
-      stride, &beta, reinterpret_cast<float*>(poses_left_.data()), mat_size,
-      stride, num_factors));
-
-  // Step 4: Multiply by delta^{-1}
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<float*>(poses_left_.data()), mat_size, stride,
-      reinterpret_cast<const float*>(pose_deltas_ptr_), mat_size, stride,
-      &beta, reinterpret_cast<float*>(poses_left_inverse_.data()), mat_size,
-      stride, num_factors));
 
   // Step 5: residual = Log(R_error)
   ComputeLogSO2(stream,

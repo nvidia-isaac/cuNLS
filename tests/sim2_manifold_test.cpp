@@ -89,7 +89,7 @@ TEST(Sim2ManifoldTest, PriorLMConvergence) {
   cuBLASHandle cublas;
   Similarity2StateBatch state_batch(
       cublas, reinterpret_cast<const float*>(initials_dev.data()), kN);
-  Similarity2PriorFactorBatch factor_batch(cublas, targets_dev.data(), kN);
+  Similarity2PriorFactorBatch factor_batch(targets_dev.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(kN);
@@ -163,7 +163,7 @@ TEST(Sim2ManifoldTest, BetweenLMConvergence) {
       cublas, reinterpret_cast<const float*>(left_dev.data()), kN);
   Similarity2StateBatch state_right(
       cublas, reinterpret_cast<const float*>(right_dev.data()), kN);
-  Similarity2BetweenFactorBatch factor_batch(cublas, deltas_dev.data(), kN);
+  Similarity2BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(2 * kN);

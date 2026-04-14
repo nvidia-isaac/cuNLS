@@ -75,6 +75,21 @@ class DeviceVector {
     }
   }
 
+  DeviceVector(const T& fill_value, size_t num_elements, cudaStream_t stream)
+      : data_(nullptr), size_(num_elements), capacity_(num_elements) {
+    if (num_elements > 0) {
+      THROW_ON_CUDA_ERROR(cudaMalloc(&data_, num_elements * sizeof(T)));
+      T* pinned = nullptr;
+      THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned, num_elements * sizeof(T)));
+      std::fill(pinned, pinned + num_elements, fill_value);
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(data_, pinned,
+                                          num_elements * sizeof(T),
+                                          cudaMemcpyHostToDevice, stream));
+      THROW_ON_CUDA_ERROR(cudaLaunchHostFunc(stream,
+          [](void* p) { cudaFreeHost(p); }, pinned));
+    }
+  }
+
   /**
    * @brief Constructs a DeviceVector from a std::vector, copying data to device.
    *
@@ -89,6 +104,20 @@ class DeviceVector {
       THROW_ON_CUDA_ERROR(cudaMalloc(&data_, size_ * sizeof(T)));
       THROW_ON_CUDA_ERROR(cudaMemcpy(data_, host_vector.data(), size_ * sizeof(T),
                                      cudaMemcpyHostToDevice));
+    }
+  }
+
+  DeviceVector(const std::vector<T>& host_vector, cudaStream_t stream)
+      : data_(nullptr), size_(host_vector.size()), capacity_(host_vector.size()) {
+    if (size_ > 0) {
+      THROW_ON_CUDA_ERROR(cudaMalloc(&data_, size_ * sizeof(T)));
+      T* pinned = nullptr;
+      THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned, size_ * sizeof(T)));
+      std::copy(host_vector.begin(), host_vector.end(), pinned);
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(data_, pinned, size_ * sizeof(T),
+                                          cudaMemcpyHostToDevice, stream));
+      THROW_ON_CUDA_ERROR(cudaLaunchHostFunc(stream,
+          [](void* p) { cudaFreeHost(p); }, pinned));
     }
   }
 

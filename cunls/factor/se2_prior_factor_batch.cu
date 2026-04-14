@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-#include <cublas_v2.h>
-
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -33,28 +31,41 @@ constexpr size_t kSE2TangentStride = 3;
 constexpr size_t kSE2JacobianStride = 9;
 
 /**
- * @brief Collect SE(2) transforms from state pointers into contiguous memory.
+ * @brief Fused kernel: collect SE(2) transform and compute T_inv * T_current.
+ *
+ * SE(2) 3x3 row-major multiply with structure exploitation: last row is [0 0 1].
+ * Only 3x3 active part computed (6 FMAs for rotation, 3 for translation).
  */
-__global__ void collect_se2_transforms_kernel(float const* const* state_pointers,
-                                              size_t num_factors,
-                                              Matrix<3>* transforms) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) {
-    return;
-  }
+__global__ void collect_and_multiply_se2_prior_kernel(
+    float const* const* state_pointers, const Matrix<3>* obs_inverse,
+    size_t num_factors, Matrix<3>* errors) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= num_factors) return;
 
-  auto transform_ptr = reinterpret_cast<const Matrix<3>*>(state_pointers[tid]);
-  transforms[tid] = *transform_ptr;
+  const float* __restrict__ C = state_pointers[tid];
+  const float* __restrict__ I = obs_inverse[tid].data();
+  float* __restrict__ out = errors[tid].data();
+
+  const float c00=C[0], c01=C[1], c02=C[2];
+  const float c10=C[3], c11=C[4], c12=C[5];
+
+  const float i00=I[0], i01=I[1], i02=I[2];
+  const float i10=I[3], i11=I[4], i12=I[5];
+
+  out[0] = i00*c00 + i01*c10;
+  out[1] = i00*c01 + i01*c11;
+  out[2] = i00*c02 + i01*c12 + i02;
+  out[3] = i10*c00 + i11*c10;
+  out[4] = i10*c01 + i11*c11;
+  out[5] = i10*c02 + i11*c12 + i12;
+  out[6] = 0.0f; out[7] = 0.0f; out[8] = 1.0f;
 }
 
-SE2PriorFactorBatch::SE2PriorFactorBatch(
-    cuBLASHandle& cublas_handle, const Matrix<3>* observations_ptr,
-    size_t num_factors)
+SE2PriorFactorBatch::SE2PriorFactorBatch(const Matrix<3>* observations_ptr,
+                                         size_t num_factors)
     : observations_ptr_(observations_ptr),
       num_factors_(num_factors),
       observations_inverse_(num_factors),
-      cublas_handle_(cublas_handle),
-      transforms_current_(num_factors),
       transforms_error_(num_factors) {
   // Pre-compute T_target^{-1} for all observations
   CudaStream stream;
@@ -72,26 +83,12 @@ bool SE2PriorFactorBatch::Evaluate(float* residuals, float* jacobians,
   size_t num_blocks =
       (num_factors + kSE2PriorBlockSize - 1) / kSE2PriorBlockSize;
 
-  // Step 1: Gather current transforms from state pointers
-  collect_se2_transforms_kernel<<<num_blocks, kSE2PriorBlockSize, 0, stream>>>(
-      state_pointers, num_factors, transforms_current_.data());
+  // Fused: collect T_current + compute T_inv * T_current
+  collect_and_multiply_se2_prior_kernel<<<num_blocks, kSE2PriorBlockSize, 0,
+                                          stream>>>(
+      state_pointers, observations_inverse_.data(), num_factors,
+      transforms_error_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  // Step 2: T_error = T_target^{-1} * T_current via batched cuBLAS GEMM
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr int mat_size = 3;
-  constexpr int stride = 9;
-
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<const float*>(transforms_current_.data()), mat_size,
-      stride,
-      reinterpret_cast<const float*>(observations_inverse_.data()), mat_size,
-      stride, &beta,
-      reinterpret_cast<float*>(transforms_error_.data()), mat_size, stride,
-      num_factors));
 
   // Step 3: residual = Log(T_error)
   ComputeLogSE2(stream,

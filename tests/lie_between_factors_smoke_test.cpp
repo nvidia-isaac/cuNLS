@@ -74,8 +74,7 @@ TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
 
   DeviceVector<float> res(3 * kN);
   DeviceVector<float> jac(18 * kN);
-  cuBLASHandle h;
-  SE2BetweenFactorBatch fb(h, deltas_dev.data(), kN);
+  SE2BetweenFactorBatch fb(deltas_dev.data(), kN);
 CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
               reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
@@ -109,8 +108,7 @@ TEST(LieBetweenFactorsSmoke, SO2BetweenEvaluate) {
 
   DeviceVector<float> res(kN);
   DeviceVector<float> jac(2 * kN);
-  cuBLASHandle h;
-  SO2BetweenFactorBatch fb(h, deltas_dev.data(), kN);
+  SO2BetweenFactorBatch fb(deltas_dev.data(), kN);
 CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
               reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
@@ -156,8 +154,7 @@ TEST(LieBetweenFactorsSmoke, SO3BetweenEvaluate) {
 
   DeviceVector<float> res(3 * kN);
   DeviceVector<float> jac(18 * kN);
-  cuBLASHandle h;
-  SO3BetweenFactorBatch fb(h, deltas_dev.data(), kN);
+  SO3BetweenFactorBatch fb(deltas_dev.data(), kN);
 fb.Evaluate(res.data(), jac.data(),
               reinterpret_cast<const float* const*>(state_ptrs_dev.data()),
               stream.GetStream());
@@ -190,8 +187,7 @@ TEST(LieBetweenFactorsSmoke, Similarity2BetweenEvaluate) {
 
   DeviceVector<float> res(4 * kN);
   DeviceVector<float> jac(32 * kN);
-  cuBLASHandle h;
-  Similarity2BetweenFactorBatch fb(h, deltas_dev.data(), kN);
+  Similarity2BetweenFactorBatch fb(deltas_dev.data(), kN);
 CudaStream stream;
   fb.Evaluate(res.data(), jac.data(),
               reinterpret_cast<const float* const*>(state_ptrs_dev.data()),

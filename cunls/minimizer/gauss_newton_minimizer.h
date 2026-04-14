@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "cunls/common/cusparse_helper.h"
+#include "cunls/common/pinned_vector.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
@@ -259,6 +260,27 @@ class GaussNewtonMinimizer {
                                 float& step_quality);
 
   /**
+   * @brief Fused cost evaluation + convergence check with a single D2H + sync.
+   *
+   * Enqueues the cost reduction and all convergence-related reductions
+   * (squared step norm, etc.) as async device kernels, then performs one
+   * cudaMemcpyAsync + cudaStreamSynchronize to read all scalars at once.
+   *
+   * @param stream CUDA stream.
+   * @param problem The optimization problem.
+   * @param updated_state State after applying the step.
+   * @param current_cost Cost before the step.
+   * @param step Step vector.
+   * @param[out] updated_cost Cost after applying the step.
+   * @param[out] step_quality Step quality metric.
+   * @return True if converged.
+   */
+  virtual bool EvaluateAndCheckConvergence(
+      cudaStream_t stream, const Problem& problem,
+      const MinimizerState& updated_state, float current_cost,
+      const dvector<float>& step, float& updated_cost, float& step_quality);
+
+  /**
    * @brief Determines if a step should be accepted.
    *
    * A step is accepted if it reduces the cost (step_quality < 1.0).
@@ -333,6 +355,14 @@ class GaussNewtonMinimizer {
   float ComputeCost(cudaStream_t stream, const Problem& problem,
                     const MinimizerState& minimizer_state);
 
+  /**
+   * @brief Async version: enqueues cost reduction writing result to d_cost_out.
+   * Caller must copy and sync to read the scalar.
+   */
+  void ComputeCostAsync(cudaStream_t stream, const Problem& problem,
+                        const MinimizerState& minimizer_state,
+                        float* d_cost_out);
+
  private:
   /**
    * @brief Applies diagonal column scaling to the normal-equation system.
@@ -379,11 +409,13 @@ class GaussNewtonMinimizer {
 
   dvector<float> residuals_;  ///< Residual vector storage.
 
-  SparseJacobian sparse_jacobian_;  ///< Jacobian in COO (triplet) format.
-  CSRSparseMatrix csr_jacobian_;    ///< Jacobian in CSR format.
-  dvector<int> csr_mapping_;        ///< Mapping from triplet to CSR indices.
+  SparseJacobian sparse_jacobian_;    ///< Jacobian in COO (triplet) format.
+  CSRSparseMatrix csr_jacobian_;      ///< Jacobian in CSR format.
+  CSRMatrixDimensions jacobian_dims_; ///< Cached Jacobian dimensions.
+  dvector<int> csr_mapping_;          ///< Mapping from triplet to CSR indices.
 
-  CSRSparseMatrix hessian_;  ///< Approximate Hessian H = J^T J.
+  CSRSparseMatrix hessian_;           ///< Approximate Hessian H = J^T J.
+  CSRMatrixDimensions hessian_dims_;  ///< Cached Hessian dimensions.
 
   /// Diagonal S when column_scaling is enabled; size = number of tangent DOFs.
   dvector<float> column_scale_;
@@ -391,6 +423,13 @@ class GaussNewtonMinimizer {
   dvector<float> step_;  ///< State update step vector.
 
   dvector<uint8_t> buffer_;  ///< Temporary buffer for sparse operations.
+
+  /// Device staging buffer for async scalar reductions (cost, step norm, etc.).
+  dvector<float> d_scalars_;
+  /// Pinned host mirror for async D2H of scalar results.
+  PinnedVector<float> h_scalars_;
+  /// Scratch buffer for partial sums used by reduction kernels.
+  dvector<float> d_reduce_partials_;
 
   /// Working normal-equation system; retained across Minimize calls to preserve
   /// capacity.

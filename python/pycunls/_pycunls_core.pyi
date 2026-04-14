@@ -454,7 +454,6 @@ class ReprojectionFactorBatch(FactorBatch):
 
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         observations: DevicePointer,
         num_observations: int,
         z_threshold: float = 1e-3,
@@ -474,7 +473,6 @@ class PnPFactorBatch(FactorBatch):
     @overload
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         observations: DevicePointer,
         points_world: DevicePointer,
         num_observations: int,
@@ -483,7 +481,6 @@ class PnPFactorBatch(FactorBatch):
     @overload
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         observations: DevicePointer,
         poses_camera_from_rig: DevicePointer,
         points_world: DevicePointer,
@@ -502,7 +499,6 @@ class SE3BetweenFactorBatch(FactorBatch):
 
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         deltas: DevicePointer,
         num_factors: int,
     ) -> None: ...
@@ -517,7 +513,6 @@ class SE3PriorFactorBatch(FactorBatch):
 
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         observations: DevicePointer,
         num_factors: int,
     ) -> None: ...
@@ -532,7 +527,6 @@ class SO3PriorFactorBatch(FactorBatch):
 
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         observations: DevicePointer,
         num_factors: int,
     ) -> None: ...
@@ -599,12 +593,7 @@ class PriorVectorFactorBatch6(FactorBatch):
 class SE2BetweenFactorBatch(FactorBatch):
     """Batched SE(2) between factor. Residual=3, States=[SE2(3), SE2(3)]."""
 
-    def __init__(
-        self,
-        cublas_handle: CublasHandle,
-        deltas: DevicePointer,
-        num_factors: int,
-    ) -> None: ...
+    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -614,12 +603,7 @@ class SE2BetweenFactorBatch(FactorBatch):
 class SO2BetweenFactorBatch(FactorBatch):
     """Batched SO(2) between factor. Residual=1, States=[SO2(1), SO2(1)]."""
 
-    def __init__(
-        self,
-        cublas_handle: CublasHandle,
-        deltas: DevicePointer,
-        num_factors: int,
-    ) -> None: ...
+    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -629,12 +613,7 @@ class SO2BetweenFactorBatch(FactorBatch):
 class SO3BetweenFactorBatch(FactorBatch):
     """Batched SO(3) between factor. Residual=3, States=[SO3(3), SO3(3)]."""
 
-    def __init__(
-        self,
-        cublas_handle: CublasHandle,
-        deltas: DevicePointer,
-        num_factors: int,
-    ) -> None: ...
+    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -644,12 +623,7 @@ class SO3BetweenFactorBatch(FactorBatch):
 class Similarity2BetweenFactorBatch(FactorBatch):
     """Batched Sim(2) between factor. Residual=4, States=[Sim2(4), Sim2(4)]."""
 
-    def __init__(
-        self,
-        cublas_handle: CublasHandle,
-        deltas: DevicePointer,
-        num_factors: int,
-    ) -> None: ...
+    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -676,7 +650,6 @@ class SL4PriorFactorBatch(FactorBatch):
 
     def __init__(
         self,
-        cublas_handle: CublasHandle,
         observations: DevicePointer,
         num_factors: int,
     ) -> None: ...
@@ -689,12 +662,7 @@ class SL4PriorFactorBatch(FactorBatch):
 class SL4BetweenFactorBatch(FactorBatch):
     """Batched SL(4) between factor. Residual=15, States=[SL4(15), SL4(15)]."""
 
-    def __init__(
-        self,
-        cublas_handle: CublasHandle,
-        deltas: DevicePointer,
-        num_factors: int,
-    ) -> None: ...
+    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property

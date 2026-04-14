@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -54,13 +53,11 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
    *
    * Pre-computes T_target^{-1} for all targets during construction.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param observations_ptr Pointer to GPU device memory containing target transforms.
    *                         Must point to at least num_factors * 16 floats.
    * @param num_factors Number of factors in the batch.
    */
-  Similarity3PriorFactorBatch(cuBLASHandle& cublas_handle,
-                                    const Matrix<4>* observations_ptr,
+  Similarity3PriorFactorBatch(const Matrix<4>* observations_ptr,
                                     size_t num_factors);
 
   /**
@@ -89,8 +86,6 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
   const Matrix<4>* observations_ptr_;
   size_t num_factors_;
   DeviceVector<Matrix<4>> observations_inverse_;
-  cuBLASHandle& cublas_handle_;
-  mutable DeviceVector<Matrix<4>> transforms_current_;
   mutable DeviceVector<Matrix<4>> transforms_error_;
 };
 

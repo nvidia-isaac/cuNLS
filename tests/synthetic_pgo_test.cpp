@@ -232,8 +232,8 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   // For N poses, we have N-1 consecutive constraints
   size_t num_constraints = this->num_poses_;
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  SE3BetweenFactorBatch between_factor_batch(this->cublas_handle_, pose_deltas_device.data(),
-                                                     num_constraints);
+  SE3BetweenFactorBatch between_factor_batch(pose_deltas_device.data(),
+                                             num_constraints);
 
   // Create state pointers for set 1 constraints
   // Each constraint connects pose[i] from set1 (left) and pose[i] from set2 (right)
@@ -322,7 +322,7 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
   InformationFactorBatch<SE3BetweenFactorBatch>
       between_factor_batch(this->cublas_handle_, sqrt_information_matrices_device.data(),
-                            num_constraints, this->cublas_handle_,
+                            num_constraints,
                             pose_deltas_device.data(), num_constraints);
 
   // Create state pointers for set 1 constraints
@@ -407,7 +407,7 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>>
       between_factor_batch(
           2.0f, this->cublas_handle_, sqrt_information_matrices_device.data(),
-          num_constraints, this->cublas_handle_,
+          num_constraints,
           pose_deltas_device.data(), num_constraints);
 
   std::vector<float*> state_pointers;
@@ -482,7 +482,7 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>>
       between_factor_batch(
           this->cublas_handle_, sqrt_information_matrices_device.data(),
-          num_constraints, 2.0f, this->cublas_handle_,
+          num_constraints, 2.0f,
           pose_deltas_device.data(), num_constraints);
 
   std::vector<float*> state_pointers;

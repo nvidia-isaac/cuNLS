@@ -155,7 +155,7 @@ memory.
 .. code-block:: python
 
    reproj_factor = pycunls.ReprojectionFactorBatch(
-       cublas, obs_gpu, num_observations, z_threshold=1e-3)
+       obs_gpu, num_observations, z_threshold=1e-3)
 
 **Step 5 — Create the state-pointer list and assemble the problem.**
 The state-pointer list is a flat sequence of device pointers, two per
@@ -295,7 +295,7 @@ except the anchor are perturbed.
 .. code-block:: python
 
    between_factor = pycunls.SE3BetweenFactorBatch(
-       cublas, deltas_gpu, num_constraints)
+       deltas_gpu, num_constraints)
 
 **Step 4 — Wire state pointers and assemble the problem.**
 Each between factor reads two state blocks: ``[T_i, T_{i+1}]``.

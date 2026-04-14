@@ -97,9 +97,11 @@ class InformationFactorBatch : public T::sized_layout {
    * @param num_matrices Number of square-root information matrices; must equal
    *                     the wrapped batch's ``NumFactors()``.
    * @param sized_factor_batch_args Arguments forwarded to the wrapped
-   * factor batch constructor verbatim (e.g. pass ``cublas_handle`` first
-   * when ``T`` is ``SE3BetweenFactorBatch``; for ``WeightedFactorBatch<U>``,
-   * pass ``weight`` then ``U``'s constructor arguments).
+   * factor batch constructor verbatim (same order as ``T``'s constructor;
+   * e.g. ``SE3BetweenFactorBatch`` and ``Similarity3BetweenFactorBatch``
+   * still take a leading ``cuBLASHandle``, while factors such as
+   * ``ReprojectionFactorBatch`` do not. For ``WeightedFactorBatch<U>``, pass ``weight`` (or
+   * per-factor weights) then ``U``'s constructor arguments).
    */
   template <class... Args>
   InformationFactorBatch(cuBLASHandle& cublas_handle,

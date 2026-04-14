@@ -177,6 +177,18 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
                         float& step_quality) override;
 
   /**
+   * @brief Fused cost + LM convergence with a single D2H + sync.
+   *
+   * Batches cost reduction, squared step norm, diag-weighted step norm,
+   * and sparse-weighted step norm into one memcpy and one sync.
+   */
+  bool EvaluateAndCheckConvergence(
+      cudaStream_t stream, const Problem& problem,
+      const MinimizerState& updated_state, float current_cost,
+      const dvector<float>& step, float& updated_cost,
+      float& step_quality) override;
+
+  /**
    * @brief Determines if a step should be accepted (LM version).
    *
    * Accepts step if rho >= step_accept_threshold. If step is very successful

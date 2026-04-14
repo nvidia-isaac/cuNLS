@@ -196,6 +196,7 @@ if(BUILD_TESTING)
 
   include(GoogleTest)
   gtest_discover_tests(nls_tests)
+
 endif()
 
 if(ENABLE_PROFILING)

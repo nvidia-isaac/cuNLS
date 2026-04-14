@@ -168,7 +168,7 @@ TEST(Sim3ManifoldTest, PriorLMConvergence) {
   cuBLASHandle cublas;
   Similarity3StateBatch state_batch(
       cublas, reinterpret_cast<const float*>(initials_dev.data()), kN);
-  Similarity3PriorFactorBatch factor_batch(cublas, targets_dev.data(), kN);
+  Similarity3PriorFactorBatch factor_batch(targets_dev.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(kN);
