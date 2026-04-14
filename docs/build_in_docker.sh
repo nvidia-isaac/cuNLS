@@ -16,7 +16,10 @@ mkdir -p "$HOST_OUTPUT_DIR"
 
 docker build -f "$DOCKERFILE" "$REPO_ROOT" --network host --tag cunls:local
 
-docker run --rm -it \
+TTY_FLAG=""
+[ -t 0 ] && TTY_FLAG="-it"
+
+docker run --rm $TTY_FLAG \
   -v "$REPO_ROOT:/cunls" \
   -v "$HOST_OUTPUT_DIR:/output" \
   cunls:local /bin/bash -c "
