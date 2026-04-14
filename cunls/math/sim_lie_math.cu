@@ -219,10 +219,10 @@ __global__ void inverse_sim2_kernel(const float *transforms,
   Ti[8] = s;
 }
 
-__global__ void __launch_bounds__(256, 8)
-    jacobian_right_inverse_sim2_kernel(const float *tangent,
-                                       size_t tangent_stride, float *jacobians,
-                                       size_t jacobian_stride, size_t size) {
+__global__ void __launch_bounds__(256, 4)
+    jacobian_right_inverse_sim2_kernel(
+    const float* tangent, size_t tangent_stride, float* jacobians,
+    size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
