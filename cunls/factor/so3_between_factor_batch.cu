@@ -127,12 +127,10 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r,
 // Left  Jacobian (cols 0..2): -D * J_l^{-1}(r)  where D = Ad(Delta)
 // Right Jacobian (cols 3..5):  J_r^{-1}(r) = J_l^{-1}(-r)
 // 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
-__global__ void __launch_bounds__(256, 4)
-    so3_between_fused_jacobians_kernel(
-    const float* __restrict__ residuals,
-    const Matrix<3>* __restrict__ delta_adjoints,
-    int num_factors,
-    float* __restrict__ jacobians) {
+__global__ void __launch_bounds__(256, 4) so3_between_fused_jacobians_kernel(
+    const float *__restrict__ residuals,
+    const Matrix<3> *__restrict__ delta_adjoints, int num_factors,
+    float *__restrict__ jacobians) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_factors)
     return;

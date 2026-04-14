@@ -604,12 +604,10 @@ __global__ void jacobian_so3_kernel(bool left, const float *twist,
  * @param size Number of twist vectors to process.
  */
 __global__ void __launch_bounds__(256, 4)
-    jacobian_inverse_so3_kernel(bool left, const float* twist,
-                                            const size_t twist_stride,
-                                            float* jacobian_inv,
-                                            const size_t jacobian_inv_pitch,
-                                            const size_t jacobian_inv_stride,
-                                            size_t size) {
+    jacobian_inverse_so3_kernel(bool left, const float *twist,
+                                const size_t twist_stride, float *jacobian_inv,
+                                const size_t jacobian_inv_pitch,
+                                const size_t jacobian_inv_stride, size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -1529,11 +1527,9 @@ __global__ void inverse_se2_kernel(const float *transforms,
  * For |alpha| < 1e-3 (near identity): J_r^{-1} ~ I + small corrections.
  */
 __global__ void __launch_bounds__(256, 4)
-    jacobian_right_inverse_se2_kernel(const float* tangent,
-                                                  size_t tangent_stride,
-                                                  float* jacobians,
-                                                  size_t jacobian_stride,
-                                                  size_t size) {
+    jacobian_right_inverse_se2_kernel(const float *tangent,
+                                      size_t tangent_stride, float *jacobians,
+                                      size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;

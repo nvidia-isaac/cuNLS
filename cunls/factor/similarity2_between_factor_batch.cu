@@ -96,12 +96,9 @@ collect_sim2_left_poses_kernel(float const *const *state_pointers,
  *         [0 0, 1, 0],
  *         [0 0, 0, 1]]
  */
-__global__ void __launch_bounds__(256, 4)
-    sim2_between_jacobian_kernel(const float* __restrict__ residuals,
-                                 const float* __restrict__ deltas,
-                                 size_t delta_stride,
-                                 float* __restrict__ jacobians,
-                                 size_t num_factors) {
+__global__ void __launch_bounds__(256, 4) sim2_between_jacobian_kernel(
+    const float *__restrict__ residuals, const float *__restrict__ deltas,
+    size_t delta_stride, float *__restrict__ jacobians, size_t num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_factors) {
     return;
