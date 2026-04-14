@@ -1,4 +1,5 @@
 add_library(cunls_minimizer OBJECT
+  device_reduction.cu
   gauss_newton_minimizer.cu
   jacobian_ops.cu
   levenberg_marquardt_minimizer.cpp

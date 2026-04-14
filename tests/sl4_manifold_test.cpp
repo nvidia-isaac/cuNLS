@@ -115,7 +115,7 @@ TEST(SL4ManifoldTest, PriorLMConvergence) {
 
   SL4StateBatch state_batch(
       cublas, reinterpret_cast<const float*>(initials.data()), kN);
-  SL4PriorFactorBatch factor_batch(cublas, targets.data(), kN);
+  SL4PriorFactorBatch factor_batch(targets.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(kN);
@@ -179,7 +179,7 @@ TEST(SL4ManifoldTest, BetweenLMConvergence) {
       cublas, reinterpret_cast<const float*>(poses_left.data()), kN);
   SL4StateBatch state_right(
       cublas, reinterpret_cast<const float*>(poses_right.data()), kN);
-  SL4BetweenFactorBatch factor_batch(cublas, deltas_dev.data(), kN);
+  SL4BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(2 * kN);

@@ -29,32 +29,84 @@ namespace cunls {
 constexpr size_t block_size = 256;
 
 /**
- * @brief CUDA kernel to collect poses from state pointers.
+ * @brief Fused kernel: collect L/R SE3 transforms, compute T_left^{-1},
+ *        then compute error = Delta * T_left^{-1} * T_right in one pass.
  *
- * Extracts SE(3) transformation matrices from the state pointer array
- * and stores them in contiguous memory for batch processing.
- *
- * @param state_pointers Array of state block pointers (device pointer to device pointers)
- * @param num_factors Number of factors in the batch
- * @param pose_left Output array for left poses (device pointer)
- * @param pose_right Output array for right poses (device pointer)
+ * Replaces: collect_poses_kernel + ComputeInverseSE3 + 2x cuBLAS SGEMM.
+ * Fully unrolled with SE3 structure exploitation: last row is always [0 0 0 1],
+ * reducing 128 FMAs to ~78 FMAs + additions.  Zero local-memory arrays.
  */
-__global__ void collect_poses_kernel(float const* const* state_pointers,
-                                     size_t num_factors,
-                                     SE3Transform* pose_left,
-                                     SE3Transform* pose_right) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) {
-    return;
-  }
+__global__ void collect_and_compute_se3_between_error_kernel(
+    float const* const* state_pointers, const SE3Transform* deltas,
+    size_t num_factors, SE3Transform* errors) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= (int)num_factors) return;
 
-  auto pose_left_ptr =
-      reinterpret_cast<const SE3Transform*>(state_pointers[2 * tid]);
-  auto pose_right_ptr =
-      reinterpret_cast<const SE3Transform*>(state_pointers[2 * tid + 1]);
+  const float* __restrict__ L = state_pointers[2 * tid];
+  const float* __restrict__ R = state_pointers[2 * tid + 1];
+  const float* __restrict__ D = deltas[tid].data();
+  float* __restrict__ out = errors[tid].data();
 
-  pose_left[tid] = *pose_left_ptr;
-  pose_right[tid] = *pose_right_ptr;
+  // Load L rotation (3x3) and translation (3x1)
+  const float l00 = L[0], l01 = L[1], l02 = L[2], l03 = L[3];
+  const float l10 = L[4], l11 = L[5], l12 = L[6], l13 = L[7];
+  const float l20 = L[8], l21 = L[9], l22 = L[10], l23 = L[11];
+
+  // L_inv rotation = L_rot^T (transpose), L_inv translation = -L_rot^T * L_t
+  // i00 = l00, i01 = l10, i02 = l20  (transposed)
+  // i10 = l01, i11 = l11, i12 = l21
+  // i20 = l02, i21 = l12, i22 = l22
+  const float i03 = -(l00*l03 + l10*l13 + l20*l23);
+  const float i13 = -(l01*l03 + l11*l13 + l21*l23);
+  const float i23 = -(l02*l03 + l12*l13 + l22*l23);
+
+  // Load R (3x4 active part)
+  const float r00 = R[0], r01 = R[1], r02 = R[2], r03 = R[3];
+  const float r10 = R[4], r11 = R[5], r12 = R[6], r13 = R[7];
+  const float r20 = R[8], r21 = R[9], r22 = R[10], r23 = R[11];
+
+  // temp = L_inv * R  (only compute 3x4 active part; row 3 = [0 0 0 1])
+  // Using transposed L indices directly
+  const float t00 = l00*r00 + l10*r10 + l20*r20;
+  const float t01 = l00*r01 + l10*r11 + l20*r21;
+  const float t02 = l00*r02 + l10*r12 + l20*r22;
+  const float t03 = l00*r03 + l10*r13 + l20*r23 + i03;
+
+  const float t10 = l01*r00 + l11*r10 + l21*r20;
+  const float t11 = l01*r01 + l11*r11 + l21*r21;
+  const float t12 = l01*r02 + l11*r12 + l21*r22;
+  const float t13 = l01*r03 + l11*r13 + l21*r23 + i13;
+
+  const float t20 = l02*r00 + l12*r10 + l22*r20;
+  const float t21 = l02*r01 + l12*r11 + l22*r21;
+  const float t22 = l02*r02 + l12*r12 + l22*r22;
+  const float t23 = l02*r03 + l12*r13 + l22*r23 + i23;
+
+  // Load D (3x4 active part)
+  const float d00 = D[0], d01 = D[1], d02 = D[2], d03 = D[3];
+  const float d10 = D[4], d11 = D[5], d12 = D[6], d13 = D[7];
+  const float d20 = D[8], d21 = D[9], d22 = D[10], d23 = D[11];
+
+  // error = D * temp  (only compute 3x4 active part; row 3 = [0 0 0 1])
+  out[0]  = d00*t00 + d01*t10 + d02*t20;
+  out[1]  = d00*t01 + d01*t11 + d02*t21;
+  out[2]  = d00*t02 + d01*t12 + d02*t22;
+  out[3]  = d00*t03 + d01*t13 + d02*t23 + d03;
+
+  out[4]  = d10*t00 + d11*t10 + d12*t20;
+  out[5]  = d10*t01 + d11*t11 + d12*t21;
+  out[6]  = d10*t02 + d11*t12 + d12*t22;
+  out[7]  = d10*t03 + d11*t13 + d12*t23 + d13;
+
+  out[8]  = d20*t00 + d21*t10 + d22*t20;
+  out[9]  = d20*t01 + d21*t11 + d22*t21;
+  out[10] = d20*t02 + d21*t12 + d22*t22;
+  out[11] = d20*t03 + d21*t13 + d22*t23 + d23;
+
+  out[12] = 0.0f;
+  out[13] = 0.0f;
+  out[14] = 0.0f;
+  out[15] = 1.0f;
 }
 
 /**
@@ -101,58 +153,22 @@ SE3BetweenFactorBatch::SE3BetweenFactorBatch(
 bool SE3BetweenFactorBatch::Evaluate(float* residuals, float* jacobians,
                                            float const* const* state_pointers,
                                            cudaStream_t stream) const {
-  auto poses_left_ptr = poses_left_.data();
-  auto poses_right_ptr = poses_right_.data();
-  auto poses_left_inv_ptr = reinterpret_cast<float*>(
-      poses_left_inverse_.data());
-
   size_t num_factors = NumFactors();
-
   size_t num_blocks = (num_factors + block_size - 1) / block_size;
-  collect_poses_kernel<<<num_blocks, block_size, 0, stream>>>(
-      state_pointers, num_factors, poses_left_ptr, poses_right_ptr);
+
+  // Fused: collect L/R + compute Delta * L^{-1} * R in one kernel
+  collect_and_compute_se3_between_error_kernel<<<num_blocks, block_size, 0,
+                                                 stream>>>(
+      state_pointers, pose_deltas_ptr_, num_factors,
+      poses_left_inverse_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pitch = 4;
   constexpr size_t stride = 16;
-  // Compute inverse of left poses: T_left_inv = T_left^{-1}
-  ComputeInverseSE3(stream, reinterpret_cast<const float*>(poses_left_ptr),
-                    pitch, stride, pitch, stride, num_factors,
-                    poses_left_inv_ptr);
-
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-
-  // cuBLAS uses column-major storage, but our matrices are row-major
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-
-  constexpr size_t mat_size = 4;
-
-  // Compute relative transform: T_left := T_left_inv @ T_right
-  // This overwrites poses_left_ with the relative transformation
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<const float*>(poses_right_ptr), mat_size, stride,
-      poses_left_inv_ptr, mat_size, stride, &beta,
-      reinterpret_cast<float*>(poses_left_ptr), mat_size, stride,
-      num_factors));
-
-  // Compute relative transform: T_left_inv := Delta @ T_left =
-  // = Delta @ T_left_inv @ Delta
-  // This overwrites poses_left_inv
-  auto delta_ptr = reinterpret_cast<const float*>(pose_deltas_ptr_);
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<float*>(poses_left_ptr), mat_size, stride, delta_ptr,
-      mat_size, stride, &beta, poses_left_inv_ptr, mat_size, stride,
-      num_factors));
-
   constexpr size_t twist_stride = 6;
-  // Compute residual: residual = Log(Delta @ T_left_inv @ T_right)
-  // Note: poses_left_ now contains the relative transform after the matrix
-  // multiply
-  ComputeLogSE3(stream, poses_left_inv_ptr, pitch, stride, twist_stride,
-                num_factors, residuals);
+  ComputeLogSE3(stream,
+                reinterpret_cast<const float*>(poses_left_inverse_.data()),
+                pitch, stride, twist_stride, num_factors, residuals);
 
   if (jacobians != nullptr) {
     ComputeLeftPoseJacobian(stream, residuals, jacobians);

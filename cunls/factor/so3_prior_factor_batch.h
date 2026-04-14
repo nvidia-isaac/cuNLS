@@ -18,8 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
-#include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
 
@@ -50,13 +48,11 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
   /**
    * @brief Constructs a batch of SO(3) prior factors.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param observations_ptr Pointer to GPU device memory containing target rotations.
    *                         Must point to at least num_factors * 9 floats.
    * @param num_factors Number of factors in the batch.
    */
-  SO3PriorFactorBatch(cuBLASHandle& cublas_handle,
-                            const Matrix<3>* observations_ptr,
+  SO3PriorFactorBatch(const Matrix<3>* observations_ptr,
                             size_t num_factors);
 
   /**
@@ -87,12 +83,6 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
 
   /// Number of factors in the batch.
   size_t num_factors_;
-
-  /// cuBLAS handle for batched matrix operations.
-  cuBLASHandle& cublas_handle_;
-
-  /// Preallocated memory for current rotations collected from state pointers.
-  mutable DeviceVector<Matrix<3>> rotations_current_;
 
   /// Preallocated memory for rotation error R_target^T * R_current.
   mutable DeviceVector<Matrix<3>> rotations_error_;

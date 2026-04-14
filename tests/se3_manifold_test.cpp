@@ -120,7 +120,7 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
 
   SE3StateBatch state_batch(
       cublas, reinterpret_cast<const float*>(initials.data()), kN);
-  SE3PriorFactorBatch factor_batch(cublas, targets.data(), kN);
+  SE3PriorFactorBatch factor_batch(targets.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(kN);

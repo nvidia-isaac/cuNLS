@@ -15,16 +15,91 @@
  * limitations under the License.
  */
 
-#include <cublas_v2.h>
-#include <thrust/copy.h>
-#include <thrust/device_ptr.h>
-#include <thrust/transform.h>
-
 #include "cunls/common/helper.h"
-#include "cunls/math/so_se_lie_math.h"
 #include "cunls/state/so3_state_batch.h"
 
 namespace cunls {
+
+namespace {
+
+constexpr int kBlockSize = 256;
+
+__global__ void fused_so3_plus_kernel(const float* __restrict__ x,
+                                      const float* __restrict__ delta,
+                                      float* __restrict__ result, int n,
+                                      bool negate_delta) {
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= n) {
+    return;
+  }
+  const float* d = delta + tid * 3;
+  float w0 = d[0];
+  float w1 = d[1];
+  float w2 = d[2];
+  if (negate_delta) {
+    w0 = -w0;
+    w1 = -w1;
+    w2 = -w2;
+  }
+  float theta2 = w0 * w0 + w1 * w1 + w2 * w2;
+  float theta = sqrtf(theta2);
+  float A;
+  float B;
+  if (theta2 < 1e-6f) {
+    A = 1.0f - theta2 / 6.0f;
+    B = 0.5f - theta2 / 24.0f;
+  } else {
+    float st = sinf(theta);
+    float ct = cosf(theta);
+    A = st / theta;
+    B = (1.0f - ct) / theta2;
+  }
+  float e00 = 1.0f - B * (w1 * w1 + w2 * w2);
+  float e11 = 1.0f - B * (w0 * w0 + w2 * w2);
+  float e22 = 1.0f - B * (w0 * w0 + w1 * w1);
+  float e01 = B * w0 * w1 - A * w2;
+  float e10 = B * w0 * w1 + A * w2;
+  float e02 = B * w0 * w2 + A * w1;
+  float e20 = B * w0 * w2 - A * w1;
+  float e12 = B * w1 * w2 - A * w0;
+  float e21 = B * w1 * w2 + A * w0;
+
+  const float* X = x + tid * 9;
+  float* R = result + tid * 9;
+  float x0 = X[0];
+  float x1 = X[1];
+  float x2 = X[2];
+  float x3 = X[3];
+  float x4 = X[4];
+  float x5 = X[5];
+  float x6 = X[6];
+  float x7 = X[7];
+  float x8 = X[8];
+
+  R[0] = x0 * e00 + x1 * e10 + x2 * e20;
+  R[1] = x0 * e01 + x1 * e11 + x2 * e21;
+  R[2] = x0 * e02 + x1 * e12 + x2 * e22;
+  R[3] = x3 * e00 + x4 * e10 + x5 * e20;
+  R[4] = x3 * e01 + x4 * e11 + x5 * e21;
+  R[5] = x3 * e02 + x4 * e12 + x5 * e22;
+  R[6] = x6 * e00 + x7 * e10 + x8 * e20;
+  R[7] = x6 * e01 + x7 * e11 + x8 * e21;
+  R[8] = x6 * e02 + x7 * e12 + x8 * e22;
+}
+
+void LaunchFusedSo3Plus(cudaStream_t stream, const float* x, const float* delta,
+                        float* result, size_t num_blocks, bool negate_delta) {
+  int n = static_cast<int>(num_blocks);
+  if (n <= 0) {
+    return;
+  }
+  int grid = (n + kBlockSize - 1) / kBlockSize;
+  fused_so3_plus_kernel<<<grid, kBlockSize, 0, stream>>>(
+      x, delta, result, n, negate_delta);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+}  // namespace
 
 SO3StateBatch::SO3StateBatch(cuBLASHandle& cublas_handle, const float* device_ptr,
                              size_t num_blocks)
@@ -42,73 +117,15 @@ SO3StateBatch::SO3StateBatch(cuBLASHandle& cublas_handle, const float* device_pt
       delta_rotations_(num_blocks),
       twists_(num_blocks * 3) {}
 
-/** @copydoc SO3StateBatch::ApplyUpdate */
 void SO3StateBatch::ApplyUpdate(const float* x, const float* delta,
-                              float* result, bool invert_delta,
-                              cudaStream_t stream) {
-  size_t num_rotations = NumStateBlocks();
-
-  auto twists_ptr =
-      reinterpret_cast<const float*>(twists_.data());
-  auto delta_rotations_ptr = reinterpret_cast<float*>(
-      delta_rotations_.data());
-
-  thrust::device_ptr<const float> ptr = thrust::device_pointer_cast(delta);
-  thrust::device_ptr<float> twists_device_ptr(twists_.data());
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-  thrust::copy(stream_policy, ptr, ptr + num_rotations * 3, twists_device_ptr);
-
-  // Negate twists if computing Exp(-delta) instead of Exp(delta)
-  if (invert_delta) {
-    thrust::transform(stream_policy, twists_device_ptr, twists_device_ptr + twists_.size(),
-                      twists_device_ptr, thrust::negate<float>());
-  }
-
-  constexpr size_t twist_stride = 3;
-  constexpr size_t rotation_stride = 9;
-  constexpr size_t rotation_pitch = 3;
-  // Compute update matrices: delta_rotations = Exp(±delta)
-  ComputeExpSO3(stream, twists_ptr, twist_stride, rotation_pitch, rotation_stride,
-         num_rotations, delta_rotations_ptr);
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-
-  // cuBLAS uses column-major storage, but our matrices are row-major
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-
-  constexpr int mat_size = 3;
-  constexpr int stride = 9;
-
-  // Perform batched matrix multiplication: result = x * Exp(±delta)
-  // Note: cuBLAS uses column-major, but CUBLAS_OP_N for both operands computes
-  // the equivalent of row-major right-multiplication
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha, delta_rotations_ptr,
-      mat_size, stride, x, mat_size, stride, &beta, result,
-      mat_size, stride, num_rotations));
+                                float* result, bool invert_delta,
+                                cudaStream_t stream) {
+  LaunchFusedSo3Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
 }
 
-/**
- * @brief Performs the Plus operation: x_plus_delta = x * Exp(skew(delta))
- *
- * Computes the right-multiplication update for SO(3) rotations.
- * First computes the update matrix Exp(skew(delta)) using Exp,
- * then performs batched matrix multiplication using cuBLAS.
- *
- * Note: cuBLAS uses column-major storage, but our matrices are row-major.
- * For right-multiplication (x * update), we use CUBLAS_OP_N for both operands.
- * cuBLAS interprets the matrices as column-major, so this computes the
- * equivalent of the desired row-major result.
- *
- * @param x Input rotation matrices (device pointer, row-major)
- * @param delta Tangent space updates (3D rotation vectors, device pointer)
- * @param x_plus_delta Output rotation matrices (device pointer,
- * row-major)
- * @param stream CUDA stream for asynchronous execution
- */
 void SO3StateBatch::Plus(const float* x, const float* delta,
                          float* x_plus_delta, cudaStream_t stream) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream);
+  LaunchFusedSo3Plus(stream, x, delta, x_plus_delta, NumStateBlocks(), false);
 }
 
 }  // namespace cunls

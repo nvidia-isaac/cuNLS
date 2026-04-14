@@ -151,9 +151,8 @@ Prior on a 3D rotation. Penalizes deviation from a target orientation.
 
 **Inputs:** :math:`R` = current rotation (state). State: one block from :code:`SO3StateBatch` (see :doc:`state`).
 
-.. cpp:function:: SO3PriorFactorBatch(cuBLASHandle& cublas_handle, const Matrix<3>* observations_ptr, size_t num_factors)
+.. cpp:function:: SO3PriorFactorBatch(const Matrix<3>* observations_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``observations_ptr``: [in] Device pointer to SO(3) observations (3×3 row-major).
   :param ``num_factors``: [in] Number of factors.
   :returns: Constructor has no return value.
@@ -248,9 +247,8 @@ Prior on 3D similarity transform. State: one block from :code:`Similarity3StateB
 
 **Constructors (all four prior classes above):**
 
-.. cpp:function:: ClassName(cuBLASHandle& cublas_handle, const ObsType* observations_ptr, size_t num_factors)
+.. cpp:function:: ClassName(const ObsType* observations_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``observations_ptr``: [in] Device pointer to observation transforms.
   :param ``num_factors``: [in] Number of factors.
   :returns: Constructor has no return value.
@@ -277,9 +275,8 @@ Prior on an SL(4) transform. State: one block from :code:`SL4StateBatch` (see :d
      - :math:`15 \times 15`
      - SL(4)
 
-.. cpp:function:: SL4PriorFactorBatch(cuBLASHandle& cublas_handle, const SL4Transform* observations_ptr, size_t num_factors)
+.. cpp:function:: SL4PriorFactorBatch(const SL4Transform* observations_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``observations_ptr``: [in] Device pointer to SL(4) target transforms (row-major 4×4).
   :param ``num_factors``: [in] Number of factors.
   :returns: Constructor has no return value.
@@ -345,9 +342,8 @@ Constrains the relative transform between two SE(2) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two poses (state blocks). State: two blocks from :code:`SE2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SE2BetweenFactorBatch(cuBLASHandle& cublas_handle, const Matrix<3>* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: SE2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
   :param ``num_factors``: [in] Number of between constraints.
   :returns: Constructor has no return value.
@@ -379,9 +375,8 @@ Constrains the relative rotation between two SO(2) frames.
 
 **Inputs:** :math:`R_{\mathrm{left}}`, :math:`R_{\mathrm{right}}` = two rotations (state blocks). State: two blocks from :code:`SO2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative rotation (constructor).
 
-.. cpp:function:: SO2BetweenFactorBatch(cuBLASHandle& cublas_handle, const Matrix<2>* rotation_deltas_ptr, size_t num_factors)
+.. cpp:function:: SO2BetweenFactorBatch(const Matrix<2>* rotation_deltas_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 2×2).
   :param ``num_factors``: [in] Number of between constraints.
   :returns: Constructor has no return value.
@@ -413,9 +408,8 @@ Constrains the relative rotation between two SO(3) frames.
 
 **Inputs:** :math:`R_{\mathrm{left}}`, :math:`R_{\mathrm{right}}` = two rotations (state blocks). State: two blocks from :code:`SO3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative rotation (constructor).
 
-.. cpp:function:: SO3BetweenFactorBatch(cuBLASHandle& cublas_handle, const Matrix<3>* rotation_deltas_ptr, size_t num_factors)
+.. cpp:function:: SO3BetweenFactorBatch(const Matrix<3>* rotation_deltas_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 3×3).
   :param ``num_factors``: [in] Number of between constraints.
   :returns: Constructor has no return value.
@@ -447,9 +441,8 @@ Constrains the relative transform between two Sim(2) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (state blocks). State: two blocks from :code:`Similarity2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: Similarity2BetweenFactorBatch(cuBLASHandle& cublas_handle, const Matrix<3>* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: Similarity2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
   :param ``num_factors``: [in] Number of between constraints.
   :returns: Constructor has no return value.
@@ -515,9 +508,8 @@ Constrains the relative transform between two SL(4) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (state blocks). State: two blocks from :code:`SL4StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SL4BetweenFactorBatch(cuBLASHandle& cublas_handle, const SL4Transform* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: SL4BetweenFactorBatch(const SL4Transform* pose_deltas_ptr, size_t num_factors)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 4×4, unit determinant).
   :param ``num_factors``: [in] Number of between constraints.
   :returns: Constructor has no return value.
@@ -587,10 +579,9 @@ Reprojection error for bundle adjustment. Observations in **normalized** image c
 
 **Inputs:** Pose :math:`T_{\mathrm{cam}}` (state block 1), 3D point :math:`P` (state block 2). State: :code:`SE3StateBatch` then :code:`VectorStateBatch<3>` (see :doc:`state`). Observations :math:`(x_n, y_n)` and optional camera-from-rig from constructor.
 
-.. cpp:function:: ReprojectionFactorBatch(cuBLASHandle& cublas_handle, const Vector<2>* observations, size_t num_observations, float z_threshold = 1e-3f)
-.. cpp:function:: ReprojectionFactorBatch(cuBLASHandle& cublas_handle, const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, size_t num_observations, float z_threshold = 1e-3f)
+.. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, size_t num_observations, float z_threshold = 1e-3f)
+.. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, size_t num_observations, float z_threshold = 1e-3f)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``observations``: [in] Device pointer to normalized observations.
   :param ``poses_camera_from_rig``: [in] Optional device pointer to camera extrinsics (second overload).
   :param ``num_observations``: [in] Number of reprojection factors.
@@ -634,10 +625,9 @@ world-to-camera according to your convention—match how you built the
 observations). Optional ``poses_camera_from_rig`` uses the same composition as
 `ReprojectionFactorBatch`.
 
-.. cpp:function:: PnPFactorBatch(cuBLASHandle& cublas_handle, const Vector<2>* observations, const Vector<3>* points_world, size_t num_observations, float z_threshold = 1e-3f)
-.. cpp:function:: PnPFactorBatch(cuBLASHandle& cublas_handle, const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, const Vector<3>* points_world, size_t num_observations, float z_threshold = 1e-3f)
+.. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const Vector<3>* points_world, size_t num_observations, float z_threshold = 1e-3f)
+.. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, const Vector<3>* points_world, size_t num_observations, float z_threshold = 1e-3f)
 
-  :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``observations``: [in] Device pointer to normalized 2-D observations.
   :param ``points_world``: [in] Device pointer to fixed world points :math:`P`.
   :param ``poses_camera_from_rig``: [in] Optional per-factor rig extrinsics (second overload).
@@ -942,16 +932,14 @@ Does **not** require a ``CublasHandle``.
 
 Prior on a 3-D rotation.  Residual =
 :math:`\mathrm{Log}(R_\mathrm{target}^\top R)`, Jacobian =
-:math:`J_r^{-1}(r)`.
+:math:`J_r^{-1}(r)`.  Does **not** require a ``CublasHandle``.
 
 **Constructor**
 
 .. code-block:: python
 
-   fb = pycunls.SO3PriorFactorBatch(cublas, observations, num_factors)
+   fb = pycunls.SO3PriorFactorBatch(observations, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **observations** (``DevicePointer``) — ``num_factors × 9`` floats holding
   row-major 3×3 target rotation matrices.
 - **num_factors** (``int``) — number of prior factors.
@@ -965,15 +953,14 @@ Prior on a 3-D rotation.  Residual =
 
 Prior on a 3-D rigid transform.  Residual =
 :math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`, Jacobian = :math:`J_r^{-1}(r)`.
+Does **not** require a ``CublasHandle``.
 
 **Constructor**
 
 .. code-block:: python
 
-   fb = pycunls.SE3PriorFactorBatch(cublas, observations, num_factors)
+   fb = pycunls.SE3PriorFactorBatch(observations, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **observations** (``DevicePointer``) — ``num_factors × 16`` floats
   holding row-major 4×4 target homogeneous matrices.
 - **num_factors** (``int``) — number of prior factors.
@@ -987,16 +974,15 @@ Prior on a 3-D rigid transform.  Residual =
 --------------------------------------------------------------------------------
 
 Prior on an SL(4) transform.  Residual =
-:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`.
+:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`.  Does **not** require a
+``CublasHandle``.
 
 **Constructor**
 
 .. code-block:: python
 
-   fb = pycunls.SL4PriorFactorBatch(cublas, observations, num_factors)
+   fb = pycunls.SL4PriorFactorBatch(observations, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **observations** (``DevicePointer``) — ``num_factors × 16`` floats
   holding row-major 4×4 SL(4) target transforms.
 - **num_factors** (``int``) — number of prior factors.
@@ -1041,10 +1027,8 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SE2BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.SE2BetweenFactorBatch(deltas, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **deltas** (``DevicePointer``) — ``num_factors × 9`` floats holding
   row-major 3×3 measured relative transforms :math:`\Delta`.
 - **num_factors** (``int``) — number of between constraints.
@@ -1065,10 +1049,8 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SO2BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.SO2BetweenFactorBatch(deltas, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **deltas** (``DevicePointer``) — ``num_factors × 4`` floats holding
   row-major 2×2 measured relative rotations :math:`\Delta`.
 - **num_factors** (``int``) — number of between constraints.
@@ -1089,10 +1071,8 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SO3BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.SO3BetweenFactorBatch(deltas, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **deltas** (``DevicePointer``) — ``num_factors × 9`` floats holding
   row-major 3×3 measured relative rotations :math:`\Delta`.
 - **num_factors** (``int``) — number of between constraints.
@@ -1113,10 +1093,8 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.Similarity2BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.Similarity2BetweenFactorBatch(deltas, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **deltas** (``DevicePointer``) — ``num_factors × 9`` floats holding
   row-major 3×3 measured relative transforms :math:`\Delta`.
 - **num_factors** (``int``) — number of between constraints.
@@ -1161,10 +1139,8 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SL4BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.SL4BetweenFactorBatch(deltas, num_factors)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **deltas** (``DevicePointer``) — ``num_factors × 16`` floats holding
   row-major 4×4 measured relative transforms :math:`\Delta` (unit determinant).
 - **num_factors** (``int``) — number of between constraints.
@@ -1207,10 +1183,8 @@ Reprojection error for bundle adjustment.  Observations must be in
 .. code-block:: python
 
    fb = pycunls.ReprojectionFactorBatch(
-       cublas, observations, num_observations, z_threshold=1e-3)
+       observations, num_observations, z_threshold=1e-3)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **observations** (``DevicePointer``) — ``num_observations × 2`` floats
   holding normalized 2-D observations :math:`(x_n, y_n)`.
 - **num_observations** (``int``) — number of reprojection factors.
@@ -1235,18 +1209,16 @@ state per correspondence (typically the same camera pose pointer repeated).
 .. code-block:: python
 
    fb = pycunls.PnPFactorBatch(
-       cublas, observations, points_world, num_observations, z_threshold=1e-3)
+       observations, points_world, num_observations, z_threshold=1e-3)
 
 **Constructor (with camera-from-rig extrinsics per factor)**
 
 .. code-block:: python
 
    fb = pycunls.PnPFactorBatch(
-       cublas, observations, poses_camera_from_rig, points_world,
+       observations, poses_camera_from_rig, points_world,
        num_observations, z_threshold=1e-3)
 
-- **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
-  handle.
 - **observations** — ``num_observations × 2`` normalized image coordinates.
 - **points_world** — ``num_observations × 3`` fixed world points (not
   optimized).

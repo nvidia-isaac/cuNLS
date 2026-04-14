@@ -41,10 +41,14 @@ class FastSparseMatrixMultiplier : public SparseMatrixMultiplier {
                             CSRSparseMatrix& output) override;
 
  private:
+  void ComputeOutputStructure(cudaStream_t stream, const Problem& problem,
+                              CSRSparseMatrix& output, int num_cols);
+
   int max_nnz_per_row_ = 0;
   dvector<int> position_map_;  ///< Precomputed output positions, indexed as
                                ///< [input_nnz_idx * max_nnz_per_row + b].
   dvector<int> buffer_;        ///< Reusable scratch buffer for initialization.
+  pvector<int> pinned_buf_;    ///< Reusable pinned buffer for D2H readbacks.
   profiler::Domain profiler_domain_{
       "FastSparseMatrixMultiplier"};  ///< Profiling domain.
 };

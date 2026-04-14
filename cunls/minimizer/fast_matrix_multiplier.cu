@@ -224,12 +224,11 @@ __global__ void ExpandBlockPairsKernel(const ExpandPair* __restrict__ pairs,
  * (A,A), (A,B), (B,A), (B,B) in the Hessian.  Block pairs are collected
  * on the host, sorted, and expanded into a CSR on the GPU.
  *
- * Uses @p buffer as scratch space to avoid runtime GPU memory allocation.
+ * Uses buffer_ as scratch space to avoid runtime GPU memory allocation.
  */
-static void ComputeOutputStructure(cudaStream_t stream,
-                                   const Problem& problem,
-                                   CSRSparseMatrix& output, int num_cols,
-                                   dvector<int>& buffer) {
+void FastSparseMatrixMultiplier::ComputeOutputStructure(
+    cudaStream_t stream, const Problem& problem,
+    CSRSparseMatrix& output, int num_cols) {
   struct BlockInfo {
     int col_offset;
     int tangent_size;
@@ -260,11 +259,15 @@ static void ComputeOutputStructure(cudaStream_t stream,
     std::set<int> const_ids;
     size_t num_const = batch->NumConstStateBlocks();
     if (num_const > 0) {
-      std::vector<int> h_const(num_const);
-      THROW_ON_CUDA_ERROR(cudaMemcpy(h_const.data(), batch->ConstStateIds(),
-                                     num_const * sizeof(int),
-                                     cudaMemcpyDeviceToHost));
-      const_ids.insert(h_const.begin(), h_const.end());
+      if (pinned_buf_.size() < num_const) {
+        pinned_buf_.resize(num_const);
+      }
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(),
+                                          batch->ConstStateIds(),
+                                          num_const * sizeof(int),
+                                          cudaMemcpyDeviceToHost, stream));
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+      const_ids.insert(pinned_buf_.data(), pinned_buf_.data() + num_const);
     }
 
     for (int i = 0; i < bd.num_blocks; i++) {
@@ -371,9 +374,9 @@ static void ComputeOutputStructure(cudaStream_t stream,
   int num_pairs = static_cast<int>(gpu_pairs.size());
   size_t pairs_ints = static_cast<size_t>(num_pairs) * 5;
 
-  buffer.resize(pairs_ints + num_cols);
-  auto* d_pairs = reinterpret_cast<ExpandPair*>(buffer.data());
-  int* row_counts = buffer.data() + pairs_ints;
+  buffer_.resize(pairs_ints + num_cols);
+  auto* d_pairs = reinterpret_cast<ExpandPair*>(buffer_.data());
+  int* row_counts = buffer_.data() + pairs_ints;
 
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_pairs, gpu_pairs.data(),
                                       num_pairs * sizeof(ExpandPair),
@@ -401,11 +404,15 @@ static void ComputeOutputStructure(cudaStream_t stream,
                            offsets_ptr + 1);
   }
 
+  if (pinned_buf_.size() < 1) {
+    pinned_buf_.resize(1);
+  }
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(),
+                                      output.row_offsets.data() + num_cols,
+                                      sizeof(int), cudaMemcpyDeviceToHost,
+                                      stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  int total_nnz;
-  THROW_ON_CUDA_ERROR(cudaMemcpy(&total_nnz,
-                                 output.row_offsets.data() + num_cols,
-                                 sizeof(int), cudaMemcpyDeviceToHost));
+  int total_nnz = pinned_buf_[0];
 
   output.col_ids.resize(total_nnz);
   output.values.resize(total_nnz);
@@ -440,7 +447,7 @@ void FastSparseMatrixMultiplier::Initialize(cudaStream_t stream,
     return;
   }
 
-  ComputeOutputStructure(stream, problem, output, num_cols, buffer_);
+  ComputeOutputStructure(stream, problem, output, num_cols);
 
   // Precompute output positions for every input (a, b) pair so
   // that ComputeSquaredMatrix avoids binary searches entirely.

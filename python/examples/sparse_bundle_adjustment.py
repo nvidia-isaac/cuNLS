@@ -100,7 +100,7 @@ def main():
     point_states = pycunls.VectorStateBatch3(points_gpu, num_points)
 
     reproj_factor = pycunls.ReprojectionFactorBatch(
-        cublas, observations_gpu, num_observations, z_threshold)
+        observations_gpu, num_observations, z_threshold)
 
     state_pointers = []
     for pi in range(num_poses):

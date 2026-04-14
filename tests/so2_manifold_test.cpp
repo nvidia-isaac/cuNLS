@@ -150,7 +150,7 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
       cublas, reinterpret_cast<const float*>(left_dev.data()), kN);
   SO2StateBatch state_right(
       cublas, reinterpret_cast<const float*>(right_dev.data()), kN);
-  SO2BetweenFactorBatch factor_batch(cublas, deltas_dev.data(), kN);
+  SO2BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
   std::vector<float*> ptrs;
   ptrs.reserve(2 * kN);

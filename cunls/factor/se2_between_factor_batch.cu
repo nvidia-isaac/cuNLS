@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cublas_v2.h>
-
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/se2_between_factor_batch.h"
@@ -19,21 +17,52 @@ constexpr size_t kSE2TransformStride = 9;
 constexpr size_t kSE2TangentStride = 3;
 
 /**
- * @brief Gather left and right SE(2) poses from state pointers.
+ * @brief Fused kernel: collect L/R SE(2), compute T_left^{-1} * T_right * Delta
+ *        in one pass. SE(2) structure: last row [0 0 1].
  *
- * For a between factor connecting state i and j, state_pointers has
- * alternating left/right pairs: [left_0, right_0, left_1, right_1, ...].
+ * Replaces: collect + InverseSE2 + 2x cuBLAS 3x3 GEMM.
  */
-__global__ void collect_se2_poses_between_kernel(
-    float const* const* state_pointers, size_t num_factors,
-    Matrix<3>* pose_left, Matrix<3>* pose_right) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) {
-    return;
-  }
-  pose_left[tid] = *reinterpret_cast<const Matrix<3>*>(state_pointers[2 * tid]);
-  pose_right[tid] =
-      *reinterpret_cast<const Matrix<3>*>(state_pointers[2 * tid + 1]);
+__global__ void collect_and_compute_se2_between_error_kernel(
+    float const* const* state_pointers, const Matrix<3>* deltas,
+    size_t num_factors, Matrix<3>* errors) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= (int)num_factors) return;
+
+  const float* __restrict__ L = state_pointers[2 * tid];
+  const float* __restrict__ R = state_pointers[2 * tid + 1];
+  const float* __restrict__ D = deltas[tid].data();
+  float* __restrict__ out = errors[tid].data();
+
+  // L: [[c,-s,tx],[s,c,ty],[0,0,1]]
+  const float lc = L[0], ls = L[3], ltx = L[2], lty = L[5];
+
+  // L_inv: [[c,s,-c*tx-s*ty],[-s,c,s*tx-c*ty],[0,0,1]]
+  const float i02 = -(lc*ltx + ls*lty);
+  const float i12 = ls*ltx - lc*lty;
+
+  // R active part
+  const float r00=R[0], r01=R[1], r02=R[2];
+  const float r10=R[3], r11=R[4], r12=R[5];
+
+  // temp = L_inv * R (3x3, last row [0 0 1])
+  const float t00 = lc*r00 + ls*r10;
+  const float t01 = lc*r01 + ls*r11;
+  const float t02 = lc*r02 + ls*r12 + i02;
+  const float t10 = -ls*r00 + lc*r10;
+  const float t11 = -ls*r01 + lc*r11;
+  const float t12 = -ls*r02 + lc*r12 + i12;
+
+  // error = D * temp (row-major: D_row * temp_row)
+  // cuBLAS col-major: C_col = A_col * B_col => C_row = B_row * A_row = D * temp
+  const float d00=D[0], d01=D[1], d02=D[2];
+  const float d10=D[3], d11=D[4], d12=D[5];
+  out[0] = d00*t00 + d01*t10;
+  out[1] = d00*t01 + d01*t11;
+  out[2] = d00*t02 + d01*t12 + d02;
+  out[3] = d10*t00 + d11*t10;
+  out[4] = d10*t01 + d11*t11;
+  out[5] = d10*t02 + d11*t12 + d12;
+  out[6] = 0.0f; out[7] = 0.0f; out[8] = 1.0f;
 }
 
 /**
@@ -145,12 +174,10 @@ __global__ void se2_between_jacobian_kernel(const float* residuals,
   }
 }
 
-SE2BetweenFactorBatch::SE2BetweenFactorBatch(cuBLASHandle& cublas_handle,
-                                             const Matrix<3>* pose_deltas_ptr,
+SE2BetweenFactorBatch::SE2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr,
                                              size_t num_factors)
     : pose_deltas_ptr_(pose_deltas_ptr),
       num_factors_(num_factors),
-      cublas_handle_(cublas_handle),
       poses_left_(num_factors),
       poses_right_(num_factors),
       poses_left_inverse_(num_factors) {}
@@ -161,38 +188,12 @@ bool SE2BetweenFactorBatch::Evaluate(float* residuals, float* jacobians,
   size_t num_factors = NumFactors();
   size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
 
-  // Step 1: Gather left and right poses from state pointers
-  collect_se2_poses_between_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, num_factors, poses_left_.data(), poses_right_.data());
+  // Fused: collect L/R + compute (L^{-1} * R) * Delta in one kernel
+  collect_and_compute_se2_between_error_kernel<<<num_blocks, kBlockSize, 0,
+                                                 stream>>>(
+      state_pointers, pose_deltas_ptr_, num_factors,
+      poses_left_inverse_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  // Step 2: Compute T_left^{-1}
-  ComputeInverseSE2(stream,
-                    reinterpret_cast<const float*>(poses_left_.data()),
-                    kSE2TransformStride, kSE2TransformStride, num_factors,
-                    reinterpret_cast<float*>(poses_left_inverse_.data()));
-
-  // Step 3: Compute T_left^{-1} * T_right via batched GEMM
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr int mat_size = 3;
-  constexpr int stride = 9;
-
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<const float*>(poses_right_.data()), mat_size, stride,
-      reinterpret_cast<const float*>(poses_left_inverse_.data()), mat_size,
-      stride, &beta, reinterpret_cast<float*>(poses_left_.data()), mat_size,
-      stride, num_factors));
-
-  // Step 4: Multiply by delta^{-1} to get error: (T_left^{-1}*T_right) * delta_inv
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      reinterpret_cast<float*>(poses_left_.data()), mat_size, stride,
-      reinterpret_cast<const float*>(pose_deltas_ptr_), mat_size, stride,
-      &beta, reinterpret_cast<float*>(poses_left_inverse_.data()), mat_size,
-      stride, num_factors));
 
   // Step 5: residual = Log(error)
   ComputeLogSE2(stream,

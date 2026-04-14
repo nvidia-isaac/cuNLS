@@ -30,32 +30,32 @@ import pycunls
 
 class TestReprojectionFactorBatch:
     """2D reprojection factor: residual=2, states=[SE3(6), Point3(3)]."""
-    def test_creation(self, cublas):
+    def test_creation(self):
         num_obs = 100
         obs = cp.zeros(num_obs * 2, dtype=cp.float32)
-        fb = pycunls.ReprojectionFactorBatch(cublas, obs, num_obs)
+        fb = pycunls.ReprojectionFactorBatch(obs, num_obs)
         assert fb.num_factors == num_obs
         assert fb.residuals_size == 2
         assert fb.state_block_sizes() == [6, 3]
 
-    def test_custom_z_threshold(self, cublas):
+    def test_custom_z_threshold(self):
         obs = cp.zeros(20, dtype=cp.float32)
-        fb = pycunls.ReprojectionFactorBatch(cublas, obs, 10, z_threshold=0.1)
+        fb = pycunls.ReprojectionFactorBatch(obs, 10, z_threshold=0.1)
         assert fb.num_factors == 10
 
 
 class TestPnPFactorBatch:
     """PnP factor: residual=2, single SE3(6); 3D points fixed at construction."""
-    def test_creation(self, cublas):
+    def test_creation(self):
         num_obs = 20
         obs = cp.zeros(num_obs * 2, dtype=cp.float32)
         pts = cp.zeros(num_obs * 3, dtype=cp.float32)
-        fb = pycunls.PnPFactorBatch(cublas, obs, pts, num_obs)
+        fb = pycunls.PnPFactorBatch(obs, pts, num_obs)
         assert fb.num_factors == num_obs
         assert fb.residuals_size == 2
         assert fb.state_block_sizes() == [6]
 
-    def test_creation_with_camera_from_rig(self, cublas):
+    def test_creation_with_camera_from_rig(self):
         n = 8
         obs = cp.zeros(n * 2, dtype=cp.float32)
         rig = cp.zeros(n * 16, dtype=cp.float32)
@@ -64,7 +64,7 @@ class TestPnPFactorBatch:
         rig[10::16] = 1.0
         rig[15::16] = 1.0
         pts = cp.zeros(n * 3, dtype=cp.float32)
-        fb = pycunls.PnPFactorBatch(cublas, obs, rig, pts, n, z_threshold=0.02)
+        fb = pycunls.PnPFactorBatch(obs, rig, pts, n, z_threshold=0.02)
         assert fb.num_factors == n
         assert fb.state_block_sizes() == [6]
 
@@ -82,10 +82,10 @@ class TestSE3BetweenFactorBatch:
 
 class TestSE3PriorFactorBatch:
     """SE(3) prior factor: residual=6, states=[SE3(6)]."""
-    def test_creation(self, cublas):
+    def test_creation(self):
         num = 10
         obs = cp.zeros(num * 16, dtype=cp.float32)
-        fb = pycunls.SE3PriorFactorBatch(cublas, obs, num)
+        fb = pycunls.SE3PriorFactorBatch(obs, num)
         assert fb.num_factors == num
         assert fb.residuals_size == 6
         assert fb.state_block_sizes() == [6]
@@ -93,10 +93,10 @@ class TestSE3PriorFactorBatch:
 
 class TestSO3PriorFactorBatch:
     """SO(3) prior factor: residual=3, states=[SO3(3)]."""
-    def test_creation(self, cublas):
+    def test_creation(self):
         num = 10
         obs = cp.zeros(num * 9, dtype=cp.float32)
-        fb = pycunls.SO3PriorFactorBatch(cublas, obs, num)
+        fb = pycunls.SO3PriorFactorBatch(obs, num)
         assert fb.num_factors == num
         assert fb.residuals_size == 3
         assert fb.state_block_sizes() == [3]

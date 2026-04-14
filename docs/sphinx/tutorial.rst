@@ -250,8 +250,7 @@ is nearly behind the camera.
 .. code-block:: cpp
 
    cunls::ReprojectionFactorBatch reproj_factor(
-       cublas_handle, observations_device.data(), num_observations,
-       kZThreshold);
+       observations_device.data(), num_observations, kZThreshold);
 
 **Step 5 — Create the state-pointer map and assemble the problem.**
 The state-pointer vector is a flattened list of device pointers, two per

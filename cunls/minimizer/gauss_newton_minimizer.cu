@@ -15,18 +15,13 @@
  * limitations under the License.
  */
 
-#include <thrust/device_ptr.h>
-#include <thrust/functional.h>
-#include <thrust/reduce.h>
-#include <thrust/transform.h>
-
 #include <numeric>
 #include <stdexcept>
 
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
-#include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
+#include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/residual_batch.h"
@@ -99,10 +94,10 @@ void GaussNewtonMinimizer::InitializeJacobian(cudaStream_t stream,
  * @param minimizer_state Current minimizer state.
  * @return Total cost (sum of squared residuals from all factors).
  */
-float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
-                                        const Problem& problem,
-                                        const MinimizerState& minimizer_state) {
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
+void GaussNewtonMinimizer::ComputeCostAsync(
+    cudaStream_t stream, const Problem& problem,
+    const MinimizerState& minimizer_state, float* d_cost_out) {
+  auto range = profiler_domain_.CreateDomainRange("ComputeCost");
   const auto& state_pointers = minimizer_state.GetStatePointers();
 
   const auto& residual_batches = problem.GetResidualBatches();
@@ -136,14 +131,33 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
     cost_ptr += factor_batch->NumFactors();
   }
 
-  float total_cost = 0;
   if (total_num_cost_elements > 0) {
-    thrust::device_ptr<float> cost_vec_ptr(reinterpret_cast<float*>(buffer_.data()));
-    total_cost = thrust::reduce(stream_policy, cost_vec_ptr,
-                               cost_vec_ptr + total_num_cost_elements);
+    size_t partials_needed = ReducePartialCount(total_num_cost_elements);
+    if (d_reduce_partials_.size() < partials_needed) {
+      d_reduce_partials_.resize(partials_needed);
+    }
+    ReduceSumToDevice(stream, reinterpret_cast<float*>(buffer_.data()),
+                      total_num_cost_elements, d_cost_out,
+                      d_reduce_partials_.data());
+  } else {
+    THROW_ON_CUDA_ERROR(
+        cudaMemsetAsync(d_cost_out, 0, sizeof(float), stream));
   }
+}
+
+float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream,
+                                        const Problem& problem,
+                                        const MinimizerState& minimizer_state) {
+  if (d_scalars_.size() < 1) d_scalars_.resize(1);
+  if (h_scalars_.size() < 1) h_scalars_.resize(1);
+
+  ComputeCostAsync(stream, problem, minimizer_state, d_scalars_.data());
+
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
+                                      sizeof(float), cudaMemcpyDeviceToHost,
+                                      stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  return total_cost;
+  return h_scalars_[0];
 }
 
 /**
@@ -220,21 +234,17 @@ void GaussNewtonMinimizer::ApplyColumnScalingToNormalEquations(
   }
 
   if (options_.column_scaling == ColumnScaling::HessianDiagonal) {
-    // S_ii = 1 / sqrt(H_ii) using unscaled Hessian in hessian_.
     ExtractDiagonal(stream, hessian_, column_scale_);
     InvertSqrtWithFloorInPlace(stream, column_scale_);
   } else {
-    // ColumnScaling::JacobianColumnNorm: S_jj = 1 / ||J_{:,j}||_2.
-    ComputeJacobianColumnScaling(stream, csr_jacobian_, column_scale_);
+    ComputeJacobianColumnScaling(stream, csr_jacobian_,
+                                  jacobian_dims_.num_cols,
+                                  jacobian_dims_.num_nonzeros, column_scale_);
   }
 
-  // lhs becomes S H S; rhs becomes S b for b = -J^T r.
   ScaleSymmetricCSR(stream, lhs, column_scale_);
-  auto policy = thrust::cuda::par_nosync.on(stream);
-  thrust::device_ptr<float> r_ptr(rhs.data());
-  thrust::device_ptr<float> s_ptr(column_scale_.data());
-  thrust::transform(policy, r_ptr, r_ptr + rhs.size(), s_ptr, r_ptr,
-                    thrust::multiplies<float>());
+  ElementwiseMultiplyInPlace(stream, rhs.data(), column_scale_.data(),
+                             rhs.size());
 }
 
 void GaussNewtonMinimizer::MapScaledLinearSolutionToTangentStep(
@@ -242,11 +252,8 @@ void GaussNewtonMinimizer::MapScaledLinearSolutionToTangentStep(
   if (options_.column_scaling == ColumnScaling::None || step.empty()) {
     return;
   }
-  auto policy = thrust::cuda::par_nosync.on(stream);
-  thrust::device_ptr<float> st_ptr(step.data());
-  thrust::device_ptr<float> sc_ptr(column_scale_.data());
-  thrust::transform(policy, st_ptr, st_ptr + step.size(), sc_ptr, st_ptr,
-                    thrust::multiplies<float>());
+  ElementwiseMultiplyInPlace(stream, step.data(), column_scale_.data(),
+                             step.size());
 }
 
 void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
@@ -266,7 +273,9 @@ void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream,
   gemm_->ComputeSquaredMatrix(stream, problem, csr_jacobian_, hessian_);
   CopyCSRSparseMatrix(stream, hessian_, lhs);
   auto handle = cusparse_handle_.GetHandle(stream);
-  ComputeRHS(stream, handle, csr_jacobian_, residuals_, rhs, buffer_);
+  ComputeRHS(stream, handle, csr_jacobian_,
+             jacobian_dims_.num_rows, jacobian_dims_.num_cols,
+             jacobian_dims_.num_nonzeros, residuals_, rhs, buffer_);
 
   ApplyColumnScalingToNormalEquations(stream, lhs, rhs);
 }
@@ -314,6 +323,9 @@ void GaussNewtonMinimizer::UpdateStates(cudaStream_t stream,
 void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
                                       Problem& problem) {
   auto range = profiler_domain_.CreateDomainRange("Initialize");
+  jacobian_dims_.Invalidate();
+  hessian_dims_.Invalidate();
+
   InitializeResiduals(problem, residuals_);
   InitializeJacobian(stream, problem);
   state_ops_.Preprocess(stream, problem.GetStateBatches());
@@ -330,6 +342,14 @@ void GaussNewtonMinimizer::Initialize(cudaStream_t stream,
   }
 
   gemm_->Initialize(stream, problem, csr_jacobian_, hessian_);
+
+  {
+    int nr, nc, nnz;
+    ExtractMatrixMetadata(stream, csr_jacobian_, nr, nc, nnz);
+    jacobian_dims_.Set(nr, nc, nnz);
+    ExtractMatrixMetadata(stream, hessian_, nr, nc, nnz);
+    hessian_dims_.Set(nr, nc, nnz);
+  }
 }
 
 /**
@@ -357,9 +377,22 @@ bool GaussNewtonMinimizer::CheckConvergence(cudaStream_t stream,
                                             const dvector<float>& step,
                                             float& step_quality) {
   auto range = profiler_domain_.CreateDomainRange("CheckConvergence");
-  float squared_step = ComputeSquaredStep(stream, step);
+
+  if (d_scalars_.size() < 1) d_scalars_.resize(1);
+  if (h_scalars_.size() < 1) h_scalars_.resize(1);
+  size_t partials_needed = ReducePartialCount(step.size());
+  if (d_reduce_partials_.size() < partials_needed) {
+    d_reduce_partials_.resize(partials_needed);
+  }
+
+  ComputeSquaredStepAsync(stream, step, d_scalars_.data(),
+                          d_reduce_partials_.data());
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
+                                      sizeof(float), cudaMemcpyDeviceToHost,
+                                      stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
+  float squared_step = h_scalars_[0];
   LogMessage("Squared step = {}", squared_step);
   step_quality = updated_cost / current_cost;
 
@@ -371,6 +404,44 @@ bool GaussNewtonMinimizer::CheckConvergence(cudaStream_t stream,
   }
 
   return false;
+}
+
+bool GaussNewtonMinimizer::EvaluateAndCheckConvergence(
+    cudaStream_t stream, const Problem& problem,
+    const MinimizerState& updated_state, float current_cost,
+    const dvector<float>& step, float& updated_cost, float& step_quality) {
+  auto range = profiler_domain_.CreateDomainRange("EvaluateAndCheckConvergence");
+
+  constexpr size_t kSlots = 2;  // [0] = cost, [1] = squared_step
+  if (d_scalars_.size() < kSlots) d_scalars_.resize(kSlots);
+  if (h_scalars_.size() < kSlots) h_scalars_.resize(kSlots);
+
+  // Enqueue cost reduction (async, result stays on device)
+  ComputeCostAsync(stream, problem, updated_state, d_scalars_.data());
+
+  // Enqueue squared step reduction (async, result stays on device)
+  size_t partials_needed = ReducePartialCount(step.size());
+  if (d_reduce_partials_.size() < partials_needed) {
+    d_reduce_partials_.resize(partials_needed);
+  }
+  ComputeSquaredStepAsync(stream, step, d_scalars_.data() + 1,
+                          d_reduce_partials_.data());
+
+  // Single D2H + single sync
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
+                                      kSlots * sizeof(float),
+                                      cudaMemcpyDeviceToHost, stream));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+
+  updated_cost = h_scalars_[0];
+  float squared_step = h_scalars_[1];
+
+  LogMessage("Squared step = {}", squared_step);
+  step_quality = updated_cost / current_cost;
+  LogMessage("Step quality = {}", step_quality);
+
+  return (squared_step < options_.state_tolerance ||
+          updated_cost < options_.cost_tolerance || step_quality >= 1);
 }
 
 /**
@@ -478,7 +549,6 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
     {
       auto solve_range = profiler_domain_.CreateDomainRange("Solve");
-      // Solve linear system: J^T J dx = -J^T r (or SHS z = S b with scaling)
       bool success = solver_->Solve(stream, lhs_work_, rhs_work_, step_);
       if (!success) {
         std::string str = "Failed to solve linear system";
@@ -489,19 +559,17 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
     MapScaledLinearSolutionToTangentStep(stream, step_);
 
-    // Apply step: x_new = x + dx
     UpdateStates(stream, current_state_, step_, updated_state_);
 
-    // Evaluate cost with updated states
-    float cost = ComputeCost(stream, problem, updated_state_);
+    // Fused: cost reduction + squared step in one D2H + sync
+    float cost;
+    float step_quality;
+    bool converged = EvaluateAndCheckConvergence(
+        stream, problem, updated_state_, summary.final_cost, step_, cost,
+        step_quality);
 
     LogMessage("Current cost = {}, updated cost = {}", summary.final_cost,
                cost);
-
-    // Check convergence criteria
-    float step_quality;
-    bool converged =
-        CheckConvergence(stream, cost, summary.final_cost, step_, step_quality);
     LogMessage("Current step quality = {}", step_quality);
 
     if (converged) {
@@ -513,7 +581,6 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
       break;
     }
 
-    // Reject step if it increases cost
     if (RejectStep(step_quality)) {
       LogMessage("Reject step");
       consecutive_rejected++;
@@ -524,7 +591,6 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
         break;
       }
     } else {
-      // Accept step and update state
       LogMessage("Accept step");
       consecutive_rejected = 0;
       AcceptStep(step_quality);
@@ -532,7 +598,6 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
       current_state_.Copy(stream, updated_state_.GetStates());
     }
 
-    // Rebuild linear system for next iteration
     BuildSystem(stream, problem, current_state_, lhs_work_, rhs_work_);
   };
 

@@ -15,16 +15,112 @@
  * limitations under the License.
  */
 
-#include <cublas_v2.h>
-#include <thrust/copy.h>
-#include <thrust/device_ptr.h>
-#include <thrust/transform.h>
-
 #include "cunls/common/helper.h"
-#include "cunls/math/sim_lie_math.h"
 #include "cunls/state/similarity2_state_batch.h"
 
 namespace cunls {
+
+namespace {
+
+constexpr int kBlockSize = 256;
+
+/** Same logic as ComputeVCoeffsSim2 in sim_lie_math.cu (inlined for fusion). */
+__device__ void ComputeVCoeffsSim2Inline(float theta, float lambda, float& X,
+                                         float& thetaY) {
+  const float lambda2 = lambda * lambda;
+  const float theta2 = theta * theta;
+
+  if (fabsf(lambda) < 1e-4f) {
+    float A, B;
+    if (theta2 > 1e-6f) {
+      const float sv = sinf(theta);
+      const float cv = cosf(theta);
+      A = sv / theta;
+      B = (1.0f - cv) / theta2;
+    } else {
+      A = 1.0f - theta2 / 6.0f;
+      B = 0.5f - theta2 / 24.0f;
+    }
+    X = A;
+    thetaY = theta * B;
+    return;
+  }
+
+  const float d2 = lambda2 + theta2;
+  if (d2 < 1e-10f) {
+    X = 1.0f;
+    thetaY = 0.0f;
+    return;
+  }
+
+  float A, B, C;
+  if (theta2 > 1e-6f) {
+    const float sv = sinf(theta);
+    const float cv = cosf(theta);
+    A = sv / theta;
+    B = (1.0f - cv) / theta2;
+    C = (1.0f - A) / theta2;
+  } else {
+    A = 1.0f - theta2 / 6.0f;
+    B = 0.5f - theta2 / 24.0f;
+    C = 1.0f / 6.0f - theta2 / 120.0f;
+  }
+
+  const float alpha_coeff = lambda2 / d2;
+  const float s_inv = expf(-lambda);
+  X = alpha_coeff * (1.0f - s_inv) / lambda +
+      (1.0f - alpha_coeff) * (A - lambda * B);
+  const float Y = alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 +
+                  (1.0f - alpha_coeff) * (B - lambda * C);
+  thetaY = theta * Y;
+}
+
+__global__ void sim2_apply_update_fused_kernel(const float* __restrict__ x,
+                                               const float* __restrict__ delta,
+                                               float* __restrict__ result, int n,
+                                               bool negate_delta) {
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tid >= n) {
+    return;
+  }
+
+  const float* xi = delta + tid * 4;
+  float ux = xi[0], uy = xi[1], theta = xi[2], lambda = xi[3];
+  if (negate_delta) {
+    ux = -ux;
+    uy = -uy;
+    theta = -theta;
+    lambda = -lambda;
+  }
+
+  const float c = cosf(theta);
+  const float s = sinf(theta);
+  const float inv_scale = expf(-lambda);
+
+  float X, thetaY;
+  ComputeVCoeffsSim2Inline(theta, lambda, X, thetaY);
+  const float tx = X * ux - thetaY * uy;
+  const float ty = thetaY * ux + X * uy;
+
+  const float e00 = c, e01 = -s, e02 = tx;
+  const float e10 = s, e11 = c, e12 = ty;
+  const float e20 = 0.0f, e21 = 0.0f, e22 = inv_scale;
+
+  const float* xm = x + tid * 9;
+  float* rm = result + tid * 9;
+
+#pragma unroll
+  for (int r = 0; r < 3; ++r) {
+    const float xr0 = xm[r * 3 + 0];
+    const float xr1 = xm[r * 3 + 1];
+    const float xr2 = xm[r * 3 + 2];
+    rm[r * 3 + 0] = xr0 * e00 + xr1 * e10 + xr2 * e20;
+    rm[r * 3 + 1] = xr0 * e01 + xr1 * e11 + xr2 * e21;
+    rm[r * 3 + 2] = xr0 * e02 + xr1 * e12 + xr2 * e22;
+  }
+}
+
+}  // namespace
 
 Similarity2StateBatch::Similarity2StateBatch(cuBLASHandle& cublas_handle,
                                              const float* device_ptr,
@@ -44,49 +140,18 @@ Similarity2StateBatch::Similarity2StateBatch(
       tangents_(num_blocks * 4) {}
 
 void Similarity2StateBatch::ApplyUpdate(const float* x, const float* delta,
-                                      float* result,
-                                      bool invert_delta,
-                                      cudaStream_t stream) {
-  size_t num_transforms = NumStateBlocks();
-
-  auto tangents_ptr = reinterpret_cast<const float*>(tangents_.data());
-  auto delta_transforms_ptr =
-      reinterpret_cast<float*>(delta_transforms_.data());
-
-  thrust::device_ptr<const float> ptr = thrust::device_pointer_cast(delta);
-  thrust::device_ptr<float> tangents_device_ptr(tangents_.data());
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-  thrust::copy(stream_policy, ptr, ptr + num_transforms * 4,
-               tangents_device_ptr);
-
-  if (invert_delta) {
-    thrust::transform(stream_policy, tangents_device_ptr,
-                      tangents_device_ptr + tangents_.size(),
-                      tangents_device_ptr, thrust::negate<float>());
-  }
-
-  // Exp(delta): tangent vectors -> Sim(2) matrices
-  constexpr size_t kTangentStride = 4;
-  constexpr size_t kTransformStride = 9;
-  ComputeExpSim2(stream, tangents_ptr, kTangentStride, kTransformStride,
-                 num_transforms, delta_transforms_ptr);
-
-  // result = x * Exp(delta) via batched matrix multiplication
-  auto handle = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
-  constexpr float alpha = 1.0f;
-  constexpr float beta = 0.0f;
-  constexpr int mat_size = 3;
-  constexpr int stride = 9;
-
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-      delta_transforms_ptr, mat_size, stride, x, mat_size, stride, &beta,
-      result, mat_size, stride, num_transforms));
+                                        float* result, bool invert_delta,
+                                        cudaStream_t stream) {
+  const int num_transforms = static_cast<int>(NumStateBlocks());
+  const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
+  sim2_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(
+      x, delta, result, num_transforms, invert_delta);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  static_cast<void>(cublas_handle_);
 }
 
 void Similarity2StateBatch::Plus(const float* x, const float* delta,
-                               float* x_plus_delta,
-                               cudaStream_t stream) {
+                                 float* x_plus_delta, cudaStream_t stream) {
   ApplyUpdate(x, delta, x_plus_delta, false, stream);
 }
 

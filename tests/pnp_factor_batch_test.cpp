@@ -223,9 +223,8 @@ class PnPFactorBatchTest : public ::testing::Test {
 
 TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
   const size_t n = 6;
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
-  ReprojectionFactorBatch reproj(cublas_handle_, obs_device_.data(), n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
+  ReprojectionFactorBatch reproj(obs_device_.data(), n, kZThr);
   VectorStateBatch<3> point_batch(reinterpret_cast<float*>(points_device_.data()),
                                   n);
   SE3StateBatch pose_state(cublas_handle_,
@@ -275,8 +274,7 @@ TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
 
 TEST_F(PnPFactorBatchTest, EvaluateNearZeroAtGroundTruth) {
   const size_t n = 20;
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 
@@ -308,8 +306,7 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   DisturbPoseOnDevice(cublas_handle_, pose_device_.data(), 0.08f, 0.25f);
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 
@@ -374,8 +371,7 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   DisturbPoseOnDevice(cublas_handle_, pose_device_.data(), 0.08f, 0.25f);
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
-  PnPFactorBatch pnp(cublas_handle_, obs_device_.data(), points_device_.data(),
-                     n, kZThr);
+  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
   SE3StateBatch pose_state(cublas_handle_,
                            reinterpret_cast<const float*>(pose_device_.data()), 1);
 

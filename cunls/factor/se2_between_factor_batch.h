@@ -6,7 +6,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -14,7 +13,7 @@
 namespace cunls {
 
 /**
- * @brief Batch factor for SE(2) between constraints.
+ * @brief Batch factor for SE(2) between constraints (no cuBLAS handle).
  *
  * residual = Log(Delta * T_left^{-1} * T_right) (3-vector).
  *
@@ -26,8 +25,7 @@ class SE2BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
   using Base = SizedFactorBatch<3, 3, 3>;
 
  public:
-  SE2BetweenFactorBatch(cuBLASHandle& cublas_handle,
-                        const Matrix<3>* pose_deltas_ptr, size_t num_factors);
+  SE2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t num_factors);
 
   bool Evaluate(float* residuals, float* jacobians,
                 float const* const* state_pointers,
@@ -40,7 +38,6 @@ class SE2BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
 
   const Matrix<3>* pose_deltas_ptr_;
   size_t num_factors_;
-  cuBLASHandle& cublas_handle_;
   mutable DeviceVector<Matrix<3>> poses_left_;
   mutable DeviceVector<Matrix<3>> poses_right_;
   mutable DeviceVector<Matrix<3>> poses_left_inverse_;

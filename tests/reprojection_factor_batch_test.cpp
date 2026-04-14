@@ -489,8 +489,8 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(
-      cublas_handle_, observations_device.data(), num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
 // Set up state pointers
   std::vector<const float*> state_pointers;
   for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
@@ -572,8 +572,8 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(
-      cublas_handle_, observations_device.data(), num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
 
   // Create state pointers and build problem
   std::vector<float*> state_pointers =
@@ -670,8 +670,8 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(
-      cublas_handle_, observations_device.data(), num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
 
   // Create state pointers and build problem
   std::vector<float*> state_pointers =
@@ -752,8 +752,8 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeJoint) {
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(
-      cublas_handle_, observations_device.data(), num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
 
   // Create state pointers and build problem
   std::vector<float*> state_pointers =
@@ -827,8 +827,7 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
 
   // Create factor batch with explicit positive z_threshold to test the check
   constexpr float z_threshold_for_test = 1e-3f;
-  ReprojectionFactorBatch factor_batch(cublas_handle_, obs_device.data(), 1,
-                                              z_threshold_for_test);
+  ReprojectionFactorBatch factor_batch(obs_device.data(), 1, z_threshold_for_test);
 // Set up state pointers
   std::vector<const float*> param_ptrs = {
       reinterpret_cast<const float*>(pose_device.data()),
@@ -890,12 +889,12 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
 
   // Create factor batch with rig transforms
   ReprojectionFactorBatch factor_batch_with_rig(
-      cublas_handle_, observations_device.data(), rig_transforms_device.data(),
-      num_observations, kDefaultZThreshold);
+      observations_device.data(), rig_transforms_device.data(), num_observations,
+      kDefaultZThreshold);
 
   // Create factor batch without rig transforms for comparison
-  ReprojectionFactorBatch factor_batch_no_rig(
-      cublas_handle_, observations_device.data(), num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch_no_rig(observations_device.data(),
+                                              num_observations, kDefaultZThreshold);
 
   // Set up state pointers
   std::vector<const float*> state_pointers;
@@ -1085,8 +1084,8 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
 
   // Create factor batch with camera-from-rig transforms
   ReprojectionFactorBatch factor_batch(
-      cublas_handle_, observations_device.data(), camera_from_rig_device.data(),
-      num_observations, kDefaultZThreshold);
+      observations_device.data(), camera_from_rig_device.data(), num_observations,
+      kDefaultZThreshold);
 
   // Create state pointers and build problem
   std::vector<float*> state_pointers =
@@ -1202,8 +1201,8 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
 
   // Create factor batch with rig transforms
   ReprojectionFactorBatch factor_batch(
-      cublas_handle_, observations_device.data(), camera_from_rig_device.data(),
-      num_observations, kDefaultZThreshold);
+      observations_device.data(), camera_from_rig_device.data(), num_observations,
+      kDefaultZThreshold);
 // Set up state pointers
   std::vector<const float*> state_pointers;
   for (size_t point_idx = 0; point_idx < test_num_points; point_idx++) {

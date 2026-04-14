@@ -18,6 +18,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/common/types.h"
+#include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
@@ -74,26 +75,44 @@ bool LevenbergMarquardtMinimizer::CheckConvergence(cudaStream_t stream,
                                                    float current_cost,
                                                    const dvector<float>& step,
                                                    float& step_quality) {
-  float step_sq_norm = ComputeSquaredStep(stream, step_);
+  constexpr size_t kSlots = 3;
+  if (d_scalars_.size() < kSlots) d_scalars_.resize(kSlots);
+  if (h_scalars_.size() < kSlots) h_scalars_.resize(kSlots);
+  size_t partials_needed = ReducePartialCount(step_.size());
+  if (d_reduce_partials_.size() < partials_needed) {
+    d_reduce_partials_.resize(partials_needed);
+  }
 
+  // Enqueue all three reductions async
+  ComputeSquaredStepAsync(stream, step_, d_scalars_.data(),
+                          d_reduce_partials_.data());
+  ComputeWeightedSquaredStepAsync(stream, diagonal_, step_,
+                                  d_scalars_.data() + 1,
+                                  d_reduce_partials_.data());
   auto handle = cusparse_handle_.GetHandle(stream);
+  ComputeWeightedSquaredStepAsync(stream, handle, hessian_,
+                                  hessian_dims_.num_rows,
+                                  hessian_dims_.num_cols,
+                                  hessian_dims_.num_nonzeros, step_, buffer_,
+                                  d_scalars_.data() + 2,
+                                  d_reduce_partials_.data());
 
-  float diag_weight =
-      ComputeWeightedSquaredStep(stream, diagonal_, step_, buffer_);
-  float matrix_weight =
-      ComputeWeightedSquaredStep(stream, handle, hessian_, step_, buffer_);
-
+  // Single D2H + single sync
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
+                                      kSlots * sizeof(float),
+                                      cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
-  // Predicted reduction = (step^T H step + 2 * lambda * step^T diag(H) step) /
-  // cost
+  float step_sq_norm = h_scalars_[0];
+  float diag_weight = h_scalars_[1];
+  float matrix_weight = h_scalars_[2];
+
   float predicted_relative_reduction =
       (matrix_weight + 2.f * lambda_ * diag_weight) / current_cost;
 
   LogMessage("Predicted relative reduction = {}", predicted_relative_reduction);
   LogMessage("Step squared norm = {}", step_sq_norm);
 
-  // rho = actual_reduction / predicted_reduction
   float rho =
       (1.f - updated_cost / current_cost) / predicted_relative_reduction;
 
@@ -106,6 +125,68 @@ bool LevenbergMarquardtMinimizer::CheckConvergence(cudaStream_t stream,
   }
 
   return false;
+}
+
+bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
+    cudaStream_t stream, const Problem& problem,
+    const MinimizerState& updated_state, float current_cost,
+    const dvector<float>& step, float& updated_cost, float& step_quality) {
+  // 4 slots: [0]=cost, [1]=step_sq_norm, [2]=diag_weight, [3]=matrix_weight
+  constexpr size_t kSlots = 4;
+  if (d_scalars_.size() < kSlots) d_scalars_.resize(kSlots);
+  if (h_scalars_.size() < kSlots) h_scalars_.resize(kSlots);
+
+  // Enqueue cost reduction
+  ComputeCostAsync(stream, problem, updated_state, d_scalars_.data());
+
+  size_t partials_needed = ReducePartialCount(step_.size());
+  if (d_reduce_partials_.size() < partials_needed) {
+    d_reduce_partials_.resize(partials_needed);
+  }
+
+  // Enqueue squared step norm
+  ComputeSquaredStepAsync(stream, step_, d_scalars_.data() + 1,
+                          d_reduce_partials_.data());
+
+  // Enqueue diag-weighted step norm
+  ComputeWeightedSquaredStepAsync(stream, diagonal_, step_,
+                                  d_scalars_.data() + 2,
+                                  d_reduce_partials_.data());
+
+  // Enqueue sparse-weighted step norm (SpMV + dot, all on stream)
+  auto handle = cusparse_handle_.GetHandle(stream);
+  ComputeWeightedSquaredStepAsync(stream, handle, hessian_,
+                                  hessian_dims_.num_rows,
+                                  hessian_dims_.num_cols,
+                                  hessian_dims_.num_nonzeros, step_, buffer_,
+                                  d_scalars_.data() + 3,
+                                  d_reduce_partials_.data());
+
+  // Single D2H + single sync for all 4 scalars
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(),
+                                      kSlots * sizeof(float),
+                                      cudaMemcpyDeviceToHost, stream));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+
+  updated_cost = h_scalars_[0];
+  float step_sq_norm = h_scalars_[1];
+  float diag_weight = h_scalars_[2];
+  float matrix_weight = h_scalars_[3];
+
+  float predicted_relative_reduction =
+      (matrix_weight + 2.f * lambda_ * diag_weight) / current_cost;
+
+  LogMessage("Predicted relative reduction = {}", predicted_relative_reduction);
+  LogMessage("Step squared norm = {}", step_sq_norm);
+
+  float rho =
+      (1.f - updated_cost / current_cost) / predicted_relative_reduction;
+
+  step_quality = rho;
+
+  return (step_sq_norm < options_.base_options.state_tolerance ||
+          predicted_relative_reduction < options_.relative_reduction_tolerance ||
+          updated_cost < options_.base_options.cost_tolerance);
 }
 
 /**

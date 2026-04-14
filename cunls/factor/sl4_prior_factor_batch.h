@@ -6,7 +6,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -26,8 +25,7 @@ class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
   using Base = SizedFactorBatch<15, 15>;
 
  public:
-  SL4PriorFactorBatch(cuBLASHandle& cublas_handle,
-                      const SL4Transform* observations_ptr, size_t num_factors);
+  SL4PriorFactorBatch(const SL4Transform* observations_ptr, size_t num_factors);
 
   bool Evaluate(float* residuals, float* jacobians,
                 float const* const* state_pointers,
@@ -41,8 +39,6 @@ class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
   const SL4Transform* observations_ptr_;
   size_t num_factors_;
   DeviceVector<SL4Transform> observations_inverse_;
-  cuBLASHandle& cublas_handle_;
-  mutable DeviceVector<SL4Transform> transforms_current_;
   mutable DeviceVector<SL4Transform> transforms_error_;
 };
 

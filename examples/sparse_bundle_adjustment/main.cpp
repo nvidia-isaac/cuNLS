@@ -155,8 +155,8 @@ int main() {
                                      const_pose_ids_device.data(), 1);
     cunls::VectorStateBatch<3> point_states(points_ptr, num_points);
 
-    cunls::ReprojectionFactorBatch reproj_factor(
-        cublas_handle, observations_device.data(), num_observations, kZThreshold);
+    cunls::ReprojectionFactorBatch reproj_factor(observations_device.data(),
+                                                 num_observations, kZThreshold);
 
     // Flatten factor connectivity:
     // for each observation, provide [pose_ptr, point_ptr].

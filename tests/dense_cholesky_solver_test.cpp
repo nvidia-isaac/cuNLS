@@ -347,8 +347,7 @@ TEST_F(DenseCholeskySolverTestFixture, SolvePnPWithCholeskySolver) {
   VectorStateBatch<3> point_batch(
       reinterpret_cast<const float*>(points_device.data()), num_points,
       point_const_ids_device.data(), point_const_ids.size());
-  ReprojectionFactorBatch reprojection_factor(
-      cublas_handle_, observations_device.data(), num_points);
+  ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
 
   std::vector<float*> state_pointers;
   state_pointers.reserve(num_points * 2);
