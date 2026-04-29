@@ -1,0 +1,88 @@
+name: PR Verification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check script permissions
+        run: |
+          errors=0
+          for f in scripts/*.sh; do
+            [ -f "$f" ] || continue
+            if [ ! -x "$f" ]; then
+              echo "::error file=$f::Script is not executable"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::$errors script(s) missing executable permission"
+            exit 1
+          fi
+
+      - name: Check required files exist
+        run: |
+          missing=0
+          for f in python/pyproject.toml CMakeLists.txt scripts/Dockerfile; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Required file missing: $f"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            exit 1
+          fi
+
+  gpu-build-test:
+    needs: lint
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      matrix_json: |
+        [
+          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"},
+          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
+          {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
+          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"}
+        ]
+      artifact_retention_days: 14
+      upload_binaries: false
+      timeout_minutes: 120
+
+  # Gate job: reusable workflow jobs don't reliably register as status checks
+  # for branch protection (actions/runner#1917). This job mirrors the result
+  # and provides a stable check name for the ruleset.
+  #
+  # The ruleset starts in "evaluate" mode (dry-run). After verifying that
+  # this check name appears correctly in the GitHub UI on a real PR, change
+  # .github/rulesets/main-protection.json "enforcement" from "evaluate" to
+  # "active" to begin enforcing.
+  pr-status:
+    name: "PR status"
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, gpu-build-test]
+    steps:
+      - name: Check results
+        run: |
+          echo "lint: ${{ needs.lint.result }}"
+          echo "gpu-build-test: ${{ needs.gpu-build-test.result }}"
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.gpu-build-test.result }}" != "success" ]; then
+            echo "::error::One or more required checks failed"
+            exit 1
+          fi

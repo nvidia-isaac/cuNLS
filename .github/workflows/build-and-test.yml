@@ -1,0 +1,99 @@
+name: Build and Test
+
+on:
+  workflow_call:
+    inputs:
+      matrix_json:
+        description: >
+          JSON array of matrix entries. Each entry must have: ubuntu, cuda, archs.
+          Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"}]
+        type: string
+        required: true
+      artifact_retention_days:
+        description: "Number of days to retain uploaded artifacts"
+        type: number
+        default: 30
+      upload_binaries:
+        description: "Upload compiled libraries and wheels as artifacts"
+        type: boolean
+        default: true
+      timeout_minutes:
+        description: "Per-job timeout in minutes"
+        type: number
+        default: 120
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-matrix:
+    name: "x86_64 / ubuntu-${{ matrix.config.ubuntu }} / cuda-${{ matrix.config.cuda }}"
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJson(inputs.matrix_json) }}
+
+    steps:
+      - name: Verify GPU
+        run: nvidia-smi
+
+      - uses: actions/checkout@v5
+
+      - name: Build C++ libraries
+        run: |
+          CUDA_VERSION="${{ matrix.config.cuda }}" \
+          UBUNTU_VERSION="${{ matrix.config.ubuntu }}" \
+          EXTRA_CMAKE_ARGS="-DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.config.archs }}" \
+          ./scripts/build_cunls_in_docker.sh Release ./output
+
+      - name: Run C++ tests
+        run: ./scripts/test_cunls_in_docker.sh ./output
+
+      - name: Build Python wheel
+        run: |
+          CUDA_VERSION="${{ matrix.config.cuda }}" \
+          UBUNTU_VERSION="${{ matrix.config.ubuntu }}" \
+          ./scripts/build_pycunls_in_docker.sh ./output/wheel
+
+      - name: Run Python tests
+        run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
+
+      - name: Upload C++ test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-results-cpp-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          path: output/cpp-test-results.xml
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn
+
+      - name: Upload Python test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-results-python-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          path: output/wheel/python-test-results.xml
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn
+
+      - name: Upload C++ libraries
+        if: ${{ always() && inputs.upload_binaries }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: cunls-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          path: |
+            output/shared/
+            output/static/
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn
+
+      - name: Upload Python wheel
+        if: ${{ always() && inputs.upload_binaries }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pycunls-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          path: output/wheel/*.whl
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn
