@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --upgrade pip && \
-    pip install scikit-build-core nanobind build wheel
+    pip install scikit-build-core nanobind build wheel pre-commit
 
 # Sphinx docs dependencies
 COPY docs/sphinx/requirements.txt /tmp/cunls-docs-requirements.txt
