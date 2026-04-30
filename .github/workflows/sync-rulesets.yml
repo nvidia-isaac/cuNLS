@@ -1,0 +1,82 @@
+name: Sync branch rulesets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/rulesets/**'
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: "Apply rulesets"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Sync rulesets via API
+        env:
+          GH_TOKEN: ${{ secrets.RULESET_ADMIN_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::RULESET_ADMIN_TOKEN secret is not set. Cannot manage rulesets."
+            echo "Create a fine-grained PAT with administration:write scope and store it as a repo secret."
+            exit 1
+          fi
+
+          for file in .github/rulesets/*.json; do
+            [ -f "$file" ] || continue
+            NAME=$(jq -r '.name' "$file")
+            echo "Processing ruleset: $NAME (from $file)"
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$OWNER/$REPO/rulesets")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+              echo "::error::Failed to list rulesets (HTTP $HTTP_CODE)"
+              echo "$BODY" | head -5
+              exit 1
+            fi
+
+            EXISTING_ID=$(echo "$BODY" | jq -r "[.[] | select(.name == \"$NAME\") | .id] | first // empty")
+
+            if [ -n "$EXISTING_ID" ]; then
+              echo "Updating existing ruleset (id=$EXISTING_ID)"
+              RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -d @"$file" \
+                "https://api.github.com/repos/$OWNER/$REPO/rulesets/$EXISTING_ID")
+            else
+              echo "Creating new ruleset"
+              RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -d @"$file" \
+                "https://api.github.com/repos/$OWNER/$REPO/rulesets")
+            fi
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              RESULT_ID=$(echo "$BODY" | jq -r '.id // empty')
+              echo "Success (HTTP $HTTP_CODE, ruleset id=$RESULT_ID)"
+            else
+              echo "::error::Failed to apply ruleset '$NAME' (HTTP $HTTP_CODE)"
+              echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+              exit 1
+            fi
+          done

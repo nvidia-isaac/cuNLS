@@ -1,0 +1,42 @@
+language: en
+reviews:
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!third_party/**"
+    - "!docs/sphinx/_build/**"
+    - "!**/*.xml"
+    - "!**/*.whl"
+  path_instructions:
+    - path: "cunls/**"
+      instructions: >
+        This is the core C++/CUDA library. Pay attention to CUDA memory management,
+        kernel launch configurations, numerical stability, and thread safety.
+        The project follows Google C++ Style Guide.
+    - path: "python/**"
+      instructions: >
+        Python bindings using nanobind and scikit-build-core. Check for correct
+        type annotations, memory ownership across the C++/Python boundary,
+        and GIL handling.
+    - path: "CMakeLists.txt"
+      instructions: >
+        Root CMake configuration. Check for correct CUDA architecture handling,
+        FetchContent usage, and option definitions.
+    - path: "cmake/**"
+      instructions: >
+        CMake modules for finding dependencies. Check for correct Find module
+        patterns and version constraints.
+    - path: "scripts/**"
+      instructions: >
+        Build and test automation scripts. These must work identically in
+        interactive terminals and non-interactive CI. Check for bashisms
+        in POSIX scripts, correct Docker volume mounts, and proper error handling.
+    - path: ".github/workflows/**"
+      instructions: >
+        GitHub Actions workflows. Build and test commands must not appear inline
+        in YAML; they should call scripts. Check for correct matrix definitions,
+        artifact naming, timeout-minutes on GPU jobs, and secret handling via
+        env blocks.
+chat:
+  auto_reply: true

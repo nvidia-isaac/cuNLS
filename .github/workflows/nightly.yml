@@ -43,86 +43,22 @@ jobs:
           fi
 
   build-matrix:
-    name: "x86_64 / ubuntu-${{ matrix.ubuntu }} / cuda-${{ matrix.cuda }}"
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
-    runs-on: [self-hosted, gpu]
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { ubuntu: "22.04", cuda: "12.8.1", archs: "75;80;86;89" }
-          - { ubuntu: "22.04", cuda: "13.2.0", archs: "75;80;86;89;100" }
-          - { ubuntu: "24.04", cuda: "12.8.1", archs: "75;80;86;89" }
-          - { ubuntu: "24.04", cuda: "13.2.0", archs: "75;80;86;89;100" }
-
-          # Jetson (aarch64) — DISABLED pending infra changes.
-          # To re-enable: add entries with archs: "72;87" and the confirmed
-          # Jetson runner labels from the RPT team.
-
-    steps:
-      - name: Verify GPU
-        run: nvidia-smi
-
-      - uses: actions/checkout@v5
-
-      - name: Build C++ libraries
-        run: |
-          CUDA_VERSION=${{ matrix.cuda }} \
-          UBUNTU_VERSION=${{ matrix.ubuntu }} \
-          EXTRA_CMAKE_ARGS="-DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.archs }}" \
-          ./scripts/build_cunls_in_docker.sh Release ./output
-
-      - name: Run C++ tests
-        run: ./scripts/test_cunls_in_docker.sh ./output
-
-      - name: Build Python wheel
-        run: |
-          CUDA_VERSION=${{ matrix.cuda }} \
-          UBUNTU_VERSION=${{ matrix.ubuntu }} \
-          ./scripts/build_pycunls_in_docker.sh ./output/wheel
-
-      - name: Run Python tests
-        run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
-
-      - name: Upload C++ test results
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: test-results-cpp-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: output/cpp-test-results.xml
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload Python test results
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: test-results-python-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: output/wheel/python-test-results.xml
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload C++ libraries
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: cunls-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: |
-            output/shared/
-            output/static/
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload Python wheel
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: pycunls-x86_64-cuda${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}
-          path: output/wheel/*.whl
-          retention-days: 30
-          if-no-files-found: warn
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      # Jetson (aarch64) is DISABLED pending infra changes. To re-enable,
+      # add entries with archs:"72;87" and the confirmed Jetson runner labels.
+      matrix_json: |
+        [
+          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"},
+          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
+          {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
+          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"}
+        ]
+      artifact_retention_days: 30
+      upload_binaries: true
+      timeout_minutes: 120
 
   nightly-status:
     name: Nightly status & release

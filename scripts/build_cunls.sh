@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
   echo "Usage ./scripts/build_cunls.sh <build_dir> <CMAKE_BUILD_TYPE = Release | Coverage> [install_dir]"
@@ -7,7 +8,7 @@ fi
 
 BUILD_DIR=$1
 CMAKE_BUILD_TYPE=$2
-INSTALL_DIR=$3
+INSTALL_DIR=${3:-}
 
 CMAKE_EXTRA_ARGS=""
 if [ -n "$INSTALL_DIR" ]; then
@@ -21,7 +22,7 @@ mkdir -p $BUILD_DIR && cd $BUILD_DIR
 cmake --version && cmake \
     -D CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
     ${CMAKE_EXTRA_ARGS} \
-    ${EXTRA_CMAKE_ARGS} \
+    ${EXTRA_CMAKE_ARGS:-} \
     -G "Unix Makefiles" -S "$SOURCE_DIR"
 
 if [[ "$CMAKE_BUILD_TYPE" == "Coverage" ]]
