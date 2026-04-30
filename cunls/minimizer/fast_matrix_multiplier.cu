@@ -19,7 +19,10 @@
 #include <thrust/scan.h>
 
 #include <algorithm>
-#include <set>
+#include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/fast_matrix_multiplier.h"
@@ -106,23 +109,41 @@ PrecomputePositionsKernel(const int *__restrict__ input_row_offsets,
  * (a, b) pair looks up the precomputed output position from position_map
  * and accumulates val_a * val_b with atomicAdd.
  *
+ * Block-sparsity optimization: for block-sparse Jacobians (state blocks up
+ * to 16x16), the per-row nnz `L` is small (typically <= max_nnz_per_row).
+ * The 32 warp lanes are decomposed into `kAPerWarp = 32 / kThreadsPerA`
+ * sub-groups, each processing a different `a` value in parallel rather
+ * than serializing them in the outer loop.  This halves (or more) the
+ * outer-loop iteration count vs. the naive one-`a`-at-a-time scheme.
+ *
  * Shared memory layout (per block):
  *   [warp0_vals ... warpN_vals]
+ *
+ * @tparam kThreadsPerA Power-of-two number of lanes that cooperate on a
+ *                      single `a` value.  Must be >= max_nnz_per_row
+ *                      (rounded up to a power of two), capped at 32.
  */
+template <int kThreadsPerA>
 __global__ void ComputeJtJKernel(const int *__restrict__ input_row_offsets,
                                  const float *__restrict__ input_values,
                                  int num_input_rows,
                                  const int *__restrict__ position_map,
                                  float *__restrict__ output_values,
                                  int max_nnz_per_row) {
+  static_assert(kThreadsPerA > 0 && (kThreadsPerA & (kThreadsPerA - 1)) == 0,
+                "kThreadsPerA must be a power of two");
+  static_assert(kThreadsPerA <= WARP_SIZE, "kThreadsPerA must be <= 32");
+  constexpr int kAPerWarp = WARP_SIZE / kThreadsPerA;
+
   extern __shared__ float s_vals[];
 
   int warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
   int lane = threadIdx.x & (WARP_SIZE - 1);
   int warp_in_block = threadIdx.x / WARP_SIZE;
 
-  if (warp_id >= num_input_rows)
+  if (warp_id >= num_input_rows) {
     return;
+  }
 
   float *my_vals = s_vals + warp_in_block * max_nnz_per_row;
 
@@ -135,15 +156,35 @@ __global__ void ComputeJtJKernel(const int *__restrict__ input_row_offsets,
   }
   __syncwarp();
 
-  for (int a = 0; a < L; a++) {
-    float val_a = my_vals[a];
-    int map_base = (start + a) * max_nnz_per_row;
+  // Lane decomposition: a_sub picks which `a` value within the kAPerWarp
+  // group this lane handles; b_lane is the lane's column within the
+  // kThreadsPerA group cooperating on that `a`.
+  const int a_sub = lane / kThreadsPerA;
+  const int b_lane = lane & (kThreadsPerA - 1);
 
-    for (int b = lane; b < L; b += WARP_SIZE) {
-      int pos = position_map[map_base + b];
-      atomicAdd(&output_values[pos], val_a * my_vals[b]);
+  for (int a_base = 0; a_base < L; a_base += kAPerWarp) {
+    int a = a_base + a_sub;
+    if (a < L) {
+      float val_a = my_vals[a];
+      int map_base = (start + a) * max_nnz_per_row;
+      for (int b = b_lane; b < L; b += kThreadsPerA) {
+        int pos = position_map[map_base + b];
+        atomicAdd(&output_values[pos], val_a * my_vals[b]);
+      }
     }
   }
+}
+
+// Picks the smallest power-of-two >= max_nnz_per_row, capped at WARP_SIZE.
+// Lower values let multiple `a` columns be processed in parallel within
+// one warp; for max_nnz_per_row <= 16 this gives a 2x or better reduction
+// in serialized outer-loop iterations.
+static int PickThreadsPerA(int max_nnz_per_row) {
+  int t = 1;
+  while (t < max_nnz_per_row && t < WARP_SIZE) {
+    t *= 2;
+  }
+  return t;
 }
 
 // ============================================================================
@@ -228,7 +269,15 @@ __global__ void ExpandBlockPairsKernel(const ExpandPair *__restrict__ pairs,
  * Derives the J^T J sparsity pattern from the factor graph connectivity.
  * Each factor connecting state blocks A,B produces dense sub-blocks
  * (A,A), (A,B), (B,A), (B,B) in the Hessian.  Block pairs are collected
- * on the host, sorted, and expanded into a CSR on the GPU.
+ * on the host, deduplicated via a hash set, and expanded into a CSR on
+ * the GPU.
+ *
+ * Block-sparsity optimization: rather than push every (row, col, row_tang,
+ * col_tang) tuple per factor (millions of entries) and then sort+unique,
+ * we deduplicate on-the-fly with an unordered_set keyed on
+ * (row_offset << 32 | col_offset).  Tangent sizes are constant per
+ * column-offset and looked up after dedup.  All const-state-id D2H copies
+ * are issued first and a single stream sync gates host processing.
  *
  * Uses buffer_ as scratch space to avoid runtime GPU memory allocation.
  */
@@ -253,38 +302,73 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(cudaStream_t stream,
   const auto &state_batches = problem.GetStateBatches();
   std::vector<BatchDesc> batch_descs;
   batch_descs.reserve(state_batches.size());
-  int last_col = 0;
 
-  for (auto *batch : state_batches) {
+  // Phase 1: issue all const-state-id D2H copies into one pinned buffer
+  // and synchronize the stream once instead of once per batch.
+  std::vector<size_t> const_offsets(state_batches.size() + 1, 0);
+  for (size_t i = 0; i < state_batches.size(); i++) {
+    const_offsets[i + 1] =
+        const_offsets[i] + state_batches[i]->NumConstStateBlocks();
+  }
+  size_t total_const = const_offsets.back();
+
+  if (total_const > 0) {
+    if (pinned_buf_.size() < total_const) {
+      pinned_buf_.resize(total_const);
+    }
+    for (size_t i = 0; i < state_batches.size(); i++) {
+      size_t nc = state_batches[i]->NumConstStateBlocks();
+      if (nc > 0) {
+        THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
+            pinned_buf_.data() + const_offsets[i],
+            state_batches[i]->ConstStateIds(), nc * sizeof(int),
+            cudaMemcpyDeviceToHost, stream));
+      }
+    }
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  }
+
+  // Phase 2: build per-batch column-offset tables.
+  int last_col = 0;
+  for (size_t i = 0; i < state_batches.size(); i++) {
+    auto *batch = state_batches[i];
     BatchDesc bd;
     bd.base = batch->StateBlockDevicePtr(0);
     bd.ambient_size = static_cast<int>(batch->AmbientSize());
     bd.tangent_size = static_cast<int>(batch->TangentSize());
     bd.num_blocks = static_cast<int>(batch->NumStateBlocks());
-    bd.col_offsets.resize(bd.num_blocks, 0);
+    bd.col_offsets.assign(bd.num_blocks, 0);
 
-    std::set<int> const_ids;
-    size_t num_const = batch->NumConstStateBlocks();
-    if (num_const > 0) {
-      if (pinned_buf_.size() < num_const) {
-        pinned_buf_.resize(num_const);
+    size_t nc = state_batches[i]->NumConstStateBlocks();
+    std::vector<bool> is_const(bd.num_blocks, false);
+    for (size_t k = 0; k < nc; k++) {
+      int idx = pinned_buf_[const_offsets[i] + k];
+      if (idx >= 0 && idx < bd.num_blocks) {
+        is_const[idx] = true;
       }
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
-          pinned_buf_.data(), batch->ConstStateIds(), num_const * sizeof(int),
-          cudaMemcpyDeviceToHost, stream));
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-      const_ids.insert(pinned_buf_.data(), pinned_buf_.data() + num_const);
     }
 
-    for (int i = 0; i < bd.num_blocks; i++) {
-      if (const_ids.count(i) != 0) {
-        bd.col_offsets[i] = -1;
+    for (int j = 0; j < bd.num_blocks; j++) {
+      if (is_const[j]) {
+        bd.col_offsets[j] = -1;
       } else {
-        bd.col_offsets[i] = last_col;
+        bd.col_offsets[j] = last_col;
         last_col += bd.tangent_size;
       }
     }
     batch_descs.push_back(std::move(bd));
+  }
+
+  // Pre-build a col_offset -> tangent_size map.  Tangent size is constant
+  // per state batch, so every column offset has a fixed tangent.
+  std::unordered_map<int, int> col_to_tangent;
+  col_to_tangent.reserve(static_cast<size_t>(num_cols));
+  for (const auto &bd : batch_descs) {
+    for (int col : bd.col_offsets) {
+      if (col >= 0) {
+        col_to_tangent.emplace(col, bd.tangent_size);
+      }
+    }
   }
 
   // Lambda: resolve device pointer → BlockInfo via pointer arithmetic.
@@ -295,33 +379,21 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(cudaStream_t stream,
           diff < static_cast<ptrdiff_t>(bd.num_blocks) * bd.ambient_size) {
         int idx = static_cast<int>(diff / bd.ambient_size);
         int col = bd.col_offsets[idx];
-        if (col >= 0)
+        if (col >= 0) {
           return {col, bd.tangent_size};
+        }
         return {-1, 0};
       }
     }
     return {-1, 0};
   };
 
-  // Collect all block pairs into a flat vector, sort, and deduplicate.
-  struct BlockPair {
-    int row_offset;
-    int col_offset;
-    int row_tangent;
-    int col_tangent;
-    bool operator<(const BlockPair &o) const {
-      if (row_offset != o.row_offset)
-        return row_offset < o.row_offset;
-      return col_offset < o.col_offset;
-    }
-    bool operator==(const BlockPair &o) const {
-      return row_offset == o.row_offset && col_offset == o.col_offset;
-    }
-  };
-
   const auto &res_batches = problem.GetResidualBatches();
   const auto &state_ptrs = problem.GetStatePointers();
 
+  // Estimate the number of unique (row, col) block pairs.  We don't know
+  // the real count up front; reserving a healthy fraction of the worst
+  // case avoids most rehashes for typical workloads.
   size_t total_pair_estimate = 0;
   for (size_t rb = 0; rb < res_batches.size(); rb++) {
     auto *factor = res_batches[rb].GetFactorBatch();
@@ -329,40 +401,84 @@ void FastSparseMatrixMultiplier::ComputeOutputStructure(cudaStream_t stream,
     total_pair_estimate += factor->NumFactors() * nb * nb;
   }
 
-  std::vector<BlockPair> pairs;
-  pairs.reserve(total_pair_estimate);
+  // Hash-set dedup: O(1) insert per (row, col) pair vs. the previous
+  // sort+unique on millions of 16-byte structs.  Keys pack
+  // (row_offset, col_offset) into a single 64-bit integer.
+  std::unordered_set<uint64_t> seen_pairs;
+  seen_pairs.reserve(std::min<size_t>(total_pair_estimate,
+                                      static_cast<size_t>(1) << 22));
 
-  std::vector<BlockInfo> factor_blocks;
-  std::vector<float *> h_ptrs;
+  // Per-factor scratch.  16x16 block sparse means at most ~16 blocks per
+  // factor; stack array avoids per-factor heap allocations.
+  constexpr int kMaxBlocksPerFactor = 64;
+  int local_cols[kMaxBlocksPerFactor];
+  std::vector<int> local_cols_dyn;
 
   for (size_t rb = 0; rb < res_batches.size(); rb++) {
     auto *factor = res_batches[rb].GetFactorBatch();
     size_t nf = factor->NumFactors();
     size_t nb = factor->StateBlockSizes().size();
+    const auto &h_ptrs = state_ptrs[rb];
 
-    factor_blocks.resize(nb);
-    h_ptrs = state_ptrs[rb];
+    int *cols_ptr;
+    if (nb <= kMaxBlocksPerFactor) {
+      cols_ptr = local_cols;
+    } else {
+      local_cols_dyn.resize(nb);
+      cols_ptr = local_cols_dyn.data();
+    }
 
     for (size_t f = 0; f < nf; f++) {
       int nblocks = 0;
+      const float *const *fp = h_ptrs.data() + f * nb;
       for (size_t b = 0; b < nb; b++) {
-        auto info = resolve_ptr(h_ptrs[f * nb + b]);
-        if (info.col_offset >= 0)
-          factor_blocks[nblocks++] = info;
+        auto info = resolve_ptr(fp[b]);
+        if (info.col_offset >= 0) {
+          cols_ptr[nblocks++] = info.col_offset;
+        }
       }
       for (int a = 0; a < nblocks; a++) {
+        uint64_t row_part = static_cast<uint64_t>(
+                                static_cast<uint32_t>(cols_ptr[a]))
+                            << 32;
         for (int b = 0; b < nblocks; b++) {
-          pairs.push_back(
-              {factor_blocks[a].col_offset, factor_blocks[b].col_offset,
-               factor_blocks[a].tangent_size, factor_blocks[b].tangent_size});
+          uint64_t key =
+              row_part | static_cast<uint32_t>(cols_ptr[b]);
+          seen_pairs.insert(key);
         }
       }
     }
   }
 
-  std::sort(pairs.begin(), pairs.end());
-  auto new_end = std::unique(pairs.begin(), pairs.end());
-  pairs.erase(new_end, pairs.end());
+  // Materialize into a sorted BlockPair vector for offset computation.
+  // The unique count is O(num_state_blocks^2) in the worst case but
+  // typically much smaller, so this sort dominates only at <<1% scale
+  // compared to the previous sort over all (factor x nb x nb) entries.
+  struct BlockPair {
+    int row_offset;
+    int col_offset;
+    int row_tangent;
+    int col_tangent;
+  };
+
+  std::vector<BlockPair> pairs;
+  pairs.reserve(seen_pairs.size());
+  for (uint64_t key : seen_pairs) {
+    int row = static_cast<int>(key >> 32);
+    int col = static_cast<int>(key & 0xFFFFFFFFu);
+    auto row_it = col_to_tangent.find(row);
+    auto col_it = col_to_tangent.find(col);
+    int row_t = row_it != col_to_tangent.end() ? row_it->second : 0;
+    int col_t = col_it != col_to_tangent.end() ? col_it->second : 0;
+    pairs.push_back({row, col, row_t, col_t});
+  }
+  std::sort(pairs.begin(), pairs.end(),
+            [](const BlockPair &a, const BlockPair &b) {
+              if (a.row_offset != b.row_offset) {
+                return a.row_offset < b.row_offset;
+              }
+              return a.col_offset < b.col_offset;
+            });
 
   // Compute per-pair write offsets: within a block row, each successive
   // block column starts after the previous one's tangent width.
@@ -493,9 +609,41 @@ void FastSparseMatrixMultiplier::ComputeSquaredMatrix(
                      warps_per_block, block_size, smem);
   int grid = (num_input_rows + warps_per_block - 1) / warps_per_block;
 
-  ComputeJtJKernel<<<grid, block_size, smem, stream>>>(
-      input.row_offsets.data(), input.values.data(), num_input_rows,
-      position_map_.data(), output.values.data(), max_nnz_per_row_);
+  // Dispatch to a kernel specialization sized to the per-row nnz so that
+  // multiple `a` columns are processed in parallel within one warp.
+  int threads_per_a = PickThreadsPerA(max_nnz_per_row_);
+  switch (threads_per_a) {
+  case 1:
+    ComputeJtJKernel<1><<<grid, block_size, smem, stream>>>(
+        input.row_offsets.data(), input.values.data(), num_input_rows,
+        position_map_.data(), output.values.data(), max_nnz_per_row_);
+    break;
+  case 2:
+    ComputeJtJKernel<2><<<grid, block_size, smem, stream>>>(
+        input.row_offsets.data(), input.values.data(), num_input_rows,
+        position_map_.data(), output.values.data(), max_nnz_per_row_);
+    break;
+  case 4:
+    ComputeJtJKernel<4><<<grid, block_size, smem, stream>>>(
+        input.row_offsets.data(), input.values.data(), num_input_rows,
+        position_map_.data(), output.values.data(), max_nnz_per_row_);
+    break;
+  case 8:
+    ComputeJtJKernel<8><<<grid, block_size, smem, stream>>>(
+        input.row_offsets.data(), input.values.data(), num_input_rows,
+        position_map_.data(), output.values.data(), max_nnz_per_row_);
+    break;
+  case 16:
+    ComputeJtJKernel<16><<<grid, block_size, smem, stream>>>(
+        input.row_offsets.data(), input.values.data(), num_input_rows,
+        position_map_.data(), output.values.data(), max_nnz_per_row_);
+    break;
+  default:
+    ComputeJtJKernel<32><<<grid, block_size, smem, stream>>>(
+        input.row_offsets.data(), input.values.data(), num_input_rows,
+        position_map_.data(), output.values.data(), max_nnz_per_row_);
+    break;
+  }
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
