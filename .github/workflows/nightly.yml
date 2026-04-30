@@ -131,6 +131,11 @@ jobs:
     needs: [check-changes, build-matrix]
     permissions:
       contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy-pages.outputs.page_url }}
     steps:
       - name: Check result
         id: check
@@ -237,6 +242,22 @@ jobs:
           echo "=== Assets ==="
           ls -lh release-assets/
 
+      - name: Build Sphinx documentation
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          pip install -r docs/sphinx/requirements.txt
+          python -m sphinx -b html docs/sphinx docs/sphinx/_build
+
+      - name: Configure GitHub Pages
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/sphinx/_build
+
       - name: Create GitHub Release
         if: steps.check.outputs.skip == 'false'
         uses: softprops/action-gh-release@v3
@@ -246,3 +267,8 @@ jobs:
           body_path: release-notes.md
           prerelease: true
           files: release-assets/*
+
+      - name: Deploy to GitHub Pages
+        if: steps.check.outputs.skip == 'false'
+        id: deploy-pages
+        uses: actions/deploy-pages@v5
