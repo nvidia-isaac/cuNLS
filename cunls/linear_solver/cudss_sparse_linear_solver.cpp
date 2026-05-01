@@ -40,6 +40,16 @@ namespace cunls {
  * CUDSS_ALG_1).
  */
 int GetOrderingType(cuDSSLinearSolverMode mode) {
+#ifdef CUDSS_NEW_API
+  switch (mode) {
+  case cuDSSLinearSolverMode::SlowInitFastSolve:
+    return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
+  case cuDSSLinearSolverMode::FastInitSlowSolve:
+    return static_cast<int>(CUDSS_REORDERING_ALG_BTF_COLAMD);
+  default:
+    return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
+  }
+#else
   switch (mode) {
   case cuDSSLinearSolverMode::SlowInitFastSolve:
     return static_cast<int>(CUDSS_ALG_DEFAULT);
@@ -48,6 +58,7 @@ int GetOrderingType(cuDSSLinearSolverMode mode) {
   default:
     return static_cast<int>(CUDSS_ALG_DEFAULT);
   }
+#endif
 }
 
 /** @copydoc cuDSSLinearSolver::cuDSSLinearSolver */
