@@ -16,6 +16,7 @@
  */
 
 #include "cunls/minimizer/problem.h"
+
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 namespace cunls {
@@ -165,7 +166,7 @@ bool Problem::CheckGraphConnectivity() const {
 /**
  * @brief Validates the complete problem structure.
  *
- * Runs both input validation and graph connectivity checks.
+ * Runs input validation and graph-connectivity checks.
  *
  * @return True if the problem is well-formed, false otherwise.
  */

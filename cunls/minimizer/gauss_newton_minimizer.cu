@@ -534,13 +534,14 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
     // Perform symbolic analysis on the requested CUDA stream.
     auto sa_range =
         profiler_domain_.CreateDomainRange("PerformSymbolicAnalysis");
-    bool success = solver_->Initialize(stream, lhs_work_, rhs_work_, step_);
+    bool success =
+        solver_->Initialize(stream, problem, lhs_work_, rhs_work_, step_);
     if (!success) {
       std::string str = "Failed to initialize linear solver";
       LogError(str);
       throw std::runtime_error(str);
     }
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    // THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 
   // Main optimization loop
@@ -555,7 +556,8 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
     {
       auto solve_range = profiler_domain_.CreateDomainRange("LinearSolve");
-      bool success = solver_->Solve(stream, lhs_work_, rhs_work_, step_);
+      bool success =
+          solver_->Solve(stream, lhs_work_, rhs_work_, step_);
       if (!success) {
         std::string str = "Failed to solve linear system";
         LogError(str);

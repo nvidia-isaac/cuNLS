@@ -351,15 +351,18 @@ CopyStateToHost(const VectorStateBatch<Dim> &state_batch) {
 
 /**
  * @brief Reads CUNLS_SOLVER from the environment and returns the matching
- *        solver type.  Defaults to cuDSS so existing tests keep their
- *        baseline behaviour.  Recognised values: "cuDSS", "BlockSparsePCG".
+ *        solver type.  Defaults to BlockSparsePCG — the sweep on SBA and
+ *        loop-closure PGO shows it dominates cuDSS at every nontrivial
+ *        problem size (see profile/PCG_RESULTS.md).  Set
+ *        CUNLS_SOLVER=cuDSS to opt back into the sparse-direct path.
+ *        Recognised values: "BlockSparsePCG", "cuDSS".
  */
 inline SparseLinearSolverType SolverTypeFromEnv() {
   const char *s = std::getenv("CUNLS_SOLVER");
-  if (s != nullptr && std::strcmp(s, "BlockSparsePCG") == 0) {
-    return SparseLinearSolverType::BlockSparsePCG;
+  if (s != nullptr && std::strcmp(s, "cuDSS") == 0) {
+    return SparseLinearSolverType::cuDSS;
   }
-  return SparseLinearSolverType::cuDSS;
+  return SparseLinearSolverType::BlockSparsePCG;
 }
 
 /** Reads CUNLS_PCG_BLOCK_SIZE; defaults to ``fallback`` if unset/invalid. */

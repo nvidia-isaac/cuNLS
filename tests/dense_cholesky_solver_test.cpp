@@ -166,7 +166,7 @@ TEST_F(DenseCholeskySolverTestFixture, SolveDenseSystemAcrossDifferentSizes) {
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -195,7 +195,7 @@ TEST_F(DenseCholeskySolverTestFixture, SolveReturnsFalseForZeroMatrix) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
@@ -219,7 +219,7 @@ TEST_F(DenseCholeskySolverTestFixture,
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
@@ -243,7 +243,7 @@ TEST_F(DenseCholeskySolverTestFixture, SolveReturnsFalseForIndefiniteMatrix) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
@@ -265,7 +265,7 @@ TEST_F(DenseCholeskySolverTestFixture,
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
   }
 
@@ -287,7 +287,7 @@ TEST_F(DenseCholeskySolverTestFixture,
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 

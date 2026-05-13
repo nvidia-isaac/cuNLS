@@ -68,6 +68,7 @@ cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
 
 /** @copydoc cuDSSLinearSolver::Initialize */
 bool cuDSSLinearSolver::Initialize(cudaStream_t stream,
+                                   const Problem & /*problem*/,
                                    const CSRSparseMatrix &spd_matrix,
                                    const dvector<float> &rhs,
                                    dvector<float> &result) {
