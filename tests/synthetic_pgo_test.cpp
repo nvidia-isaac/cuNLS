@@ -44,6 +44,7 @@
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 
@@ -261,6 +262,11 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options = {
+      test_utils::PCGBlockSizeFromEnv(6),
+      test_utils::PCGMaxIterFromEnv(400),
+      test_utils::PCGTolFromEnv(1e-4f)};
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -352,6 +358,11 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options = {
+      test_utils::PCGBlockSizeFromEnv(6),
+      test_utils::PCGMaxIterFromEnv(400),
+      test_utils::PCGTolFromEnv(1e-4f)};
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -428,6 +439,11 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options = {
+      test_utils::PCGBlockSizeFromEnv(6),
+      test_utils::PCGMaxIterFromEnv(400),
+      test_utils::PCGTolFromEnv(1e-4f)};
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -502,6 +518,11 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options = {
+      test_utils::PCGBlockSizeFromEnv(6),
+      test_utils::PCGMaxIterFromEnv(400),
+      test_utils::PCGTolFromEnv(1e-4f)};
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;

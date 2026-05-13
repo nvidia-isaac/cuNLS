@@ -21,6 +21,7 @@
 
 #include <memory>
 
+#include "cunls/linear_solver/block_sparse_pcg_solver.h"
 #include "cunls/linear_solver/csr_sparse_linear_solver.h"
 #include "cunls/linear_solver/cudss_sparse_linear_solver.h"
 #include "cunls/linear_solver/dense_cholesky_solver.h"
@@ -33,15 +34,20 @@ namespace cunls {
  * @brief Selects the linear solver backend for the Gauss-Newton system.
  */
 enum class SparseLinearSolverType {
-  cuDSS,         ///< Sparse direct solver using NVIDIA's cuDSS library.
-  DenseLDLT,     ///< Converts CSR to dense and solves with a custom CUDA
-                 ///< pivoted LDLT kernel.
-  DenseCholesky, ///< Converts CSR to dense and solves with cuSOLVER Cholesky
-                 ///< factorization (cusolverDnSpotrf / cusolverDnSpotrs).
-                 ///< Requires SPD matrix.
-  DenseQR,       ///< Converts CSR to dense and solves with cuSOLVER QR
-                 ///< factorization (cusolverDnSgeqrf / cusolverDnSormqr /
-                 ///< cublasStrsm). Works for any non-singular square matrix.
+  cuDSS,          ///< Sparse direct solver using NVIDIA's cuDSS library.
+  DenseLDLT,      ///< Converts CSR to dense and solves with a custom CUDA
+                  ///< pivoted LDLT kernel.
+  DenseCholesky,  ///< Converts CSR to dense and solves with cuSOLVER Cholesky
+                  ///< factorization (cusolverDnSpotrf / cusolverDnSpotrs).
+                  ///< Requires SPD matrix.
+  DenseQR,        ///< Converts CSR to dense and solves with cuSOLVER QR
+                  ///< factorization (cusolverDnSgeqrf / cusolverDnSormqr /
+                  ///< cublasStrsm). Works for any non-singular square matrix.
+  BlockSparsePCG, ///< Block-Jacobi preconditioned CG.  Iterative solver tuned
+                  ///< for SPD normal equations with uniform diagonal block
+                  ///< structure (e.g. 6x6 for SE3).  Skips the sparse direct
+                  ///< factorization cost; the preconditioner is refactored on
+                  ///< every Solve from the current diagonal tiles.
 };
 
 /**
@@ -54,6 +60,7 @@ enum class SparseLinearSolverType {
  */
 struct SparseLinearSolverConfig {
   cuDSSLinearSolverOptions cudss_solver_options;
+  BlockSparsePCGOptions block_sparse_pcg_options;
 };
 
 /**

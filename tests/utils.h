@@ -25,10 +25,14 @@
 #include <random>
 #include <vector>
 
+#include <cstdlib>
+#include <cstring>
+
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
@@ -339,6 +343,53 @@ CopyStateToHost(const VectorStateBatch<Dim> &state_batch) {
                                  num_blocks * sizeof(Vector<Dim>),
                                  cudaMemcpyDeviceToHost));
   return out;
+}
+
+// ============================================================================
+// Solver-selection helpers (driven by CUNLS_SOLVER env var)
+// ============================================================================
+
+/**
+ * @brief Reads CUNLS_SOLVER from the environment and returns the matching
+ *        solver type.  Defaults to cuDSS so existing tests keep their
+ *        baseline behaviour.  Recognised values: "cuDSS", "BlockSparsePCG".
+ */
+inline SparseLinearSolverType SolverTypeFromEnv() {
+  const char *s = std::getenv("CUNLS_SOLVER");
+  if (s != nullptr && std::strcmp(s, "BlockSparsePCG") == 0) {
+    return SparseLinearSolverType::BlockSparsePCG;
+  }
+  return SparseLinearSolverType::cuDSS;
+}
+
+/** Reads CUNLS_PCG_BLOCK_SIZE; defaults to ``fallback`` if unset/invalid. */
+inline int PCGBlockSizeFromEnv(int fallback) {
+  const char *s = std::getenv("CUNLS_PCG_BLOCK_SIZE");
+  if (s == nullptr) {
+    return fallback;
+  }
+  int v = std::atoi(s);
+  return (v >= 1 && v <= 16) ? v : fallback;
+}
+
+/** Reads CUNLS_PCG_MAX_ITER; defaults to ``fallback`` if unset/invalid. */
+inline int PCGMaxIterFromEnv(int fallback) {
+  const char *s = std::getenv("CUNLS_PCG_MAX_ITER");
+  if (s == nullptr) {
+    return fallback;
+  }
+  int v = std::atoi(s);
+  return (v > 0) ? v : fallback;
+}
+
+/** Reads CUNLS_PCG_TOL; defaults to ``fallback`` if unset/invalid. */
+inline float PCGTolFromEnv(float fallback) {
+  const char *s = std::getenv("CUNLS_PCG_TOL");
+  if (s == nullptr) {
+    return fallback;
+  }
+  float v = static_cast<float>(std::atof(s));
+  return (v > 0.f) ? v : fallback;
 }
 
 } // namespace test_utils

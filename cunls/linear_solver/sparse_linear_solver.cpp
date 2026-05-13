@@ -35,6 +35,9 @@ CreateCSRSparseLinearSolver(SparseLinearSolverType type,
     return std::make_unique<DenseCholeskySolver>();
   case SparseLinearSolverType::DenseQR:
     return std::make_unique<DenseQRSolver>();
+  case SparseLinearSolverType::BlockSparsePCG:
+    return std::make_unique<BlockSparsePCGSolver>(
+        config.block_sparse_pcg_options);
   default:
     throw std::invalid_argument("Invalid sparse linear solver type");
   }

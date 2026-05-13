@@ -540,6 +540,7 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
       LogError(str);
       throw std::runtime_error(str);
     }
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 
   // Main optimization loop
@@ -553,13 +554,18 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
     summary.iteration_costs.push_back(summary.final_cost);
 
     {
-      auto solve_range = profiler_domain_.CreateDomainRange("Solve");
+      auto solve_range = profiler_domain_.CreateDomainRange("LinearSolve");
       bool success = solver_->Solve(stream, lhs_work_, rhs_work_, step_);
       if (!success) {
         std::string str = "Failed to solve linear system";
         LogError(str);
         throw std::runtime_error(str);
       }
+      // Fair-measurement barrier: ensure the linear-solve kernels finish before
+      // the NVTX range ends. nsys reports CPU-side NVTX durations, so without a
+      // sync the recorded interval excludes asynchronous GPU work that the
+      // solver enqueued.
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     }
 
     MapScaledLinearSolutionToTangentStep(stream, step_);
