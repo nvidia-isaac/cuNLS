@@ -263,9 +263,12 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -358,9 +361,12 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -438,9 +444,12 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -516,9 +525,12 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -637,8 +649,7 @@ protected:
   }
 
   cuBLASHandle cublas_handle_;
-  profiler::Domain profiler_domain_ =
-      profiler::Domain("LoopClosurePGOTest");
+  profiler::Domain profiler_domain_ = profiler::Domain("LoopClosurePGOTest");
 };
 
 TEST_P(LoopClosurePGOTest, Optimize) {
@@ -673,8 +684,7 @@ TEST_P(LoopClosurePGOTest, Optimize) {
     inv[15] = 1.f;
     return inv;
   };
-  auto mul = [](const SE3Transform &a,
-                const SE3Transform &b) -> SE3Transform {
+  auto mul = [](const SE3Transform &a, const SE3Transform &b) -> SE3Transform {
     SE3Transform c{};
     for (int rr = 0; rr < 4; ++rr) {
       for (int cc = 0; cc < 4; ++cc) {
@@ -732,10 +742,8 @@ TEST_P(LoopClosurePGOTest, Optimize) {
   std::vector<float *> state_pointers;
   state_pointers.reserve(deltas.size() * 2);
   for (size_t e = 0; e < deltas.size(); ++e) {
-    state_pointers.push_back(
-        pose_batch.StateBlockDevicePtr(edges_left[e]));
-    state_pointers.push_back(
-        pose_batch.StateBlockDevicePtr(edges_right[e]));
+    state_pointers.push_back(pose_batch.StateBlockDevicePtr(edges_left[e]));
+    state_pointers.push_back(pose_batch.StateBlockDevicePtr(edges_right[e]));
   }
 
   Problem problem;
@@ -750,9 +758,12 @@ TEST_P(LoopClosurePGOTest, Optimize) {
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = true;
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -769,11 +780,11 @@ TEST_P(LoopClosurePGOTest, Optimize) {
   EXPECT_LE(summary.final_cost, summary.initial_cost + 1e-3f);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Sizes, LoopClosurePGOTest,
-    ::testing::Values(LcPgoParams{100, 300, "P100_LC300"},
-                      LcPgoParams{500, 1000, "P500_LC1k"},
-                      LcPgoParams{1000, 3000, "P1k_LC3k"},
-                      LcPgoParams{5000, 10000, "P5k_LC10k"}));
+INSTANTIATE_TEST_SUITE_P(Sizes, LoopClosurePGOTest,
+                         ::testing::Values(LcPgoParams{100, 300, "P100_LC300"},
+                                           LcPgoParams{500, 1000, "P500_LC1k"},
+                                           LcPgoParams{1000, 3000, "P1k_LC3k"},
+                                           LcPgoParams{5000, 10000,
+                                                       "P5k_LC10k"}));
 
 } // namespace cunls

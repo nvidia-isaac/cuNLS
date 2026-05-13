@@ -51,12 +51,12 @@ namespace cunls {
 struct SyntheticSbaParams {
   int n_poses;
   int n_points;
-  int obs_per_landmark; // visibility per landmark; total obs = n_points * obs_per_landmark.
+  int obs_per_landmark; // visibility per landmark; total obs = n_points *
+                        // obs_per_landmark.
   const char *label;
 };
 
-inline std::ostream &operator<<(std::ostream &os,
-                                const SyntheticSbaParams &p) {
+inline std::ostream &operator<<(std::ostream &os, const SyntheticSbaParams &p) {
   return os << p.label;
 }
 
@@ -90,14 +90,18 @@ protected:
    *  normalized image observation.  Returns false if the point is behind
    *  the camera or too close to it. */
   static bool Project(const SE3Transform &pose_world_from_cam_or_cam_from_world,
-                      const Vector<3> &p_world, Vector<2> &out, bool cam_from_world) {
+                      const Vector<3> &p_world, Vector<2> &out,
+                      bool cam_from_world) {
     const SE3Transform &T = pose_world_from_cam_or_cam_from_world;
     Vector<3> p_cam{};
     if (cam_from_world) {
       // T transforms world->cam.
-      p_cam[0] = T[0] * p_world[0] + T[1] * p_world[1] + T[2] * p_world[2] + T[3];
-      p_cam[1] = T[4] * p_world[0] + T[5] * p_world[1] + T[6] * p_world[2] + T[7];
-      p_cam[2] = T[8] * p_world[0] + T[9] * p_world[1] + T[10] * p_world[2] + T[11];
+      p_cam[0] =
+          T[0] * p_world[0] + T[1] * p_world[1] + T[2] * p_world[2] + T[3];
+      p_cam[1] =
+          T[4] * p_world[0] + T[5] * p_world[1] + T[6] * p_world[2] + T[7];
+      p_cam[2] =
+          T[8] * p_world[0] + T[9] * p_world[1] + T[10] * p_world[2] + T[11];
     } else {
       // T transforms cam->world; compute inverse.
       // Inverse of [R t; 0 1] is [R^T -R^T t; 0 1].
@@ -305,8 +309,8 @@ TEST_P(SyntheticSbaTest, Optimize) {
                                   const_point_ids.size());
 
   InformationFactorBatch<ReprojectionFactorBatch> info_factor(
-      cublas_handle_, info_d.data(), n_obs, obs_d.data(),
-      cam_from_rig_d.data(), n_obs, 1e-3f);
+      cublas_handle_, info_d.data(), n_obs, obs_d.data(), cam_from_rig_d.data(),
+      n_obs, 1e-3f);
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(n_obs * 2);
@@ -331,9 +335,12 @@ TEST_P(SyntheticSbaTest, Optimize) {
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = true;
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(200);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(200);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;

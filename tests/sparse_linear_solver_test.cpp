@@ -34,10 +34,10 @@
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
-#include "cunls/minimizer/problem.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
+#include "cunls/minimizer/problem.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -187,7 +187,8 @@ TEST(SparseLinearSolverTest, Solve) {
     cuDSSLinearSolver solver(cudss_solver_options);
     {
       profiler::ScopedRange range("Warm up");
-      solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs, result);
+      solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs,
+                        result);
       solver.Solve(stream.GetStream(), input_matrix, rhs, result);
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
@@ -311,7 +312,8 @@ TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
   opts.relative_tolerance = 1e-5f;
   opts.max_iterations = 500;
   BlockSparsePCGSolver solver(opts);
-  ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), mat, rhs, result));
+  ASSERT_TRUE(
+      solver.Initialize(stream.GetStream(), Problem(), mat, rhs, result));
   ASSERT_TRUE(solver.Solve(stream.GetStream(), mat, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 

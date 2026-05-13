@@ -93,8 +93,8 @@ public:
    * @return true on success, false if a dimension mismatch is detected.
    */
   bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix,
-                  const dvector<float> &rhs, dvector<float> &result) final;
+                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+                  dvector<float> &result) final;
 
   /**
    * @brief Solves a sparse SPD linear system Ax = b.

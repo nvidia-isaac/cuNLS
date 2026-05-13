@@ -556,8 +556,7 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
 
     {
       auto solve_range = profiler_domain_.CreateDomainRange("LinearSolve");
-      bool success =
-          solver_->Solve(stream, lhs_work_, rhs_work_, step_);
+      bool success = solver_->Solve(stream, lhs_work_, rhs_work_, step_);
       if (!success) {
         std::string str = "Failed to solve linear system";
         LogError(str);

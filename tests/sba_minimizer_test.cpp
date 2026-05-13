@@ -377,9 +377,12 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
   // block_size=3 keeps the preconditioner cheap and well-conditioned for the
   // landmark blocks while still capturing useful structure inside the 6x6
   // pose tiles (every 6x6 splits into a 2x2 grid of 3x3 sub-blocks).
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size = test_utils::PCGBlockSizeFromEnv(3);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations = test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(3);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;

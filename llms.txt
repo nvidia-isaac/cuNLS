@@ -10,7 +10,8 @@ cuNLS organizes optimization into:
 - `FactorBatch` implementations for batched residual/Jacobian evaluation.
 - `Problem` for factor-graph composition.
 - `GaussNewtonMinimizer` and `LevenbergMarquardtMinimizer` for solving.
-- Sparse backends (`cuDSS`) and robust losses.
+- Sparse backends (`BlockSparsePCG` default, plus `cuDSS` direct and
+  dense LDLT/Cholesky/QR fallbacks) and robust losses.
 
 ## Entry points
 

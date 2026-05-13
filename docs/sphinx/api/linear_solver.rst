@@ -2,19 +2,27 @@
 Linear Solver API
 ################################################################################
 
-`cunls/linear_solver` hosts linear-system abstractions (cuDSS integration,
-dense pivoted LDLT, dense Cholesky, and dense QR solvers) behind a common
-CSR-based interface.
+`cunls/linear_solver` hosts linear-system abstractions (block-Jacobi PCG,
+cuDSS integration, dense pivoted LDLT, dense Cholesky, and dense QR
+solvers) behind a common CSR-based interface.
 
 SparseLinearSolverType
 ----------------------
 
 Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 
-- `cuDSS`
-- `DenseLDLT`
-- `DenseCholesky`
-- `DenseQR`
+- `BlockSparsePCG` — iterative block-Jacobi preconditioned conjugate
+  gradient solver.  Default backend for Gauss-Newton and
+  Levenberg-Marquardt: outperforms ``cuDSS`` on most SBA / PGO
+  workloads (see ``profile/PCG_RESULTS.md``).
+- `cuDSS` — NVIDIA cuDSS sparse direct solver.  Pick when each Solve
+  sees a tiny system and PCG's per-iter kernel-launch overhead
+  dominates.
+- `DenseLDLT` — converts CSR to dense and solves with a custom CUDA
+  pivoted LDLT kernel.
+- `DenseCholesky` — converts CSR to dense and solves with cuSOLVER
+  Cholesky (requires SPD).
+- `DenseQR` — converts CSR to dense and solves with cuSOLVER QR.
 
 SparseLinearSolverConfig
 ------------------------
@@ -22,25 +30,37 @@ SparseLinearSolverConfig
 Struct in `sparse_linear_solver.h`. Only the member corresponding to the
 chosen ``SparseLinearSolverType`` is used:
 
-- `cudss_solver_options` - [in] cuDSS-specific backend options (ignored when
-  using ``DenseLDLT``, ``DenseCholesky``, or ``DenseQR``).
+- `block_sparse_pcg_options` - [in] BlockSparsePCG-specific knobs;
+  ignored when a different backend is selected.
+- `cudss_solver_options` - [in] cuDSS-specific options; ignored when a
+  different backend is selected.
+- Dense backends take no extra configuration.
 
 CSRSparseLinearSolver
 ---------------------
 
 Abstract base (`cunls/linear_solver/csr_sparse_linear_solver.h`).
 
-.. cpp:function:: bool Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Performs setup work (at minimum symbolic analysis; some modes also perform
   an initial factorization) for the given sparsity pattern. Must be called
   before :cpp:func:`Solve` and re-called whenever the matrix structure changes.
+
+  Solvers may inspect ``problem`` to specialize their setup (e.g.
+  ``BlockSparsePCGSolver`` reads each state batch's ``TangentSize`` to
+  build the block-Jacobi layout).  Solvers that do not need it (cuDSS,
+  dense backends) simply ignore it; for callers that operate on a raw
+  matrix without a cuNLS problem context, pass a default-constructed
+  ``Problem``.
 
   Both ``rhs`` and ``result`` must be pre-allocated to the same number of
   elements as the number of rows in ``spd_matrix``; the solver does **not**
   resize them.
 
   :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
+  :param ``problem``: [in] Originating problem; used by problem-aware
+    backends to derive per-solver structure.
   :param ``spd_matrix``: [in] Symmetric matrix in CSR format (backend-specific
     definiteness requirements may apply).
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
@@ -80,6 +100,93 @@ Abstract base (`cunls/linear_solver/csr_sparse_linear_solver.h`).
 
   :returns: ``true`` when post-factorization safety checks are enabled
     (the default).
+
+BlockSparsePCGOptions
+---------------------
+
+Struct in `cunls/linear_solver/block_sparse_pcg_solver.h`.  Convergence
+and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
+
+- ``block_size`` - [in] Uniform diagonal tile size; used only when
+  ``block_layout`` is empty.  Must divide the matrix dimension.
+  ``block_size = 1`` reduces the preconditioner to scalar Jacobi.
+  Default: ``6``.
+- ``block_layout`` - [in] Optional ``std::vector<std::pair<int, int>>``
+  describing a heterogeneous block-diagonal layout: each
+  ``(count_i, size_i)`` element contributes ``count_i * size_i`` rows
+  with ``size_i``-square diagonal tiles.  When empty (default),
+  ``Initialize`` derives the layout automatically from the
+  ``Problem``'s state batches (segment per non-empty batch with
+  ``size = TangentSize()``, ``count = NumStateBlocks() -
+  NumConstStateBlocks()``).
+- ``max_iterations`` - [in] PCG iteration cap.  Default: ``200``.
+- ``relative_tolerance`` - [in] Stop when
+  ``||r_k|| <= relative_tolerance * ||b||``.  Default: ``1e-3``.
+- ``absolute_tolerance`` - [in] Stop also when
+  ``||r_k|| <= absolute_tolerance``.  Default: ``1e-30``.
+- ``pivot_floor`` - [in] Floor on ``|D_{kk}|`` during the per-tile
+  LDLT pivoting; keeps the preconditioner invertible on near-singular
+  diagonal tiles.  Default: ``1e-12``.
+- ``check_period`` - [in] Number of PCG iterations between host-side
+  convergence polls.  Higher values reduce host syncs but may do up to
+  ``check_period - 1`` extra iterations after convergence.  Default:
+  ``4``.
+
+BlockSparsePCGSolver
+--------------------
+
+Concrete implementation in `block_sparse_pcg_solver.h`.  Solves
+``H x = b`` for symmetric positive-(semi-)definite ``H`` with the
+standard preconditioned conjugate gradient recurrence (Saad,
+*Iterative Methods for Sparse Linear Systems*, §9.2) and a
+block-Jacobi preconditioner formed from the dense diagonal tiles of
+``H``.  Each tile is factored independently with an in-shared-memory
+LDLT.  SpMV is delegated to cuSPARSE.
+
+All scalar quantities (``alpha``, ``beta``, ``<p, q>``, ``<r, r>``,
+``<r, z>``) live on the device for the whole inner loop.  Only the
+residual norm is copied to the host, and only once every
+``check_period`` iterations.
+
+.. cpp:function:: BlockSparsePCGSolver(BlockSparsePCGOptions options = BlockSparsePCGOptions())
+
+  :param ``options``: [in] Convergence / preconditioner-layout knobs.
+    See ``BlockSparsePCGOptions``.
+  :returns: Constructor has no return value.
+
+.. cpp:function:: bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Builds the cuSPARSE SpMV plan, allocates the PCG scratch vectors,
+  and (when ``options.block_layout`` is empty) derives the block-Jacobi
+  layout from ``problem.GetStateBatches()``.
+
+  :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
+  :param ``problem``: [in] Source of the block-Jacobi layout when
+    ``options.block_layout`` is empty.  Pass a default-constructed
+    ``Problem`` when calling on a raw matrix.
+  :param ``spd_matrix``: [in] Coefficient matrix ``H`` in CSR format.
+  :param ``rhs``: [in] Right-hand-side vector ``b``.
+  :param ``result``: [out] Solution vector ``x``.
+  :returns: ``true`` on success; ``false`` on dimension mismatch or
+    invalid layout.
+
+.. cpp:function:: bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Rebuilds the block-Jacobi factor from the current values of ``H``
+  and runs up to ``options.max_iterations`` PCG iterations with the
+  zero initial guess ``x_0 = 0``.
+
+  :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
+  :param ``spd_matrix``: [in] Coefficient matrix ``H`` (same structure
+    as in ``Initialize``).
+  :param ``rhs``: [in] Right-hand-side vector ``b``.
+  :param ``result``: [out] Solution vector ``x``.
+  :returns: ``true`` on success.
+
+.. cpp:function:: int BlockSparsePCGSolver::LastIterations() const
+
+  :returns: Number of PCG iterations consumed by the most recent
+    ``Solve`` call.  Useful for convergence diagnostics.
 
 cuDSSLinearSolverMode
 ---------------------

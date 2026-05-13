@@ -207,8 +207,8 @@ public:
    *         layout.
    */
   bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix,
-                  const dvector<float> &rhs, dvector<float> &result) final;
+                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+                  dvector<float> &result) final;
 
   /**
    * @brief Runs the PCG loop on `H x = b`, writing into @p result.
@@ -282,10 +282,10 @@ private:
   /**
    * @brief LDLT factors of every diagonal tile, packed contiguously.
    *
-   * Tile @c b of segment @c s lives at `precond_factors_[segment_factor_offset(s) +
-   * b * size_s * size_s ..]` in row-major order.  Lower triangle holds
-   * `L` with unit diagonal (implicit); the stored diagonal holds `D`;
-   * upper triangle is unused.
+   * Tile @c b of segment @c s lives at
+   * `precond_factors_[segment_factor_offset(s) + b * size_s * size_s ..]` in
+   * row-major order.  Lower triangle holds `L` with unit diagonal (implicit);
+   * the stored diagonal holds `D`; upper triangle is unused.
    */
   dvector<float> precond_factors_;
 

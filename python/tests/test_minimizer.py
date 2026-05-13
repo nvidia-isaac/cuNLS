@@ -168,7 +168,8 @@ class TestMinimizerOptions:
         assert opts.max_num_iterations == 50
         assert opts.state_tolerance == pytest.approx(1e-6)
         assert opts.cost_tolerance == pytest.approx(1e-6)
-        assert opts.sparse_linear_solver_type == pycunls.SparseLinearSolverType.cuDSS
+        assert (opts.sparse_linear_solver_type
+                == pycunls.SparseLinearSolverType.BlockSparsePCG)
         assert opts.column_scaling == pycunls.ColumnScaling.none
         assert opts.disable_safety_checks is True
 

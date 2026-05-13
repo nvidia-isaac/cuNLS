@@ -54,8 +54,7 @@ public:
    * @return true on success, false if a dimension mismatch is detected.
    */
   bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix,
-                  const dvector<float> &rhs,
+                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                   dvector<float> &result) final;
 
   /**

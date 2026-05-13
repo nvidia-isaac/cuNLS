@@ -14,7 +14,8 @@ This directory contains all core library modules and the public umbrella header
 
 - `common/llms.txt`: CUDA handles, device vectors, sparse/dense type aliases.
 - `factor/llms.txt`: factor interfaces and built-in factor implementations.
-- `linear_solver/llms.txt`: sparse solver interface and cuDSS implementation.
+- `linear_solver/llms.txt`: sparse solver interface, BlockSparsePCG
+  iterative solver (default), cuDSS direct solver, and dense fallbacks.
 - `math/llms.txt`: Lie and matrix math kernels/utilities.
 - `minimizer/llms.txt`: `Problem`, residual wrappers, GN/LM solvers.
 - `robustifier/llms.txt`: robust loss batches.

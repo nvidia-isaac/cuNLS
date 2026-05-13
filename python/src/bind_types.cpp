@@ -70,7 +70,8 @@ void bind_types(nb::module_ &m) {
       .value("cuDSS", cunls::SparseLinearSolverType::cuDSS)
       .value("DenseLDLT", cunls::SparseLinearSolverType::DenseLDLT)
       .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky)
-      .value("DenseQR", cunls::SparseLinearSolverType::DenseQR);
+      .value("DenseQR", cunls::SparseLinearSolverType::DenseQR)
+      .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG);
 
   nb::enum_<cunls::SparseMatrixMultiplierType>(m, "SparseMatrixMultiplierType")
       .value("cuSPARSE", cunls::SparseMatrixMultiplierType::cuSPARSE)

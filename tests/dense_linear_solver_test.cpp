@@ -244,7 +244,8 @@ TEST_F(DenseLDLTSolverTestFixture, SolveDenseSystemAcrossDifferentSizes) {
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    ASSERT_TRUE(
+        solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -286,7 +287,8 @@ TEST_F(DenseLDLTSolverTestFixture, SolveSymmetricIndefiniteSystem) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+  ASSERT_TRUE(
+      solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -399,7 +401,8 @@ TEST_F(DenseLDLTSolverTestFixture, SolveReturnsFalseForZeroMatrix) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+  ASSERT_TRUE(
+      solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
@@ -425,7 +428,8 @@ TEST_F(DenseLDLTSolverTestFixture, SolveReturnsFalseForRankDeficientMatrix) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+  ASSERT_TRUE(
+      solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
@@ -448,7 +452,8 @@ TEST_F(DenseLDLTSolverTestFixture,
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    ASSERT_TRUE(
+        solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
   }
 
@@ -472,7 +477,8 @@ TEST_F(DenseLDLTSolverTestFixture,
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    ASSERT_TRUE(
+        solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
