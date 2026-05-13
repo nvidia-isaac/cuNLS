@@ -87,6 +87,7 @@
 #include <cusparse.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -150,7 +151,10 @@ __global__ void ExtractAndFactorBlockDiagonalsKernel(
   }
   __syncthreads();
 
-  // Step 1: gather dense tile from CSR.
+  // Step 1: gather dense tile from CSR.  Early-break exploits the
+  // sorted-cols invariant — for SBA pose rows where the many
+  // landmark columns sit after the diagonal-tile range, this turns
+  // an O(nnz_per_row) scan into O(B).
   if (tid < B) {
     int global_row = row_start + block_row * B + tid;
     int start = row_off[global_row];
@@ -159,7 +163,10 @@ __global__ void ExtractAndFactorBlockDiagonalsKernel(
     int col_hi = col_lo + B;
     for (int k = start; k < end; ++k) {
       int c = col_idx[k];
-      if (c >= col_lo && c < col_hi) {
+      if (c >= col_hi) {
+        break;
+      }
+      if (c >= col_lo) {
         tile[tid * B + (c - col_lo)] = values[k];
       }
     }
@@ -236,7 +243,10 @@ __global__ void ExtractAndFactorGenericKernel(
     int col_hi = col_lo + B;
     for (int k = start; k < end; ++k) {
       int c = col_idx[k];
-      if (c >= col_lo && c < col_hi) {
+      if (c >= col_hi) {
+        break;
+      }
+      if (c >= col_lo) {
         tile[tid * B + (c - col_lo)] = values[k];
       }
     }
@@ -308,6 +318,12 @@ __global__ void ExtractAndFactorPerThreadKernel(
   }
   int col_lo = row_start + block_row * B;
   int col_hi = col_lo + B;
+  // CSR column indices are sorted within a row, so as soon as we walk
+  // past `col_hi` we are guaranteed never to see a column in the
+  // tile's range again — break out of the inner loop.  Crucially, for
+  // SBA's pose rows where the non-diagonal cols are the (many)
+  // landmark cols sorted *after* the diagonal-tile cols, this turns a
+  // per-row scan of ~hundreds of entries into a scan of ~B entries.
 #pragma unroll
   for (int rr = 0; rr < B; ++rr) {
     int global_row = col_lo + rr;
@@ -315,7 +331,10 @@ __global__ void ExtractAndFactorPerThreadKernel(
     int end = row_off[global_row + 1];
     for (int k = start; k < end; ++k) {
       int c = col_idx[k];
-      if (c >= col_lo && c < col_hi) {
+      if (c >= col_hi) {
+        break;
+      }
+      if (c >= col_lo) {
         tile[rr * B + (c - col_lo)] = values[k];
       }
     }
@@ -597,19 +616,25 @@ ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factors,
 // =============================================================================
 
 /**
- * @brief Fused `x ← x + α p ; r ← r − α q` for the PCG step.
+ * @brief Fused: compute `α = rz_old / <p, q>` and apply
+ *        `x ← x + α p ; r ← r − α q` in a single kernel.
  *
- * Reads `α` from device memory so the host doesn't have to wait on the
- * preceding `<p, q>` dot product.  One thread per coordinate.
+ * Thread 0 reads the two scalar slots, computes α, stores it in
+ * shared memory; all threads then perform the axpy on their slice.
+ * This eliminates the separate `ComputeAlphaKernel` launch
+ * (~1.2 µs / call × thousands of iters = several percent of total
+ * runtime on the small-Minimize SBA fixture).
  */
-__global__ void PcgUpdateKernel(const float *__restrict__ alpha_ptr,
+__global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
+                                const float *__restrict__ pAp_ptr,
                                 const float *__restrict__ p,
                                 const float *__restrict__ Ap,
                                 float *__restrict__ x, float *__restrict__ r,
                                 int n) {
   __shared__ float a;
   if (threadIdx.x == 0) {
-    a = alpha_ptr[0];
+    float denom = pAp_ptr[0];
+    a = (denom > 0.f) ? rz_old_ptr[0] / denom : 0.f;
   }
   __syncthreads();
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -621,14 +646,28 @@ __global__ void PcgUpdateKernel(const float *__restrict__ alpha_ptr,
 }
 
 /**
- * @brief Updates the search direction `p ← z + β p` (in place into p).
+ * @brief Fused: compute `β = rz_new / rz_old`, store `rz_old ← rz_new`,
+ *        and update the search direction `p ← z + β p` in a single
+ *        kernel.  Eliminates the separate `ComputeBetaKernel` launch
+ *        and writes the new `rz_old` from the first CTA's thread 0
+ *        (subsequent CTAs don't read the slot in this kernel).
  */
-__global__ void PcgDirectionKernel(const float *__restrict__ beta_ptr,
+__global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
+                                   float *__restrict__ rz_old_ptr,
                                    const float *__restrict__ z,
                                    float *__restrict__ p, int n) {
   __shared__ float b;
   if (threadIdx.x == 0) {
-    b = beta_ptr[0];
+    float num = rz_new_ptr[0];
+    float denom = rz_old_ptr[0];
+    b = (fabsf(denom) > 0.f) ? num / denom : 0.f;
+    // Only the first CTA's thread 0 writes rz_old; all other CTAs
+    // skip the write (the rz_old slot is read by the *next*
+    // iteration's PcgUpdate, which happens after this kernel
+    // completes, so any one writer is enough).
+    if (blockIdx.x == 0) {
+      rz_old_ptr[0] = num;
+    }
   }
   __syncthreads();
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -636,24 +675,6 @@ __global__ void PcgDirectionKernel(const float *__restrict__ beta_ptr,
     return;
   }
   p[i] = z[i] + b * p[i];
-}
-
-/** `alpha = rz_old / <p, Ap>` (single-thread, device-side). */
-__global__ void ComputeAlphaKernel(const float *__restrict__ rz_old,
-                                   const float *__restrict__ pAp,
-                                   float *__restrict__ alpha) {
-  float denom = pAp[0];
-  alpha[0] = (denom > 0.f) ? rz_old[0] / denom : 0.f;
-}
-
-/** `beta = rz_new / rz_old; rz_old <- rz_new` (single-thread). */
-__global__ void ComputeBetaKernel(const float *__restrict__ rz_new,
-                                  float *__restrict__ rz_old,
-                                  float *__restrict__ beta) {
-  float num = rz_new[0];
-  float denom = rz_old[0];
-  beta[0] = (fabsf(denom) > 0.f) ? num / denom : 0.f;
-  rz_old[0] = num;
 }
 
 /** Zero one or two scalar slots. */
@@ -889,20 +910,31 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-/** Enqueues `out[0] = <a, b>` (clear-then-reduce). */
+/** Enqueues `out[0] = <a, b>` (clear-then-reduce).
+ *
+ *  We use `cudaMemsetAsync` instead of a one-thread kernel because for
+ *  a single-float clear the runtime can short-circuit it to a tiny
+ *  memory operation, saving the per-kernel-launch dispatch overhead
+ *  (~1 µs) that dominates on small-matrix workloads where PCG
+ *  performs hundreds of dots per Solve. */
 void DotAsync(cudaStream_t stream, const float *a, const float *b, int n,
               float *out) {
-  ZeroScalarKernel<<<1, 1, 0, stream>>>(out);
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(out, 0, sizeof(float), stream));
   int threads = 256;
   int blocks = std::min(1024, (n + threads - 1) / threads);
   DotKernel<<<blocks, threads, 0, stream>>>(a, b, n, out);
 }
 
 /** Enqueues `out_ab = <a, b>` and `out_ac = <a, c>` in a single pass.
- *  Equivalent to two @ref DotAsync calls but with half the global reads. */
+ *  Equivalent to two @ref DotAsync calls but with half the global reads
+ *  AND a single 8-byte memset (vs two 4-byte memsets) — the two output
+ *  slots are required to be adjacent in memory, which the caller
+ *  guarantees by laying them out next to each other in @c d_scratch_. */
 void DualDotAsync(cudaStream_t stream, const float *a, const float *b,
                   const float *c, int n, float *out_ab, float *out_ac) {
-  Zero2ScalarKernel<<<1, 1, 0, stream>>>(out_ab, out_ac);
+  // Verified adjacent at the call site (kRzNew, kRnorm2 in d_scratch_).
+  assert(out_ac == out_ab + 1);
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(out_ab, 0, 2 * sizeof(float), stream));
   int threads = 256;
   int blocks = std::min(1024, (n + threads - 1) / threads);
   DualDotKernel<<<blocks, threads, 0, stream>>>(a, b, c, n, out_ab, out_ac);
@@ -1202,16 +1234,13 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
         &spmv_beta, vecY, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT,
         spmv_buffer_.data()));
 
-    // <p, Ap> and alpha = rz_old / <p, Ap>.
+    // <p, Ap>.
     DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp);
-    ComputeAlphaKernel<<<1, 1, 0, stream>>>(d_scratch_.data() + kRzOld,
-                                            d_scratch_.data() + kPAp,
-                                            d_scratch_.data() + kAlpha);
 
-    // x ← x + α p; r ← r − α Ap.
+    // α = rz_old / <p, Ap>; x ← x + α p; r ← r − α Ap (fused kernel).
     PcgUpdateKernel<<<blocks, threads, 0, stream>>>(
-        d_scratch_.data() + kAlpha, p_.data(), Ap_.data(), result.data(),
-        r_.data(), n);
+        d_scratch_.data() + kRzOld, d_scratch_.data() + kPAp, p_.data(),
+        Ap_.data(), result.data(), r_.data(), n);
 
     // z = M^{-1} r.
     for (const auto &s : segments_) {
@@ -1223,14 +1252,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
     DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n,
                  d_scratch_.data() + kRzNew, d_scratch_.data() + kRnorm2);
 
-    // beta = rz_new / rz_old; rz_old ← rz_new.
-    ComputeBetaKernel<<<1, 1, 0, stream>>>(d_scratch_.data() + kRzNew,
-                                           d_scratch_.data() + kRzOld,
-                                           d_scratch_.data() + kBeta);
-
-    // p ← z + β p.
+    // β = rz_new / rz_old; rz_old ← rz_new; p ← z + β p (fused).
     PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
-        d_scratch_.data() + kBeta, z_.data(), p_.data(), n);
+        d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(),
+        p_.data(), n);
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.
