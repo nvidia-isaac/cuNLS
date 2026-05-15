@@ -60,6 +60,7 @@
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 
@@ -298,6 +299,13 @@ TEST_F(PgoMinimizerTestFixture, Optimize) {
   options.state_tolerance = 1e-10f;
   options.cost_tolerance = 1e-2f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(200);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1000.0;

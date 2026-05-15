@@ -32,7 +32,7 @@ $\left\|v\right\|^2_{\Sigma} = v^T \Sigma^{-1} v$ is the Mahalanobis norm.
 | **Robust losses** | Huber, Cauchy, Arctan, SoftL1, Tolerant, Tukey, Scaled |
 | **Built-in factors** | Reprojection, PnP, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, symmetric point-to-plane, prior |
 | **Custom factors** | User-defined CUDA kernels via `SizedFactorBatch` |
-| **Linear solver** | NVIDIA cuDSS, dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
+| **Linear solver** | Block-sparse PCG (variable block-Jacobi preconditioner, default), NVIDIA cuDSS, dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
 | **Safety checks** | Optional runtime validation (linear-solver diagnostics and more) — disable via `MinimizerOptions::disable_safety_checks` for low-latency solves |
 | **Execution model** | Fully asynchronous via CUDA streams |
 

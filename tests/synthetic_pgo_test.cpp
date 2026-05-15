@@ -44,6 +44,7 @@
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 
@@ -261,6 +262,13 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -352,6 +360,13 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -428,6 +443,13 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -502,6 +524,13 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   options.state_tolerance = 1e-6f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = false;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -520,5 +549,242 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
                                stream.GetStream());
 }
+
+// =============================================================================
+// Loop-closure PGO benchmark
+// =============================================================================
+
+/**
+ * @brief Parameterized PGO with random loop closures.
+ *
+ * Builds a single set of @p n_poses SE(3) poses with sequential between
+ * factors (i, i+1) and adds @p n_lc random non-sequential loop-closure
+ * factors at randomly chosen pairs (i, j).  All deltas are sampled so
+ * the ground-truth solution matches a small-jitter perturbation of the
+ * initial chain — i.e. the problem has a clear minimum.
+ *
+ * The first pose is held constant to fix the gauge.  All test sizes
+ * pick LC counts in the user-specified 300-10000 range and grow Nposes
+ * accordingly.
+ */
+struct LcPgoParams {
+  int n_poses;
+  int n_lc;
+  const char *label;
+};
+
+inline std::ostream &operator<<(std::ostream &os, const LcPgoParams &p) {
+  return os << p.label;
+}
+
+class LoopClosurePGOTest : public ::testing::TestWithParam<LcPgoParams> {
+protected:
+  /**
+   * @brief Generates a chain of poses by composing small random twists.
+   *        The returned @p gt_poses is the ground truth; @p init_poses is
+   *        a perturbed copy that the solver starts from.
+   */
+  void GenerateChain(int n_poses, std::vector<SE3Transform> &gt_poses,
+                     std::vector<SE3Transform> &init_poses) {
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> r(-0.1f, 0.1f);
+    std::uniform_real_distribution<float> t(-0.4f, 0.4f);
+    std::normal_distribution<float> jitter(0.f, 0.02f);
+
+    // Build a chain of twists.
+    std::vector<Vector<6>> twists(n_poses);
+    for (int i = 0; i < n_poses; ++i) {
+      twists[i] = {r(rng), r(rng), r(rng), t(rng), t(rng), t(rng)};
+    }
+    dvector<Vector<6>> twists_d(twists);
+    dvector<SE3Transform> seg_d(n_poses);
+    CudaStream stream;
+    ComputeExpSE3(stream.GetStream(),
+                  reinterpret_cast<const float *>(twists_d.data()), 6, 4, 16,
+                  n_poses, reinterpret_cast<float *>(seg_d.data()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    std::vector<SE3Transform> segs(n_poses);
+    seg_d.CopyToHost(segs.data(), n_poses);
+
+    auto mul = [](const SE3Transform &a,
+                  const SE3Transform &b) -> SE3Transform {
+      SE3Transform c{};
+      for (int rr = 0; rr < 4; ++rr) {
+        for (int cc = 0; cc < 4; ++cc) {
+          float s = 0.f;
+          for (int k = 0; k < 4; ++k) {
+            s += a[rr * 4 + k] * b[k * 4 + cc];
+          }
+          c[rr * 4 + cc] = s;
+        }
+      }
+      return c;
+    };
+
+    gt_poses.resize(n_poses);
+    gt_poses[0] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    for (int i = 1; i < n_poses; ++i) {
+      gt_poses[i] = mul(gt_poses[i - 1], segs[i]);
+    }
+
+    // Initial guess: small per-pose noise.
+    init_poses = gt_poses;
+    std::vector<Vector<6>> djitters(n_poses);
+    for (int i = 1; i < n_poses; ++i) {
+      for (int k = 0; k < 6; ++k) {
+        djitters[i][k] = jitter(rng);
+      }
+    }
+    dvector<Vector<6>> djit_d(djitters);
+    dvector<SE3Transform> delta_d(n_poses);
+    ComputeExpSE3(stream.GetStream(),
+                  reinterpret_cast<const float *>(djit_d.data()), 6, 4, 16,
+                  n_poses, reinterpret_cast<float *>(delta_d.data()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    std::vector<SE3Transform> deltas(n_poses);
+    delta_d.CopyToHost(deltas.data(), n_poses);
+    for (int i = 1; i < n_poses; ++i) {
+      init_poses[i] = mul(gt_poses[i], deltas[i]);
+    }
+  }
+
+  cuBLASHandle cublas_handle_;
+  profiler::Domain profiler_domain_ = profiler::Domain("LoopClosurePGOTest");
+};
+
+TEST_P(LoopClosurePGOTest, Optimize) {
+  auto p = GetParam();
+  SCOPED_TRACE(std::string("LoopClosurePGOTest: ") + p.label);
+
+  std::vector<SE3Transform> gt, init;
+  GenerateChain(p.n_poses, gt, init);
+
+  // Sequential between factors (i, i+1).  Delta = T_{i+1}^{-1} * T_i would
+  // make the residual zero at ground truth; cuNLS expects the user to
+  // supply that delta, but for a chain we know it equals the segment we
+  // sampled.  Computing on device for exactness.
+  // Simpler: residual = Log(Delta * T_left^{-1} * T_right) per
+  // SE3BetweenFactorBatch.  Setting Delta = T_left * T_right^{-1} = (T_i)
+  // * inv(T_{i+1}) makes the residual zero at GT.
+  auto inv_se3 = [](const SE3Transform &T) -> SE3Transform {
+    // [R t; 0 1]^-1 = [R^T -R^T t; 0 1] (row-major SE(3)).
+    SE3Transform inv{};
+    inv[0] = T[0];
+    inv[1] = T[4];
+    inv[2] = T[8];
+    inv[4] = T[1];
+    inv[5] = T[5];
+    inv[6] = T[9];
+    inv[8] = T[2];
+    inv[9] = T[6];
+    inv[10] = T[10];
+    inv[3] = -(inv[0] * T[3] + inv[1] * T[7] + inv[2] * T[11]);
+    inv[7] = -(inv[4] * T[3] + inv[5] * T[7] + inv[6] * T[11]);
+    inv[11] = -(inv[8] * T[3] + inv[9] * T[7] + inv[10] * T[11]);
+    inv[15] = 1.f;
+    return inv;
+  };
+  auto mul = [](const SE3Transform &a, const SE3Transform &b) -> SE3Transform {
+    SE3Transform c{};
+    for (int rr = 0; rr < 4; ++rr) {
+      for (int cc = 0; cc < 4; ++cc) {
+        float s = 0.f;
+        for (int k = 0; k < 4; ++k) {
+          s += a[rr * 4 + k] * b[k * 4 + cc];
+        }
+        c[rr * 4 + cc] = s;
+      }
+    }
+    return c;
+  };
+
+  // Sequential edges (i, i+1).
+  std::vector<int> edges_left, edges_right;
+  std::vector<SE3Transform> deltas;
+  edges_left.reserve(p.n_poses - 1 + p.n_lc);
+  edges_right.reserve(p.n_poses - 1 + p.n_lc);
+  deltas.reserve(p.n_poses - 1 + p.n_lc);
+  for (int i = 0; i + 1 < p.n_poses; ++i) {
+    edges_left.push_back(i);
+    edges_right.push_back(i + 1);
+    deltas.push_back(mul(gt[i], inv_se3(gt[i + 1])));
+  }
+  // Random loop closures (i, j) with |i - j| > 1.
+  std::mt19937 rng(11);
+  std::uniform_int_distribution<int> pose_pick(0, p.n_poses - 1);
+  int added = 0;
+  int attempts = 0;
+  while (added < p.n_lc && attempts < p.n_lc * 20) {
+    ++attempts;
+    int i = pose_pick(rng);
+    int j = pose_pick(rng);
+    if (std::abs(i - j) <= 1) {
+      continue;
+    }
+    edges_left.push_back(i);
+    edges_right.push_back(j);
+    deltas.push_back(mul(gt[i], inv_se3(gt[j])));
+    ++added;
+  }
+  ASSERT_EQ(added, p.n_lc) << "Could not allocate requested loop closures";
+
+  // Build problem.
+  dvector<SE3Transform> poses_d(init);
+  auto poses_ptr = reinterpret_cast<const float *>(poses_d.data());
+  std::vector<int> const_ids = {0};
+  dvector<int> const_ids_d(const_ids);
+  SE3StateBatch pose_batch(cublas_handle_, poses_ptr, p.n_poses,
+                           const_ids_d.data(), const_ids.size());
+
+  dvector<SE3Transform> deltas_d(deltas);
+  SE3BetweenFactorBatch between_batch(deltas_d.data(), deltas.size());
+
+  std::vector<float *> state_pointers;
+  state_pointers.reserve(deltas.size() * 2);
+  for (size_t e = 0; e < deltas.size(); ++e) {
+    state_pointers.push_back(pose_batch.StateBlockDevicePtr(edges_left[e]));
+    state_pointers.push_back(pose_batch.StateBlockDevicePtr(edges_right[e]));
+  }
+
+  Problem problem;
+  problem.AddStateBatch(&pose_batch);
+  problem.AddFactorBatch(&between_batch, state_pointers);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  CudaStream stream;
+  MinimizerOptions options;
+  options.max_num_iterations = 15;
+  options.state_tolerance = 1e-10f;
+  options.cost_tolerance = 1e-6f;
+  options.disable_safety_checks = true;
+  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+      test_utils::PCGBlockSizeFromEnv(6);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(400);
+  options.sparse_linear_solver_config.block_sparse_pcg_options
+      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = options;
+  lm_options.initial_lambda = 1e-3f;
+  LevenbergMarquardtMinimizer minimizer(lm_options);
+
+  MinimizerSummary summary;
+  {
+    auto range = profiler_domain_.CreateDomainRange("Minimize");
+    summary = minimizer.Minimize(stream.GetStream(), problem);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+  EXPECT_TRUE(std::isfinite(summary.initial_cost));
+  EXPECT_TRUE(std::isfinite(summary.final_cost));
+  EXPECT_LE(summary.final_cost, summary.initial_cost + 1e-3f);
+}
+
+INSTANTIATE_TEST_SUITE_P(Sizes, LoopClosurePGOTest,
+                         ::testing::Values(LcPgoParams{100, 300, "P100_LC300"},
+                                           LcPgoParams{500, 1000, "P500_LC1k"},
+                                           LcPgoParams{1000, 3000, "P1k_LC3k"},
+                                           LcPgoParams{5000, 10000,
+                                                       "P5k_LC10k"}));
 
 } // namespace cunls

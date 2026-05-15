@@ -53,6 +53,7 @@ __global__ void csr_to_dense_kernel(const int *__restrict__ row_offsets,
 } // namespace
 
 bool DenseCholeskySolver::Initialize(cudaStream_t stream,
+                                     const Problem & /*problem*/,
                                      const CSRSparseMatrix &spd_matrix,
                                      const dvector<float> &rhs,
                                      dvector<float> &result) {

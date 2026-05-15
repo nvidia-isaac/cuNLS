@@ -442,6 +442,7 @@ void SolveFromPivotedLDLT(cudaStream_t stream, const float *ldlt_factor,
 // ---------------------------------------------------------------------------
 
 bool DenseLDLTSolver::Initialize(cudaStream_t stream,
+                                 const Problem & /*problem*/,
                                  const CSRSparseMatrix &spd_matrix,
                                  const dvector<float> &rhs,
                                  dvector<float> &result) {

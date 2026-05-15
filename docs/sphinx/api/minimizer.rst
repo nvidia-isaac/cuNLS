@@ -130,17 +130,22 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
   (cost increases or step quality below acceptance threshold) this many times
   in a row, the minimizer treats the current solution as converged. Set to 0 to
   disable. Default: 5.
-- **sparse_linear_solver_type** [in]: Linear backend; options are ``cuDSS``
-  (sparse direct solver via NVIDIA's cuDSS library), ``DenseLDLT`` (converts
-  CSR to dense and solves with a custom CUDA pivoted LDLT factorization),
+- **sparse_linear_solver_type** [in]: Linear backend; options are
+  ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate gradient;
+  layout auto-derived from the problem's state batches), ``cuDSS`` (sparse
+  direct solver via NVIDIA's cuDSS library), ``DenseLDLT`` (converts CSR
+  to dense and solves with a custom CUDA pivoted LDLT factorization),
   ``DenseCholesky`` (converts CSR to dense and solves via cuSOLVER Cholesky;
   requires SPD matrix), and ``DenseQR`` (converts CSR to dense and solves
   via cuSOLVER QR factorization; works for any non-singular matrix).
-  Default: ``cuDSS``.
-- **sparse_linear_solver_config** [in]: Backend-specific options. For cuDSS,
-  contains :code:`cudss_solver_options` (mode, e.g. SlowInitFastSolve;
-  :code:`nthreads`; optional :code:`threading_lib_path` for multi-threaded
-  cuDSS).
+  Default: ``BlockSparsePCG``.
+- **sparse_linear_solver_config** [in]: Backend-specific options. For
+  ``BlockSparsePCG`` contains :code:`block_sparse_pcg_options`
+  (``block_size`` / ``block_layout``, ``max_iterations``,
+  ``relative_tolerance``, ``absolute_tolerance``, ``pivot_floor``,
+  ``check_period``).  For ``cuDSS`` contains :code:`cudss_solver_options`
+  (mode, ``nthreads``, optional ``threading_lib_path`` for multi-threaded
+  cuDSS).  Dense backends take no extra configuration.
 - **sparse_square_multiplier_type** [in]: Strategy for computing the approximate
   Hessian :math:`J^T J`; options are ``cuSPARSE`` (cuSPARSE SpGEMM reuse API)
   and ``Fast`` (warp-efficient CUDA kernels with bitmap pattern discovery).
@@ -482,11 +487,14 @@ values and then override individual fields.
   acceptance threshold) are allowed before the minimizer treats the current
   estimate as converged.  Set to ``0`` to disable this criterion.
 - **sparse_linear_solver_type** (``SparseLinearSolverType``, default
-  ``cuDSS``) — selects the linear-system backend.  ``cuDSS`` uses NVIDIA's
-  sparse direct solver; ``DenseLDLT`` converts to dense and factorizes with
-  a custom pivoted LDLT kernel; ``DenseCholesky`` converts to dense and uses
-  cuSOLVER Cholesky (requires SPD); ``DenseQR`` converts to dense and uses
-  cuSOLVER QR factorization (works for any non-singular matrix).
+  ``BlockSparsePCG``) — selects the linear-system backend.
+  ``BlockSparsePCG`` runs block-Jacobi preconditioned conjugate gradient
+  with the block layout derived automatically from the problem's state
+  batches.  ``cuDSS`` uses NVIDIA's sparse direct solver; ``DenseLDLT``
+  converts to dense and factorizes with a custom pivoted LDLT kernel;
+  ``DenseCholesky`` converts to dense and uses cuSOLVER Cholesky
+  (requires SPD); ``DenseQR`` converts to dense and uses cuSOLVER QR
+  factorization (works for any non-singular matrix).
 - **sparse_square_multiplier_type** (``SparseMatrixMultiplierType``, default
   ``Fast``) — strategy for computing the approximate Hessian
   :math:`J^T J`.  ``cuSPARSE`` uses the cuSPARSE SpGEMM reuse API;
@@ -723,6 +731,10 @@ Creates an empty problem with no states or factors.
 
 Integer enum selecting the linear-system backend.
 
+- ``SparseLinearSolverType.BlockSparsePCG`` (default) — block-Jacobi
+  preconditioned conjugate gradient solver.  The block layout is derived
+  automatically from the problem's state batches at minimizer-initialize
+  time.
 - ``SparseLinearSolverType.cuDSS`` — sparse direct solver via NVIDIA cuDSS.
 - ``SparseLinearSolverType.DenseLDLT`` — converts CSR to dense and solves
   with a custom CUDA pivoted LDLT kernel.

@@ -172,6 +172,7 @@ if(BUILD_TESTING)
     tests/pnp_factor_batch_test.cpp
     tests/decreasing_scale_minimizer_test.cpp
     tests/synthetic_pgo_test.cpp
+    tests/synthetic_sba_test.cpp
     tests/dense_matrix_ops_test.cpp
     tests/utils_test.cpp
     tests/device_vector_test.cpp

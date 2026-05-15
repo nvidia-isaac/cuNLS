@@ -27,6 +27,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <map>
 #include <random>
 #include <unordered_map>
 #include <vector>
@@ -35,6 +37,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
+#include "cunls/minimizer/problem.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -184,7 +187,8 @@ TEST(SparseLinearSolverTest, Solve) {
     cuDSSLinearSolver solver(cudss_solver_options);
     {
       profiler::ScopedRange range("Warm up");
-      solver.Initialize(stream.GetStream(), input_matrix, rhs, result);
+      solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs,
+                        result);
       solver.Solve(stream.GetStream(), input_matrix, rhs, result);
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
@@ -213,6 +217,123 @@ TEST(SparseLinearSolverTest, Solve) {
   }
 
   ASSERT_NEAR(squared_error / matrix_size, 0, 1e-1);
+}
+
+namespace {
+
+// Generates a block-SPD matrix: dense 6x6 diagonal blocks plus a sparse pattern
+// of symmetric 6x6 off-diagonal couplings.  Mirrors the structure of a
+// Hessian from an SE3 pose graph and is the natural fit for the block-Jacobi
+// preconditioner.
+void GenerateBlockSPDMatrix(std::mt19937 &gen, int num_blocks, int block_size,
+                            float off_diag_strength,
+                            std::vector<float> &csr_values,
+                            std::vector<int> &csr_col_idx,
+                            std::vector<int> &csr_row_offsets) {
+  int n = num_blocks * block_size;
+  std::uniform_real_distribution<float> off_dist(-off_diag_strength,
+                                                 off_diag_strength);
+  std::uniform_real_distribution<float> prob_dist(0.f, 1.f);
+  // Dense per-row map for ordered CSR assembly.
+  std::vector<std::map<int, float>> rows(n);
+
+  // Strongly diagonal-dominant diagonal blocks for SPD guarantee.
+  for (int b = 0; b < num_blocks; ++b) {
+    for (int i = 0; i < block_size; ++i) {
+      for (int j = 0; j < block_size; ++j) {
+        int gi = b * block_size + i;
+        int gj = b * block_size + j;
+        if (i == j) {
+          rows[gi][gj] = 50.f;
+        } else {
+          float v = off_dist(gen) * 0.1f;
+          rows[gi][gj] = (rows[gi].count(gj) ? rows[gi][gj] : 0.f) + v;
+        }
+      }
+    }
+  }
+  // Add symmetric block off-diagonal couplings to a few neighbour blocks.
+  for (int b = 0; b < num_blocks; ++b) {
+    for (int nb = b + 1; nb < num_blocks; ++nb) {
+      if (prob_dist(gen) > 5.f / num_blocks) {
+        continue;
+      }
+      for (int i = 0; i < block_size; ++i) {
+        for (int j = 0; j < block_size; ++j) {
+          float v = off_dist(gen);
+          int gi = b * block_size + i;
+          int gj = nb * block_size + j;
+          rows[gi][gj] = (rows[gi].count(gj) ? rows[gi][gj] : 0.f) + v;
+          rows[gj][gi] = (rows[gj].count(gi) ? rows[gj][gi] : 0.f) + v;
+        }
+      }
+    }
+  }
+
+  csr_row_offsets.clear();
+  csr_col_idx.clear();
+  csr_values.clear();
+  csr_row_offsets.push_back(0);
+  for (int i = 0; i < n; ++i) {
+    for (const auto &[j, v] : rows[i]) {
+      csr_col_idx.push_back(j);
+      csr_values.push_back(v);
+    }
+    csr_row_offsets.push_back(static_cast<int>(csr_col_idx.size()));
+  }
+}
+
+} // namespace
+
+TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
+  std::mt19937 gen(7);
+  constexpr int num_blocks = 200;
+  constexpr int block_size = 6;
+  constexpr int matrix_size = num_blocks * block_size;
+
+  std::vector<float> csr_values;
+  std::vector<int> csr_col_idx;
+  std::vector<int> csr_row_offsets;
+  GenerateBlockSPDMatrix(gen, num_blocks, block_size, 1.0f, csr_values,
+                         csr_col_idx, csr_row_offsets);
+
+  CSRSparseMatrix mat;
+  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values,
+                                    mat);
+
+  std::vector<float> rhs_cpu;
+  test_utils::GenerateRandomVector(matrix_size, rhs_cpu);
+  dvector<float> rhs(rhs_cpu);
+  dvector<float> result(matrix_size);
+
+  CudaStream stream;
+  BlockSparsePCGOptions opts;
+  opts.block_size = block_size;
+  opts.relative_tolerance = 1e-5f;
+  opts.max_iterations = 500;
+  BlockSparsePCGSolver solver(opts);
+  ASSERT_TRUE(
+      solver.Initialize(stream.GetStream(), Problem(), mat, rhs, result));
+  ASSERT_TRUE(solver.Solve(stream.GetStream(), mat, rhs, result));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> x(matrix_size);
+  result.CopyToHost(x.data(), matrix_size);
+
+  std::vector<float> Ax;
+  MultiplySymmetricCSRMatrixByVector(csr_row_offsets, csr_col_idx, csr_values,
+                                     x, Ax);
+  float sq_err = 0.f;
+  float b_sq = 0.f;
+  for (int i = 0; i < matrix_size; ++i) {
+    float d = Ax[i] - rhs_cpu[i];
+    sq_err += d * d;
+    b_sq += rhs_cpu[i] * rhs_cpu[i];
+  }
+  float rel_err = std::sqrt(sq_err / std::max(b_sq, 1e-30f));
+  EXPECT_LT(rel_err, 1e-3f) << "PCG residual too large (relative): " << rel_err;
+  EXPECT_GT(solver.LastIterations(), 0);
+  EXPECT_LE(solver.LastIterations(), opts.max_iterations);
 }
 
 } // namespace cunls

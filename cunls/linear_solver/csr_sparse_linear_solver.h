@@ -23,13 +23,21 @@
 
 namespace cunls {
 
+class Problem; // forward declaration; defined in cunls/minimizer/problem.h.
+
 /**
  * @brief Base class for linear solvers operating on CSR matrices.
  *
  * Provides a common interface for solving sparse symmetric linear systems
  * Ax = b where the matrix A is stored in CSR (Compressed Sparse Row) format.
  * Derived classes implement specific solver strategies (e.g. cuDSS direct
- * factorization, dense pivoted LDLT).
+ * factorization, dense pivoted LDLT, block-Jacobi PCG).
+ *
+ * Initialize receives the originating @ref Problem so solvers can adapt
+ * to its block / factor-graph structure (e.g.
+ * @ref BlockSparsePCGSolver reads each state batch's @c TangentSize to
+ * build its block-Jacobi preconditioner without a downcast at the call
+ * site).  Solvers that don't care can simply ignore the argument.
  */
 class CSRSparseLinearSolver {
 public:
@@ -44,13 +52,19 @@ public:
    * elements as the number of rows in @p spd_matrix; the solver does not
    * resize them.
    *
-   * @param stream CUDA stream for asynchronous GPU operations.
+   * @param stream     CUDA stream for asynchronous GPU operations.
+   * @param problem    The originating optimization problem.  Solvers may use
+   *                   its state-batch structure to specialize their setup
+   *                   (e.g. derive a block-Jacobi preconditioner layout).
+   *                   Pass a default-constructed @ref Problem when calling
+   *                   on a raw matrix that wasn't produced by cuNLS factors.
    * @param spd_matrix The coefficient matrix A in CSR format.
-   * @param rhs The right-hand side vector b (size must equal matrix rows).
-   * @param result Output vector x (size must equal matrix rows).
+   * @param rhs        The right-hand side vector b (size must equal matrix
+   *                   rows).
+   * @param result     Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  virtual bool Initialize(cudaStream_t stream,
+  virtual bool Initialize(cudaStream_t stream, const Problem &problem,
                           const CSRSparseMatrix &spd_matrix,
                           const dvector<float> &rhs,
                           dvector<float> &result) = 0;

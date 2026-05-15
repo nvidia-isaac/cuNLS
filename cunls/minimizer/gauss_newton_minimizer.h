@@ -111,31 +111,39 @@ struct MinimizerOptions {
    * @brief Type of sparse linear solver to use.
    *
    * Supported options:
-   *  - cuDSS: GPU-accelerated sparse direct solver via NVIDIA's cuDSS library.
-   *  - DenseLDLT: Converts the CSR matrix to dense and solves via a custom
-   *    CUDA pivoted LDLT factorization. Suitable for small-to-medium systems
-   *    where the matrix fits in dense form.
+   *  - BlockSparsePCG (default): block-Jacobi preconditioned CG; derives
+   *    the per-state-batch block layout automatically.  Recommended for
+   *    most SBA and PGO workloads — see `profile/PCG_RESULTS.md` and
+   *    `profile/benchmark_a6000.png`.
+   *  - cuDSS: NVIDIA cuDSS sparse direct solver.  Preferred when many
+   *    near-identical small Hessians are solved back-to-back and the
+   *    per-iteration kernel-launch overhead of PCG dominates.
+   *  - DenseLDLT: converts CSR to dense, solves with a custom pivoted
+   *    LDLT kernel.  Suitable for small dense Hessians.
+   *  - DenseCholesky / DenseQR: cuSOLVER-backed dense solves.
    *
-   * Default: cuDSS
+   * Default: BlockSparsePCG.
    */
   SparseLinearSolverType sparse_linear_solver_type =
-      SparseLinearSolverType::cuDSS;
+      SparseLinearSolverType::BlockSparsePCG;
 
   /**
    * @brief Configuration for the sparse linear solver.
    *
-   * Contains solver-specific configuration options. Defaults to cuDSS solver
-   * with SlowInitFastSolve configuration and 1 thread.
-   * To enable mutiple threads in cuDSS, please provide the full path to the
-   * threading library in the cudss_solver_options.
-   * e.g. .cudss_solver_options = cuDSSLinearSolverOptions{
-   * .mode = cuDSSLinearSolverMode::SlowInitFastSolve,
-   * .nthreads = 12,
-   * .threading_lib_path = "/path/to/libcudss_mtlayer_gomp.so"
-   * }
+   * Contains backend-specific options.  Only the field corresponding to
+   * @ref sparse_linear_solver_type is read:
+   *  - `block_sparse_pcg_options` for `BlockSparsePCG`,
+   *  - `cudss_solver_options` for `cuDSS`,
+   *  - Dense backends have no extra options.
+   *
+   * Defaults: `BlockSparsePCG` with the layout auto-derived from the
+   * problem's state batches at @ref GaussNewtonMinimizer::Initialize time.
+   *
+   * To enable multi-threaded cuDSS, set
+   * `cudss_solver_options.threading_lib_path` to the full path of
+   * `libcudss_mtlayer_gomp.so` (or equivalent).
    */
-  SparseLinearSolverConfig sparse_linear_solver_config = {
-      .cudss_solver_options = cuDSSLinearSolverOptions()};
+  SparseLinearSolverConfig sparse_linear_solver_config = {};
 
   /**
    * @brief Strategy for computing the approximate Hessian J^T * J.

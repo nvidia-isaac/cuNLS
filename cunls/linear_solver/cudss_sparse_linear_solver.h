@@ -92,8 +92,9 @@ public:
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-                  const dvector<float> &rhs, dvector<float> &result) final;
+  bool Initialize(cudaStream_t stream, const Problem &problem,
+                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+                  dvector<float> &result) final;
 
   /**
    * @brief Solves a sparse SPD linear system Ax = b.

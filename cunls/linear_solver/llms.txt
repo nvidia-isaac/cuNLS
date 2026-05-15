@@ -14,6 +14,17 @@ Sparse linear system abstraction and implementation used by minimizers.
 - `cudss_sparse_linear_solver.h`:
   - `cuDSSLinearSolverOptions`
   - `cuDSSLinearSolver`
+- `block_sparse_pcg_solver.h`:
+  - `BlockSparsePCGOptions` — `block_size` / `block_layout`,
+    `max_iterations`, `relative_tolerance`, `absolute_tolerance`,
+    `pivot_floor`.
+  - `BlockSparsePCGSolver` — iterative SPD solver: cuSPARSE CSR SpMV +
+    block-Jacobi LDLT preconditioner (dense B x B diagonal tiles factored
+    in shared memory).  Supports a uniform block size or a layout vector
+    of `(count, block_size)` segments matching the host state-batch
+    structure (e.g. `{{N_poses, 6}, {N_points, 3}}` for SBA).  Inner loop
+    computes alpha/beta on device; convergence is polled every K
+    iterations to keep CPU launches ahead of the GPU.
 
 ## Expected system form
 
