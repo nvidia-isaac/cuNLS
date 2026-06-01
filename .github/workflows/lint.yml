@@ -1,0 +1,49 @@
+name: Lint
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check script permissions
+        run: |
+          errors=0
+          for f in scripts/*.sh; do
+            [ -f "$f" ] || continue
+            if [ ! -x "$f" ]; then
+              echo "::error file=$f::Script is not executable"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::$errors script(s) missing executable permission"
+            exit 1
+          fi
+
+      - name: Build Docker image
+        run: docker build -f scripts/Dockerfile . --network host --tag cunls:local
+
+      - name: Run pre-commit (changed files)
+        run: |
+          docker run --rm \
+            -v "$(pwd):/cunls" \
+            -w /cunls \
+            cunls:local \
+            bash -c "git config --global --add safe.directory /cunls && pre-commit run --from-ref origin/main --to-ref HEAD"
