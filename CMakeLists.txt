@@ -19,13 +19,7 @@ include(cmake/AddCUDSS.cmake)
 include(cmake/BundleStaticDeps.cmake)
 
 add_spdlog()
-option(LOCAL_CUDSS_BUILD "Build cuDSS locally" ON)
-set(CUDSS_BUILD_PATH "${PROJECT_SOURCE_DIR}/libs/cudss")
-
-if(NOT LOCAL_CUDSS_BUILD)
-  set(CUDSS_BUILD_PATH "")
-endif()
-add_cudss(CUDSS_BUILD_PATH "${CUDSS_BUILD_PATH}")
+add_cudss()
 
 set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver cudss)
 

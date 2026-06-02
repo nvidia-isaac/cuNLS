@@ -8,7 +8,3 @@ add_library(cunls_linear_solver OBJECT
 )
 
 target_link_libraries(cunls_linear_solver PRIVATE cudss)
-
-if(LOCAL_CUDSS_BUILD)
-  target_compile_definitions(cunls_linear_solver PRIVATE CUDSS_NEW_API)
-endif()

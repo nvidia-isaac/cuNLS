@@ -240,17 +240,10 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   cudssMatrix_t mat = nullptr;
   // Create cuDSS CSR matrix descriptor
   // Parameters: symmetric matrix, full view, zero-based indexing
-#ifdef CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(
       &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr,
       values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F, CUDSS_MTYPE_SYMMETRIC,
       CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
-#else
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(
-      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr,
-      values_ptr, CUDA_R_32I, CUDA_R_32F, CUDSS_MTYPE_SYMMETRIC,
-      CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
-#endif
 
   matrix_ = reinterpret_cast<void *>(mat);
 }
@@ -273,13 +266,8 @@ cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
   // vector
 
   cudssMatrix_t mat = nullptr;
-#ifdef CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F,
                                            CUDSS_LAYOUT_COL_MAJOR));
-#else
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F,
-                                           CUDSS_LAYOUT_COL_MAJOR));
-#endif
   matrix_ = reinterpret_cast<void *>(mat);
 }
 
@@ -301,13 +289,13 @@ cuDSSDescription::~cuDSSDescription() {
  * number of threads.
  *
  * @param reordering_algorithm The reordering algorithm to use (e.g.,
- *                             CUDSS_ALG_DEFAULT, CUDSS_ALG_1). Defaults to 0.
+ *                             CUDSS_REORDERING_ALG_DEFAULT,
+ *                             CUDSS_REORDERING_ALG_BTF_COLAMD). Defaults to 0.
  * @param nthreads The number of threads to use. Defaults to 1.
  */
 cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
   cudssConfig_t cfg = nullptr;
 
-#ifdef CUDSS_NEW_API
   // Validate algorithm is within expected range
   if (reordering_algorithm < static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT) ||
       reordering_algorithm > static_cast<int>(CUDSS_REORDERING_ALG_NONE)) {
@@ -320,25 +308,10 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
 
   THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg,
                                       sizeof(cudssReorderingAlg_t)));
-#else
-  // Validate algorithm is within expected range
-  if (reordering_algorithm < static_cast<int>(CUDSS_ALG_DEFAULT) ||
-      reordering_algorithm > static_cast<int>(CUDSS_ALG_5)) {
-    throw std::invalid_argument("Invalid reordering algorithm value");
-  }
-
-  THROW_ON_CUDSS_ERROR(cudssConfigCreate(&cfg));
-
-  auto alg = (cudssAlgType_t)reordering_algorithm;
-
-  THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg,
-                                      sizeof(cudssAlgType_t)));
-#endif
 
   THROW_ON_CUDSS_ERROR(
       cudssConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
-#ifdef CUDSS_NEW_API
   // Hybrid execute mode is incompatible with the BTF_COLAMD/COLAMD reordering
   // paths in cuDSS — those algorithms return CUDSS_STATUS_NOT_SUPPORTED during
   // analysis when hybrid execution is on. Enable hybrid mode only for the
@@ -349,7 +322,6 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
     THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE,
                                         &hybrid_execute_mode, sizeof(int)));
   }
-#endif
 
   config_ = reinterpret_cast<void *>(cfg);
 }

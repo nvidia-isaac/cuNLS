@@ -36,11 +36,10 @@ namespace cunls {
  * constant used for factorization.
  *
  * @param mode Solver mode.
- * @return cuDSS algorithm type number (0 for CUDSS_ALG_DEFAULT or 1 for
- * CUDSS_ALG_1).
+ * @return cuDSS reordering algorithm number (CUDSS_REORDERING_ALG_DEFAULT for
+ * SlowInitFastSolve or CUDSS_REORDERING_ALG_BTF_COLAMD for FastInitSlowSolve).
  */
 int GetOrderingType(cuDSSLinearSolverMode mode) {
-#ifdef CUDSS_NEW_API
   switch (mode) {
   case cuDSSLinearSolverMode::SlowInitFastSolve:
     return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
@@ -49,16 +48,6 @@ int GetOrderingType(cuDSSLinearSolverMode mode) {
   default:
     return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
   }
-#else
-  switch (mode) {
-  case cuDSSLinearSolverMode::SlowInitFastSolve:
-    return static_cast<int>(CUDSS_ALG_DEFAULT);
-  case cuDSSLinearSolverMode::FastInitSlowSolve:
-    return static_cast<int>(CUDSS_ALG_1);
-  default:
-    return static_cast<int>(CUDSS_ALG_DEFAULT);
-  }
-#endif
 }
 
 /** @copydoc cuDSSLinearSolver::cuDSSLinearSolver */
