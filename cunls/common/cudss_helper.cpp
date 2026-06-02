@@ -17,11 +17,20 @@
 
 #include "cunls/common/cudss_helper.h"
 
+#include <cudss.h>
+
 #include <cassert>
 #include <cstring>
 
 #include "cunls/common/log.h"
-#include <cudss.h>
+
+// cuDSS 0.8 reworked the matrix descriptor and config API (new reordering enums,
+// hybrid execute mode, separate offset/index/value types in cudssMatrixCreateCsr).
+// Releases <= 0.7.x still use the legacy API. Gate on the version reported by the
+// cuDSS header so both prebuilt 0.7.1 and 0.8 builds compile.
+#if CUDSS_VERSION_MAJOR > 0 || CUDSS_VERSION_MINOR >= 8
+#define CUDSS_NEW_API
+#endif
 
 namespace cunls {
 
@@ -128,25 +137,21 @@ int cuDSSDeviceMemPool::Dealloc(void *ptr, size_t size, cudaStream_t stream) {
   return cudaErrorInvalidDevicePointer;
 }
 
-int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size,
-                            cudaStream_t stream) {
+int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size, cudaStream_t stream) {
   if (ctx == nullptr) {
     return cudaErrorInvalidResourceHandle;
   }
   return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Alloc(ptr, size, stream);
 }
 
-int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size,
-                              cudaStream_t stream) {
+int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size, cudaStream_t stream) {
   if (ctx == nullptr) {
     return cudaErrorInvalidResourceHandle;
   }
-  return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Dealloc(ptr, size,
-                                                              stream);
+  return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Dealloc(ptr, size, stream);
 }
 
-void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool,
-                              const char *handler_name) {
+void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool, const char *handler_name) {
   if (handle == nullptr) {
     return;
   }
@@ -155,25 +160,22 @@ void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool,
   handler.ctx = reinterpret_cast<void *>(&pool);
   handler.device_alloc = cuDSSDeviceMemPoolAlloc;
   handler.device_free = cuDSSDeviceMemPoolDealloc;
-  std::strncpy(handler.name,
-               (handler_name == nullptr || handler_name[0] == '\0')
-                   ? "cunls device pool"
-                   : handler_name,
-               CUDSS_ALLOCATOR_NAME_LEN);
+  std::strncpy(
+      handler.name,
+      (handler_name == nullptr || handler_name[0] == '\0') ? "cunls device pool" : handler_name,
+      CUDSS_ALLOCATOR_NAME_LEN);
   handler.name[CUDSS_ALLOCATOR_NAME_LEN - 1] = '\0';
 
   DetachcuDSSDeviceMemHandler(handle);
 
-  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(
-      reinterpret_cast<cudssHandle_t>(handle), &handler));
+  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), &handler));
 }
 
 void DetachcuDSSDeviceMemHandler(void *handle) {
   if (handle == nullptr) {
     return;
   }
-  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(
-      reinterpret_cast<cudssHandle_t>(handle), nullptr));
+  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), nullptr));
 }
 
 /**
@@ -241,15 +243,14 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   // Create cuDSS CSR matrix descriptor
   // Parameters: symmetric matrix, full view, zero-based indexing
 #ifdef CUDSS_NEW_API
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(
-      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr,
-      values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F, CUDSS_MTYPE_SYMMETRIC,
-      CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
+  THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(&mat, matrix_size, matrix_size, num_nonzeros, rows_ptr,
+                                            NULL, cols_ptr, values_ptr, CUDSS_R_32I, CUDSS_R_32I,
+                                            CUDSS_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL,
+                                            CUDSS_BASE_ZERO));
 #else
   THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(
-      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr,
-      values_ptr, CUDA_R_32I, CUDA_R_32F, CUDSS_MTYPE_SYMMETRIC,
-      CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
+      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,
+      CUDA_R_32I, CUDA_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
 #endif
 
   matrix_ = reinterpret_cast<void *>(mat);
@@ -274,11 +275,11 @@ cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
 
   cudssMatrix_t mat = nullptr;
 #ifdef CUDSS_NEW_API
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F,
-                                           CUDSS_LAYOUT_COL_MAJOR));
+  THROW_ON_CUDSS_ERROR(
+      cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F, CUDSS_LAYOUT_COL_MAJOR));
 #else
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F,
-                                           CUDSS_LAYOUT_COL_MAJOR));
+  THROW_ON_CUDSS_ERROR(
+      cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F, CUDSS_LAYOUT_COL_MAJOR));
 #endif
   matrix_ = reinterpret_cast<void *>(mat);
 }
@@ -318,8 +319,8 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
 
   auto alg = (cudssReorderingAlg_t)reordering_algorithm;
 
-  THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg,
-                                      sizeof(cudssReorderingAlg_t)));
+  THROW_ON_CUDSS_ERROR(
+      cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(cudssReorderingAlg_t)));
 #else
   // Validate algorithm is within expected range
   if (reordering_algorithm < static_cast<int>(CUDSS_ALG_DEFAULT) ||
@@ -331,23 +332,21 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
 
   auto alg = (cudssAlgType_t)reordering_algorithm;
 
-  THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg,
-                                      sizeof(cudssAlgType_t)));
+  THROW_ON_CUDSS_ERROR(
+      cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(cudssAlgType_t)));
 #endif
 
-  THROW_ON_CUDSS_ERROR(
-      cudssConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
+  THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
 #ifdef CUDSS_NEW_API
   // Hybrid execute mode is incompatible with the BTF_COLAMD/COLAMD reordering
   // paths in cuDSS — those algorithms return CUDSS_STATUS_NOT_SUPPORTED during
   // analysis when hybrid execution is on. Enable hybrid mode only for the
   // remaining reordering algorithms.
-  if (alg != CUDSS_REORDERING_ALG_BTF_COLAMD &&
-      alg != CUDSS_REORDERING_ALG_COLAMD) {
+  if (alg != CUDSS_REORDERING_ALG_BTF_COLAMD && alg != CUDSS_REORDERING_ALG_COLAMD) {
     int hybrid_execute_mode = 16;
-    THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE,
-                                        &hybrid_execute_mode, sizeof(int)));
+    THROW_ON_CUDSS_ERROR(
+        cudssConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE, &hybrid_execute_mode, sizeof(int)));
   }
 #endif
 
@@ -401,4 +400,4 @@ cuDSSData::~cuDSSData() {
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

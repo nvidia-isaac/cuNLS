@@ -81,8 +81,6 @@
  * Vector<3> = 3) while still supporting arbitrary user state batches.
  */
 
-#include "cunls/linear_solver/block_sparse_pcg_solver.h"
-
 #include <cuda_runtime.h>
 #include <cusparse.h>
 
@@ -95,6 +93,7 @@
 #include "cunls/common/cusparse_helper.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
+#include "cunls/linear_solver/block_sparse_pcg_solver.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/state_batch.h"
 
@@ -135,10 +134,12 @@ constexpr int kMaxBlockSize = 16;
  * @tparam B Compile-time tile side length.
  */
 template <int B>
-__global__ void ExtractAndFactorBlockDiagonalsKernel(
-    const int *__restrict__ row_off, const int *__restrict__ col_idx,
-    const float *__restrict__ values, int row_start, int num_blocks,
-    int factor_offset, float pivot_floor, float *__restrict__ factors) {
+__global__ void ExtractAndFactorBlockDiagonalsKernel(const int *__restrict__ row_off,
+                                                     const int *__restrict__ col_idx,
+                                                     const float *__restrict__ values,
+                                                     int row_start, int num_blocks,
+                                                     int factor_offset, float pivot_floor,
+                                                     float *__restrict__ factors) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -218,10 +219,11 @@ __global__ void ExtractAndFactorBlockDiagonalsKernel(
  *  shared memory of size `B*B` floats.  Slightly slower than the
  *  templated version (no constant-B unrolling) but works for any
  *  block size up to @c kMaxBlockSize. */
-__global__ void ExtractAndFactorGenericKernel(
-    const int *__restrict__ row_off, const int *__restrict__ col_idx,
-    const float *__restrict__ values, int B, int row_start, int num_blocks,
-    int factor_offset, float pivot_floor, float *__restrict__ factors) {
+__global__ void ExtractAndFactorGenericKernel(const int *__restrict__ row_off,
+                                              const int *__restrict__ col_idx,
+                                              const float *__restrict__ values, int B,
+                                              int row_start, int num_blocks, int factor_offset,
+                                              float pivot_floor, float *__restrict__ factors) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -302,10 +304,11 @@ __global__ void ExtractAndFactorGenericKernel(
  * scan stays in register loops.
  */
 template <int B>
-__global__ void ExtractAndFactorPerThreadKernel(
-    const int *__restrict__ row_off, const int *__restrict__ col_idx,
-    const float *__restrict__ values, int row_start, int num_blocks,
-    int factor_offset, float pivot_floor, float *__restrict__ factors) {
+__global__ void ExtractAndFactorPerThreadKernel(const int *__restrict__ row_off,
+                                                const int *__restrict__ col_idx,
+                                                const float *__restrict__ values, int row_start,
+                                                int num_blocks, int factor_offset,
+                                                float pivot_floor, float *__restrict__ factors) {
   int block_row = blockIdx.x * blockDim.x + threadIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -380,9 +383,8 @@ __global__ void ExtractAndFactorPerThreadKernel(
 /** Scalar-Jacobi extractor for B == 1: `M^{-1}[i] = 1 / H[i,i]`. */
 __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
                                     const int *__restrict__ col_idx,
-                                    const float *__restrict__ values,
-                                    int row_start, int n, int factor_offset,
-                                    float pivot_floor,
+                                    const float *__restrict__ values, int row_start, int n,
+                                    int factor_offset, float pivot_floor,
                                     float *__restrict__ factors) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n) {
@@ -421,10 +423,9 @@ __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
  * @tparam B Compile-time tile side length.
  */
 template <int B>
-__global__ void
-ApplyBlockJacobiKernel(const float *__restrict__ factors, int factor_offset,
-                       const float *__restrict__ r, int row_start,
-                       int num_blocks, float *__restrict__ z) {
+__global__ void ApplyBlockJacobiKernel(const float *__restrict__ factors, int factor_offset,
+                                       const float *__restrict__ r, int row_start, int num_blocks,
+                                       float *__restrict__ z) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -477,11 +478,9 @@ ApplyBlockJacobiKernel(const float *__restrict__ factors, int factor_offset,
 }
 
 /** Generic-B apply for non-templated tile sizes; dynamic shared mem. */
-__global__ void ApplyBlockJacobiGenericKernel(const float *__restrict__ factors,
-                                              int factor_offset, int B,
-                                              const float *__restrict__ r,
-                                              int row_start, int num_blocks,
-                                              float *__restrict__ z) {
+__global__ void ApplyBlockJacobiGenericKernel(const float *__restrict__ factors, int factor_offset,
+                                              int B, const float *__restrict__ r, int row_start,
+                                              int num_blocks, float *__restrict__ z) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -524,10 +523,9 @@ __global__ void ApplyBlockJacobiGenericKernel(const float *__restrict__ factors,
 }
 
 /** Scalar-Jacobi apply (B == 1). */
-__global__ void ApplyScalarJacobi(const float *__restrict__ factors,
-                                  int factor_offset,
-                                  const float *__restrict__ r, int row_start,
-                                  int n, float *__restrict__ z) {
+__global__ void ApplyScalarJacobi(const float *__restrict__ factors, int factor_offset,
+                                  const float *__restrict__ r, int row_start, int n,
+                                  float *__restrict__ z) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n) {
     return;
@@ -551,11 +549,10 @@ __global__ void ApplyScalarJacobi(const float *__restrict__ factors,
  *           per-thread register file (we instantiate for {2, 3, 4, 6}).
  */
 template <int B>
-__global__ void
-ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factors,
-                                int factor_offset, const float *__restrict__ r,
-                                int row_start, int num_blocks,
-                                float *__restrict__ z) {
+__global__ void ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factors,
+                                                int factor_offset, const float *__restrict__ r,
+                                                int row_start, int num_blocks,
+                                                float *__restrict__ z) {
   int block_row = blockIdx.x * blockDim.x + threadIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -626,11 +623,9 @@ ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factors,
  * runtime on the small-Minimize SBA fixture).
  */
 __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
-                                const float *__restrict__ pAp_ptr,
-                                const float *__restrict__ p,
-                                const float *__restrict__ Ap,
-                                float *__restrict__ x, float *__restrict__ r,
-                                int n) {
+                                const float *__restrict__ pAp_ptr, const float *__restrict__ p,
+                                const float *__restrict__ Ap, float *__restrict__ x,
+                                float *__restrict__ r, int n) {
   __shared__ float a;
   if (threadIdx.x == 0) {
     float denom = pAp_ptr[0];
@@ -653,8 +648,7 @@ __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
  *        (subsequent CTAs don't read the slot in this kernel).
  */
 __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
-                                   float *__restrict__ rz_old_ptr,
-                                   const float *__restrict__ z,
+                                   float *__restrict__ rz_old_ptr, const float *__restrict__ z,
                                    float *__restrict__ p, int n) {
   __shared__ float b;
   if (threadIdx.x == 0) {
@@ -675,13 +669,6 @@ __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
     return;
   }
   p[i] = z[i] + b * p[i];
-}
-
-/** Zero one or two scalar slots. */
-__global__ void ZeroScalarKernel(float *out) { out[0] = 0.f; }
-__global__ void Zero2ScalarKernel(float *out_a, float *out_b) {
-  out_a[0] = 0.f;
-  out_b[0] = 0.f;
 }
 
 /** Performs `dst += local` on a single device scalar via a per-block warp
@@ -714,15 +701,13 @@ __device__ inline void ReduceAndAddToScalar(float local, float *dst) {
  *
  * Each CTA does a register-level reduction over its slice, then a
  * single-warp reduction inside shared memory, then one atomicAdd into
- * the scalar slot.  Caller must zero `out[0]` first (the companion
- * @ref ZeroScalarKernel kernel above does this).
+ * the scalar slot.  Caller must zero `out[0]` first (see the
+ * `cudaMemsetAsync` in the launch helper below).
  */
-__global__ void DotKernel(const float *__restrict__ a,
-                          const float *__restrict__ b, int n,
+__global__ void DotKernel(const float *__restrict__ a, const float *__restrict__ b, int n,
                           float *__restrict__ out) {
   float s = 0.f;
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
-       i += blockDim.x * gridDim.x) {
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += blockDim.x * gridDim.x) {
     s += a[i] * b[i];
   }
   ReduceAndAddToScalar(s, out);
@@ -733,19 +718,16 @@ __global__ void DotKernel(const float *__restrict__ a,
  *        single pass over `a`.
  *
  * Halves the number of vector reads and saves one kernel launch per
- * PCG iteration (only one `ZeroScalarKernel` pair instead of two).
+ * PCG iteration (only one scalar-zeroing memset instead of two).
  * Each thread accumulates two partial sums in registers and the
  * per-block reduction is identical to @ref DotKernel.
  */
-__global__ void DualDotKernel(const float *__restrict__ a,
-                              const float *__restrict__ b,
-                              const float *__restrict__ c, int n,
-                              float *__restrict__ out_ab,
+__global__ void DualDotKernel(const float *__restrict__ a, const float *__restrict__ b,
+                              const float *__restrict__ c, int n, float *__restrict__ out_ab,
                               float *__restrict__ out_ac) {
   float sab = 0.f;
   float sac = 0.f;
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
-       i += blockDim.x * gridDim.x) {
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += blockDim.x * gridDim.x) {
     float ai = a[i];
     sab += ai * b[i];
     sac += ai * c[i];
@@ -759,9 +741,8 @@ __global__ void DualDotKernel(const float *__restrict__ a,
 // =============================================================================
 
 /** Picks the right ExtractAndFactor specialization for B. */
-void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start,
-                              int num_blocks, int factor_offset,
-                              float pivot_floor, const CSRSparseMatrix &matrix,
+void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start, int num_blocks,
+                              int factor_offset, float pivot_floor, const CSRSparseMatrix &matrix,
                               float *factors) {
   if (num_blocks == 0) {
     return;
@@ -774,20 +755,18 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start,
     int threads = 256;
     int blocks = (num_blocks + threads - 1) / threads;
     ExtractScalarJacobi<<<blocks, threads, 0, stream>>>(
-        row_off, col_idx, vals, row_start, num_blocks, factor_offset,
-        pivot_floor, factors);
+        row_off, col_idx, vals, row_start, num_blocks, factor_offset, pivot_floor, factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return;
   }
 
-#define LAUNCH_FACTOR_PER_THREAD(BVAL)                                         \
-  case BVAL: {                                                                 \
-    int threads = 256;                                                         \
-    int blocks = (num_blocks + threads - 1) / threads;                         \
-    ExtractAndFactorPerThreadKernel<BVAL><<<blocks, threads, 0, stream>>>(     \
-        row_off, col_idx, vals, row_start, num_blocks, factor_offset,          \
-        pivot_floor, factors);                                                 \
-    break;                                                                     \
+#define LAUNCH_FACTOR_PER_THREAD(BVAL)                                                       \
+  case BVAL: {                                                                               \
+    int threads = 256;                                                                       \
+    int blocks = (num_blocks + threads - 1) / threads;                                       \
+    ExtractAndFactorPerThreadKernel<BVAL><<<blocks, threads, 0, stream>>>(                   \
+        row_off, col_idx, vals, row_start, num_blocks, factor_offset, pivot_floor, factors); \
+    break;                                                                                   \
   }
 
   // Small-B path: one block per thread.
@@ -797,8 +776,8 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start,
     LAUNCH_FACTOR_PER_THREAD(4);
     LAUNCH_FACTOR_PER_THREAD(5);
     LAUNCH_FACTOR_PER_THREAD(6);
-  default:
-    break;
+    default:
+      break;
   }
 #undef LAUNCH_FACTOR_PER_THREAD
   if (B >= 2 && B <= 6) {
@@ -808,12 +787,10 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start,
 
   // Large-B path: one CTA per block.
   int threads = ((B + 31) / 32) * 32;
-#define LAUNCH_FACTOR(BVAL)                                                    \
-  case BVAL:                                                                   \
-    ExtractAndFactorBlockDiagonalsKernel<BVAL>                                 \
-        <<<num_blocks, threads, 0, stream>>>(                                  \
-            row_off, col_idx, vals, row_start, num_blocks, factor_offset,      \
-            pivot_floor, factors);                                             \
+#define LAUNCH_FACTOR(BVAL)                                                                  \
+  case BVAL:                                                                                 \
+    ExtractAndFactorBlockDiagonalsKernel<BVAL><<<num_blocks, threads, 0, stream>>>(          \
+        row_off, col_idx, vals, row_start, num_blocks, factor_offset, pivot_floor, factors); \
     break
 
   switch (B) {
@@ -821,14 +798,12 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start,
     LAUNCH_FACTOR(8);
     LAUNCH_FACTOR(15);
     LAUNCH_FACTOR(16);
-  default: {
-    size_t shared_bytes = static_cast<size_t>(B) * B * sizeof(float);
-    ExtractAndFactorGenericKernel<<<num_blocks, threads, shared_bytes,
-                                    stream>>>(
-        row_off, col_idx, vals, B, row_start, num_blocks, factor_offset,
-        pivot_floor, factors);
-    break;
-  }
+    default: {
+      size_t shared_bytes = static_cast<size_t>(B) * B * sizeof(float);
+      ExtractAndFactorGenericKernel<<<num_blocks, threads, shared_bytes, stream>>>(
+          row_off, col_idx, vals, B, row_start, num_blocks, factor_offset, pivot_floor, factors);
+      break;
+    }
   }
 #undef LAUNCH_FACTOR
   THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -842,28 +817,27 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start,
  *  overhead for problems with millions of small tiles (e.g. SBA
  *  landmarks).  For larger B we fall back to the per-CTA path that
  *  stages the factor through shared memory. */
-void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start,
-                          int num_blocks, int factor_offset,
-                          const float *factors, const float *r, float *z) {
+void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start, int num_blocks,
+                          int factor_offset, const float *factors, const float *r, float *z) {
   if (num_blocks == 0) {
     return;
   }
   if (B == 1) {
     int threads = 256;
     int blocks = (num_blocks + threads - 1) / threads;
-    ApplyScalarJacobi<<<blocks, threads, 0, stream>>>(factors, factor_offset, r,
-                                                      row_start, num_blocks, z);
+    ApplyScalarJacobi<<<blocks, threads, 0, stream>>>(factors, factor_offset, r, row_start,
+                                                      num_blocks, z);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return;
   }
 
-#define LAUNCH_APPLY_PER_THREAD(BVAL)                                          \
-  case BVAL: {                                                                 \
-    int threads = 256;                                                         \
-    int blocks = (num_blocks + threads - 1) / threads;                         \
-    ApplyBlockJacobiPerThreadKernel<BVAL><<<blocks, threads, 0, stream>>>(     \
-        factors, factor_offset, r, row_start, num_blocks, z);                  \
-    break;                                                                     \
+#define LAUNCH_APPLY_PER_THREAD(BVAL)                                                          \
+  case BVAL: {                                                                                 \
+    int threads = 256;                                                                         \
+    int blocks = (num_blocks + threads - 1) / threads;                                         \
+    ApplyBlockJacobiPerThreadKernel<BVAL>                                                      \
+        <<<blocks, threads, 0, stream>>>(factors, factor_offset, r, row_start, num_blocks, z); \
+    break;                                                                                     \
   }
 
   // Small-B path: one block per thread, lots of blocks per CTA.
@@ -873,8 +847,8 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start,
     LAUNCH_APPLY_PER_THREAD(4);
     LAUNCH_APPLY_PER_THREAD(5);
     LAUNCH_APPLY_PER_THREAD(6);
-  default:
-    break; // fall through to per-CTA path below
+    default:
+      break;  // fall through to per-CTA path below
   }
 #undef LAUNCH_APPLY_PER_THREAD
   if (B >= 2 && B <= 6) {
@@ -884,10 +858,10 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start,
 
   // Large-B path: one CTA per block, factor staged through shared mem.
   int threads = ((B + 31) / 32) * 32;
-#define LAUNCH_APPLY(BVAL)                                                     \
-  case BVAL:                                                                   \
-    ApplyBlockJacobiKernel<BVAL><<<num_blocks, threads, 0, stream>>>(          \
-        factors, factor_offset, r, row_start, num_blocks, z);                  \
+#define LAUNCH_APPLY(BVAL)                                                                         \
+  case BVAL:                                                                                       \
+    ApplyBlockJacobiKernel<BVAL>                                                                   \
+        <<<num_blocks, threads, 0, stream>>>(factors, factor_offset, r, row_start, num_blocks, z); \
     break
 
   switch (B) {
@@ -895,13 +869,12 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start,
     LAUNCH_APPLY(8);
     LAUNCH_APPLY(15);
     LAUNCH_APPLY(16);
-  default: {
-    size_t shared_bytes = (static_cast<size_t>(B) * B + B) * sizeof(float);
-    ApplyBlockJacobiGenericKernel<<<num_blocks, threads, shared_bytes,
-                                    stream>>>(factors, factor_offset, B, r,
-                                              row_start, num_blocks, z);
-    break;
-  }
+    default: {
+      size_t shared_bytes = (static_cast<size_t>(B) * B + B) * sizeof(float);
+      ApplyBlockJacobiGenericKernel<<<num_blocks, threads, shared_bytes, stream>>>(
+          factors, factor_offset, B, r, row_start, num_blocks, z);
+      break;
+    }
   }
 #undef LAUNCH_APPLY
   THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -914,8 +887,7 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start,
  *  memory operation, saving the per-kernel-launch dispatch overhead
  *  (~1 µs) that dominates on small-matrix workloads where PCG
  *  performs hundreds of dots per Solve. */
-void DotAsync(cudaStream_t stream, const float *a, const float *b, int n,
-              float *out) {
+void DotAsync(cudaStream_t stream, const float *a, const float *b, int n, float *out) {
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(out, 0, sizeof(float), stream));
   int threads = 256;
   int blocks = std::min(1024, (n + threads - 1) / threads);
@@ -927,8 +899,8 @@ void DotAsync(cudaStream_t stream, const float *a, const float *b, int n,
  *  AND a single 8-byte memset (vs two 4-byte memsets) — the two output
  *  slots are required to be adjacent in memory, which the caller
  *  guarantees by laying them out next to each other in @c d_scratch_. */
-void DualDotAsync(cudaStream_t stream, const float *a, const float *b,
-                  const float *c, int n, float *out_ab, float *out_ac) {
+void DualDotAsync(cudaStream_t stream, const float *a, const float *b, const float *c, int n,
+                  float *out_ab, float *out_ac) {
   // Verified adjacent at the call site (kRzNew, kRnorm2 in d_scratch_).
   assert(out_ac == out_ab + 1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(out_ab, 0, 2 * sizeof(float), stream));
@@ -937,7 +909,7 @@ void DualDotAsync(cudaStream_t stream, const float *a, const float *b,
   DualDotKernel<<<blocks, threads, 0, stream>>>(a, b, c, n, out_ab, out_ac);
 }
 
-} // namespace
+}  // namespace
 
 // =============================================================================
 // BlockSparsePCGSolver
@@ -946,8 +918,7 @@ void DualDotAsync(cudaStream_t stream, const float *a, const float *b,
 BlockSparsePCGSolver::BlockSparsePCGSolver(BlockSparsePCGOptions options)
     : options_(std::move(options)) {
   if (options_.block_size < 1 || options_.block_size > kMaxBlockSize) {
-    throw std::invalid_argument(
-        "BlockSparsePCGSolver: block_size must be in [1, 16]");
+    throw std::invalid_argument("BlockSparsePCGSolver: block_size must be in [1, 16]");
   }
   for (const auto &seg : options_.block_layout) {
     if (seg.second < 1 || seg.second > kMaxBlockSize) {
@@ -973,9 +944,10 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
     layout_ = options_.block_layout;
   } else {
     if (matrix_dim % options_.block_size != 0) {
-      LogError("BlockSparsePCGSolver: matrix dim {} not divisible by uniform "
-               "block_size {}",
-               matrix_dim, options_.block_size);
+      LogError(
+          "BlockSparsePCGSolver: matrix dim {} not divisible by uniform "
+          "block_size {}",
+          matrix_dim, options_.block_size);
       return false;
     }
     layout_.push_back({matrix_dim / options_.block_size, options_.block_size});
@@ -1002,12 +974,12 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
 
     row_cursor += count * size;
     block_cursor += count;
-    factor_cursor += static_cast<size_t>(count) *
-                     (size == 1 ? 1ull : static_cast<size_t>(size) * size);
+    factor_cursor +=
+        static_cast<size_t>(count) * (size == 1 ? 1ull : static_cast<size_t>(size) * size);
   }
   if (row_cursor != matrix_dim) {
-    LogError("BlockSparsePCGSolver: layout covers {} rows but matrix has {}",
-             row_cursor, matrix_dim);
+    LogError("BlockSparsePCGSolver: layout covers {} rows but matrix has {}", row_cursor,
+             matrix_dim);
     return false;
   }
   total_blocks_ = block_cursor;
@@ -1015,17 +987,13 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
   return true;
 }
 
-bool BlockSparsePCGSolver::Initialize(cudaStream_t stream,
-                                      const Problem &problem,
-                                      const CSRSparseMatrix &spd_matrix,
-                                      const dvector<float> &rhs,
+bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
+                                      const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                       dvector<float> &result) {
   int n = static_cast<int>(spd_matrix.NumRows());
-  if (n != static_cast<int>(rhs.size()) ||
-      n != static_cast<int>(result.size())) {
-    LogError(
-        "BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n,
-        rhs.size(), result.size());
+  if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
+    LogError("BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n, rhs.size(),
+             result.size());
     return false;
   }
   // When @p problem carries state batches, the block-Jacobi layout is
@@ -1049,8 +1017,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream,
       continue;
     }
     int t = static_cast<int>(sb->TangentSize());
-    int count =
-        static_cast<int>(sb->NumStateBlocks() - sb->NumConstStateBlocks());
+    int count = static_cast<int>(sb->NumStateBlocks() - sb->NumConstStateBlocks());
     if (count == 0) {
       continue;
     }
@@ -1083,45 +1050,39 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream,
 
   // cuSPARSE SpMV setup.  The descriptor is reused across all PCG steps
   // and across all Solve calls until the matrix structure changes.
-  mat_desc_ = cuSPARSEMatrixDescription(
-      n, n, static_cast<int>(spd_matrix.NumNonZeros()), spd_matrix);
-  auto handle =
-      static_cast<cusparseHandle_t>(cusparse_handle_.GetHandle(stream));
+  mat_desc_ =
+      cuSPARSEMatrixDescription(n, n, static_cast<int>(spd_matrix.NumNonZeros()), spd_matrix);
+  auto handle = static_cast<cusparseHandle_t>(cusparse_handle_.GetHandle(stream));
 
   auto matA = static_cast<cusparseSpMatDescr_t>(mat_desc_.GetDescription());
   cusparseDnVecDescr_t vecX = nullptr;
   cusparseDnVecDescr_t vecY = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecX, n, p_.data(), CUDA_R_32F));
-  THROW_ON_CUSPARSE_ERROR(
-      cusparseCreateDnVec(&vecY, n, Ap_.data(), CUDA_R_32F));
+  THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecY, n, Ap_.data(), CUDA_R_32F));
 
   float alpha = 1.f;
   float beta = 0.f;
   size_t buffer_size = 0;
-  THROW_ON_CUSPARSE_ERROR(cusparseSpMV_bufferSize(
-      handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-      CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &buffer_size));
+  THROW_ON_CUSPARSE_ERROR(cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+                                                  matA, vecX, &beta, vecY, CUDA_R_32F,
+                                                  CUSPARSE_SPMV_ALG_DEFAULT, &buffer_size));
   if (buffer_size > spmv_buffer_.size()) {
     spmv_buffer_.resize(buffer_size);
   }
-  THROW_ON_CUSPARSE_ERROR(cusparseSpMV_preprocess(
-      handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-      CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+  THROW_ON_CUSPARSE_ERROR(cusparseSpMV_preprocess(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+                                                  matA, vecX, &beta, vecY, CUDA_R_32F,
+                                                  CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecX));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecY));
   return true;
 }
 
-bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
-                                 const CSRSparseMatrix &spd_matrix,
-                                 const dvector<float> &rhs,
-                                 dvector<float> &result) {
+bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                                 const dvector<float> &rhs, dvector<float> &result) {
   int n = static_cast<int>(spd_matrix.NumRows());
-  if (n != static_cast<int>(rhs.size()) ||
-      n != static_cast<int>(result.size())) {
-    LogError(
-        "BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n,
-        rhs.size(), result.size());
+  if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
+    LogError("BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n, rhs.size(),
+             result.size());
     return false;
   }
   if (n == 0) {
@@ -1146,46 +1107,34 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
   // 1. Rebuild the block-Jacobi preconditioner from current H values.
   // -----------------------------------------------------------------
   for (const auto &s : segments_) {
-    DispatchExtractAndFactor(stream, s.block_size, s.row_start, s.num_blocks,
-                             s.factor_offset, options_.pivot_floor, spd_matrix,
-                             precond_factors_.data());
+    DispatchExtractAndFactor(stream, s.block_size, s.row_start, s.num_blocks, s.factor_offset,
+                             options_.pivot_floor, spd_matrix, precond_factors_.data());
   }
 
-  auto handle =
-      static_cast<cusparseHandle_t>(cusparse_handle_.GetHandle(stream));
+  auto handle = static_cast<cusparseHandle_t>(cusparse_handle_.GetHandle(stream));
   auto matA = static_cast<cusparseSpMatDescr_t>(mat_desc_.GetDescription());
 
   // -----------------------------------------------------------------
   // 2. Initialize PCG with x_0 = 0 ⇒ r_0 = b.
   // -----------------------------------------------------------------
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(result.data(), 0, n * sizeof(float), stream));
   THROW_ON_CUDA_ERROR(
-      cudaMemsetAsync(result.data(), 0, n * sizeof(float), stream));
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(r_.data(), rhs.data(), n * sizeof(float),
-                                      cudaMemcpyDeviceToDevice, stream));
+      cudaMemcpyAsync(r_.data(), rhs.data(), n * sizeof(float), cudaMemcpyDeviceToDevice, stream));
 
   // z_0 = M^{-1} r_0, p_0 = z_0.
   for (const auto &s : segments_) {
-    DispatchApplyPrecond(stream, s.block_size, s.row_start, s.num_blocks,
-                         s.factor_offset, precond_factors_.data(), r_.data(),
-                         z_.data());
+    DispatchApplyPrecond(stream, s.block_size, s.row_start, s.num_blocks, s.factor_offset,
+                         precond_factors_.data(), r_.data(), z_.data());
   }
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(p_.data(), z_.data(), n * sizeof(float),
-                                      cudaMemcpyDeviceToDevice, stream));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpyAsync(p_.data(), z_.data(), n * sizeof(float), cudaMemcpyDeviceToDevice, stream));
 
   // -----------------------------------------------------------------
   // 3. Compute initial inner products on device.
   // -----------------------------------------------------------------
   // Scratch slots: [0] alpha, [1] beta, [2] <p, Ap>, [3] rz_old (= <r, z>),
   // [4] rz_new, [5] ||r||^2, [6] ||b||^2.
-  enum : int {
-    kAlpha = 0,
-    kBeta = 1,
-    kPAp = 2,
-    kRzOld = 3,
-    kRzNew = 4,
-    kRnorm2 = 5,
-    kBnorm2 = 6
-  };
+  enum : int { kAlpha = 0, kBeta = 1, kPAp = 2, kRzOld = 3, kRzNew = 4, kRnorm2 = 5, kBnorm2 = 6 };
 
   DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzOld);
   DotAsync(stream, rhs.data(), rhs.data(), n, d_scratch_.data() + kBnorm2);
@@ -1194,9 +1143,8 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
   // the ONLY guaranteed host sync; the rest of the loop polls residual
   // norm only every `check_period` iterations.
   float b_norm2 = 0.f;
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&b_norm2, d_scratch_.data() + kBnorm2,
-                                      sizeof(float), cudaMemcpyDeviceToHost,
-                                      stream));
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&b_norm2, d_scratch_.data() + kBnorm2, sizeof(float),
+                                      cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   float abs_tol2 = options_.absolute_tolerance * options_.absolute_tolerance;
   float rel_tol2 = options_.relative_tolerance * options_.relative_tolerance;
@@ -1211,8 +1159,7 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
   cusparseDnVecDescr_t vecX = nullptr;
   cusparseDnVecDescr_t vecY = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecX, n, p_.data(), CUDA_R_32F));
-  THROW_ON_CUSPARSE_ERROR(
-      cusparseCreateDnVec(&vecY, n, Ap_.data(), CUDA_R_32F));
+  THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecY, n, Ap_.data(), CUDA_R_32F));
 
   const int threads = 256;
   const int blocks = (n + threads - 1) / threads;
@@ -1223,41 +1170,37 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
     // Ap = H * p.
     float spmv_alpha = 1.f;
     float spmv_beta = 0.f;
-    THROW_ON_CUSPARSE_ERROR(
-        cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
-                     matA, vecX, &spmv_beta, vecY, CUDA_R_32F,
-                     CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+    THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
+                                         matA, vecX, &spmv_beta, vecY, CUDA_R_32F,
+                                         CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
 
     // <p, Ap>.
     DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp);
 
     // α = rz_old / <p, Ap>; x ← x + α p; r ← r − α Ap (fused kernel).
-    PcgUpdateKernel<<<blocks, threads, 0, stream>>>(
-        d_scratch_.data() + kRzOld, d_scratch_.data() + kPAp, p_.data(),
-        Ap_.data(), result.data(), r_.data(), n);
+    PcgUpdateKernel<<<blocks, threads, 0, stream>>>(d_scratch_.data() + kRzOld,
+                                                    d_scratch_.data() + kPAp, p_.data(), Ap_.data(),
+                                                    result.data(), r_.data(), n);
 
     // z = M^{-1} r.
     for (const auto &s : segments_) {
-      DispatchApplyPrecond(stream, s.block_size, s.row_start, s.num_blocks,
-                           s.factor_offset, precond_factors_.data(), r_.data(),
-                           z_.data());
+      DispatchApplyPrecond(stream, s.block_size, s.row_start, s.num_blocks, s.factor_offset,
+                           precond_factors_.data(), r_.data(), z_.data());
     }
     // Fused: rz_new = <r, z>, ||r||^2 = <r, r>.  Single pass over r.
-    DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n,
-                 d_scratch_.data() + kRzNew, d_scratch_.data() + kRnorm2);
+    DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, d_scratch_.data() + kRzNew,
+                 d_scratch_.data() + kRnorm2);
 
     // β = rz_new / rz_old; rz_old ← rz_new; p ← z + β p (fused).
     PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
-        d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(),
-        p_.data(), n);
+        d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(), p_.data(), n);
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.
     if (((it + 1) % check_period) == 0 || (it + 1) == options_.max_iterations) {
       float r_norm2 = 0.f;
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&r_norm2, d_scratch_.data() + kRnorm2,
-                                          sizeof(float), cudaMemcpyDeviceToHost,
-                                          stream));
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&r_norm2, d_scratch_.data() + kRnorm2, sizeof(float),
+                                          cudaMemcpyDeviceToHost, stream));
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
       if (r_norm2 <= stop_thresh) {
         ++it;
@@ -1271,4 +1214,4 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream,
   return true;
 }
 
-} // namespace cunls
+}  // namespace cunls
