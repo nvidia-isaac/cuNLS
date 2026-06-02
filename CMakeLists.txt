@@ -19,13 +19,10 @@ include(cmake/AddCUDSS.cmake)
 include(cmake/BundleStaticDeps.cmake)
 
 add_spdlog()
-option(LOCAL_CUDSS_BUILD "Build cuDSS locally" ON)
-set(CUDSS_BUILD_PATH "${PROJECT_SOURCE_DIR}/libs/cudss")
-
-if(NOT LOCAL_CUDSS_BUILD)
-  set(CUDSS_BUILD_PATH "")
-endif()
-add_cudss(CUDSS_BUILD_PATH "${CUDSS_BUILD_PATH}")
+# cuDSS is fetched as a prebuilt archive. Default to 0.8.0.10; 0.7.1.4 is still
+# supported via -DCUDSS_VERSION=0.7.1.4.
+set(CUDSS_VERSION "0.8.0.10" CACHE STRING "cuDSS version to download")
+add_cudss(VERSION "${CUDSS_VERSION}")
 
 set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver cudss)
 
@@ -60,7 +57,7 @@ add_library(cunls
   $<TARGET_OBJECTS:cunls_robustifier>
 )
 
-target_link_libraries(cunls 
+target_link_libraries(cunls
   PUBLIC CUDA::cudart
   PRIVATE ${CUNLS_LIBS}
 )
