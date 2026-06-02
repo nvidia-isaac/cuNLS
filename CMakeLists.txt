@@ -54,7 +54,7 @@ add_library(cunls
   $<TARGET_OBJECTS:cunls_robustifier>
 )
 
-target_link_libraries(cunls 
+target_link_libraries(cunls
   PUBLIC CUDA::cudart
   PRIVATE ${CUNLS_LIBS}
 )
