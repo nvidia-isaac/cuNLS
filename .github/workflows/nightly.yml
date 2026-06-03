@@ -51,8 +51,10 @@ jobs:
       # add entries with archs:"72;87" and the confirmed Jetson runner labels.
       matrix_json: |
         [
+          {"ubuntu":"22.04","cuda":"12.6.3","archs":"75;80;86;89"},
           {"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"},
           {"ubuntu":"22.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
+          {"ubuntu":"24.04","cuda":"12.6.3","archs":"75;80;86;89"},
           {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
           {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"}
         ]
