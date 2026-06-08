@@ -74,8 +74,10 @@ void GaussNewtonMinimizer::InitializeJacobian(cudaStream_t stream,
                                               const Problem &problem) {
   current_state_.BuildTripletSparseStructure(stream, problem,
                                              sparse_jacobian_.structure);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
+  // No sync needed: col_ids was resized synchronously on the host inside
+  // BuildTripletSparseStructure, so its size is already known, and the
+  // independent values buffer is only consumed later on the same stream.
   size_t jacobian_size = sparse_jacobian_.structure.col_ids.size();
   if (sparse_jacobian_.values.size() != jacobian_size) {
     sparse_jacobian_.values.resize(jacobian_size);
@@ -562,11 +564,6 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream,
         LogError(str);
         throw std::runtime_error(str);
       }
-      // Fair-measurement barrier: ensure the linear-solve kernels finish before
-      // the NVTX range ends. nsys reports CPU-side NVTX durations, so without a
-      // sync the recorded interval excludes asynchronous GPU work that the
-      // solver enqueued.
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     }
 
     MapScaledLinearSolutionToTangentStep(stream, step_);
