@@ -1,0 +1,5 @@
+# Local visualization scripts / source (not part of the published library)
+viz/
+
+# Rendered video outputs (only the GIFs in assets/ are committed, via Git LFS)
+*.mp4
