@@ -23,6 +23,26 @@ where $x$ is the optimization variable (often on a manifold), $f_i(x)$ are resid
 $\rho_i(\cdot)$ are optional robust loss functions, and
 $\left\|v\right\|^2_{\Sigma} = v^T \Sigma^{-1} v$ is the Mahalanobis norm.
 
+## Gallery
+
+cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per frame
+(source in [`viz/`](viz/)):
+
+<p align="center">
+  <img src="assets/sphere_refine.gif" alt="Sphere pose-graph refinement" width="46%">
+  &ensp;
+  <img src="assets/kepler_orbits.gif" alt="Kepler orbit fitting" width="46%">
+</p>
+
+- **Left — Sphere pose-graph refinement.** 200k points that should lie on a sphere
+  are connected by relative ("between") constraints and start as a disturbed blob.
+  cuNLS drives them back onto the sphere; color encodes per-point error, cooling from
+  hot to calm as the solve converges.
+- **Right — Kepler orbit fitting.** A family of orbits is observed as noisy 3-D points;
+  cuNLS estimates the five Keplerian elements per orbit (custom NVIDIA Warp factor on an
+  $\mathbb{R}^5$ state) and a jittered tangle of loops organizes into a crisp nested
+  rosette of tilted ellipses.
+
 ## Features
 
 | Category | Details |
