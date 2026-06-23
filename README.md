@@ -25,8 +25,7 @@ $\left\|v\right\|^2_{\Sigma} = v^T \Sigma^{-1} v$ is the Mahalanobis norm.
 
 ## Gallery
 
-cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per frame
-(source in [`viz/`](viz/)):
+cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per frame:
 
 <p align="center">
   <img src="assets/sphere_refine.gif" alt="Sphere pose-graph refinement" width="46%">
