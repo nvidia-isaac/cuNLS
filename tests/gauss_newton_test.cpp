@@ -418,4 +418,69 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   EXPECT_NEAR(s1.initial_cost, s2.initial_cost, 1e-4f);
 }
 
+/**
+ * @brief Reusing a minimizer after the number of state batches decreases must
+ * not retain stale state vectors from the previous problem.
+ *
+ * Regression test for a two-batch to one-batch topology transition. Before the
+ * fix, MinimizerState::CreateStates only grew its outer vector. UpdateStates
+ * consequently passed two state pointers to StateBatchOps configured for one
+ * batch, causing an assertion failure in debug builds and an out-of-bounds
+ * access in release builds.
+ */
+TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
+  constexpr size_t n = 32;
+  const auto observations = test_utils::MakeZeroVectors<1>(n);
+  const auto initial_states = test_utils::MakeConstantVectors<1>(n, 1.0f);
+
+  MinimizerOptions opts;
+  opts.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
+  cuDSSLinearSolverOptions cudss_solver_options = {
+      .mode = cuDSSLinearSolverMode::SlowInitFastSolve,
+      .nthreads = 1,
+      .threading_lib_path = "",
+  };
+  opts.sparse_linear_solver_config = {
+      .cudss_solver_options = cudss_solver_options};
+  opts.disable_safety_checks = false;
+
+  CudaStream stream;
+  GaussNewtonMinimizer minimizer(opts);
+
+  {
+    test_utils::VectorStateData<1> first_state_data(initial_states);
+    test_utils::VectorStateData<1> second_state_data(initial_states);
+    test_utils::PriorFactorData<1> first_factor_data(observations);
+    test_utils::PriorFactorData<1> second_factor_data(observations);
+
+    Problem two_batch_problem;
+    two_batch_problem.AddStateBatch(first_state_data.ptr());
+    two_batch_problem.AddStateBatch(second_state_data.ptr());
+    two_batch_problem.AddFactorBatch(
+        &first_factor_data.get(),
+        test_utils::CollectStatePointers(first_state_data.get()));
+    two_batch_problem.AddFactorBatch(
+        &second_factor_data.get(),
+        test_utils::CollectStatePointers(second_state_data.get()));
+    ASSERT_TRUE(two_batch_problem.CheckConsistency());
+
+    minimizer.Minimize(stream.GetStream(), two_batch_problem);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+
+  {
+    test_utils::VectorStateData<1> state_data(initial_states);
+    test_utils::PriorFactorData<1> factor_data(observations);
+
+    Problem one_batch_problem;
+    one_batch_problem.AddStateBatch(state_data.ptr());
+    one_batch_problem.AddFactorBatch(
+        &factor_data.get(), test_utils::CollectStatePointers(state_data.get()));
+    ASSERT_TRUE(one_batch_problem.CheckConsistency());
+
+    EXPECT_NO_THROW(minimizer.Minimize(stream.GetStream(), one_batch_problem));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+}
+
 } // namespace cunls

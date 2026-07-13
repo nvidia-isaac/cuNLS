@@ -69,7 +69,10 @@ set_state_pointers_kernel(float **new_pointers, float *const *old_pointers,
  */
 void MinimizerState::CreateStates(const Problem &problem) {
   const auto &state_batches = problem.GetStateBatches();
-  if (states_.size() < state_batches.size()) {
+  // Resize to the exact batch count so stale trailing batches from a previous,
+  // larger problem are dropped when the topology shrinks. Surviving batches keep
+  // their device buffers; only whole unused batch buffers are freed.
+  if (states_.size() != state_batches.size()) {
     states_.resize(state_batches.size());
   }
 
@@ -97,7 +100,7 @@ void MinimizerState::CreateStates(const Problem &problem) {
  */
 void MinimizerState::CreateStatePointers(const Problem &problem) {
   const auto &problem_param_pointers = problem.GetStatePointers();
-  if (state_pointers_.size() < problem_param_pointers.size()) {
+  if (state_pointers_.size() != problem_param_pointers.size()) {
     state_pointers_.resize(problem_param_pointers.size());
   }
 
@@ -111,7 +114,7 @@ void MinimizerState::CreateStatePointers(const Problem &problem) {
 
 void MinimizerState::CopyProblemStatePointersFromHost(const Problem &problem) {
   const auto &host = problem.GetStatePointers();
-  if (problem_state_ptrs_device_.size() < host.size()) {
+  if (problem_state_ptrs_device_.size() != host.size()) {
     problem_state_ptrs_device_.resize(host.size());
   }
   for (size_t i = 0; i < host.size(); ++i) {
