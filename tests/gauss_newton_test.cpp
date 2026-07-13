@@ -50,7 +50,7 @@ namespace cunls {
  */
 template <class TestParam>
 class GaussNewtonMinimizerTest : public ::testing::Test {
-public:
+ public:
   static constexpr int kDim = TestParam::vector_size;
   using StatesType = VectorStateBatch<kDim>;
   using VectorType = Vector<kDim>;
@@ -76,16 +76,14 @@ public:
       state_values_[i].fill(x);
     }
 
-    minimizer_options_.sparse_linear_solver_type =
-        SparseLinearSolverType::cuDSS;
+    minimizer_options_.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
 
     cuDSSLinearSolverOptions cudss_solver_options = {
         .mode = static_cast<cuDSSLinearSolverMode>(TestParam::solver_id),
         .nthreads = 1,
         .threading_lib_path = "",
     };
-    minimizer_options_.sparse_linear_solver_config = {.cudss_solver_options =
-                                                          cudss_solver_options};
+    minimizer_options_.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
   }
 
   /**
@@ -97,23 +95,19 @@ public:
    *
    * @param states Optimized state batch to verify.
    */
-  void CheckConvergence(const StatesType &states,
-                        const std::vector<int> &const_state_ids = {}) {
+  void CheckConvergence(const StatesType &states, const std::vector<int> &const_state_ids = {}) {
     size_t num_blocks = states.NumStateBlocks();
-    auto ptr =
-        reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
+    auto ptr = reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
 
     std::vector<VectorType> host_states(num_blocks);
-    THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr,
-                                   num_blocks * sizeof(VectorType),
+    THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr, num_blocks * sizeof(VectorType),
                                    cudaMemcpyDeviceToHost));
 
     ASSERT_EQ(host_states.size(), observations_.size());
     for (size_t i = 0; i < num_blocks; i++) {
       const auto &obs = observations_[i];
       const auto &state_vals = host_states[i];
-      auto const_state_it =
-          std::find(const_state_ids.begin(), const_state_ids.end(), i);
+      auto const_state_it = std::find(const_state_ids.begin(), const_state_ids.end(), i);
       if (const_state_it != const_state_ids.end()) {
         // State is constant, verify it wasn't changed during optimization
         float x = static_cast<float>(i);
@@ -128,15 +122,14 @@ public:
     }
   }
 
-  const size_t num_vectors_ = 10000; ///< Number of state blocks in test.
+  const size_t num_vectors_ = 10000;  ///< Number of state blocks in test.
 
-  std::vector<VectorType> observations_; ///< Target values for optimization.
-  std::vector<VectorType> state_values_; ///< Initial state values.
+  std::vector<VectorType> observations_;  ///< Target values for optimization.
+  std::vector<VectorType> state_values_;  ///< Initial state values.
 
   MinimizerOptions minimizer_options_{.disable_safety_checks = false};
 
-  profiler::Domain profiler_domain_{
-      "GaussNewtonMinimizerTest"}; ///< Profiling domain.
+  profiler::Domain profiler_domain_{"GaussNewtonMinimizerTest"};  ///< Profiling domain.
 };
 
 /**
@@ -144,15 +137,15 @@ public:
  *
  * @tparam Value Vector dimension (1, 2, 3, or 4).
  */
-template <int VectorSize, int SolverId> struct TestParam {
+template <int VectorSize, int SolverId>
+struct TestParam {
   static constexpr int vector_size = VectorSize;
   static constexpr int solver_id = SolverId;
 };
 
 /** @brief Test types: 1D, 2D, 3D, and 4D vectors. */
-typedef ::testing::Types<TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>,
-                         TestParam<4, 0>, TestParam<1, 1>, TestParam<2, 1>,
-                         TestParam<3, 1>, TestParam<4, 1>>
+typedef ::testing::Types<TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>,
+                         TestParam<1, 1>, TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>>
     TestParams;
 TYPED_TEST_CASE(GaussNewtonMinimizerTest, TestParams);
 
@@ -193,11 +186,9 @@ TYPED_TEST(GaussNewtonMinimizerTest, SimpleGN) {
  * states.
  */
 TYPED_TEST(GaussNewtonMinimizerTest, GNWithConstantStates) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("GNWithConstantStates");
+  auto test_range = this->profiler_domain_.CreateDomainRange("GNWithConstantStates");
   std::vector<int> const_state_ids = {0, 9, 99, 999};
-  typename TestFixture::StateData state_data(this->state_values_,
-                                             const_state_ids);
+  typename TestFixture::StateData state_data(this->state_values_, const_state_ids);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
@@ -253,11 +244,9 @@ TYPED_TEST(GaussNewtonMinimizerTest, SimpleLM) {
  * during optimization while still optimizing other states.
  */
 TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("LMWithConstantStates");
+  auto test_range = this->profiler_domain_.CreateDomainRange("LMWithConstantStates");
   std::vector<int> const_state_ids = {0, 9, 99, 999};
-  typename TestFixture::StateData state_data(this->state_values_,
-                                             const_state_ids);
+  typename TestFixture::StateData state_data(this->state_values_, const_state_ids);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
   typename TestFixture::FactorData factor_data(this->observations_);
@@ -282,8 +271,7 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
  * @brief Levenberg-Marquardt with Hessian-diagonal column scaling.
  */
 TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "LMColumnScalingHessianDiagonal");
+  auto test_range = this->profiler_domain_.CreateDomainRange("LMColumnScalingHessianDiagonal");
   typename TestFixture::StateData state_data(this->state_values_);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
@@ -309,8 +297,7 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
  * @brief Levenberg-Marquardt with Jacobian column-norm scaling.
  */
 TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingJacobianColumnNorm) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "LMColumnScalingJacobianColumnNorm");
+  auto test_range = this->profiler_domain_.CreateDomainRange("LMColumnScalingJacobianColumnNorm");
   typename TestFixture::StateData state_data(this->state_values_);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
@@ -336,8 +323,7 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingJacobianColumnNorm) {
  * @brief Gauss-Newton with column scaling (shared MinimizerOptions path).
  */
 TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "GNColumnScalingHessianDiagonal");
+  auto test_range = this->profiler_domain_.CreateDomainRange("GNColumnScalingHessianDiagonal");
   typename TestFixture::StateData state_data(this->state_values_);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
@@ -389,8 +375,7 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
       .nthreads = 1,
       .threading_lib_path = "",
   };
-  opts.sparse_linear_solver_config = {.cudss_solver_options =
-                                          cudss_solver_options};
+  opts.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
   opts.disable_safety_checks = false;
 
   CudaStream stream;
@@ -399,15 +384,13 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   float *state_base = vector_states.StateBlockDevicePtr(0);
   const size_t num_floats = n * 1;
   std::vector<float> initial_host(num_floats);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(initial_host.data(), state_base,
-                                 num_floats * sizeof(float),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(initial_host.data(), state_base, num_floats * sizeof(float),
                                  cudaMemcpyDeviceToHost));
 
   MinimizerSummary s1 = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
-  THROW_ON_CUDA_ERROR(cudaMemcpy(state_base, initial_host.data(),
-                                 num_floats * sizeof(float),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(state_base, initial_host.data(), num_floats * sizeof(float),
                                  cudaMemcpyHostToDevice));
 
   MinimizerSummary s2 = minimizer.Minimize(stream.GetStream(), problem);
@@ -440,8 +423,7 @@ TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
       .nthreads = 1,
       .threading_lib_path = "",
   };
-  opts.sparse_linear_solver_config = {
-      .cudss_solver_options = cudss_solver_options};
+  opts.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
   opts.disable_safety_checks = false;
 
   CudaStream stream;
@@ -456,12 +438,10 @@ TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
     Problem two_batch_problem;
     two_batch_problem.AddStateBatch(first_state_data.ptr());
     two_batch_problem.AddStateBatch(second_state_data.ptr());
-    two_batch_problem.AddFactorBatch(
-        &first_factor_data.get(),
-        test_utils::CollectStatePointers(first_state_data.get()));
-    two_batch_problem.AddFactorBatch(
-        &second_factor_data.get(),
-        test_utils::CollectStatePointers(second_state_data.get()));
+    two_batch_problem.AddFactorBatch(&first_factor_data.get(),
+                                     test_utils::CollectStatePointers(first_state_data.get()));
+    two_batch_problem.AddFactorBatch(&second_factor_data.get(),
+                                     test_utils::CollectStatePointers(second_state_data.get()));
     ASSERT_TRUE(two_batch_problem.CheckConsistency());
 
     minimizer.Minimize(stream.GetStream(), two_batch_problem);
@@ -474,8 +454,8 @@ TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
 
     Problem one_batch_problem;
     one_batch_problem.AddStateBatch(state_data.ptr());
-    one_batch_problem.AddFactorBatch(
-        &factor_data.get(), test_utils::CollectStatePointers(state_data.get()));
+    one_batch_problem.AddFactorBatch(&factor_data.get(),
+                                     test_utils::CollectStatePointers(state_data.get()));
     ASSERT_TRUE(one_batch_problem.CheckConsistency());
 
     EXPECT_NO_THROW(minimizer.Minimize(stream.GetStream(), one_batch_problem));
@@ -483,4 +463,4 @@ TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

@@ -41,10 +41,9 @@ constexpr size_t block_size = 256;
  * @param num_states_in_batch Number of state elements in the batch.
  * @param num_new_pointers Number of pointers to remap.
  */
-__global__ void
-set_state_pointers_kernel(float **new_pointers, float *const *old_pointers,
-                          float *old_start_ptr, float *new_start_ptr,
-                          size_t num_states_in_batch, size_t num_new_pointers) {
+__global__ void set_state_pointers_kernel(float **new_pointers, float *const *old_pointers,
+                                          float *old_start_ptr, float *new_start_ptr,
+                                          size_t num_states_in_batch, size_t num_new_pointers) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_new_pointers) {
     return;
@@ -80,8 +79,7 @@ void MinimizerState::CreateStates(const Problem &problem) {
     const auto &param_batch_ptr = state_batches[i];
     auto &state_vec = states_[i];
 
-    size_t size =
-        param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
+    size_t size = param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
 
     if (state_vec.size() != size) {
       state_vec.resize(size);
@@ -120,8 +118,7 @@ void MinimizerState::CopyProblemStatePointersFromHost(const Problem &problem) {
   for (size_t i = 0; i < host.size(); ++i) {
     problem_state_ptrs_device_[i].resize(host[i].size());
     if (!host[i].empty()) {
-      problem_state_ptrs_device_[i].CopyFromHost(host[i].data(),
-                                                 host[i].size());
+      problem_state_ptrs_device_[i].CopyFromHost(host[i].data(), host[i].size());
     }
   }
 }
@@ -152,8 +149,7 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
       auto &state_vec = states_[i];
 
       float *ptr = param_batch_ptr->StateBlockDevicePtr(0);
-      size_t size =
-          param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
+      size_t size = param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
 
       thrust::device_ptr<float> src_ptr(ptr);
       thrust::device_ptr<float> dst_ptr(state_vec.data());
@@ -190,8 +186,8 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
         size_t num_blocks = (param_ptrs.size() + block_size - 1) / block_size;
 
         set_state_pointers_kernel<<<num_blocks, block_size, 0, stream>>>(
-            new_pointers, old_pointers, state_batch_ptr, new_param_ptr,
-            num_states_in_batch, param_ptrs.size());
+            new_pointers, old_pointers, state_batch_ptr, new_param_ptr, num_states_in_batch,
+            param_ptrs.size());
         THROW_ON_CUDA_ERROR(cudaGetLastError());
       }
     }
@@ -207,8 +203,7 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
  * @param stream CUDA stream for GPU operations.
  * @param from Source state vectors to copy from.
  */
-void MinimizerState::Copy(cudaStream_t stream,
-                          const std::vector<dvector<float>> &from) {
+void MinimizerState::Copy(cudaStream_t stream, const std::vector<dvector<float>> &from) {
   if (states_.size() != from.size()) {
     states_.resize(from.size());
   }
@@ -254,4 +249,4 @@ void Copy(cudaStream_t stream, const MinimizerState &state, Problem &problem) {
     thrust::copy(stream_policy, src_ptr, src_ptr + dvec.size(), dst_ptr);
   }
 }
-} // namespace cunls
+}  // namespace cunls
