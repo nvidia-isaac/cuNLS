@@ -142,11 +142,9 @@ if(BUILD_TESTING)
     tests/prior_vector_prior_factor_test.cpp
     tests/residual_batch_test.cpp
     tests/loss_function_test.cpp
-    tests/jacobian_ops_test.cpp
     tests/state_batch_ops_test.cpp
     tests/sparse_matrix_test.cpp
-    tests/cusparse_matrix_multiplier_test.cpp
-    tests/fast_matrix_multiplier_test.cpp
+    tests/block_hessian_assembler_test.cpp
     tests/sparse_linear_solver_test.cpp
     tests/dense_linear_solver_test.cpp
     tests/dense_cholesky_solver_test.cpp

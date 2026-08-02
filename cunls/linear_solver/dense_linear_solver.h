@@ -42,6 +42,13 @@ namespace cunls {
  */
 class DenseLDLTSolver : public CSRSparseLinearSolver {
 public:
+  // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
+  // base class's block-storage overloads are never called on it.  The
+  // using-declarations keep them visible rather than hidden by the CSR
+  // overrides below.
+  using CSRSparseLinearSolver::Initialize;
+  using CSRSparseLinearSolver::Solve;
+
   /**
    * @brief Allocates internal dense buffers for the given matrix size.
    *
@@ -56,9 +63,8 @@ public:
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-                  dvector<float> &result) final;
+  bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Converts CSR to dense and solves via pivoted LDLT factorization.
@@ -84,8 +90,8 @@ public:
    * @return true on success, false on dimension mismatch, singular pivot,
    *         or zero diagonal.
    */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-             const dvector<float> &rhs, dvector<float> &result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+             dvector<float> &result) final;
 
 private:
   /**
@@ -112,11 +118,11 @@ private:
   void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
                          dvector<float> &dense_matrix);
 
-  dvector<float> dense_matrix_;          ///< Dense row-major copy of A.
-  dvector<float> ldlt_factor_;           ///< In-place LDLT factor storage.
-  dvector<int> permutation_;             ///< Pivot permutation vector.
-  dvector<float> permuted_rhs_;          ///< P * b scratch vector.
-  dvector<float> permuted_solution_;     ///< Permuted solution scratch.
+  dvector<float> dense_matrix_;           ///< Dense row-major copy of A.
+  dvector<float> ldlt_factor_;            ///< In-place LDLT factor storage.
+  dvector<int> permutation_;              ///< Pivot permutation vector.
+  dvector<float> permuted_rhs_;           ///< P * b scratch vector.
+  dvector<float> permuted_solution_;      ///< Permuted solution scratch.
   dvector<float> intermediate_solution_; ///< Intermediate solve scratch.
 
   /// Device-side kernel status flags (index 0 = factorize, index 1 = solve).

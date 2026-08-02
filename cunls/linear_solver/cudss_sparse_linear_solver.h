@@ -32,9 +32,9 @@ namespace cunls {
  * Controls the trade-off between initialization time and solve time.
  */
 enum class cuDSSLinearSolverMode {
-  SlowInitFastSolve, ///< Slower initialization, faster subsequent solves.
-  FastInitSlowSolve, ///< Faster initialization, slower subsequent solves (uses
-                     ///< refactorization).
+  SlowInitFastSolve,  ///< Slower initialization, faster subsequent solves.
+  FastInitSlowSolve,  ///< Faster initialization, slower subsequent solves (uses
+                      ///< refactorization).
 };
 
 /**
@@ -46,8 +46,8 @@ enum class cuDSSLinearSolverMode {
 struct cuDSSLinearSolverOptions {
   cuDSSLinearSolverMode mode =
       cuDSSLinearSolverMode::SlowInitFastSolve; ///< Solver mode controlling
-                                                ///< the init/solve trade-off.
-  int nthreads = 1; ///< Number of threads for host-side operations.
+                                                 ///< the init/solve trade-off.
+  int nthreads = 1;                              ///< Number of threads for host-side operations.
   std::string threading_lib_path =
       ""; ///< Path to the threading library (empty disables multi-threading).
 };
@@ -61,6 +61,13 @@ struct cuDSSLinearSolverOptions {
  */
 class cuDSSLinearSolver : public CSRSparseLinearSolver {
 public:
+  // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
+  // base class's block-storage overloads are never called on it.  The
+  // using-declarations keep them visible rather than hidden by the CSR
+  // overrides below.
+  using CSRSparseLinearSolver::Initialize;
+  using CSRSparseLinearSolver::Solve;
+
   /**
    * @brief Constructs a cuDSS linear solver.
    *
@@ -69,8 +76,7 @@ public:
    * @param options Solver configuration controlling the initialization/solve
    *                trade-off and threading settings.
    */
-  cuDSSLinearSolver(
-      cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions());
+  cuDSSLinearSolver(cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions());
 
   /**
    * @brief Performs setup for the sparse linear system.
@@ -92,9 +98,8 @@ public:
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-                  dvector<float> &result) final;
+  bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
@@ -116,16 +121,15 @@ public:
    *               (size must equal matrix rows).
    * @return true on success, false if any dimension mismatch is detected.
    */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-             const dvector<float> &rhs, dvector<float> &result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+             dvector<float> &result) final;
 
 private:
   cuDSSLinearSolverOptions options_; ///< Solver configuration.
 
-  cuDSSHandle
-      cudss_handle_; ///< Owns the cuDSS handle used for all solver phases.
+  cuDSSHandle cudss_handle_;            ///< Owns the cuDSS handle used for all solver phases.
   cuDSSDeviceMemPool device_mem_pool_; ///< Reusable pool for cuDSS allocations.
-  cuDSSData cudss_data_; ///< cuDSS data object storing internal solver state.
+  cuDSSData cudss_data_;                ///< cuDSS data object storing internal solver state.
 
   cuDSSConfig cudss_config_; ///< cuDSS configuration for solver parameters.
 };

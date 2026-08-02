@@ -73,14 +73,9 @@ void bind_types(nb::module_ &m) {
       .value("DenseQR", cunls::SparseLinearSolverType::DenseQR)
       .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG);
 
-  nb::enum_<cunls::SparseMatrixMultiplierType>(m, "SparseMatrixMultiplierType")
-      .value("cuSPARSE", cunls::SparseMatrixMultiplierType::cuSPARSE)
-      .value("Fast", cunls::SparseMatrixMultiplierType::Fast);
-
   nb::enum_<cunls::ColumnScaling>(m, "ColumnScaling")
       .value("none", cunls::ColumnScaling::None)
-      .value("hessian_diagonal", cunls::ColumnScaling::HessianDiagonal)
-      .value("jacobian_column_norm", cunls::ColumnScaling::JacobianColumnNorm);
+      .value("hessian_diagonal", cunls::ColumnScaling::HessianDiagonal);
 
   // --- Minimizer configuration structs ---
   // All fields are read/write so users can tune convergence behaviour
@@ -98,8 +93,6 @@ void bind_types(nb::module_ &m) {
               &cunls::MinimizerOptions::max_consecutive_rejected_steps)
       .def_rw("sparse_linear_solver_type",
               &cunls::MinimizerOptions::sparse_linear_solver_type)
-      .def_rw("sparse_square_multiplier_type",
-              &cunls::MinimizerOptions::sparse_square_multiplier_type)
       .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
       .def_rw("disable_safety_checks",
               &cunls::MinimizerOptions::disable_safety_checks,

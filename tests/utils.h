@@ -21,12 +21,11 @@
 
 #pragma once
 
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <random>
 #include <vector>
-
-#include <cstdlib>
-#include <cstring>
 
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -48,7 +47,8 @@ namespace test_utils {
  * Used with ::testing::Types to parameterize tests across vector dimensions.
  * @tparam Value Compile-time integer value.
  */
-template <int Value> struct Size {
+template <int Value>
+struct Size {
   static constexpr int size = Value;
 };
 
@@ -58,7 +58,8 @@ template <int Value> struct Size {
  * Used for matrix dimensions and other size_t-valued compile-time parameters.
  * @tparam Value Compile-time size_t value.
  */
-template <size_t Value> struct SizeT {
+template <size_t Value>
+struct SizeT {
   static constexpr size_t value = Value;
 };
 
@@ -77,10 +78,8 @@ template <size_t Value> struct SizeT {
  * @param values Value array for non-zero elements.
  * @param matrix Output CSRSparseMatrix to populate with the data.
  */
-void CreateCSRSparseMatrix(const std::vector<int> &row_ptr,
-                           const std::vector<int> &col_idx,
-                           const std::vector<float> &values,
-                           CSRSparseMatrix &matrix);
+void CreateCSRSparseMatrix(const std::vector<int> &row_ptr, const std::vector<int> &col_idx,
+                           const std::vector<float> &values, CSRSparseMatrix &matrix);
 
 /**
  * @brief Generates a random vector with values in [0.1, 1.0] using a fixed
@@ -170,7 +169,8 @@ std::vector<Vector<Dim>> MakeSequentialVectors(size_t count) {
  * @param count Number of vectors to generate.
  * @return Vector of zero-filled vectors.
  */
-template <int Dim> std::vector<Vector<Dim>> MakeZeroVectors(size_t count) {
+template <int Dim>
+std::vector<Vector<Dim>> MakeZeroVectors(size_t count) {
   std::vector<Vector<Dim>> v(count);
   for (size_t i = 0; i < count; i++) {
     v[i].fill(0);
@@ -224,7 +224,8 @@ inline std::vector<int> MakeSequentialIds(size_t count) {
  *
  * @tparam Dim Dimension of each vector state.
  */
-template <int Dim> struct VectorStateData {
+template <int Dim>
+struct VectorStateData {
   DeviceVector<Vector<Dim>> vectors;
   DeviceVector<int> const_ids;
   std::unique_ptr<VectorStateBatch<Dim>> batch;
@@ -245,8 +246,8 @@ template <int Dim> struct VectorStateData {
     const_ids = DeviceVector<int>(const_state_ids);
     const float *data_ptr = reinterpret_cast<const float *>(vectors.data());
     const int *const_ids_ptr = const_ids.empty() ? nullptr : const_ids.data();
-    batch = std::make_unique<VectorStateBatch<Dim>>(
-        data_ptr, num_vectors, const_ids_ptr, const_ids.size());
+    batch = std::make_unique<VectorStateBatch<Dim>>(data_ptr, num_vectors, const_ids_ptr,
+                                                    const_ids.size());
   }
 
   /** @brief Returns a reference to the managed VectorStateBatch. */
@@ -268,7 +269,8 @@ template <int Dim> struct VectorStateData {
  *
  * @tparam Dim Dimension of each observation vector.
  */
-template <int Dim> struct PriorFactorData {
+template <int Dim>
+struct PriorFactorData {
   DeviceVector<Vector<Dim>> observations_device;
   std::unique_ptr<PriorVectorFactorBatch<Dim>> factor_batch;
 
@@ -279,8 +281,8 @@ template <int Dim> struct PriorFactorData {
    */
   PriorFactorData(const std::vector<Vector<Dim>> &observations) {
     observations_device = DeviceVector<Vector<Dim>>(observations);
-    factor_batch = std::make_unique<PriorVectorFactorBatch<Dim>>(
-        observations_device.data(), observations.size());
+    factor_batch = std::make_unique<PriorVectorFactorBatch<Dim>>(observations_device.data(),
+                                                                 observations.size());
   }
 
   /** @brief Returns a reference to the managed factor batch. */
@@ -333,15 +335,13 @@ DeviceVector<float *> CollectStatePointersDevice(StateBatchType &state_batch) {
  * @return Host vector of state values.
  */
 template <int Dim>
-std::vector<Vector<Dim>>
-CopyStateToHost(const VectorStateBatch<Dim> &state_batch) {
+std::vector<Vector<Dim>> CopyStateToHost(const VectorStateBatch<Dim> &state_batch) {
   auto ptr = state_batch.StateBlockDevicePtr(0);
   size_t num_blocks = state_batch.NumStateBlocks();
   auto vec_ptr = reinterpret_cast<const Vector<Dim> *>(ptr);
   std::vector<Vector<Dim>> out(num_blocks);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(out.data(), vec_ptr,
-                                 num_blocks * sizeof(Vector<Dim>),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(out.data(), vec_ptr, num_blocks * sizeof(Vector<Dim>), cudaMemcpyDeviceToHost));
   return out;
 }
 

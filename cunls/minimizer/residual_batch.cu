@@ -212,17 +212,22 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace,
                              float *residuals,
                              float const *const *state_pointers, float *cost,
                              float *jacobians) const {
-  assert(residuals != nullptr);
-  assert(state_pointers != nullptr);
-
-  factor_batch_->Evaluate(residuals, jacobians, state_pointers, stream);
-
   int num_residuals = static_cast<int>(factor_batch_->NumFactors());
   int residual_dim = static_cast<int>(factor_batch_->ResidualsSize());
 
-  if (num_residuals == 0)
+  // Return before the preconditions below: an empty batch has nothing to
+  // evaluate, its buffers are legitimately null (a zero-size DeviceVector has
+  // no allocation), and the factor kernels would be launched with a zero-size
+  // grid.
+  if (num_residuals == 0) {
     return true;
+  }
+
+  assert(residuals != nullptr);
+  assert(state_pointers != nullptr);
   assert(workspace != nullptr);
+
+  factor_batch_->Evaluate(residuals, jacobians, state_pointers, stream);
 
   float *sq_err_ptr = nullptr;
   float3 *rho_ptr = nullptr;

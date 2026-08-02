@@ -14,23 +14,28 @@ optimization.
 - `levenberg_marquardt_minimizer.h`:
   `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer`
 - `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
-- `sparse_matrix.h`: sparse conversion, RHS, norms (free functions)
-- `sparse_matrix_multiplier.h`: `SparseMatrixMultiplier` base class, enum,
-  factory, and `SparseMatrixMultiplierPtr`
-- `cusparse_matrix_multiplier.h`: `cuSPARSESparseMatrixMultiplier` (cuSPARSE backend)
-- `fast_matrix_multiplier.h`: `FastSparseMatrixMultiplier`
-  (custom CUDA kernels)
+- `sparse_matrix.h`: CSR diagonal ops, scaling, norms (free functions)
+- `normal_equations.h`: `NormalEquations` (owns H, the working LHS, and their
+  storage layout; the only place either layout is named)
+- `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
+- `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
+- `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
 
 ## Solver flow
 
-1. Evaluate residuals/Jacobians for all residual batches.
-2. Build sparse Jacobian in triplet, convert/update CSR.
-3. Form normal equations (`J^T J`, `-J^T r`).
-4. Solve sparse linear system.
-5. Apply manifold-aware state updates (`StateBatchOps`).
-6. Accept/reject step and iterate until convergence.
+1. Evaluate residuals and per-factor dense Jacobian blocks for all residual
+   batches.
+2. Contract each factor locally and scatter-add into the normal equations
+   (`H = J^T J`, `-J^T r`); the global Jacobian is never materialized.
+3. Solve the sparse linear system.
+4. Apply manifold-aware state updates (`StateBatchOps`).
+5. Accept/reject step and iterate until convergence.
 
 ## Important constraints
 
 - Problem pointers are non-owning; caller keeps lifetime.
 - Inputs and intermediate buffers are GPU-resident.
+- The Hessian is stored as BSR when the state tangent dimensions share a common
+  factor and the solver supports it, otherwise as scalar CSR. This is chosen
+  automatically inside `NormalEquations`; no user-facing option, and no storage
+  branch outside that class.

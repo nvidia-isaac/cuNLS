@@ -294,32 +294,6 @@ TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
 }
 
 /**
- * @brief Levenberg-Marquardt with Jacobian column-norm scaling.
- */
-TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingJacobianColumnNorm) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("LMColumnScalingJacobianColumnNorm");
-  typename TestFixture::StateData state_data(this->state_values_);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = this->minimizer_options_;
-  lm_options.base_options.column_scaling = ColumnScaling::JacobianColumnNorm;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states);
-}
-
-/**
  * @brief Gauss-Newton with column scaling (shared MinimizerOptions path).
  */
 TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {

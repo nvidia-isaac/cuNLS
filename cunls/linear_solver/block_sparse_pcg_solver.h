@@ -142,7 +142,7 @@ struct BlockSparsePCGOptions {
  * dominates many iterative solver implementations.
  *
  * Implementation notes (see the `.cu` file for derivations):
- *  - SpMV is delegated to cuSPARSE (`cusparseSpMV` with the default
+ *  - Scalar-CSR SpMV is delegated to cuSPARSE (`cusparseSpMV` with the default
  *    algorithm and an up-front `preprocess` pass) — the same matrix
  *    structure is reused across all PCG steps of one @ref Solve and
  *    typically across multiple @ref Solve calls inside a single
@@ -206,9 +206,8 @@ public:
    * @return true on success, false on dimension mismatch or invalid
    *         layout.
    */
-  bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-                  dvector<float> &result) final;
+  bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Runs the PCG loop on `H x = b`, writing into @p result.
@@ -229,8 +228,19 @@ public:
    *                   reset).
    * @return true on success, false on dimension mismatch.
    */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-             const dvector<float> &rhs, dvector<float> &result) final;
+  /** @copydoc CSRSparseLinearSolver::SupportsBlockStorage */
+  bool SupportsBlockStorage() const override { return true; }
+
+  /** @copydoc CSRSparseLinearSolver::Initialize */
+  bool Initialize(cudaStream_t stream, const Problem &problem, const BSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) override;
+
+  /** @copydoc CSRSparseLinearSolver::Solve */
+  bool Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+             dvector<float> &result) override;
+
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+             dvector<float> &result) final;
 
   /**
    * @brief Number of PCG iterations consumed by the most recent
@@ -257,6 +267,16 @@ private:
    */
   bool BuildSegmentTables(int matrix_dim);
 
+  /** @brief Layout-independent part of Initialize (segments and scratch). */
+  bool InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
+                        const dvector<float> &rhs, dvector<float> &result);
+
+  /** @brief Builds the generic-API SpMV plan used by the CSR path only. */
+  bool InitializeCsrSpMV(cudaStream_t stream, const CSRSparseMatrix &spd_matrix);
+
+  /** @brief The CG recurrence, shared by both storage layouts. */
+  bool SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs, dvector<float> &result);
+
   BlockSparsePCGOptions options_;
   /** Cached host copy of `options_.block_layout`, normalized to a
    *  single uniform segment when the user didn't supply one. */
@@ -271,10 +291,10 @@ private:
 
   /** Per-segment data, kept on the host for the launch loop. */
   struct Segment {
-    int block_size;      ///< side length of each tile (rows = cols)
-    int num_blocks;      ///< number of tiles in this segment
-    int row_start;       ///< first matrix row covered by this segment
-    int factor_offset;   ///< first index in @ref precond_factors_
+    int block_size;       ///< side length of each tile (rows = cols)
+    int num_blocks;       ///< number of tiles in this segment
+    int row_start;        ///< first matrix row covered by this segment
+    int factor_offset;    ///< first index in @ref precond_factors_
     int block_row_start; ///< first block index in the global tile order
   };
   std::vector<Segment> segments_;
@@ -292,9 +312,9 @@ private:
   // ------------------------------------------------------------------
   // PCG scratch
   // ------------------------------------------------------------------
-  dvector<float> r_;  ///< residual `r_k`
-  dvector<float> z_;  ///< preconditioned residual `z_k = M^{-1} r_k`
-  dvector<float> p_;  ///< search direction `p_k`
+  dvector<float> r_;   ///< residual `r_k`
+  dvector<float> z_;   ///< preconditioned residual `z_k = M^{-1} r_k`
+  dvector<float> p_;   ///< search direction `p_k`
   dvector<float> Ap_; ///< `H p_k` (the SpMV output)
 
   /** Device-resident scalar slots: alpha, beta, <p,Ap>, rz_old, rz_new,
@@ -307,6 +327,11 @@ private:
   cuSPARSEHandle cusparse_handle_;
   cuSPARSEMatrixDescription mat_desc_;
   dvector<uint8_t> spmv_buffer_; ///< work buffer for cuSPARSE SpMV
+
+  /** Non-owning view of the matrix passed to the current Solve; exactly one
+   *  of the two is non-null and selects the storage layout. */
+  const CSRSparseMatrix *csr_view_ = nullptr;
+  const BSRSparseMatrix *bsr_view_ = nullptr;
 
   /** Iteration count reported by the last @ref Solve. */
   int last_iterations_ = 0;

@@ -44,6 +44,13 @@ namespace cunls {
  */
 class DenseQRSolver : public CSRSparseLinearSolver {
 public:
+  // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
+  // base class's block-storage overloads are never called on it.  The
+  // using-declarations keep them visible rather than hidden by the CSR
+  // overrides below.
+  using CSRSparseLinearSolver::Initialize;
+  using CSRSparseLinearSolver::Solve;
+
   /**
    * @brief Validates dimensions and pre-allocates internal buffers.
    *
@@ -53,9 +60,8 @@ public:
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false if a dimension mismatch is detected.
    */
-  bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-                  dvector<float> &result) final;
+  bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
+                  const dvector<float> &rhs, dvector<float> &result) final;
 
   /**
    * @brief Converts CSR to dense and solves via QR factorization.
@@ -75,8 +81,8 @@ public:
    * @param result Output vector x (size must equal matrix rows).
    * @return true on success, false on dimension mismatch or singular matrix.
    */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-             const dvector<float> &rhs, dvector<float> &result) final;
+  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+             dvector<float> &result) final;
 
 private:
   void EnsureBuffersSize(cudaStream_t stream, size_t n);

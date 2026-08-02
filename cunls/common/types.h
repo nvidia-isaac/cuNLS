@@ -33,7 +33,8 @@ namespace cunls {
  *
  * @tparam Dim Number of elements in the vector.
  */
-template <int Dim> using Vector = cuda::std::array<float, Dim>;
+template <int Dim>
+using Vector = cuda::std::array<float, Dim>;
 
 /**
  * @brief Fixed-size square matrix of floats stored in row-major order.
@@ -43,7 +44,8 @@ template <int Dim> using Vector = cuda::std::array<float, Dim>;
  *
  * @tparam Dim Number of rows (and columns) in the square matrix.
  */
-template <int Dim> using Matrix = cuda::std::array<float, Dim * Dim>;
+template <int Dim>
+using Matrix = cuda::std::array<float, Dim * Dim>;
 
 /**
  * @brief SE(3) transformation matrix representation.
@@ -68,19 +70,22 @@ using SL4Transform = Matrix<4>;
  * @brief Alias for a device (GPU) vector.
  * @tparam T Element type (must be trivially copyable).
  */
-template <class T> using dvector = DeviceVector<T>;
+template <class T>
+using dvector = DeviceVector<T>;
 
 /**
  * @brief Alias for a host (CPU) vector (std::vector).
  * @tparam T Element type.
  */
-template <class T> using hvector = std::vector<T>;
+template <class T>
+using hvector = std::vector<T>;
 
 /**
  * @brief Alias for a pinned (CPU) vector (PinnedVector).
  * @tparam T Element type.
  */
-template <class T> using pvector = PinnedVector<T>;
+template <class T>
+using pvector = PinnedVector<T>;
 
 /**
  * @brief Compressed Sparse Row (CSR) matrix stored in GPU memory.
@@ -130,16 +135,14 @@ struct CSRMatrixDimensions {
  */
 struct CSRSparseMatrix {
   dvector<int> row_offsets; ///< Row offset array (num_rows + 1 entries).
-  dvector<int> col_ids;     ///< Column index array (num_nonzeros entries).
-  dvector<float> values;    ///< Non-zero value array (num_nonzeros entries).
+  dvector<int> col_ids;      ///< Column index array (num_nonzeros entries).
+  dvector<float> values;     ///< Non-zero value array (num_nonzeros entries).
 
   /**
    * @brief Returns the number of rows in the matrix.
    * @return Number of rows (row_offsets.size() - 1).
    */
-  size_t NumRows() const {
-    return row_offsets.empty() ? 0 : row_offsets.size() - 1;
-  }
+  size_t NumRows() const { return row_offsets.empty() ? 0 : row_offsets.size() - 1; }
 
   /**
    * @brief Returns the number of non-zero entries in the matrix.
@@ -149,25 +152,61 @@ struct CSRSparseMatrix {
 };
 
 /**
- * @brief COO-like sparse structure storing row and column indices.
+ * @brief Block Sparse Row (BSR) matrix stored in GPU memory.
  *
- * Used as a triplet/coordinate format for building sparse matrices
- * before conversion to CSR.
+ * A square matrix partitioned into uniform `block_size x block_size` tiles.
+ * Only tiles containing at least one structural non-zero are stored:
+ * - row_offsets: index into col_ids/values-tiles per block row
+ *   (size = num_block_rows + 1).
+ * - col_ids: block-column index of each stored tile (size = NumBlocks()).
+ * - values: tiles laid out row-major and contiguously, i.e. entry (k, l) of
+ *   tile `t` lives at `values[t * block_size * block_size + k * block_size + l]`
+ *   (CUSPARSE_DIRECTION_ROW).
+ *
+ * The Hessian of a factor graph is naturally block structured: every state
+ * block contributes a dense tile per neighbour. Storing it this way keeps one
+ * column index per tile instead of one per scalar entry, which is where the
+ * SpMV bandwidth saving comes from — the values are identical either way.
+ *
+ * Requires every state block's tangent dimension to be a multiple of
+ * `block_size`; see ChooseHessianBlockSize().
  */
-struct TripletSparseStructure {
-  dvector<int> row_ids; ///< Row indices of non-zero entries.
-  dvector<int> col_ids; ///< Column indices of non-zero entries.
+struct BSRSparseMatrix {
+  dvector<int> row_offsets; ///< Block-row offsets (num_block_rows + 1 entries).
+  dvector<int> col_ids;      ///< Block-column index per tile.
+  dvector<float> values;     ///< Tiles, row-major, block_size^2 floats each.
+
+  int block_size = 1; ///< Tile edge length.
+  /**
+   * @brief Largest number of tiles in any block row.
+   *
+   * Selects the SpMV schedule.  Factor-graph Hessians come in two shapes: a
+   * pose graph is near-uniform with a handful of tiles per row, while bundle
+   * adjustment is extremely skewed (a pose row holds one tile per observation
+   * of that camera, a landmark row a handful).  One schedule cannot serve both.
+   */
+  int max_tiles_per_row = 0;
+  int num_block_rows = 0; ///< Number of block rows (= block columns).
+
+  /** @brief Number of stored tiles. */
+  size_t NumBlocks() const { return col_ids.size(); }
+
+  /** @brief Scalar row/column count. */
+  int NumRows() const { return num_block_rows * block_size; }
+
+  /** @brief Number of stored scalar entries (tiles are dense). */
+  size_t NumNonZeros() const { return values.size(); }
 };
 
 /**
- * @brief Sparse Jacobian matrix in triplet format.
+ * @brief Per-factor dense Jacobian blocks, concatenated across residual
+ * batches.
  *
- * Stores both the sparsity structure (row/column indices) and the
- * non-zero values of the Jacobian.
+ * Each factor batch writes `NumFactors()` dense row-major blocks of
+ * `ResidualsSize() x sum(StateBlockSizes())` floats, and the batches are laid
+ * out back to back.  There is no global sparse Jacobian: the Hessian is
+ * assembled from these blocks directly (see BlockHessianAssembler).
  */
-struct SparseJacobian {
-  TripletSparseStructure structure; ///< Row and column indices.
-  dvector<float> values;            ///< Non-zero Jacobian values.
-};
+using PerFactorJacobians = dvector<float>;
 
 } // namespace cunls

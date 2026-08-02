@@ -23,7 +23,7 @@
 
 namespace cunls {
 
-class Problem; // forward declaration; defined in cunls/minimizer/problem.h.
+class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
 
 /**
  * @brief Base class for linear solvers operating on CSR matrices.
@@ -65,8 +65,7 @@ public:
    * @return true on success, false if a dimension mismatch is detected.
    */
   virtual bool Initialize(cudaStream_t stream, const Problem &problem,
-                          const CSRSparseMatrix &spd_matrix,
-                          const dvector<float> &rhs,
+                          const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                           dvector<float> &result) = 0;
 
   /**
@@ -87,6 +86,29 @@ public:
                      const dvector<float> &rhs, dvector<float> &result) = 0;
 
   /**
+   * @brief Whether this backend can consume a block-stored matrix directly.
+   *
+   * The Hessian of a factor graph is naturally block structured, and assembling
+   * it that way keeps one column index per tile instead of one per scalar
+   * entry.  Backends that say yes get the block form; the rest are handed an
+   * expanded CSR copy, so no caller has to care.
+   */
+  virtual bool SupportsBlockStorage() const { return false; }
+
+  /** @brief BSR counterpart of Initialize; only called when supported. */
+  virtual bool Initialize(cudaStream_t stream, const Problem &problem,
+                          const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+                          dvector<float> &result) {
+    return false;
+  }
+
+  /** @brief BSR counterpart of Solve; only called when supported. */
+  virtual bool Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix,
+                     const dvector<float> &rhs, dvector<float> &result) {
+    return false;
+  }
+
+  /**
    * @brief Disables post-factorization safety checks.
    *
    * By default, dense solvers copy a device-side status flag back to the
@@ -105,7 +127,7 @@ public:
    */
   virtual ~CSRSparseLinearSolver() = default;
 
-protected:
+ protected:
   bool safety_checks_enabled_ = true;
 };
 } // namespace cunls

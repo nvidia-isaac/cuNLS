@@ -55,16 +55,11 @@ class SparseLinearSolverType(enum.IntEnum):
     DenseQR = ...
     BlockSparsePCG = ...
 
-class SparseMatrixMultiplierType(enum.IntEnum):
-    cuSPARSE = ...
-    Fast = ...
-
 class ColumnScaling(enum.IntEnum):
     """Diagonal scaling mode for the GN/LM normal equations."""
 
     none = ...
     hessian_diagonal = ...
-    jacobian_column_norm = ...
 
 # ===================================================================
 # Options and summary
@@ -78,7 +73,6 @@ class MinimizerOptions:
     cost_tolerance: float
     max_consecutive_rejected_steps: int
     sparse_linear_solver_type: SparseLinearSolverType
-    sparse_square_multiplier_type: SparseMatrixMultiplierType
     column_scaling: ColumnScaling
     disable_safety_checks: bool
 
