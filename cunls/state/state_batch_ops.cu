@@ -124,7 +124,7 @@ StateBatchOps::StateBatchOps(cudaStream_t stream, const std::vector<StateBatch *
   Preprocess(stream, state_batches);
 }
 
-/** @copydoc StateBatchOps::InitUpdatesVector */
+/** @copydoc ComputeStateBlockColumnOffsets */
 void ComputeStateBlockColumnOffsets(cudaStream_t stream, int first_column,
                                     const StateBatch *state_batch,
                                     DeviceVector<int> &column_offsets) {

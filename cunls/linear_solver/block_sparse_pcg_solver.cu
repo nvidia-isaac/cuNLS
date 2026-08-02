@@ -652,7 +652,13 @@ __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
   }
   float d = 0.f;
   GatherTileRow(row_off, col_idx, values, block_storage, block_size, row_start + idx, 1, 0, &d);
-  factors[factor_offset + idx] = fmaxf(fabsf(d), pivot_floor);
+  // Floor the magnitude but keep the sign, as the B > 1 pivots do: this is the
+  // same preconditioner at B == 1, so a diagonal entry must not be scaled one
+  // way here and the other way one block size up.
+  if (fabsf(d) < pivot_floor) {
+    d = (d >= 0.f) ? pivot_floor : -pivot_floor;
+  }
+  factors[factor_offset + idx] = d;
 }
 
 // =============================================================================

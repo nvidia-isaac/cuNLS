@@ -88,9 +88,10 @@ Wikipedia links above for convergence and damping strategies.
 :code:`MinimizerOptions::column_scaling` can re-scale the normal equations with a
 diagonal :math:`S`: the linear solve uses :math:`S H S \, z = S b` with
 :math:`H = J^T J` and :math:`b = -J^T r`, then applies the physical tangent step
-:math:`\Delta x = S z`. Modes are: no scaling (default); :math:`S_{ii} = 1/\sqrt{H_{ii}}`
-(with a small floor for stability); or :math:`S_{jj} = 1/\|J_{:,j}\|_2` from the
-CSR Jacobian. For Levenberg-Marquardt, damping uses the diagonal of the **scaled**
+:math:`\Delta x = S z`. Modes are: no scaling (default); or
+:math:`S_{ii} = 1/\sqrt{H_{ii}}` with a small floor for stability, which is
+equivalently :math:`1/\|J_{:,j}\|_2` since :math:`H_{jj} = \|J_{:,j}\|_2^2`.
+For Levenberg-Marquardt, damping uses the diagonal of the **scaled**
 Hessian: :math:`S H S + \lambda \operatorname{diag}(S H S)`.
 
 ================================================================================
@@ -491,8 +492,9 @@ values and then override individual fields.
 Enum used by ``MinimizerOptions.column_scaling`` (and ``LevenbergMarquardtMinimizerOptions.base_options.column_scaling``):
 
 - **none** — identity scaling (standard :math:`H \Delta x = -J^T r`).
-- **hessian_diagonal** — :math:`S_{ii} = 1 / \sqrt{H_{ii}}` with a numerical floor.
-- **jacobian_column_norm** — :math:`S_{jj} = 1 / \|J_{:,j}\|_2` from the CSR Jacobian.
+- **hessian_diagonal** — :math:`S_{ii} = 1 / \sqrt{H_{ii}}` with a numerical
+  floor. Equivalently :math:`1 / \|J_{:,j}\|_2`, since
+  :math:`H_{jj} = \|J_{:,j}\|_2^2`.
 
 For LM, damping uses the diagonal of the **scaled** Hessian. See the C++
 column-scaling theory note earlier in this page.
