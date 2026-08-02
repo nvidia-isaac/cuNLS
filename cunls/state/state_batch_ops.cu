@@ -243,4 +243,4 @@ void StateBatchOps::Plus(cudaStream_t stream, const std::vector<const float *> &
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

@@ -42,7 +42,7 @@ namespace cunls {
  *   used by the pointer-remap kernel.
  */
 class MinimizerState {
-public:
+ public:
   MinimizerState() = default;
 
   /**
@@ -105,7 +105,7 @@ public:
    */
   const std::vector<dvector<float *>> &GetStatePointers() const { return state_pointers_; }
 
-private:
+ private:
   /**
    * @brief Creates minimizer state from a problem.
    *
@@ -166,4 +166,4 @@ private:
  * @param[out] problem Destination problem to update.
  */
 void Copy(cudaStream_t stream, const MinimizerState &state, Problem &problem);
-} // namespace cunls
+}  // namespace cunls

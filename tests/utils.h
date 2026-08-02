@@ -395,5 +395,5 @@ inline float PCGTolFromEnv(float fallback) {
   return (v > 0.f) ? v : fallback;
 }
 
-} // namespace test_utils
-} // namespace cunls
+}  // namespace test_utils
+}  // namespace cunls

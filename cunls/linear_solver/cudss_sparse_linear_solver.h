@@ -45,11 +45,11 @@ enum class cuDSSLinearSolverMode {
  */
 struct cuDSSLinearSolverOptions {
   cuDSSLinearSolverMode mode =
-      cuDSSLinearSolverMode::SlowInitFastSolve; ///< Solver mode controlling
+      cuDSSLinearSolverMode::SlowInitFastSolve;  ///< Solver mode controlling
                                                  ///< the init/solve trade-off.
   int nthreads = 1;                              ///< Number of threads for host-side operations.
   std::string threading_lib_path =
-      ""; ///< Path to the threading library (empty disables multi-threading).
+      "";  ///< Path to the threading library (empty disables multi-threading).
 };
 
 /**
@@ -60,7 +60,7 @@ struct cuDSSLinearSolverOptions {
  * library for GPU-accelerated direct factorization.
  */
 class cuDSSLinearSolver : public CSRSparseLinearSolver {
-public:
+ public:
   // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
   // base class's block-storage overloads are never called on it.  The
   // using-declarations keep them visible rather than hidden by the CSR
@@ -124,13 +124,13 @@ public:
   bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) final;
 
-private:
-  cuDSSLinearSolverOptions options_; ///< Solver configuration.
+ private:
+  cuDSSLinearSolverOptions options_;  ///< Solver configuration.
 
   cuDSSHandle cudss_handle_;            ///< Owns the cuDSS handle used for all solver phases.
-  cuDSSDeviceMemPool device_mem_pool_; ///< Reusable pool for cuDSS allocations.
+  cuDSSDeviceMemPool device_mem_pool_;  ///< Reusable pool for cuDSS allocations.
   cuDSSData cudss_data_;                ///< cuDSS data object storing internal solver state.
 
-  cuDSSConfig cudss_config_; ///< cuDSS configuration for solver parameters.
+  cuDSSConfig cudss_config_;  ///< cuDSS configuration for solver parameters.
 };
-} // namespace cunls
+}  // namespace cunls

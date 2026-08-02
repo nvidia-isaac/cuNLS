@@ -60,6 +60,7 @@
 #include "cunls/robustifier/huber_loss_function_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/bsr_expansion.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -77,7 +78,7 @@ namespace {
  * the two assembly paths on identical input.
  */
 class SystemBuilder : public GaussNewtonMinimizer {
-public:
+ public:
   /**
    * @brief Builds with block storage (the default for a block-capable solver).
    */
@@ -110,7 +111,7 @@ public:
     if (!normal_equations_.UsesBlockStorage()) {
       return normal_equations_.LhsCSR();
     }
-    ConvertBSRToCSR(stream, normal_equations_.LhsBSR(), csr_mirror_, expand_scratch_);
+    test_utils::ExpandBSRToCSR(stream, normal_equations_.LhsBSR(), csr_mirror_, expand_scratch_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     return csr_mirror_;
   }
@@ -134,7 +135,7 @@ public:
   NormalEquations &Equations() { return normal_equations_; }
   bool UsesBlockStorage() const { return normal_equations_.UsesBlockStorage(); }
 
-private:
+ private:
   static MinimizerOptions MakeOptions(SparseLinearSolverType solver) {
     MinimizerOptions options;
     options.sparse_linear_solver_type = solver;
@@ -944,7 +945,7 @@ TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
 
   CSRSparseMatrix csr;
   dvector<int> expand_scratch;
-  ConvertBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
+  test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   const size_t n = block.Rhs().size();
@@ -1003,7 +1004,7 @@ TEST(HessianStorageTest, FirstPcgIterationAgreesBetweenStorages) {
   // Feed both solvers the *same* matrix, so only the reader differs.
   CSRSparseMatrix csr;
   dvector<int> expand_scratch;
-  ConvertBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
+  test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   const size_t n = block.Rhs().size();
@@ -1284,5 +1285,5 @@ TEST(BlockHessianAssemblerTest, AllConstantStatesProduceZeroSystem) {
   }
 }
 
-} // namespace
-} // namespace cunls
+}  // namespace
+}  // namespace cunls

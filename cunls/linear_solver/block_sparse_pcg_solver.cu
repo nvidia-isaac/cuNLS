@@ -1151,7 +1151,7 @@ void DualDotAsync(cudaStream_t stream, const float *a, const float *b, const flo
   DualDotKernel<<<blocks, threads, 0, stream>>>(a, b, c, n, out_ab, out_ac);
 }
 
-} // namespace
+}  // namespace
 
 // =============================================================================
 // BlockSparsePCGSolver
@@ -1532,4 +1532,4 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
   return true;
 }
 
-} // namespace cunls
+}  // namespace cunls

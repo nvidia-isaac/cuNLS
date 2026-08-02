@@ -157,29 +157,6 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
   void BuildSystem(cudaStream_t stream, const Problem &problem,
                    const MinimizerState &minimizer_state) override;
 
-  /**
-   * @brief Checks convergence using LM-specific criteria.
-   *
-   * Computes the rho metric (ratio of actual to predicted cost reduction) and
-   * checks convergence based on step size, cost, and predicted relative
-   * reduction.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param updated_cost Cost after applying the step.
-   * @param current_cost Cost before applying the step.
-   * @param step State update step vector.
-   * @param[out] step_quality Output rho metric (actual/predicted reduction).
-   * @return True if converged, false otherwise.
-   */
-  bool CheckConvergence(cudaStream_t stream, float updated_cost, float current_cost,
-                        const dvector<float> &step, float &step_quality) override;
-
-  /**
-   * @brief Fused cost + LM convergence with a single D2H + sync.
-   *
-   * Batches cost reduction, squared step norm, diag-weighted step norm,
-   * and sparse-weighted step norm into one memcpy and one sync.
-   */
   bool EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
                                    const MinimizerState &updated_state, float current_cost,
                                    const dvector<float> &step, float &updated_cost,

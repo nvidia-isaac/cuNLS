@@ -109,8 +109,6 @@ struct CSRMatrixDimensions {
   int num_cols = -1;
   int num_nonzeros = -1;
 
-  bool IsValid() const { return num_rows >= 0; }
-
   void Set(int rows, int cols, int nnz) {
     num_rows = rows;
     num_cols = cols;
@@ -134,7 +132,7 @@ struct CSRMatrixDimensions {
  * - values: non-zero values (size = num_nonzeros).
  */
 struct CSRSparseMatrix {
-  dvector<int> row_offsets; ///< Row offset array (num_rows + 1 entries).
+  dvector<int> row_offsets;  ///< Row offset array (num_rows + 1 entries).
   dvector<int> col_ids;      ///< Column index array (num_nonzeros entries).
   dvector<float> values;     ///< Non-zero value array (num_nonzeros entries).
 
@@ -172,11 +170,11 @@ struct CSRSparseMatrix {
  * `block_size`; see ChooseHessianBlockSize().
  */
 struct BSRSparseMatrix {
-  dvector<int> row_offsets; ///< Block-row offsets (num_block_rows + 1 entries).
+  dvector<int> row_offsets;  ///< Block-row offsets (num_block_rows + 1 entries).
   dvector<int> col_ids;      ///< Block-column index per tile.
   dvector<float> values;     ///< Tiles, row-major, block_size^2 floats each.
 
-  int block_size = 1; ///< Tile edge length.
+  int block_size = 1;  ///< Tile edge length.
   /**
    * @brief Largest number of tiles in any block row.
    *
@@ -186,7 +184,7 @@ struct BSRSparseMatrix {
    * of that camera, a landmark row a handful).  One schedule cannot serve both.
    */
   int max_tiles_per_row = 0;
-  int num_block_rows = 0; ///< Number of block rows (= block columns).
+  int num_block_rows = 0;  ///< Number of block rows (= block columns).
 
   /** @brief Number of stored tiles. */
   size_t NumBlocks() const { return col_ids.size(); }
@@ -209,4 +207,4 @@ struct BSRSparseMatrix {
  */
 using PerFactorJacobians = dvector<float>;
 
-} // namespace cunls
+}  // namespace cunls

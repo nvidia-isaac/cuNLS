@@ -156,7 +156,7 @@ struct BlockSparsePCGOptions {
  *    and does a small LDLT entirely in shared memory).
  */
 class BlockSparsePCGSolver : public CSRSparseLinearSolver {
-public:
+ public:
   /**
    * @brief Constructs the solver with the given options.
    *
@@ -186,7 +186,7 @@ public:
    * `count = NumStateBlocks() - NumConstStateBlocks()`.  Consecutive
    * segments of equal size are merged so the dispatch loop only sees
    * distinct-size groups.  An explicit layout previously set via
-   * @ref SetBlockLayout takes precedence; passing an empty problem
+   * @c options_.block_layout takes precedence; passing an empty problem
    * (default-constructed) reverts to the uniform
    * @ref BlockSparsePCGOptions::block_size.
    *
@@ -195,7 +195,7 @@ public:
    *                   derive the block-Jacobi preconditioner layout
    *                   when @ref BlockSparsePCGOptions::block_layout is
    *                   empty and the caller hasn't explicitly invoked
-   *                   @ref SetBlockLayout.
+   *                   @c options_.block_layout.
    * @param spd_matrix Coefficient matrix `H` in CSR format.  Only its
    *                   sparsity pattern is examined here; values are read
    *                   on every @ref Solve.
@@ -248,7 +248,7 @@ public:
    */
   int LastIterations() const { return last_iterations_; }
 
-private:
+ private:
   // ------------------------------------------------------------------
   // Layout helpers
   // ------------------------------------------------------------------
@@ -295,7 +295,7 @@ private:
     int num_blocks;       ///< number of tiles in this segment
     int row_start;        ///< first matrix row covered by this segment
     int factor_offset;    ///< first index in @ref precond_factors_
-    int block_row_start; ///< first block index in the global tile order
+    int block_row_start;  ///< first block index in the global tile order
   };
   std::vector<Segment> segments_;
 
@@ -315,7 +315,7 @@ private:
   dvector<float> r_;   ///< residual `r_k`
   dvector<float> z_;   ///< preconditioned residual `z_k = M^{-1} r_k`
   dvector<float> p_;   ///< search direction `p_k`
-  dvector<float> Ap_; ///< `H p_k` (the SpMV output)
+  dvector<float> Ap_;  ///< `H p_k` (the SpMV output)
 
   /** Device-resident scalar slots: alpha, beta, <p,Ap>, rz_old, rz_new,
    *  ||r||^2, ||b||^2.  Layout is fixed in the .cu file. */
@@ -326,7 +326,7 @@ private:
   // ------------------------------------------------------------------
   cuSPARSEHandle cusparse_handle_;
   cuSPARSEMatrixDescription mat_desc_;
-  dvector<uint8_t> spmv_buffer_; ///< work buffer for cuSPARSE SpMV
+  dvector<uint8_t> spmv_buffer_;  ///< work buffer for cuSPARSE SpMV
 
   /** Non-owning view of the matrix passed to the current Solve; exactly one
    *  of the two is non-null and selects the storage layout. */
@@ -337,4 +337,4 @@ private:
   int last_iterations_ = 0;
 };
 
-} // namespace cunls
+}  // namespace cunls

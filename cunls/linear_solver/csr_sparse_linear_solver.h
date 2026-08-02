@@ -40,7 +40,7 @@ class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
  * site).  Solvers that don't care can simply ignore the argument.
  */
 class CSRSparseLinearSolver {
-public:
+ public:
   /**
    * @brief Performs setup work for the linear system.
    *
@@ -130,4 +130,4 @@ public:
  protected:
   bool safety_checks_enabled_ = true;
 };
-} // namespace cunls
+}  // namespace cunls

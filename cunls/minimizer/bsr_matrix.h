@@ -46,9 +46,6 @@ class Problem;
  */
 int ChooseHessianBlockSize(const Problem &problem, int max_block_size = 16);
 
-/** @brief Largest tile edge the block SpMV supports. */
-constexpr int kMaxHessianBlockSize = 16;
-
 /**
  * @brief Extracts the main diagonal of a BSR matrix.
  *
@@ -96,35 +93,6 @@ void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
                          BSRSparseMatrix &output);
 
 /**
- * @brief Expands a BSR matrix into scalar CSR.
- *
- * Used for solver backends that cannot consume block storage (cuDSS and the
- * dense factorizations).  Column indices come out sorted within each row.
- *
- * @param stream CUDA stream for GPU operations.
- * @param input BSR matrix.
- * @param[out] output CSR matrix; resized as needed.
- * @param[out] row_of_tile Caller-owned scratch mapping tile index to block row.
- */
-void ConvertBSRToCSR(cudaStream_t stream, const BSRSparseMatrix &input, CSRSparseMatrix &output,
-                     dvector<int> &row_of_tile);
-
-/**
- * @brief Sparse matrix-vector product y = A * x for BSR storage.
- *
- * cuSPARSE's `cusparseSbsrmv` is not used: it measured 3.6x slower than
- * `csrmv_v3` on a bundle-adjustment Hessian, which would negate the format's
- * whole advantage.  See bsr_matrix.cu.
- *
- * @param stream CUDA stream for GPU operations.
- * @param matrix BSR matrix A.
- * @param x Input vector of length matrix.NumRows().
- * @param[out] y Output vector; resized to matrix.NumRows().
- */
-void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
-                              const dvector<float> &x, dvector<float> &y);
-
-/**
  * @brief Async BSR-weighted squared step: d_out[0] = step^T A step.
  *
  * @param stream CUDA stream for GPU operations.
@@ -138,4 +106,4 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const BSRSparseMatrix 
                                      const dvector<float> &step, dvector<float> &scratch,
                                      float *d_out, float *d_partials);
 
-} // namespace cunls
+}  // namespace cunls

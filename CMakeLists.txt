@@ -137,6 +137,7 @@ if(BUILD_TESTING)
   add_executable(
     nls_tests
     tests/utils.cpp
+    tests/bsr_expansion.cu
     tests/factor_batch_test.cpp
     tests/problem_test.cpp
     tests/prior_vector_prior_factor_test.cpp

@@ -39,28 +39,28 @@ namespace {
 spdlog::level::level_enum GetLogLevel(Verbosity verbosity) {
   spdlog::level::level_enum log_level;
   switch (verbosity) {
-  case Verbosity::Error:
-    log_level = spdlog::level::err;
-    break;
-  case Verbosity::Warning:
-    log_level = spdlog::level::warn;
-    break;
-  case Verbosity::Message:
-    log_level = spdlog::level::info;
-    break;
-  case Verbosity::Debug:
-    log_level = spdlog::level::debug;
-    break;
-  case Verbosity::Silent:
-    log_level = spdlog::level::off;
-    break;
-  default:
-    log_level = spdlog::level::off;
-    break;
+    case Verbosity::Error:
+      log_level = spdlog::level::err;
+      break;
+    case Verbosity::Warning:
+      log_level = spdlog::level::warn;
+      break;
+    case Verbosity::Message:
+      log_level = spdlog::level::info;
+      break;
+    case Verbosity::Debug:
+      log_level = spdlog::level::debug;
+      break;
+    case Verbosity::Silent:
+      log_level = spdlog::level::off;
+      break;
+    default:
+      log_level = spdlog::level::off;
+      break;
   }
   return log_level;
 }
-} // namespace
+}  // namespace
 
 /** @copydoc SetLoggerOptions */
 void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string &path) {
@@ -72,8 +72,7 @@ void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string &path) {
   }
 
   if (path.empty()) {
-    spdlog::warn(
-        "Empty path provided to the logger. Using the default logger.");
+    spdlog::warn("Empty path provided to the logger. Using the default logger.");
     spdlog::set_level(log_level);
     return;
   }
@@ -90,8 +89,7 @@ void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string &path) {
     sinks.push_back(file_sink);
   }
 
-  auto logger =
-      std::make_shared<spdlog::logger>("logger", begin(sinks), end(sinks));
+  auto logger = std::make_shared<spdlog::logger>("logger", begin(sinks), end(sinks));
   logger->set_level(log_level);
 
   spdlog::set_default_logger(logger);
@@ -124,4 +122,4 @@ void LogMessage(std::string_view msg) { Log(Verbosity::Message, msg); }
 
 /** @copydoc LogDebug(std::string_view) */
 void LogDebug(std::string_view msg) { Log(Verbosity::Debug, msg); }
-} // namespace cunls
+}  // namespace cunls

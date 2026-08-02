@@ -41,7 +41,7 @@ namespace cunls {
  * accurate bool return from Solve().
  */
 class DenseLDLTSolver : public CSRSparseLinearSolver {
-public:
+ public:
   // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
   // base class's block-storage overloads are never called on it.  The
   // using-declarations keep them visible rather than hidden by the CSR
@@ -93,7 +93,7 @@ public:
   bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) final;
 
-private:
+ private:
   /**
    * @brief Ensures all internal buffers are (re-)allocated for an n x n system.
    *
@@ -123,7 +123,7 @@ private:
   dvector<int> permutation_;              ///< Pivot permutation vector.
   dvector<float> permuted_rhs_;           ///< P * b scratch vector.
   dvector<float> permuted_solution_;      ///< Permuted solution scratch.
-  dvector<float> intermediate_solution_; ///< Intermediate solve scratch.
+  dvector<float> intermediate_solution_;  ///< Intermediate solve scratch.
 
   /// Device-side kernel status flags (index 0 = factorize, index 1 = solve).
   /// Each kernel writes 1 on success or 0 on failure.
@@ -135,4 +135,4 @@ private:
   pvector<int> status_pinned_;
 };
 
-} // namespace cunls
+}  // namespace cunls

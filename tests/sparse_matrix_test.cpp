@@ -39,11 +39,31 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
+#include "cunls/minimizer/device_reduction.h"
 #include "tests/utils.h"
 
 namespace cunls {
 
 namespace {
+
+/**
+ * @brief Runs an async reduction to completion and returns the scalar.
+ *
+ * The minimizers only ever use the async forms, so the tests do too; this wraps
+ * the device-side result the way Levenberg-Marquardt reads it.
+ */
+template <typename AsyncFn>
+float RunAsyncReduction(cudaStream_t stream, size_t length, AsyncFn &&enqueue) {
+  dvector<float> scratch(ReducePartialCount(length) + 1);
+  float *d_out = scratch.data();
+  float *d_partials = d_out + 1;
+  enqueue(d_out, d_partials);
+  float result = 0.f;
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpyAsync(&result, d_out, sizeof(float), cudaMemcpyDeviceToHost, stream));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  return result;
+}
 
 /**
  * @brief Computes y = A * x on the CPU where A is in CSR format.
@@ -117,7 +137,7 @@ void AddScaledDiagonalCPU(const std::vector<int> &row_ptr, const std::vector<int
   }
 }
 
-} // namespace
+}  // namespace
 
 /**
  * @brief Test fixture for sparse matrix operations.
@@ -126,7 +146,7 @@ void AddScaledDiagonalCPU(const std::vector<int> &row_ptr, const std::vector<int
  * for use across multiple test cases.
  */
 class SparseMatrixTest : public ::testing::Test {
-public:
+ public:
   /**
    * @brief Generates a random sparse matrix directly in CSR format.
    *
@@ -310,8 +330,10 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepFirst) {
   float result;
   {
     auto range = this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepFirst");
-    result = ComputeWeightedSquaredStep(stream.GetStream(), dweights, dsteps, buffer);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    result =
+        RunAsyncReduction(stream.GetStream(), dsteps.size(), [&](float *d_out, float *d_partials) {
+          ComputeWeightedSquaredStepAsync(stream.GetStream(), dweights, dsteps, d_out, d_partials);
+        });
   }
 
   // Verify GPU result matches CPU computation
@@ -351,8 +373,14 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
   float result;
   {
     auto range = this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepSecond");
-    result = ComputeWeightedSquaredStep(stream.GetStream(), handle, input_matrix, dsteps, buffer);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    int num_rows = 0, num_cols = 0, num_nonzeros = 0;
+    ExtractMatrixMetadata(stream.GetStream(), input_matrix, num_rows, num_cols, num_nonzeros);
+    result =
+        RunAsyncReduction(stream.GetStream(), dsteps.size(), [&](float *d_out, float *d_partials) {
+          ComputeWeightedSquaredStepAsync(stream.GetStream(), handle, input_matrix, num_rows,
+                                          num_cols, num_nonzeros, dsteps, buffer, d_out,
+                                          d_partials);
+        });
   }
 
   result /= matrix_size;
@@ -384,4 +412,4 @@ TEST(SparseMatrixColumnScaling, SymmetricScaling2x2) {
   ASSERT_NEAR(out[3], 1.f, 1e-4f);
 }
 
-} // namespace cunls
+}  // namespace cunls

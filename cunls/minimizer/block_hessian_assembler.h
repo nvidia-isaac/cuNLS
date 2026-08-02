@@ -53,7 +53,7 @@ class Problem;
  * column scaling, PCG, cuDSS) sees the matrix it already expects.
  */
 class BlockHessianAssembler {
-public:
+ public:
   /**
    * @brief Builds the Hessian sparsity pattern and the per-factor scatter maps.
    *
@@ -103,10 +103,10 @@ public:
   /** @brief Total floats needed for the per-factor Jacobian value buffer. */
   size_t JacobianValuesSize() const { return structure_builder_.JacobianValuesSize(); }
 
-private:
+ private:
   /** @brief Per-residual-batch constants uploaded once for the kernel. */
   struct BatchPlan {
-    HessianBatchLayout layout; ///< Geometry and flat-buffer offsets.
+    HessianBatchLayout layout;  ///< Geometry and flat-buffer offsets.
     /// n entries: block index owning each local column.
     dvector<int> block_of_col;
     /// n entries: offset of each local column inside its block.
@@ -144,4 +144,4 @@ private:
   profiler::Domain profiler_domain_{"BlockHessianAssembler"};
 };
 
-} // namespace cunls
+}  // namespace cunls

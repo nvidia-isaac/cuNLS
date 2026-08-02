@@ -187,7 +187,7 @@ struct MinimizerOptions {
  * @brief Gauss-Newton nonlinear least-squares optimizer.
  */
 class GaussNewtonMinimizer {
-public:
+ public:
   /**
    * @brief Constructs a Gauss-Newton optimizer.
    *
@@ -235,24 +235,6 @@ public:
   MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
  protected:
-  /**
-   * @brief Checks if convergence criteria are satisfied.
-   *
-   * Determines whether the optimization has converged based on step size,
-   * cost reduction, and step quality. Also computes the step quality metric
-   * (ratio of updated cost to current cost).
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param updated_cost Cost after applying the step.
-   * @param current_cost Cost before applying the step.
-   * @param step State update step vector.
-   * @param[out] step_quality Output argument for step quality metric
-   *                          (updated_cost / current_cost).
-   * @return True if converged, false otherwise.
-   */
-  virtual bool CheckConvergence(cudaStream_t stream, float updated_cost, float current_cost,
-                                const dvector<float> &step, float &step_quality);
-
   /**
    * @brief Fused cost evaluation + convergence check with a single D2H + sync.
    *
@@ -352,7 +334,7 @@ public:
   void ComputeCostAsync(cudaStream_t stream, const Problem &problem,
                         const MinimizerState &minimizer_state, float *d_cost_out);
 
-private:
+ private:
   /**
    * @brief Applies diagonal column scaling to the normal-equation system.
    *
@@ -385,14 +367,14 @@ private:
   void ResizeFactorJacobians();
 
  protected:
-  const MinimizerOptions options_; ///< Optimizer configuration options.
+  const MinimizerOptions options_;  ///< Optimizer configuration options.
 
   SparseLinearSolverPtr solver_;    ///< Linear solver for the normal equations.
-  cuSPARSEHandle cusparse_handle_; ///< cuSPARSE handle for sparse operations.
+  cuSPARSEHandle cusparse_handle_;  ///< cuSPARSE handle for sparse operations.
 
-  StateBatchOps state_ops_; ///< Operations on state batches.
+  StateBatchOps state_ops_;  ///< Operations on state batches.
 
-  dvector<float> residuals_; ///< Residual vector storage.
+  dvector<float> residuals_;  ///< Residual vector storage.
 
   /// Per-factor dense Jacobian blocks; the only Jacobian ever materialized.
   PerFactorJacobians factor_jacobians_;
@@ -403,9 +385,9 @@ private:
   /// Diagonal S when column_scaling is enabled; size = number of tangent DOFs.
   dvector<float> column_scale_;
 
-  dvector<float> step_; ///< State update step vector.
+  dvector<float> step_;  ///< State update step vector.
 
-  dvector<uint8_t> buffer_; ///< Temporary buffer for sparse operations.
+  dvector<uint8_t> buffer_;  ///< Temporary buffer for sparse operations.
 
   /// Device staging buffer for async scalar reductions (cost, step norm, etc.).
   dvector<float> d_scalars_;
@@ -419,7 +401,7 @@ private:
   MinimizerState current_state_;
   MinimizerState updated_state_;
 
-  profiler::Domain profiler_domain_{"GaussNewtonMinimizer"}; ///< Profiling domain.
+  profiler::Domain profiler_domain_{"GaussNewtonMinimizer"};  ///< Profiling domain.
 };
 
-} // namespace cunls
+}  // namespace cunls

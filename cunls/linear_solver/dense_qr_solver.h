@@ -43,7 +43,7 @@ namespace cunls {
  * via devInfo.
  */
 class DenseQRSolver : public CSRSparseLinearSolver {
-public:
+ public:
   // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
   // base class's block-storage overloads are never called on it.  The
   // using-declarations keep them visible rather than hidden by the CSR
@@ -84,7 +84,7 @@ public:
   bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) final;
 
-private:
+ private:
   void EnsureBuffersSize(cudaStream_t stream, size_t n);
 
   void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
@@ -101,4 +101,4 @@ private:
   size_t last_n_ = 0;
 };
 
-} // namespace cunls
+}  // namespace cunls

@@ -53,7 +53,7 @@ class Problem;
  * the tiles are real.
  */
 class NormalEquations {
-public:
+ public:
   /**
    * @brief Derives the sparsity pattern and picks the storage layout.
    *
@@ -118,16 +118,13 @@ public:
   /** @brief True when the block layout is live for the current problem. */
   bool UsesBlockStorage() const { return block_size_ > 1; }
 
-  /** @brief Tile edge of the block layout; 1 when the scalar layout is live. */
-  int BlockSize() const { return block_size_; }
-
   /** @brief Working left-hand side in scalar storage; empty under block storage. */
   const CSRSparseMatrix &LhsCSR() const { return csr_lhs_; }
 
   /** @brief Working left-hand side in block storage; empty under scalar storage. */
   const BSRSparseMatrix &LhsBSR() const { return bsr_lhs_; }
 
-private:
+ private:
   BlockHessianAssembler assembler_;
 
   // Exactly one pair is populated, decided by block_size_.
@@ -138,9 +135,9 @@ private:
 
   CSRMatrixDimensions csr_dims_;       ///< Cached dims for the scalar SpMV.
   dvector<int> tile_row_scratch_;      ///< Tile-to-block-row map for scaling.
-  dvector<float> block_spmv_scratch_; ///< SpMV result for the block path.
+  dvector<float> block_spmv_scratch_;  ///< SpMV result for the block path.
 
   int block_size_ = 1;
 };
 
-} // namespace cunls
+}  // namespace cunls

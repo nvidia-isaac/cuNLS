@@ -383,33 +383,6 @@ void AddScaledDiagonal(cudaStream_t stream, float scale, const dvector<float> &d
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-/**
- * Computes the right-hand side vector for the normal equations: rhs = -J^T * r.
- * This is a key step in Gauss-Newton and Levenberg-Marquardt optimization
- * algorithms.
- *
- * @param stream CUDA stream for asynchronous operations
- * @param jacobian CSR sparse Jacobian matrix (J)
- * @param residuals Dense residual vector (r)
- * @param rhs Output right-hand side vector (-J^T * r)
- * @param buffer Temporary buffer for sparse matrix operations
- *
- * First computes J^T * r using sparse matrix-vector multiplication,
- * then negates the result to get -J^T * r.
- */
-__global__ void negate_kernel(float *__restrict__ data, int n) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) data[i] = -data[i];
-}
-
-void NegateVector(cudaStream_t stream, float *data, size_t n) {
-  if (n == 0) return;
-  constexpr int kBlock = 256;
-  int grid = static_cast<int>((n + kBlock - 1) / kBlock);
-  negate_kernel<<<grid, kBlock, 0, stream>>>(data, static_cast<int>(n));
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
 __global__ void elementwise_multiply_kernel(float *__restrict__ a, const float *__restrict__ b,
                                             int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -425,18 +398,7 @@ void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, s
 }
 
 /**
- * Computes the weighted squared norm of a step vector: step^T * W * step,
- * where W is a diagonal weight matrix.
- *
- * @param stream CUDA stream for asynchronous operations
- * @param weights Diagonal weight values (W)
- * @param step Step vector
- * @param buffer Temporary buffer for intermediate computations
- * @return The weighted squared norm (scalar value)
- *
- * Computes the inner product of the step vector with its element-wise
- * product with the weights: sum(step[i] * weights[i] * step[i]).
- * Used in trust region methods and optimization algorithms.
+ * @brief Async diagonally-weighted squared step: d_out[0] = step^T diag(w) step.
  */
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const dvector<float> &weights,
                                      const dvector<float> &step, float *d_out, float *d_partials) {
@@ -445,100 +407,20 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const dvector<float> &
                              d_partials);
 }
 
-float ComputeWeightedSquaredStep(cudaStream_t stream, const dvector<float> &weights,
-                                 const dvector<float> &step, dvector<uint8_t> &buffer) {
-  assert(step.size() == weights.size());
-  size_t partials_count = ReducePartialCount(step.size());
-  buffer.resize((partials_count + 1) * sizeof(float));
-  float *d_out = reinterpret_cast<float *>(buffer.data());
-  float *d_partials = d_out + 1;
-
-  WeightedDotProductToDevice(stream, step.data(), weights.data(), step.data(), step.size(), d_out,
-                             d_partials);
-
-  float result;
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpyAsync(&result, d_out, sizeof(float), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  assert(result >= 0);
-  return result;
-}
-
 /**
- * Computes the weighted squared norm using a sparse matrix: step^T * A * step.
- * This overload uses a sparse matrix A instead of diagonal weights.
+ * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
  *
- * @param stream CUDA stream for asynchronous operations
- * @param matrix Sparse weight matrix (A)
- * @param step Step vector
- * @param buffer Temporary buffer for sparse matrix operations
- * @return The weighted squared norm (scalar value)
- *
- * First computes A * step using sparse matrix-vector multiplication,
- * then computes the inner product with the original step vector.
- * Used when the weighting is represented as a full sparse matrix rather than
- * just diagonal weights.
+ * Runs the SpMV into a slice of `buffer` and reduces against `step`, so the
+ * whole thing stays on the stream with no host synchronization.
  */
-static thread_local dvector<float> g_spmv_result;
-
-static void WeightedSquaredStepSparseAsyncImpl(cudaStream_t stream, void *handle,
-                                               const CSRSparseMatrix &matrix, int num_rows,
-                                               int num_cols, int num_nonzeros,
-                                               const dvector<float> &step, dvector<uint8_t> &buffer,
-                                               float *d_out, float *d_partials) {
-  constexpr bool transpose_matrix = false;
-  SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, transpose_matrix, step,
-           g_spmv_result, buffer);
-  DotProductToDevice(stream, g_spmv_result.data(), step.data(), g_spmv_result.size(), d_out,
-                     d_partials);
-}
-
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
                                      const CSRSparseMatrix &matrix, int num_rows, int num_cols,
                                      int num_nonzeros, const dvector<float> &step,
                                      dvector<uint8_t> &buffer, float *d_out, float *d_partials) {
-  WeightedSquaredStepSparseAsyncImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, step,
-                                     buffer, d_out, d_partials);
-}
-
-float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
-                                 const dvector<float> &step, dvector<uint8_t> &buffer) {
-  int num_rows, num_cols, num_nonzeros;
-  ExtractMatrixMetadata(stream, matrix, num_rows, num_cols, num_nonzeros);
-
-  size_t partials_count = ReducePartialCount(step.size());
-  dvector<float> d_scratch(partials_count + 1);
-  float *d_out = d_scratch.data();
-  float *d_partials = d_out + 1;
-
-  WeightedSquaredStepSparseAsyncImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, step,
-                                     buffer, d_out, d_partials);
-
-  float result;
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpyAsync(&result, d_out, sizeof(float), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  assert(result >= 0);
-  return result;
-}
-
-float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
-                                 int num_rows, int num_cols, int num_nonzeros,
-                                 const dvector<float> &step, dvector<uint8_t> &buffer) {
-  size_t partials_count = ReducePartialCount(step.size());
-  dvector<float> d_scratch(partials_count + 1);
-  float *d_out = d_scratch.data();
-  float *d_partials = d_out + 1;
-
-  WeightedSquaredStepSparseAsyncImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, step,
-                                     buffer, d_out, d_partials);
-
-  float result;
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpyAsync(&result, d_out, sizeof(float), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  assert(result >= 0);
-  return result;
+  static thread_local dvector<float> spmv_result;
+  SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, /*transpose_matrix=*/false,
+           step, spmv_result, buffer);
+  DotProductToDevice(stream, step.data(), spmv_result.data(), step.size(), d_out, d_partials);
 }
 
 /**
@@ -553,19 +435,4 @@ void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float> &step, fl
   DotProductToDevice(stream, step.data(), step.data(), step.size(), d_out, d_partials);
 }
 
-float ComputeSquaredStep(cudaStream_t stream, const dvector<float> &step) {
-  size_t partials_count = ReducePartialCount(step.size());
-  dvector<float> d_scratch(partials_count + 1);
-  float *d_out = d_scratch.data();
-  float *d_partials = d_out + 1;
-
-  DotProductToDevice(stream, step.data(), step.data(), step.size(), d_out, d_partials);
-
-  float result;
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpyAsync(&result, d_out, sizeof(float), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  assert(result >= 0);
-  return result;
-}
-} // namespace cunls
+}  // namespace cunls

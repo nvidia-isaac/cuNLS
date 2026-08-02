@@ -115,8 +115,7 @@ namespace {
  * @param target_index Runtime index of the argument to output.
  */
 template <size_t Index, typename Tuple>
-void format_arg_at_index(std::ostringstream &oss, const Tuple &args,
-                         size_t target_index) {
+void format_arg_at_index(std::ostringstream &oss, const Tuple &args, size_t target_index) {
   if (Index == target_index && Index < std::tuple_size_v<Tuple>) {
     oss << std::get<Index>(args);
   }
@@ -134,8 +133,7 @@ void format_arg_at_index(std::ostringstream &oss, const Tuple &args,
  * @param target_index Runtime index of the argument to output.
  */
 template <size_t... Indices, typename Tuple>
-void format_arg_recursive(std::ostringstream &oss, const Tuple &args,
-                          size_t target_index,
+void format_arg_recursive(std::ostringstream &oss, const Tuple &args, size_t target_index,
                           std::index_sequence<Indices...>) {
   (format_arg_at_index<Indices>(oss, args, target_index), ...);
 }
@@ -178,14 +176,12 @@ std::string vformat_to(std::string_view fmt_str, Args &&...args) {
     }
 
     // Extract placeholder content
-    std::string placeholder =
-        fmt.substr(open_brace + 1, close_brace - open_brace - 1);
+    std::string placeholder = fmt.substr(open_brace + 1, close_brace - open_brace - 1);
 
     if (placeholder.empty()) {
       // Empty placeholder {} - use next argument in order
       if (arg_index < num_args) {
-        format_arg_recursive(result, args_tuple, arg_index,
-                             std::make_index_sequence<num_args>{});
+        format_arg_recursive(result, args_tuple, arg_index, std::make_index_sequence<num_args>{});
         arg_index++;
       } else {
         result << "{}";
@@ -215,7 +211,7 @@ std::string vformat_to(std::string_view fmt_str, Args &&...args) {
 
   return result.str();
 }
-} // namespace
+}  // namespace
 
 /**
  * @brief Logs a formatted message at the given verbosity level (C++17 path).
@@ -281,4 +277,4 @@ template <typename... Args>
 inline void LogDebug(std::string_view fmt, Args &&...args) {
   Log(Verbosity::Debug, fmt, std::forward<Args>(args)...);
 }
-} // namespace cunls
+}  // namespace cunls

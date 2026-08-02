@@ -221,7 +221,7 @@ int PickWarpsPerBlock(int residual_dim, int tangent_dim, int num_blocks, size_t 
   return warps;
 }
 
-} // namespace
+}  // namespace
 
 void BlockHessianAssembler::Initialize(cudaStream_t stream, const Problem &problem, int num_cols,
                                        CSRSparseMatrix &hessian) {
@@ -368,4 +368,4 @@ void BlockHessianAssembler::LaunchAssembly(cudaStream_t stream, const float *jac
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

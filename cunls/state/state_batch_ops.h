@@ -53,7 +53,7 @@ void ComputeStateBlockColumnOffsets(cudaStream_t stream, int first_column,
  * batch.
  */
 class StateBatchOps {
-public:
+ public:
   /**
    * @brief Constructs and preprocesses the operator for the given state
    * batches.
@@ -110,7 +110,7 @@ public:
    *         full (including constant) state indices. */
   DeviceVector<int> map_;
 
-private:
+ private:
   /**
    * @brief Allocates the full-size state updates buffer and computes per-batch
    * delta pointers.
@@ -143,4 +143,4 @@ private:
    * constant blocks. */
   size_t num_reduced_states_ = 0;
 };
-} // namespace cunls
+}  // namespace cunls

@@ -22,11 +22,10 @@
 // other bind_*.cpp file relies on it for constructor arguments that accept
 // CuPy arrays or plain integer addresses.
 
-#include "bindings.h"
-
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include "bindings.h"
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
@@ -42,16 +41,14 @@
 //      cupy.ndarray, which exposes the GPU pointer through its memory
 //      descriptor.
 uintptr_t extract_device_ptr(nb::handle obj) {
-  if (nb::isinstance<nb::int_>(obj))
-    return nb::cast<uintptr_t>(obj);
+  if (nb::isinstance<nb::int_>(obj)) return nb::cast<uintptr_t>(obj);
   return nb::cast<uintptr_t>(obj.attr("data").attr("ptr"));
 }
 
 void bind_types(nb::module_ &m) {
   // --- CUDA stream / cuBLAS handle wrappers ---
 
-  nb::class_<cunls::CudaStream>(m, "CudaStream",
-                                "RAII wrapper for a CUDA stream.")
+  nb::class_<cunls::CudaStream>(m, "CudaStream", "RAII wrapper for a CUDA stream.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)
       .def(
           "get_stream",
@@ -60,8 +57,7 @@ void bind_types(nb::module_ &m) {
           },
           "Returns the underlying cudaStream_t as an integer handle.");
 
-  nb::class_<cunls::cuBLASHandle>(m, "CublasHandle",
-                                  "RAII wrapper for a cuBLAS handle.")
+  nb::class_<cunls::cuBLASHandle>(m, "CublasHandle", "RAII wrapper for a cuBLAS handle.")
       .def(nb::init<>());
 
   // --- Enumerations for solver/multiplier strategy selection ---
@@ -82,20 +78,16 @@ void bind_types(nb::module_ &m) {
   // from Python before passing the options to a minimizer constructor.
 
   nb::class_<cunls::MinimizerOptions>(
-      m, "MinimizerOptions",
-      "Options for Gauss-Newton and Levenberg-Marquardt minimizers.")
+      m, "MinimizerOptions", "Options for Gauss-Newton and Levenberg-Marquardt minimizers.")
       .def(nb::init<>())
-      .def_rw("max_num_iterations",
-              &cunls::MinimizerOptions::max_num_iterations)
+      .def_rw("max_num_iterations", &cunls::MinimizerOptions::max_num_iterations)
       .def_rw("state_tolerance", &cunls::MinimizerOptions::state_tolerance)
       .def_rw("cost_tolerance", &cunls::MinimizerOptions::cost_tolerance)
       .def_rw("max_consecutive_rejected_steps",
               &cunls::MinimizerOptions::max_consecutive_rejected_steps)
-      .def_rw("sparse_linear_solver_type",
-              &cunls::MinimizerOptions::sparse_linear_solver_type)
+      .def_rw("sparse_linear_solver_type", &cunls::MinimizerOptions::sparse_linear_solver_type)
       .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
-      .def_rw("disable_safety_checks",
-              &cunls::MinimizerOptions::disable_safety_checks,
+      .def_rw("disable_safety_checks", &cunls::MinimizerOptions::disable_safety_checks,
               "When False, the minimizer enables all optional runtime "
               "validation.  Currently this covers post-factorization "
               "checks in the linear solver: pivot/diagonal checks "
@@ -110,38 +102,28 @@ void bind_types(nb::module_ &m) {
               "singular or ill-conditioned matrices may produce silently "
               "incorrect results.");
 
-  nb::class_<cunls::MinimizerSummary>(m, "MinimizerSummary",
-                                      "Summary of a minimization run.")
+  nb::class_<cunls::MinimizerSummary>(m, "MinimizerSummary", "Summary of a minimization run.")
       .def_ro("num_iterations", &cunls::MinimizerSummary::num_iterations)
       .def_ro("initial_cost", &cunls::MinimizerSummary::initial_cost)
       .def_ro("final_cost", &cunls::MinimizerSummary::final_cost)
       .def_ro("iteration_costs", &cunls::MinimizerSummary::iteration_costs)
       .def("__repr__", [](const cunls::MinimizerSummary &s) {
-        return "MinimizerSummary(iterations=" +
-               std::to_string(s.num_iterations) +
+        return "MinimizerSummary(iterations=" + std::to_string(s.num_iterations) +
                ", initial_cost=" + std::to_string(s.initial_cost) +
                ", final_cost=" + std::to_string(s.final_cost) + ")";
       });
 
   nb::class_<cunls::LevenbergMarquardtMinimizerOptions>(
-      m, "LevenbergMarquardtMinimizerOptions",
-      "Options for the Levenberg-Marquardt minimizer.")
+      m, "LevenbergMarquardtMinimizerOptions", "Options for the Levenberg-Marquardt minimizer.")
       .def(nb::init<>())
-      .def_rw("base_options",
-              &cunls::LevenbergMarquardtMinimizerOptions::base_options)
-      .def_rw("initial_lambda",
-              &cunls::LevenbergMarquardtMinimizerOptions::initial_lambda)
-      .def_rw("lambda_upscale",
-              &cunls::LevenbergMarquardtMinimizerOptions::lambda_upscale)
-      .def_rw("lambda_downscale",
-              &cunls::LevenbergMarquardtMinimizerOptions::lambda_downscale)
-      .def_rw("lambda_max",
-              &cunls::LevenbergMarquardtMinimizerOptions::lambda_max)
-      .def_rw("lambda_min",
-              &cunls::LevenbergMarquardtMinimizerOptions::lambda_min)
+      .def_rw("base_options", &cunls::LevenbergMarquardtMinimizerOptions::base_options)
+      .def_rw("initial_lambda", &cunls::LevenbergMarquardtMinimizerOptions::initial_lambda)
+      .def_rw("lambda_upscale", &cunls::LevenbergMarquardtMinimizerOptions::lambda_upscale)
+      .def_rw("lambda_downscale", &cunls::LevenbergMarquardtMinimizerOptions::lambda_downscale)
+      .def_rw("lambda_max", &cunls::LevenbergMarquardtMinimizerOptions::lambda_max)
+      .def_rw("lambda_min", &cunls::LevenbergMarquardtMinimizerOptions::lambda_min)
       .def_rw("step_accept_threshold",
               &cunls::LevenbergMarquardtMinimizerOptions::step_accept_threshold)
       .def_rw("lambda_downscale_threshold",
-              &cunls::LevenbergMarquardtMinimizerOptions::
-                  lambda_downscale_threshold);
+              &cunls::LevenbergMarquardtMinimizerOptions::lambda_downscale_threshold);
 }

@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 
+#include "cunls/common/cusparse_helper.h"
+
 #include <cuda_runtime.h>
 #include <cusparse.h>
 
-#include "cunls/common/cusparse_helper.h"
 #include "cunls/common/log.h"
 
 namespace cunls {
@@ -30,8 +31,7 @@ const char *cusparseGetErrorString(int status) {
 /** @copydoc cuSPARSEHandle::~cuSPARSEHandle */
 cuSPARSEHandle::~cuSPARSEHandle() {
   if (handle_ != nullptr) {
-    WARN_ON_CUSPARSE_ERROR(
-        cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
+    WARN_ON_CUSPARSE_ERROR(cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
   }
 }
 
@@ -48,8 +48,7 @@ void *cuSPARSEHandle::GetHandle(cudaStream_t stream) {
   }
 
   if (handle_ != nullptr) {
-    THROW_ON_CUSPARSE_ERROR(
-        cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
+    THROW_ON_CUSPARSE_ERROR(cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
   }
 
   stream_ = stream;
@@ -69,8 +68,7 @@ cuSPARSEMatrixDescription &cuSPARSEMatrixDescription::operator=(
   }
 
   if (description_) {
-    WARN_ON_CUSPARSE_ERROR(
-        cusparseDestroySpMat(static_cast<cusparseSpMatDescr_t>(description_)));
+    WARN_ON_CUSPARSE_ERROR(cusparseDestroySpMat(static_cast<cusparseSpMatDescr_t>(description_)));
   }
 
   description_ = std::exchange(other.description_, nullptr);
@@ -80,36 +78,32 @@ cuSPARSEMatrixDescription &cuSPARSEMatrixDescription::operator=(
 /** @copydoc
  * cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int,int,const
  * CSRSparseMatrix&) */
-cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(
-    int num_rows, int num_cols, int num_nonzeros,
-    const CSRSparseMatrix &matrix) {
+cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows, int num_cols, int num_nonzeros,
+                                                     const CSRSparseMatrix &matrix) {
   auto rows_ptr = const_cast<int *>(matrix.row_offsets.data());
   auto cols_ptr = const_cast<int *>(matrix.col_ids.data());
   auto values_ptr = const_cast<float *>(matrix.values.data());
 
   cusparseSpMatDescr_t descr = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(
-      &descr, num_rows, num_cols, num_nonzeros, rows_ptr, cols_ptr, values_ptr,
-      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
-      CUDA_R_32F));
+      &descr, num_rows, num_cols, num_nonzeros, rows_ptr, cols_ptr, values_ptr, CUSPARSE_INDEX_32I,
+      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
   description_ = static_cast<void *>(descr);
 };
 
 /** @copydoc cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int) */
-cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows,
-                                                     int num_cols) {
+cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows, int num_cols) {
   cusparseSpMatDescr_t descr = nullptr;
-  THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(
-      &descr, num_rows, num_cols, 0, NULL, NULL, NULL, CUSPARSE_INDEX_32I,
-      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+  THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(&descr, num_rows, num_cols, 0, NULL, NULL, NULL,
+                                            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                                            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
   description_ = static_cast<void *>(descr);
 };
 
 /** @copydoc cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription */
 cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription() {
   if (description_) {
-    WARN_ON_CUSPARSE_ERROR(
-        cusparseDestroySpMat(static_cast<cusparseSpMatDescr_t>(description_)));
+    WARN_ON_CUSPARSE_ERROR(cusparseDestroySpMat(static_cast<cusparseSpMatDescr_t>(description_)));
   }
 }
 
@@ -119,34 +113,30 @@ void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix &matrix) {
   auto cols_ptr = const_cast<int *>(matrix.col_ids.data());
   auto values_ptr = const_cast<float *>(matrix.values.data());
 
-  THROW_ON_CUSPARSE_ERROR(
-      cusparseCsrSetPointers(static_cast<cusparseSpMatDescr_t>(description_),
-                             rows_ptr, cols_ptr, values_ptr));
+  THROW_ON_CUSPARSE_ERROR(cusparseCsrSetPointers(static_cast<cusparseSpMatDescr_t>(description_),
+                                                 rows_ptr, cols_ptr, values_ptr));
 }
 
 /** @copydoc cuSPARSEMatrixDescription::GetDescription */
 void *cuSPARSEMatrixDescription::GetDescription() { return description_; }
 
 /** @copydoc cuSPARSEVectorDescription::cuSPARSEVectorDescription */
-cuSPARSEVectorDescription::cuSPARSEVectorDescription(
-    const dvector<float> &vec) {
+cuSPARSEVectorDescription::cuSPARSEVectorDescription(const dvector<float> &vec) {
   auto ptr = const_cast<float *>(vec.data());
 
   cusparseDnVecDescr_t descr = nullptr;
-  THROW_ON_CUSPARSE_ERROR(
-      cusparseCreateDnVec(&descr, vec.size(), ptr, CUDA_R_32F));
+  THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&descr, vec.size(), ptr, CUDA_R_32F));
   description_ = static_cast<void *>(descr);
 };
 
 /** @copydoc cuSPARSEVectorDescription::~cuSPARSEVectorDescription */
 cuSPARSEVectorDescription::~cuSPARSEVectorDescription() {
   if (description_) {
-    WARN_ON_CUSPARSE_ERROR(
-        cusparseDestroyDnVec(static_cast<cusparseDnVecDescr_t>(description_)));
+    WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(static_cast<cusparseDnVecDescr_t>(description_)));
   }
 }
 
 /** @copydoc cuSPARSEVectorDescription::GetDescription */
 void *cuSPARSEVectorDescription::GetDescription() { return description_; }
 
-} // namespace cunls
+}  // namespace cunls

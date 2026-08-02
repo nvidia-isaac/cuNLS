@@ -291,56 +291,6 @@ void GaussNewtonMinimizer::Initialize(cudaStream_t stream, Problem &problem) {
   ResizeFactorJacobians();
 }
 
-/**
- * @brief Checks if convergence criteria are satisfied.
- *
- * Convergence is determined by:
- * 1. Step size: squared step norm < state_tolerance
- * 2. Cost reduction: updated_cost < cost_tolerance
- * 3. Step quality: step_quality >= 1.0 (cost increased)
- *
- * Also computes step_quality = updated_cost / current_cost as a metric for
- * step acceptance/rejection.
- *
- * @param stream CUDA stream for GPU operations.
- * @param updated_cost Cost after applying the step.
- * @param current_cost Cost before applying the step.
- * @param step State update step vector.
- * @param[out] step_quality Output step quality metric (updated_cost /
- * current_cost).
- * @return True if converged, false otherwise.
- */
-bool GaussNewtonMinimizer::CheckConvergence(cudaStream_t stream, float updated_cost,
-                                            float current_cost, const dvector<float> &step,
-                                            float &step_quality) {
-  auto range = profiler_domain_.CreateDomainRange("CheckConvergence");
-
-  if (d_scalars_.size() < 1) d_scalars_.resize(1);
-  if (h_scalars_.size() < 1) h_scalars_.resize(1);
-  size_t partials_needed = ReducePartialCount(step.size());
-  if (d_reduce_partials_.size() < partials_needed) {
-    d_reduce_partials_.resize(partials_needed);
-  }
-
-  ComputeSquaredStepAsync(stream, step, d_scalars_.data(), d_reduce_partials_.data());
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(), sizeof(float),
-                                      cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-
-  float squared_step = h_scalars_[0];
-  LogMessage("Squared step = {}", squared_step);
-  step_quality = updated_cost / current_cost;
-
-  LogMessage("Step quality = {}", step_quality);
-
-  if (squared_step < options_.state_tolerance || updated_cost < options_.cost_tolerance ||
-      step_quality >= 1) {
-    return true;
-  }
-
-  return false;
-}
-
 bool GaussNewtonMinimizer::EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
                                                        const MinimizerState &updated_state,
                                                        float current_cost,

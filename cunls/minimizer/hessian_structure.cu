@@ -293,7 +293,7 @@ __global__ void ScatterWriteOffsetsKernel(int num_candidates, int num_valid,
   write_offsets[pair_order[idx]] = value;
 }
 
-} // namespace
+}  // namespace
 
 void HessianStructureBuilder::BuildLayout(const Problem &problem) {
   const auto &residual_batches = problem.GetResidualBatches();
@@ -679,4 +679,4 @@ void HessianStructureBuilder::Build(cudaStream_t stream, const Problem &problem,
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 
-} // namespace cunls
+}  // namespace cunls

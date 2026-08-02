@@ -45,7 +45,6 @@ struct DerivedFromAnySizedFactorBatchHelper {
  */
 template <class T>
 struct IsDerivedFromAnySizedFactorBatch
-    : decltype(DerivedFromAnySizedFactorBatchHelper::test(
-          std::declval<T *>())){};
+    : decltype(DerivedFromAnySizedFactorBatchHelper::test(std::declval<T *>())) {};
 
-} // namespace cunls
+}  // namespace cunls

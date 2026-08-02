@@ -34,8 +34,8 @@ struct HessianBatchLayout {
   int residual_dim = 0;        ///< m: residual dimension of one factor.
   int tangent_dim = 0;         ///< n: sum of the factor's state block sizes.
   int num_blocks = 0;          ///< nb: state blocks a factor touches.
-  size_t jacobian_offset = 0; ///< Offset into the flat Jacobian value buffer.
-  size_t residual_offset = 0; ///< Offset into the flat residual vector.
+  size_t jacobian_offset = 0;  ///< Offset into the flat Jacobian value buffer.
+  size_t residual_offset = 0;  ///< Offset into the flat residual vector.
   size_t col_offset = 0;       ///< Offset into FactorCols(), stride nb.
   size_t pair_offset = 0;      ///< Offset into WriteOffsets(), stride nb*nb.
 };
@@ -62,7 +62,7 @@ struct HessianBatchLayout {
  * `output.values` is resized but left uninitialized.
  */
 class HessianStructureBuilder {
-public:
+ public:
   /**
    * @brief Builds the scalar CSR pattern, and optionally the scatter maps.
    *
@@ -113,7 +113,7 @@ public:
   /** @brief Total floats needed for the per-factor Jacobian value buffer. */
   size_t JacobianValuesSize() const { return jacobian_values_size_; }
 
-private:
+ private:
   /**
    * @brief Shared front half: layout, column resolution, key sort, segmentation.
    *
@@ -146,4 +146,4 @@ private:
   size_t jacobian_values_size_ = 0;
 };
 
-} // namespace cunls
+}  // namespace cunls

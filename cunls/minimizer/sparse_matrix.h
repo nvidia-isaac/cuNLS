@@ -96,53 +96,6 @@ void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix &matrix, const dvect
  */
 void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float> &v, float floor_value = 1e-12f);
 
-/**
- * @brief Computes the squared L2 norm of a step vector.
- *
- * Computes step^T * step using a GPU inner product.
- *
- * @param stream CUDA stream for GPU operations.
- * @param step Step vector.
- * @return The squared L2 norm (scalar value).
- */
-float ComputeSquaredStep(cudaStream_t stream, const dvector<float> &step);
-
-/**
- * @brief Computes a diagonally-weighted squared step norm.
- *
- * Computes step^T * diag(weights) * step, i.e., sum(weights[i] * step[i]^2).
- * Used in Levenberg-Marquardt to evaluate predicted cost reduction.
- *
- * @param stream CUDA stream for GPU operations.
- * @param weights Diagonal weight values.
- * @param step Step vector.
- * @param[out] buffer Temporary buffer for intermediate computations.
- * @return The weighted squared norm (scalar value).
- */
-float ComputeWeightedSquaredStep(cudaStream_t stream, const dvector<float> &weights,
-                                 const dvector<float> &step, dvector<uint8_t> &buffer);
-
-/**
- * @brief Computes a sparse-matrix-weighted squared step norm.
- *
- * Computes step^T * A * step using sparse matrix-vector multiplication
- * followed by an inner product. Used when the weighting is a full sparse
- * matrix rather than just diagonal weights.
- *
- * @param stream CUDA stream for GPU operations.
- * @param handle Opaque cuSPARSE library handle (void*).
- * @param matrix Sparse weight matrix (A).
- * @param step Step vector.
- * @param[out] buffer Temporary buffer for cuSPARSE operations.
- * @return The weighted squared norm (scalar value).
- */
-float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
-                                 const dvector<float> &step, dvector<uint8_t> &buffer);
-
-float ComputeWeightedSquaredStep(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
-                                 int num_rows, int num_cols, int num_nonzeros,
-                                 const dvector<float> &step, dvector<uint8_t> &buffer);
-
 // ---- Async variants: write scalar result to device memory, no D2H or sync --
 
 /**
@@ -170,14 +123,6 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
                                      int num_nonzeros, const dvector<float> &step,
                                      dvector<uint8_t> &buffer, float *d_out, float *d_partials);
 
-/**
- * @brief Elementwise vector negation: out[i] = -in[i].
- */
-void NegateVector(cudaStream_t stream, float *data, size_t n);
-
-/**
- * @brief Elementwise multiply: out[i] = a[i] * b[i].
- */
 void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, size_t n);
 
-} // namespace cunls
+}  // namespace cunls

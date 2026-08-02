@@ -15,9 +15,10 @@
  * limitations under the License.
  */
 
+#include "cunls/common/cublas_helper.h"
+
 #include <cublas_v2.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/log.h"
 
 namespace cunls {
@@ -77,4 +78,4 @@ void *cuBLASHandle::GetHandle(cudaStream_t stream) {
   return handle_;
 }
 
-} // namespace cunls
+}  // namespace cunls

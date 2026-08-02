@@ -31,54 +31,6 @@ constexpr int kBlockSize = 256;
 
 int GridFor(size_t count) { return static_cast<int>((count + kBlockSize - 1) / kBlockSize); }
 
-/**
- * @brief Fills the CSR row offsets of the expanded matrix.
- *
- * Every tile in a block row contributes `block_size` columns to each of the
- * block row's `block_size` scalar rows, so a row's length is known from the
- * block row's tile count alone.
- */
-__global__ void FillExpandedRowOffsetsKernel(int num_rows, int block_size,
-                                             const int *__restrict__ block_row_offsets,
-                                             int *__restrict__ row_offsets) {
-  int row = blockIdx.x * blockDim.x + threadIdx.x;
-  if (row > num_rows) {
-    return;
-  }
-  // Rows before `row` belong to whole block rows plus a partial one.
-  const int block_row = row / block_size;
-  const int sub_row = row - block_row * block_size;
-  const int whole = block_row_offsets[block_row] * block_size;
-  const int partial = sub_row * (block_row_offsets[block_row + 1] - block_row_offsets[block_row]);
-  row_offsets[row] = (whole + partial) * block_size;
-}
-
-/** @brief Scatters each tile entry to its scalar CSR position. */
-__global__ void ExpandTilesToCSRKernel(size_t num_values, int block_size,
-                                       const int *__restrict__ row_of_tile,
-                                       const int *__restrict__ block_row_offsets,
-                                       const int *__restrict__ block_col_ids,
-                                       const float *__restrict__ values,
-                                       const int *__restrict__ row_offsets,
-                                       int *__restrict__ col_ids, float *__restrict__ out_values) {
-  size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (idx >= num_values) {
-    return;
-  }
-  const int tile_area = block_size * block_size;
-  const size_t tile = idx / tile_area;
-  const int within = static_cast<int>(idx - tile * tile_area);
-  const int row_in_tile = within / block_size;
-  const int col_in_tile = within - row_in_tile * block_size;
-
-  const int block_row = row_of_tile[tile];
-  const int tile_in_row = static_cast<int>(tile) - block_row_offsets[block_row];
-  const int row = block_row * block_size + row_in_tile;
-  const int slot = row_offsets[row] + tile_in_row * block_size + col_in_tile;
-  col_ids[slot] = block_col_ids[tile] * block_size + col_in_tile;
-  out_values[slot] = values[idx];
-}
-
 /** One thread per block row; locates the diagonal tile and reads its diagonal. */
 __global__ void ExtractBlockDiagonalKernel(int num_block_rows, int block_size,
                                            const int *__restrict__ row_offsets,
@@ -377,8 +329,11 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-} // namespace
-
+/**
+ * @brief y = A * x for block storage, into a caller-owned buffer.
+ *
+ * Internal: the only caller is ComputeWeightedSquaredStepAsync below.
+ */
 void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
                               const dvector<float> &x, dvector<float> &y) {
   y.resize(static_cast<size_t>(matrix.NumRows()));
@@ -389,6 +344,8 @@ void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix
                     matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(),
                     x.data(), y.data());
 }
+
+}  // namespace
 
 int ChooseHessianBlockSize(const Problem &problem, int max_block_size) {
   int block_size = 0;
@@ -494,34 +451,6 @@ void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
   }
 }
 
-void ConvertBSRToCSR(cudaStream_t stream, const BSRSparseMatrix &input, CSRSparseMatrix &output,
-                     dvector<int> &row_of_tile) {
-  const int num_rows = input.NumRows();
-  output.row_offsets.resize(static_cast<size_t>(num_rows) + 1);
-  output.col_ids.resize(input.NumNonZeros());
-  output.values.resize(input.NumNonZeros());
-  if (num_rows == 0) {
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(output.row_offsets.data(), 0, sizeof(int), stream));
-    return;
-  }
-
-  row_of_tile.resize(input.NumBlocks());
-  FillRowOfTileKernel<<<GridFor(input.num_block_rows), kBlockSize, 0, stream>>>(
-      input.num_block_rows, input.row_offsets.data(), row_of_tile.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  FillExpandedRowOffsetsKernel<<<GridFor(static_cast<size_t>(num_rows) + 1), kBlockSize, 0,
-                                 stream>>>(num_rows, input.block_size, input.row_offsets.data(),
-                                           output.row_offsets.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  ExpandTilesToCSRKernel<<<GridFor(input.values.size()), kBlockSize, 0, stream>>>(
-      input.values.size(), input.block_size, row_of_tile.data(), input.row_offsets.data(),
-      input.col_ids.data(), input.values.data(), output.row_offsets.data(), output.col_ids.data(),
-      output.values.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const BSRSparseMatrix &matrix,
                                      const dvector<float> &step, dvector<float> &scratch,
                                      float *d_out, float *d_partials) {
@@ -529,4 +458,4 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const BSRSparseMatrix 
   DotProductToDevice(stream, step.data(), scratch.data(), step.size(), d_out, d_partials);
 }
 
-} // namespace cunls
+}  // namespace cunls

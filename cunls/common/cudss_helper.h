@@ -17,9 +17,9 @@
 
 #pragma once
 
-#include <cstddef>
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <mutex>
 #include <vector>
 
@@ -42,8 +42,7 @@ const char *cudssGetErrorString(int status);
  * If the status indicates an error, this macro will throw an exception with
  * a descriptive error message.
  */
-#define THROW_ON_CUDSS_ERROR(status)                                           \
-  CHECK_CUDA_ERROR(status, cudssGetErrorString, true)
+#define THROW_ON_CUDSS_ERROR(status) CHECK_CUDA_ERROR(status, cudssGetErrorString, true)
 
 /**
  * @brief Macro to check cuDSS status and log a warning on error.
@@ -51,8 +50,7 @@ const char *cudssGetErrorString(int status);
  * If the status indicates an error, this macro will log a warning but will
  * not throw an exception.
  */
-#define WARN_ON_CUDSS_ERROR(status)                                            \
-  CHECK_CUDA_ERROR(status, cudssGetErrorString, false)
+#define WARN_ON_CUDSS_ERROR(status) CHECK_CUDA_ERROR(status, cudssGetErrorString, false)
 
 /**
  * @brief Reusable device memory pool used by cuDSS callbacks.
@@ -62,7 +60,7 @@ const char *cudssGetErrorString(int status);
  * the retained capacity of an available block.
  */
 class cuDSSDeviceMemPool {
-public:
+ public:
   cuDSSDeviceMemPool() = default;
 
   cuDSSDeviceMemPool(const cuDSSDeviceMemPool &) = delete;
@@ -91,7 +89,7 @@ public:
    */
   int Dealloc(void *ptr, size_t size, cudaStream_t stream);
 
-private:
+ private:
   struct Block {
     void *ptr = nullptr;
     size_t capacity = 0;
@@ -105,14 +103,12 @@ private:
 /**
  * @brief C callback wrapper for cuDSS device allocation.
  */
-int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size,
-                            cudaStream_t stream);
+int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size, cudaStream_t stream);
 
 /**
  * @brief C callback wrapper for cuDSS device deallocation.
  */
-int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size,
-                              cudaStream_t stream);
+int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size, cudaStream_t stream);
 
 /**
  * @brief Installs a cuDSS memory handler backed by a custom pool.
@@ -139,7 +135,7 @@ void DetachcuDSSDeviceMemHandler(void *handle);
  * and automatically destroyed in the destructor.
  */
 class cuDSSHandle {
-public:
+ public:
   cuDSSHandle() = default;
 
   cuDSSHandle(const cuDSSHandle &) = delete;
@@ -161,9 +157,9 @@ public:
    */
   void *GetHandle(cudaStream_t stream);
 
-private:
-  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream.
-  void *handle_ = nullptr;        ///< The cuDSS handle.
+ private:
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
+  void *handle_ = nullptr;         ///< The cuDSS handle.
 };
 
 /**
@@ -173,7 +169,7 @@ private:
  * or a dense vector and manages its lifecycle.
  */
 class cuDSSDescription {
-public:
+ public:
   /**
    * @brief Constructs a cuDSS matrix descriptor from a CSR sparse matrix.
    *
@@ -200,8 +196,8 @@ public:
    */
   void *GetDescription() { return matrix_; }
 
-private:
-  void *matrix_; ///< The cuDSS matrix descriptor.
+ private:
+  void *matrix_;  ///< The cuDSS matrix descriptor.
 };
 
 /**
@@ -211,7 +207,7 @@ private:
  * parameters and options.
  */
 class cuDSSConfig {
-public:
+ public:
   /** @brief Constructor that creates a cuDSS configuration object. */
   cuDSSConfig(int reordering_algorithm = 0, int nthreads = 1);
 
@@ -224,8 +220,8 @@ public:
    */
   void *GetData() const { return config_; }
 
-private:
-  void *config_ = nullptr; ///< The cuDSS configuration handle.
+ private:
+  void *config_ = nullptr;  ///< The cuDSS configuration handle.
 };
 
 /**
@@ -235,7 +231,7 @@ private:
  * and working memory during the factorization and solve phases.
  */
 class cuDSSData {
-public:
+ public:
   cuDSSData() = default;
 
   /** @brief Destructor that releases the cuDSS data object. */
@@ -253,9 +249,9 @@ public:
    */
   void *GetData(void *handle);
 
-private:
-  void *handle_ = nullptr; ///< Associated cuDSS handle.
-  void *data_ = nullptr;   ///< The cuDSS data handle.
+ private:
+  void *handle_ = nullptr;  ///< Associated cuDSS handle.
+  void *data_ = nullptr;    ///< The cuDSS data handle.
 };
 
-} // namespace cunls
+}  // namespace cunls

@@ -117,4 +117,4 @@ bool NormalEquations::Solve(cudaStream_t stream, CSRSparseLinearSolver &solver,
   return solver.Solve(stream, csr_lhs_, rhs, step);
 }
 
-} // namespace cunls
+}  // namespace cunls
