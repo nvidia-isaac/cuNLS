@@ -933,6 +933,10 @@ TEST(HessianStorageTest, BlockDiagonalOpsMatchScalar) {
  * Same matrix, same right-hand side, same preconditioner -- so the solution and
  * the iteration count should match.  A divergence here points at the block
  * SpMV or the block-Jacobi tile gather rather than at assembly.
+ *
+ * The tolerance is one this preconditioner actually reaches on a pose graph.
+ * Asking for more only drives both solvers into the iteration cap, where the
+ * counts match trivially and the comparison stops testing anything.
  */
 TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
   auto data = MakePoseGraph(2048, /*fix_first_pose=*/true);
@@ -956,7 +960,7 @@ TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
   BlockSparsePCGOptions pcg_options;
   pcg_options.block_size = 6;
   pcg_options.max_iterations = 500;
-  pcg_options.relative_tolerance = 1e-6f;
+  pcg_options.relative_tolerance = 1e-3f;
 
   dvector<float> x_csr(n);
   dvector<float> x_bsr(n);
@@ -975,10 +979,20 @@ TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
   x_csr.CopyToHost(a.data(), n);
   x_bsr.CopyToHost(b.data(), n);
 
-  // Same iteration count means the two are tracking the same recurrence.  The
-  // solutions themselves only agree to the level PCG was asked for: it stops on
-  // a relative residual, so the reordered block SpMV moves x within that ball.
-  EXPECT_EQ(csr_solver.LastIterations(), bsr_solver.LastIterations());
+  // Both must stop on the residual test, not on the cap -- otherwise the counts
+  // agree only because they were clamped to the same number.
+  ASSERT_LT(csr_solver.LastIterations(), pcg_options.max_iterations);
+  ASSERT_LT(bsr_solver.LastIterations(), pcg_options.max_iterations);
+
+  // Near-equal iteration counts mean the two are tracking the same recurrence.
+  // Not exactly equal: the block SpMV sums each row in a different order, so the
+  // residual differs in its last bits and can cross the threshold an iteration
+  // early or late.  A real fault in the SpMV or the tile gather changes the
+  // count by far more than this, or stops it converging at all.
+  EXPECT_NEAR(csr_solver.LastIterations(), bsr_solver.LastIterations(), 2);
+
+  // The solutions themselves only agree to the level PCG was asked for: it stops
+  // on a relative residual, so the reordered block SpMV moves x within that ball.
   const float tol = 1e-3f * std::max(MaxAbs(a), 1e-6f);
   for (size_t i = 0; i < n; i++) {
     ASSERT_NEAR(a[i], b[i], tol) << "solution mismatch at " << i;
@@ -1232,15 +1246,24 @@ TEST(BlockHessianAssemblerTest, MatchesReferenceWithColumnScaling) {
   ASSERT_TRUE(data->problem.CheckConsistency());
 
   CudaStream stream;
-  MinimizerOptions options;
-  options.column_scaling = ColumnScaling::HessianDiagonal;
+  MinimizerOptions block_options;
+  block_options.column_scaling = ColumnScaling::HessianDiagonal;
 
-  SystemBuilder reference(options);
+  // Column scaling reads the Hessian diagonal and rescales the LHS in place, and
+  // both of those are implemented once per layout.  The reference therefore has
+  // to be the scalar path -- selecting a CSR-only backend is how a caller gets
+  // there -- or the comparison is block storage against itself.
+  MinimizerOptions scalar_options = block_options;
+  scalar_options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
+
+  SystemBuilder reference(scalar_options);
   reference.Build(stream.GetStream(), data->problem);
+  ASSERT_FALSE(reference.UsesBlockStorage());
   std::vector<float> expected = Snapshot(reference, stream.GetStream()).values;
 
-  SystemBuilder block(options);
+  SystemBuilder block(block_options);
   block.Build(stream.GetStream(), data->problem);
+  ASSERT_TRUE(block.UsesBlockStorage());
   std::vector<float> actual = Snapshot(block, stream.GetStream()).values;
 
   ASSERT_EQ(expected.size(), actual.size());

@@ -48,7 +48,12 @@ namespace cunls {
  * @param num_nonzeros Output argument for the number of non-zero elements
  *
  * The number of columns is determined by finding the maximum column index + 1.
- * Requires matrix to have at least one row and one non-zero element.
+ *
+ * An empty system is well-formed, not an error: a fully-constrained problem
+ * leaves nothing to solve, which is encoded as `row_offsets == {0}` (one more
+ * offset than rows, with no rows) and reported here as 0 x 0 with no nonzeros.
+ * Because the column count is a reduction over the column indices, it cannot be
+ * recovered when there are no nonzeros, and is reported as 0.
  */
 void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix &matrix, int &num_rows,
                            int &num_cols, int &num_nonzeros) {
@@ -242,8 +247,11 @@ __global__ void scale_symmetric_csr_rows_kernel(const int *__restrict__ row_offs
 }
 
 void ScaleSymmetricCSR(cudaStream_t stream, CSRSparseMatrix &matrix, const dvector<float> &scale) {
-  int num_rows = static_cast<int>(matrix.row_offsets.size() - 1);
+  int num_rows = static_cast<int>(matrix.NumRows());
   assert(static_cast<int>(scale.size()) == num_rows);
+  if (num_rows == 0) {
+    return;
+  }
   dim3 block(WARP_SIZE, 8);
   dim3 grid((num_rows + block.y - 1) / block.y);
   scale_symmetric_csr_rows_kernel<<<grid, block, 0, stream>>>(
@@ -287,9 +295,12 @@ void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float> &v, float fl
  * col).
  */
 void ExtractDiagonal(cudaStream_t stream, const CSRSparseMatrix &matrix, dvector<float> &diagonal) {
-  size_t num_rows = matrix.row_offsets.size() - 1;
+  size_t num_rows = matrix.NumRows();
 
   diagonal.resize(num_rows);
+  if (num_rows == 0) {
+    return;
+  }
   dim3 block(32, 4);
   dim3 grid((num_rows + block.y - 1) / block.y);
   extract_diagonal_kernel<<<grid, block, 0, stream>>>(matrix.row_offsets.data(),
@@ -371,7 +382,12 @@ void AddScaledDiagonal(cudaStream_t stream, float scale, const dvector<float> &d
   int num_rows = diagonal.size();
   assert(num_rows + 1 == matrix.row_offsets.size());
 
+  // The copy is the caller-visible half of the contract, so it happens even
+  // when there is no diagonal left to damp.
   CopyCSRSparseMatrix(stream, matrix, result);
+  if (num_rows == 0) {
+    return;
+  }
 
   // Launch one warp (32 threads) per row for warp-cooperative diagonal search
   constexpr int block_size = 256;  // Must be multiple of WARP_SIZE
@@ -410,17 +426,19 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const dvector<float> &
 /**
  * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
  *
- * Runs the SpMV into a slice of `buffer` and reduces against `step`, so the
- * whole thing stays on the stream with no host synchronization.
+ * Runs the SpMV into `scratch` and reduces against `step`, so the whole thing
+ * stays on the stream with no host synchronization.  `scratch` is caller-owned
+ * and resized here; it ties the buffer's lifetime to the object driving the
+ * stream rather than to the thread.
  */
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
                                      const CSRSparseMatrix &matrix, int num_rows, int num_cols,
                                      int num_nonzeros, const dvector<float> &step,
-                                     dvector<uint8_t> &buffer, float *d_out, float *d_partials) {
-  static thread_local dvector<float> spmv_result;
+                                     dvector<float> &scratch, dvector<uint8_t> &buffer,
+                                     float *d_out, float *d_partials) {
   SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, /*transpose_matrix=*/false,
-           step, spmv_result, buffer);
-  DotProductToDevice(stream, step.data(), spmv_result.data(), step.size(), d_out, d_partials);
+           step, scratch, buffer);
+  DotProductToDevice(stream, step.data(), scratch.data(), step.size(), d_out, d_partials);
 }
 
 /**

@@ -133,9 +133,9 @@ class NormalEquations {
   BSRSparseMatrix bsr_hessian_;
   BSRSparseMatrix bsr_lhs_;
 
-  CSRMatrixDimensions csr_dims_;       ///< Cached dims for the scalar SpMV.
-  dvector<int> tile_row_scratch_;      ///< Tile-to-block-row map for scaling.
-  dvector<float> block_spmv_scratch_;  ///< SpMV result for the block path.
+  CSRMatrixDimensions csr_dims_;   ///< Cached dims for the scalar SpMV.
+  dvector<int> tile_row_scratch_;  ///< Tile-to-block-row map for scaling.
+  dvector<float> spmv_scratch_;    ///< SpMV result, either layout.
 
   int block_size_ = 1;
 };

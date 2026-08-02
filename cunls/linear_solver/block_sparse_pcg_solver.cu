@@ -89,6 +89,7 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 #include "cunls/common/cusparse_helper.h"
 #include "cunls/common/helper.h"
@@ -258,18 +259,23 @@ __global__ void BsrMultiplyWarpKernel(int num_block_rows, const int *__restrict_
   }
 }
 
+/// Largest tile edge the generic BSR SpMV can accumulate per lane.
+/// Distinct from the preconditioner's block-size limit; this one is set by
+/// the fixed-size accumulator in BsrMultiplyWarpGenericKernel.
+constexpr int kMaxSpMVBlockSize = 16;
+
 /**
  * @brief Runtime-tile-edge fallback for block sizes without a specialization.
  *
- * Same schedule as BsrMultiplyWarpKernel; the accumulator is sized to the
- * largest edge ChooseHessianBlockSize can return.
+ * Same schedule as BsrMultiplyWarpKernel, but the per-lane accumulator is a
+ * fixed-size array, so the caller must reject edges above
+ * kMaxSpMVBlockSize before dispatching here.
  */
 __global__ void BsrMultiplyWarpGenericKernel(int num_block_rows, int block_size,
                                              const int *__restrict__ row_offsets,
                                              const int *__restrict__ col_ids,
                                              const float *__restrict__ values,
                                              const float *__restrict__ x, float *__restrict__ y) {
-  constexpr int kMaxBlockSize = 16;
   const int block_row = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
   const int lane = threadIdx.x & 31;
   if (block_row >= num_block_rows) {
@@ -278,7 +284,7 @@ __global__ void BsrMultiplyWarpGenericKernel(int num_block_rows, int block_size,
 
   const int b = block_size;
   const int end = row_offsets[block_row + 1];
-  float acc[kMaxBlockSize];
+  float acc[kMaxSpMVBlockSize];
   for (int k = 0; k < b; ++k) {
     acc[k] = 0.f;
   }
@@ -400,6 +406,12 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
     LAUNCH_WARP(8);
 #undef LAUNCH_WARP
     default:
+      // The generic kernel accumulates into a fixed-size per-lane array; a
+      // larger edge would write past it, silently, so refuse instead.
+      if (block_size > kMaxSpMVBlockSize) {
+        throw std::runtime_error("BSR SpMV: block size exceeds " +
+                                 std::to_string(kMaxSpMVBlockSize));
+      }
       BsrMultiplyWarpGenericKernel<<<grid, kThreads, 0, stream>>>(
           num_block_rows, block_size, row_offsets, col_ids, values, x, y);
       break;

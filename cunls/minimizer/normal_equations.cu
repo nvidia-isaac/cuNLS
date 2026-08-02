@@ -91,13 +91,12 @@ void NormalEquations::WeightedSquaredStepAsync(cudaStream_t stream, void *cuspar
                                                const dvector<float> &step, float *d_out,
                                                float *d_partials, dvector<uint8_t> &buffer) {
   if (UsesBlockStorage()) {
-    ComputeWeightedSquaredStepAsync(stream, bsr_hessian_, step, block_spmv_scratch_, d_out,
-                                    d_partials);
+    ComputeWeightedSquaredStepAsync(stream, bsr_hessian_, step, spmv_scratch_, d_out, d_partials);
     return;
   }
   ComputeWeightedSquaredStepAsync(stream, cusparse_handle, csr_hessian_, csr_dims_.num_rows,
-                                  csr_dims_.num_cols, csr_dims_.num_nonzeros, step, buffer, d_out,
-                                  d_partials);
+                                  csr_dims_.num_cols, csr_dims_.num_nonzeros, step, spmv_scratch_,
+                                  buffer, d_out, d_partials);
 }
 
 bool NormalEquations::InitializeSolver(cudaStream_t stream, CSRSparseLinearSolver &solver,

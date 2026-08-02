@@ -117,11 +117,14 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const dvector<float> &
  * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
  *
  * Performs SpMV (A*step) then dot(step, A*step) into d_out, all on the stream.
+ * `scratch` holds the SpMV result and is resized as needed; the caller owns it
+ * so that one buffer per driver object cannot be shared across streams.
  */
 void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
                                      const CSRSparseMatrix &matrix, int num_rows, int num_cols,
                                      int num_nonzeros, const dvector<float> &step,
-                                     dvector<uint8_t> &buffer, float *d_out, float *d_partials);
+                                     dvector<float> &scratch, dvector<uint8_t> &buffer,
+                                     float *d_out, float *d_partials);
 
 void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, size_t n);
 

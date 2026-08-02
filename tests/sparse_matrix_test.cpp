@@ -375,11 +375,12 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
     auto range = this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepSecond");
     int num_rows = 0, num_cols = 0, num_nonzeros = 0;
     ExtractMatrixMetadata(stream.GetStream(), input_matrix, num_rows, num_cols, num_nonzeros);
+    dvector<float> spmv_scratch;
     result =
         RunAsyncReduction(stream.GetStream(), dsteps.size(), [&](float *d_out, float *d_partials) {
           ComputeWeightedSquaredStepAsync(stream.GetStream(), handle, input_matrix, num_rows,
-                                          num_cols, num_nonzeros, dsteps, buffer, d_out,
-                                          d_partials);
+                                          num_cols, num_nonzeros, dsteps, spmv_scratch, buffer,
+                                          d_out, d_partials);
         });
   }
 
@@ -410,6 +411,55 @@ TEST(SparseMatrixColumnScaling, SymmetricScaling2x2) {
   ASSERT_NEAR(out[1], 1.f / 6.f, 1e-4f);
   ASSERT_NEAR(out[2], 1.f / 6.f, 1e-4f);
   ASSERT_NEAR(out[3], 1.f, 1e-4f);
+}
+
+/**
+ * @brief A 0x0 system is a valid CSR matrix, and every op over it is a no-op.
+ *
+ * `row_offsets == {0}` is the well-formed encoding of an empty matrix -- one
+ * more offset than rows, with no rows. Every one of these ops derives its grid
+ * from the row count, so a zero row count must be recognized before launch
+ * rather than turned into an empty grid.
+ */
+TEST(SparseMatrixEmptySystem, OperationsOnZeroRowMatrixAreNoOps) {
+  CSRSparseMatrix empty;
+  test_utils::CreateCSRSparseMatrix({0}, {}, {}, empty);
+  ASSERT_EQ(empty.NumRows(), 0);
+
+  CudaStream stream;
+  dvector<float> scale;
+  dvector<float> diagonal;
+
+  ScaleSymmetricCSR(stream.GetStream(), empty, scale);
+  ExtractDiagonal(stream.GetStream(), empty, diagonal);
+  EXPECT_EQ(diagonal.size(), 0u);
+
+  // Damping still has to produce the (empty) output matrix, since callers read
+  // `damped` afterwards regardless of size.
+  CSRSparseMatrix damped;
+  AddScaledDiagonal(stream.GetStream(), 1e-3f, diagonal, empty, damped);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  EXPECT_EQ(damped.NumRows(), 0);
+  EXPECT_EQ(damped.NumNonZeros(), 0);
+  ASSERT_EQ(damped.row_offsets.size(), 1u);
+  hvector<int> offsets(1);
+  damped.row_offsets.CopyToHost(offsets.data(), offsets.size());
+  EXPECT_EQ(offsets[0], 0);
+}
+
+/** @brief Metadata of an empty-but-well-formed CSR is 0x0 with no nonzeros. */
+TEST(SparseMatrixEmptySystem, MetadataOfZeroRowMatrixIsAllZero) {
+  CSRSparseMatrix empty;
+  test_utils::CreateCSRSparseMatrix({0}, {}, {}, empty);
+
+  CudaStream stream;
+  int num_rows = -1, num_cols = -1, num_nonzeros = -1;
+  ExtractMatrixMetadata(stream.GetStream(), empty, num_rows, num_cols, num_nonzeros);
+
+  EXPECT_EQ(num_rows, 0);
+  EXPECT_EQ(num_cols, 0);
+  EXPECT_EQ(num_nonzeros, 0);
 }
 
 }  // namespace cunls
