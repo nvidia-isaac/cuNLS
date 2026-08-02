@@ -31,7 +31,6 @@
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
-#include "cunls/minimizer/sparse_matrix_multiplier.h"
 
 // Convert a Python object to a raw device pointer (uintptr_t).
 //
