@@ -40,8 +40,8 @@ namespace cunls {
  */
 GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions &options)
     : options_(options),
-      solver_(CreateCSRSparseLinearSolver(options_.sparse_linear_solver_type,
-                                          options_.sparse_linear_solver_config)) {
+      solver_(CreateSparseLinearSolver(options_.sparse_linear_solver_type,
+                                       options_.sparse_linear_solver_config)) {
   if (options_.disable_safety_checks) {
     solver_->DisableSafetyChecks();
   }

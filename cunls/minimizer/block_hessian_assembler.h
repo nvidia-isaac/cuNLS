@@ -45,12 +45,18 @@ class Problem;
  * atomic count by exactly a factor of `m` and removes the triplet-to-CSR
  * conversion, the `J^T J` kernel and the RHS SpMV from every iteration.
  *
- * Storage stays plain CSR: the pattern produced by ComputeHessianStructure
- * lays out each block pair contiguously within a row and at the same
- * row-relative offset for every row of the block, so the scatter address is
- * `row_offsets[col_a + i] + write_offset(a,b) + j`.  No intermediate
- * block-format Hessian is needed, and every downstream consumer (LM damping,
- * column scaling, PCG, cuDSS) sees the matrix it already expects.
+ * The saving above is layout-independent: it comes from contracting per factor
+ * rather than per residual row, and it is the same whether the target is scalar
+ * CSR or block BSR.  Both are supported, selected by NormalEquations and passed
+ * in via the `block_size` overload of Initialize().  There is no intermediate
+ * Hessian and no conversion between the two — the assembler scatters straight
+ * into whichever layout it was initialized for.
+ *
+ * Scattering is direct in either case because the pattern produced by
+ * HessianStructureBuilder lays out each block pair contiguously within a row
+ * and at the same row-relative offset for every row of the block.  For scalar
+ * CSR the address is `row_offsets[col_a + i] + write_offset(a,b) + j`; for BSR
+ * the same offsets index tiles instead of entries.
  */
 class BlockHessianAssembler {
  public:

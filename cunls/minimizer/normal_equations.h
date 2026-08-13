@@ -20,7 +20,7 @@
 #include <cuda_runtime.h>
 
 #include "cunls/common/types.h"
-#include "cunls/linear_solver/csr_sparse_linear_solver.h"
+#include "cunls/linear_solver/sparse_linear_solver_base.h"
 #include "cunls/minimizer/block_hessian_assembler.h"
 #include "cunls/minimizer/bsr_matrix.h"
 
@@ -61,7 +61,7 @@ class NormalEquations {
    * @param problem The optimization problem.
    * @param num_cols Number of free tangent dimensions in the reduced system.
    * @param solver_supports_block_storage Whether the active solver can consume
-   *        block storage; see CSRSparseLinearSolver::SupportsBlockStorage.
+   *        block storage; see SparseLinearSolver::SupportsBlockStorage.
    */
   void Initialize(cudaStream_t stream, const Problem &problem, int num_cols,
                   bool solver_supports_block_storage);
@@ -108,11 +108,11 @@ class NormalEquations {
                                 dvector<uint8_t> &buffer);
 
   /** @brief Hands the working left-hand side to the solver for symbolic setup. */
-  bool InitializeSolver(cudaStream_t stream, CSRSparseLinearSolver &solver, const Problem &problem,
+  bool InitializeSolver(cudaStream_t stream, SparseLinearSolver &solver, const Problem &problem,
                         const dvector<float> &rhs, dvector<float> &step);
 
   /** @brief Solves with the working left-hand side. */
-  bool Solve(cudaStream_t stream, CSRSparseLinearSolver &solver, const dvector<float> &rhs,
+  bool Solve(cudaStream_t stream, SparseLinearSolver &solver, const dvector<float> &rhs,
              dvector<float> &step);
 
   /** @brief True when the block layout is live for the current problem. */

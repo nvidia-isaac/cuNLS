@@ -3,6 +3,7 @@ add_library(cunls_linear_solver OBJECT
   cudss_sparse_linear_solver.cpp
   dense_cholesky_solver.cu
   dense_linear_solver.cu
+  dense_linear_solver_base.cu
   dense_qr_solver.cu
   sparse_linear_solver.cpp
 )

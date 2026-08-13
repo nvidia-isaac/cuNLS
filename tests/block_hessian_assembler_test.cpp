@@ -50,6 +50,10 @@
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/factor/se3_between_factor_batch.h"
 #include "cunls/factor/vector_between_factor_batch.h"
+#include "cunls/linear_solver/dense_cholesky_solver.h"
+#include "cunls/linear_solver/dense_linear_solver.h"
+#include "cunls/linear_solver/dense_qr_solver.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/bsr_matrix.h"
 #include "cunls/minimizer/device_reduction.h"
@@ -1143,7 +1147,10 @@ TEST(HessianStorageTest, BlockSizeIsTheTangentDimensionGcd) {
 }
 
 TEST(HessianStorageTest, FallsBackToScalarWhenSolverNeedsCSR) {
-  // cuDSS consumes CSR, so block storage would only have to be expanded again.
+  // cuDSS consumes CSR, so the Hessian is assembled natively in CSR for it.
+  // Assembling in BSR and expanding would be strictly worse: the block layout's
+  // saving is the index array, which an expansion puts straight back, plus a
+  // per-iteration value permutation on top.
   auto data = MakePoseGraph(64, /*fix_first_pose=*/true);
   MinimizerOptions options;
   options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
@@ -1152,6 +1159,136 @@ TEST(HessianStorageTest, FallsBackToScalarWhenSolverNeedsCSR) {
   SystemBuilder builder(options);
   builder.Build(stream.GetStream(), data->problem);
   EXPECT_FALSE(builder.UsesBlockStorage());
+}
+
+/**
+ * @brief The storage layout must follow the problem, not the solver choice.
+ *
+ * A backend that densifies (or otherwise discards the sparse layout) has no
+ * reason to force the whole assembly onto scalar CSR, because doing so costs
+ * the block layout's smaller index array and the BuildSystem time with it.
+ * cuDSS is the one backend that genuinely cannot read tiles; every other one
+ * must take the block path on a problem that qualifies for it.
+ *
+ * This is the regression guard for that invariant: it is exactly the property
+ * that silently degrades if a new backend forgets to declare block support.
+ */
+TEST(HessianStorageTest, OnlyCuDSSDeclinesBlockStorage) {
+  auto data = MakePoseGraph(64, /*fix_first_pose=*/true);
+  ASSERT_EQ(6, ChooseHessianBlockSize(data->problem)) << "fixture must qualify for block storage";
+
+  const std::vector<std::pair<SparseLinearSolverType, const char *>> kBackends = {
+      {SparseLinearSolverType::cuDSS, "cuDSS"},
+      {SparseLinearSolverType::DenseLDLT, "DenseLDLT"},
+      {SparseLinearSolverType::DenseCholesky, "DenseCholesky"},
+      {SparseLinearSolverType::DenseQR, "DenseQR"},
+      {SparseLinearSolverType::BlockSparsePCG, "BlockSparsePCG"},
+  };
+
+  CudaStream stream;
+  for (const auto &[type, name] : kBackends) {
+    MinimizerOptions options;
+    options.sparse_linear_solver_type = type;
+    SystemBuilder builder(options);
+    builder.Build(stream.GetStream(), data->problem);
+
+    const bool expect_block = type != SparseLinearSolverType::cuDSS;
+    EXPECT_EQ(expect_block, builder.UsesBlockStorage())
+        << name << " selected the wrong Hessian storage layout";
+  }
+}
+
+/**
+ * @brief Every dense backend must read BSR and CSR to the same answer.
+ *
+ * The dense solvers scatter into an `n x n` buffer and never look at the sparse
+ * form again, so both layouts have to land identically in that buffer.  Solving
+ * the same system twice — once from tiles, once from the expanded scalar copy —
+ * compares the two scatter kernels through the factorization that consumes
+ * them, which is the only place a mis-scattered entry would actually matter.
+ */
+void ExpectDenseBackendAgreesAcrossLayouts(SparseLinearSolver &solver, Problem &problem) {
+  CudaStream stream;
+  cudaStream_t s = stream.GetStream();
+
+  SystemBuilder builder;
+  builder.Build(s, problem);
+  ASSERT_TRUE(builder.UsesBlockStorage()) << "fixture must qualify for block storage";
+
+  const size_t n = static_cast<size_t>(builder.Equations().LhsBSR().NumRows());
+
+  // Damp before solving, exactly as Levenberg-Marquardt does.  An undamped
+  // Gauss-Newton Hessian is only positive *semi*-definite whenever the problem
+  // has gauge freedom — a bundle with no fixed pose has seven such directions —
+  // and Cholesky rightly refuses it.  Damping is applied to the block LHS
+  // before the scalar copy is expanded from it, so both layouts hold the same
+  // matrix and the comparison stays about the scatter.
+  dvector<float> ones(1.f, n);
+  builder.Equations().AddScaledDiagonalToLhs(s, 1e-2f, ones);
+
+  const BSRSparseMatrix &bsr = builder.Equations().LhsBSR();
+  CSRSparseMatrix csr;
+  dvector<int> scratch;
+  test_utils::ExpandBSRToCSR(s, bsr, csr, scratch);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
+
+  ASSERT_EQ(n, csr.NumRows());
+
+  const dvector<float> &rhs = builder.Rhs();
+  ASSERT_EQ(n, rhs.size());
+  dvector<float> x_block(n);
+  dvector<float> x_scalar(n);
+
+  // Scalar first: it is the reference, and if the fixture's Hessian is not
+  // solvable by this backend at all, the failure should point at the fixture
+  // rather than at the block scatter under test.
+  Problem empty;
+  ASSERT_TRUE(solver.Initialize(s, empty, csr, rhs, x_scalar));
+  ASSERT_TRUE(solver.Solve(s, csr, rhs, x_scalar)) << "reference (scalar CSR) solve failed";
+  ASSERT_TRUE(solver.Initialize(s, empty, bsr, rhs, x_block));
+  ASSERT_TRUE(solver.Solve(s, bsr, rhs, x_block)) << "block (BSR) solve failed";
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
+
+  std::vector<float> block_host(n);
+  std::vector<float> scalar_host(n);
+  x_block.CopyToHost(block_host.data(), n);
+  x_scalar.CopyToHost(scalar_host.data(), n);
+
+  // The dense buffer is bit-identical either way; the factorization is the same
+  // code on the same input, so this is a tight bound rather than a solve-quality
+  // tolerance.
+  const float tol = 1e-5f * std::max(MaxAbs(scalar_host), 1e-6f);
+  for (size_t i = 0; i < block_host.size(); i++) {
+    ASSERT_NEAR(scalar_host[i], block_host[i], tol) << "solution mismatch at " << i;
+  }
+}
+
+TEST(HessianStorageTest, DenseLDLTAgreesAcrossLayouts) {
+  auto data = MakePoseGraph(48, /*fix_first_pose=*/true);
+  DenseLDLTSolver solver;
+  ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
+}
+
+TEST(HessianStorageTest, DenseCholeskyAgreesAcrossLayouts) {
+  auto data = MakePoseGraph(48, /*fix_first_pose=*/true);
+  DenseCholeskySolver solver;
+  ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
+}
+
+TEST(HessianStorageTest, DenseQRAgreesAcrossLayouts) {
+  auto data = MakePoseGraph(48, /*fix_first_pose=*/true);
+  DenseQRSolver solver;
+  ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
+}
+
+/**
+ * @brief Bundle-adjustment tiles are 3x3 and the block rows are skewed, which
+ * the pose-graph fixtures above do not exercise.
+ */
+TEST(HessianStorageTest, DenseCholeskyAgreesAcrossLayoutsOnBundle) {
+  auto data = MakeBundle(6, 120, /*robust_loss=*/false);
+  DenseCholeskySolver solver;
+  ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
 }
 
 // ============================================================================

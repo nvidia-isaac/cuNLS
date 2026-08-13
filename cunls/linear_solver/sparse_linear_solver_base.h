@@ -26,12 +26,18 @@ namespace cunls {
 class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
 
 /**
- * @brief Base class for linear solvers operating on CSR matrices.
+ * @brief Base class for solvers of the sparse symmetric system `A x = b`.
  *
- * Provides a common interface for solving sparse symmetric linear systems
- * Ax = b where the matrix A is stored in CSR (Compressed Sparse Row) format.
- * Derived classes implement specific solver strategies (e.g. cuDSS direct
- * factorization, dense pivoted LDLT, block-Jacobi PCG).
+ * Derived classes implement specific strategies (cuDSS direct factorization,
+ * dense pivoted LDLT / Cholesky / QR, block-Jacobi PCG).
+ *
+ * `A` arrives in one of two layouts, and every backend must accept at least
+ * scalar CSR: Initialize and Solve are pure virtual for @ref CSRSparseMatrix
+ * and defaulted for @ref BSRSparseMatrix.  A backend opts into the block form
+ * by overriding @ref SupportsBlockStorage together with the two BSR overloads;
+ * one that does not is never handed a BSR matrix, so its defaults are dead.
+ * The layout is decided once per problem in @ref NormalEquations, and no
+ * conversion between the two ever runs on the solve path.
  *
  * Initialize receives the originating @ref Problem so solvers can adapt
  * to its block / factor-graph structure (e.g.
@@ -39,7 +45,7 @@ class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
  * build its block-Jacobi preconditioner without a downcast at the call
  * site).  Solvers that don't care can simply ignore the argument.
  */
-class CSRSparseLinearSolver {
+class SparseLinearSolver {
  public:
   /**
    * @brief Performs setup work for the linear system.
@@ -90,8 +96,20 @@ class CSRSparseLinearSolver {
    *
    * The Hessian of a factor graph is naturally block structured, and assembling
    * it that way keeps one column index per tile instead of one per scalar
-   * entry.  Backends that say yes get the block form; the rest are handed an
-   * expanded CSR copy, so no caller has to care.
+   * entry.  Backends that say yes get the block form.
+   *
+   * Backends that say no are not handed a converted copy — no BSR-to-CSR
+   * expansion runs anywhere on the solve path.  Instead the Hessian is
+   * assembled *natively* in scalar CSR for them (see NormalEquations), which is
+   * their optimum: the block layout's saving is the index array, and
+   * materializing scalar indices for a CSR-only backend would give that saving
+   * straight back plus a per-iteration value permutation.
+   *
+   * The layout is therefore a property of the problem, and this method is a
+   * veto, not a request.  Vetoing costs the block-storage delta only — the
+   * smaller index array and the assembly time that comes with it — never the
+   * much larger block-wise *assembly* win, which is layout-independent and
+   * which every backend gets unconditionally.
    */
   virtual bool SupportsBlockStorage() const { return false; }
 
@@ -109,25 +127,22 @@ class CSRSparseLinearSolver {
   }
 
   /**
-   * @brief Disables post-factorization safety checks.
+   * @brief Advisory request to skip post-factorization safety checks.
    *
-   * By default, dense solvers copy a device-side status flag back to the
-   * host after factorization and synchronize the stream to detect singular
-   * or non-positive-definite matrices.  Calling this method skips the extra
-   * device-to-host memcpy, stream synchronization, and (for the LDLT solver)
-   * in-kernel pivot/diagonal checks, which can be a significant fraction of
-   * the total solve time for small systems.
+   * The dense backends copy a device-side status flag back to the host after
+   * factorization and synchronize the stream to detect singular or
+   * non-positive-definite matrices.  Skipping that removes a device-to-host
+   * memcpy, a stream synchronization, and (for LDLT) in-kernel pivot checks,
+   * which can be a significant fraction of the solve time for small systems.
+   *
+   * Backends with no such phase — cuDSS, which reports through its own status,
+   * and the PCG solver, which has no factorization — ignore this.  It is a
+   * hint, not a contract; see DenseLinearSolverBase for the implementation.
    */
-  void DisableSafetyChecks() { safety_checks_enabled_ = false; }
-
-  /** @brief Returns whether post-factorization safety checks are enabled. */
-  bool SafetyChecksEnabled() const { return safety_checks_enabled_; }
+  virtual void DisableSafetyChecks() {}
 
   /** @brief Virtual destructor for proper cleanup of derived solver instances.
    */
-  virtual ~CSRSparseLinearSolver() = default;
-
- protected:
-  bool safety_checks_enabled_ = true;
+  virtual ~SparseLinearSolver() = default;
 };
 }  // namespace cunls

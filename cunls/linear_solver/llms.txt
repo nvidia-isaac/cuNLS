@@ -6,14 +6,27 @@ Sparse linear system abstraction and implementation used by minimizers.
 
 ## Key types
 
-- `csr_sparse_linear_solver.h`: abstract `CSRSparseLinearSolver`
+- `sparse_linear_solver_base.h`: abstract `SparseLinearSolver` — CSR
+  `Initialize`/`Solve` are pure virtual; BSR counterparts are defaulted and
+  guarded by `SupportsBlockStorage()`.
 - `sparse_linear_solver.h`:
   - `SparseLinearSolverType`
   - `SparseLinearSolverConfig`
-  - `CreateCSRSparseLinearSolver(...)`
+  - `CreateSparseLinearSolver(...)`
+- `dense_linear_solver_base.h`:
+  - `DenseLinearSolverBase` — shared machinery for the backends that densify
+    before factorizing.  Owns `dense_matrix_`, dimension validation, the
+    CSR/BSR scatter and the layout dispatch; subclasses supply only
+    `EnsureBuffersSize` and `FactorizeAndSolve`.  `SupportsBlockStorage()` is
+    `true`: the sparse layout does not survive the scatter, so neither layout
+    can be better for them.
+- `dense_linear_solver.h`: `DenseLDLTSolver` — custom pivoted-LDLT kernels;
+  handles indefinite symmetric matrices.
+- `dense_cholesky_solver.h`: `DenseCholeskySolver` — cuSOLVER potrf/potrs.
+- `dense_qr_solver.h`: `DenseQRSolver` — cuSOLVER geqrf/ormqr + cuBLAS trsm.
 - `cudss_sparse_linear_solver.h`:
   - `cuDSSLinearSolverOptions`
-  - `cuDSSLinearSolver`
+  - `cuDSSLinearSolver` — the only backend that declines block storage.
 - `block_sparse_pcg_solver.h`:
   - `BlockSparsePCGOptions` — `block_size` / `block_layout`,
     `max_iterations`, `relative_tolerance`, `absolute_tolerance`,
@@ -28,8 +41,10 @@ Sparse linear system abstraction and implementation used by minimizers.
 
 ## Expected system form
 
-- Solves SPD systems in CSR format (`CSRSparseMatrix`), typically normal
-  equations assembled by `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`.
+- Solves SPD systems given as `CSRSparseMatrix` or, for backends that report
+  `SupportsBlockStorage()`, `BSRSparseMatrix` — typically normal equations
+  assembled by `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`.  The
+  layout is chosen in `NormalEquations`; no conversion runs on the solve path.
 
 ## Performance modes
 

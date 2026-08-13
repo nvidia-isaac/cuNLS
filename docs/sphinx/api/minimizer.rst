@@ -396,10 +396,16 @@ The layout is chosen automatically, with no user-facing switch. Block storage
 requires a tile edge dividing every state block's tangent dimension (the gcd of
 the tangent sizes; see :code:`ChooseHessianBlockSize` in
 ``cunls/minimizer/bsr_matrix.h``) **and** a solver that reports
-:code:`CSRSparseLinearSolver::SupportsBlockStorage`. When either does not hold —
-a gcd of one, or a backend such as cuDSS or the dense factorizations that needs
-CSR anyway — the minimizer falls back to scalar CSR with no behavioural change.
-No conversion is ever performed on the solver path.
+:code:`SparseLinearSolver::SupportsBlockStorage`. When either does not hold —
+a gcd of one, or a backend such as cuDSS that needs CSR anyway — the minimizer
+falls back to scalar CSR with no behavioural change. No conversion is ever
+performed on the solver path; the fallback is assembled natively in CSR.
+
+The dense factorizations (:code:`DenseLDLT`, :code:`DenseCholesky`,
+:code:`DenseQR`) accept either layout. They scatter the coefficient matrix into
+an ``n x n`` dense buffer and never consult the sparse form again, so the layout
+is invisible to them past the first kernel. cuDSS is the only backend that
+declines block storage.
 
 ================================================================================
 Python API (``pycunls``)

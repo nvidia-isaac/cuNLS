@@ -22,7 +22,7 @@
 #include <string>
 
 #include "cunls/common/cudss_helper.h"
-#include "cunls/linear_solver/csr_sparse_linear_solver.h"
+#include "cunls/linear_solver/sparse_linear_solver_base.h"
 
 namespace cunls {
 
@@ -59,14 +59,14 @@ struct cuDSSLinearSolverOptions {
  * Ax = b where A is symmetric positive definite. It uses NVIDIA's cuDSS
  * library for GPU-accelerated direct factorization.
  */
-class cuDSSLinearSolver : public CSRSparseLinearSolver {
+class cuDSSLinearSolver : public SparseLinearSolver {
  public:
   // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
   // base class's block-storage overloads are never called on it.  The
   // using-declarations keep them visible rather than hidden by the CSR
   // overrides below.
-  using CSRSparseLinearSolver::Initialize;
-  using CSRSparseLinearSolver::Solve;
+  using SparseLinearSolver::Initialize;
+  using SparseLinearSolver::Solve;
 
   /**
    * @brief Constructs a cuDSS linear solver.

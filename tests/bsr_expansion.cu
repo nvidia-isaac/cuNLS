@@ -66,7 +66,13 @@ __global__ void FillExpandedRowOffsetsKernel(int num_rows, int block_size,
   const int block_row = row / block_size;
   const int sub_row = row - block_row * block_size;
   const int whole = block_row_offsets[block_row] * block_size;
-  const int partial = sub_row * (block_row_offsets[block_row + 1] - block_row_offsets[block_row]);
+  // The sentinel row `num_rows` lands on block_row == num_block_rows, where
+  // block_row_offsets[block_row + 1] is out of bounds.  Its sub_row is 0, so
+  // the partial term is zero there anyway; skip the read rather than multiply
+  // it away.
+  const int partial =
+      (sub_row == 0) ? 0
+                     : sub_row * (block_row_offsets[block_row + 1] - block_row_offsets[block_row]);
   row_offsets[row] = (whole + partial) * block_size;
 }
 

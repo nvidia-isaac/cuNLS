@@ -22,77 +22,55 @@
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/cusolver_helper.h"
 #include "cunls/common/types.h"
-#include "cunls/linear_solver/csr_sparse_linear_solver.h"
+#include "cunls/linear_solver/dense_linear_solver_base.h"
 
 namespace cunls {
 
 /**
  * @brief Dense GPU linear solver based on QR factorization via cuSOLVER.
  *
- * Converts the input CSR matrix to a dense matrix and solves A x = b via:
+ * Densifies the coefficient matrix (from either sparse layout; see
+ * DenseLinearSolverBase) and solves A x = b via:
  *  1) QR factorization: A = Q R          (cusolverDnSgeqrf)
  *  2) Apply Q^T to rhs: y = Q^T b        (cusolverDnSormqr)
  *  3) Triangular solve:  R x = y          (cublasStrsm)
  *
  * Since the input matrix is symmetric, the row-major dense representation
- * produced by CSR conversion is identical to column-major, so no transpose
- * is required for the column-major cuSOLVER/cuBLAS APIs.
+ * produced by the scatter is identical to column-major, so no transpose is
+ * required for the column-major cuSOLVER/cuBLAS APIs.
  *
  * QR factorization works for any non-singular square matrix (not limited
  * to SPD). Returns false from Solve() if the factorization reports an error
  * via devInfo.
  */
-class DenseQRSolver : public CSRSparseLinearSolver {
- public:
-  // This backend consumes CSR only; SupportsBlockStorage() stays false, so the
-  // base class's block-storage overloads are never called on it.  The
-  // using-declarations keep them visible rather than hidden by the CSR
-  // overrides below.
-  using CSRSparseLinearSolver::Initialize;
-  using CSRSparseLinearSolver::Solve;
+class DenseQRSolver : public DenseLinearSolverBase {
+ protected:
+  /** @copydoc DenseLinearSolverBase::EnsureBuffersSize */
+  void EnsureBuffersSize(cudaStream_t stream, size_t n) final;
 
   /**
-   * @brief Validates dimensions and pre-allocates internal buffers.
-   *
-   * @param stream CUDA stream used to query the cuSOLVER workspace size.
-   * @param spd_matrix The coefficient matrix A in CSR format.
-   * @param rhs The right-hand side vector b (size must equal matrix rows).
-   * @param result Output vector x (size must equal matrix rows).
-   * @return true on success, false if a dimension mismatch is detected.
-   */
-  bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
-                  const dvector<float> &rhs, dvector<float> &result) final;
-
-  /**
-   * @brief Converts CSR to dense and solves via QR factorization.
+   * @brief Factorizes the dense matrix via QR and solves.
    *
    * The pipeline is:
-   *   1. CSR -> dense conversion.
-   *   2. cusolverDnSgeqrf  (in-place QR factorization).
+   *   1. cusolverDnSgeqrf  (in-place QR factorization).
+   *   2. Rank-deficiency check on R's diagonal (if safety checks enabled).
    *   3. Copy rhs into a work vector.
    *   4. cusolverDnSormqr   (Q^T * b in-place).
    *   5. cublasStrsm        (R x = Q^T b upper-triangular solve).
    *   6. Copy result from work vector.
-   *   7. Async copy of devInfo to pinned host, stream sync, host check.
    *
    * @param stream CUDA stream for asynchronous GPU operations.
-   * @param spd_matrix The coefficient matrix A in CSR format.
-   * @param rhs The right-hand side vector b (size must equal matrix rows).
-   * @param result Output vector x (size must equal matrix rows).
-   * @return true on success, false on dimension mismatch or singular matrix.
+   * @param n Matrix dimension.
+   * @param rhs The right-hand side vector b.
+   * @param result Output vector x.
+   * @return true on success, false on a singular or rank-deficient matrix.
    */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-             dvector<float> &result) final;
+  bool FactorizeAndSolve(cudaStream_t stream, int n, const dvector<float> &rhs,
+                         dvector<float> &result) final;
 
  private:
-  void EnsureBuffersSize(cudaStream_t stream, size_t n);
-
-  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
-                         dvector<float> &dense_matrix);
-
   cuSolverHandle cusolver_handle_;
   cuBLASHandle cublas_handle_;
-  dvector<float> dense_matrix_;
   dvector<float> tau_;
   dvector<float> workspace_;
   dvector<float> rhs_copy_;

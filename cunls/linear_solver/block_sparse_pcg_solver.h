@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "cunls/common/cusparse_helper.h"
-#include "cunls/linear_solver/csr_sparse_linear_solver.h"
+#include "cunls/linear_solver/sparse_linear_solver_base.h"
 
 namespace cunls {
 
@@ -155,7 +155,7 @@ struct BlockSparsePCGOptions {
  *    on every @ref Solve (cheap: one CTA per tile reads a few floats
  *    and does a small LDLT entirely in shared memory).
  */
-class BlockSparsePCGSolver : public CSRSparseLinearSolver {
+class BlockSparsePCGSolver : public SparseLinearSolver {
  public:
   /**
    * @brief Constructs the solver with the given options.
@@ -209,14 +209,14 @@ class BlockSparsePCGSolver : public CSRSparseLinearSolver {
   bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
                   const dvector<float> &rhs, dvector<float> &result) final;
 
-  /** @copydoc CSRSparseLinearSolver::SupportsBlockStorage */
+  /** @copydoc SparseLinearSolver::SupportsBlockStorage */
   bool SupportsBlockStorage() const override { return true; }
 
-  /** @copydoc CSRSparseLinearSolver::Initialize */
+  /** @copydoc SparseLinearSolver::Initialize */
   bool Initialize(cudaStream_t stream, const Problem &problem, const BSRSparseMatrix &spd_matrix,
                   const dvector<float> &rhs, dvector<float> &result) override;
 
-  /** @copydoc CSRSparseLinearSolver::Solve */
+  /** @copydoc SparseLinearSolver::Solve */
   bool Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) override;
 

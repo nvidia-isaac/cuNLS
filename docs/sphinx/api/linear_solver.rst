@@ -4,7 +4,9 @@ Linear Solver API
 
 `cunls/linear_solver` hosts linear-system abstractions (block-Jacobi PCG,
 cuDSS integration, dense pivoted LDLT, dense Cholesky, and dense QR
-solvers) behind a common CSR-based interface.
+solvers) behind a common interface. Every backend accepts scalar CSR; all
+but cuDSS also accept block BSR directly, which is what
+:cpp:func:`SupportsBlockStorage` reports.
 
 SparseLinearSolverType
 ----------------------
@@ -18,11 +20,11 @@ Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 - `cuDSS` — NVIDIA cuDSS sparse direct solver.  Pick when each Solve
   sees a tiny system and PCG's per-iter kernel-launch overhead
   dominates.
-- `DenseLDLT` — converts CSR to dense and solves with a custom CUDA
-  pivoted LDLT kernel.
-- `DenseCholesky` — converts CSR to dense and solves with cuSOLVER
-  Cholesky (requires SPD).
-- `DenseQR` — converts CSR to dense and solves with cuSOLVER QR.
+- `DenseLDLT` — densifies the coefficient matrix and solves with a custom
+  CUDA pivoted LDLT kernel.
+- `DenseCholesky` — densifies the coefficient matrix and solves with
+  cuSOLVER Cholesky (requires SPD).
+- `DenseQR` — densifies the coefficient matrix and solves with cuSOLVER QR.
 
 SparseLinearSolverConfig
 ------------------------
@@ -36,10 +38,10 @@ chosen ``SparseLinearSolverType`` is used:
   different backend is selected.
 - Dense backends take no extra configuration.
 
-CSRSparseLinearSolver
+SparseLinearSolver
 ---------------------
 
-Abstract base (`cunls/linear_solver/csr_sparse_linear_solver.h`).
+Abstract base (`cunls/linear_solver/sparse_linear_solver_base.h`).
 
 .. cpp:function:: bool Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
@@ -84,7 +86,9 @@ Abstract base (`cunls/linear_solver/csr_sparse_linear_solver.h`).
 
 .. cpp:function:: void DisableSafetyChecks()
 
-  Disables runtime safety checks in the solver.  By default (safety checks
+  Advisory request to skip post-factorization safety checks; backends with no
+  such phase (cuDSS, which reports through its own status, and PCG, which has
+  no factorization) ignore it.  By default (safety checks
   enabled), dense solvers validate every factorization and solve step:
   Cholesky checks cuSOLVER ``devInfo`` after ``potrf`` and ``potrs``; QR
   inspects the diagonal of ``R`` for rank deficiency; LDLT performs in-kernel
@@ -95,11 +99,6 @@ Abstract base (`cunls/linear_solver/csr_sparse_linear_solver.h`).
   for small systems but may produce silently incorrect results for singular
   or ill-conditioned matrices.  Normally called by the minimizer when
   ``MinimizerOptions::disable_safety_checks`` is ``true``.
-
-.. cpp:function:: bool SafetyChecksEnabled() const
-
-  :returns: ``true`` when post-factorization safety checks are enabled
-    (the default).
 
 BlockSparsePCGOptions
 ---------------------
@@ -360,7 +359,7 @@ Factory
 
 Function in `sparse_linear_solver.h`:
 
-.. cpp:function:: SparseLinearSolverPtr CreateCSRSparseLinearSolver(SparseLinearSolverType type, const SparseLinearSolverConfig& config)
+.. cpp:function:: SparseLinearSolverPtr CreateSparseLinearSolver(SparseLinearSolverType type, const SparseLinearSolverConfig& config)
 
   :param ``type``: [in] Backend type to instantiate.
   :param ``config``: [in] Backend-specific configuration blob.

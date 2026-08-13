@@ -26,15 +26,29 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
                                  bool solver_supports_block_storage) {
   csr_dims_.Invalidate();
 
-  // Block storage only pays off when the tangent dimensions share a factor and
-  // the solver can read tiles; a CSR-only backend would just have to expand
-  // them again.
-  block_size_ = solver_supports_block_storage ? ChooseHessianBlockSize(problem) : 1;
+  // Two independent conditions have to hold.  The tangent dimensions must share
+  // a factor, or there are no tiles to form; and the solver must be able to read
+  // tiles, since a CSR-only backend is better served by a natively assembled CSR
+  // than by one expanded from blocks.
+  const int problem_block_size = ChooseHessianBlockSize(problem);
+  block_size_ = solver_supports_block_storage ? problem_block_size : 1;
 
   if (UsesBlockStorage()) {
     assembler_.Initialize(stream, problem, num_cols, block_size_, bsr_hessian_);
     LogMessage("Hessian storage: BSR with block size {}", block_size_);
     return;
+  }
+
+  // Say which of the two conditions failed.  Falling back to scalar costs the
+  // block-storage delta, and a silent fallback is the kind of thing that only
+  // shows up as an unexplained regression in a profile.
+  if (problem_block_size <= 1) {
+    LogMessage("Hessian storage: CSR (tangent dimensions share no common factor)");
+  } else {
+    LogMessage(
+        "Hessian storage: CSR (solver does not accept block storage; "
+        "problem would have supported block size {})",
+        problem_block_size);
   }
 
   assembler_.Initialize(stream, problem, num_cols, csr_hessian_);
@@ -99,7 +113,7 @@ void NormalEquations::WeightedSquaredStepAsync(cudaStream_t stream, void *cuspar
                                   buffer, d_out, d_partials);
 }
 
-bool NormalEquations::InitializeSolver(cudaStream_t stream, CSRSparseLinearSolver &solver,
+bool NormalEquations::InitializeSolver(cudaStream_t stream, SparseLinearSolver &solver,
                                        const Problem &problem, const dvector<float> &rhs,
                                        dvector<float> &step) {
   if (UsesBlockStorage()) {
@@ -108,7 +122,7 @@ bool NormalEquations::InitializeSolver(cudaStream_t stream, CSRSparseLinearSolve
   return solver.Initialize(stream, problem, csr_lhs_, rhs, step);
 }
 
-bool NormalEquations::Solve(cudaStream_t stream, CSRSparseLinearSolver &solver,
+bool NormalEquations::Solve(cudaStream_t stream, SparseLinearSolver &solver,
                             const dvector<float> &rhs, dvector<float> &step) {
   if (UsesBlockStorage()) {
     return solver.Solve(stream, bsr_lhs_, rhs, step);
