@@ -21,74 +21,56 @@
 
 #include "cunls/common/cusolver_helper.h"
 #include "cunls/common/types.h"
-#include "cunls/linear_solver/csr_sparse_linear_solver.h"
+#include "cunls/linear_solver/dense_linear_solver_base.h"
 
 namespace cunls {
 
 /**
  * @brief Dense GPU linear solver based on Cholesky factorization via cuSOLVER.
  *
- * Converts the input CSR symmetric positive-definite matrix to a dense matrix
- * and solves A x = b via:
+ * Densifies the symmetric positive-definite coefficient matrix (from either
+ * sparse layout; see DenseLinearSolverBase) and solves A x = b via:
  *  1) Cholesky factorization: A = L L^T  (cusolverDnSpotrf)
  *  2) Triangular solve using the factor   (cusolverDnSpotrs)
  *
  * Since the input matrix is symmetric, the row-major dense representation
- * produced by CSR conversion is identical to column-major, so no transpose
- * is required for the column-major cuSOLVER API.
+ * produced by the scatter is identical to column-major, so no transpose is
+ * required for the column-major cuSOLVER API.
  *
  * Returns false from Solve() if the matrix is not positive-definite (cuSOLVER
  * reports a non-zero devInfo from potrf).
  */
-class DenseCholeskySolver : public CSRSparseLinearSolver {
-public:
-  /**
-   * @brief Validates dimensions and pre-allocates internal buffers.
-   *
-   * @param stream CUDA stream used to query the cuSOLVER workspace size.
-   * @param spd_matrix The SPD coefficient matrix A in CSR format.
-   * @param rhs The right-hand side vector b (size must equal matrix rows).
-   * @param result Output vector x (size must equal matrix rows).
-   * @return true on success, false if a dimension mismatch is detected.
-   */
-  bool Initialize(cudaStream_t stream, const Problem &problem,
-                  const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-                  dvector<float> &result) final;
+class DenseCholeskySolver : public DenseLinearSolverBase {
+ protected:
+  /** @copydoc DenseLinearSolverBase::EnsureBuffersSize */
+  void EnsureBuffersSize(cudaStream_t stream, size_t n) final;
 
   /**
-   * @brief Converts CSR to dense and solves via Cholesky factorization.
+   * @brief Factorizes the dense matrix via Cholesky and solves.
    *
    * The pipeline is:
-   *   1. CSR -> dense conversion.
-   *   2. cusolverDnSpotrf  (in-place Cholesky factorization).
-   *   3. devInfo check after potrf (if safety checks enabled).
-   *   4. Copy rhs into result (potrs works in-place on B).
-   *   5. cusolverDnSpotrs  (triangular solve).
-   *   6. devInfo check after potrs (if safety checks enabled).
+   *   1. cusolverDnSpotrf  (in-place Cholesky factorization).
+   *   2. devInfo check after potrf (if safety checks enabled).
+   *   3. Copy rhs into result (potrs works in-place on B).
+   *   4. cusolverDnSpotrs  (triangular solve).
+   *   5. devInfo check after potrs (if safety checks enabled).
    *
    * @param stream CUDA stream for asynchronous GPU operations.
-   * @param spd_matrix The SPD coefficient matrix A in CSR format.
-   * @param rhs The right-hand side vector b (size must equal matrix rows).
-   * @param result Output vector x (size must equal matrix rows).
-   * @return true on success, false on dimension mismatch, non-SPD matrix
-   *         (devInfo > 0 from potrf), or invalid parameter from potrs
-   *         (devInfo < 0).
+   * @param n Matrix dimension.
+   * @param rhs The right-hand side vector b.
+   * @param result Output vector x.
+   * @return true on success, false on a non-SPD matrix (devInfo > 0 from
+   *         potrf) or an invalid parameter from potrs (devInfo < 0).
    */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-             const dvector<float> &rhs, dvector<float> &result) final;
+  bool FactorizeAndSolve(cudaStream_t stream, int n, const dvector<float> &rhs,
+                         dvector<float> &result) final;
 
-private:
-  void EnsureBuffersSize(cudaStream_t stream, size_t n);
-
-  void ConvertCSRToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
-                         dvector<float> &dense_matrix);
-
+ private:
   cuSolverHandle cusolver_handle_;
-  dvector<float> dense_matrix_;
   dvector<float> workspace_;
   dvector<int> dev_info_;
   pvector<int> dev_info_pinned_;
   size_t last_n_ = 0;
 };
 
-} // namespace cunls
+}  // namespace cunls

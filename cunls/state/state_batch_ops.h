@@ -26,6 +26,24 @@
 namespace cunls {
 
 /**
+ * @brief Computes each state block's starting column in the reduced system.
+ *
+ * The reduced system omits constant state blocks, so a block's column offset is
+ * the running sum of the tangent sizes of the non-constant blocks before it.
+ * Constant blocks are marked with -1 so callers can distinguish "column 0" from
+ * "no column at all".
+ *
+ * @param stream CUDA stream for GPU operations.
+ * @param first_column Column index at which this batch's blocks start, i.e. the
+ *        total tangent size of all preceding batches' non-constant blocks.
+ * @param state_batch The state batch.
+ * @param[out] column_offsets One entry per state block; resized as needed.
+ */
+void ComputeStateBlockColumnOffsets(cudaStream_t stream, int first_column,
+                                    const StateBatch *state_batch,
+                                    DeviceVector<int> &column_offsets);
+
+/**
  * @brief Orchestrates manifold Plus operations across multiple state batches.
  *
  * StateBatchOps manages the mapping between a reduced (optimizable)
@@ -35,7 +53,7 @@ namespace cunls {
  * batch.
  */
 class StateBatchOps {
-public:
+ public:
   /**
    * @brief Constructs and preprocesses the operator for the given state
    * batches.
@@ -44,8 +62,7 @@ public:
    * preprocessing.
    * @param state_batches Vector of pointers to state batches to manage.
    */
-  StateBatchOps(cudaStream_t stream,
-                const std::vector<StateBatch *> &state_batches);
+  StateBatchOps(cudaStream_t stream, const std::vector<StateBatch *> &state_batches);
 
   /** @brief Default constructor. Call Preprocess() before use. */
   StateBatchOps() = default;
@@ -60,8 +77,7 @@ public:
    * @param stream        CUDA stream for asynchronous GPU operations.
    * @param state_batches Vector of pointers to state batches to manage.
    */
-  void Preprocess(cudaStream_t stream,
-                  const std::vector<StateBatch *> &state_batches);
+  void Preprocess(cudaStream_t stream, const std::vector<StateBatch *> &state_batches);
 
   /**
    * @brief Applies manifold Plus operations across all state batches.
@@ -79,8 +95,7 @@ public:
    *                         one per state batch.
    */
   void Plus(cudaStream_t stream, const std::vector<const float *> &x_ptrs,
-            const DeviceVector<float> &delta,
-            std::vector<float *> &x_plus_delta_ptrs);
+            const DeviceVector<float> &delta, std::vector<float *> &x_plus_delta_ptrs);
 
   /**
    * @brief Returns the number of reduced (non-constant) states.
@@ -90,12 +105,12 @@ public:
   size_t NumReducedStates() const { return num_reduced_states_; }
 
   // Protected for testing
-protected:
+ protected:
   /** @brief Device vector storing the mapping from reduced state indices to
    *         full (including constant) state indices. */
   DeviceVector<int> map_;
 
-private:
+ private:
   /**
    * @brief Allocates the full-size state updates buffer and computes per-batch
    * delta pointers.
@@ -112,8 +127,7 @@ private:
    * @param stream        CUDA stream for asynchronous GPU operations.
    * @param state_batches Vector of state batches.
    */
-  void InitMapping(cudaStream_t stream,
-                   const std::vector<StateBatch *> &state_batches);
+  void InitMapping(cudaStream_t stream, const std::vector<StateBatch *> &state_batches);
 
   /** @brief Cached pointers to the user-supplied state batches. */
   std::vector<StateBatch *> user_state_batches_;
@@ -129,4 +143,4 @@ private:
    * constant blocks. */
   size_t num_reduced_states_ = 0;
 };
-} // namespace cunls
+}  // namespace cunls

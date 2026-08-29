@@ -167,6 +167,12 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
 
       assert(param_ptrs.size() == new_ptrs.size());
 
+      // A factor batch may legitimately hold zero factors; a zero-size grid is
+      // an invalid launch configuration.
+      if (param_ptrs.empty()) {
+        continue;
+      }
+
       float **new_pointers = new_ptrs.data();
       float *const *old_pointers = param_ptrs.data();
 

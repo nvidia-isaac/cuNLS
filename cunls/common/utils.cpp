@@ -15,25 +15,23 @@
  * limitations under the License.
  */
 
+#include "cunls/common/utils.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <stdexcept>
 
-#include "cunls/common/utils.h"
-
 namespace cunls {
 
 /** @copydoc DumpCSRSparseMatrixToFile */
-void DumpCSRSparseMatrixToFile(const std::string &filename,
-                               const CSRSparseMatrix &matrix) {
+void DumpCSRSparseMatrixToFile(const std::string &filename, const CSRSparseMatrix &matrix) {
   // Copy device vectors to host vectors
   hvector<int> host_row_offsets(matrix.row_offsets.size());
   hvector<int> host_col_ids(matrix.col_ids.size());
   hvector<float> host_values(matrix.values.size());
 
-  matrix.row_offsets.CopyToHost(host_row_offsets.data(),
-                                host_row_offsets.size());
+  matrix.row_offsets.CopyToHost(host_row_offsets.data(), host_row_offsets.size());
   matrix.col_ids.CopyToHost(host_col_ids.data(), host_col_ids.size());
   matrix.values.CopyToHost(host_values.data(), host_values.size());
 
@@ -42,9 +40,7 @@ void DumpCSRSparseMatrixToFile(const std::string &filename,
   size_t num_nonzeros = matrix.NumNonZeros();
   size_t num_cols = 0;
   if (num_nonzeros > 0) {
-    num_cols = *std::max_element(host_col_ids.begin(),
-                                 host_col_ids.begin() + num_nonzeros) +
-               1;
+    num_cols = *std::max_element(host_col_ids.begin(), host_col_ids.begin() + num_nonzeros) + 1;
   }
 
   // Open file in append binary mode
@@ -60,8 +56,7 @@ void DumpCSRSparseMatrixToFile(const std::string &filename,
 
   file.write(reinterpret_cast<const char *>(&num_rows_u32), sizeof(uint32_t));
   file.write(reinterpret_cast<const char *>(&num_cols_u32), sizeof(uint32_t));
-  file.write(reinterpret_cast<const char *>(&num_nonzeros_u32),
-             sizeof(uint32_t));
+  file.write(reinterpret_cast<const char *>(&num_nonzeros_u32), sizeof(uint32_t));
 
   // Convert and write row_offsets (int -> uint32_t)
   for (size_t i = 0; i < host_row_offsets.size(); ++i) {
@@ -76,15 +71,13 @@ void DumpCSRSparseMatrixToFile(const std::string &filename,
   }
 
   // Write values (float)
-  file.write(reinterpret_cast<const char *>(host_values.data()),
-             num_nonzeros * sizeof(float));
+  file.write(reinterpret_cast<const char *>(host_values.data()), num_nonzeros * sizeof(float));
 
   file.close();
 }
 
 /** @copydoc DumpVectorToFile */
-void DumpVectorToFile(const std::string &filename,
-                      const dvector<float> &vector) {
+void DumpVectorToFile(const std::string &filename, const dvector<float> &vector) {
   // Copy device vector to host vector
   hvector<float> host_vector(vector.size());
   vector.CopyToHost(host_vector.data(), host_vector.size());
@@ -98,10 +91,9 @@ void DumpVectorToFile(const std::string &filename,
   // Write binary data according to the format
   uint32_t size = static_cast<uint32_t>(vector.size());
   file.write(reinterpret_cast<const char *>(&size), sizeof(uint32_t));
-  file.write(reinterpret_cast<const char *>(host_vector.data()),
-             size * sizeof(float));
+  file.write(reinterpret_cast<const char *>(host_vector.data()), size * sizeof(float));
 
   file.close();
 }
 
-} // namespace cunls
+}  // namespace cunls

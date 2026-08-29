@@ -18,9 +18,8 @@
 #include "cunls/common/profiler.h"
 
 #ifdef ENABLE_PROFILING
-#include <random>
-
 #include <nvtx3/nvtx3.hpp>
+#include <random>
 #endif
 
 namespace cunls::profiler {
@@ -58,11 +57,9 @@ DomainRange::~DomainRange() {
     nvtxDomainRangePop((nvtxDomainHandle_t)handle_);
   }
 }
-} // namespace internal
+}  // namespace internal
 
-ScopedRange::ScopedRange(const std::string &name) : name_(name) {
-  nvtxRangePushA(name_.c_str());
-};
+ScopedRange::ScopedRange(const std::string &name) : name_(name) { nvtxRangePushA(name_.c_str()); };
 
 /**
  * @brief Destructor that pops the range from the NVTX stack
@@ -73,8 +70,7 @@ ScopedRange::~ScopedRange() { nvtxRangePop(); }
  * @brief Constructs a new profiling domain with a random color
  * @param name The name of the domain (visible in profiling tools)
  */
-Domain::Domain(const std::string &name)
-    : name_(name), handle_(nvtxDomainCreateA(name_.c_str())) {
+Domain::Domain(const std::string &name) : name_(name), handle_(nvtxDomainCreateA(name_.c_str())) {
   std::random_device rd;
   std::mt19937 gen(rd());
 
@@ -104,14 +100,13 @@ namespace internal {
  * @param name The name to display in the profiler for this range
  * @param color The color for this range (ARGB format, default is 0)
  */
-DomainRange::DomainRange(void *handle, const std::string &name,
-                         uint32_t color) {}
+DomainRange::DomainRange(void *handle, const std::string &name, uint32_t color) {}
 
 /**
  * @brief Destructor that pops the range from the domain stack
  */
 DomainRange::~DomainRange() {}
-} // namespace internal
+}  // namespace internal
 
 ScopedRange::ScopedRange(const std::string &name) {}
 
@@ -141,4 +136,4 @@ internal::DomainRange Domain::CreateDomainRange(const std::string &name) const {
 }
 
 #endif
-} // namespace cunls::profiler
+}  // namespace cunls::profiler

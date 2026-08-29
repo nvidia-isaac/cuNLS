@@ -106,10 +106,7 @@ class TestLevenbergMarquardtMinimizer:
 
     @pytest.mark.parametrize(
         "scaling",
-        [
-            pycunls.ColumnScaling.hessian_diagonal,
-            pycunls.ColumnScaling.jacobian_column_norm,
-        ],
+        [pycunls.ColumnScaling.hessian_diagonal],
     )
     def test_converges_with_column_scaling(self, stream, scaling):
         problem, states_gpu, target = _make_prior_problem()

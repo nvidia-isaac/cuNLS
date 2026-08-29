@@ -122,18 +122,17 @@ struct LevenbergMarquardtMinimizerOptions {
  * while often converging faster than gradient descent.
  */
 class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
-public:
+ public:
   /**
    * @brief Constructs a Levenberg-Marquardt optimizer.
    *
    * @param options Configuration options. Defaults to standard LM options.
    */
   LevenbergMarquardtMinimizer(
-      const LevenbergMarquardtMinimizerOptions &options =
-          LevenbergMarquardtMinimizerOptions())
+      const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions())
       : GaussNewtonMinimizer(options.base_options), options_(options) {}
 
-private:
+ private:
   /**
    * @brief Initializes LM-specific data structures.
    *
@@ -156,38 +155,11 @@ private:
    * @param[out] rhs Output right-hand side vector (-J^T r).
    */
   void BuildSystem(cudaStream_t stream, const Problem &problem,
-                   const MinimizerState &minimizer_state, CSRSparseMatrix &lhs,
-                   dvector<float> &rhs) override;
+                   const MinimizerState &minimizer_state) override;
 
-  /**
-   * @brief Checks convergence using LM-specific criteria.
-   *
-   * Computes the rho metric (ratio of actual to predicted cost reduction) and
-   * checks convergence based on step size, cost, and predicted relative
-   * reduction.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param updated_cost Cost after applying the step.
-   * @param current_cost Cost before applying the step.
-   * @param step State update step vector.
-   * @param[out] step_quality Output rho metric (actual/predicted reduction).
-   * @return True if converged, false otherwise.
-   */
-  bool CheckConvergence(cudaStream_t stream, float updated_cost,
-                        float current_cost, const dvector<float> &step,
-                        float &step_quality) override;
-
-  /**
-   * @brief Fused cost + LM convergence with a single D2H + sync.
-   *
-   * Batches cost reduction, squared step norm, diag-weighted step norm,
-   * and sparse-weighted step norm into one memcpy and one sync.
-   */
   bool EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
-                                   const MinimizerState &updated_state,
-                                   float current_cost,
-                                   const dvector<float> &step,
-                                   float &updated_cost,
+                                   const MinimizerState &updated_state, float current_cost,
+                                   const dvector<float> &step, float &updated_cost,
                                    float &step_quality) override;
 
   /**
@@ -212,11 +184,11 @@ private:
    */
   bool RejectStep(float step_quality) override;
 
-  const LevenbergMarquardtMinimizerOptions options_; ///< LM-specific options.
+  const LevenbergMarquardtMinimizerOptions options_;  ///< LM-specific options.
 
-  dvector<float> diagonal_; ///< Diagonal of the Hessian matrix (J^T J).
+  dvector<float> diagonal_;  ///< Diagonal of the Hessian matrix (J^T J).
 
-  float lambda_; ///< Current damping factor.
+  float lambda_;  ///< Current damping factor.
 };
 
-} // namespace cunls
+}  // namespace cunls

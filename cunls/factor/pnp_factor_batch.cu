@@ -36,15 +36,12 @@ constexpr size_t kPnPBlockSize = 256;
  * Replaces: pnp_collect_poses_kernel + cuBLAS SGEMM (or memcpy) +
  * pnp_cost_kernel.
  */
-__global__ void pnp_fused_kernel(const Vector<2> *observations,
-                                 const Vector<3> *points_world,
+__global__ void pnp_fused_kernel(const Vector<2> *observations, const Vector<3> *points_world,
                                  float const *const *state_pointers,
-                                 const SE3Transform *poses_camera_from_rig,
-                                 float *residuals, float *jacobians,
-                                 float z_threshold, int num_observations) {
+                                 const SE3Transform *poses_camera_from_rig, float *residuals,
+                                 float *jacobians, float z_threshold, int num_observations) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_observations)
-    return;
+  if (tid >= num_observations) return;
 
   constexpr int kResidualDim = 2;
   constexpr int kJacobianCols = 6;
@@ -79,8 +76,7 @@ __global__ void pnp_fused_kernel(const Vector<2> *observations,
     pose[11] = e20 * r03 + e21 * r13 + e22 * r23 + e23;
   } else {
 #pragma unroll
-    for (int i = 0; i < 12; i++)
-      pose[i] = rig[i];
+    for (int i = 0; i < 12; i++) pose[i] = rig[i];
   }
 
   float point_cam[3];
@@ -110,8 +106,7 @@ __global__ void pnp_fused_kernel(const Vector<2> *observations,
 
     if (point_cam[2] < z_threshold) {
 #pragma unroll
-      for (int i = 0; i < kJacobianBlockSize; i++)
-        jac_ptr[i] = 0.0f;
+      for (int i = 0; i < kJacobianBlockSize; i++) jac_ptr[i] = 0.0f;
       return;
     }
 
@@ -152,23 +147,25 @@ __global__ void pnp_fused_kernel(const Vector<2> *observations,
   }
 }
 
-PnPFactorBatch::PnPFactorBatch(const Vector<2> *observations,
-                               const Vector<3> *points_world,
+PnPFactorBatch::PnPFactorBatch(const Vector<2> *observations, const Vector<3> *points_world,
                                size_t num_observations, float z_threshold)
-    : observations_(observations), points_world_(points_world),
-      num_observations_(num_observations), z_threshold_(z_threshold) {}
+    : observations_(observations),
+      points_world_(points_world),
+      num_observations_(num_observations),
+      z_threshold_(z_threshold) {}
 
 PnPFactorBatch::PnPFactorBatch(const Vector<2> *observations,
                                const SE3Transform *poses_camera_from_rig,
-                               const Vector<3> *points_world,
-                               size_t num_observations, float z_threshold)
-    : observations_(observations), points_world_(points_world),
+                               const Vector<3> *points_world, size_t num_observations,
+                               float z_threshold)
+    : observations_(observations),
+      points_world_(points_world),
       poses_camera_from_rig_(poses_camera_from_rig),
-      num_observations_(num_observations), z_threshold_(z_threshold) {}
+      num_observations_(num_observations),
+      z_threshold_(z_threshold) {}
 
 bool PnPFactorBatch::Evaluate(float *residuals, float *jacobians,
-                              float const *const *state_pointers,
-                              cudaStream_t stream) const {
+                              float const *const *state_pointers, cudaStream_t stream) const {
   if (num_observations_ == 0) {
     return true;
   }
@@ -176,11 +173,11 @@ bool PnPFactorBatch::Evaluate(float *residuals, float *jacobians,
   size_t num_blocks = (num_observations_ + kPnPBlockSize - 1) / kPnPBlockSize;
 
   pnp_fused_kernel<<<num_blocks, kPnPBlockSize, 0, stream>>>(
-      observations_, points_world_, state_pointers, poses_camera_from_rig_,
-      residuals, jacobians, z_threshold_, static_cast<int>(num_observations_));
+      observations_, points_world_, state_pointers, poses_camera_from_rig_, residuals, jacobians,
+      z_threshold_, static_cast<int>(num_observations_));
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-} // namespace cunls
+}  // namespace cunls

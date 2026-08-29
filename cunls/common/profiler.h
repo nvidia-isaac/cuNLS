@@ -29,7 +29,7 @@ namespace cunls::profiler {
  * and non-movable to ensure one-to-one scope-to-range mapping.
  */
 class ScopedRange {
-public:
+ public:
   ScopedRange(const ScopedRange &) = delete;
   ScopedRange &operator=(const ScopedRange &) = delete;
   ScopedRange(ScopedRange &&) = delete;
@@ -47,8 +47,8 @@ public:
    */
   ~ScopedRange();
 
-private:
-  std::string name_; ///< Label for the profiling range.
+ private:
+  std::string name_;  ///< Label for the profiling range.
 };
 
 namespace internal {
@@ -60,7 +60,7 @@ namespace internal {
  * and ends it on destruction. Used internally by Domain::CreateDomainRange.
  */
 class DomainRange {
-public:
+ public:
   DomainRange(const DomainRange &) = delete;
   DomainRange &operator=(const DomainRange &) = delete;
   DomainRange(DomainRange &&) = delete;
@@ -80,12 +80,12 @@ public:
    */
   ~DomainRange();
 
-private:
-  void *handle_ = nullptr; ///< Handle to the NVTX domain.
-  std::string name_;       ///< Copy of the name string to ensure lifetime.
+ private:
+  void *handle_ = nullptr;  ///< Handle to the NVTX domain.
+  std::string name_;        ///< Copy of the name string to ensure lifetime.
 };
 
-} // namespace internal
+}  // namespace internal
 
 /**
  * @brief NVTX profiling domain with automatic color cycling.
@@ -97,7 +97,7 @@ private:
  * Non-copyable and non-movable to ensure unique domain ownership.
  */
 class Domain {
-public:
+ public:
   Domain(const Domain &) = delete;
   Domain &operator=(const Domain &) = delete;
   Domain(Domain &&) = delete;
@@ -126,9 +126,9 @@ public:
    */
   internal::DomainRange CreateDomainRange(const std::string &name) const;
 
-private:
-  std::string name_;       ///< Copy of the name string to ensure lifetime.
-  void *handle_ = nullptr; ///< Handle to the NVTX domain.
-  uint32_t color_ = 0;     ///< Current color counter for range cycling.
+ private:
+  std::string name_;        ///< Copy of the name string to ensure lifetime.
+  void *handle_ = nullptr;  ///< Handle to the NVTX domain.
+  uint32_t color_ = 0;      ///< Current color counter for range cycling.
 };
-} // namespace cunls::profiler
+}  // namespace cunls::profiler

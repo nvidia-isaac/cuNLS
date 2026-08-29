@@ -36,8 +36,9 @@ namespace cunls {
  *
  * @tparam T The element type stored in the vector. Must be trivially copyable.
  */
-template <typename T> class DeviceVector {
-public:
+template <typename T>
+class DeviceVector {
+ public:
   /**
    * @brief Default constructor. Creates an empty vector with no allocated
    * memory.
@@ -69,9 +70,8 @@ public:
     if (num_elements > 0) {
       THROW_ON_CUDA_ERROR(cudaMalloc(&data_, num_elements * sizeof(T)));
       std::vector<T> host_data(num_elements, fill_value);
-      THROW_ON_CUDA_ERROR(cudaMemcpy(data_, host_data.data(),
-                                     num_elements * sizeof(T),
-                                     cudaMemcpyHostToDevice));
+      THROW_ON_CUDA_ERROR(
+          cudaMemcpy(data_, host_data.data(), num_elements * sizeof(T), cudaMemcpyHostToDevice));
     }
   }
 
@@ -82,11 +82,10 @@ public:
       T *pinned = nullptr;
       THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned, num_elements * sizeof(T)));
       std::fill(pinned, pinned + num_elements, fill_value);
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(data_, pinned,
-                                          num_elements * sizeof(T),
-                                          cudaMemcpyHostToDevice, stream));
       THROW_ON_CUDA_ERROR(
-          cudaLaunchHostFunc(stream, [](void *p) { cudaFreeHost(p); }, pinned));
+          cudaMemcpyAsync(data_, pinned, num_elements * sizeof(T), cudaMemcpyHostToDevice, stream));
+      THROW_ON_CUDA_ERROR(cudaLaunchHostFunc(
+          stream, [](void *p) { cudaFreeHost(p); }, pinned));
     }
   }
 
@@ -100,28 +99,25 @@ public:
    * @param host_vector The host vector to copy from.
    */
   explicit DeviceVector(const std::vector<T> &host_vector)
-      : data_(nullptr), size_(host_vector.size()),
-        capacity_(host_vector.size()) {
+      : data_(nullptr), size_(host_vector.size()), capacity_(host_vector.size()) {
     if (size_ > 0) {
       THROW_ON_CUDA_ERROR(cudaMalloc(&data_, size_ * sizeof(T)));
-      THROW_ON_CUDA_ERROR(cudaMemcpy(data_, host_vector.data(),
-                                     size_ * sizeof(T),
-                                     cudaMemcpyHostToDevice));
+      THROW_ON_CUDA_ERROR(
+          cudaMemcpy(data_, host_vector.data(), size_ * sizeof(T), cudaMemcpyHostToDevice));
     }
   }
 
   DeviceVector(const std::vector<T> &host_vector, cudaStream_t stream)
-      : data_(nullptr), size_(host_vector.size()),
-        capacity_(host_vector.size()) {
+      : data_(nullptr), size_(host_vector.size()), capacity_(host_vector.size()) {
     if (size_ > 0) {
       THROW_ON_CUDA_ERROR(cudaMalloc(&data_, size_ * sizeof(T)));
       T *pinned = nullptr;
       THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned, size_ * sizeof(T)));
       std::copy(host_vector.begin(), host_vector.end(), pinned);
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(data_, pinned, size_ * sizeof(T),
-                                          cudaMemcpyHostToDevice, stream));
       THROW_ON_CUDA_ERROR(
-          cudaLaunchHostFunc(stream, [](void *p) { cudaFreeHost(p); }, pinned));
+          cudaMemcpyAsync(data_, pinned, size_ * sizeof(T), cudaMemcpyHostToDevice, stream));
+      THROW_ON_CUDA_ERROR(cudaLaunchHostFunc(
+          stream, [](void *p) { cudaFreeHost(p); }, pinned));
     }
   }
 
@@ -222,12 +218,10 @@ public:
    */
   void CopyFromHost(const T *src, size_t num_elements) {
     if (num_elements > capacity_) {
-      throw std::runtime_error(
-          "CopyFromHost: num_elements exceeds allocated capacity");
+      throw std::runtime_error("CopyFromHost: num_elements exceeds allocated capacity");
     }
     if (num_elements > 0) {
-      THROW_ON_CUDA_ERROR(cudaMemcpy(data_, src, num_elements * sizeof(T),
-                                     cudaMemcpyHostToDevice));
+      THROW_ON_CUDA_ERROR(cudaMemcpy(data_, src, num_elements * sizeof(T), cudaMemcpyHostToDevice));
     }
     size_ = num_elements;
   }
@@ -244,8 +238,7 @@ public:
       throw std::runtime_error("CopyToHost: num_elements exceeds stored size");
     }
     if (num_elements > 0) {
-      THROW_ON_CUDA_ERROR(cudaMemcpy(dst, data_, num_elements * sizeof(T),
-                                     cudaMemcpyDeviceToHost));
+      THROW_ON_CUDA_ERROR(cudaMemcpy(dst, data_, num_elements * sizeof(T), cudaMemcpyDeviceToHost));
     }
   }
 
@@ -257,16 +250,13 @@ public:
    * @param stream CUDA stream for the async operation.
    * @throws std::runtime_error if num_elements exceeds capacity.
    */
-  void CopyFromHostAsync(const T *src, size_t num_elements,
-                         CudaStream &stream) {
+  void CopyFromHostAsync(const T *src, size_t num_elements, CudaStream &stream) {
     if (num_elements > capacity_) {
-      throw std::runtime_error(
-          "CopyFromHostAsync: num_elements exceeds allocated capacity");
+      throw std::runtime_error("CopyFromHostAsync: num_elements exceeds allocated capacity");
     }
     if (num_elements > 0) {
       THROW_ON_CUDA_ERROR(cudaMemcpyAsync(data_, src, num_elements * sizeof(T),
-                                          cudaMemcpyHostToDevice,
-                                          stream.GetStream()));
+                                          cudaMemcpyHostToDevice, stream.GetStream()));
     }
     size_ = num_elements;
   }
@@ -281,13 +271,11 @@ public:
    */
   void CopyToHostAsync(T *dst, size_t num_elements, CudaStream &stream) const {
     if (num_elements > size_) {
-      throw std::runtime_error(
-          "CopyToHostAsync: num_elements exceeds stored size");
+      throw std::runtime_error("CopyToHostAsync: num_elements exceeds stored size");
     }
     if (num_elements > 0) {
       THROW_ON_CUDA_ERROR(cudaMemcpyAsync(dst, data_, num_elements * sizeof(T),
-                                          cudaMemcpyDeviceToHost,
-                                          stream.GetStream()));
+                                          cudaMemcpyDeviceToHost, stream.GetStream()));
     }
   }
 
@@ -314,8 +302,7 @@ public:
 
     // Copy existing data if requested
     if (preserve_data && data_ != nullptr && size_ > 0) {
-      THROW_ON_CUDA_ERROR(cudaMemcpy(new_data, data_, size_ * sizeof(T),
-                                     cudaMemcpyDeviceToDevice));
+      THROW_ON_CUDA_ERROR(cudaMemcpy(new_data, data_, size_ * sizeof(T), cudaMemcpyDeviceToDevice));
     }
 
     // Free old memory
@@ -346,8 +333,7 @@ public:
 
     // Copy existing data
     if (data_ != nullptr && size_ > 0) {
-      THROW_ON_CUDA_ERROR(cudaMemcpy(new_data, data_, size_ * sizeof(T),
-                                     cudaMemcpyDeviceToDevice));
+      THROW_ON_CUDA_ERROR(cudaMemcpy(new_data, data_, size_ * sizeof(T), cudaMemcpyDeviceToDevice));
     }
 
     // Free old memory
@@ -387,8 +373,7 @@ public:
     THROW_ON_CUDA_ERROR(cudaMalloc(&new_data, size_ * sizeof(T)));
 
     // Copy data
-    THROW_ON_CUDA_ERROR(cudaMemcpy(new_data, data_, size_ * sizeof(T),
-                                   cudaMemcpyDeviceToDevice));
+    THROW_ON_CUDA_ERROR(cudaMemcpy(new_data, data_, size_ * sizeof(T), cudaMemcpyDeviceToDevice));
 
     // Free old memory
     WARN_ON_CUDA_ERROR(cudaFree(data_));
@@ -397,10 +382,10 @@ public:
     capacity_ = size_;
   }
 
-private:
-  T *data_;         ///< Pointer to device memory
-  size_t size_;     ///< Number of elements stored
-  size_t capacity_; ///< Number of elements allocated
+ private:
+  T *data_;          ///< Pointer to device memory
+  size_t size_;      ///< Number of elements stored
+  size_t capacity_;  ///< Number of elements allocated
 };
 
-} // namespace cunls
+}  // namespace cunls

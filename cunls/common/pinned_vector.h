@@ -45,8 +45,9 @@ namespace cunls {
  *
  * @tparam T Element type. Must be trivially copyable.
  */
-template <typename T> class PinnedVector {
-public:
+template <typename T>
+class PinnedVector {
+ public:
   /** @brief Default constructor. Creates an empty vector with no allocation. */
   PinnedVector() : data_(nullptr), size_(0), capacity_(0) {}
 
@@ -163,10 +164,10 @@ public:
     size_ = new_size;
   }
 
-private:
-  T *data_;         ///< Pointer to page-locked host memory.
-  size_t size_;     ///< Number of elements stored.
-  size_t capacity_; ///< Number of elements allocated.
+ private:
+  T *data_;          ///< Pointer to page-locked host memory.
+  size_t size_;      ///< Number of elements stored.
+  size_t capacity_;  ///< Number of elements allocated.
 };
 
-} // namespace cunls
+}  // namespace cunls

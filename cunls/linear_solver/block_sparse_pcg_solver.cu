@@ -89,6 +89,7 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 #include "cunls/common/cusparse_helper.h"
 #include "cunls/common/helper.h"
@@ -133,13 +134,309 @@ constexpr int kMaxBlockSize = 16;
  *
  * @tparam B Compile-time tile side length.
  */
+
+/**
+ * @brief Gathers one row of a diagonal tile out of scalar CSR.
+ *
+ * Column indices are sorted within a row, so the scan can stop as soon as it
+ * walks past the tile.  For SBA pose rows, whose many landmark columns sort
+ * after the diagonal tile, that turns an O(nnz_per_row) scan into O(B).
+ */
+__device__ __forceinline__ void GatherTileRowCSR(const int *__restrict__ row_off,
+                                                 const int *__restrict__ col_idx,
+                                                 const float *__restrict__ values, int col_lo,
+                                                 int B, int rr, float *tile_row) {
+  const int global_row = col_lo + rr;
+  const int col_hi = col_lo + B;
+  for (int k = row_off[global_row]; k < row_off[global_row + 1]; ++k) {
+    int c = col_idx[k];
+    if (c >= col_hi) {
+      break;
+    }
+    if (c >= col_lo) {
+      tile_row[c - col_lo] = values[k];
+    }
+  }
+}
+
+/**
+ * @brief Same, out of uniform block storage.
+ *
+ * The scan walks the enclosing block row, which holds one index per tile
+ * instead of one per scalar column -- `block_size` times shorter than the CSR
+ * row it replaces.  `B` need not be a multiple of `block_size`; the overlap
+ * test below handles partial tiles.
+ */
+__device__ __forceinline__ void GatherTileRowBSR(const int *__restrict__ row_off,
+                                                 const int *__restrict__ col_idx,
+                                                 const float *__restrict__ values, int block_size,
+                                                 int col_lo, int B, int rr, float *tile_row) {
+  const int global_row = col_lo + rr;
+  const int block_row = global_row / block_size;
+  const int sub_row = global_row - block_row * block_size;
+  const int col_hi = col_lo + B;
+  const int tile_area = block_size * block_size;
+  for (int t = row_off[block_row]; t < row_off[block_row + 1]; ++t) {
+    const int c0 = col_idx[t] * block_size;
+    if (c0 >= col_hi) {
+      break;
+    }
+    if (c0 + block_size <= col_lo) {
+      continue;
+    }
+    const float *src = values + static_cast<size_t>(t) * tile_area + sub_row * block_size;
+    for (int l = 0; l < block_size; ++l) {
+      const int c = c0 + l;
+      if (c >= col_lo && c < col_hi) {
+        tile_row[c - col_lo] = src[l];
+      }
+    }
+  }
+}
+
+/**
+ * @brief y = A * x for uniform block storage, one warp per block row.
+ *
+ * cuSPARSE's `cusparseSbsrmv` measured 3.6x slower than `csrmv_v3` on a
+ * bundle-adjustment Hessian with 3x3 tiles, which would negate the point of
+ * block storage, so the SpMV is written here.
+ *
+ * A warp per block row rather than a thread per row: bundle-adjustment Hessians
+ * are wildly non-uniform -- a pose block row holds one tile per observation of
+ * that camera (thousands) while a landmark row holds a handful -- so a
+ * thread-per-row schedule leaves the few pose threads serializing for as long
+ * as the whole kernel takes.  Lanes stride over the row's tiles instead, and a
+ * butterfly reduction combines their partial `b`-vectors.
+ *
+ * @tparam kB Tile edge.
+ */
+template <int kB>
+__global__ void BsrMultiplyWarpKernel(int num_block_rows, const int *__restrict__ row_offsets,
+                                      const int *__restrict__ col_ids,
+                                      const float *__restrict__ values, const float *__restrict__ x,
+                                      float *__restrict__ y) {
+  const int block_row = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+  const int lane = threadIdx.x & 31;
+  if (block_row >= num_block_rows) {
+    return;
+  }
+
+  const int end = row_offsets[block_row + 1];
+  float acc[kB];
+#pragma unroll
+  for (int k = 0; k < kB; ++k) {
+    acc[k] = 0.f;
+  }
+
+  for (int t = row_offsets[block_row] + lane; t < end; t += 32) {
+    const float *tile = values + static_cast<size_t>(t) * kB * kB;
+    const float *xs = x + static_cast<size_t>(col_ids[t]) * kB;
+    float xv[kB];
+#pragma unroll
+    for (int l = 0; l < kB; ++l) {
+      xv[l] = xs[l];
+    }
+#pragma unroll
+    for (int k = 0; k < kB; ++k) {
+#pragma unroll
+      for (int l = 0; l < kB; ++l) {
+        acc[k] = fmaf(tile[k * kB + l], xv[l], acc[k]);
+      }
+    }
+  }
+
+  // Butterfly rather than shfl_down so every lane ends with the totals and the
+  // first kB lanes can write the output run coalesced.
+#pragma unroll
+  for (int k = 0; k < kB; ++k) {
+#pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      acc[k] += __shfl_xor_sync(0xFFFFFFFFu, acc[k], offset);
+    }
+  }
+  if (lane < kB) {
+    y[block_row * kB + lane] = acc[lane];
+  }
+}
+
+/// Largest tile edge the generic BSR SpMV can accumulate per lane.
+/// Distinct from the preconditioner's block-size limit; this one is set by
+/// the fixed-size accumulator in BsrMultiplyWarpGenericKernel.
+constexpr int kMaxSpMVBlockSize = 16;
+
+/**
+ * @brief Runtime-tile-edge fallback for block sizes without a specialization.
+ *
+ * Same schedule as BsrMultiplyWarpKernel, but the per-lane accumulator is a
+ * fixed-size array, so the caller must reject edges above
+ * kMaxSpMVBlockSize before dispatching here.
+ */
+__global__ void BsrMultiplyWarpGenericKernel(int num_block_rows, int block_size,
+                                             const int *__restrict__ row_offsets,
+                                             const int *__restrict__ col_ids,
+                                             const float *__restrict__ values,
+                                             const float *__restrict__ x, float *__restrict__ y) {
+  const int block_row = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+  const int lane = threadIdx.x & 31;
+  if (block_row >= num_block_rows) {
+    return;
+  }
+
+  const int b = block_size;
+  const int end = row_offsets[block_row + 1];
+  float acc[kMaxSpMVBlockSize];
+  for (int k = 0; k < b; ++k) {
+    acc[k] = 0.f;
+  }
+
+  for (int t = row_offsets[block_row] + lane; t < end; t += 32) {
+    const float *tile = values + static_cast<size_t>(t) * b * b;
+    const float *xs = x + static_cast<size_t>(col_ids[t]) * b;
+    for (int k = 0; k < b; ++k) {
+      float a = 0.f;
+      for (int l = 0; l < b; ++l) {
+        a = fmaf(tile[k * b + l], xs[l], a);
+      }
+      acc[k] += a;
+    }
+  }
+
+  for (int k = 0; k < b; ++k) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      acc[k] += __shfl_xor_sync(0xFFFFFFFFu, acc[k], offset);
+    }
+  }
+  if (lane < b) {
+    y[block_row * b + lane] = acc[lane];
+  }
+}
+
+/**
+ * @brief y = A * x, one thread per scalar row.
+ *
+ * The right schedule for near-uniform, short block rows -- a pose graph has a
+ * handful of tiles per row, so a whole warp per row would leave most lanes idle
+ * and pay for a reduction that spans mostly zeros.  Thread `i` walks row
+ * `i % b` of every tile in block row `i / b`; the `b` consecutive threads
+ * sharing a block row read each tile as one contiguous run and broadcast their
+ * identical `col_ids` and `x` loads.
+ *
+ * @tparam kB Tile edge, or 0 to take it as a runtime argument.
+ */
+template <int kB>
+__global__ void BsrMultiplyRowKernel(int num_rows, int runtime_block_size,
+                                     const int *__restrict__ row_offsets,
+                                     const int *__restrict__ col_ids,
+                                     const float *__restrict__ values, const float *__restrict__ x,
+                                     float *__restrict__ y) {
+  const int row = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row >= num_rows) {
+    return;
+  }
+  const int b = kB > 0 ? kB : runtime_block_size;
+  const int block_row = row / b;
+  const int sub_row = row - block_row * b;
+
+  float acc = 0.f;
+  const int end = row_offsets[block_row + 1];
+  for (int t = row_offsets[block_row]; t < end; ++t) {
+    const float *tile = values + static_cast<size_t>(t) * b * b + sub_row * b;
+    const float *xs = x + static_cast<size_t>(col_ids[t]) * b;
+    for (int l = 0; l < b; ++l) {
+      acc = fmaf(tile[l], xs[l], acc);
+    }
+  }
+  y[row] = acc;
+}
+
+/**
+ * @brief Launches the BSR SpMV, choosing a schedule from the row lengths.
+ *
+ * A warp per block row tolerates skew but wastes lanes on short rows; a thread
+ * per scalar row is the opposite.  Bundle adjustment needs the former (pose
+ * rows hold thousands of tiles), pose graphs the latter (every row holds a
+ * handful), so the peak row length decides.
+ */
+void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
+                       int max_tiles_per_row, const int *row_offsets, const int *col_ids,
+                       const float *values, const float *x, float *y) {
+  constexpr int kThreads = 128;
+  constexpr int kSkewThreshold = 32;
+
+  if (max_tiles_per_row < kSkewThreshold) {
+    const int num_rows = num_block_rows * block_size;
+    const int grid = (num_rows + kThreads - 1) / kThreads;
+    switch (block_size) {
+#define LAUNCH_ROW(BVAL)                                                                     \
+  case BVAL:                                                                                 \
+    BsrMultiplyRowKernel<BVAL>                                                               \
+        <<<grid, kThreads, 0, stream>>>(num_rows, BVAL, row_offsets, col_ids, values, x, y); \
+    break
+      LAUNCH_ROW(2);
+      LAUNCH_ROW(3);
+      LAUNCH_ROW(4);
+      LAUNCH_ROW(6);
+      LAUNCH_ROW(7);
+      LAUNCH_ROW(15);
+      LAUNCH_ROW(16);
+#undef LAUNCH_ROW
+      default:
+        BsrMultiplyRowKernel<0><<<grid, kThreads, 0, stream>>>(num_rows, block_size, row_offsets,
+                                                               col_ids, values, x, y);
+        break;
+    }
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
+    return;
+  }
+
+  const int warps_per_block = kThreads / 32;
+  const int grid = (num_block_rows + warps_per_block - 1) / warps_per_block;
+  switch (block_size) {
+#define LAUNCH_WARP(BVAL)                                                                    \
+  case BVAL:                                                                                 \
+    BsrMultiplyWarpKernel<BVAL>                                                              \
+        <<<grid, kThreads, 0, stream>>>(num_block_rows, row_offsets, col_ids, values, x, y); \
+    break
+    LAUNCH_WARP(2);
+    LAUNCH_WARP(3);
+    LAUNCH_WARP(4);
+    LAUNCH_WARP(5);
+    LAUNCH_WARP(6);
+    LAUNCH_WARP(7);
+    LAUNCH_WARP(8);
+#undef LAUNCH_WARP
+    default:
+      // The generic kernel accumulates into a fixed-size per-lane array; a
+      // larger edge would write past it, silently, so refuse instead.
+      if (block_size > kMaxSpMVBlockSize) {
+        throw std::runtime_error("BSR SpMV: block size exceeds " +
+                                 std::to_string(kMaxSpMVBlockSize));
+      }
+      BsrMultiplyWarpGenericKernel<<<grid, kThreads, 0, stream>>>(
+          num_block_rows, block_size, row_offsets, col_ids, values, x, y);
+      break;
+  }
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+/** @brief Dispatches the gather on the storage layout. */
+__device__ __forceinline__ void GatherTileRow(const int *__restrict__ row_off,
+                                              const int *__restrict__ col_idx,
+                                              const float *__restrict__ values, bool block_storage,
+                                              int block_size, int col_lo, int B, int rr,
+                                              float *tile_row) {
+  if (block_storage) {
+    GatherTileRowBSR(row_off, col_idx, values, block_size, col_lo, B, rr, tile_row);
+  } else {
+    GatherTileRowCSR(row_off, col_idx, values, col_lo, B, rr, tile_row);
+  }
+}
+
 template <int B>
-__global__ void ExtractAndFactorBlockDiagonalsKernel(const int *__restrict__ row_off,
-                                                     const int *__restrict__ col_idx,
-                                                     const float *__restrict__ values,
-                                                     int row_start, int num_blocks,
-                                                     int factor_offset, float pivot_floor,
-                                                     float *__restrict__ factors) {
+__global__ void ExtractAndFactorBlockDiagonalsKernel(
+    const int *__restrict__ row_off, const int *__restrict__ col_idx,
+    const float *__restrict__ values, bool block_storage, int block_size, int row_start,
+    int num_blocks, int factor_offset, float pivot_floor, float *__restrict__ factors) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -157,20 +454,9 @@ __global__ void ExtractAndFactorBlockDiagonalsKernel(const int *__restrict__ row
   // landmark columns sit after the diagonal-tile range, this turns
   // an O(nnz_per_row) scan into O(B).
   if (tid < B) {
-    int global_row = row_start + block_row * B + tid;
-    int start = row_off[global_row];
-    int end = row_off[global_row + 1];
     int col_lo = row_start + block_row * B;
-    int col_hi = col_lo + B;
-    for (int k = start; k < end; ++k) {
-      int c = col_idx[k];
-      if (c >= col_hi) {
-        break;
-      }
-      if (c >= col_lo) {
-        tile[tid * B + (c - col_lo)] = values[k];
-      }
-    }
+    GatherTileRow(row_off, col_idx, values, block_storage, block_size, col_lo, B, tid,
+                  tile + tid * B);
   }
   __syncthreads();
 
@@ -221,9 +507,10 @@ __global__ void ExtractAndFactorBlockDiagonalsKernel(const int *__restrict__ row
  *  block size up to @c kMaxBlockSize. */
 __global__ void ExtractAndFactorGenericKernel(const int *__restrict__ row_off,
                                               const int *__restrict__ col_idx,
-                                              const float *__restrict__ values, int B,
-                                              int row_start, int num_blocks, int factor_offset,
-                                              float pivot_floor, float *__restrict__ factors) {
+                                              const float *__restrict__ values, bool block_storage,
+                                              int block_size, int B, int row_start, int num_blocks,
+                                              int factor_offset, float pivot_floor,
+                                              float *__restrict__ factors) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
@@ -238,20 +525,9 @@ __global__ void ExtractAndFactorGenericKernel(const int *__restrict__ row_off,
   __syncthreads();
 
   if (tid < B) {
-    int global_row = row_start + block_row * B + tid;
-    int start = row_off[global_row];
-    int end = row_off[global_row + 1];
     int col_lo = row_start + block_row * B;
-    int col_hi = col_lo + B;
-    for (int k = start; k < end; ++k) {
-      int c = col_idx[k];
-      if (c >= col_hi) {
-        break;
-      }
-      if (c >= col_lo) {
-        tile[tid * B + (c - col_lo)] = values[k];
-      }
-    }
+    GatherTileRow(row_off, col_idx, values, block_storage, block_size, col_lo, B, tid,
+                  tile + tid * B);
   }
   __syncthreads();
   if (tid < B) {
@@ -306,7 +582,8 @@ __global__ void ExtractAndFactorGenericKernel(const int *__restrict__ row_off,
 template <int B>
 __global__ void ExtractAndFactorPerThreadKernel(const int *__restrict__ row_off,
                                                 const int *__restrict__ col_idx,
-                                                const float *__restrict__ values, int row_start,
+                                                const float *__restrict__ values,
+                                                bool block_storage, int block_size, int row_start,
                                                 int num_blocks, int factor_offset,
                                                 float pivot_floor, float *__restrict__ factors) {
   int block_row = blockIdx.x * blockDim.x + threadIdx.x;
@@ -320,27 +597,10 @@ __global__ void ExtractAndFactorPerThreadKernel(const int *__restrict__ row_off,
     tile[i] = 0.f;
   }
   int col_lo = row_start + block_row * B;
-  int col_hi = col_lo + B;
-  // CSR column indices are sorted within a row, so as soon as we walk
-  // past `col_hi` we are guaranteed never to see a column in the
-  // tile's range again — break out of the inner loop.  Crucially, for
-  // SBA's pose rows where the non-diagonal cols are the (many)
-  // landmark cols sorted *after* the diagonal-tile cols, this turns a
-  // per-row scan of ~hundreds of entries into a scan of ~B entries.
 #pragma unroll
   for (int rr = 0; rr < B; ++rr) {
-    int global_row = col_lo + rr;
-    int start = row_off[global_row];
-    int end = row_off[global_row + 1];
-    for (int k = start; k < end; ++k) {
-      int c = col_idx[k];
-      if (c >= col_hi) {
-        break;
-      }
-      if (c >= col_lo) {
-        tile[rr * B + (c - col_lo)] = values[k];
-      }
-    }
+    GatherTileRow(row_off, col_idx, values, block_storage, block_size, col_lo, B, rr,
+                  tile + rr * B);
   }
   // Symmetrize numerically.
 #pragma unroll
@@ -383,22 +643,20 @@ __global__ void ExtractAndFactorPerThreadKernel(const int *__restrict__ row_off,
 /** Scalar-Jacobi extractor for B == 1: `M^{-1}[i] = 1 / H[i,i]`. */
 __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
                                     const int *__restrict__ col_idx,
-                                    const float *__restrict__ values, int row_start, int n,
-                                    int factor_offset, float pivot_floor,
-                                    float *__restrict__ factors) {
+                                    const float *__restrict__ values, bool block_storage,
+                                    int block_size, int row_start, int n, int factor_offset,
+                                    float pivot_floor, float *__restrict__ factors) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n) {
     return;
   }
-  int i = row_start + idx;
-  int start = row_off[i];
-  int end = row_off[i + 1];
-  float d = pivot_floor;
-  for (int k = start; k < end; ++k) {
-    if (col_idx[k] == i) {
-      d = fmaxf(fabsf(values[k]), pivot_floor);
-      break;
-    }
+  float d = 0.f;
+  GatherTileRow(row_off, col_idx, values, block_storage, block_size, row_start + idx, 1, 0, &d);
+  // Floor the magnitude but keep the sign, as the B > 1 pivots do: this is the
+  // same preconditioner at B == 1, so a diagonal entry must not be scaled one
+  // way here and the other way one block size up.
+  if (fabsf(d) < pivot_floor) {
+    d = (d >= 0.f) ? pivot_floor : -pivot_floor;
   }
   factors[factor_offset + idx] = d;
 }
@@ -742,31 +1000,31 @@ __global__ void DualDotKernel(const float *__restrict__ a, const float *__restri
 
 /** Picks the right ExtractAndFactor specialization for B. */
 void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start, int num_blocks,
-                              int factor_offset, float pivot_floor, const CSRSparseMatrix &matrix,
-                              float *factors) {
+                              int factor_offset, float pivot_floor, const int *row_off,
+                              const int *col_idx, const float *vals, bool block_storage,
+                              int block_size, float *factors) {
   if (num_blocks == 0) {
     return;
   }
-  const int *row_off = matrix.row_offsets.data();
-  const int *col_idx = matrix.col_ids.data();
-  const float *vals = matrix.values.data();
 
   if (B == 1) {
     int threads = 256;
     int blocks = (num_blocks + threads - 1) / threads;
-    ExtractScalarJacobi<<<blocks, threads, 0, stream>>>(
-        row_off, col_idx, vals, row_start, num_blocks, factor_offset, pivot_floor, factors);
+    ExtractScalarJacobi<<<blocks, threads, 0, stream>>>(row_off, col_idx, vals, block_storage,
+                                                        block_size, row_start, num_blocks,
+                                                        factor_offset, pivot_floor, factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return;
   }
 
-#define LAUNCH_FACTOR_PER_THREAD(BVAL)                                                       \
-  case BVAL: {                                                                               \
-    int threads = 256;                                                                       \
-    int blocks = (num_blocks + threads - 1) / threads;                                       \
-    ExtractAndFactorPerThreadKernel<BVAL><<<blocks, threads, 0, stream>>>(                   \
-        row_off, col_idx, vals, row_start, num_blocks, factor_offset, pivot_floor, factors); \
-    break;                                                                                   \
+#define LAUNCH_FACTOR_PER_THREAD(BVAL)                                                           \
+  case BVAL: {                                                                                   \
+    int threads = 256;                                                                           \
+    int blocks = (num_blocks + threads - 1) / threads;                                           \
+    ExtractAndFactorPerThreadKernel<BVAL><<<blocks, threads, 0, stream>>>(                       \
+        row_off, col_idx, vals, block_storage, block_size, row_start, num_blocks, factor_offset, \
+        pivot_floor, factors);                                                                   \
+    break;                                                                                       \
   }
 
   // Small-B path: one block per thread.
@@ -787,10 +1045,11 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start, int num
 
   // Large-B path: one CTA per block.
   int threads = ((B + 31) / 32) * 32;
-#define LAUNCH_FACTOR(BVAL)                                                                  \
-  case BVAL:                                                                                 \
-    ExtractAndFactorBlockDiagonalsKernel<BVAL><<<num_blocks, threads, 0, stream>>>(          \
-        row_off, col_idx, vals, row_start, num_blocks, factor_offset, pivot_floor, factors); \
+#define LAUNCH_FACTOR(BVAL)                                                                      \
+  case BVAL:                                                                                     \
+    ExtractAndFactorBlockDiagonalsKernel<BVAL><<<num_blocks, threads, 0, stream>>>(              \
+        row_off, col_idx, vals, block_storage, block_size, row_start, num_blocks, factor_offset, \
+        pivot_floor, factors);                                                                   \
     break
 
   switch (B) {
@@ -801,7 +1060,8 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start, int num
     default: {
       size_t shared_bytes = static_cast<size_t>(B) * B * sizeof(float);
       ExtractAndFactorGenericKernel<<<num_blocks, threads, shared_bytes, stream>>>(
-          row_off, col_idx, vals, B, row_start, num_blocks, factor_offset, pivot_floor, factors);
+          row_off, col_idx, vals, block_storage, block_size, B, row_start, num_blocks,
+          factor_offset, pivot_floor, factors);
       break;
     }
   }
@@ -988,9 +1248,26 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
 }
 
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
+                                      const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
+                                      dvector<float> &result) {
+  bsr_view_ = &spd_matrix;
+  csr_view_ = nullptr;
+  return InitializeCommon(stream, problem, spd_matrix.NumRows(), rhs, result);
+}
+
+bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
                                       const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                       dvector<float> &result) {
-  int n = static_cast<int>(spd_matrix.NumRows());
+  csr_view_ = &spd_matrix;
+  bsr_view_ = nullptr;
+  if (!InitializeCommon(stream, problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
+    return false;
+  }
+  return InitializeCsrSpMV(stream, spd_matrix);
+}
+
+bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
+                                            const dvector<float> &rhs, dvector<float> &result) {
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
     LogError("BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n, rhs.size(),
              result.size());
@@ -1048,6 +1325,12 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
     d_scratch_.resize(7);
   }
 
+  return true;
+}
+
+bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
+                                             const CSRSparseMatrix &spd_matrix) {
+  const int n = static_cast<int>(spd_matrix.NumRows());
   // cuSPARSE SpMV setup.  The descriptor is reused across all PCG steps
   // and across all Solve calls until the matrix structure changes.
   mat_desc_ =
@@ -1077,6 +1360,28 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
   return true;
 }
 
+bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix,
+                                 const dvector<float> &rhs, dvector<float> &result) {
+  const int n = spd_matrix.NumRows();
+  if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
+    LogError("BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n, rhs.size(),
+             result.size());
+    return false;
+  }
+  if (n == 0) {
+    return true;
+  }
+  bsr_view_ = &spd_matrix;
+  csr_view_ = nullptr;
+  if (n != matrix_size_) {
+    Problem empty_problem;
+    if (!InitializeCommon(stream, empty_problem, n, rhs, result)) {
+      return false;
+    }
+  }
+  return SolveCommon(stream, n, rhs, result);
+}
+
 bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
                                  const dvector<float> &rhs, dvector<float> &result) {
   int n = static_cast<int>(spd_matrix.NumRows());
@@ -1088,6 +1393,8 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
   if (n == 0) {
     return true;
   }
+  csr_view_ = &spd_matrix;
+  bsr_view_ = nullptr;
   if (n != matrix_size_) {
     // Recovery path: matrix dim changed since the last Initialize.  Use
     // a default-constructed Problem; the cached options_.block_layout
@@ -1102,17 +1409,35 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
   // Refresh the cuSPARSE descriptor's value pointer; the matrix's
   // structure is unchanged so no re-preprocess is needed.
   mat_desc_.UpdatePointers(spd_matrix);
+  return SolveCommon(stream, n, rhs, result);
+}
+
+/**
+ * The CG recurrence is identical for both storage layouts; only the SpMV and
+ * the preconditioner gather read the matrix, and both dispatch on which view
+ * pointer is set.
+ */
+bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs,
+                                       dvector<float> &result) {
+  const bool block_storage = bsr_view_ != nullptr;
+  const int *row_off =
+      block_storage ? bsr_view_->row_offsets.data() : csr_view_->row_offsets.data();
+  const int *col_idx = block_storage ? bsr_view_->col_ids.data() : csr_view_->col_ids.data();
+  const float *vals = block_storage ? bsr_view_->values.data() : csr_view_->values.data();
+  const int storage_block = block_storage ? bsr_view_->block_size : 1;
 
   // -----------------------------------------------------------------
   // 1. Rebuild the block-Jacobi preconditioner from current H values.
   // -----------------------------------------------------------------
   for (const auto &s : segments_) {
     DispatchExtractAndFactor(stream, s.block_size, s.row_start, s.num_blocks, s.factor_offset,
-                             options_.pivot_floor, spd_matrix, precond_factors_.data());
+                             options_.pivot_floor, row_off, col_idx, vals, block_storage,
+                             storage_block, precond_factors_.data());
   }
 
   auto handle = static_cast<cusparseHandle_t>(cusparse_handle_.GetHandle(stream));
-  auto matA = static_cast<cusparseSpMatDescr_t>(mat_desc_.GetDescription());
+  auto matA =
+      block_storage ? nullptr : static_cast<cusparseSpMatDescr_t>(mat_desc_.GetDescription());
 
   // -----------------------------------------------------------------
   // 2. Initialize PCG with x_0 = 0 ⇒ r_0 = b.
@@ -1158,8 +1483,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
   // explicit size n each Solve.  Cheap host calls.
   cusparseDnVecDescr_t vecX = nullptr;
   cusparseDnVecDescr_t vecY = nullptr;
-  THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecX, n, p_.data(), CUDA_R_32F));
-  THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecY, n, Ap_.data(), CUDA_R_32F));
+  if (!block_storage) {
+    THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecX, n, p_.data(), CUDA_R_32F));
+    THROW_ON_CUSPARSE_ERROR(cusparseCreateDnVec(&vecY, n, Ap_.data(), CUDA_R_32F));
+  }
 
   const int threads = 256;
   const int blocks = (n + threads - 1) / threads;
@@ -1167,12 +1494,19 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
 
   int it = 0;
   for (; it < options_.max_iterations; ++it) {
-    // Ap = H * p.
+    // Ap = H * p.  Block storage carries one column index per tile instead of
+    // one per scalar entry, which is where the bandwidth saving comes from.
     float spmv_alpha = 1.f;
     float spmv_beta = 0.f;
-    THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
-                                         matA, vecX, &spmv_beta, vecY, CUDA_R_32F,
-                                         CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+    if (block_storage) {
+      LaunchBsrMultiply(stream, bsr_view_->num_block_rows, bsr_view_->block_size,
+                        bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
+                        Ap_.data());
+    } else {
+      THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
+                                           matA, vecX, &spmv_beta, vecY, CUDA_R_32F,
+                                           CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+    }
 
     // <p, Ap>.
     DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp);
@@ -1208,8 +1542,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
       }
     }
   }
-  WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecX));
-  WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecY));
+  if (!block_storage) {
+    WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecX));
+    WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecY));
+  }
   last_iterations_ = it;
   return true;
 }

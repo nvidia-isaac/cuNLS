@@ -41,10 +41,8 @@ namespace cunls {
  * @param residual_size Dimension of each residual / information matrix.
  * @param num_factors Number of factors in the batch.
  */
-void ApplyInformationToResiduals(void *cublas_handle,
-                                 const float *sqrt_information,
-                                 float *residuals, size_t residual_size,
-                                 size_t num_factors);
+void ApplyInformationToResiduals(void *cublas_handle, const float *sqrt_information,
+                                 float *residuals, size_t residual_size, size_t num_factors);
 
 /**
  * @brief Applies sqrt-information matrices to a batch of Jacobian matrices.
@@ -60,10 +58,9 @@ void ApplyInformationToResiduals(void *cublas_handle,
  * Jacobian.
  * @param num_factors Number of factors in the batch.
  */
-void ApplyInformationToJacobians(void *cublas_handle,
-                                 const float *sqrt_information,
-                                 float *jacobians, size_t residual_size,
-                                 size_t jacobian_pitch, size_t num_factors);
+void ApplyInformationToJacobians(void *cublas_handle, const float *sqrt_information,
+                                 float *jacobians, size_t residual_size, size_t jacobian_pitch,
+                                 size_t num_factors);
 
 /**
  * @brief Wrapper factor that applies square-root information matrices.
@@ -82,10 +79,9 @@ void ApplyInformationToJacobians(void *cublas_handle,
  * remain valid for the lifetime of this object. The memory layout is: [mat0:
  * residual_size^2 floats][mat1: residual_size^2 floats]...
  */
-template <class T, typename std::enable_if_t<
-                       IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
+template <class T, typename std::enable_if_t<IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
 class InformationFactorBatch : public T::sized_layout {
-public:
+ public:
   using InformationMatrix = Matrix<T::residual_size_>;
 
   /**
@@ -115,8 +111,7 @@ public:
     if (num_matrices_ != factor_batch_.NumFactors()) {
       std::stringstream ss;
       ss << "Number of sqrt information matrices (" << num_matrices_
-         << ") must match wrapped factor batch size ("
-         << factor_batch_.NumFactors() << ")";
+         << ") must match wrapped factor batch size (" << factor_batch_.NumFactors() << ")";
       LogError(ss.str());
       throw std::invalid_argument(ss.str());
     }
@@ -145,19 +140,16 @@ public:
    * @param stream CUDA stream for asynchronous execution
    * @return true if evaluation succeeded, false otherwise
    */
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream) const final {
     factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream);
 
     auto handle = cublas_handle_.GetHandle(stream);
-    auto info_ptr =
-        reinterpret_cast<const float *>(sqrt_information_matrices_ptr_);
+    auto info_ptr = reinterpret_cast<const float *>(sqrt_information_matrices_ptr_);
     const size_t rsize = T::residual_size_;
     const size_t num_factors = factor_batch_.NumFactors();
 
-    ApplyInformationToResiduals(handle, info_ptr, residuals, rsize,
-                                num_factors);
+    ApplyInformationToResiduals(handle, info_ptr, residuals, rsize, num_factors);
 
     if (jacobians == nullptr) {
       return true;
@@ -167,14 +159,13 @@ public:
     const size_t jacobian_pitch =
         std::accumulate(state_block_sizes.begin(), state_block_sizes.end(), 0);
 
-    ApplyInformationToJacobians(handle, info_ptr, jacobians, rsize,
-                                jacobian_pitch, num_factors);
+    ApplyInformationToJacobians(handle, info_ptr, jacobians, rsize, jacobian_pitch, num_factors);
 
     return true;
   }
 
-private:
-  T factor_batch_; ///< Wrapped factor batch
+ private:
+  T factor_batch_;  ///< Wrapped factor batch
 
   /// Pointer to user-managed device memory containing square-root information
   /// matrices.
@@ -183,7 +174,7 @@ private:
   /// Number of per-factor square-root information matrices (equals batch size).
   size_t num_matrices_;
 
-  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
+  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
 };
 
-} // namespace cunls
+}  // namespace cunls

@@ -88,9 +88,10 @@ Wikipedia links above for convergence and damping strategies.
 :code:`MinimizerOptions::column_scaling` can re-scale the normal equations with a
 diagonal :math:`S`: the linear solve uses :math:`S H S \, z = S b` with
 :math:`H = J^T J` and :math:`b = -J^T r`, then applies the physical tangent step
-:math:`\Delta x = S z`. Modes are: no scaling (default); :math:`S_{ii} = 1/\sqrt{H_{ii}}`
-(with a small floor for stability); or :math:`S_{jj} = 1/\|J_{:,j}\|_2` from the
-CSR Jacobian. For Levenberg-Marquardt, damping uses the diagonal of the **scaled**
+:math:`\Delta x = S z`. Modes are: no scaling (default); or
+:math:`S_{ii} = 1/\sqrt{H_{ii}}` with a small floor for stability, which is
+equivalently :math:`1/\|J_{:,j}\|_2` since :math:`H_{jj} = \|J_{:,j}\|_2^2`.
+For Levenberg-Marquardt, damping uses the diagonal of the **scaled**
 Hessian: :math:`S H S + \lambda \operatorname{diag}(S H S)`.
 
 ================================================================================
@@ -146,13 +147,9 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
   ``check_period``).  For ``cuDSS`` contains :code:`cudss_solver_options`
   (mode, ``nthreads``, optional ``threading_lib_path`` for multi-threaded
   cuDSS).  Dense backends take no extra configuration.
-- **sparse_square_multiplier_type** [in]: Strategy for computing the approximate
-  Hessian :math:`J^T J`; options are ``cuSPARSE`` (cuSPARSE SpGEMM reuse API)
-  and ``Fast`` (warp-efficient CUDA kernels with bitmap pattern discovery).
-  Default: ``Fast``.
 - **column_scaling** [in]: Diagonal scaling of the normal equations; see the
-  column-scaling note above. Values: ``None``, ``HessianDiagonal``,
-  ``JacobianColumnNorm``. Default: ``None``.
+  column-scaling note above. Values: ``None``, ``HessianDiagonal``.
+  Default: ``None``.
 - **disable_safety_checks** [in]: When ``false``, the minimizer enables all
   optional runtime validation.  Currently this covers post-factorization
   checks in the linear solver: Cholesky checks cuSOLVER ``devInfo`` after
@@ -360,86 +357,55 @@ problem’s state storage. Useful for rollback or warm starts.
   :param ``problem``: [out] Problem whose state storage is overwritten with the copied values.
   :returns: [out] No return value.
 
-.. _minimizer-state-build-triplet-label:
+.. _hessian-assembly-label:
 
 --------------------------------------------------------------------------------
-:code:`MinimizerState::BuildTripletSparseStructure`
+Hessian assembly
 --------------------------------------------------------------------------------
 
-**Purpose:** Fills the row and column index arrays of a :code:`TripletSparseStructure`
-for the problem’s Jacobian (COO / triplet layout). Implementation lives in
-``jacobian_ops.cu``; the minimizer uploads the problem’s host-held state-pointer
-lists to device internally before building column indices.
+The normal equations are assembled directly from the per-factor Jacobian blocks
+that each factor batch writes; no global sparse Jacobian is ever materialized.
 
-.. cpp:function:: void BuildTripletSparseStructure(cudaStream_t stream, const Problem& problem, TripletSparseStructure& structure)
+:code:`HessianStructureBuilder` (``cunls/minimizer/hessian_structure.h``) derives
+the sparsity pattern from factor-graph connectivity on the GPU: it resolves each
+factor's state pointers to global columns, packs every candidate block pair into
+a 64-bit key, then sorts and segments. It also returns, for each
+``(factor, block_a, block_b)`` slot, the row-relative offset at which that tile
+starts — the map the assembler scatters through.
 
-  :param ``stream``: [in] CUDA stream for GPU work.
-  :param ``problem``: [in] Factor graph and state-pointer mappings.
-  :param ``structure``: [out] Row and column index device buffers sized to the Jacobian nonzeros.
-  :returns: [out] No return value.
-
-.. _sparse-square-multiplier-label:
-
---------------------------------------------------------------------------------
-:code:`SparseMatrixMultiplier` (base class)
---------------------------------------------------------------------------------
-
-Abstract interface for computing :math:`A^T A` of a sparse CSR matrix.
-Two concrete implementations are provided:
-
-- **cuSPARSESparseMatrixMultiplier** — uses the cuSPARSE SpGEMM reuse API
-  (transpose + multiply). Select with
-  :code:`SparseMatrixMultiplierType::cuSPARSE`.
-- **FastSparseMatrixMultiplier** — uses custom warp-efficient CUDA
-  kernels with bitmap-based sparsity pattern discovery. Select with
-  :code:`SparseMatrixMultiplierType::Fast`.
-
-.. cpp:function:: void SparseMatrixMultiplier::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& input, CSRSparseMatrix& output)
-
-  Analyzes the sparsity pattern of :math:`A^T A` and allocates the output
-  matrix. Must be called once whenever the sparsity pattern changes.
-
-  :param ``stream``: [in] CUDA stream for GPU operations.
-  :param ``problem``: [in] Optimization problem providing structural hints.
-  :param ``input``: [in] Input sparse matrix :math:`A`.
-  :param ``output``: [out] Output sparse matrix :math:`A^T A` (structure allocated).
-  :returns: [out] No return value.
-
-.. cpp:function:: void SparseMatrixMultiplier::ComputeSquaredMatrix(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& input, CSRSparseMatrix& output)
-
-  Computes the numerical values of :math:`A^T A`. The output structure must
-  already be set by a prior call to :cpp:func:`Initialize`.
-
-  :param ``stream``: [in] CUDA stream for GPU operations.
-  :param ``problem``: [in] Optimization problem (may be used for kernel tuning).
-  :param ``input``: [in] Input sparse matrix :math:`A`.
-  :param ``output``: [out] Output sparse matrix :math:`A^T A`.
-  :returns: [out] No return value.
-
-.. _sparse-square-multiplier-type-label:
+:code:`BlockHessianAssembler` (``cunls/minimizer/block_hessian_assembler.h``)
+runs one kernel per residual batch, one warp per factor. Each warp stages
+:math:`J_f` and :math:`r_f` in shared memory, forms
+:math:`H_f = J_f^T J_f` and :math:`b_f = -J_f^T r_f`, and scatter-adds both into
+the global system.
 
 --------------------------------------------------------------------------------
-:code:`SparseMatrixMultiplierType`
+Hessian storage
 --------------------------------------------------------------------------------
 
-Enum in ``cunls/minimizer/sparse_matrix_multiplier.h``:
+The Hessian of a factor graph is block structured, so it is stored as BSR — one
+column index per dense tile instead of one per scalar entry. That is bandwidth
+the iterative solver's SpMV no longer has to move.
 
-- ``cuSPARSE`` — cuSPARSE SpGEMM reuse API (transpose + multiply).
-- ``Fast`` — fast warp-efficient CUDA kernels with bitmap pattern
-  discovery.
+Both the Hessian and the working left-hand side are owned by
+:code:`NormalEquations` (``cunls/minimizer/normal_equations.h``), which is the
+only place either layout is named; the minimizers work in terms of "the Hessian"
+and "the left-hand side" and never branch on storage.
 
-.. _sparse-square-multiplier-factory-label:
+The layout is chosen automatically, with no user-facing switch. Block storage
+requires a tile edge dividing every state block's tangent dimension (the gcd of
+the tangent sizes; see :code:`ChooseHessianBlockSize` in
+``cunls/minimizer/bsr_matrix.h``) **and** a solver that reports
+:code:`SparseLinearSolver::SupportsBlockStorage`. When either does not hold —
+a gcd of one, or a backend such as cuDSS that needs CSR anyway — the minimizer
+falls back to scalar CSR with no behavioural change. No conversion is ever
+performed on the solver path; the fallback is assembled natively in CSR.
 
---------------------------------------------------------------------------------
-:code:`CreateSparseMatrixMultiplier`
---------------------------------------------------------------------------------
-
-Factory function in ``cunls/minimizer/sparse_matrix_multiplier.h``:
-
-.. cpp:function:: SparseMatrixMultiplierPtr CreateSparseMatrixMultiplier(SparseMatrixMultiplierType type)
-
-  :param ``type``: [in] Strategy to use for computing :math:`A^T A`.
-  :returns: [out] Heap-allocated multiplier instance.
+The dense factorizations (:code:`DenseLDLT`, :code:`DenseCholesky`,
+:code:`DenseQR`) accept either layout. They scatter the coefficient matrix into
+an ``n x n`` dense buffer and never consult the sparse form again, so the layout
+is invisible to them past the first kernel. cuDSS is the only backend that
+declines block storage.
 
 ================================================================================
 Python API (``pycunls``)
@@ -495,10 +461,6 @@ values and then override individual fields.
   ``DenseCholesky`` converts to dense and uses cuSOLVER Cholesky
   (requires SPD); ``DenseQR`` converts to dense and uses cuSOLVER QR
   factorization (works for any non-singular matrix).
-- **sparse_square_multiplier_type** (``SparseMatrixMultiplierType``, default
-  ``Fast``) — strategy for computing the approximate Hessian
-  :math:`J^T J`.  ``cuSPARSE`` uses the cuSPARSE SpGEMM reuse API;
-  ``Fast`` uses warp-efficient CUDA kernels with bitmap pattern discovery.
 - **column_scaling** (``ColumnScaling``, default ``ColumnScaling.none``) —
   optional diagonal scaling :math:`S` for the normal equations
   (:math:`S H S\, z = S b`, then :math:`\Delta x = S z`). See
@@ -536,8 +498,9 @@ values and then override individual fields.
 Enum used by ``MinimizerOptions.column_scaling`` (and ``LevenbergMarquardtMinimizerOptions.base_options.column_scaling``):
 
 - **none** — identity scaling (standard :math:`H \Delta x = -J^T r`).
-- **hessian_diagonal** — :math:`S_{ii} = 1 / \sqrt{H_{ii}}` with a numerical floor.
-- **jacobian_column_norm** — :math:`S_{jj} = 1 / \|J_{:,j}\|_2` from the CSR Jacobian.
+- **hessian_diagonal** — :math:`S_{ii} = 1 / \sqrt{H_{ii}}` with a numerical
+  floor. Equivalently :math:`1 / \|J_{:,j}\|_2`, since
+  :math:`H_{jj} = \|J_{:,j}\|_2^2`.
 
 For LM, damping uses the diagonal of the **scaled** Hessian. See the C++
 column-scaling theory note earlier in this page.
@@ -742,17 +705,6 @@ Integer enum selecting the linear-system backend.
   via cuSOLVER Cholesky factorization (requires SPD matrix).
 - ``SparseLinearSolverType.DenseQR`` — converts CSR to dense and solves via
   cuSOLVER QR factorization (works for any non-singular matrix).
-
---------------------------------------------------------------------------------
-``pycunls.SparseMatrixMultiplierType``
---------------------------------------------------------------------------------
-
-Integer enum selecting the strategy for computing the approximate Hessian
-:math:`J^T J`.
-
-- ``SparseMatrixMultiplierType.cuSPARSE`` — cuSPARSE SpGEMM reuse API.
-- ``SparseMatrixMultiplierType.Fast`` — warp-efficient CUDA kernels with
-  bitmap pattern discovery.
 
 .. _py-minimizer-example-label:
 

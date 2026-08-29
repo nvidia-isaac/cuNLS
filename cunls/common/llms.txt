@@ -12,7 +12,7 @@ Shared infrastructure used across cuNLS modules:
 ## Key files
 
 - `device_vector.h`: `DeviceVector<T>` (`dvector<T>` alias in `types.h`)
-- `types.h`: `Vector`, `Matrix`, `SE3Transform`, `CSRSparseMatrix`, `SparseJacobian`
+- `types.h`: `Vector`, `Matrix`, `SE3Transform`, `CSRSparseMatrix`, `BSRSparseMatrix`, `PerFactorJacobians`
 - `cuda_stream.h`: RAII CUDA stream wrapper
 - `cublas_helper.h`, `cusparse_helper.h`, `cusolver_helper.h`, `cudss_helper.h`
 - `profiler.h`: NVTX range/domain wrappers

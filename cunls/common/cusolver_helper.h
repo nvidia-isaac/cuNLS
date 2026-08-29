@@ -38,8 +38,7 @@ const char *cusolverGetErrorString(int status);
  * Checks the cuSolver status and throws std::runtime_error with a descriptive
  * message if the status indicates an error.
  */
-#define THROW_ON_CUSOLVER_ERROR(status)                                        \
-  CHECK_CUDA_ERROR(status, cusolverGetErrorString, true)
+#define THROW_ON_CUSOLVER_ERROR(status) CHECK_CUDA_ERROR(status, cusolverGetErrorString, true)
 
 /**
  * @brief Macro that logs a warning if cuSolver operation fails.
@@ -47,8 +46,7 @@ const char *cusolverGetErrorString(int status);
  * Checks the cuSolver status and logs a warning message if the status indicates
  * an error, but does not throw an exception.
  */
-#define WARN_ON_CUSOLVER_ERROR(status)                                         \
-  CHECK_CUDA_ERROR(status, cusolverGetErrorString, false)
+#define WARN_ON_CUSOLVER_ERROR(status) CHECK_CUDA_ERROR(status, cusolverGetErrorString, false)
 
 /**
  * @brief RAII wrapper for cuSolver handle management.
@@ -58,7 +56,7 @@ const char *cusolverGetErrorString(int status);
  * a specific CUDA stream when GetHandle is called.
  */
 class cuSolverHandle {
-public:
+ public:
   /// Constructs a cuSolver handle (handle is created lazily on first GetHandle
   /// call)
   cuSolverHandle();
@@ -88,9 +86,9 @@ public:
    */
   void *GetHandle(cudaStream_t stream);
 
-private:
-  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream
-  void *handle_ = nullptr;        ///< cuSolver handle
+ private:
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
+  void *handle_ = nullptr;         ///< cuSolver handle
 };
 
 /**
@@ -100,7 +98,7 @@ private:
  * symmetric eigenvalue decomposition.
  */
 class cuSolverInfo {
-public:
+ public:
   /// Constructs a cuSolver info object
   cuSolverInfo();
   /// Destroys the cuSolver info object
@@ -121,8 +119,8 @@ public:
    */
   void *GetInfo() const { return info_; }
 
-private:
-  void *info_ = nullptr; ///< cuSolver eigenvalue solver info handle
+ private:
+  void *info_ = nullptr;  ///< cuSolver eigenvalue solver info handle
 };
 
-} // namespace cunls
+}  // namespace cunls

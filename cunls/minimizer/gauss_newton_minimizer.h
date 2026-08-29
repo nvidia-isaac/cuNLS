@@ -27,9 +27,9 @@
 #include "cunls/common/types.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/minimizer_state.h"
+#include "cunls/minimizer/normal_equations.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
-#include "cunls/minimizer/sparse_matrix_multiplier.h"
 #include "cunls/state/state_batch_ops.h"
 
 namespace cunls {
@@ -44,10 +44,12 @@ namespace cunls {
 enum class ColumnScaling {
   /** No scaling (identity S). */
   None = 0,
-  /** \f$S_{ii} = 1 / \sqrt{H_{ii}}\f$ with a floor on the diagonal. */
+  /**
+   * \f$S_{ii} = 1 / \sqrt{H_{ii}}\f$ with a floor on the diagonal.
+   *
+   * Equivalently \f$1 / \|J_{:,j}\|_2\f$, since \f$H_{jj} = \|J_{:,j}\|_2^2\f$.
+   */
   HessianDiagonal = 1,
-  /** \f$S_{jj} = 1 / \|J_{:,j}\|_2\f$ from the CSR Jacobian. */
-  JacobianColumnNorm = 2,
 };
 
 /**
@@ -124,8 +126,7 @@ struct MinimizerOptions {
    *
    * Default: BlockSparsePCG.
    */
-  SparseLinearSolverType sparse_linear_solver_type =
-      SparseLinearSolverType::BlockSparsePCG;
+  SparseLinearSolverType sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;
 
   /**
    * @brief Configuration for the sparse linear solver.
@@ -144,20 +145,6 @@ struct MinimizerOptions {
    * `libcudss_mtlayer_gomp.so` (or equivalent).
    */
   SparseLinearSolverConfig sparse_linear_solver_config = {};
-
-  /**
-   * @brief Strategy for computing the approximate Hessian J^T * J.
-   *
-   * - ``cuSPARSE``: uses cuSPARSE SpGEMM reuse API (transpose + multiply).
-   *   Robust and well-tested; may allocate large internal work buffers.
-   * - ``Fast``: fast warp-efficient CUDA kernels with bitmap-based
-   *   sparsity pattern discovery. Exploits the Problem's factor layout
-   *   for kernel tuning.
-   *
-   * Default: Fast.
-   */
-  SparseMatrixMultiplierType sparse_square_multiplier_type =
-      SparseMatrixMultiplierType::Fast;
 
   /**
    * @brief Optional diagonal scaling of the GN/LM normal equations.
@@ -200,7 +187,7 @@ struct MinimizerOptions {
  * @brief Gauss-Newton nonlinear least-squares optimizer.
  */
 class GaussNewtonMinimizer {
-public:
+ public:
   /**
    * @brief Constructs a Gauss-Newton optimizer.
    *
@@ -247,26 +234,7 @@ public:
    */
   MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
-protected:
-  /**
-   * @brief Checks if convergence criteria are satisfied.
-   *
-   * Determines whether the optimization has converged based on step size,
-   * cost reduction, and step quality. Also computes the step quality metric
-   * (ratio of updated cost to current cost).
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param updated_cost Cost after applying the step.
-   * @param current_cost Cost before applying the step.
-   * @param step State update step vector.
-   * @param[out] step_quality Output argument for step quality metric
-   *                          (updated_cost / current_cost).
-   * @return True if converged, false otherwise.
-   */
-  virtual bool CheckConvergence(cudaStream_t stream, float updated_cost,
-                                float current_cost, const dvector<float> &step,
-                                float &step_quality);
-
+ protected:
   /**
    * @brief Fused cost evaluation + convergence check with a single D2H + sync.
    *
@@ -283,11 +251,10 @@ protected:
    * @param[out] step_quality Step quality metric.
    * @return True if converged.
    */
-  virtual bool
-  EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
-                              const MinimizerState &updated_state,
-                              float current_cost, const dvector<float> &step,
-                              float &updated_cost, float &step_quality);
+  virtual bool EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
+                                           const MinimizerState &updated_state, float current_cost,
+                                           const dvector<float> &step, float &updated_cost,
+                                           float &step_quality);
 
   /**
    * @brief Determines if a step should be accepted.
@@ -331,12 +298,9 @@ protected:
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
    * @param minimizer_state Current minimizer state.
-   * @param[out] lhs Output left-hand side matrix (H = J^T J).
-   * @param[out] rhs Output right-hand side vector (-J^T r).
    */
   virtual void BuildSystem(cudaStream_t stream, const Problem &problem,
-                           const MinimizerState &minimizer_state,
-                           CSRSparseMatrix &lhs, dvector<float> &rhs);
+                           const MinimizerState &minimizer_state);
 
   /**
    * @brief Updates states with the computed step.
@@ -368,26 +332,22 @@ protected:
    * Caller must copy and sync to read the scalar.
    */
   void ComputeCostAsync(cudaStream_t stream, const Problem &problem,
-                        const MinimizerState &minimizer_state,
-                        float *d_cost_out);
+                        const MinimizerState &minimizer_state, float *d_cost_out);
 
-private:
+ private:
   /**
    * @brief Applies diagonal column scaling to the normal-equation system.
    *
    * After the unscaled Hessian copy is in lhs and rhs holds b = -J^T r,
-   * this may replace the solve target with S H S z = S b: fills column_scale_,
-   * scales lhs symmetrically, and sets rhs_i *= S_i. When column_scaling is
-   * None, returns immediately (hessian_ is unchanged and already separate).
+   * After Assemble() the working left-hand side holds H and rhs holds
+   * b = -J^T r, this may replace the solve target with S H S z = S b: it fills
+   * column_scale_, scales the left-hand side symmetrically, and sets
+   * rhs_i *= S_i.  No-op when column_scaling is None.
    *
    * @param stream CUDA stream for GPU work.
-   * @param[in,out] lhs Approximate Hessian H = J^T J (scaled in-place when
-   * enabled).
    * @param[in,out] rhs Right-hand side b (elementwise-scaled when enabled).
    */
-  void ApplyColumnScalingToNormalEquations(cudaStream_t stream,
-                                           CSRSparseMatrix &lhs,
-                                           dvector<float> &rhs);
+  void ApplyColumnScalingToNormalEquations(cudaStream_t stream, dvector<float> &rhs);
 
   /**
    * @brief Maps the scaled linear unknown z to the manifold tangent step dx = S
@@ -401,39 +361,33 @@ private:
    * @param[in,out] step Solution vector from the linear solver; overwritten by
    * dx.
    */
-  void MapScaledLinearSolutionToTangentStep(cudaStream_t stream,
-                                            dvector<float> &step);
+  void MapScaledLinearSolutionToTangentStep(cudaStream_t stream, dvector<float> &step);
 
-  /**
-   * @brief Builds Jacobian COO structure and resizes value buffer.
-   */
-  void InitializeJacobian(cudaStream_t stream, const Problem &problem);
+  /** @brief Sizes the per-factor Jacobian buffer for the problem. */
+  void ResizeFactorJacobians();
 
-protected:
-  const MinimizerOptions options_; ///< Optimizer configuration options.
+ protected:
+  const MinimizerOptions options_;  ///< Optimizer configuration options.
 
-  SparseLinearSolverPtr solver_;   ///< Linear solver for Gauss-Newton system.
-  SparseMatrixMultiplierPtr gemm_; ///< Matrix multiplication for H = J^T J.
-  cuSPARSEHandle cusparse_handle_; ///< cuSPARSE handle for sparse operations.
+  SparseLinearSolverPtr solver_;    ///< Linear solver for the normal equations.
+  cuSPARSEHandle cusparse_handle_;  ///< cuSPARSE handle for sparse operations.
 
-  StateBatchOps state_ops_; ///< Operations on state batches.
+  StateBatchOps state_ops_;  ///< Operations on state batches.
 
-  dvector<float> residuals_; ///< Residual vector storage.
+  dvector<float> residuals_;  ///< Residual vector storage.
 
-  SparseJacobian sparse_jacobian_;    ///< Jacobian in COO (triplet) format.
-  CSRSparseMatrix csr_jacobian_;      ///< Jacobian in CSR format.
-  CSRMatrixDimensions jacobian_dims_; ///< Cached Jacobian dimensions.
-  dvector<int> csr_mapping_;          ///< Mapping from triplet to CSR indices.
+  /// Per-factor dense Jacobian blocks; the only Jacobian ever materialized.
+  PerFactorJacobians factor_jacobians_;
 
-  CSRSparseMatrix hessian_;          ///< Approximate Hessian H = J^T J.
-  CSRMatrixDimensions hessian_dims_; ///< Cached Hessian dimensions.
+  /// The assembled system: Hessian, working left-hand side, and their storage.
+  NormalEquations normal_equations_;
 
   /// Diagonal S when column_scaling is enabled; size = number of tangent DOFs.
   dvector<float> column_scale_;
 
-  dvector<float> step_; ///< State update step vector.
+  dvector<float> step_;  ///< State update step vector.
 
-  dvector<uint8_t> buffer_; ///< Temporary buffer for sparse operations.
+  dvector<uint8_t> buffer_;  ///< Temporary buffer for sparse operations.
 
   /// Device staging buffer for async scalar reductions (cost, step norm, etc.).
   dvector<float> d_scalars_;
@@ -442,15 +396,12 @@ protected:
   /// Scratch buffer for partial sums used by reduction kernels.
   dvector<float> d_reduce_partials_;
 
-  /// Working normal-equation system; retained across Minimize calls to preserve
-  /// capacity.
-  CSRSparseMatrix lhs_work_;
+  /// Right-hand side; retained across Minimize calls to preserve capacity.
   dvector<float> rhs_work_;
   MinimizerState current_state_;
   MinimizerState updated_state_;
 
-  profiler::Domain profiler_domain_{
-      "GaussNewtonMinimizer"}; ///< Profiling domain.
+  profiler::Domain profiler_domain_{"GaussNewtonMinimizer"};  ///< Profiling domain.
 };
 
-} // namespace cunls
+}  // namespace cunls

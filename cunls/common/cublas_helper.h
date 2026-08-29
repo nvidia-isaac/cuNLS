@@ -38,8 +38,7 @@ const char *cublasGetErrorString(int status);
  * If the cuBLAS status indicates an error, throws an exception with
  * a descriptive error message.
  */
-#define THROW_ON_CUBLAS_ERROR(status)                                          \
-  CHECK_CUDA_ERROR(status, cublasGetErrorString, true)
+#define THROW_ON_CUBLAS_ERROR(status) CHECK_CUDA_ERROR(status, cublasGetErrorString, true)
 
 /**
  * @brief Macro to log a warning on cuBLAS errors.
@@ -47,8 +46,7 @@ const char *cublasGetErrorString(int status);
  * If the cuBLAS status indicates an error, logs a warning message
  * but does not throw an exception.
  */
-#define WARN_ON_CUBLAS_ERROR(status)                                           \
-  CHECK_CUDA_ERROR(status, cublasGetErrorString, false)
+#define WARN_ON_CUBLAS_ERROR(status) CHECK_CUDA_ERROR(status, cublasGetErrorString, false)
 
 /**
  * @brief RAII wrapper for cuBLAS handle management.
@@ -61,7 +59,7 @@ const char *cublasGetErrorString(int status);
  * Non-copyable: Prevents accidental handle duplication.
  */
 class cuBLASHandle {
-public:
+ public:
   cuBLASHandle() = default;
 
   cuBLASHandle(const cuBLASHandle &) = delete;
@@ -89,9 +87,9 @@ public:
    */
   void *GetHandle(cudaStream_t stream);
 
-private:
-  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream.
-  void *handle_ = nullptr;        ///< The cuBLAS handle.
+ private:
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
+  void *handle_ = nullptr;         ///< The cuBLAS handle.
 };
 
-} // namespace cunls
+}  // namespace cunls

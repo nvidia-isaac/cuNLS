@@ -30,8 +30,7 @@ namespace cunls {
  * @param sync_on_destroy If true, the stream will be synchronized before
  *                        destruction.
  */
-CudaStream::CudaStream(bool sync_on_destroy)
-    : sync_on_destroy_(sync_on_destroy) {
+CudaStream::CudaStream(bool sync_on_destroy) : sync_on_destroy_(sync_on_destroy) {
   THROW_ON_CUDA_ERROR(cudaStreamCreate(&stream));
 }
 
@@ -51,4 +50,4 @@ CudaStream::~CudaStream() {
 
 /** @brief Returns a reference to the underlying cudaStream_t handle. */
 cudaStream_t &CudaStream::GetStream() { return stream; }
-} // namespace cunls
+}  // namespace cunls

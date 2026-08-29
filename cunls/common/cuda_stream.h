@@ -31,7 +31,7 @@ namespace cunls {
  * Non-copyable to prevent accidental sharing of stream ownership.
  */
 class CudaStream {
-public:
+ public:
   /**
    * @brief Constructs a new CUDA stream.
    *
@@ -55,8 +55,8 @@ public:
    */
   cudaStream_t &GetStream();
 
-private:
-  cudaStream_t stream;   ///< The underlying CUDA stream handle.
-  bool sync_on_destroy_; ///< Whether to synchronize on destruction.
+ private:
+  cudaStream_t stream;    ///< The underlying CUDA stream handle.
+  bool sync_on_destroy_;  ///< Whether to synchronize on destruction.
 };
-} // namespace cunls
+}  // namespace cunls

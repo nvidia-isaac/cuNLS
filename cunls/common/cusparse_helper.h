@@ -39,8 +39,7 @@ const char *cusparseGetErrorString(int status);
  * fails. It uses the cusparseGetErrorString function to provide detailed error
  * messages.
  */
-#define THROW_ON_CUSPARSE_ERROR(status)                                        \
-  CHECK_CUDA_ERROR(status, cusparseGetErrorString, true)
+#define THROW_ON_CUSPARSE_ERROR(status) CHECK_CUDA_ERROR(status, cusparseGetErrorString, true)
 
 /**
  * @brief Macro to check cuSPARSE status and issue a warning on error
@@ -49,8 +48,7 @@ const char *cusparseGetErrorString(int status);
  * throwing. Useful for cleanup operations where exceptions should not be
  * thrown.
  */
-#define WARN_ON_CUSPARSE_ERROR(status)                                         \
-  CHECK_CUDA_ERROR(status, cusparseGetErrorString, false)
+#define WARN_ON_CUSPARSE_ERROR(status) CHECK_CUDA_ERROR(status, cusparseGetErrorString, false)
 
 /**
  * @class cuSPARSEHandle
@@ -63,7 +61,7 @@ const char *cusparseGetErrorString(int status);
  * requested.
  */
 class cuSPARSEHandle {
-public:
+ public:
   /**
    * @brief Default constructor
    *
@@ -94,9 +92,9 @@ public:
    */
   void *GetHandle(cudaStream_t stream);
 
-private:
-  cudaStream_t stream_ = nullptr; ///< Currently associated CUDA stream
-  void *handle_ = nullptr;        ///< The cuSPARSE handle object
+ private:
+  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
+  void *handle_ = nullptr;         ///< The cuSPARSE handle object
 };
 
 /**
@@ -109,7 +107,7 @@ private:
  * descriptor.
  */
 class cuSPARSEMatrixDescription {
-public:
+ public:
   /**
    * @brief Default constructor
    *
@@ -155,8 +153,7 @@ public:
    * @param other The source object to move from
    * @return Reference to this object
    */
-  cuSPARSEMatrixDescription &
-  operator=(cuSPARSEMatrixDescription &&other) noexcept;
+  cuSPARSEMatrixDescription &operator=(cuSPARSEMatrixDescription &&other) noexcept;
 
   /**
    * @brief Destructor
@@ -188,8 +185,8 @@ public:
    */
   void *GetDescription();
 
-private:
-  void *description_ = nullptr; ///< The cuSPARSE matrix descriptor
+ private:
+  void *description_ = nullptr;  ///< The cuSPARSE matrix descriptor
 };
 
 /**
@@ -201,7 +198,7 @@ private:
  * of float values and is commonly used in sparse matrix-vector operations.
  */
 class cuSPARSEVectorDescription {
-public:
+ public:
   /**
    * @brief Constructor from device vector
    *
@@ -231,8 +228,8 @@ public:
    */
   void *GetDescription();
 
-private:
-  void *description_ = nullptr; ///< The cuSPARSE vector descriptor
+ private:
+  void *description_ = nullptr;  ///< The cuSPARSE vector descriptor
 };
 
-} // namespace cunls
+}  // namespace cunls

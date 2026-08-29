@@ -15,9 +15,10 @@
  * limitations under the License.
  */
 
+#include "cunls/common/cusolver_helper.h"
+
 #include <cusolverDn.h>
 
-#include "cunls/common/cusolver_helper.h"
 #include "cunls/common/log.h"
 
 namespace cunls {
@@ -85,8 +86,7 @@ cuSolverHandle::cuSolverHandle() {
 }
 
 cuSolverHandle::~cuSolverHandle() {
-  WARN_ON_CUSOLVER_ERROR(
-      cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
+  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
 }
 
 void *cuSolverHandle::GetHandle(cudaStream_t stream) {
@@ -101,8 +101,7 @@ void *cuSolverHandle::GetHandle(cudaStream_t stream) {
   }
 
   if (handle_ != nullptr) {
-    THROW_ON_CUSOLVER_ERROR(
-        cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
+    THROW_ON_CUSOLVER_ERROR(cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
   }
 
   stream_ = stream;
@@ -120,8 +119,7 @@ cuSolverInfo::cuSolverInfo() {
 }
 
 cuSolverInfo::~cuSolverInfo() {
-  WARN_ON_CUSOLVER_ERROR(
-      cusolverDnDestroySyevjInfo(static_cast<syevjInfo_t>(info_)));
+  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroySyevjInfo(static_cast<syevjInfo_t>(info_)));
 }
 
-} // namespace cunls
+}  // namespace cunls

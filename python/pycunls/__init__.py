@@ -56,7 +56,6 @@ from pycunls._pycunls_core import (
     CublasHandle,
     # --- Enumerations ---
     SparseLinearSolverType,
-    SparseMatrixMultiplierType,
     ColumnScaling,
     # --- Minimizer options & summary ---
     MinimizerOptions,
@@ -129,7 +128,6 @@ __all__ = [
     "CudaStream",
     "CublasHandle",
     "SparseLinearSolverType",
-    "SparseMatrixMultiplierType",
     "ColumnScaling",
     "MinimizerOptions",
     "MinimizerSummary",

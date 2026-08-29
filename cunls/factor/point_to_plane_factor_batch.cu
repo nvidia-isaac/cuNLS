@@ -135,12 +135,10 @@ constexpr size_t kBlockSize = 256;
  * @note Launch configuration: <<<ceil(num_correspondences / kBlockSize),
  * kBlockSize>>>
  */
-__global__ void point_to_plane_cost_kernel(const float *p_observations,
-                                           const float *q_observations,
+__global__ void point_to_plane_cost_kernel(const float *p_observations, const float *q_observations,
                                            const float *nq_observations,
-                                           float const *const *state_pointers,
-                                           float *residuals, float *jacobians,
-                                           int num_correspondences) {
+                                           float const *const *state_pointers, float *residuals,
+                                           float *jacobians, int num_correspondences) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_correspondences) {
     return;
@@ -231,11 +229,10 @@ bool PointToPlaneFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
   point_to_plane_cost_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      p_data_ptr, q_data_ptr, nq_data_ptr, state_pointers, residuals, jacobians,
-      num_factors);
+      p_data_ptr, q_data_ptr, nq_data_ptr, state_pointers, residuals, jacobians, num_factors);
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-} // namespace cunls
+}  // namespace cunls

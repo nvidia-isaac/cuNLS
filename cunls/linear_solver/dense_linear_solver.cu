@@ -41,12 +41,9 @@ constexpr int kMaxBlockSize = kMaxWarpsPerBlock * kWarpSize;
 ///        is >= n.  Keeping the block small when n is small reduces wasted
 ///        threads that would just idle in the synchronization barriers.
 inline int SelectBlockSize(int n) {
-  if (n <= 32)
-    return 32;
-  if (n <= 64)
-    return 64;
-  if (n <= 128)
-    return 128;
+  if (n <= 32) return 32;
+  if (n <= 64) return 64;
+  if (n <= 128) return 128;
   return kMaxBlockSize;
 }
 
@@ -76,34 +73,6 @@ __device__ __forceinline__ float WarpReduceSum(float val) {
 }
 
 // ---------------------------------------------------------------------------
-// CSR -> Dense conversion kernel
-// ---------------------------------------------------------------------------
-
-/// @brief Scatters CSR values into a dense row-major matrix.
-///
-/// Each warp processes one row: threads in the warp iterate over the row's
-/// non-zero entries in parallel and write them to the corresponding column
-/// position in the dense output.  The caller must zero-initialize
-/// @p dense_matrix before launch.
-__global__ void csr_to_dense_kernel(const int *__restrict__ row_offsets,
-                                    const int *__restrict__ col_ids,
-                                    const float *__restrict__ values,
-                                    int num_rows,
-                                    float *__restrict__ dense_matrix) {
-  const int row = (blockIdx.x * blockDim.x + threadIdx.x) / kWarpSize;
-  if (row >= num_rows) {
-    return;
-  }
-  const int lane = threadIdx.x % kWarpSize;
-  const int row_start = row_offsets[row];
-  const int row_end = row_offsets[row + 1];
-  float *const dense_row = dense_matrix + row * num_rows;
-  for (int idx = row_start + lane; idx < row_end; idx += kWarpSize) {
-    dense_row[col_ids[idx]] = values[idx];
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Pivoted LDLT factorization kernel
 // ---------------------------------------------------------------------------
 
@@ -129,9 +98,11 @@ __global__ void csr_to_dense_kernel(const int *__restrict__ row_offsets,
 ///                 @p check_status != 0).
 /// @param check_status  When non-zero, enable pivot-value checks and status
 ///                      reporting; when zero, skip them for lower latency.
-__global__ void factorize_symmetric_pivoted_ldlt_kernel(
-    const float *__restrict__ A, int n, float *__restrict__ ldlt,
-    int *__restrict__ permutation, int *__restrict__ status, int check_status) {
+__global__ void factorize_symmetric_pivoted_ldlt_kernel(const float *__restrict__ A, int n,
+                                                        float *__restrict__ ldlt,
+                                                        int *__restrict__ permutation,
+                                                        int *__restrict__ status,
+                                                        int check_status) {
   if (blockIdx.x != 0) {
     return;
   }
@@ -228,8 +199,7 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(
       }
       __syncthreads();
       if (!factorization_ok) {
-        if (tid == 0)
-          *status = 0;
+        if (tid == 0) *status = 0;
         return;
       }
     }
@@ -387,7 +357,7 @@ __global__ void solve_from_pivoted_ldlt_kernel(
   }
 }
 
-} // namespace
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Host-side launcher functions
@@ -400,18 +370,16 @@ __global__ void solve_from_pivoted_ldlt_kernel(
 ///                @p check_status is true.
 /// @param check_status  When true, the kernel checks pivots for near-zero
 ///                      values and reports status; when false, skips checks.
-void FactorizeSymmetricPivotedLDLT(cudaStream_t stream,
-                                   const float *dense_symmetric_matrix, int n,
-                                   float *ldlt_factor, int *permutation,
-                                   int *status, bool check_status) {
+void FactorizeSymmetricPivotedLDLT(cudaStream_t stream, const float *dense_symmetric_matrix, int n,
+                                   float *ldlt_factor, int *permutation, int *status,
+                                   bool check_status) {
   if (n == 0) {
     return;
   }
 
   const int threads = SelectBlockSize(n);
   factorize_symmetric_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(
-      dense_symmetric_matrix, n, ldlt_factor, permutation, status,
-      check_status ? 1 : 0);
+      dense_symmetric_matrix, n, ldlt_factor, permutation, status, check_status ? 1 : 0);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -422,18 +390,17 @@ void FactorizeSymmetricPivotedLDLT(cudaStream_t stream,
 ///                @p check_status is true.
 /// @param check_status  When true, the kernel checks diagonal elements and
 ///                      reports status; when false, skips checks.
-void SolveFromPivotedLDLT(cudaStream_t stream, const float *ldlt_factor,
-                          const int *permutation, const float *rhs, int n,
-                          float *permuted_rhs, float *intermediate_solution,
-                          float *permuted_solution, float *solution,
+void SolveFromPivotedLDLT(cudaStream_t stream, const float *ldlt_factor, const int *permutation,
+                          const float *rhs, int n, float *permuted_rhs,
+                          float *intermediate_solution, float *permuted_solution, float *solution,
                           int *status, bool check_status) {
   if (n == 0) {
     return;
   }
   const int threads = SelectBlockSize(n);
   solve_from_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(
-      ldlt_factor, permutation, rhs, n, permuted_rhs, intermediate_solution,
-      permuted_solution, solution, status, check_status ? 1 : 0);
+      ldlt_factor, permutation, rhs, n, permuted_rhs, intermediate_solution, permuted_solution,
+      solution, status, check_status ? 1 : 0);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -441,65 +408,20 @@ void SolveFromPivotedLDLT(cudaStream_t stream, const float *ldlt_factor,
 // DenseLDLTSolver public API
 // ---------------------------------------------------------------------------
 
-bool DenseLDLTSolver::Initialize(cudaStream_t stream,
-                                 const Problem & /*problem*/,
-                                 const CSRSparseMatrix &spd_matrix,
-                                 const dvector<float> &rhs,
-                                 dvector<float> &result) {
-  (void)stream;
-  const size_t matrix_size = spd_matrix.NumRows();
-  if (matrix_size != rhs.size()) {
-    LogError("LHS size: {} does not match RHS size: {}", matrix_size,
-             rhs.size());
-    return false;
-  }
-  if (matrix_size != result.size()) {
-    LogError("LHS size: {} does not match result size: {}", matrix_size,
-             result.size());
-    return false;
-  }
-  EnsureBuffersSize(matrix_size);
-  return true;
-}
+bool DenseLDLTSolver::FactorizeAndSolve(cudaStream_t stream, int n, const dvector<float> &rhs,
+                                        dvector<float> &result) {
+  FactorizeSymmetricPivotedLDLT(stream, dense_matrix_.data(), n, ldlt_factor_.data(),
+                                permutation_.data(), status_.data(), safety_checks_enabled_);
 
-bool DenseLDLTSolver::Solve(cudaStream_t stream,
-                            const CSRSparseMatrix &spd_matrix,
-                            const dvector<float> &rhs, dvector<float> &result) {
-  const size_t matrix_size = spd_matrix.NumRows();
-  if (matrix_size != rhs.size()) {
-    LogError("LHS size: {} does not match RHS size: {}", matrix_size,
-             rhs.size());
-    return false;
-  }
-  if (matrix_size != result.size()) {
-    LogError("LHS size: {} does not match result size: {}", matrix_size,
-             result.size());
-    return false;
-  }
-  if (matrix_size == 0) {
-    return true;
-  }
-
-  EnsureBuffersSize(matrix_size);
-
-  ConvertCSRToDense(stream, spd_matrix, dense_matrix_);
-
-  const int n = static_cast<int>(matrix_size);
-
-  FactorizeSymmetricPivotedLDLT(stream, dense_matrix_.data(), n,
-                                ldlt_factor_.data(), permutation_.data(),
-                                status_.data(), safety_checks_enabled_);
-
-  SolveFromPivotedLDLT(stream, ldlt_factor_.data(), permutation_.data(),
-                       rhs.data(), n, permuted_rhs_.data(),
-                       intermediate_solution_.data(), permuted_solution_.data(),
-                       result.data(), status_.data() + 1,
+  SolveFromPivotedLDLT(stream, ldlt_factor_.data(), permutation_.data(), rhs.data(), n,
+                       permuted_rhs_.data(), intermediate_solution_.data(),
+                       permuted_solution_.data(), result.data(), status_.data() + 1,
                        safety_checks_enabled_);
 
   if (safety_checks_enabled_) {
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(status_pinned_.data(), status_.data(),
-                                        kNumStatuses * sizeof(int),
-                                        cudaMemcpyDeviceToHost, stream));
+                                        kNumStatuses * sizeof(int), cudaMemcpyDeviceToHost,
+                                        stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
     if (status_pinned_[0] == 0) {
@@ -518,11 +440,8 @@ bool DenseLDLTSolver::Solve(cudaStream_t stream,
 // DenseLDLTSolver private helpers
 // ---------------------------------------------------------------------------
 
-void DenseLDLTSolver::EnsureBuffersSize(size_t n) {
+void DenseLDLTSolver::EnsureBuffersSize(cudaStream_t /*stream*/, size_t n) {
   const size_t matrix_elements = n * n;
-  if (dense_matrix_.size() != matrix_elements) {
-    dense_matrix_.resize(matrix_elements);
-  }
   if (ldlt_factor_.size() != matrix_elements) {
     ldlt_factor_.resize(matrix_elements);
   }
@@ -544,24 +463,4 @@ void DenseLDLTSolver::EnsureBuffersSize(size_t n) {
   }
 }
 
-void DenseLDLTSolver::ConvertCSRToDense(cudaStream_t stream,
-                                        const CSRSparseMatrix &matrix,
-                                        dvector<float> &dense_matrix) {
-  const int num_rows = static_cast<int>(matrix.NumRows());
-  if (num_rows == 0) {
-    return;
-  }
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(
-      dense_matrix.data(), 0,
-      static_cast<size_t>(num_rows) * num_rows * sizeof(float), stream));
-
-  constexpr int kThreads = 256;
-  constexpr int kWarpsPerBlock = kThreads / kWarpSize;
-  const int blocks = (num_rows + kWarpsPerBlock - 1) / kWarpsPerBlock;
-  csr_to_dense_kernel<<<blocks, kThreads, 0, stream>>>(
-      matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(),
-      num_rows, dense_matrix.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-} // namespace cunls
+}  // namespace cunls

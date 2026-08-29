@@ -27,12 +27,17 @@ Sparse matrix structs
   - `col_ids` - [in/out] CSR column indices.
   - `values` - [in/out] CSR non-zero values.
   - methods: `NumRows()`, `NumNonZeros()`.
-- `TripletSparseStructure`
-  - `row_ids` - [in/out] triplet row indices.
-  - `col_ids` - [in/out] triplet column indices.
-- `SparseJacobian`
-  - `structure` - [in/out] sparse structure.
-  - `values` - [in/out] sparse values.
+- `BSRSparseMatrix`
+  - `row_offsets` - [in/out] block-row offsets.
+  - `col_ids` - [in/out] block-column index of each stored tile.
+  - `values` - [in/out] dense `block_size` x `block_size` tiles, row-major.
+  - `block_size` - [in/out] tile edge length.
+  - `num_block_rows` - [in/out] number of block rows.
+  - `max_tiles_per_row` - [in/out] longest block row; selects the SpMV schedule.
+  - methods: `NumBlocks()`, `NumRows()`, `NumNonZeros()`.
+- `PerFactorJacobians`
+  - alias for `dvector<float>`: per-factor dense Jacobian blocks, concatenated
+    across residual batches. There is no global sparse Jacobian.
 
 DeviceVector<T>
 ---------------
