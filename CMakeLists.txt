@@ -57,6 +57,25 @@ add_library(cunls
   $<TARGET_OBJECTS:cunls_robustifier>
 )
 
+target_include_directories(cunls
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+
+# Public cuNLS headers include CCCL/libcudacxx headers such as <cuda/std/array>.
+# Some CUDA Toolkit layouts place them under a nested cccl include directory,
+# so propagate that path to build-tree consumers when it exists.
+foreach(_cunls_cuda_include_dir IN LISTS CUDAToolkit_INCLUDE_DIRS)
+  if(EXISTS "${_cunls_cuda_include_dir}/cccl")
+    target_include_directories(cunls
+      PUBLIC $<BUILD_INTERFACE:${_cunls_cuda_include_dir}/cccl>
+    )
+  endif()
+endforeach()
+
+add_library(cunls::cunls ALIAS cunls)
+
 target_link_libraries(cunls
   PUBLIC CUDA::cudart
   PRIVATE ${CUNLS_LIBS}
