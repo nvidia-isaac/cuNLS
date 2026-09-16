@@ -7,7 +7,7 @@ cuNLS is a GPU-accelerated nonlinear least-squares solver library written in CUD
 ### Key facts
 
 - **Language**: CUDA/C++ (C++17), with Python bindings via nanobind
-- **Build system**: CMake 3.24+, `nvcc`, Unix Makefiles
+- **Build system**: CMake 3.22+, `nvcc`, Unix Makefiles
 - **Testing**: GoogleTest (C++), pytest (Python). Tests require a GPU.
 - **Dependencies**: cuDSS, spdlog, CUDA Toolkit (cusparse, cublas, cusolver). All fetched via CMake `FetchContent`.
 - **Docker**: All builds run inside Docker containers via `scripts/Dockerfile`. Parameterized by `CUDA_VERSION` and `UBUNTU_VERSION` build args.
@@ -166,7 +166,7 @@ These are mistakes encountered during implementation. Avoid repeating them.
 | Pitfall | What happens | How to avoid |
 |---|---|---|
 | Hardcoding GCC version (e.g., `g++-13`) | Fails on Ubuntu 22.04 which doesn't ship GCC 13 | Use distro default `g++` -- C++17 works on GCC 11+ |
-| System CMake on Ubuntu 22.04 | Version 3.22, but project needs 3.24+ | Use Kitware APT repo for latest CMake |
+| Unnecessarily pinning CMake | Hides compatibility regressions and adds an external APT repository | Use the distro-provided CMake 3.22+ |
 | `docker login -p $SECRET` | Exposes secret in process list | Use `env:` block + `echo "$VAR" \| docker login --password-stdin` |
 | `grep ... \| head -1 \|\| echo "?"` | `\|\|` applies to `head` (exit 0), not `grep` | Use `${VAR:-"?"}` after the pipeline |
 | Different container mount paths between build and test | CTest include files reference absolute paths from build container | Mount at `/cunls_install` in all scripts |

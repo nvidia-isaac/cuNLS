@@ -3,16 +3,9 @@ ARG UBUNTU_VERSION=24.04
 
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 
-# CMake from Kitware APT (system cmake on Ubuntu 22.04 is 3.22, project needs >= 3.24)
+# Use the distro CMake so Ubuntu 22.04 continuously validates the 3.22 minimum.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates gpg wget \
-    && wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc \
-       | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg \
-    && . /etc/os-release \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ ${UBUNTU_CODENAME} main" \
-       > /etc/apt/sources.list.d/kitware.list \
-    && apt-get update && apt-get install -y --allow-change-held-packages \
-       apt-utils g++ gcc git cmake ccache \
+       ca-certificates apt-utils g++ gcc git cmake ccache \
        software-properties-common curl \
        python3 python3-pip python3-dev python3-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
