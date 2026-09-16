@@ -112,6 +112,22 @@ cmake --install build
 By default this builds a shared library. Pass `-DBUILD_SHARED_LIBS=OFF` to
 build a static library instead.
 
+CUDA compiler and architecture selections supplied by the caller are preserved. For example, a
+native Jetson Orin build can avoid PTX JIT compatibility requirements by compiling an SM 87 cubin:
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES=87-real
+```
+
+On Arm, `CUDSS_PLATFORM=auto` selects the Jetson-oriented `linux-aarch64` cuDSS archive for CUDA 12
+builds targeting SM 72 or SM 87. Other Arm builds use `linux-sbsa`, the Server Base System
+Architecture package; this includes Jetson Thor with cuDSS 0.8 because NVIDIA does not publish a
+`linux-aarch64` CUDA 13 archive for that release. Override the selection explicitly with
+`-DCUDSS_PLATFORM=linux-aarch64` or `-DCUDSS_PLATFORM=linux-sbsa` when cross-compiling or using a
+custom toolchain.
+
 ## Quick Start
 
 The following minimal program solves a 1-D prior problem: a scalar variable $x$ pulled toward a target $o = 2$.

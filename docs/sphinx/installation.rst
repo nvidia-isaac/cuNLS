@@ -80,6 +80,27 @@ Pass ``-DBUILD_SHARED_LIBS=OFF`` to build a static library instead of a shared
 one.
 
 ===============================================================================
+CUDA target and Arm platform selection
+===============================================================================
+
+cuNLS preserves caller-provided CUDA compiler and architecture settings. A
+native Jetson Orin build can compile an SM 87 cubin and avoid PTX JIT
+compatibility requirements:
+
+.. code-block:: bash
+
+   cmake -S . -B build \
+     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+     -DCMAKE_CUDA_ARCHITECTURES=87-real
+
+On Arm, ``CUDSS_PLATFORM=auto`` selects the Jetson-oriented
+``linux-aarch64`` archive for CUDA 12 builds targeting SM 72 or SM 87. Other
+Arm builds use the SBSA archive. This includes Jetson Thor with cuDSS 0.8
+because NVIDIA does not publish a ``linux-aarch64`` CUDA 13 archive for that
+release. Cross-compilation and custom toolchains can override this with
+``-DCUDSS_PLATFORM=linux-aarch64`` or ``-DCUDSS_PLATFORM=linux-sbsa``.
+
+===============================================================================
 Notes
 ===============================================================================
 

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89)
-set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89" CACHE STRING "CUDA architectures to compile")
+endif()
 
 project(cunls LANGUAGES CXX CUDA)
 
@@ -22,7 +24,9 @@ add_spdlog()
 # cuDSS is fetched as a prebuilt archive. Default to 0.8.0.10; 0.7.1.4 is still
 # supported via -DCUDSS_VERSION=0.7.1.4.
 set(CUDSS_VERSION "0.8.0.10" CACHE STRING "cuDSS version to download")
-add_cudss(VERSION "${CUDSS_VERSION}")
+set(CUDSS_PLATFORM "auto" CACHE STRING "cuDSS redistribution platform")
+set_property(CACHE CUDSS_PLATFORM PROPERTY STRINGS auto linux-x86_64 linux-aarch64 linux-sbsa)
+add_cudss(VERSION "${CUDSS_VERSION}" PLATFORM "${CUDSS_PLATFORM}")
 
 set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver cudss)
 
