@@ -7,7 +7,7 @@ Prerequisites
 ===============================================================================
 
 - CUDA Toolkit (with `nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`)
-- CMake >= 3.24
+- CMake >= 3.22
 - C++17 compiler
 - GNU Make (for the provided scripts)
 - NVIDIA GPU driver compatible with your CUDA Toolkit

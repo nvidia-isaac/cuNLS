@@ -133,7 +133,7 @@ Step 3: Create CMakeLists.txt
 
 .. code-block:: cmake
 
-   cmake_minimum_required(VERSION 3.24)
+   cmake_minimum_required(VERSION 3.22)
    project(cunls_quick_start LANGUAGES CXX CUDA)
 
    set(CMAKE_CXX_STANDARD 17)

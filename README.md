@@ -59,7 +59,7 @@ cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per 
 
 - NVIDIA GPU with compatible driver
 - CUDA Toolkit (`nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`)
-- CMake >= 3.24
+- CMake >= 3.22
 - C++17 compiler
 - GNU Make
 
@@ -159,7 +159,7 @@ int main() {
 **CMakeLists.txt**
 
 ```cmake
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.22)
 project(cunls_quick_start LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)

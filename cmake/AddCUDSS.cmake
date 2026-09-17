@@ -59,7 +59,6 @@ function(add_cudss)
   include(FetchContent)
   FetchContent_Declare(
     cudss
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     URL ${CUDSS_URL}
   )
   FetchContent_MakeAvailable(cudss)

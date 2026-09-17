@@ -1,4 +1,11 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.22)
+
+# DOWNLOAD_EXTRACT_TIMESTAMP was added in CMake 3.24. Keep FetchContent declarations
+# compatible with 3.22 and select the preferred extraction-time behavior when the policy exists.
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+
 set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 
@@ -30,7 +37,6 @@ option(ENABLE_PROFILING "Enable profiling" OFF)
 if(ENABLE_PROFILING)
   FetchContent_Declare(
     nvtx
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     URL https://github.com/NVIDIA/NVTX/archive/refs/tags/v3.3.0.zip
   )
   FetchContent_MakeAvailable(nvtx)
@@ -145,7 +151,6 @@ endif()
 if(BUILD_TESTING)
   FetchContent_Declare(
     googletest
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip
   )
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
