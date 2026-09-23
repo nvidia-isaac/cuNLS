@@ -25,6 +25,14 @@ DOCKER_VOLUMES="-v $(pwd):/cunls:ro -v $LOCAL_INSTALL_DIR:$INSTALL_DIR"
 BUILD_CMD="cd $INSTALL_DIR"
 BUILD_CMD="$BUILD_CMD && CUNLS_SOURCE_DIR=/cunls EXTRA_CMAKE_ARGS='${EXTRA_CMAKE_ARGS:-} -DBUILD_SHARED_LIBS=ON' /cunls/scripts/build_cunls.sh build_shared $CMAKE_BUILD_TYPE $INSTALL_DIR/shared"
 BUILD_CMD="$BUILD_CMD && CUNLS_SOURCE_DIR=/cunls EXTRA_CMAKE_ARGS='${EXTRA_CMAKE_ARGS:-} -DBUILD_SHARED_LIBS=OFF' /cunls/scripts/build_cunls.sh build_static $CMAKE_BUILD_TYPE $INSTALL_DIR/static"
+# cunls no longer links or bundles cuDSS (it is dlopen()'d at runtime); still
+# package the cuDSS binaries FetchContent downloaded for build_shared as a
+# standalone artifact, separate from the cunls shared/static outputs, so
+# consumers who need SparseLinearSolverType::cuDSS can grab it and point
+# LD_LIBRARY_PATH at $INSTALL_DIR/cudss/lib.
+BUILD_CMD="$BUILD_CMD && mkdir -p $INSTALL_DIR/cudss"
+BUILD_CMD="$BUILD_CMD && cp -r $INSTALL_DIR/build_shared/_deps/cudss-src/include $INSTALL_DIR/cudss/"
+BUILD_CMD="$BUILD_CMD && cp -r $INSTALL_DIR/build_shared/_deps/cudss-src/lib $INSTALL_DIR/cudss/"
 
 TTY_FLAG=""
 [ -t 0 ] && TTY_FLAG="-it"

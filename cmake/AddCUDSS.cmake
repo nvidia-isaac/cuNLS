@@ -1,11 +1,23 @@
-# Function to add cuDSS library to the project
+# Function to make the cuDSS headers available to the build
 #
 # Usage:
 #   add_cudss(VERSION "0.8.0.10")
 #
 # This function downloads a prebuilt cuDSS archive (matching the host
 # architecture and the CUDA major version) using FetchContent and creates an
-# imported target 'cudss' that can be linked against.
+# INTERFACE imported target 'cudss::headers' exposing only the cuDSS include
+# directory.
+#
+# cuDSS is an OPTIONAL runtime dependency of cunls: cunls loads libcudss.so
+# with dlopen() at runtime (see cunls/common/cudss_dynamic.h) instead of
+# linking against it, so cunls binaries carry no link-time or load-time
+# dependency on cuDSS. Only the headers are needed at compile time to declare
+# the cuDSS types/functions used by cudss_dynamic.cpp and cudss_helper.cpp.
+#
+# The downloaded archive's lib/ directory (containing libcudss.so and
+# libcudss_static.a) is exposed via CUDSS_LIB_DIR in the parent scope so
+# callers can point LD_LIBRARY_PATH at it (e.g. for tests) or package it as a
+# standalone artifact, separate from cunls's own binaries.
 #
 # Supported versions: 0.8.0.10 (default) and 0.7.1.4. The cuDSS API differs
 # between 0.7.x and 0.8.x; the C++ sources select the right API based on the
@@ -25,9 +37,7 @@ function(add_cudss)
     set(ARG_VERSION "0.8.0.10")
   endif()
 
-  add_library(cudss STATIC IMPORTED)
-
-  message(STATUS "Using prebuilt cuDSS ${ARG_VERSION}")
+  message(STATUS "Using prebuilt cuDSS ${ARG_VERSION} headers (loaded at runtime via dlopen)")
   set(CUDSS_URL_PREFIX "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/")
   message(STATUS "CUDA Compiler Version: ${CMAKE_CUDA_COMPILER_VERSION}")
 
@@ -63,8 +73,14 @@ function(add_cudss)
   )
   FetchContent_MakeAvailable(cudss)
 
-  set_target_properties(cudss PROPERTIES
-    IMPORTED_LOCATION "${cudss_SOURCE_DIR}/lib/libcudss_static.a"
+  add_library(cudss::headers INTERFACE IMPORTED)
+  set_target_properties(cudss::headers PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${cudss_SOURCE_DIR}/include"
   )
+
+  # Exposed so the top-level build can package cuDSS's shared/static
+  # libraries as a standalone artifact and so tests can add it to
+  # LD_LIBRARY_PATH; cunls itself never links against these files.
+  set(CUDSS_LIB_DIR "${cudss_SOURCE_DIR}/lib" PARENT_SCOPE)
+  set(CUDSS_INCLUDE_DIR "${cudss_SOURCE_DIR}/include" PARENT_SCOPE)
 endfunction()

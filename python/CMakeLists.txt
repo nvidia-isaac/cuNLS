@@ -29,7 +29,9 @@ target_include_directories(_pycunls_core PRIVATE
 target_link_libraries(_pycunls_core PRIVATE cunls CUDA::cudart)
 
 # When cunls is static, INTERFACE does not include bundled deps; link CUDA
-# toolkit libs explicitly. spdlog and cuDSS are already inside libcunls.a.
+# toolkit libs explicitly. spdlog is already inside libcunls.a; cuDSS is never
+# linked at all (it is dlopen()'d at runtime, see cudss_dynamic.cpp) so no
+# pycunls wheel carries a cuDSS binary or a load-time dependency on one.
 if(NOT BUILD_SHARED_LIBS)
   target_link_libraries(_pycunls_core PRIVATE
     CUDA::cusparse CUDA::cublas CUDA::cusolver)

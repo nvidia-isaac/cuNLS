@@ -12,10 +12,6 @@ Runtime / core build dependencies
   - License: MIT
   - URL: `https://github.com/gabime/spdlog`
 
-- **cuDSS**
-  - License: Proprietary (NVIDIA)
-  - URL: `https://developer.nvidia.com/cudss`
-
 - **NVIDIA CUDA Toolkit libraries** (`cudart`, `cuBLAS`, `cuSPARSE`,
   `cuSOLVER`)
   - License: NVIDIA CUDA End User License Agreement
@@ -24,6 +20,11 @@ Runtime / core build dependencies
 ===============================================================================
 Optional dependency
 ===============================================================================
+
+- **cuDSS** (only required to use `SparseLinearSolverType::cuDSS`; loaded via
+  `dlopen()` at runtime, not linked or bundled — see :doc:`installation`)
+  - License: Proprietary (NVIDIA)
+  - URL: `https://developer.nvidia.com/cudss`
 
 - **NVTX** (used when `ENABLE_PROFILING=ON`)
   - License: Apache-2.0

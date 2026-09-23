@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <sstream>
 
+#include "cunls/common/cudss_dynamic.h"
 #include "cunls/common/cudss_helper.h"
 #include "cunls/common/log.h"
 
@@ -93,7 +94,8 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
   assert(cudss_data != nullptr && "Invalid cuDSS data");
 
   if (options_.nthreads > 1 && !options_.threading_lib_path.empty()) {
-    THROW_ON_CUDSS_ERROR(cudssSetThreadingLayer(dss_handle, options_.threading_lib_path.c_str()));
+    THROW_ON_CUDSS_ERROR(
+        GetCudssApi().SetThreadingLayer(dss_handle, options_.threading_lib_path.c_str()));
   }
   SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
 
@@ -109,8 +111,8 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
   auto cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
 
   // Perform symbolic analysis phase
-  THROW_ON_CUDSS_ERROR(cudssExecute(dss_handle, CUDSS_PHASE_ANALYSIS, cfg, cudss_data, desc_m,
-                                    desc_result, desc_rhs));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_ANALYSIS, cfg, cudss_data,
+                                             desc_m, desc_result, desc_rhs));
 
   // For FastInitSlowSolve, also perform initial factorization during
   // initialization
@@ -118,8 +120,8 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
     case cuDSSLinearSolverMode::SlowInitFastSolve:
       break;
     case cuDSSLinearSolverMode::FastInitSlowSolve:
-      THROW_ON_CUDSS_ERROR(cudssExecute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg, cudss_data,
-                                        desc_m, desc_result, desc_rhs));
+      THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg,
+                                                 cudss_data, desc_m, desc_result, desc_rhs));
   }
 
   return true;
@@ -174,10 +176,10 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
 
   // Perform factorization or refactorization
   THROW_ON_CUDSS_ERROR(
-      cudssExecute(dss_handle, phase, cfg, cudss_data, desc_m, desc_result, desc_rhs));
+      GetCudssApi().Execute(dss_handle, phase, cfg, cudss_data, desc_m, desc_result, desc_rhs));
   // Solve the linear system
-  THROW_ON_CUDSS_ERROR(
-      cudssExecute(dss_handle, CUDSS_PHASE_SOLVE, cfg, cudss_data, desc_m, desc_result, desc_rhs));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_SOLVE, cfg, cudss_data, desc_m,
+                                             desc_result, desc_rhs));
 
   return true;
 }

@@ -22,6 +22,7 @@
 #include <cassert>
 #include <cstring>
 
+#include "cunls/common/cudss_dynamic.h"
 #include "cunls/common/log.h"
 
 // cuDSS 0.8 reworked the matrix descriptor and config API (new reordering enums,
@@ -168,14 +169,16 @@ void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool, const char
 
   DetachcuDSSDeviceMemHandler(handle);
 
-  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), &handler));
+  THROW_ON_CUDSS_ERROR(
+      GetCudssApi().SetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), &handler));
 }
 
 void DetachcuDSSDeviceMemHandler(void *handle) {
   if (handle == nullptr) {
     return;
   }
-  THROW_ON_CUDSS_ERROR(cudssSetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), nullptr));
+  THROW_ON_CUDSS_ERROR(
+      GetCudssApi().SetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), nullptr));
 }
 
 /**
@@ -186,7 +189,7 @@ void DetachcuDSSDeviceMemHandler(void *handle) {
  */
 cuDSSHandle::~cuDSSHandle() {
   if (handle_ != nullptr) {
-    WARN_ON_CUDSS_ERROR(cudssDestroy((cudssHandle_t)handle_));
+    WARN_ON_CUDSS_ERROR(GetCudssApi().Destroy((cudssHandle_t)handle_));
   }
 }
 
@@ -207,15 +210,15 @@ void *cuDSSHandle::GetHandle(cudaStream_t stream) {
   // Destroy old handle if switching to a different stream
   if (handle_ != nullptr) {
     auto h = reinterpret_cast<cudssHandle_t>(handle_);
-    THROW_ON_CUDSS_ERROR(cudssDestroy(h));
+    THROW_ON_CUDSS_ERROR(GetCudssApi().Destroy(h));
   }
 
   // Create and initialize new handle for the requested stream
   stream_ = stream;
 
   cudssHandle_t h = nullptr;
-  THROW_ON_CUDSS_ERROR(cudssCreate(&h));
-  THROW_ON_CUDSS_ERROR(cudssSetStream(h, stream_));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().Create(&h));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().SetStream(h, stream_));
   handle_ = reinterpret_cast<void *>(h);
   return handle_;
 }
@@ -243,12 +246,12 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   // Create cuDSS CSR matrix descriptor
   // Parameters: symmetric matrix, full view, zero-based indexing
 #ifdef CUDSS_NEW_API
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(&mat, matrix_size, matrix_size, num_nonzeros, rows_ptr,
-                                            NULL, cols_ptr, values_ptr, CUDSS_R_32I, CUDSS_R_32I,
-                                            CUDSS_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL,
-                                            CUDSS_BASE_ZERO));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().MatrixCreateCsr(
+      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,
+      CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL,
+      CUDSS_BASE_ZERO));
 #else
-  THROW_ON_CUDSS_ERROR(cudssMatrixCreateCsr(
+  THROW_ON_CUDSS_ERROR(GetCudssApi().MatrixCreateCsr(
       &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,
       CUDA_R_32I, CUDA_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
 #endif
@@ -276,10 +279,10 @@ cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
   cudssMatrix_t mat = nullptr;
 #ifdef CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(
-      cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F, CUDSS_LAYOUT_COL_MAJOR));
+      GetCudssApi().MatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F, CUDSS_LAYOUT_COL_MAJOR));
 #else
   THROW_ON_CUDSS_ERROR(
-      cudssMatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F, CUDSS_LAYOUT_COL_MAJOR));
+      GetCudssApi().MatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F, CUDSS_LAYOUT_COL_MAJOR));
 #endif
   matrix_ = reinterpret_cast<void *>(mat);
 }
@@ -292,7 +295,7 @@ cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
  */
 cuDSSDescription::~cuDSSDescription() {
   auto mat = reinterpret_cast<cudssMatrix_t>(matrix_);
-  WARN_ON_CUDSS_ERROR(cudssMatrixDestroy(mat));
+  WARN_ON_CUDSS_ERROR(GetCudssApi().MatrixDestroy(mat));
 }
 
 /**
@@ -315,12 +318,12 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
     throw std::invalid_argument("Invalid reordering algorithm value");
   }
 
-  THROW_ON_CUDSS_ERROR(cudssConfigCreate(&cfg));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigCreate(&cfg));
 
   auto alg = (cudssReorderingAlg_t)reordering_algorithm;
 
-  THROW_ON_CUDSS_ERROR(
-      cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(cudssReorderingAlg_t)));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg,
+                                               sizeof(cudssReorderingAlg_t)));
 #else
   // Validate algorithm is within expected range
   if (reordering_algorithm < static_cast<int>(CUDSS_ALG_DEFAULT) ||
@@ -328,15 +331,16 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
     throw std::invalid_argument("Invalid reordering algorithm value");
   }
 
-  THROW_ON_CUDSS_ERROR(cudssConfigCreate(&cfg));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigCreate(&cfg));
 
   auto alg = (cudssAlgType_t)reordering_algorithm;
 
   THROW_ON_CUDSS_ERROR(
-      cudssConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(cudssAlgType_t)));
+      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(cudssAlgType_t)));
 #endif
 
-  THROW_ON_CUDSS_ERROR(cudssConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
+  THROW_ON_CUDSS_ERROR(
+      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
 #ifdef CUDSS_NEW_API
   // Hybrid execute mode is incompatible with the BTF_COLAMD/COLAMD reordering
@@ -345,8 +349,8 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
   // remaining reordering algorithms.
   if (alg != CUDSS_REORDERING_ALG_BTF_COLAMD && alg != CUDSS_REORDERING_ALG_COLAMD) {
     int hybrid_execute_mode = 16;
-    THROW_ON_CUDSS_ERROR(
-        cudssConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE, &hybrid_execute_mode, sizeof(int)));
+    THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE,
+                                                 &hybrid_execute_mode, sizeof(int)));
   }
 #endif
 
@@ -362,7 +366,7 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
 cuDSSConfig::~cuDSSConfig() {
   if (config_ != nullptr) {
     auto config = reinterpret_cast<cudssConfig_t>(config_);
-    WARN_ON_CUDSS_ERROR(cudssConfigDestroy(config));
+    WARN_ON_CUDSS_ERROR(GetCudssApi().ConfigDestroy(config));
   }
 }
 
@@ -376,13 +380,13 @@ void *cuDSSData::GetData(void *handle) {
 
   if (data_ != nullptr && handle_ != nullptr) {
     auto cudss_data = reinterpret_cast<cudssData_t>(data_);
-    WARN_ON_CUDSS_ERROR(cudssDataDestroy((cudssHandle_t)handle_, cudss_data));
+    WARN_ON_CUDSS_ERROR(GetCudssApi().DataDestroy((cudssHandle_t)handle_, cudss_data));
   }
 
   // Create and initialize new data object for the requested handle
   handle_ = handle;
   cudssData_t cudss_data = nullptr;
-  THROW_ON_CUDSS_ERROR(cudssDataCreate((cudssHandle_t)handle_, &cudss_data));
+  THROW_ON_CUDSS_ERROR(GetCudssApi().DataCreate((cudssHandle_t)handle_, &cudss_data));
   data_ = reinterpret_cast<void *>(cudss_data);
   return data_;
 }
@@ -396,7 +400,7 @@ void *cuDSSData::GetData(void *handle) {
 cuDSSData::~cuDSSData() {
   if (data_ != nullptr && handle_ != nullptr) {
     auto data = reinterpret_cast<cudssData_t>(data_);
-    WARN_ON_CUDSS_ERROR(cudssDataDestroy((cudssHandle_t)handle_, data));
+    WARN_ON_CUDSS_ERROR(GetCudssApi().DataDestroy((cudssHandle_t)handle_, data));
   }
 }
 

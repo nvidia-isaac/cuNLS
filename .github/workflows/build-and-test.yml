@@ -89,6 +89,18 @@ jobs:
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: warn
 
+      # cuDSS is an optional runtime dependency (loaded via dlopen, not linked
+      # into cunls); ship it as its own artifact, separate from the cunls
+      # C++ libraries and Python wheel above.
+      - name: Upload cuDSS binaries
+        if: ${{ always() && inputs.upload_binaries }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: cudss-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          path: output/cudss/
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn
+
       - name: Upload Python wheel
         if: ${{ always() && inputs.upload_binaries }}
         uses: actions/upload-artifact@v6
