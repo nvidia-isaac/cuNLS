@@ -246,10 +246,10 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   // Create cuDSS CSR matrix descriptor
   // Parameters: symmetric matrix, full view, zero-based indexing
 #ifdef CUDSS_NEW_API
-  THROW_ON_CUDSS_ERROR(GetCudssApi().MatrixCreateCsr(
-      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,
-      CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL,
-      CUDSS_BASE_ZERO));
+  THROW_ON_CUDSS_ERROR(
+      GetCudssApi().MatrixCreateCsr(&mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL,
+                                    cols_ptr, values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F,
+                                    CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
 #else
   THROW_ON_CUDSS_ERROR(GetCudssApi().MatrixCreateCsr(
       &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,

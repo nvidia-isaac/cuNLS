@@ -38,6 +38,7 @@ namespace cunls {
  * generation (<=0.7.x or >=0.8) cunls was built against.
  */
 struct CudssApi {
+  decltype(&::cudssGetProperty) GetProperty = nullptr;
   decltype(&::cudssCreate) Create = nullptr;
   decltype(&::cudssDestroy) Destroy = nullptr;
   decltype(&::cudssSetStream) SetStream = nullptr;
@@ -74,10 +75,11 @@ bool cuDSSIsAvailable();
  * fallbacks). The result is cached for the lifetime of the process.
  *
  * @return A reference to the populated API table.
- * @throws std::runtime_error if libcudss.so could not be found/loaded, with
- *         a message explaining that cuDSS ships separately from cunls and
- *         how to make it available (add its lib/ directory to
- *         LD_LIBRARY_PATH).
+ * @throws std::runtime_error if libcudss.so could not be found/loaded, is
+ *         missing an expected symbol, or reports a MAJOR.MINOR version that
+ *         differs from the cuDSS headers cunls was built against, with a
+ *         message explaining how to fix it (e.g. add the matching cuDSS
+ *         release's lib/ directory to LD_LIBRARY_PATH).
  */
 const CudssApi &GetCudssApi();
 

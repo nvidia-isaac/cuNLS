@@ -67,6 +67,7 @@ struct CudssLoader {
   void *library_handle = nullptr;
   CudssApi api;
   bool available = false;
+  std::string error_message;
 };
 
 void *OpenCudssLibrary() {
@@ -79,39 +80,85 @@ void *OpenCudssLibrary() {
   return nullptr;
 }
 
+/**
+ * @brief Verifies the loaded libcudss.so reports the same MAJOR.MINOR
+ * version as the cuDSS headers cunls was compiled against.
+ *
+ * A mismatched version is the same failure mode as a missing symbol (an ABI
+ * cunls cannot safely call into) but may not always manifest as one, so it
+ * is checked explicitly.
+ */
+void CheckCudssVersion(const CudssApi &api) {
+  int runtime_major = 0;
+  int runtime_minor = 0;
+  if (api.GetProperty(MAJOR_VERSION, &runtime_major) != CUDSS_STATUS_SUCCESS ||
+      api.GetProperty(MINOR_VERSION, &runtime_minor) != CUDSS_STATUS_SUCCESS) {
+    throw std::runtime_error(
+        "cuNLS: found libcudss.so but could not query its version via "
+        "cudssGetProperty(). The loaded cuDSS library is likely a version "
+        "incompatible with the cuDSS headers cunls was built against.");
+  }
+
+  if (runtime_major != CUDSS_VERSION_MAJOR || runtime_minor != CUDSS_VERSION_MINOR) {
+    throw std::runtime_error(
+        "cuNLS: found libcudss.so version " + std::to_string(runtime_major) + "." +
+        std::to_string(runtime_minor) + ", but cunls was built against cuDSS " +
+        std::to_string(CUDSS_VERSION_MAJOR) + "." + std::to_string(CUDSS_VERSION_MINOR) +
+        " headers. Point LD_LIBRARY_PATH at a matching cuDSS " +
+        std::to_string(CUDSS_VERSION_MAJOR) + "." + std::to_string(CUDSS_VERSION_MINOR) +
+        ".x release instead.");
+  }
+}
+
 CudssLoader LoadCudss() {
   CudssLoader loader;
   loader.library_handle = OpenCudssLibrary();
   if (loader.library_handle == nullptr) {
+    loader.error_message = kCudssMissingMessage;
     return loader;
   }
 
-  auto &api = loader.api;
-  api.Create = LoadCudssSymbol<decltype(api.Create)>(loader.library_handle, "cudssCreate");
-  api.Destroy = LoadCudssSymbol<decltype(api.Destroy)>(loader.library_handle, "cudssDestroy");
-  api.SetStream = LoadCudssSymbol<decltype(api.SetStream)>(loader.library_handle, "cudssSetStream");
-  api.SetDeviceMemHandler = LoadCudssSymbol<decltype(api.SetDeviceMemHandler)>(
-      loader.library_handle, "cudssSetDeviceMemHandler");
-  api.SetThreadingLayer = LoadCudssSymbol<decltype(api.SetThreadingLayer)>(
-      loader.library_handle, "cudssSetThreadingLayer");
-  api.ConfigCreate =
-      LoadCudssSymbol<decltype(api.ConfigCreate)>(loader.library_handle, "cudssConfigCreate");
-  api.ConfigDestroy =
-      LoadCudssSymbol<decltype(api.ConfigDestroy)>(loader.library_handle, "cudssConfigDestroy");
-  api.ConfigSet = LoadCudssSymbol<decltype(api.ConfigSet)>(loader.library_handle, "cudssConfigSet");
-  api.DataCreate =
-      LoadCudssSymbol<decltype(api.DataCreate)>(loader.library_handle, "cudssDataCreate");
-  api.DataDestroy =
-      LoadCudssSymbol<decltype(api.DataDestroy)>(loader.library_handle, "cudssDataDestroy");
-  api.MatrixCreateCsr = LoadCudssSymbol<decltype(api.MatrixCreateCsr)>(loader.library_handle,
-                                                                       "cudssMatrixCreateCsr");
-  api.MatrixCreateDn = LoadCudssSymbol<decltype(api.MatrixCreateDn)>(loader.library_handle,
-                                                                     "cudssMatrixCreateDn");
-  api.MatrixDestroy =
-      LoadCudssSymbol<decltype(api.MatrixDestroy)>(loader.library_handle, "cudssMatrixDestroy");
-  api.Execute = LoadCudssSymbol<decltype(api.Execute)>(loader.library_handle, "cudssExecute");
+  try {
+    auto &api = loader.api;
+    api.GetProperty =
+        LoadCudssSymbol<decltype(api.GetProperty)>(loader.library_handle, "cudssGetProperty");
+    api.Create = LoadCudssSymbol<decltype(api.Create)>(loader.library_handle, "cudssCreate");
+    api.Destroy = LoadCudssSymbol<decltype(api.Destroy)>(loader.library_handle, "cudssDestroy");
+    api.SetStream =
+        LoadCudssSymbol<decltype(api.SetStream)>(loader.library_handle, "cudssSetStream");
+    api.SetDeviceMemHandler = LoadCudssSymbol<decltype(api.SetDeviceMemHandler)>(
+        loader.library_handle, "cudssSetDeviceMemHandler");
+    api.SetThreadingLayer = LoadCudssSymbol<decltype(api.SetThreadingLayer)>(
+        loader.library_handle, "cudssSetThreadingLayer");
+    api.ConfigCreate =
+        LoadCudssSymbol<decltype(api.ConfigCreate)>(loader.library_handle, "cudssConfigCreate");
+    api.ConfigDestroy =
+        LoadCudssSymbol<decltype(api.ConfigDestroy)>(loader.library_handle, "cudssConfigDestroy");
+    api.ConfigSet =
+        LoadCudssSymbol<decltype(api.ConfigSet)>(loader.library_handle, "cudssConfigSet");
+    api.DataCreate =
+        LoadCudssSymbol<decltype(api.DataCreate)>(loader.library_handle, "cudssDataCreate");
+    api.DataDestroy =
+        LoadCudssSymbol<decltype(api.DataDestroy)>(loader.library_handle, "cudssDataDestroy");
+    api.MatrixCreateCsr = LoadCudssSymbol<decltype(api.MatrixCreateCsr)>(loader.library_handle,
+                                                                         "cudssMatrixCreateCsr");
+    api.MatrixCreateDn =
+        LoadCudssSymbol<decltype(api.MatrixCreateDn)>(loader.library_handle, "cudssMatrixCreateDn");
+    api.MatrixDestroy =
+        LoadCudssSymbol<decltype(api.MatrixDestroy)>(loader.library_handle, "cudssMatrixDestroy");
+    api.Execute = LoadCudssSymbol<decltype(api.Execute)>(loader.library_handle, "cudssExecute");
 
-  loader.available = true;
+    CheckCudssVersion(api);
+
+    loader.available = true;
+  } catch (const std::exception &error) {
+    loader.error_message = error.what();
+    dlclose(loader.library_handle);
+    loader.library_handle = nullptr;
+    loader.api = CudssApi{};
+    loader.available = false;
+  }
+
   return loader;
 }
 
@@ -127,7 +174,7 @@ bool cuDSSIsAvailable() { return GetCudssLoader().available; }
 const CudssApi &GetCudssApi() {
   const CudssLoader &loader = GetCudssLoader();
   if (!loader.available) {
-    throw std::runtime_error(kCudssMissingMessage);
+    throw std::runtime_error(loader.error_message);
   }
   return loader.api;
 }

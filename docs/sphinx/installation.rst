@@ -100,8 +100,13 @@ Notes
     major version from
     `NVIDIA's cuDSS redistributables <https://developer.download.nvidia.com/compute/cudss/redist/libcudss/>`_
     (or install it via your platform's package manager), then add the
-    directory containing ``libcudss.so`` to ``LD_LIBRARY_PATH`` before
-    constructing a ``cuDSSLinearSolver``.
+    directory containing ``libcudss.so`` to ``LD_LIBRARY_PATH`` **in the
+    environment the process is launched with** — e.g. ``export
+    LD_LIBRARY_PATH=...`` in the shell before running your executable or
+    ``python``. The dynamic loader reads ``LD_LIBRARY_PATH`` once at process
+    startup, so setting it from inside an already-running process (for
+    example via ``os.environ[...]`` in a live Python interpreter, before
+    constructing a ``cuDSSLinearSolver``) has no effect on ``dlopen()``.
   - Requesting the cuDSS solver without ``libcudss.so`` reachable raises a
     ``std::runtime_error`` (Python: ``RuntimeError``) describing how to fix
     it, rather than a linker error or crash.
