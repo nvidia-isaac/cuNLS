@@ -26,12 +26,16 @@ include(cmake/AddCUDSS.cmake)
 include(cmake/BundleStaticDeps.cmake)
 
 add_spdlog()
-# cuDSS is fetched as a prebuilt archive. Default to 0.8.0.10; 0.7.1.4 is still
-# supported via -DCUDSS_VERSION=0.7.1.4.
+# cuDSS is fetched as a prebuilt archive purely for its headers; cunls loads
+# libcudss.so at runtime via dlopen() (see cunls/common/cudss_dynamic.h), so
+# cuDSS is an OPTIONAL runtime dependency and its binaries are never linked
+# into or bundled with cunls. Default to 0.8.0.10; 0.7.1.4 is still supported
+# via -DCUDSS_VERSION=0.7.1.4. CUDSS_LIB_DIR (set by add_cudss) points at the
+# downloaded libcudss.so/.a for packaging cuDSS as a standalone artifact.
 set(CUDSS_VERSION "0.8.0.10" CACHE STRING "cuDSS version to download")
 add_cudss(VERSION "${CUDSS_VERSION}")
 
-set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver cudss)
+set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver ${CMAKE_DL_LIBS})
 
 option(ENABLE_PROFILING "Enable profiling" OFF)
 if(ENABLE_PROFILING)
@@ -87,10 +91,13 @@ target_link_libraries(cunls
   PRIVATE ${CUNLS_LIBS}
 )
 
-# Static archives bundle spdlog and cuDSS (see bundle_static_dependencies below).
-# CMake would otherwise propagate those PRIVATE deps on INTERFACE_LINK_LIBRARIES,
-# forcing consumers to find spdlog/cudss targets and link them again — duplicate
-# symbols and unnecessary dependencies. Only CUDA toolkit libs stay external.
+# Static archives bundle spdlog (see bundle_static_dependencies below). cuDSS
+# is never bundled or linked — it is loaded at runtime via dlopen(), so it
+# carries no compile-time or link-time footprint in libcunls at all.
+# CMake would otherwise propagate PRIVATE deps like spdlog on
+# INTERFACE_LINK_LIBRARIES, forcing consumers to find that target and link it
+# again — duplicate symbols and unnecessary dependencies. Only CUDA toolkit
+# libs (and CMAKE_DL_LIBS, needed by cunls's own dlopen() calls) stay external.
 if(NOT BUILD_SHARED_LIBS)
   if(ENABLE_PROFILING)
     set_property(TARGET cunls PROPERTY INTERFACE_LINK_LIBRARIES
@@ -99,6 +106,7 @@ if(NOT BUILD_SHARED_LIBS)
       $<LINK_ONLY:CUDA::cublas>
       $<LINK_ONLY:CUDA::cusolver>
       $<LINK_ONLY:nvtx3-cpp>
+      $<LINK_ONLY:${CMAKE_DL_LIBS}>
     )
   else()
     set_property(TARGET cunls PROPERTY INTERFACE_LINK_LIBRARIES
@@ -106,6 +114,7 @@ if(NOT BUILD_SHARED_LIBS)
       $<LINK_ONLY:CUDA::cusparse>
       $<LINK_ONLY:CUDA::cublas>
       $<LINK_ONLY:CUDA::cusolver>
+      $<LINK_ONLY:${CMAKE_DL_LIBS}>
     )
   endif()
 endif()
@@ -116,7 +125,7 @@ if(BUILD_SHARED_LIBS)
 else()
   set_target_properties(cunls PROPERTIES
       ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-  bundle_static_dependencies(cunls spdlog::spdlog cudss)
+  bundle_static_dependencies(cunls spdlog::spdlog)
 endif()
 
 # C++ library install targets (skipped when only building Python wheel)
@@ -216,7 +225,12 @@ if(BUILD_TESTING)
   target_link_libraries(nls_tests PRIVATE ${TEST_LIBS})
 
   include(GoogleTest)
-  gtest_discover_tests(nls_tests)
+  # Tests exercise SparseLinearSolverType::cuDSS, which dlopen()s libcudss.so
+  # at runtime; point LD_LIBRARY_PATH at the copy FetchContent downloaded for
+  # this build so the tests find it without a system-wide cuDSS install.
+  gtest_discover_tests(nls_tests
+    PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${CUDSS_LIB_DIR}:$ENV{LD_LIBRARY_PATH}"
+  )
 
 endif()
 

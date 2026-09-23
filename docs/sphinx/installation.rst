@@ -87,7 +87,32 @@ Notes
   for a static archive with bundled dependencies.
 - ``BUILD_TESTING`` is off by default.
 - ``ENABLE_PROFILING=ON`` adds NVTX support.
-- cuDSS integration is configured through ``cmake/AddCUDSS.cmake``.
+- cuDSS is an **optional runtime dependency**. cunls never links against
+  ``libcudss.so``; instead it loads it with ``dlopen()`` the first time
+  ``SparseLinearSolverType::cuDSS`` is used (see ``cmake/AddCUDSS.cmake`` and
+  ``cunls/common/cudss_dynamic.h``). This means:
+
+  - Neither ``libcunls.so``/``libcunls.a`` nor the ``pycunls`` wheel bundle or
+    depend on cuDSS at load time — every other solver (``DenseLDLT``,
+    ``DenseCholesky``, ``DenseQR``, ``BlockSparsePCG``) works with no cuDSS
+    installed at all.
+  - To use the cuDSS solver, download a cuDSS release matching your CUDA
+    major version from
+    `NVIDIA's cuDSS redistributables <https://developer.download.nvidia.com/compute/cudss/redist/libcudss/>`_
+    (or install it via your platform's package manager), then add the
+    directory containing ``libcudss.so`` to ``LD_LIBRARY_PATH`` **in the
+    environment the process is launched with** — e.g. ``export
+    LD_LIBRARY_PATH=...`` in the shell before running your executable or
+    ``python``. The dynamic loader reads ``LD_LIBRARY_PATH`` once at process
+    startup, so setting it from inside an already-running process (for
+    example via ``os.environ[...]`` in a live Python interpreter, before
+    constructing a ``cuDSSLinearSolver``) has no effect on ``dlopen()``.
+  - Requesting the cuDSS solver without ``libcudss.so`` reachable raises a
+    ``std::runtime_error`` (Python: ``RuntimeError``) describing how to fix
+    it, rather than a linker error or crash.
+  - CI still downloads cuDSS at build time (for headers) and publishes its
+    shared/static libraries as a separate ``cudss-*`` artifact, distinct from
+    the ``cunls-*`` and ``pycunls-*`` artifacts.
 - ``build_cunls.sh`` supports two environment variables for advanced use:
 
   - ``CUNLS_SOURCE_DIR`` — override the CMake source directory (defaults to

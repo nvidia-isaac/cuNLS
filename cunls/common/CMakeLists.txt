@@ -1,6 +1,7 @@
 add_library(cunls_common OBJECT
   cublas_helper.cpp
   cuda_stream.cpp
+  cudss_dynamic.cpp
   cudss_helper.cpp
   cusolver_helper.cpp
   cusparse_helper.cpp
@@ -9,7 +10,9 @@ add_library(cunls_common OBJECT
   utils.cpp
 )
 
-target_link_libraries(cunls_common PRIVATE spdlog::spdlog cudss)
+# cuDSS is loaded at runtime via dlopen() (see cudss_dynamic.cpp), so only
+# its headers are needed at compile time; CMAKE_DL_LIBS provides dlopen/dlsym.
+target_link_libraries(cunls_common PRIVATE spdlog::spdlog cudss::headers ${CMAKE_DL_LIBS})
 
 if(ENABLE_PROFILING)
   target_link_libraries(cunls_common PRIVATE nvtx3-cpp)

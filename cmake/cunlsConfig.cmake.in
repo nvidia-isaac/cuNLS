@@ -1,8 +1,12 @@
 # cunlsConfig.cmake -- find_package(cunls) support
 #
 # Provides the imported target cunls::cunls.
-# Consumers only need to have the CUDA toolkit installed; all other
-# dependencies (spdlog, cuDSS) are already bundled inside the library.
+# Consumers only need to have the CUDA toolkit installed; spdlog is already
+# bundled inside the library. cuDSS is an OPTIONAL runtime dependency: cunls
+# loads libcudss.so via dlopen() only when SparseLinearSolverType::cuDSS is
+# actually used, so it is never linked against and does not need to be found
+# at CMake configure time. To use the cuDSS solver, install cuDSS separately
+# and ensure libcudss.so is on the consumer's LD_LIBRARY_PATH at runtime.
 
 include(CMakeFindDependencyMacro)
 find_dependency(CUDAToolkit REQUIRED)

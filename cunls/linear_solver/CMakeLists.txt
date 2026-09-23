@@ -8,4 +8,4 @@ add_library(cunls_linear_solver OBJECT
   sparse_linear_solver.cpp
 )
 
-target_link_libraries(cunls_linear_solver PRIVATE cudss)
+target_link_libraries(cunls_linear_solver PRIVATE cudss::headers)
