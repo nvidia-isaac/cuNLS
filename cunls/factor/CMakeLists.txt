@@ -1,34 +1,34 @@
 add_library(cunls_factor OBJECT
-  constant_acceleration_se2_factor_batch.cu
-  constant_acceleration_se3_factor_batch.cu
-  constant_acceleration_so2_factor_batch.cu
-  constant_acceleration_so3_factor_batch.cu
-  constant_velocity_se2_factor_batch.cu
-  constant_velocity_se3_factor_batch.cu
-  constant_velocity_so2_factor_batch.cu
-  constant_velocity_so3_factor_batch.cu
-  information_factor_batch.cpp
-  motion_prior_information.cu
+  between/se2_between_factor_batch.cu
+  between/se3_between_factor_batch.cu
+  between/similarity2_between_factor_batch.cu
+  between/similarity3_between_factor_batch.cu
+  between/sl4_between_factor_batch.cu
+  between/so2_between_factor_batch.cu
+  between/so3_between_factor_batch.cu
+  between/vector_between_factor_batch.cu
+  information/information_factor_batch.cpp
+  information/motion_prior_information.cu
+  motion/constant_acceleration_se2_factor_batch.cu
+  motion/constant_acceleration_se3_factor_batch.cu
+  motion/constant_acceleration_so2_factor_batch.cu
+  motion/constant_acceleration_so3_factor_batch.cu
+  motion/constant_velocity_se2_factor_batch.cu
+  motion/constant_velocity_se3_factor_batch.cu
+  motion/constant_velocity_so2_factor_batch.cu
+  motion/constant_velocity_so3_factor_batch.cu
   point_to_plane_factor_batch.cu
   point_to_point_factor_batch.cu
-  prior_vector_factor_batch.cu
+  prior/prior_vector_factor_batch.cu
+  prior/se2_prior_factor_batch.cu
+  prior/se3_prior_factor_batch.cu
+  prior/similarity2_prior_factor_batch.cu
+  prior/similarity3_prior_factor_batch.cu
+  prior/sl4_prior_factor_batch.cu
+  prior/so2_prior_factor_batch.cu
+  prior/so3_prior_factor_batch.cu
   pnp_factor_batch.cu
   reprojection_factor_batch.cu
-  se2_between_factor_batch.cu
-  se2_prior_factor_batch.cu
-  se3_between_factor_batch.cu
-  se3_prior_factor_batch.cu
-  similarity2_between_factor_batch.cu
-  similarity2_prior_factor_batch.cu
-  similarity3_between_factor_batch.cu
-  similarity3_prior_factor_batch.cu
-  sl4_between_factor_batch.cu
-  sl4_prior_factor_batch.cu
-  so2_between_factor_batch.cu
-  so2_prior_factor_batch.cu
-  so3_between_factor_batch.cu
-  so3_prior_factor_batch.cu
   symmetric_point_to_plane_factor_batch.cu
-  vector_between_factor_batch.cu
   weighted_factor_batch.cu
 )

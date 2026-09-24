@@ -20,7 +20,7 @@
  * @brief Unit tests for ConstantAccelerationSO2FactorBatch.
  */
 
-#include "cunls/factor/constant_acceleration_so2_factor_batch.h"
+#include "cunls/factor/motion/constant_acceleration_so2_factor_batch.h"
 
 #include <gtest/gtest.h>
 

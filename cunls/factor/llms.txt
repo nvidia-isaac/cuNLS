@@ -11,13 +11,29 @@ Defines residual/Jacobian models evaluated in GPU batches.
 
 ## Built-in factor families
 
-- Priors: `prior_vector_factor_batch.h`, `so2/so3/se2/se3/similarity2/similarity3_prior_factor_batch.h`
-- Relative pose: `se3_between_factor_batch.h`
+Per-manifold implementations live in kind-named subfolders; each also has a
+manifold-generic, compile-time-deduced facade:
+
+- `between/`: relative-pose factors (`so2/so3/se2/se3/similarity2/similarity3/sl4/vector_between_factor_batch.h`)
+  plus the facade `between/between_factor_batch.h` (`BetweenFactorBatch<Manifold>`,
+  manifold deduced from the deltas pointer's type — no `<Manifold>` needed).
+- `prior/`: prior factors (`so2/so3/se2/se3/similarity2/similarity3/sl4/prior_vector_factor_batch.h`)
+  plus the facade `prior/prior_factor_batch.h` (`PriorFactorBatch<Manifold>`, same deduction).
+- `motion/`: constant-velocity/-acceleration motion-prior factors
+  (`constant_velocity_so2/so3/se2/se3_factor_batch.h`,
+  `constant_acceleration_so2/so3/se2/se3_factor_batch.h`) plus the facades
+  `motion/constant_velocity_factor_batch.h`/`constant_acceleration_factor_batch.h`
+  (`ConstantVelocityFactorBatch<Manifold>`/`ConstantAccelerationFactorBatch<Manifold>` —
+  manifold is an explicit template argument, not deduced; see the design doc for why).
+- `information/`: covariance/weight fusion — `information/information_factor_batch.h`
+  (generic `InformationFactorBatch<T>` wrapper) and
+  `information/motion_prior_information.h` (closed-form `Q(dt)^-1` for the
+  `motion/` factors, plus `MotionPriorInformationFactorBatch<T, Dim>`).
 - Reprojection: `reprojection_factor_batch.h`
 - PnP (fixed 3D points, pose-only Jacobian): `pnp_factor_batch.h`
 - Registration: `point_to_point_factor_batch.h`, `point_to_plane_factor_batch.h`,
   `symmetric_point_to_plane_factor_batch.h`
-- Weighting wrapper: `information_factor_batch.h`
+- Generic weighting wrapper: `weighted_factor_batch.h`
 
 ## Data contracts
 

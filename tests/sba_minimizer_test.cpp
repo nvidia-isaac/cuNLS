@@ -47,7 +47,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/information_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"

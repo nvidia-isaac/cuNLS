@@ -18,12 +18,12 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/se2_between_factor_batch.h"
-#include "cunls/factor/similarity2_between_factor_batch.h"
-#include "cunls/factor/similarity3_between_factor_batch.h"
-#include "cunls/factor/so2_between_factor_batch.h"
-#include "cunls/factor/so3_between_factor_batch.h"
-#include "cunls/factor/vector_between_factor_batch.h"
+#include "cunls/factor/between/se2_between_factor_batch.h"
+#include "cunls/factor/between/similarity2_between_factor_batch.h"
+#include "cunls/factor/between/similarity3_between_factor_batch.h"
+#include "cunls/factor/between/so2_between_factor_batch.h"
+#include "cunls/factor/between/so3_between_factor_batch.h"
+#include "cunls/factor/between/vector_between_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -44,7 +44,7 @@ static Matrix<4> MakeSim3Identity() {
   return T;
 }
 
-} // namespace
+}  // namespace
 
 TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
   constexpr size_t kN = 128;
@@ -55,8 +55,7 @@ TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
   std::vector<Matrix<3>> poses(kN + 1);
   for (size_t i = 0; i <= kN; ++i) {
     float th = ang(rng);
-    poses[i] = {cosf(th), -sinf(th), t(rng), sinf(th), cosf(th),
-                t(rng),   0.0f,      0.0f,   1.0f};
+    poses[i] = {cosf(th), -sinf(th), t(rng), sinf(th), cosf(th), t(rng), 0.0f, 0.0f, 1.0f};
   }
 
   DeviceVector<Matrix<3>> poses_dev(poses);
@@ -74,10 +73,9 @@ TEST(LieBetweenFactorsSmoke, SE2BetweenEvaluate) {
 
   DeviceVector<float> res(3 * kN);
   DeviceVector<float> jac(18 * kN);
-  SE2BetweenFactorBatch fb(deltas_dev.data(), kN);
+  SE2BetweenFactorBatch fb(reinterpret_cast<const SE2Transform *>(deltas_dev.data()), kN);
   CudaStream stream;
-  fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
+  fb.Evaluate(res.data(), jac.data(), reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -108,10 +106,9 @@ TEST(LieBetweenFactorsSmoke, SO2BetweenEvaluate) {
 
   DeviceVector<float> res(kN);
   DeviceVector<float> jac(2 * kN);
-  SO2BetweenFactorBatch fb(deltas_dev.data(), kN);
+  SO2BetweenFactorBatch fb(reinterpret_cast<const SO2Rotation *>(deltas_dev.data()), kN);
   CudaStream stream;
-  fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
+  fb.Evaluate(res.data(), jac.data(), reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -134,8 +131,7 @@ TEST(LieBetweenFactorsSmoke, SO3BetweenEvaluate) {
   constexpr size_t twist_stride = 3;
   constexpr size_t rot_pitch = 3;
   constexpr size_t rot_stride = 9;
-  ComputeExpSO3(stream.GetStream(),
-                reinterpret_cast<const float *>(twists_dev.data()),
+  ComputeExpSO3(stream.GetStream(), reinterpret_cast<const float *>(twists_dev.data()),
                 twist_stride, rot_pitch, rot_stride, kN + 1,
                 reinterpret_cast<float *>(poses_dev.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
@@ -154,9 +150,8 @@ TEST(LieBetweenFactorsSmoke, SO3BetweenEvaluate) {
 
   DeviceVector<float> res(3 * kN);
   DeviceVector<float> jac(18 * kN);
-  SO3BetweenFactorBatch fb(deltas_dev.data(), kN);
-  fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
+  SO3BetweenFactorBatch fb(reinterpret_cast<const SO3Rotation *>(deltas_dev.data()), kN);
+  fb.Evaluate(res.data(), jac.data(), reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -187,10 +182,10 @@ TEST(LieBetweenFactorsSmoke, Similarity2BetweenEvaluate) {
 
   DeviceVector<float> res(4 * kN);
   DeviceVector<float> jac(32 * kN);
-  Similarity2BetweenFactorBatch fb(deltas_dev.data(), kN);
+  Similarity2BetweenFactorBatch fb(
+      reinterpret_cast<const Similarity2Transform *>(deltas_dev.data()), kN);
   CudaStream stream;
-  fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
+  fb.Evaluate(res.data(), jac.data(), reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -213,10 +208,10 @@ TEST(LieBetweenFactorsSmoke, Similarity3BetweenEvaluate) {
   DeviceVector<float> res(7 * kN);
   DeviceVector<float> jac(98 * kN);
   cuBLASHandle h;
-  Similarity3BetweenFactorBatch fb(h, deltas_dev.data(), kN);
+  Similarity3BetweenFactorBatch fb(
+      h, reinterpret_cast<const Similarity3Transform *>(deltas_dev.data()), kN);
   CudaStream stream;
-  fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
+  fb.Evaluate(res.data(), jac.data(), reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
@@ -247,10 +242,9 @@ TEST(LieBetweenFactorsSmoke, VectorBetweenEvaluate) {
   DeviceVector<float> jac(18 * kN);
   VectorBetweenFactorBatch<3> fb(deltas_dev.data(), kN);
   CudaStream stream;
-  fb.Evaluate(res.data(), jac.data(),
-              reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
+  fb.Evaluate(res.data(), jac.data(), reinterpret_cast<const float *const *>(state_ptrs_dev.data()),
               stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 }
 
-} // namespace cunls
+}  // namespace cunls

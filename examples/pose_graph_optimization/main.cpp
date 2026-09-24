@@ -24,7 +24,7 @@
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/se3_between_factor_batch.h"
+#include "cunls/factor/between/se3_between_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"

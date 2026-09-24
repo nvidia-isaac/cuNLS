@@ -67,7 +67,7 @@ the same layout as the inner batch ``T``.
 PriorVectorFactorBatch<Dim>
 ----------------------------
 
-Header: :code:`cunls/factor/prior_vector_factor_batch.h`
+Header: :code:`cunls/factor/prior/prior_vector_factor_batch.h`
 
 Prior on a Euclidean vector (e.g. bias, landmark). Pulls the state toward observed values.
 
@@ -100,7 +100,7 @@ Constructor:
 SO2PriorFactorBatch
 -------------------
 
-Header: :code:`cunls/factor/so2_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/so2_prior_factor_batch.h`
 
 Prior on a 2D rotation (e.g. heading). Penalizes deviation from a target rotation.
 
@@ -130,7 +130,7 @@ Prior on a 2D rotation (e.g. heading). Penalizes deviation from a target rotatio
 SO3PriorFactorBatch
 -------------------
 
-Header: :code:`cunls/factor/so3_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/so3_prior_factor_batch.h`
 
 Prior on a 3D rotation. Penalizes deviation from a target orientation.
 
@@ -160,7 +160,7 @@ Prior on a 3D rotation. Penalizes deviation from a target orientation.
 SE2PriorFactorBatch
 -------------------
 
-Header: :code:`cunls/factor/se2_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/se2_prior_factor_batch.h`
 
 Prior on 2D rigid transform. State: one block from :code:`SE2StateBatch` (see :doc:`state`).
 
@@ -182,7 +182,7 @@ Prior on 2D rigid transform. State: one block from :code:`SE2StateBatch` (see :d
 SE3PriorFactorBatch
 -------------------
 
-Header: :code:`cunls/factor/se3_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/se3_prior_factor_batch.h`
 
 Prior on 3D rigid transform. State: one block from :code:`SE3StateBatch` (see :doc:`state`).
 
@@ -204,7 +204,7 @@ Prior on 3D rigid transform. State: one block from :code:`SE3StateBatch` (see :d
 Similarity2PriorFactorBatch
 ---------------------------
 
-Header: :code:`cunls/factor/similarity2_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/similarity2_prior_factor_batch.h`
 
 Prior on 2D similarity transform. State: one block from :code:`Similarity2StateBatch` (see :doc:`state`).
 
@@ -226,7 +226,7 @@ Prior on 2D similarity transform. State: one block from :code:`Similarity2StateB
 Similarity3PriorFactorBatch
 ----------------------------
 
-Header: :code:`cunls/factor/similarity3_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/similarity3_prior_factor_batch.h`
 
 Prior on 3D similarity transform. State: one block from :code:`Similarity3StateBatch` (see :doc:`state`).
 
@@ -256,7 +256,7 @@ Prior on 3D similarity transform. State: one block from :code:`Similarity3StateB
 SL4PriorFactorBatch
 -------------------
 
-Header: :code:`cunls/factor/sl4_prior_factor_batch.h`
+Header: :code:`cunls/factor/prior/sl4_prior_factor_batch.h`
 
 Prior on an SL(4) transform. State: one block from :code:`SL4StateBatch` (see :doc:`state`).
 
@@ -284,7 +284,7 @@ Prior on an SL(4) transform. State: one block from :code:`SL4StateBatch` (see :d
 SE3BetweenFactorBatch
 ---------------------
 
-Header: :code:`cunls/factor/se3_between_factor_batch.h`
+Header: :code:`cunls/factor/between/se3_between_factor_batch.h`
 
 Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closure).
 
@@ -317,7 +317,7 @@ Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closu
 SE2BetweenFactorBatch
 ---------------------
 
-Header: :code:`cunls/factor/se2_between_factor_batch.h`
+Header: :code:`cunls/factor/between/se2_between_factor_batch.h`
 
 Constrains the relative transform between two SE(2) frames.
 
@@ -350,7 +350,7 @@ Constrains the relative transform between two SE(2) frames.
 SO2BetweenFactorBatch
 ---------------------
 
-Header: :code:`cunls/factor/so2_between_factor_batch.h`
+Header: :code:`cunls/factor/between/so2_between_factor_batch.h`
 
 Constrains the relative rotation between two SO(2) frames.
 
@@ -383,7 +383,7 @@ Constrains the relative rotation between two SO(2) frames.
 SO3BetweenFactorBatch
 ---------------------
 
-Header: :code:`cunls/factor/so3_between_factor_batch.h`
+Header: :code:`cunls/factor/between/so3_between_factor_batch.h`
 
 Constrains the relative rotation between two SO(3) frames.
 
@@ -416,7 +416,7 @@ Constrains the relative rotation between two SO(3) frames.
 Similarity2BetweenFactorBatch
 -----------------------------
 
-Header: :code:`cunls/factor/similarity2_between_factor_batch.h`
+Header: :code:`cunls/factor/between/similarity2_between_factor_batch.h`
 
 Constrains the relative transform between two Sim(2) frames.
 
@@ -449,7 +449,7 @@ Constrains the relative transform between two Sim(2) frames.
 Similarity3BetweenFactorBatch
 -----------------------------
 
-Header: :code:`cunls/factor/similarity3_between_factor_batch.h`
+Header: :code:`cunls/factor/between/similarity3_between_factor_batch.h`
 
 Constrains the relative transform between two Sim(3) frames.
 
@@ -483,7 +483,7 @@ Constrains the relative transform between two Sim(3) frames.
 SL4BetweenFactorBatch
 ---------------------
 
-Header: :code:`cunls/factor/sl4_between_factor_batch.h`
+Header: :code:`cunls/factor/between/sl4_between_factor_batch.h`
 
 Constrains the relative transform between two SL(4) frames.
 
@@ -516,7 +516,7 @@ Constrains the relative transform between two SL(4) frames.
 VectorBetweenFactorBatch<Dim>
 -----------------------------
 
-Header: :code:`cunls/factor/vector_between_factor_batch.h`
+Header: :code:`cunls/factor/between/vector_between_factor_batch.h`
 
 Constrains the difference between two Euclidean vector states.
 
@@ -548,6 +548,61 @@ Constructor:
 
 - ``deltas_ptr`` — [in] Device pointer to measured difference vectors.
 - ``num_factors`` — [in] Number of factors in this batch.
+
+Manifold facade
+----------------
+
+The per-manifold classes above (``SE3BetweenFactorBatch``,
+``SO2PriorFactorBatch``, ...) are the hand-optimized implementations. Two
+zero-cost, manifold-generic facades let callers write fewer distinct class
+names:
+
+.. cpp:function:: template <class Manifold> class BetweenFactorBatch
+
+  Header: :code:`cunls/factor/between/between_factor_batch.h`. A compile-time
+  alias for the matching ``XxxBetweenFactorBatch``: each specialization adds
+  no data members or virtual dispatch, so
+  ``sizeof(BetweenFactorBatch<manifold::SE3>) == sizeof(SE3BetweenFactorBatch)``
+  and the two are interchangeable everywhere a ``FactorBatch*`` is expected.
+  ``Manifold`` is one of the tags in ``cunls::manifold`` (``SE3``, ``SO3``,
+  ``SE2``, ``SO2``, ``Similarity2``, ``Similarity3``, ``SL4``, or
+  ``Vector<Dim>``) and is usually **deduced via CTAD** from the deltas
+  pointer's own (now manifold-distinct) type, so ``<Manifold>`` need not be
+  written explicitly:
+
+  .. code-block:: cpp
+
+     cunls::BetweenFactorBatch between(deltas_ptr, num_factors);  // manifold deduced
+
+  CTAD deduction is unavailable for ``Vector<Dim>`` (a C++ template-argument-deduction
+  limitation: ``Vector``'s ``int Dim`` cannot be deduced from the ``size_t``
+  extent of the underlying array type), so that one specialization requires
+  ``<manifold::Vector<Dim>>`` explicitly.
+
+.. cpp:function:: template <class Manifold> class PriorFactorBatch
+
+  Header: :code:`cunls/factor/prior/prior_factor_batch.h`. Same mechanism as
+  ``BetweenFactorBatch<Manifold>``, for ``XxxPriorFactorBatch`` instead of
+  ``XxxBetweenFactorBatch``; ``Manifold`` is deduced from the observations
+  pointer's type.
+
+.. cpp:function:: template <class Manifold> class ConstantVelocityFactorBatch
+
+  Header: :code:`cunls/factor/motion/constant_velocity_factor_batch.h`. Same
+  zero-cost specialization mechanism, but **always requires the manifold as
+  an explicit template argument**: every ``ConstantVelocityXxxFactorBatch``
+  constructor is ``(const float* dt_ptr, size_t num_factors)``, so there is
+  no manifold-specific argument type to deduce from.
+
+  .. code-block:: cpp
+
+     cunls::ConstantVelocityFactorBatch<cunls::manifold::SE3> factor(dt_ptr, num_factors);
+
+.. cpp:function:: template <class Manifold> class ConstantAccelerationFactorBatch
+
+  Header: :code:`cunls/factor/motion/constant_acceleration_factor_batch.h`.
+  Identical mechanism and explicit-template-argument-only convention as
+  ``ConstantVelocityFactorBatch<Manifold>``.
 
 Motion prior factors
 ---------------------
@@ -585,7 +640,7 @@ rather than a dedicated left-Jacobian primitive.
 ConstantVelocitySE3FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_velocity_se3_factor_batch.h`
+Header: :code:`cunls/factor/motion/constant_velocity_se3_factor_batch.h`
 
 .. list-table::
    :header-rows: 1
@@ -613,7 +668,7 @@ Header: :code:`cunls/factor/constant_velocity_se3_factor_batch.h`
 ConstantVelocitySO3FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_velocity_so3_factor_batch.h`. Same
+Header: :code:`cunls/factor/motion/constant_velocity_so3_factor_batch.h`. Same
 construction as ``ConstantVelocitySE3FactorBatch``, specialized to SO(3)
 (``vel`` = angular velocity in :math:`\mathbb{R}^3`).
 
@@ -643,7 +698,7 @@ construction as ``ConstantVelocitySE3FactorBatch``, specialized to SO(3)
 ConstantVelocitySE2FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_velocity_se2_factor_batch.h`. Same
+Header: :code:`cunls/factor/motion/constant_velocity_se2_factor_batch.h`. Same
 construction, specialized to SE(2).
 
 .. list-table::
@@ -672,7 +727,7 @@ construction, specialized to SE(2).
 ConstantVelocitySO2FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_velocity_so2_factor_batch.h`. SO(2) is
+Header: :code:`cunls/factor/motion/constant_velocity_so2_factor_batch.h`. SO(2) is
 abelian, so the residual/Jacobian reduce to scalar arithmetic.
 
 .. list-table::
@@ -701,7 +756,7 @@ abelian, so the residual/Jacobian reduce to scalar arithmetic.
 ConstantAccelerationSE3FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_acceleration_se3_factor_batch.h`. Adds
+Header: :code:`cunls/factor/motion/constant_acceleration_se3_factor_batch.h`. Adds
 an acceleration state to ``ConstantVelocitySE3FactorBatch``'s construction;
 see the general formula above.
 
@@ -731,7 +786,7 @@ see the general formula above.
 ConstantAccelerationSO3FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_acceleration_so3_factor_batch.h`. Same
+Header: :code:`cunls/factor/motion/constant_acceleration_so3_factor_batch.h`. Same
 construction, specialized to SO(3).
 
 .. list-table::
@@ -760,7 +815,7 @@ construction, specialized to SO(3).
 ConstantAccelerationSE2FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_acceleration_se2_factor_batch.h`. Same
+Header: :code:`cunls/factor/motion/constant_acceleration_se2_factor_batch.h`. Same
 construction, specialized to SE(2).
 
 .. list-table::
@@ -789,7 +844,7 @@ construction, specialized to SE(2).
 ConstantAccelerationSO2FactorBatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/constant_acceleration_so2_factor_batch.h`. SO(2)
+Header: :code:`cunls/factor/motion/constant_acceleration_so2_factor_batch.h`. SO(2)
 is abelian, so the residual/Jacobian reduce to scalar arithmetic.
 
 .. list-table::
@@ -818,7 +873,7 @@ is abelian, so the residual/Jacobian reduce to scalar arithmetic.
 Motion prior covariance weighting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Header: :code:`cunls/factor/motion_prior_information.h`. The eight factors
+Header: :code:`cunls/factor/information/motion_prior_information.h`. The eight factors
 above are unweighted (unit information) on their own. To fuse the paper's
 closed-form process-noise covariance :math:`Q(\Delta t)^{-1}` into the
 residual/Jacobian, construct the corresponding **named alias** below instead
@@ -1066,7 +1121,7 @@ Symmetric point-to-plane: both frames contribute normals; :math:`N = n_p + n_q`.
 InformationFactorBatch<T>
 -------------------------
 
-Header: :code:`cunls/factor/information_factor_batch.h`
+Header: :code:`cunls/factor/information/information_factor_batch.h`
 
 **Inheritance:** ``class InformationFactorBatch : public T::sized_layout`` — i.e.
 the same ``SizedFactorBatch<kResidualSize, ...>`` as the wrapped type ``T``.

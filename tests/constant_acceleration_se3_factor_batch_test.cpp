@@ -20,7 +20,7 @@
  * @brief Unit tests for ConstantAccelerationSE3FactorBatch.
  */
 
-#include "cunls/factor/constant_acceleration_se3_factor_batch.h"
+#include "cunls/factor/motion/constant_acceleration_se3_factor_batch.h"
 
 #include <gtest/gtest.h>
 

@@ -1,21 +1,23 @@
 # Motion Prior Example
 
 This example demonstrates a constant-velocity motion-prior chain with:
-- `ConstantVelocitySE3FactorBatch` for consecutive pose/velocity constraints
+- `ConstantVelocityInformationSE3FactorBatch` for consecutive pose/velocity
+  constraints, with the paper's closed-form process-noise covariance
+  `Q(dt)^-1` fused directly into the residual/Jacobian
 - `SE3StateBatch` for pose variables and `VectorStateBatch<6>` for body-twist
   velocity variables
 - `LevenbergMarquardtMinimizer` for solving the nonlinear least-squares system
 
 It builds a synthetic **pose + velocity chain**:
 - Poses `T_0, T_1, ..., T_{N-1}` and body velocities `v_0, v_1, ..., v_{N-1}`
-- One `ConstantVelocitySE3FactorBatch` factor per consecutive pair
-  `((T_i, T_{i+1}), (v_i, v_{i+1}))`
+- One `ConstantVelocityInformationSE3FactorBatch` factor per consecutive pair
+  `((T_i, T_{i+1}), (v_i, v_{i+1}))`, weighted by a continuous-time
+  process-noise PSD `Qc` (one entry per SE(3) tangent DOF)
 - Both `T_0` and `v_0` are held fixed as gauge anchors
 - All remaining poses and velocities are optimized
 
-See `docs/design/motion_prior_factors.md` for the full derivation and
-`docs/sphinx/api/factor.rst` (Motion prior factors section) for the API
-reference.
+See `docs/sphinx/api/factor.rst` (Motion prior factors / Motion prior
+covariance weighting sections) for the API reference.
 
 ## Files
 
@@ -26,8 +28,8 @@ reference.
 
 ## How the factor is used
 
-`ConstantVelocitySE3FactorBatch` computes residuals with the convention
-(`twist := Log(T_i^{-1} * T_{i+1})`, `Jl_inv := J_l^{-1}(twist)`):
+The underlying `ConstantVelocitySE3FactorBatch` computes residuals with the
+convention (`twist := Log(T_i^{-1} * T_{i+1})`, `Jl_inv := J_l^{-1}(twist)`):
 
 ```
 r_pose = twist - dt * v_i
@@ -41,6 +43,11 @@ T_{i+1} = T_i * Exp(dt * v_i)
 v_{i+1} = J_l(dt * v_i) * v_i
 ```
 
+`ConstantVelocityInformationSE3FactorBatch` wraps this residual/Jacobian with
+the closed-form sqrt-information `S(dt)` derived from `Qc`, so the effective
+weighted residual is `S(dt) * [r_pose; r_vel]` — callers only provide `dt`
+and `Qc`, never a sqrt-information matrix directly.
+
 The example constructs the ground-truth chain exactly this way (integrating
 forward from a random anchor pose and velocity), then disturbs every pose
 and velocity except the fixed anchor to create the initial estimate.
@@ -53,7 +60,8 @@ and velocity except the fixed anchor to create the initial estimate.
 3. Disturb all poses and velocities except the anchor.
 4. Add an `SE3StateBatch` (poses) and a `VectorStateBatch<6>` (velocities),
    both with index `0` marked constant.
-5. Build one `ConstantVelocitySE3FactorBatch` factor per consecutive pair.
+5. Build one `ConstantVelocityInformationSE3FactorBatch` factor per
+   consecutive pair, from per-factor `dt` and a shared `Qc` diagonal.
 
 Fixing both `T_0` and `v_0` (rather than just `T_0`, as in
 `pose_graph_optimization`) is required here: with only relative

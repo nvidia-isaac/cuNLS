@@ -25,7 +25,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/constant_velocity_se3_factor_batch.h"
+#include "cunls/factor/information/motion_prior_information.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -42,8 +42,8 @@ using cunls::Vector;
 namespace {
 
 // Applies the SE(3) left Jacobian J_l(twist) to a vector on the host, using
-// the GPU math library (see docs/design/motion_prior_factors.md for the
-// role J_l plays in the constant-velocity residual).
+// the GPU math library. J_l transports a body-frame velocity from one pose
+// to the next under the constant-velocity model, i.e. v_{i+1} = J_l(step_twist) * v_i.
 Vector<6> ApplyLeftJacobianSE3(const Vector<6> &twist, const Vector<6> &v) {
   dvector<Vector<6>> twist_dev({twist});
   dvector<cunls::Matrix<6>> jl_dev(1);
@@ -135,13 +135,27 @@ int main() {
     dvector<int> const_ids_device(const_ids);
 
     cunls::cuBLASHandle cublas_handle;
+    cunls::CudaStream stream;
     cunls::SE3StateBatch pose_states(cublas_handle,
                                      reinterpret_cast<const float *>(poses_device.data()),
                                      num_poses, const_ids_device.data(), 1);
     cunls::VectorStateBatch<6> vel_states(reinterpret_cast<const float *>(vels_device.data()),
                                           num_poses, const_ids_device.data(), 1);
 
-    cunls::ConstantVelocitySE3FactorBatch motion_prior(dt_device.data(), num_factors);
+    // Continuous-time process-noise PSD Qc (one entry per SE(3) tangent DOF:
+    // rotation x/y/z, then translation x/y/z). This encodes how much the
+    // constant-velocity assumption is trusted to drift per unit time; smaller
+    // values mean a tighter prior (more confidence in constant velocity),
+    // larger values mean a looser one. Fusing it via
+    // ConstantVelocityInformationSE3FactorBatch turns the plain (unweighted)
+    // ConstantVelocitySE3FactorBatch residual/Jacobian into the paper's
+    // properly-scaled Q(dt)^-1-weighted one, with no extra work at the call
+    // site beyond providing Qc.
+    const std::vector<float> qc_diag = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    dvector<float> qc_device(qc_diag);
+
+    cunls::ConstantVelocityInformationSE3FactorBatch motion_prior(
+        cublas_handle, stream.GetStream(), dt_device.data(), qc_device.data(), num_factors);
 
     // Flatten factor-to-state connectivity: [T_i, T_i+1, v_i, v_i+1] per
     // factor.
@@ -164,7 +178,7 @@ int main() {
     }
 
     cunls::MinimizerOptions options;
-    options.max_num_iterations = 60;
+    options.max_num_iterations = 100;
     options.state_tolerance = 1e-8f;
     options.cost_tolerance = 1e-8f;
 
@@ -173,7 +187,6 @@ int main() {
     lm_options.initial_lambda = 1e-3f;
     cunls::LevenbergMarquardtMinimizer minimizer(lm_options);
 
-    cunls::CudaStream stream;
     const auto summary = minimizer.Minimize(stream.GetStream(), problem);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
@@ -187,10 +200,11 @@ int main() {
     const float initial_vel_mse = examples::ComputeVectorMSE<6>(initial_vels, gt_vels);
     const float final_vel_mse = examples::ComputeVectorMSE<6>(optimized_vels, gt_vels);
 
-    std::cout << "Motion Prior Example (Constant-Velocity SE(3) Chain)\n";
+    std::cout << "Motion Prior Example (Constant-Velocity SE(3) Chain, Q(dt)^-1-weighted)\n";
     std::cout << "  Num poses:              " << num_poses << "\n";
     std::cout << "  Num CV factors:         " << num_factors << "\n";
     std::cout << "  dt:                     " << dt << "\n";
+    std::cout << "  Qc (rot, trans):        [" << qc_diag[0] << ", " << qc_diag[3] << "]\n";
     std::cout << "  Initial cost:           " << summary.initial_cost << "\n";
     std::cout << "  Final cost:             " << summary.final_cost << "\n";
     std::cout << "  Iterations:             " << summary.num_iterations << "\n";

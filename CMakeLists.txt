@@ -9,7 +9,7 @@ endif()
 set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 
-project(cunls LANGUAGES CXX CUDA)
+project(cunls VERSION 0.2 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -189,6 +189,8 @@ if(BUILD_TESTING)
     tests/constant_acceleration_se2_factor_batch_test.cpp
     tests/constant_acceleration_so2_factor_batch_test.cpp
     tests/motion_prior_information_test.cpp
+    tests/motion_prior_perf_test.cpp
+    tests/factor_manifold_facade_test.cpp
     tests/dense_linear_solver_test.cpp
     tests/dense_cholesky_solver_test.cpp
     tests/dense_qr_solver_test.cpp

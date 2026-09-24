@@ -37,7 +37,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"

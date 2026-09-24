@@ -48,6 +48,35 @@ template <int Dim>
 using Matrix = cuda::std::array<float, Dim * Dim>;
 
 /**
+ * @brief SO(2) rotation matrix representation (2x2, row-major).
+ *
+ * A distinct type (not a `Matrix<2>` alias) so factor/state APIs can
+ * disambiguate manifolds at compile time from the pointer type alone.
+ * Standard-layout and byte-identical to `Matrix<2>` (public inheritance
+ * from an aggregate),
+ * so `reinterpret_cast<const float*>(ptr)` and aggregate initialization
+ * (`SO2Rotation{c, -s, s, c}`) work exactly as they do for `Matrix<2>`.
+ */
+struct SO2Rotation : Matrix<2> {};
+
+/**
+ * @brief SO(3) rotation matrix representation (3x3, row-major).
+ *
+ * See SO2Rotation for why this is a distinct type rather than a
+ * `Matrix<3>` alias.
+ */
+struct SO3Rotation : Matrix<3> {};
+
+/**
+ * @brief SE(2) transformation matrix representation (3x3 homogeneous,
+ * row-major).
+ *
+ * See SO2Rotation for why this is a distinct type rather than a
+ * `Matrix<3>` alias.
+ */
+struct SE2Transform : Matrix<3> {};
+
+/**
  * @brief SE(3) transformation matrix representation.
  *
  * Represents a 4x4 homogeneous transformation matrix in row-major order
@@ -57,14 +86,40 @@ using Matrix = cuda::std::array<float, Dim * Dim>;
  * [R20 R21 R22 tz]
  * [0   0   0   1 ]
  * where R is a 3x3 rotation matrix and [tx, ty, tz] is the translation vector.
+ *
+ * A distinct type (not a `Matrix<4>` alias) so factor/state APIs can
+ * disambiguate manifolds at compile time from the pointer type alone —
+ * see SO2Rotation.
  */
-using SE3Transform = Matrix<4>;
+struct SE3Transform : Matrix<4> {};
+
+/**
+ * @brief Similarity(2) transformation matrix representation (3x3
+ * homogeneous, row-major).
+ *
+ * See SO2Rotation for why this is a distinct type rather than a
+ * `Matrix<3>` alias.
+ */
+struct Similarity2Transform : Matrix<3> {};
+
+/**
+ * @brief Similarity(3) transformation matrix representation (4x4
+ * homogeneous, row-major).
+ *
+ * See SO2Rotation for why this is a distinct type rather than a
+ * `Matrix<4>` alias.
+ */
+struct Similarity3Transform : Matrix<4> {};
 
 /**
  * @brief SL(4) homogeneous matrix (4x4, row-major, det = 1 in exact
  * arithmetic).
+ *
+ * A distinct type (not a `Matrix<4>` alias) so factor/state APIs can
+ * disambiguate manifolds at compile time from the pointer type alone —
+ * see SO2Rotation.
  */
-using SL4Transform = Matrix<4>;
+struct SL4Transform : Matrix<4> {};
 
 /**
  * @brief Alias for a device (GPU) vector.

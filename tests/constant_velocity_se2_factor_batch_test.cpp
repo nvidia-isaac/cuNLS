@@ -20,7 +20,7 @@
  * @brief Unit tests for ConstantVelocitySE2FactorBatch.
  */
 
-#include "cunls/factor/constant_velocity_se2_factor_batch.h"
+#include "cunls/factor/motion/constant_velocity_se2_factor_batch.h"
 
 #include <gtest/gtest.h>
 

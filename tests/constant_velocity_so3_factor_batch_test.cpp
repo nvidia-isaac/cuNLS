@@ -20,7 +20,7 @@
  * @brief Unit tests for ConstantVelocitySO3FactorBatch.
  */
 
-#include "cunls/factor/constant_velocity_so3_factor_batch.h"
+#include "cunls/factor/motion/constant_velocity_so3_factor_batch.h"
 
 #include <gtest/gtest.h>
 

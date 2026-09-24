@@ -23,7 +23,7 @@
 
 #include "bindings.h"
 
-#include "cunls/factor/information_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/robustifier/scaled_loss_function_batch.h"
 

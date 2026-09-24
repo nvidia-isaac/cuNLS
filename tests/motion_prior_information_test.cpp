@@ -23,7 +23,7 @@
  * noise into the constant-velocity/-acceleration factor residual+Jacobian.
  */
 
-#include "cunls/factor/motion_prior_information.h"
+#include "cunls/factor/information/motion_prior_information.h"
 
 #include <gtest/gtest.h>
 
@@ -36,8 +36,8 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/constant_velocity_se3_factor_batch.h"
-#include "cunls/factor/information_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
+#include "cunls/factor/motion/constant_velocity_se3_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {

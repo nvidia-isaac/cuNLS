@@ -25,7 +25,7 @@
 
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {

@@ -19,8 +19,8 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/so2_between_factor_batch.h"
-#include "cunls/factor/so2_prior_factor_batch.h"
+#include "cunls/factor/between/so2_between_factor_batch.h"
+#include "cunls/factor/prior/so2_prior_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/so2_state_batch.h"
@@ -36,7 +36,7 @@ Matrix<2> MakeSO2(float theta) {
 
 Matrix<2> MakeSO2Identity() { return {1.0f, 0.0f, 0.0f, 1.0f}; }
 
-} // namespace
+}  // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -48,8 +48,7 @@ TEST(SO2ManifoldTest, StateDimensions) {
   dvector<Matrix<2>> rots_dev(rots);
 
   cuBLASHandle cublas;
-  SO2StateBatch states(cublas, reinterpret_cast<const float *>(rots_dev.data()),
-                       kN);
+  SO2StateBatch states(cublas, reinterpret_cast<const float *>(rots_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), 1u);
   EXPECT_EQ(states.AmbientSize(), 4u);
@@ -77,9 +76,8 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
   dvector<Matrix<2>> targets_dev(targets), initials_dev(initials);
 
   cuBLASHandle cublas;
-  SO2StateBatch state_batch(
-      cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
-  SO2PriorFactorBatch factor_batch(targets_dev.data(), kN);
+  SO2StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
+  SO2PriorFactorBatch factor_batch(reinterpret_cast<const SO2Rotation *>(targets_dev.data()), kN);
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
@@ -111,14 +109,12 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<2>> optimized(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
-                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 4; ++j) {
-      ASSERT_NEAR(optimized[i][j], targets[i][j], 1e-3f)
-          << "rotation " << i << ", element " << j;
+      ASSERT_NEAR(optimized[i][j], targets[i][j], 1e-3f) << "rotation " << i << ", element " << j;
     }
   }
 }
@@ -144,11 +140,9 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
   dvector<Matrix<2>> deltas_dev(deltas);
 
   cuBLASHandle cublas;
-  SO2StateBatch state_left(
-      cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
-  SO2StateBatch state_right(
-      cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
-  SO2BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
+  SO2StateBatch state_left(cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
+  SO2StateBatch state_right(cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
+  SO2BetweenFactorBatch factor_batch(reinterpret_cast<const SO2Rotation *>(deltas_dev.data()), kN);
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
@@ -181,19 +175,16 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<2>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
-                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
-                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                                 kN * sizeof(Matrix<2>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 4; ++j) {
-      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f)
-          << "rotation " << i << ", element " << j;
+      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f) << "rotation " << i << ", element " << j;
     }
   }
 }
 
-} // namespace cunls
+}  // namespace cunls
