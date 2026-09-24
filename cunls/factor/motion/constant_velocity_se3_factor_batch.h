@@ -37,10 +37,9 @@ namespace cunls {
  *
  * i.e. the relative pose should equal `dt` times the velocity at `k`, and
  * the velocity at `k+1`, transported back into the local frame at `k`
- * through the inverse left Jacobian, should equal the velocity at `k`. See
- * `docs/design/motion_prior_factors.md` for the derivation and the
- * documented simplification used for the pose-block Jacobian of `r_vel`
- * (treated as zero; the residual itself is exact).
+ * through the inverse left Jacobian, should equal the velocity at `k`. The
+ * pose-block Jacobian of `r_vel` is treated as zero (a documented
+ * simplification; the residual itself is exact).
  *
  * Inherits from SizedFactorBatch<12, 6, 6, 6, 6>:
  *   - 12: residual dimension (6 pose + 6 velocity)

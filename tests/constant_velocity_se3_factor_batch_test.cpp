@@ -271,9 +271,9 @@ TEST_F(ConstantVelocitySE3FactorBatchTest, NumericalJacobianPoseBlocksAndVelBloc
   }
 
   // NOTE: d(r_vel)/d(pose_k) and d(r_vel)/d(pose_k+1) are intentionally
-  // approximated as zero (see docs/design/motion_prior_factors.md and the
-  // class docs on ConstantVelocitySE3FactorBatch); the true numerical
-  // derivative is generally nonzero, so it is deliberately not checked here.
+  // approximated as zero (see the class docs on ConstantVelocitySE3FactorBatch);
+  // the true numerical derivative is generally nonzero, so it is
+  // deliberately not checked here.
 }
 
 // Fixes pose_k, pose_k+1 as constant and solves for vel_k, vel_k+1 only. With

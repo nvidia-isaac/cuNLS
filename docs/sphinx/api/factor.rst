@@ -557,7 +557,7 @@ The per-manifold classes above (``SE3BetweenFactorBatch``,
 zero-cost, manifold-generic facades let callers write fewer distinct class
 names:
 
-.. cpp:function:: template <class Manifold> class BetweenFactorBatch
+.. cpp:class:: template <class Manifold> BetweenFactorBatch
 
   Header: :code:`cunls/factor/between/between_factor_batch.h`. A compile-time
   alias for the matching ``XxxBetweenFactorBatch``: each specialization adds
@@ -579,14 +579,14 @@ names:
   extent of the underlying array type), so that one specialization requires
   ``<manifold::Vector<Dim>>`` explicitly.
 
-.. cpp:function:: template <class Manifold> class PriorFactorBatch
+.. cpp:class:: template <class Manifold> PriorFactorBatch
 
   Header: :code:`cunls/factor/prior/prior_factor_batch.h`. Same mechanism as
   ``BetweenFactorBatch<Manifold>``, for ``XxxPriorFactorBatch`` instead of
   ``XxxBetweenFactorBatch``; ``Manifold`` is deduced from the observations
   pointer's type.
 
-.. cpp:function:: template <class Manifold> class ConstantVelocityFactorBatch
+.. cpp:class:: template <class Manifold> ConstantVelocityFactorBatch
 
   Header: :code:`cunls/factor/motion/constant_velocity_factor_batch.h`. Same
   zero-cost specialization mechanism, but **always requires the manifold as
@@ -598,7 +598,7 @@ names:
 
      cunls::ConstantVelocityFactorBatch<cunls::manifold::SE3> factor(dt_ptr, num_factors);
 
-.. cpp:function:: template <class Manifold> class ConstantAccelerationFactorBatch
+.. cpp:class:: template <class Manifold> ConstantAccelerationFactorBatch
 
   Header: :code:`cunls/factor/motion/constant_acceleration_factor_batch.h`.
   Identical mechanism and explicit-template-argument-only convention as
@@ -614,8 +614,7 @@ timestamp. Pose, velocity, and acceleration are kept as **separate** state
 blocks (an ``SE3StateBatch``/``SO3StateBatch``/``SE2StateBatch``/
 ``SO2StateBatch`` for the pose, ``VectorStateBatch<Dim>`` for
 velocity/acceleration, ``Dim`` matching the pose's tangent size) connected by
-one of the factors below; see ``docs/design/motion_prior_factors.md`` for the
-full derivation.
+one of the factors below.
 
 For a pose group with ``Log``/``Exp`` and inverse-left-Jacobian
 :math:`J_l^{-1}`, and ``twist`` :math:`:= \mathrm{Log}(T_k^{-1} T_{k+1})`:
@@ -898,7 +897,7 @@ the wrapped factor): :code:`ConstantVelocityInformationSE3FactorBatch`,
 :code:`ConstantAccelerationInformationSE2FactorBatch`,
 :code:`ConstantAccelerationInformationSO2FactorBatch`.
 
-.. cpp:function:: template <class T, int Dim> class MotionPriorInformationFactorBatch
+.. cpp:class:: template <class T, int Dim> MotionPriorInformationFactorBatch
 
   The generic template all eight aliases instantiate; :code:`T` is the
   wrapped :code:`ConstantVelocityXxxFactorBatch`/
@@ -920,10 +919,9 @@ The two function templates behind this wrapper,
 :code:`ComputeConstantVelocitySqrtInformation<Dim>` and
 :code:`ComputeConstantAccelerationSqrtInformation<Dim>`, are still available
 directly (same header) for callers who want the raw square-root information
-matrix without going through :code:`InformationFactorBatch` — see
-:code:`docs/design/motion_prior_factors.md` for the closed-form derivation
-(a Kronecker product with an analytic Cholesky factor, no numerical linear
-algebra).
+matrix without going through :code:`InformationFactorBatch` — it's a
+Kronecker product with an analytic Cholesky factor, no numerical linear
+algebra.
 
 ReprojectionFactorBatch
 -----------------------

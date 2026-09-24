@@ -191,7 +191,7 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SE2BetweenFactorBatch *self, nb::handle deltas, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<3> *>(extract_device_ptr(deltas));
+            auto ptr = reinterpret_cast<const cunls::SE2Transform *>(extract_device_ptr(deltas));
             new (self) cunls::SE2BetweenFactorBatch(ptr, num_factors);
           },
           nb::arg("deltas"), nb::arg("num_factors"), nb::keep_alive<1, 2>())
@@ -206,7 +206,7 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO2BetweenFactorBatch *self, nb::handle deltas, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<2> *>(extract_device_ptr(deltas));
+            auto ptr = reinterpret_cast<const cunls::SO2Rotation *>(extract_device_ptr(deltas));
             new (self) cunls::SO2BetweenFactorBatch(ptr, num_factors);
           },
           nb::arg("deltas"), nb::arg("num_factors"), nb::keep_alive<1, 2>())
@@ -221,7 +221,7 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO3BetweenFactorBatch *self, nb::handle deltas, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<3> *>(extract_device_ptr(deltas));
+            auto ptr = reinterpret_cast<const cunls::SO3Rotation *>(extract_device_ptr(deltas));
             new (self) cunls::SO3BetweenFactorBatch(ptr, num_factors);
           },
           nb::arg("deltas"), nb::arg("num_factors"), nb::keep_alive<1, 2>())
@@ -236,7 +236,8 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::Similarity2BetweenFactorBatch *self, nb::handle deltas, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<3> *>(extract_device_ptr(deltas));
+            auto ptr =
+                reinterpret_cast<const cunls::Similarity2Transform *>(extract_device_ptr(deltas));
             new (self) cunls::Similarity2BetweenFactorBatch(ptr, num_factors);
           },
           nb::arg("deltas"), nb::arg("num_factors"), nb::keep_alive<1, 2>())
@@ -252,7 +253,8 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::Similarity3BetweenFactorBatch *self, cunls::cuBLASHandle &cublas,
              nb::handle deltas, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<4> *>(extract_device_ptr(deltas));
+            auto ptr =
+                reinterpret_cast<const cunls::Similarity3Transform *>(extract_device_ptr(deltas));
             new (self) cunls::Similarity3BetweenFactorBatch(cublas, ptr, num_factors);
           },
           nb::arg("cublas_handle"), nb::arg("deltas"), nb::arg("num_factors"),
@@ -312,7 +314,8 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO3PriorFactorBatch *self, nb::handle observations, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<3> *>(extract_device_ptr(observations));
+            auto ptr =
+                reinterpret_cast<const cunls::SO3Rotation *>(extract_device_ptr(observations));
             new (self) cunls::SO3PriorFactorBatch(ptr, num_factors);
           },
           nb::arg("observations"), nb::arg("num_factors"), nb::keep_alive<1, 2>())
@@ -326,7 +329,8 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO2PriorFactorBatch *self, nb::handle observations, size_t num_factors) {
-            auto ptr = reinterpret_cast<const cunls::Matrix<2> *>(extract_device_ptr(observations));
+            auto ptr =
+                reinterpret_cast<const cunls::SO2Rotation *>(extract_device_ptr(observations));
             new (self) cunls::SO2PriorFactorBatch(ptr, num_factors);
           },
           nb::arg("observations"), nb::arg("num_factors"), nb::keep_alive<1, 2>())

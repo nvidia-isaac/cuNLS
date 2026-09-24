@@ -20,6 +20,7 @@
 
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
+#include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/motion/constant_acceleration_se2_factor_batch.h"
@@ -38,8 +39,8 @@ namespace cunls {
  * constant-velocity (white-noise-on-acceleration / WNOA) motion prior, for
  * direct use with InformationFactorBatch<ConstantVelocityXxxFactorBatch>.
  *
- * Closed-form derivation (see docs/design/motion_prior_factors.md): the
- * paper's information matrix for a 2-block state `[twist; vel]` factors as a
+ * Closed-form derivation: the paper's information matrix for a 2-block
+ * state `[twist; vel]` factors as a
  * Kronecker product `Q(dt)^-1 = M(dt) (x) Qc^-1` of a 2x2 scalar matrix
  *
  *     M(dt) = [[12/dt^3, -6/dt^2], [-6/dt^2, 4/dt]]
@@ -149,6 +150,10 @@ struct MotionPriorSqrtInformationStorage {
           stream, dt_ptr, qc_diag_ptr, num_factors,
           reinterpret_cast<float *>(sqrt_information.data()));
     }
+    // Evaluate() may be called with a different stream than the one used
+    // here to compute sqrt_information, so the buffer must be fully
+    // populated (not just enqueued) before this constructor returns.
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 };
 

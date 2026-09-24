@@ -39,10 +39,9 @@ namespace cunls {
  * i.e. a second-order (constant-acceleration) Taylor prediction of the
  * relative pose, with velocity and acceleration transported back into the
  * local frame at `k` through the inverse left Jacobian, exactly as
- * ConstantVelocitySE3FactorBatch does for its single velocity block. See
- * `docs/design/motion_prior_factors.md` for the derivation and the
- * documented simplification used for the pose-block Jacobians of `r_vel`
- * and `r_accel` (treated as zero; the residuals themselves are exact).
+ * ConstantVelocitySE3FactorBatch does for its single velocity block. The
+ * pose-block Jacobians of `r_vel` and `r_accel` are treated as zero (a
+ * documented simplification; the residuals themselves are exact).
  *
  * Inherits from SizedFactorBatch<18, 6, 6, 6, 6, 6, 6>.
  */

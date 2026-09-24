@@ -78,8 +78,7 @@ __global__ void cv_se3_relative_pose_kernel(float const *const *state_pointers, 
  *
  * Column order matches SizedFactorBatch<12, 6, 6, 6, 6>: [pose_k, pose_k+1,
  * vel_k, vel_k+1]. The pose-block Jacobians of r_vel are treated as zero
- * (documented simplification; see class docs and
- * docs/design/motion_prior_factors.md).
+ * (documented simplification; see class docs).
  */
 __global__ void cv_se3_assemble_kernel(float const *const *state_pointers, const Vector<6> *twist,
                                        const Matrix<6> *jl_inv, const Matrix<6> *jr_inv,
