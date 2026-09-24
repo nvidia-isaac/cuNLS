@@ -36,8 +36,8 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
@@ -56,7 +56,7 @@ namespace cunls {
  * are equal (relative transform is identity).
  */
 class SyntheticPGOTest : public ::testing::Test {
-public:
+ public:
   void SetUp() override {
     // Initialize random number generator with fixed seed for reproducibility
     std::mt19937 rng(fixed_seed_);
@@ -64,15 +64,12 @@ public:
     std::uniform_real_distribution<float> translation_dist(-2.0f, 2.0f);
 
     // Generate poses for both sets
-    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist,
-                        poses_set1_);
-    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist,
-                        poses_set2_);
-    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist,
-                        pose_deltas_);
+    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist, poses_set1_);
+    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist, poses_set2_);
+    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist, pose_deltas_);
   }
 
-protected:
+ protected:
   /**
    * @brief Generates a random set of SE3 poses.
    *
@@ -87,11 +84,10 @@ protected:
    * (twist[3:5])
    * @return Device vector containing the generated SE3 transforms
    */
-  void
-  GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
-                      std::uniform_real_distribution<float> &rotation_dist,
-                      std::uniform_real_distribution<float> &translation_dist,
-                      std::vector<SE3Transform> &poses) {
+  void GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
+                           std::uniform_real_distribution<float> &rotation_dist,
+                           std::uniform_real_distribution<float> &translation_dist,
+                           std::vector<SE3Transform> &poses) {
     // Generate random twists
     hvector<Vector<6>> twists(num_poses);
     for (size_t i = 0; i < num_poses; i++) {
@@ -116,8 +112,8 @@ protected:
     auto twists_ptr = reinterpret_cast<const float *>(twists_device.data());
 
     auto poses_ptr = reinterpret_cast<float *>(poses_device.data());
-    ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch,
-                  transform_stride, num_poses, poses_ptr);
+    ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch, transform_stride,
+                  num_poses, poses_ptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     poses.resize(num_poses);
@@ -138,19 +134,16 @@ protected:
    * conventions as the surrounding tests.
    */
   void ExpectRelativeDeltaSatisfied(const SE3StateBatch &state_batch_set1,
-                                    const SE3StateBatch &state_batch_set2,
-                                    cudaStream_t stream) {
+                                    const SE3StateBatch &state_batch_set2, cudaStream_t stream) {
     const float *opt_poses_set1_ptr = state_batch_set1.StateBlockDevicePtr(0);
     const float *opt_poses_set2_ptr = state_batch_set2.StateBlockDevicePtr(0);
 
     dvector<SE3Transform> poses_set1_inverse(this->num_poses_);
     constexpr size_t transform_pitch = 4;
     constexpr size_t transform_stride = 16;
-    auto poses_set1_inv_ptr =
-        reinterpret_cast<float *>(poses_set1_inverse.data());
-    ComputeInverseSE3(stream, opt_poses_set1_ptr, transform_pitch,
-                      transform_stride, transform_pitch, transform_stride,
-                      this->num_poses_, poses_set1_inv_ptr);
+    auto poses_set1_inv_ptr = reinterpret_cast<float *>(poses_set1_inverse.data());
+    ComputeInverseSE3(stream, opt_poses_set1_ptr, transform_pitch, transform_stride,
+                      transform_pitch, transform_stride, this->num_poses_, poses_set1_inv_ptr);
 
     cuBLASHandle cublas_handle;
     auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream));
@@ -162,19 +155,17 @@ protected:
     float *results_ptr = reinterpret_cast<float *>(results.data());
 
     THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-        opt_poses_set2_ptr, mat_size, transform_stride, poses_set1_inv_ptr,
-        mat_size, transform_stride, &beta, results_ptr, mat_size,
-        transform_stride, this->num_poses_));
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha, opt_poses_set2_ptr,
+        mat_size, transform_stride, poses_set1_inv_ptr, mat_size, transform_stride, &beta,
+        results_ptr, mat_size, transform_stride, this->num_poses_));
 
     dvector<SE3Transform> deltas(pose_deltas_);
     float *deltas_ptr = reinterpret_cast<float *>(deltas.data());
 
     THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-        results_ptr, mat_size, transform_stride, deltas_ptr, mat_size,
-        transform_stride, &beta, results_ptr, mat_size, transform_stride,
-        this->num_poses_));
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha, results_ptr,
+        mat_size, transform_stride, deltas_ptr, mat_size, transform_stride, &beta, results_ptr,
+        mat_size, transform_stride, this->num_poses_));
 
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
@@ -186,8 +177,7 @@ protected:
       const SE3Transform &rel = results_host[i];
       for (int row = 0; row < 4; row++) {
         for (int col = 0; col < 4; col++) {
-          ASSERT_NEAR(rel[row * 4 + col], (row == col) ? 1.0f : 0.0f,
-                      tolerance);
+          ASSERT_NEAR(rel[row * 4 + col], (row == col) ? 1.0f : 0.0f, tolerance);
         }
       }
     }
@@ -199,7 +189,7 @@ protected:
   std::vector<SE3Transform> poses_set2_;
   std::vector<SE3Transform> pose_deltas_;
 
-  cuBLASHandle cublas_handle_; ///< cuBLAS handle for factor constructors
+  cuBLASHandle cublas_handle_;  ///< cuBLAS handle for factor constructors
 
   profiler::Domain profiler_domain_{"SyntheticPGOTest"};
 };
@@ -213,37 +203,32 @@ protected:
  * identity).
  */
 TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "OptimizeConsecutiveBetweenConstraints");
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("OptimizeConsecutiveBetweenConstraints");
 
   // Create device vectors from host vectors
   dvector<SE3Transform> poses_set1_device(this->poses_set1_);
   dvector<SE3Transform> poses_set2_device(this->poses_set2_);
 
   // Create state blocks for both sets
-  const float *poses_set1_ptr =
-      reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr =
-      reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr,
-                                 this->num_poses_);
-  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr,
-                                 this->num_poses_);
+  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
+  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
+  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
 
   // Create between constraints for consecutive pairs in set 1
   // For N poses, we have N-1 consecutive constraints
   size_t num_constraints = this->num_poses_;
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  SE3BetweenFactorBatch between_factor_batch(pose_deltas_device.data(),
-                                             num_constraints);
+  SE3BetweenFactorBatch between_factor_batch(pose_deltas_device.data(), num_constraints);
 
   // Create state pointers for set 1 constraints
   // Each constraint connects pose[i] from set1 (left) and pose[i] from set2
   // (right)
   std::vector<float *> state_pointers;
   for (size_t i = 0; i < num_constraints; i++) {
-    state_pointers.push_back(state_batch_set1.StateBlockDevicePtr(i)); // left
-    state_pointers.push_back(state_batch_set2.StateBlockDevicePtr(i)); // right
+    state_pointers.push_back(state_batch_set1.StateBlockDevicePtr(i));  // left
+    state_pointers.push_back(state_batch_set2.StateBlockDevicePtr(i));  // right
   }
 
   // Build problem
@@ -267,8 +252,8 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
       test_utils::PCGBlockSizeFromEnv(6);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-4f);
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -286,8 +271,7 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   ASSERT_LT(summary.final_cost, 1e-2f);
   ASSERT_GT(summary.num_iterations, 0);
 
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
-                               stream.GetStream());
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
 }
 
 /**
@@ -300,22 +284,18 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
  * transform matches the expected delta).
  */
 TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "OptimizeConsecutiveBetweenConstraints");
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("OptimizeConsecutiveBetweenConstraints");
 
   // Create device vectors from host vectors
   dvector<SE3Transform> poses_set1_device(this->poses_set1_);
   dvector<SE3Transform> poses_set2_device(this->poses_set2_);
 
   // Create state blocks for both sets
-  const float *poses_set1_ptr =
-      reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr =
-      reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr,
-                                 this->num_poses_);
-  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr,
-                                 this->num_poses_);
+  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
+  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
+  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
 
   // Create between constraints for consecutive pairs in set 1
   // For N poses, we have N-1 consecutive constraints
@@ -328,20 +308,19 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
       sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
     }
   }
-  dvector<Matrix<6>> sqrt_information_matrices_device(
-      sqrt_information_matrices_host);
+  dvector<Matrix<6>> sqrt_information_matrices_device(sqrt_information_matrices_host);
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
   InformationFactorBatch<SE3BetweenFactorBatch> between_factor_batch(
-      this->cublas_handle_, sqrt_information_matrices_device.data(),
-      num_constraints, pose_deltas_device.data(), num_constraints);
+      this->cublas_handle_, sqrt_information_matrices_device.data(), num_constraints,
+      pose_deltas_device.data(), num_constraints);
 
   // Create state pointers for set 1 constraints
   // Each constraint connects pose[i] from set1 (left) and pose[i] from set2
   // (right)
   std::vector<float *> state_pointers;
   for (size_t i = 0; i < num_constraints; i++) {
-    state_pointers.push_back(state_batch_set1.StateBlockDevicePtr(i)); // left
-    state_pointers.push_back(state_batch_set2.StateBlockDevicePtr(i)); // right
+    state_pointers.push_back(state_batch_set1.StateBlockDevicePtr(i));  // left
+    state_pointers.push_back(state_batch_set2.StateBlockDevicePtr(i));  // right
   }
 
   // Build problem
@@ -365,8 +344,8 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
       test_utils::PCGBlockSizeFromEnv(6);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-4f);
   // GaussNewtonMinimizer minimizer(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
@@ -384,8 +363,7 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   ASSERT_LT(summary.final_cost, 1e-2f);
   ASSERT_GT(summary.num_iterations, 0);
 
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
-                               stream.GetStream());
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
 }
 
 /**
@@ -393,20 +371,16 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
  * sqrt-information, uniform weight).
  */
 TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "WeightedWrapsInformationBetweenFactorBatch");
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("WeightedWrapsInformationBetweenFactorBatch");
 
   dvector<SE3Transform> poses_set1_device(this->poses_set1_);
   dvector<SE3Transform> poses_set2_device(this->poses_set2_);
 
-  const float *poses_set1_ptr =
-      reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr =
-      reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr,
-                                 this->num_poses_);
-  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr,
-                                 this->num_poses_);
+  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
+  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
+  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
 
   const size_t num_constraints = this->num_poses_;
   std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
@@ -416,13 +390,11 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
       sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
     }
   }
-  dvector<Matrix<6>> sqrt_information_matrices_device(
-      sqrt_information_matrices_host);
+  dvector<Matrix<6>> sqrt_information_matrices_device(sqrt_information_matrices_host);
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>>
-      between_factor_batch(
-          2.0f, this->cublas_handle_, sqrt_information_matrices_device.data(),
-          num_constraints, pose_deltas_device.data(), num_constraints);
+  WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>> between_factor_batch(
+      2.0f, this->cublas_handle_, sqrt_information_matrices_device.data(), num_constraints,
+      pose_deltas_device.data(), num_constraints);
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(num_constraints * 2);
@@ -448,8 +420,8 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
       test_utils::PCGBlockSizeFromEnv(6);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -465,8 +437,7 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   ASSERT_LT(summary.final_cost, 1e-2f);
   ASSERT_GT(summary.num_iterations, 0);
 
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
-                               stream.GetStream());
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
 }
 
 /**
@@ -474,20 +445,16 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
  * sqrt-information, uniform weight).
  */
 TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
-  auto test_range = this->profiler_domain_.CreateDomainRange(
-      "InformationWrapsWeightedBetweenFactorBatch");
+  auto test_range =
+      this->profiler_domain_.CreateDomainRange("InformationWrapsWeightedBetweenFactorBatch");
 
   dvector<SE3Transform> poses_set1_device(this->poses_set1_);
   dvector<SE3Transform> poses_set2_device(this->poses_set2_);
 
-  const float *poses_set1_ptr =
-      reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr =
-      reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr,
-                                 this->num_poses_);
-  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr,
-                                 this->num_poses_);
+  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
+  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
+  SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
 
   const size_t num_constraints = this->num_poses_;
   std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
@@ -497,13 +464,11 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
       sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
     }
   }
-  dvector<Matrix<6>> sqrt_information_matrices_device(
-      sqrt_information_matrices_host);
+  dvector<Matrix<6>> sqrt_information_matrices_device(sqrt_information_matrices_host);
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>>
-      between_factor_batch(
-          this->cublas_handle_, sqrt_information_matrices_device.data(),
-          num_constraints, 2.0f, pose_deltas_device.data(), num_constraints);
+  InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>> between_factor_batch(
+      this->cublas_handle_, sqrt_information_matrices_device.data(), num_constraints, 2.0f,
+      pose_deltas_device.data(), num_constraints);
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(num_constraints * 2);
@@ -529,8 +494,8 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
       test_utils::PCGBlockSizeFromEnv(6);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -546,8 +511,7 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   ASSERT_LT(summary.final_cost, 1e-2f);
   ASSERT_GT(summary.num_iterations, 0);
 
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2,
-                               stream.GetStream());
+  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
 }
 
 // =============================================================================
@@ -573,12 +537,10 @@ struct LcPgoParams {
   const char *label;
 };
 
-inline std::ostream &operator<<(std::ostream &os, const LcPgoParams &p) {
-  return os << p.label;
-}
+inline std::ostream &operator<<(std::ostream &os, const LcPgoParams &p) { return os << p.label; }
 
 class LoopClosurePGOTest : public ::testing::TestWithParam<LcPgoParams> {
-protected:
+ protected:
   /**
    * @brief Generates a chain of poses by composing small random twists.
    *        The returned @p gt_poses is the ground truth; @p init_poses is
@@ -599,15 +561,13 @@ protected:
     dvector<Vector<6>> twists_d(twists);
     dvector<SE3Transform> seg_d(n_poses);
     CudaStream stream;
-    ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float *>(twists_d.data()), 6, 4, 16,
+    ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(twists_d.data()), 6, 4, 16,
                   n_poses, reinterpret_cast<float *>(seg_d.data()));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     std::vector<SE3Transform> segs(n_poses);
     seg_d.CopyToHost(segs.data(), n_poses);
 
-    auto mul = [](const SE3Transform &a,
-                  const SE3Transform &b) -> SE3Transform {
+    auto mul = [](const SE3Transform &a, const SE3Transform &b) -> SE3Transform {
       SE3Transform c{};
       for (int rr = 0; rr < 4; ++rr) {
         for (int cc = 0; cc < 4; ++cc) {
@@ -637,8 +597,7 @@ protected:
     }
     dvector<Vector<6>> djit_d(djitters);
     dvector<SE3Transform> delta_d(n_poses);
-    ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float *>(djit_d.data()), 6, 4, 16,
+    ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(djit_d.data()), 6, 4, 16,
                   n_poses, reinterpret_cast<float *>(delta_d.data()));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     std::vector<SE3Transform> deltas(n_poses);
@@ -733,8 +692,8 @@ TEST_P(LoopClosurePGOTest, Optimize) {
   auto poses_ptr = reinterpret_cast<const float *>(poses_d.data());
   std::vector<int> const_ids = {0};
   dvector<int> const_ids_d(const_ids);
-  SE3StateBatch pose_batch(cublas_handle_, poses_ptr, p.n_poses,
-                           const_ids_d.data(), const_ids.size());
+  SE3StateBatch pose_batch(cublas_handle_, poses_ptr, p.n_poses, const_ids_d.data(),
+                           const_ids.size());
 
   dvector<SE3Transform> deltas_d(deltas);
   SE3BetweenFactorBatch between_batch(deltas_d.data(), deltas.size());
@@ -762,8 +721,8 @@ TEST_P(LoopClosurePGOTest, Optimize) {
       test_utils::PCGBlockSizeFromEnv(6);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-4f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-4f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -784,7 +743,6 @@ INSTANTIATE_TEST_SUITE_P(Sizes, LoopClosurePGOTest,
                          ::testing::Values(LcPgoParams{100, 300, "P100_LC300"},
                                            LcPgoParams{500, 1000, "P500_LC1k"},
                                            LcPgoParams{1000, 3000, "P1k_LC3k"},
-                                           LcPgoParams{5000, 10000,
-                                                       "P5k_LC10k"}));
+                                           LcPgoParams{5000, 10000, "P5k_LC10k"}));
 
-} // namespace cunls
+}  // namespace cunls

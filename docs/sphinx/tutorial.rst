@@ -24,9 +24,9 @@ The examples increase in complexity:
 - :ref:`tutorial:Sparse Bundle Adjustment` — uses built-in
   `ReprojectionFactorBatch` to jointly optimize camera poses and 3D
   landmarks from multi-view observations.
-- :ref:`tutorial:Pose Graph Optimization` — uses `SE3BetweenFactorBatch` to
-  recover a chain of SE(3) poses from consecutive relative-transform
-  measurements.
+- :ref:`tutorial:Pose Graph Optimization` — uses `BetweenFactorBatch` (the
+  manifold-generic facade, deduced to SE(3) here) to recover a chain of
+  SE(3) poses from consecutive relative-transform measurements.
 - :ref:`tutorial:Custom Factor` — shows how to implement a user-defined CUDA
   factor kernel by subclassing `SizedFactorBatch`.
 
@@ -396,8 +396,8 @@ through between factors, and the first pose :math:`T_0` is held fixed.
    anchor pose*
    :math:`T_0`\ *, green circles are optimized poses
    (*\ `SE3StateBatch`\ *), and orange squares are between factors
-   (*\ `SE3BetweenFactorBatch`\ *). Each factor encodes a measured relative
-   transform*
+   (*\ `BetweenFactorBatch`\ *, deduced to SE(3)). Each factor encodes a
+   measured relative transform*
    :math:`\Delta_i`\ *.*
 
 PGO API used
@@ -413,8 +413,9 @@ PGO API used
      - A single instance stores the full pose chain. The first pose is
        marked constant via ``device_constant_state_ids``; the rest are
        optimized.
-   * - `SE3BetweenFactorBatch` (:doc:`api/factor`)
-     - Computes the relative-transform residual
+   * - `BetweenFactorBatch<Manifold>` (:doc:`api/factor`)
+     - Manifold-generic facade; deduced here to SE(3) via CTAD from the
+       deltas pointer's type. Computes the relative-transform residual
        :math:`\mathrm{Log}(\Delta \, T_i^{-1} \, T_{i+1})` and its
        Jacobians w.r.t. both pose blocks.
    * - `Problem` (:doc:`api/minimizer`)
@@ -484,13 +485,15 @@ A single `SE3StateBatch` holds the entire pose chain. Only
        const_ids_device.data(), 1);
 
 **Step 3 — Build the between-factor batch.**
-`SE3BetweenFactorBatch` takes the measured relative transforms and
-internally computes the residual and 6 × 12 Jacobian for each factor.
+`BetweenFactorBatch` takes the measured relative transforms and internally
+computes the residual and 6 × 12 Jacobian for each factor. Its manifold is
+deduced via CTAD from ``deltas_device``'s type (`SE3Transform`), so no
+``<Manifold>`` is written — prefer this over the per-manifold
+`SE3BetweenFactorBatch` it wraps.
 
 .. code-block:: cpp
 
-   cunls::SE3BetweenFactorBatch between_factor(
-       cublas_handle, deltas_device.data(), num_constraints);
+   cunls::BetweenFactorBatch between_factor(deltas_device.data(), num_constraints);
 
 **Step 4 — Wire state pointers and assemble the problem.**
 Each between factor reads two state blocks: ``[T_i, T_{i+1}]``. The
@@ -613,7 +616,8 @@ through difference factors, and a prior factor anchors :math:`x_0`.
    *Factor graph for the custom factor example. Green circles are scalar state
    variables (*\ `VectorStateBatch<1>`\ *), orange squares are custom
    difference factors (*\ `ScalarDifferenceFactorBatch`\ *), and the purple
-   square is the anchor prior (*\ `PriorVectorFactorBatch<1>`\ *) on*
+   square is the anchor prior (*\ `PriorFactorBatch<manifold::Vector<1>>`\ *)
+   on*
    :math:`x_0`\ *.*
 
 Custom factor API used
@@ -630,9 +634,9 @@ Custom factor API used
    * - `SizedFactorBatch<1, 1, 1>` (:doc:`api/factor`)
      - Compile-time base for the custom factor (residual dim = 1, two state
        blocks of tangent dim 1 each).
-   * - `PriorVectorFactorBatch<1>` (:doc:`api/factor`)
-     - Built-in prior factor that pulls :math:`x_0` toward the observed
-       anchor value.
+   * - `PriorFactorBatch<manifold::Vector<1>>` (:doc:`api/factor`)
+     - Manifold-generic facade over the built-in prior factor that pulls
+       :math:`x_0` toward the observed anchor value.
    * - `Problem` (:doc:`api/minimizer`)
      - Assembles the factor graph.
    * - `LevenbergMarquardtMinimizer` (:doc:`api/minimizer`)
@@ -742,7 +746,7 @@ added: the custom difference factors and a built-in prior anchor.
 
    ScalarDifferenceFactorBatch difference_factor(
        measurements_device.data(), num_diff_factors);
-   cunls::PriorVectorFactorBatch<1> anchor_factor(
+   cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(
        anchor_obs_device.data(), 1);
 
 **Step 5 — Wire state pointers and assemble the problem.**

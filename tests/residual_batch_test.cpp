@@ -88,7 +88,7 @@ float jacobian_scaling_alpha(float sq_norm, const float3 &rho) {
   const float alpha = 1.0 - sqrt(D);
   return alpha / sq_norm;
 }
-} // namespace
+}  // namespace
 
 /**
  * @brief Typed test fixture for ResidualBatch tests across multiple vector
@@ -98,8 +98,9 @@ float jacobian_scaling_alpha(float sq_norm, const float3 &rho) {
  * then validates residual scaling, cost computation, and Jacobian correction
  * under Huber loss robustification.
  */
-template <class VectorSize> class ResidualBatchTest : public ::testing::Test {
-public:
+template <class VectorSize>
+class ResidualBatchTest : public ::testing::Test {
+ public:
   static constexpr int kDim = VectorSize::size;
   using VectorType = Vector<kDim>;
   using StateData = test_utils::VectorStateData<kDim>;
@@ -146,9 +147,8 @@ public:
   profiler::Domain profiler_domain_{"ResidualBatchTest"};
 };
 
-typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>,
-                         test_utils::Size<3>, test_utils::Size<4>,
-                         test_utils::Size<50>>
+typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::Size<3>,
+                         test_utils::Size<4>, test_utils::Size<50>>
     VectorSizes;
 TYPED_TEST_CASE(ResidualBatchTest, VectorSizes);
 
@@ -172,8 +172,8 @@ TYPED_TEST(ResidualBatchTest, Residuals) {
   ResidualBatch residual_batch(&factor_batch, &loss);
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Residuals");
-    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(),
-                            residuals_ptr, state_ptrs, nullptr, nullptr);
+    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(), residuals_ptr,
+                            state_ptrs, nullptr, nullptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -216,8 +216,8 @@ TYPED_TEST(ResidualBatchTest, Cost) {
   ResidualBatch residual_batch(&factor_batch, &loss);
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Cost");
-    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(),
-                            residuals_ptr, state_ptrs, cost_ptr, nullptr);
+    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(), residuals_ptr,
+                            state_ptrs, cost_ptr, nullptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -257,8 +257,8 @@ TYPED_TEST(ResidualBatchTest, Jacobians) {
   ResidualBatch residual_batch(&factor_batch, &loss);
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Jacobians");
-    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(),
-                            residuals_ptr, state_ptrs, nullptr, jacobians_ptr);
+    residual_batch.Evaluate(stream.GetStream(), this->robust_workspace_.data(), residuals_ptr,
+                            state_ptrs, nullptr, jacobians_ptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -286,17 +286,16 @@ TYPED_TEST(ResidualBatchTest, Jacobians) {
         x.assign(size * size, jac_value);
 
         for (size_t k = 0; k < size; k++) {
-          x[k * size + k] += sqrt_rho1; // Adjust the diagonal
+          x[k * size + k] += sqrt_rho1;  // Adjust the diagonal
         }
       }
     }
 
     for (size_t k = 0; k < size; k++) {
       for (size_t j = 0; j < size; j++) {
-        ASSERT_NEAR(host_jacobians[(size * i + k) * size + j],
-                    gt_jacobian[i][k * size + j], 1e-5);
+        ASSERT_NEAR(host_jacobians[(size * i + k) * size + j], gt_jacobian[i][k * size + j], 1e-5);
       }
     }
   }
 }
-} // namespace cunls
+}  // namespace cunls

@@ -23,6 +23,8 @@
  *  solution under LM optimization.
  */
 
+#include "cunls/factor/weighted_factor_batch.h"
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -32,7 +34,6 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
-#include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
@@ -42,7 +43,7 @@ namespace cunls {
 
 template <class TestParam>
 class WeightedFactorBatchTest : public ::testing::Test {
-public:
+ public:
   static constexpr int kDim = TestParam::vector_size;
   using StatesType = VectorStateBatch<kDim>;
   using VectorType = Vector<kDim>;
@@ -57,26 +58,22 @@ public:
       state_values_[i].fill(x);
     }
 
-    minimizer_options_.sparse_linear_solver_type =
-        SparseLinearSolverType::cuDSS;
+    minimizer_options_.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
 
     cuDSSLinearSolverOptions cudss_solver_options = {
         .mode = static_cast<cuDSSLinearSolverMode>(TestParam::solver_id),
         .nthreads = 1,
         .threading_lib_path = "",
     };
-    minimizer_options_.sparse_linear_solver_config = {.cudss_solver_options =
-                                                          cudss_solver_options};
+    minimizer_options_.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
   }
 
   void CheckConvergence(const StatesType &states) {
     size_t num_blocks = states.NumStateBlocks();
-    auto ptr =
-        reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
+    auto ptr = reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
 
     std::vector<VectorType> host_states(num_blocks);
-    THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr,
-                                   num_blocks * sizeof(VectorType),
+    THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr, num_blocks * sizeof(VectorType),
                                    cudaMemcpyDeviceToHost));
 
     ASSERT_EQ(host_states.size(), observations_.size());
@@ -97,14 +94,14 @@ public:
   MinimizerOptions minimizer_options_{.disable_safety_checks = false};
 };
 
-template <int VectorSize, int SolverId> struct TestParam {
+template <int VectorSize, int SolverId>
+struct TestParam {
   static constexpr int vector_size = VectorSize;
   static constexpr int solver_id = SolverId;
 };
 
-typedef ::testing::Types<TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>,
-                         TestParam<4, 0>, TestParam<1, 1>, TestParam<2, 1>,
-                         TestParam<3, 1>, TestParam<4, 1>>
+typedef ::testing::Types<TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>,
+                         TestParam<1, 1>, TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>>
     WeightedTestParams;
 TYPED_TEST_CASE(WeightedFactorBatchTest, WeightedTestParams);
 
@@ -122,8 +119,7 @@ TYPED_TEST(WeightedFactorBatchTest, UniformWeightLM) {
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
-  DeviceVector<typename TestFixture::VectorType> obs_device(
-      this->observations_);
+  DeviceVector<typename TestFixture::VectorType> obs_device(this->observations_);
 
   const float weight = 2.0f;
   WeightedType weighted_factor(weight, obs_device.data(), this->num_vectors_);
@@ -160,8 +156,7 @@ TYPED_TEST(WeightedFactorBatchTest, PerFactorWeightLM) {
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
-  DeviceVector<typename TestFixture::VectorType> obs_device(
-      this->observations_);
+  DeviceVector<typename TestFixture::VectorType> obs_device(this->observations_);
 
   std::vector<float> host_weights(this->num_vectors_);
   for (size_t i = 0; i < this->num_vectors_; i++) {
@@ -169,8 +164,8 @@ TYPED_TEST(WeightedFactorBatchTest, PerFactorWeightLM) {
   }
   DeviceVector<float> weights_device(host_weights);
 
-  WeightedType weighted_factor(weights_device.data(), this->num_vectors_,
-                               obs_device.data(), this->num_vectors_);
+  WeightedType weighted_factor(weights_device.data(), this->num_vectors_, obs_device.data(),
+                               this->num_vectors_);
 
   Problem problem;
   problem.AddFactorBatch(&weighted_factor, device_pointers);
@@ -198,8 +193,7 @@ TYPED_TEST(WeightedFactorBatchTest, UnitWeightMatchesUnweighted) {
   using FactorType = PriorVectorFactorBatch<TestFixture::kDim>;
   using WeightedType = WeightedFactorBatch<FactorType>;
 
-  DeviceVector<typename TestFixture::VectorType> obs_device(
-      this->observations_);
+  DeviceVector<typename TestFixture::VectorType> obs_device(this->observations_);
 
   // Run with weight = 1.0
   {
@@ -236,8 +230,7 @@ TYPED_TEST(WeightedFactorBatchTest, LargeUniformWeightConverges) {
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
-  DeviceVector<typename TestFixture::VectorType> obs_device(
-      this->observations_);
+  DeviceVector<typename TestFixture::VectorType> obs_device(this->observations_);
 
   const float weight = 100.0f;
   WeightedType weighted_factor(weight, obs_device.data(), this->num_vectors_);
@@ -273,8 +266,7 @@ TEST(WeightedFactorBatchValidation, NumWeightsMismatchThrows) {
   std::vector<float> host_weights = {1.f, 2.f, 3.f};
   DeviceVector<float> weights_device(host_weights);
 
-  ASSERT_THROW(WeightedType(weights_device.data(), /*num_weights=*/5,
-                            obs_device.data(), size_t{2}),
+  ASSERT_THROW(WeightedType(weights_device.data(), /*num_weights=*/5, obs_device.data(), size_t{2}),
                std::invalid_argument);
 }
 
@@ -288,9 +280,8 @@ TEST(WeightedFactorBatchValidation, NullPerFactorWeightsThrows) {
   std::vector<Vector<2>> obs_host = {{1.f, 2.f}, {3.f, 4.f}};
   DeviceVector<Vector<2>> obs_device(obs_host);
 
-  ASSERT_THROW(WeightedType(static_cast<const float *>(nullptr), 2,
-                            obs_device.data(), size_t{2}),
+  ASSERT_THROW(WeightedType(static_cast<const float *>(nullptr), 2, obs_device.data(), size_t{2}),
                std::invalid_argument);
 }
 
-} // namespace cunls
+}  // namespace cunls

@@ -1,7 +1,9 @@
 # Pose Graph Optimization Example
 
 This example demonstrates SE(3) pose graph optimization with:
-- `SE3BetweenFactorBatch` for between-pose constraints
+- `BetweenFactorBatch` (the manifold-generic facade, with the SE(3)
+  specialization deduced via CTAD from the deltas pointer) for between-pose
+  constraints
 - `SE3StateBatch` for pose variables
 - `LevenbergMarquardtMinimizer` for solving the nonlinear least-squares system
 
@@ -20,7 +22,8 @@ It builds a synthetic **pose chain**:
 
 ## How the factor is used
 
-`SE3BetweenFactorBatch` computes residuals with the convention:
+`BetweenFactorBatch` (specialized to SE(3) here) computes residuals with the
+convention:
 
 `r = Log(delta * T_i^{-1} * T_{i+1})`
 
@@ -38,7 +41,8 @@ except the fixed anchor.
 2. Compute the ground-truth chain: `T_{i+1} = T_i * inverse(delta_i)`.
 3. Disturb all poses except `T_0`.
 4. Add a single `SE3StateBatch` with `T_0` marked as constant.
-5. Build one between factor per consecutive pair `(T_i, T_{i+1})`.
+5. Build one `BetweenFactorBatch` per consecutive pair `(T_i, T_{i+1})` — no
+   `<Manifold>` needed, it's deduced from the deltas pointer's type.
 
 `LevenbergMarquardtMinimizer` allocates its working buffers during
 initialization before the first linearized solve.

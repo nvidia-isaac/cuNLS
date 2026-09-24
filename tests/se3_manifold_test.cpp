@@ -38,8 +38,7 @@ SE3Transform MakeSE3Identity() {
   return I;
 }
 
-dvector<SE3Transform> GenerateRandomSE3(size_t n, uint32_t seed, float rot_mag,
-                                        float trans_mag) {
+dvector<SE3Transform> GenerateRandomSE3(size_t n, uint32_t seed, float rot_mag, float trans_mag) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> rot_dist(-rot_mag, rot_mag);
   std::uniform_real_distribution<float> trans_dist(-trans_mag, trans_mag);
@@ -57,36 +56,32 @@ dvector<SE3Transform> GenerateRandomSE3(size_t n, uint32_t seed, float rot_mag,
   dvector<Vector<6>> twists_dev(twists);
   dvector<SE3Transform> out(n);
   CudaStream stream;
-  ComputeExpSE3(stream.GetStream(),
-                reinterpret_cast<const float *>(twists_dev.data()), 6, 4, 16, n,
+  ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(twists_dev.data()), 6, 4, 16, n,
                 reinterpret_cast<float *>(out.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   return out;
 }
 
-dvector<SE3Transform> PerturbSE3(const dvector<SE3Transform> &targets, size_t n,
-                                 uint32_t seed, float rot_mag, float trans_mag,
-                                 cuBLASHandle &cublas) {
-  dvector<SE3Transform> perturbations =
-      GenerateRandomSE3(n, seed, rot_mag, trans_mag);
+dvector<SE3Transform> PerturbSE3(const dvector<SE3Transform> &targets, size_t n, uint32_t seed,
+                                 float rot_mag, float trans_mag, cuBLASHandle &cublas) {
+  dvector<SE3Transform> perturbations = GenerateRandomSE3(n, seed, rot_mag, trans_mag);
   dvector<SE3Transform> result(n);
 
   CudaStream stream;
-  auto handle =
-      static_cast<cublasHandle_t>(cublas.GetHandle(stream.GetStream()));
+  auto handle = static_cast<cublasHandle_t>(cublas.GetHandle(stream.GetStream()));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
 
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, 4, 4, 4, &alpha,
-      reinterpret_cast<const float *>(perturbations.data()), 4, 16,
-      reinterpret_cast<const float *>(targets.data()), 4, 16, &beta,
-      reinterpret_cast<float *>(result.data()), 4, 16, n));
+  THROW_ON_CUBLAS_ERROR(
+      cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, 4, 4, 4, &alpha,
+                                reinterpret_cast<const float *>(perturbations.data()), 4, 16,
+                                reinterpret_cast<const float *>(targets.data()), 4, 16, &beta,
+                                reinterpret_cast<float *>(result.data()), 4, 16, n));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   return result;
 }
 
-} // namespace
+}  // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -98,8 +93,7 @@ TEST(SE3ManifoldTest, StateDimensions) {
   dvector<SE3Transform> transforms_dev(transforms);
 
   cuBLASHandle cublas;
-  SE3StateBatch states(
-      cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
+  SE3StateBatch states(cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), 6u);
   EXPECT_EQ(states.AmbientSize(), 16u);
@@ -115,11 +109,9 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
 
   cuBLASHandle cublas;
   dvector<SE3Transform> targets = GenerateRandomSE3(kN, 42, 0.5f, 2.0f);
-  dvector<SE3Transform> initials =
-      PerturbSE3(targets, kN, 43, 0.1f, 0.3f, cublas);
+  dvector<SE3Transform> initials = PerturbSE3(targets, kN, 43, 0.1f, 0.3f, cublas);
 
-  SE3StateBatch state_batch(
-      cublas, reinterpret_cast<const float *>(initials.data()), kN);
+  SE3StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials.data()), kN);
   SE3PriorFactorBatch factor_batch(targets.data(), kN);
 
   std::vector<float *> ptrs;
@@ -152,9 +144,8 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SE3Transform> optimized(kN), target_host(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
-                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
   targets.CopyToHost(target_host.data(), kN);
 
   for (size_t i = 0; i < kN; ++i) {
@@ -179,10 +170,8 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
   dvector<SE3Transform> deltas_dev(deltas);
 
   cuBLASHandle cublas;
-  SE3StateBatch state_left(
-      cublas, reinterpret_cast<const float *>(poses_left.data()), kN);
-  SE3StateBatch state_right(
-      cublas, reinterpret_cast<const float *>(poses_right.data()), kN);
+  SE3StateBatch state_left(cublas, reinterpret_cast<const float *>(poses_left.data()), kN);
+  SE3StateBatch state_right(cublas, reinterpret_cast<const float *>(poses_right.data()), kN);
   SE3BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
 
   std::vector<float *> ptrs;
@@ -216,19 +205,16 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SE3Transform> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
-                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
-                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                                 kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 16; ++j) {
-      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f)
-          << "transform " << i << ", element " << j;
+      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f) << "transform " << i << ", element " << j;
     }
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

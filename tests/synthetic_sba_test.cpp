@@ -51,8 +51,8 @@ namespace cunls {
 struct SyntheticSbaParams {
   int n_poses;
   int n_points;
-  int obs_per_landmark; // visibility per landmark; total obs = n_points *
-                        // obs_per_landmark.
+  int obs_per_landmark;  // visibility per landmark; total obs = n_points *
+                         // obs_per_landmark.
   const char *label;
 };
 
@@ -61,7 +61,7 @@ inline std::ostream &operator<<(std::ostream &os, const SyntheticSbaParams &p) {
 }
 
 class SyntheticSbaTest : public ::testing::TestWithParam<SyntheticSbaParams> {
-protected:
+ protected:
   /**
    * @brief Generates a random SE3 pose by sampling a small twist and
    *        composing with a forward translation, so all poses look at
@@ -77,8 +77,7 @@ protected:
     CudaStream stream;
     constexpr size_t pitch = 4;
     constexpr size_t stride = 16;
-    ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float *>(d_twist.data()), 6, pitch,
+    ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(d_twist.data()), 6, pitch,
                   stride, 1, reinterpret_cast<float *>(d_pose.data()));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     SE3Transform out;
@@ -90,18 +89,14 @@ protected:
    *  normalized image observation.  Returns false if the point is behind
    *  the camera or too close to it. */
   static bool Project(const SE3Transform &pose_world_from_cam_or_cam_from_world,
-                      const Vector<3> &p_world, Vector<2> &out,
-                      bool cam_from_world) {
+                      const Vector<3> &p_world, Vector<2> &out, bool cam_from_world) {
     const SE3Transform &T = pose_world_from_cam_or_cam_from_world;
     Vector<3> p_cam{};
     if (cam_from_world) {
       // T transforms world->cam.
-      p_cam[0] =
-          T[0] * p_world[0] + T[1] * p_world[1] + T[2] * p_world[2] + T[3];
-      p_cam[1] =
-          T[4] * p_world[0] + T[5] * p_world[1] + T[6] * p_world[2] + T[7];
-      p_cam[2] =
-          T[8] * p_world[0] + T[9] * p_world[1] + T[10] * p_world[2] + T[11];
+      p_cam[0] = T[0] * p_world[0] + T[1] * p_world[1] + T[2] * p_world[2] + T[3];
+      p_cam[1] = T[4] * p_world[0] + T[5] * p_world[1] + T[6] * p_world[2] + T[7];
+      p_cam[2] = T[8] * p_world[0] + T[9] * p_world[1] + T[10] * p_world[2] + T[11];
     } else {
       // T transforms cam->world; compute inverse.
       // Inverse of [R t; 0 1] is [R^T -R^T t; 0 1].
@@ -123,12 +118,9 @@ protected:
   /** Returns (host) ground-truth poses, perturbed poses, ground-truth
    *  landmarks, perturbed landmarks, observations, and per-obs ids. */
   void GenerateProblem(int n_poses, int n_points, int obs_per_landmark,
-                       std::vector<SE3Transform> &gt_poses,
-                       std::vector<SE3Transform> &init_poses,
-                       std::vector<Vector<3>> &gt_points,
-                       std::vector<Vector<3>> &init_points,
-                       std::vector<Vector<2>> &observations,
-                       std::vector<int> &pose_ids,
+                       std::vector<SE3Transform> &gt_poses, std::vector<SE3Transform> &init_poses,
+                       std::vector<Vector<3>> &gt_points, std::vector<Vector<3>> &init_points,
+                       std::vector<Vector<2>> &observations, std::vector<int> &pose_ids,
                        std::vector<int> &point_ids) {
     std::mt19937 rng(42);
 
@@ -158,8 +150,7 @@ protected:
     observations.clear();
     pose_ids.clear();
     point_ids.clear();
-    observations.reserve(static_cast<size_t>(n_points) *
-                         static_cast<size_t>(obs_per_landmark));
+    observations.reserve(static_cast<size_t>(n_points) * static_cast<size_t>(obs_per_landmark));
     pose_ids.reserve(observations.capacity());
     point_ids.reserve(observations.capacity());
     std::vector<int> keep_landmark;
@@ -185,7 +176,7 @@ protected:
         obs[1] += noise(rng);
         observations.push_back(obs);
         pose_ids.push_back(pose_id);
-        point_ids.push_back(remap[j]); // remap to the kept-landmark index
+        point_ids.push_back(remap[j]);  // remap to the kept-landmark index
         ++got;
       }
     }
@@ -216,15 +207,13 @@ protected:
       dvector<Vector<6>> d_jit(jitters);
       dvector<SE3Transform> d_delta(n_poses);
       CudaStream stream;
-      ComputeExpSE3(stream.GetStream(),
-                    reinterpret_cast<const float *>(d_jit.data()), 6, 4, 16,
+      ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(d_jit.data()), 6, 4, 16,
                     n_poses, reinterpret_cast<float *>(d_delta.data()));
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
       std::vector<SE3Transform> deltas(n_poses);
       d_delta.CopyToHost(deltas.data(), n_poses);
       // 4x4 matrix multiplication on host.
-      auto mul = [](const SE3Transform &a,
-                    const SE3Transform &b) -> SE3Transform {
+      auto mul = [](const SE3Transform &a, const SE3Transform &b) -> SE3Transform {
         SE3Transform c{};
         for (int r = 0; r < 4; ++r) {
           for (int cc = 0; cc < 4; ++cc) {
@@ -267,9 +256,8 @@ TEST_P(SyntheticSbaTest, Optimize) {
   std::vector<Vector<3>> gt_points, init_points;
   std::vector<Vector<2>> observations;
   std::vector<int> pose_ids, point_ids;
-  GenerateProblem(params.n_poses, params.n_points, params.obs_per_landmark,
-                  gt_poses, init_poses, gt_points, init_points, observations,
-                  pose_ids, point_ids);
+  GenerateProblem(params.n_poses, params.n_points, params.obs_per_landmark, gt_poses, init_poses,
+                  gt_points, init_points, observations, pose_ids, point_ids);
 
   const size_t n_obs = observations.size();
   ASSERT_GT(n_obs, 0u);
@@ -301,24 +289,19 @@ TEST_P(SyntheticSbaTest, Optimize) {
   auto poses_ptr = reinterpret_cast<const float *>(poses_d.data());
   auto points_ptr = reinterpret_cast<const float *>(points_d.data());
 
-  SE3StateBatch pose_batch(cublas_handle_, poses_ptr,
-                           static_cast<size_t>(params.n_poses),
+  SE3StateBatch pose_batch(cublas_handle_, poses_ptr, static_cast<size_t>(params.n_poses),
                            const_pose_ids_d.data(), const_pose_ids.size());
-  VectorStateBatch<3> point_batch(points_ptr, init_points.size(),
-                                  const_point_ids_d.data(),
+  VectorStateBatch<3> point_batch(points_ptr, init_points.size(), const_point_ids_d.data(),
                                   const_point_ids.size());
 
   InformationFactorBatch<ReprojectionFactorBatch> info_factor(
-      cublas_handle_, info_d.data(), n_obs, obs_d.data(), cam_from_rig_d.data(),
-      n_obs, 1e-3f);
+      cublas_handle_, info_d.data(), n_obs, obs_d.data(), cam_from_rig_d.data(), n_obs, 1e-3f);
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(n_obs * 2);
   for (size_t i = 0; i < n_obs; ++i) {
-    state_pointers.push_back(
-        pose_batch.StateBlockDevicePtr(static_cast<size_t>(pose_ids[i])));
-    state_pointers.push_back(
-        point_batch.StateBlockDevicePtr(static_cast<size_t>(point_ids[i])));
+    state_pointers.push_back(pose_batch.StateBlockDevicePtr(static_cast<size_t>(pose_ids[i])));
+    state_pointers.push_back(point_batch.StateBlockDevicePtr(static_cast<size_t>(point_ids[i])));
   }
 
   HuberLossFunctionBatch huber(1.0f);
@@ -339,8 +322,8 @@ TEST_P(SyntheticSbaTest, Optimize) {
       test_utils::PCGBlockSizeFromEnv(6);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(200);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-3f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -360,13 +343,12 @@ TEST_P(SyntheticSbaTest, Optimize) {
 
 INSTANTIATE_TEST_SUITE_P(
     Sizes, SyntheticSbaTest,
-    ::testing::Values(
-        SyntheticSbaParams{10, 1000, 5, "P10_L1k_obs5"},
-        SyntheticSbaParams{50, 10000, 5, "P50_L10k_obs5"},
-        SyntheticSbaParams{100, 50000, 5, "P100_L50k_obs5"},
-        SyntheticSbaParams{250, 200000, 5, "P250_L200k_obs5"},
-        // 1M landmarks: obs_per_landmark=2 keeps the Jacobian row count
-        // under cuNLS's per-batch grid-dim limit (~4M rows).  Total obs ≈ 2M.
-        SyntheticSbaParams{500, 1000000, 2, "P500_L1M_obs2"}));
+    ::testing::Values(SyntheticSbaParams{10, 1000, 5, "P10_L1k_obs5"},
+                      SyntheticSbaParams{50, 10000, 5, "P50_L10k_obs5"},
+                      SyntheticSbaParams{100, 50000, 5, "P100_L50k_obs5"},
+                      SyntheticSbaParams{250, 200000, 5, "P250_L200k_obs5"},
+                      // 1M landmarks: obs_per_landmark=2 keeps the Jacobian row count
+                      // under cuNLS's per-batch grid-dim limit (~4M rows).  Total obs ≈ 2M.
+                      SyntheticSbaParams{500, 1000000, 2, "P500_L1M_obs2"}));
 
-} // namespace cunls
+}  // namespace cunls

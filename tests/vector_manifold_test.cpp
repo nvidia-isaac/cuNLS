@@ -17,8 +17,8 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/between/vector_between_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
@@ -41,8 +41,7 @@ TEST(VectorManifoldTest, StateDimensions) {
   }
   dvector<Vector<kDim>> vecs_dev(vecs);
 
-  VectorStateBatch<kDim> states(
-      reinterpret_cast<const float *>(vecs_dev.data()), kN);
+  VectorStateBatch<kDim> states(reinterpret_cast<const float *>(vecs_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), static_cast<size_t>(kDim));
   EXPECT_EQ(states.AmbientSize(), static_cast<size_t>(kDim));
@@ -69,8 +68,7 @@ TEST(VectorManifoldTest, PriorLMConvergence) {
 
   dvector<Vector<kDim>> targets_dev(targets), initials_dev(initials);
 
-  VectorStateBatch<kDim> state_batch(
-      reinterpret_cast<const float *>(initials_dev.data()), kN);
+  VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(initials_dev.data()), kN);
   PriorVectorFactorBatch<kDim> factor_batch(targets_dev.data(), kN);
 
   std::vector<float *> ptrs;
@@ -103,14 +101,12 @@ TEST(VectorManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Vector<kDim>> optimized(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
-                 kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                                 kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (int j = 0; j < kDim; ++j) {
-      ASSERT_NEAR(optimized[i][j], targets[i][j], 1e-4f)
-          << "vector " << i << ", element " << j;
+      ASSERT_NEAR(optimized[i][j], targets[i][j], 1e-4f) << "vector " << i << ", element " << j;
     }
   }
 }
@@ -138,10 +134,8 @@ TEST(VectorManifoldTest, BetweenLMConvergence) {
   hvector<Vector<kDim>> deltas(kN, zero);
   dvector<Vector<kDim>> deltas_dev(deltas);
 
-  VectorStateBatch<kDim> state_left(
-      reinterpret_cast<const float *>(left_dev.data()), kN);
-  VectorStateBatch<kDim> state_right(
-      reinterpret_cast<const float *>(right_dev.data()), kN);
+  VectorStateBatch<kDim> state_left(reinterpret_cast<const float *>(left_dev.data()), kN);
+  VectorStateBatch<kDim> state_right(reinterpret_cast<const float *>(right_dev.data()), kN);
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_dev.data(), kN);
 
   std::vector<float *> ptrs;
@@ -176,19 +170,16 @@ TEST(VectorManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Vector<kDim>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
-                 kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
-                 kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                                 kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                                 kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (int j = 0; j < kDim; ++j) {
-      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 1e-4f)
-          << "vector " << i << ", element " << j;
+      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 1e-4f) << "vector " << i << ", element " << j;
     }
   }
 }
 
-} // namespace cunls
+}  // namespace cunls
