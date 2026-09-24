@@ -32,6 +32,9 @@ Available examples:
   first pose fixed as a gauge anchor.
 - `custom_factor`: Implements a simple user-defined scalar difference factor
   and combines it with `PriorVectorFactorBatch<1>` to anchor the solution.
+- `motion_prior`: Uses `ConstantVelocitySE3FactorBatch` to optimize a chain
+  of SE(3) poses and body-velocity states under a constant-velocity motion
+  prior, with the first pose and velocity fixed as gauge anchors.
 
 ## Build all examples locally
 

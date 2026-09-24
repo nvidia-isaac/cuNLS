@@ -49,3 +49,8 @@ add_cunls_example(
   custom_factor_example
   "${CMAKE_CURRENT_SOURCE_DIR}/custom_factor/main.cu"
 )
+
+add_cunls_example(
+  motion_prior_example
+  "${CMAKE_CURRENT_SOURCE_DIR}/motion_prior/main.cpp"
+)

@@ -30,8 +30,13 @@ void ApplyInformationToResiduals(void *cublas_handle, const float *sqrt_informat
   const size_t stride = residual_size * residual_size;
   constexpr size_t inc = 1;
 
+  // sqrt_information is stored row-major (see class docs), but cuBLAS reads
+  // it column-major, i.e. as its transpose. CUBLAS_OP_T undoes that so this
+  // computes residuals = sqrt_information * residuals (matching the
+  // row-major matrix the caller actually passed in), consistent with
+  // ApplyInformationToJacobians below.
   THROW_ON_CUBLAS_ERROR(cublasSgemvStridedBatched(
-      static_cast<cublasHandle_t>(cublas_handle), CUBLAS_OP_N, residual_size, residual_size, &alpha,
+      static_cast<cublasHandle_t>(cublas_handle), CUBLAS_OP_T, residual_size, residual_size, &alpha,
       sqrt_information, residual_size, stride, residuals, inc, residual_size, &beta, residuals, inc,
       residual_size, num_factors));
 }

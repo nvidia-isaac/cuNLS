@@ -41,6 +41,7 @@ docker run --gpus all --rm -it \
     cp /tmp/examples_build/sparse_bundle_adjustment_example /output/
     cp /tmp/examples_build/pose_graph_optimization_example /output/
     cp /tmp/examples_build/custom_factor_example /output/
+    cp /tmp/examples_build/motion_prior_example /output/
 
     cat > /output/run_all_examples.sh <<'EOF'
 #!/bin/bash
@@ -52,6 +53,7 @@ export LD_LIBRARY_PATH=\"\$SCRIPT_DIR/lib:\${LD_LIBRARY_PATH:-}\"
 \"\$SCRIPT_DIR/sparse_bundle_adjustment_example\"
 \"\$SCRIPT_DIR/pose_graph_optimization_example\"
 \"\$SCRIPT_DIR/custom_factor_example\"
+\"\$SCRIPT_DIR/motion_prior_example\"
 EOF
     chmod +x /output/run_all_examples.sh
   "

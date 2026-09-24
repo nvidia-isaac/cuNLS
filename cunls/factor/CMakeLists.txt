@@ -1,5 +1,14 @@
 add_library(cunls_factor OBJECT
+  constant_acceleration_se2_factor_batch.cu
+  constant_acceleration_se3_factor_batch.cu
+  constant_acceleration_so2_factor_batch.cu
+  constant_acceleration_so3_factor_batch.cu
+  constant_velocity_se2_factor_batch.cu
+  constant_velocity_se3_factor_batch.cu
+  constant_velocity_so2_factor_batch.cu
+  constant_velocity_so3_factor_batch.cu
   information_factor_batch.cpp
+  motion_prior_information.cu
   point_to_plane_factor_batch.cu
   point_to_point_factor_batch.cu
   prior_vector_factor_batch.cu
