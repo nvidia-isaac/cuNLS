@@ -47,7 +47,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/information_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -59,8 +59,7 @@
 namespace cunls {
 
 #ifndef CUNLS_TEST_DATA_DIR
-#error                                                                         \
-    "CUNLS_TEST_DATA_DIR must be defined by CMake (target_compile_definitions)"
+#error "CUNLS_TEST_DATA_DIR must be defined by CMake (target_compile_definitions)"
 #endif
 /// Directory containing test data (e.g. filtered_ba_problems.bin); set by
 /// CMake.
@@ -80,24 +79,21 @@ constexpr float kZThreshold = 1e-3f;
  * transforms.
  */
 struct SbaProblemHost {
-  int32_t Nposes = 0;         ///< Number of camera poses (rig poses).
-  int32_t Npoints = 0;        ///< Number of 3D points.
-  int32_t N_obs = 0;          ///< Number of observations (measurements).
-  int32_t N_fixed_points = 0; ///< Number of point indices held constant.
-  int32_t N_fixed_poses = 0;  ///< Number of pose indices held constant.
-  int32_t Ncameras =
-      0; ///< Number of cameras (rig size); each obs has camera_id.
+  int32_t Nposes = 0;          ///< Number of camera poses (rig poses).
+  int32_t Npoints = 0;         ///< Number of 3D points.
+  int32_t N_obs = 0;           ///< Number of observations (measurements).
+  int32_t N_fixed_points = 0;  ///< Number of point indices held constant.
+  int32_t N_fixed_poses = 0;   ///< Number of pose indices held constant.
+  int32_t Ncameras = 0;        ///< Number of cameras (rig size); each obs has camera_id.
   /// Per-obs: 4 floats (2x2 sqrt info), then 2 floats (observation xy); size
   /// n_obs*6.
   std::vector<float> obs_sqrt_info_and_xy;
-  std::vector<int32_t> camera_ids; ///< Camera index for each observation.
-  std::vector<int32_t> point_ids;  ///< Point index for each observation.
-  std::vector<int32_t> pose_ids;   ///< Pose index for each observation.
-  std::vector<SE3Transform>
-      poses;                     ///< Rig poses (world-to-rig), 16 floats each.
-  std::vector<Vector<3>> points; ///< 3D points in world frame.
-  std::vector<SE3Transform>
-      camera_from_rig; ///< Camera-in-rig transforms per camera.
+  std::vector<int32_t> camera_ids;            ///< Camera index for each observation.
+  std::vector<int32_t> point_ids;             ///< Point index for each observation.
+  std::vector<int32_t> pose_ids;              ///< Pose index for each observation.
+  std::vector<SE3Transform> poses;            ///< Rig poses (world-to-rig), 16 floats each.
+  std::vector<Vector<3>> points;              ///< 3D points in world frame.
+  std::vector<SE3Transform> camera_from_rig;  ///< Camera-in-rig transforms per camera.
 };
 
 /**
@@ -107,8 +103,7 @@ struct SbaProblemHost {
  * @return true if read succeeded, false on EOF or error.
  */
 static bool ReadInt32(std::istream &in, int32_t *out) {
-  return static_cast<bool>(
-      in.read(reinterpret_cast<char *>(out), sizeof(int32_t)));
+  return static_cast<bool>(in.read(reinterpret_cast<char *>(out), sizeof(int32_t)));
 }
 
 /**
@@ -119,8 +114,7 @@ static bool ReadInt32(std::istream &in, int32_t *out) {
  * @return true if all bytes were read, false otherwise.
  */
 static bool ReadFloats(std::istream &in, float *ptr, size_t count) {
-  return static_cast<bool>(
-      in.read(reinterpret_cast<char *>(ptr), count * sizeof(float)));
+  return static_cast<bool>(in.read(reinterpret_cast<char *>(ptr), count * sizeof(float)));
 }
 
 /**
@@ -136,13 +130,13 @@ static bool ReadFloats(std::istream &in, float *ptr, size_t count) {
  * @return true if the full problem was read, false on EOF or read error.
  */
 static bool ReadOneSbaProblem(std::istream &in, SbaProblemHost &out) {
-  if (!ReadInt32(in, &out.Nposes) || !ReadInt32(in, &out.Npoints) ||
-      !ReadInt32(in, &out.N_obs) || !ReadInt32(in, &out.N_fixed_points) ||
-      !ReadInt32(in, &out.N_fixed_poses) || !ReadInt32(in, &out.Ncameras)) {
+  if (!ReadInt32(in, &out.Nposes) || !ReadInt32(in, &out.Npoints) || !ReadInt32(in, &out.N_obs) ||
+      !ReadInt32(in, &out.N_fixed_points) || !ReadInt32(in, &out.N_fixed_poses) ||
+      !ReadInt32(in, &out.Ncameras)) {
     return false;
   }
-  if (out.Nposes < 0 || out.Npoints < 0 || out.N_obs < 0 ||
-      out.N_fixed_points < 0 || out.N_fixed_poses < 0 || out.Ncameras < 0) {
+  if (out.Nposes < 0 || out.Npoints < 0 || out.N_obs < 0 || out.N_fixed_points < 0 ||
+      out.N_fixed_poses < 0 || out.Ncameras < 0) {
     throw std::runtime_error("SbaProblem: negative dimension");
   }
   const size_t n_obs = static_cast<size_t>(out.N_obs);
@@ -158,24 +152,21 @@ static bool ReadOneSbaProblem(std::istream &in, SbaProblemHost &out) {
     if (!ReadFloats(in, out.obs_sqrt_info_and_xy.data() + i * 6, 6)) {
       return false;
     }
-    if (!ReadInt32(in, &out.camera_ids[i]) ||
-        !ReadInt32(in, &out.point_ids[i]) || !ReadInt32(in, &out.pose_ids[i])) {
+    if (!ReadInt32(in, &out.camera_ids[i]) || !ReadInt32(in, &out.point_ids[i]) ||
+        !ReadInt32(in, &out.pose_ids[i])) {
       return false;
     }
   }
   out.poses.resize(n_poses);
-  if (!ReadFloats(in, reinterpret_cast<float *>(out.poses.data()),
-                  n_poses * 16)) {
+  if (!ReadFloats(in, reinterpret_cast<float *>(out.poses.data()), n_poses * 16)) {
     return false;
   }
   out.points.resize(n_points);
-  if (!ReadFloats(in, reinterpret_cast<float *>(out.points.data()),
-                  n_points * 3)) {
+  if (!ReadFloats(in, reinterpret_cast<float *>(out.points.data()), n_points * 3)) {
     return false;
   }
   out.camera_from_rig.resize(n_cameras);
-  if (!ReadFloats(in, reinterpret_cast<float *>(out.camera_from_rig.data()),
-                  n_cameras * 16)) {
+  if (!ReadFloats(in, reinterpret_cast<float *>(out.camera_from_rig.data()), n_cameras * 16)) {
     return false;
   }
   return true;
@@ -196,7 +187,7 @@ static bool ReadOneSbaProblem(std::istream &in, SbaProblemHost &out) {
  * Huber loss is applied to the information-weighted residuals.
  */
 class SbaMinimizerTestFixture : public ::testing::Test {
-protected:
+ protected:
   /**
    * @brief Builds a minimizer Problem from a host SBA problem and stores device
    * state in fixture.
@@ -243,16 +234,14 @@ protected:
       if (cam_id < 0 || static_cast<size_t>(cam_id) >= n_cameras) {
         throw std::runtime_error("SbaProblem: invalid camera_id");
       }
-      camera_from_rig_per_obs[i] =
-          host.camera_from_rig[static_cast<size_t>(cam_id)];
+      camera_from_rig_per_obs[i] = host.camera_from_rig[static_cast<size_t>(cam_id)];
     }
 
     poses_device_ = dvector<SE3Transform>(host.poses);
     points_device_ = dvector<Vector<3>>(host.points);
     observations_device_ = dvector<Vector<2>>(observations);
     sqrt_information_device_ = dvector<Matrix<2>>(sqrt_info);
-    camera_from_rig_per_obs_device_ =
-        dvector<SE3Transform>(camera_from_rig_per_obs);
+    camera_from_rig_per_obs_device_ = dvector<SE3Transform>(camera_from_rig_per_obs);
 
     // Fixed blocks: first N_fixed_poses poses and N_fixed_points points are
     // constant.
@@ -267,27 +256,20 @@ protected:
     const_pose_ids_device_ = dvector<int>(const_pose_ids);
     const_point_ids_device_ = dvector<int>(const_point_ids);
 
-    const float *poses_ptr =
-        reinterpret_cast<const float *>(poses_device_.data());
-    const float *points_ptr =
-        reinterpret_cast<const float *>(points_device_.data());
+    const float *poses_ptr = reinterpret_cast<const float *>(poses_device_.data());
+    const float *points_ptr = reinterpret_cast<const float *>(points_device_.data());
 
     pose_batch_ = std::make_unique<SE3StateBatch>(
-        cublas_handle_, poses_ptr, n_poses, const_pose_ids_device_.data(),
-        const_pose_ids.size());
+        cublas_handle_, poses_ptr, n_poses, const_pose_ids_device_.data(), const_pose_ids.size());
     point_batch_ = std::make_unique<VectorStateBatch<3>>(
-        points_ptr, n_points, const_point_ids_device_.data(),
-        const_point_ids.size());
+        points_ptr, n_points, const_point_ids_device_.data(), const_point_ids.size());
 
     reproj_batch_ = std::make_unique<ReprojectionFactorBatch>(
-        observations_device_.data(), camera_from_rig_per_obs_device_.data(),
-        n_obs, kZThreshold);
+        observations_device_.data(), camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
 
-    info_factor_batch_ =
-        std::make_unique<InformationFactorBatch<ReprojectionFactorBatch>>(
-            cublas_handle_, sqrt_information_device_.data(), n_obs,
-            observations_device_.data(), camera_from_rig_per_obs_device_.data(),
-            n_obs, kZThreshold);
+    info_factor_batch_ = std::make_unique<InformationFactorBatch<ReprojectionFactorBatch>>(
+        cublas_handle_, sqrt_information_device_.data(), n_obs, observations_device_.data(),
+        camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
 
     // Factor i connects pose host.pose_ids[i] and point host.point_ids[i].
     state_pointers_.clear();
@@ -295,22 +277,19 @@ protected:
     for (size_t i = 0; i < n_obs; i++) {
       const int32_t pose_id = host.pose_ids[i];
       const int32_t point_id = host.point_ids[i];
-      if (pose_id < 0 || static_cast<size_t>(pose_id) >= n_poses ||
-          point_id < 0 || static_cast<size_t>(point_id) >= n_points) {
+      if (pose_id < 0 || static_cast<size_t>(pose_id) >= n_poses || point_id < 0 ||
+          static_cast<size_t>(point_id) >= n_points) {
         throw std::runtime_error("SbaProblem: invalid pose_id or point_id");
       }
-      state_pointers_.push_back(
-          pose_batch_->StateBlockDevicePtr(static_cast<size_t>(pose_id)));
-      state_pointers_.push_back(
-          point_batch_->StateBlockDevicePtr(static_cast<size_t>(point_id)));
+      state_pointers_.push_back(pose_batch_->StateBlockDevicePtr(static_cast<size_t>(pose_id)));
+      state_pointers_.push_back(point_batch_->StateBlockDevicePtr(static_cast<size_t>(point_id)));
     }
 
     problem->AddStateBatch(pose_batch_.get());
     problem->AddStateBatch(point_batch_.get());
 
     huber_loss_batch_ = std::make_unique<HuberLossFunctionBatch>(1.0f);
-    problem->AddFactorBatch(info_factor_batch_.get(), huber_loss_batch_.get(),
-                            state_pointers_);
+    problem->AddFactorBatch(info_factor_batch_.get(), huber_loss_batch_.get(), state_pointers_);
   }
 
   cuBLASHandle cublas_handle_;
@@ -328,12 +307,10 @@ protected:
   std::unique_ptr<SE3StateBatch> pose_batch_;
   std::unique_ptr<VectorStateBatch<3>> point_batch_;
   std::unique_ptr<ReprojectionFactorBatch> reproj_batch_;
-  std::unique_ptr<InformationFactorBatch<ReprojectionFactorBatch>>
-      info_factor_batch_;
+  std::unique_ptr<InformationFactorBatch<ReprojectionFactorBatch>> info_factor_batch_;
   std::unique_ptr<HuberLossFunctionBatch> huber_loss_batch_;
 
-  profiler::Domain profiler_domain_ =
-      profiler::Domain("SbaMinimizerTestFixture");
+  profiler::Domain profiler_domain_ = profiler::Domain("SbaMinimizerTestFixture");
 };
 
 // -----------------------------------------------------------------------------
@@ -362,8 +339,7 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
   int problem_index = -1;
   if (index_env) {
     problem_index = std::atoi(index_env);
-    if (problem_index < 0)
-      problem_index = -1;
+    if (problem_index < 0) problem_index = -1;
   }
 
   CudaStream stream;
@@ -381,8 +357,8 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
       test_utils::PCGBlockSizeFromEnv(3);
   options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
       test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options
-      .relative_tolerance = test_utils::PCGTolFromEnv(1e-3f);
+  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-3f);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -398,8 +374,7 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
       continue;
     }
     if (host.N_obs == 0 || host.Nposes == 0 || host.Npoints == 0) {
-      if (problem_index >= 0)
-        processed_requested = true;
+      if (problem_index >= 0) processed_requested = true;
       current_index++;
       continue;
     }
@@ -417,10 +392,8 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
 
-    EXPECT_TRUE(std::isfinite(summary.initial_cost))
-        << "Initial cost must be finite (no NaNs)";
-    EXPECT_TRUE(std::isfinite(summary.final_cost))
-        << "Final cost must be finite (no NaNs)";
+    EXPECT_TRUE(std::isfinite(summary.initial_cost)) << "Initial cost must be finite (no NaNs)";
+    EXPECT_TRUE(std::isfinite(summary.final_cost)) << "Final cost must be finite (no NaNs)";
     EXPECT_LE(summary.final_cost, summary.initial_cost + 1e-6f)
         << "Final cost must be <= initial cost";
 
@@ -436,4 +409,4 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

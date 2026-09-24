@@ -30,7 +30,7 @@
 #include "cunls/common/log.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"
 
@@ -46,28 +46,26 @@ namespace cunls {
  */
 template <class VectorSize>
 class ProblemConsistencyTest : public ::testing::Test {
-public:
+ public:
   static constexpr int kDim = VectorSize::size;
 
   const size_t num_vectors = 100;
   profiler::Domain profiler_domain_{"ProblemConsistencyTest"};
 };
 
-typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>,
-                         test_utils::Size<3>, test_utils::Size<4>>
+typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::Size<3>,
+                         test_utils::Size<4>>
     VectorSizes;
 TYPED_TEST_CASE(ProblemConsistencyTest, VectorSizes);
 
 /** @brief Verifies that a problem is inconsistent without states and consistent
  * once added. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencySimple) {
-  auto seq_vecs =
-      test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
+  auto seq_vecs = test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data(seq_vecs);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
-      this->num_vectors, 1.f);
+  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
   auto &factor_batch = factor_data.get();
 
@@ -77,21 +75,18 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencySimple) {
 
   problem.AddStateBatch(&vector_states);
 
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("CheckConsistencySimple");
+  auto test_range = this->profiler_domain_.CreateDomainRange("CheckConsistencySimple");
   ASSERT_TRUE(problem.CheckConsistency());
 }
 
 /** @brief Verifies consistency with one state batch and multiple factor
  * batches. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencyOneToMany) {
-  auto seq_vecs =
-      test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
+  auto seq_vecs = test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data(seq_vecs);
   auto &vector_states = state_data.get();
   auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
-      this->num_vectors, 1.f);
+  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data_1(obs_vecs);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data_2(obs_vecs);
   auto &factor_batch_1 = factor_data_1.get();
@@ -110,16 +105,14 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyOneToMany) {
   auto &factor_batch_3 = factor_data_3.get();
   problem.AddFactorBatch(&factor_batch_3, {nullptr});
 
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("CheckConsistencyOneToMany");
+  auto test_range = this->profiler_domain_.CreateDomainRange("CheckConsistencyOneToMany");
   ASSERT_FALSE(problem.CheckConsistency());
 }
 
 /** @brief Verifies consistency with multiple state batches linked to one factor
  * batch. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencyManyToOne) {
-  auto seq_vecs =
-      test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
+  auto seq_vecs = test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
   test_utils::VectorStateData<TestFixture::kDim> state_data_1(seq_vecs);
   test_utils::VectorStateData<TestFixture::kDim> state_data_2(seq_vecs);
   auto &state_batch_1 = state_data_1.get();
@@ -130,8 +123,7 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyManyToOne) {
     state_pointers.push_back(state_batch_1.StateBlockDevicePtr(i));
     state_pointers.push_back(state_batch_2.StateBlockDevicePtr(i));
   }
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
-      this->num_vectors * 2, 1.f);
+  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors * 2, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
   auto &factor_batch = factor_data.get();
 
@@ -143,9 +135,8 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyManyToOne) {
   ASSERT_FALSE(problem.CheckConsistency());
 
   problem.AddStateBatch(&state_batch_2);
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("CheckConsistencyManyToOne");
+  auto test_range = this->profiler_domain_.CreateDomainRange("CheckConsistencyManyToOne");
   ASSERT_TRUE(problem.CheckConsistency());
 }
 
-} // namespace cunls
+}  // namespace cunls

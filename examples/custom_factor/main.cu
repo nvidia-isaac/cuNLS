@@ -22,8 +22,9 @@
 #include <vector>
 
 #include "cunls/common/helper.h"
+#include "cunls/common/manifold.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/prior_factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -50,9 +51,8 @@ namespace {
 // state sizes are [1, 1], each factor contributes two Jacobian values:
 //   [dr/dx_i, dr/dx_{i+1}] = [-1, +1]
 __global__ void ScalarDifferenceKernel(const float *measurements,
-                                       float const *const *state_pointers,
-                                       float *residuals, float *jacobians,
-                                       size_t num_factors) {
+                                       float const *const *state_pointers, float *residuals,
+                                       float *jacobians, size_t num_factors) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= num_factors) {
     return;
@@ -83,16 +83,14 @@ __global__ void ScalarDifferenceKernel(const float *measurements,
 // the kernel in Evaluate(). cuNLS handles assembly and optimization using
 // the residuals/Jacobians we provide here.
 class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
-public:
+ public:
   ScalarDifferenceFactorBatch(const float *measurements, size_t num_factors)
       : measurements_(measurements), num_factors_(num_factors) {}
 
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream) const final {
     constexpr int kBlockSize = 256;
-    const int grid_size =
-        static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
+    const int grid_size = static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceKernel<<<grid_size, kBlockSize, 0, stream>>>(
         measurements_, state_pointers, residuals, jacobians, num_factors_);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -101,12 +99,12 @@ public:
 
   size_t NumFactors() const final { return num_factors_; }
 
-private:
+ private:
   const float *measurements_;
   size_t num_factors_;
 };
 
-} // namespace
+}  // namespace
 
 int main() {
   try {
@@ -154,16 +152,14 @@ int main() {
     dvector<Vector<1>> anchor_observation_device(anchor_observation);
 
     // Build a single state batch containing all scalar states.
-    const float *states_ptr =
-        reinterpret_cast<const float *>(states_device.data());
+    const float *states_ptr = reinterpret_cast<const float *>(states_device.data());
     cunls::VectorStateBatch<1> state_batch(states_ptr, num_states);
 
     // Build:
     // - custom difference factors over edges (x_i, x_{i+1})
     // - one prior factor anchoring x_0
-    ScalarDifferenceFactorBatch difference_factor(measurements_device.data(),
-                                                  num_diff_factors);
-    cunls::PriorVectorFactorBatch<1> anchor_factor(
+    ScalarDifferenceFactorBatch difference_factor(measurements_device.data(), num_diff_factors);
+    cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(
         anchor_observation_device.data(), 1);
 
     // Create state pointer map for all custom factors.
@@ -175,8 +171,7 @@ int main() {
     }
 
     // State pointer map for the anchor factor: just x_0.
-    std::vector<float *> anchor_state_pointers = {
-        state_batch.StateBlockDevicePtr(0)};
+    std::vector<float *> anchor_state_pointers = {state_batch.StateBlockDevicePtr(0)};
 
     // Assemble the optimization problem graph.
     cunls::Problem problem;
@@ -209,17 +204,14 @@ int main() {
     std::vector<Vector<1>> optimized_states(num_states);
     states_device.CopyToHost(optimized_states.data(), num_states);
 
-    const float initial_mse =
-        examples::ComputeVectorMSE(initial_states, gt_states);
-    const float final_mse =
-        examples::ComputeVectorMSE(optimized_states, gt_states);
+    const float initial_mse = examples::ComputeVectorMSE(initial_states, gt_states);
+    const float final_mse = examples::ComputeVectorMSE(optimized_states, gt_states);
 
     std::cout << "Custom Factor Example\n";
     std::cout << "  Initial cost: " << summary.initial_cost << "\n";
     std::cout << "  Final cost:   " << summary.final_cost << "\n";
     std::cout << "  Iterations:   " << summary.num_iterations << "\n";
-    std::cout << "  State MSE:    " << initial_mse << " -> " << final_mse
-              << "\n";
+    std::cout << "  State MSE:    " << initial_mse << " -> " << final_mse << "\n";
 
     if (summary.final_cost > 1e-5f || final_mse > initial_mse * 0.02f) {
       std::cerr << "Optimization quality check failed.\n";

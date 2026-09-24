@@ -14,8 +14,9 @@ with Jacobians:
 - `dr/dx_i = -1`
 - `dr/dx_{i+1} = +1`
 
-The example also adds an anchor prior (`PriorVectorFactorBatch<1>`) on the
-first state to remove global shift ambiguity.
+The example also adds an anchor prior (`PriorFactorBatch<manifold::Vector<1>>`,
+the manifold-generic facade specialized to `R^1`) on the first state to
+remove global shift ambiguity.
 
 ## Files
 

@@ -19,8 +19,8 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/se2_between_factor_batch.h"
-#include "cunls/factor/se2_prior_factor_batch.h"
+#include "cunls/factor/between/se2_between_factor_batch.h"
+#include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se2_state_batch.h"
@@ -34,11 +34,9 @@ Matrix<3> MakeSE2(float theta, float tx, float ty) {
   return {c, -s, tx, s, c, ty, 0.0f, 0.0f, 1.0f};
 }
 
-Matrix<3> MakeSE2Identity() {
-  return {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-}
+Matrix<3> MakeSE2Identity() { return {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}; }
 
-} // namespace
+}  // namespace
 
 // ============================================================================
 // State batch dimensions
@@ -50,8 +48,7 @@ TEST(SE2ManifoldTest, StateDimensions) {
   dvector<Matrix<3>> transforms_dev(transforms);
 
   cuBLASHandle cublas;
-  SE2StateBatch states(
-      cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
+  SE2StateBatch states(cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
 
   EXPECT_EQ(states.TangentSize(), 3u);
   EXPECT_EQ(states.AmbientSize(), 9u);
@@ -76,16 +73,14 @@ TEST(SE2ManifoldTest, PriorLMConvergence) {
     float theta = angle_dist(rng);
     float tx = trans_dist(rng), ty = trans_dist(rng);
     targets[i] = MakeSE2(theta, tx, ty);
-    initials[i] = MakeSE2(theta + pert_angle(rng), tx + pert_trans(rng),
-                          ty + pert_trans(rng));
+    initials[i] = MakeSE2(theta + pert_angle(rng), tx + pert_trans(rng), ty + pert_trans(rng));
   }
 
   dvector<Matrix<3>> targets_dev(targets), initials_dev(initials);
 
   cuBLASHandle cublas;
-  SE2StateBatch state_batch(
-      cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
-  SE2PriorFactorBatch factor_batch(targets_dev.data(), kN);
+  SE2StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
+  SE2PriorFactorBatch factor_batch(reinterpret_cast<const SE2Transform *>(targets_dev.data()), kN);
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
@@ -117,14 +112,12 @@ TEST(SE2ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<3>> optimized(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
-                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+                                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 9; ++j) {
-      ASSERT_NEAR(optimized[i][j], targets[i][j], 1e-2f)
-          << "transform " << i << ", element " << j;
+      ASSERT_NEAR(optimized[i][j], targets[i][j], 1e-2f) << "transform " << i << ", element " << j;
     }
   }
 }
@@ -141,10 +134,8 @@ TEST(SE2ManifoldTest, BetweenLMConvergence) {
 
   hvector<Matrix<3>> poses_left(kN), poses_right(kN);
   for (size_t i = 0; i < kN; ++i) {
-    poses_left[i] =
-        MakeSE2(angle_dist(rng1), trans_dist(rng1), trans_dist(rng1));
-    poses_right[i] =
-        MakeSE2(angle_dist(rng2), trans_dist(rng2), trans_dist(rng2));
+    poses_left[i] = MakeSE2(angle_dist(rng1), trans_dist(rng1), trans_dist(rng1));
+    poses_right[i] = MakeSE2(angle_dist(rng2), trans_dist(rng2), trans_dist(rng2));
   }
 
   dvector<Matrix<3>> left_dev(poses_left), right_dev(poses_right);
@@ -152,11 +143,9 @@ TEST(SE2ManifoldTest, BetweenLMConvergence) {
   dvector<Matrix<3>> deltas_dev(deltas);
 
   cuBLASHandle cublas;
-  SE2StateBatch state_left(
-      cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
-  SE2StateBatch state_right(
-      cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
-  SE2BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
+  SE2StateBatch state_left(cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
+  SE2StateBatch state_right(cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
+  SE2BetweenFactorBatch factor_batch(reinterpret_cast<const SE2Transform *>(deltas_dev.data()), kN);
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
@@ -189,19 +178,16 @@ TEST(SE2ManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<3>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
-                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
-                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+                                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+                                 kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 9; ++j) {
-      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f)
-          << "transform " << i << ", element " << j;
+      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f) << "transform " << i << ", element " << j;
     }
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

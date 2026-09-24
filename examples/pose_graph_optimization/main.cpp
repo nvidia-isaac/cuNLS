@@ -24,7 +24,7 @@
 #include "cunls/common/cublas_helper.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/se3_between_factor_batch.h"
+#include "cunls/factor/between/between_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
@@ -58,8 +58,7 @@ int main() {
     std::vector<SE3Transform> gt_poses(num_poses);
     gt_poses[0] = anchor_pose[0];
     for (size_t i = 0; i < num_constraints; ++i) {
-      gt_poses[i + 1] =
-          examples::ComposeSE3(gt_poses[i], examples::InverseSE3(deltas[i]));
+      gt_poses[i + 1] = examples::ComposeSE3(gt_poses[i], examples::InverseSE3(deltas[i]));
     }
 
     // Disturb all poses except the fixed anchor T_0. Small perturbations keep
@@ -69,8 +68,7 @@ int main() {
     std::vector<SE3Transform> initial_poses(num_poses);
     initial_poses[0] = gt_poses[0];
     for (size_t i = 0; i < num_constraints; ++i) {
-      initial_poses[i + 1] =
-          examples::ComposeSE3(disturbance[i], gt_poses[i + 1]);
+      initial_poses[i + 1] = examples::ComposeSE3(disturbance[i], gt_poses[i + 1]);
     }
 
     // Copy host data to GPU.
@@ -81,17 +79,16 @@ int main() {
     std::vector<int> const_ids = {0};
     dvector<int> const_ids_device(const_ids);
 
-    const float *poses_ptr =
-        reinterpret_cast<const float *>(poses_device.data());
+    const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
 
     // Single state batch for the entire chain, with T_0 fixed.
     cunls::cuBLASHandle cublas_handle;
-    cunls::SE3StateBatch pose_states(cublas_handle, poses_ptr, num_poses,
-                                     const_ids_device.data(), 1);
+    cunls::SE3StateBatch pose_states(cublas_handle, poses_ptr, num_poses, const_ids_device.data(),
+                                     1);
 
-    // Build SE(3) between factor batch for consecutive constraints.
-    cunls::SE3BetweenFactorBatch between_factor(
-        cublas_handle, deltas_device.data(), num_constraints);
+    // Build the between factor batch for consecutive constraints; the
+    // manifold (SE(3)) is deduced via CTAD from deltas_device's type.
+    cunls::BetweenFactorBatch between_factor(deltas_device.data(), num_constraints);
 
     // Flatten factor-to-state connectivity:
     // [T_0, T_1, T_1, T_2, ..., T_{N-2}, T_{N-1}]
@@ -131,10 +128,8 @@ int main() {
     std::vector<SE3Transform> optimized_poses(num_poses);
     poses_device.CopyToHost(optimized_poses.data(), num_poses);
 
-    const float initial_error =
-        examples::ChainConstraintError(initial_poses, deltas);
-    const float final_error =
-        examples::ChainConstraintError(optimized_poses, deltas);
+    const float initial_error = examples::ChainConstraintError(initial_poses, deltas);
+    const float final_error = examples::ChainConstraintError(optimized_poses, deltas);
 
     std::cout << "Pose Graph Optimization Example (Chain)\n";
     std::cout << "  Num poses:              " << num_poses << "\n";
@@ -142,8 +137,7 @@ int main() {
     std::cout << "  Initial cost:           " << summary.initial_cost << "\n";
     std::cout << "  Final cost:             " << summary.final_cost << "\n";
     std::cout << "  Iterations:             " << summary.num_iterations << "\n";
-    std::cout << "  Constraint MSE:         " << initial_error << " -> "
-              << final_error << "\n";
+    std::cout << "  Constraint MSE:         " << initial_error << " -> " << final_error << "\n";
 
     if (summary.final_cost > 1e-2f || final_error > initial_error * 0.05f) {
       std::cerr << "Optimization quality check failed.\n";

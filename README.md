@@ -49,7 +49,7 @@ cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per 
 | **Manifold support** | SO(2), SO(3), SE(2), SE(3), Sim(2), Sim(3), SL(4), Euclidean vectors |
 | **Solvers** | Gauss-Newton, Levenberg-Marquardt with adaptive damping |
 | **Robust losses** | Huber, Cauchy, Arctan, SoftL1, Tolerant, Tukey, Scaled |
-| **Built-in factors** | Reprojection, PnP, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, symmetric point-to-plane, prior |
+| **Built-in factors** | Reprojection, PnP, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, symmetric point-to-plane, prior, constant-velocity/constant-acceleration motion priors (SO(2)/SO(3)/SE(2)/SE(3)) |
 | **Custom factors** | User-defined CUDA kernels via `SizedFactorBatch` |
 | **Linear solver** | Block-sparse PCG (variable block-Jacobi preconditioner, default), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [Installation](docs/sphinx/installation.rst)), dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
 | **Safety checks** | Optional runtime validation (linear-solver diagnostics and more) — disable via `MinimizerOptions::disable_safety_checks` for low-latency solves |

@@ -71,16 +71,19 @@ number of state blocks (here just one).
      cunls::VectorStateBatch<1> state_batch(d_state.data(), /*num_blocks=*/1);
 
 **Create the factor batch.**
-A `PriorVectorFactorBatch<1>` (see :doc:`api/factor`) computes the residual
-:math:`r = x - o` and Jacobian :math:`J = I` for each factor. The
-constructor takes a device pointer to the observation vectors and the
-number of factors.
+A `PriorFactorBatch<manifold::Vector<1>>` (see :doc:`api/factor`) computes
+the residual :math:`r = x - o` and Jacobian :math:`J = I` for each factor.
+The constructor takes a device pointer to the observation vectors and the
+number of factors. `PriorFactorBatch<Manifold>` is the manifold-generic
+facade — prefer it over the per-manifold class it wraps
+(`PriorVectorFactorBatch<Dim>` here) so the same factor name works
+regardless of which manifold the state lives on.
 
 .. code-block:: cpp
 
      // Build a prior factor that penalizes deviation from the observation.
      // Residual: r = x - o,  Jacobian: J = I.
-     cunls::PriorVectorFactorBatch<1> prior(
+     cunls::PriorFactorBatch<cunls::manifold::Vector<1>> prior(
          reinterpret_cast<const cunls::Vector<1>*>(d_obs.data()),
          /*num_factors=*/1);
 

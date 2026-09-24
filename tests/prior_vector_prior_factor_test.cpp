@@ -29,7 +29,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"
 
@@ -43,8 +43,9 @@ namespace cunls {
  *
  * @tparam VectorSize Compile-time vector dimension.
  */
-template <class VectorSize> class PriorVectorCostTest : public ::testing::Test {
-public:
+template <class VectorSize>
+class PriorVectorCostTest : public ::testing::Test {
+ public:
   static constexpr int kDim = VectorSize::size;
 
   /** @brief Allocates device buffers for residuals and Jacobians. */
@@ -61,8 +62,8 @@ public:
   profiler::Domain profiler_domain_{"PriorVectorCostTest"};
 };
 
-typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>,
-                         test_utils::Size<3>, test_utils::Size<4>>
+typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::Size<3>,
+                         test_utils::Size<4>>
     VectorSizes;
 TYPED_TEST_CASE(PriorVectorCostTest, VectorSizes);
 
@@ -72,13 +73,11 @@ TYPED_TEST(PriorVectorCostTest, Residual) {
   auto test_range = this->profiler_domain_.CreateDomainRange("ResidualTest");
   CudaStream stream;
 
-  auto seq_vecs =
-      test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors_);
+  auto seq_vecs = test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors_);
   test_utils::VectorStateData<TestFixture::kDim> states_data(seq_vecs);
   auto &states = states_data.get();
   auto state_pointers = test_utils::CollectStatePointersDevice(states);
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
-      this->num_vectors_, 1.f);
+  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors_, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
   auto &factor_batch = factor_data.get();
 
@@ -86,8 +85,7 @@ TYPED_TEST(PriorVectorCostTest, Residual) {
   float **state_ptrs = state_pointers.data();
   {
     auto range = this->profiler_domain_.CreateDomainRange("Evaluate Residual");
-    factor_batch.Evaluate(residuals_ptr, nullptr, state_ptrs,
-                          stream.GetStream());
+    factor_batch.Evaluate(residuals_ptr, nullptr, state_ptrs, stream.GetStream());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -108,8 +106,7 @@ TYPED_TEST(PriorVectorCostTest, Residual) {
 /** @brief Verifies that StateBlockSizes() reports the correct single block
  * size. */
 TYPED_TEST(PriorVectorCostTest, StateBlockSizes) {
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
-      this->num_vectors_, 1.f);
+  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors_, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
   auto &factor_batch = factor_data.get();
 
@@ -124,13 +121,11 @@ TYPED_TEST(PriorVectorCostTest, Jacobian) {
   auto test_range = this->profiler_domain_.CreateDomainRange("JacobianTest");
   CudaStream stream;
 
-  auto seq_vecs =
-      test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors_);
+  auto seq_vecs = test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors_);
   test_utils::VectorStateData<TestFixture::kDim> states_data(seq_vecs);
   auto &states = states_data.get();
   auto state_pointers = test_utils::CollectStatePointersDevice(states);
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(
-      this->num_vectors_, 1.f);
+  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors_, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
   auto &factor_batch = factor_data.get();
 
@@ -157,4 +152,4 @@ TYPED_TEST(PriorVectorCostTest, Jacobian) {
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

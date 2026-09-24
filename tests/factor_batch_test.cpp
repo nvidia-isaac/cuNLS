@@ -25,7 +25,7 @@
 
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
@@ -53,11 +53,10 @@ TEST(FactorBatchTest, Simple) {
   }
   DeviceVector<Vector<2>> observations_device(observations_host);
 
-  PriorVectorFactorBatch<2> factor_batch(observations_device.data(),
-                                         observations_host.size());
+  PriorVectorFactorBatch<2> factor_batch(observations_device.data(), observations_host.size());
 
   ASSERT_EQ(factor_batch.NumFactors(), num_vectors - 1);
   ASSERT_EQ(vector_states.NumStateBlocks(), num_vectors);
 }
 
-} // namespace cunls
+}  // namespace cunls

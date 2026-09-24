@@ -27,11 +27,17 @@ Available examples:
 - `sparse_bundle_adjustment`: Uses `ReprojectionFactorBatch` to jointly optimize
   camera poses and 3D landmarks from synthetic observations (first pose fixed as
   gauge anchor; remaining poses and all points optimized).
-- `pose_graph_optimization`: Uses `SE3BetweenFactorBatch` to optimize a chain
-  of SE(3) poses from consecutive relative-transform measurements, with the
-  first pose fixed as a gauge anchor.
+- `pose_graph_optimization`: Uses `BetweenFactorBatch` (manifold deduced via
+  CTAD, here SE(3)) to optimize a chain of poses from consecutive
+  relative-transform measurements, with the first pose fixed as a gauge
+  anchor.
 - `custom_factor`: Implements a simple user-defined scalar difference factor
-  and combines it with `PriorVectorFactorBatch<1>` to anchor the solution.
+  and combines it with `PriorFactorBatch<manifold::Vector<1>>` to anchor the
+  solution.
+- `motion_prior`: Uses `ConstantVelocityInformationSE3FactorBatch` (the
+  constant-velocity motion-prior factor with the closed-form process-noise
+  covariance fused in) to optimize a chain of SE(3) poses and body-velocity
+  states, with the first pose and velocity fixed as gauge anchors.
 
 ## Build all examples locally
 
