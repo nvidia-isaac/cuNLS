@@ -113,6 +113,32 @@ public:
                 float *jacobians) const;
 
   /**
+   * @brief Applies this batch's loss function to an already-computed raw
+   * (pre-loss) residual/Jacobian pair, in place.
+   *
+   * Factors out exactly the post-`FactorBatch::Evaluate` tail of `Evaluate`
+   * (loss evaluation, residual scaling, Jacobian scaling, cost extraction) so
+   * callers that compute raw residuals/Jacobians through a path other than
+   * this class's `Evaluate` (e.g. numeric-diff Jacobians, which call
+   * `FactorBatch::Evaluate` directly) can still apply the exact same loss
+   * handling `Evaluate` would have applied. No-op work beyond the trivial
+   * squared-error/cost bookkeeping when `GetLossFunction() == nullptr`.
+   *
+   * @param stream CUDA stream used for all kernels launched by this call.
+   * @param workspace Device scratch; same sizing contract as `Evaluate`'s
+   * `workspace` parameter.
+   * @param residuals Device array of raw residuals (`NumFactors() *
+   * ResidualsSize()` floats), scaled in place.
+   * @param cost Optional device array of length `NumFactors()`, filled if
+   * non-null.
+   * @param jacobians Optional raw Jacobian blocks (same layout as
+   * `FactorBatch::Evaluate`), scaled in place if non-null.
+   * @return True on success.
+   */
+  bool ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
+                float *jacobians) const;
+
+  /**
    * @brief Gets the factor batch.
    *
    * @return Pointer to the associated factor batch.

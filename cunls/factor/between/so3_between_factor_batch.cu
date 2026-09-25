@@ -123,8 +123,17 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *r
 }
 
 // Fused kernel: computes BOTH left and right SO(3) Jacobians in one pass.
-// Left  Jacobian (cols 0..2): -D * J_l^{-1}(r)  where D = Ad(Delta)
-// Right Jacobian (cols 3..5):  J_r^{-1}(r) = J_l^{-1}(-r)
+//
+// Residual: r = Log(E), E = L^T * R * Delta^T  (see
+// collect_and_compute_so3_between_error_kernel). SO3StateBatch::Plus applies
+// a *right* local update (X' = X * Exp(eps)), so for the left pose L:
+//   E' = Exp(-eps_l) * E  =>  d r/d eps_l = -J_l^{-1}(r)         (no D factor)
+// and for the right pose R (perturbation passes through D via the SO(3)
+// adjoint Ad(D) = D):
+//   E' = E * Exp(D * eps_r)  =>  d r/d eps_r = J_r^{-1}(r) * D
+//
+// Left  Jacobian (cols 0..2): -J_l^{-1}(r)
+// Right Jacobian (cols 3..5):  J_r^{-1}(r) * D,  J_r^{-1}(r) = J_l^{-1}(-r)
 // 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
 __global__ void __launch_bounds__(256, 4)
     so3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
@@ -139,31 +148,32 @@ __global__ void __launch_bounds__(256, 4)
   const float *D = delta_adjoints[tid].data();
   float *J = jacobians + tid * 18;
 
-  // Compute J_l^{-1}(phi) rows, multiply by -D, write left block (pitch 6)
+  // Left block: -J_l_inv(phi)  (right-perturbation retraction; no D factor)
   float jl[9];
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
     so3_jl_inv_row(phi, row, &jl[row * 3]);
   }
-
-  // Left block: -D * J_l_inv
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
-    float d0 = D[row * 3], d1 = D[row * 3 + 1], d2 = D[row * 3 + 2];
-    J[row * 6 + 0] = -(d0 * jl[0] + d1 * jl[3] + d2 * jl[6]);
-    J[row * 6 + 1] = -(d0 * jl[1] + d1 * jl[4] + d2 * jl[7]);
-    J[row * 6 + 2] = -(d0 * jl[2] + d1 * jl[5] + d2 * jl[8]);
+    J[row * 6 + 0] = -jl[row * 3 + 0];
+    J[row * 6 + 1] = -jl[row * 3 + 1];
+    J[row * 6 + 2] = -jl[row * 3 + 2];
   }
 
-  // Right block: J_r^{-1}(phi) = J_l^{-1}(-phi)
+  // Right block: J_r_inv(phi) * D,  J_r_inv(phi) = J_l_inv(-phi)
   float neg_phi[3] = {-phi[0], -phi[1], -phi[2]};
+  float jr[9];
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
-    float jr[3];
-    so3_jl_inv_row(neg_phi, row, jr);
-    J[row * 6 + 3] = jr[0];
-    J[row * 6 + 4] = jr[1];
-    J[row * 6 + 5] = jr[2];
+    so3_jl_inv_row(neg_phi, row, &jr[row * 3]);
+  }
+#pragma unroll
+  for (int row = 0; row < 3; ++row) {
+    float a0 = jr[row * 3 + 0], a1 = jr[row * 3 + 1], a2 = jr[row * 3 + 2];
+    J[row * 6 + 3] = a0 * D[0] + a1 * D[3] + a2 * D[6];
+    J[row * 6 + 4] = a0 * D[1] + a1 * D[4] + a2 * D[7];
+    J[row * 6 + 5] = a0 * D[2] + a1 * D[5] + a2 * D[8];
   }
 }
 

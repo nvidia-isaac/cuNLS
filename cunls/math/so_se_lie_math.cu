@@ -742,12 +742,10 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
   float *adjoint_ptr = adjoint + tid * adjoint_stride;
   const float *transform_ptr = transform + tid * transform_stride;
 
-  float k = inverse ? -1.0f : 1.0f;
-
   float translation[3];
-  translation[0] = k * transform_ptr[0 * transform_pitch + 3];
-  translation[1] = k * transform_ptr[1 * transform_pitch + 3];
-  translation[2] = k * transform_ptr[2 * transform_pitch + 3];
+  translation[0] = transform_ptr[0 * transform_pitch + 3];
+  translation[1] = transform_ptr[1 * transform_pitch + 3];
+  translation[2] = transform_ptr[2 * transform_pitch + 3];
 
   float R[9];
 #pragma unroll
@@ -757,21 +755,31 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
     memcpy(dst, src, 3 * sizeof(float));
   }
 
+  // For Ad(T) with T = (R, t): Ad(T) = [[R, 0], [skew(t) * R, R]].
+  // For Ad(T^{-1}) = Ad(T)^{-1}, use R' = R^T and t' = -R^T * t (the
+  // rotation/translation of T^{-1}), then the same block formula applies:
+  // Ad(T^{-1}) = [[R', 0], [skew(t') * R', R']].
   if (inverse) {
-    // transpose R
+    // transpose R in place -> R'
     swap(R[0 * 3 + 1], R[1 * 3 + 0]);
     swap(R[0 * 3 + 2], R[2 * 3 + 0]);
     swap(R[1 * 3 + 2], R[2 * 3 + 1]);
+
+    // t' = -R' * t = -R^T * t
+    float t0 = translation[0], t1 = translation[1], t2 = translation[2];
+    translation[0] = -(R[0] * t0 + R[1] * t1 + R[2] * t2);
+    translation[1] = -(R[3] * t0 + R[4] * t1 + R[5] * t2);
+    translation[2] = -(R[6] * t0 + R[7] * t1 + R[8] * t2);
   }
 
 #pragma unroll
   for (uint8_t i = 0; i < 3; i++) {
-    // adjoint[0:3, 0:3] = R
+    // adjoint[0:3, 0:3] = R (or R' for the inverse)
     float *src = &R[i * 3];
     float *dst = &adjoint_ptr[i * adjoint_pitch];
     memcpy(dst, src, 3 * sizeof(float));
 
-    // adjoint[3:6, 3:6] = R
+    // adjoint[3:6, 3:6] = R (or R' for the inverse)
     dst = &adjoint_ptr[(i + 3) * adjoint_pitch + 3];
     memcpy(dst, src, 3 * sizeof(float));
 
@@ -780,15 +788,13 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
     memset(dst, 0, 3 * sizeof(float));
   }
 
+  // adjoint[3:6, 0:3] = skew(translation) * R  (matrix product order matters:
+  // this must be skew(t) * R, NOT R * skew(t))
   float skew[9];
   compute_skew_matrix(translation, skew, 3);
 
   float temp[9];
-  if (inverse) {
-    matmul_3x3(skew, R, temp);
-  } else {
-    matmul_3x3(R, skew, temp);
-  }
+  matmul_3x3(skew, R, temp);
 
 #pragma unroll
   for (uint8_t i = 0; i < 3; i++) {

@@ -110,18 +110,25 @@ __global__ void collect_and_compute_se3_between_error_kernel(float const *const 
 // ---------------------------------------------------------------------------
 // Fused kernel: computes BOTH left and right SE3 Jacobians in one pass.
 //
-// Left  Jacobian (cols  0..5): J_left  = -Ad(Delta) * J_l^{-1}(twist)
+// Residual: r = Log(E), E = Delta * T_left^{-1} * T_right. SE3StateBatch::Plus
+// applies a *right* local update (T' = T * Exp(eps)), so for the left pose:
+//   E' = Exp(-Ad(Delta) * eps_l) * E  =>  J_left = -J_l^{-1}(twist) * Ad(Delta)
+// and for the right pose (perturbation appears at the rightmost position of
+// E with no conjugation):
+//   E' = E * Exp(eps_r)               =>  J_right = J_r^{-1}(twist)
+//
+// Left  Jacobian (cols  0..5): J_left  = -J_l^{-1}(twist) * Ad(Delta)
 // Right Jacobian (cols 6..11): J_right =  J_r^{-1}(twist)
 //
 // Cooperative design: 6 threads per factor. Each thread owns one output row
 // of the 6x12 Jacobian. The 6 threads share J_so3[9] and Q[9] through
 // shared memory, so no thread needs to materialize a full 6x6 matrix.
 //
-// Shared memory per factor: twist[6] + J_so3[9] + Q[9] + Jl_inv[36] = 60 floats
-// Per-thread registers: ~6 (jl_row) + 6 (ad_row) + 6 (jr_row) + temps ≈ 40
+// Shared memory per factor: twist[6] + J_so3[9] + Q[9] = 24 floats
+// Per-thread registers: ~6 (jl_row) + 6 (jr_row) + temps ≈ 30
 //
-// The left-Jacobian multiply (-Ad * Jl_inv) requires column access to Jl_inv,
-// so Jl_inv rows are exchanged through shared memory.
+// The left-Jacobian multiply (-Jl_inv * Ad) uses each thread's own Jl_inv row
+// (jl_row, kept in registers) against columns of Ad read from global memory.
 //
 // Right Jacobian uses the identity J_r_inv(xi) = J_l_inv(-xi):
 //   SO(3): J_l_inv(-phi) = J_l_inv(phi)^T  (read J columns as rows from smem)
@@ -276,11 +283,11 @@ __device__ __forceinline__ void compute_Q_full(const float *tw, float *Q) {
 }
 
 // 6 threads per factor. Each thread computes one row of the 6x12 Jacobian.
-// Shared memory per factor: twist[6] + J_so3[9] + Q[9] + Jl_inv[36] = 60 floats
+// Shared memory per factor: twist[6] + J_so3[9] + Q[9] = 24 floats
 constexpr int kThreadsPerFactor = 6;
 constexpr int kFactorsPerBlock = 32;
 constexpr int kJacBlockSize = kFactorsPerBlock * kThreadsPerFactor;  // 192
-constexpr int kSmemPerFactor = 60;
+constexpr int kSmemPerFactor = 24;
 
 __global__ void __launch_bounds__(kJacBlockSize, 5)
     se3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
@@ -293,10 +300,9 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
   const int global_factor = blockIdx.x * kFactorsPerBlock + local_factor;
 
   float *s_base = smem + local_factor * kSmemPerFactor;
-  float *s_twist = s_base;    // [6]
-  float *s_J = s_base + 6;    // [9]  -- J_so3 (3x3 row-major)
-  float *s_Q = s_base + 15;   // [9]  -- Q (3x3 row-major)
-  float *s_jl = s_base + 24;  // [36] -- full J_l_inv (6x6) for column access
+  float *s_twist = s_base;   // [6]
+  float *s_J = s_base + 6;   // [9]  -- J_so3 (3x3 row-major)
+  float *s_Q = s_base + 15;  // [9]  -- Q (3x3 row-major)
 
   const bool active = global_factor < num_factors;
 
@@ -350,27 +356,29 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
       jl_row[5] = Jr[2];
     }
   }
-
-#pragma unroll
-  for (int j = 0; j < 6; j++) s_jl[row * 6 + j] = jl_row[j];
   __syncthreads();
 
-  // --- Phase 4: left output = -Ad[row] . Jl_inv (read Jl_inv columns from
-  // smem) ---
+  // --- Phase 4: left output = -Jl_inv[row] . Ad (read Ad columns from
+  // global memory; Jl_inv row is already held in this thread's jl_row) ---
+  //
+  // Residual r = Log(E), E = Delta * T_left^{-1} * T_right. Under the
+  // right-multiplicative retraction T' = T * Exp(eps) (see
+  // SE3StateBatch::Plus), perturbing T_left gives
+  //   E' = Delta * Exp(-eps_l) * T_left^{-1} * T_right
+  //      = Exp(-Ad(Delta) * eps_l) * E
+  // so d r / d eps_l = -J_l^{-1}(r) * Ad(Delta)  (Jl_inv on the LEFT of the
+  // matrix product, Ad(Delta) on the RIGHT) -- not Ad(Delta) * Jl_inv(r).
   constexpr int jac_pitch = 12;
   if (active) {
     float *out = jacobians + global_factor * (6 * jac_pitch) + row * jac_pitch;
 
     const float *ad_src = delta_adjoints[global_factor].data();
-    float ad_row[6];
-#pragma unroll
-    for (int i = 0; i < 6; i++) ad_row[i] = ad_src[row * 6 + i];
 
 #pragma unroll
     for (int j = 0; j < 6; j++) {
       float s = 0.f;
 #pragma unroll
-      for (int k = 0; k < 6; k++) s += ad_row[k] * s_jl[k * 6 + j];
+      for (int k = 0; k < 6; k++) s += jl_row[k] * ad_src[k * 6 + j];
       out[j] = -s;
     }
 

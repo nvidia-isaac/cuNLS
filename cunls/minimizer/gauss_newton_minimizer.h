@@ -21,13 +21,18 @@
 
 #include <vector>
 
+#include <unordered_map>
+#include <utility>
+
 #include "cunls/common/cusparse_helper.h"
 #include "cunls/common/pinned_vector.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
+#include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/minimizer_state.h"
 #include "cunls/minimizer/normal_equations.h"
+#include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
 #include "cunls/state/state_batch_ops.h"
@@ -181,6 +186,24 @@ struct MinimizerOptions {
    * Default: true (safety checks disabled).
    */
   bool disable_safety_checks = true;
+
+  /**
+   * @brief Global default Jacobian strategy for every residual batch.
+   *
+   * `kAnalytic` (default) uses each FactorBatch's own hand-derived Jacobian.
+   * `kNumeric` derives Jacobians via finite differences instead (see
+   * `NumericDiffJacobianBuilder`), requiring only residual-only evaluation
+   * support from the factor batch. Individual residual batches can override
+   * this default via `Problem::AddFactorBatch`'s `jacobian_mode_override`
+   * parameter.
+   */
+  JacobianMode jacobian_mode = JacobianMode::kAnalytic;
+
+  /**
+   * @brief Tuning for numeric-diff Jacobians. Ignored when `jacobian_mode`
+   * (and every per-group override) is `kAnalytic`.
+   */
+  NumericDiffOptions numeric_diff_options = {};
 };
 
 /**
@@ -366,6 +389,25 @@ class GaussNewtonMinimizer {
   /** @brief Sizes the per-factor Jacobian buffer for the problem. */
   void ResizeFactorJacobians();
 
+  /**
+   * @brief Computes residuals and Jacobian for the current states.
+   *
+   * Evaluates all factor batches to compute residual values and their
+   * Jacobian matrices (dense per-factor blocks, concatenated across
+   * batches). Per residual batch, uses either the FactorBatch's analytic
+   * Jacobian or a finite-difference Jacobian from `numeric_diff_builder_`,
+   * according to `Problem::JacobianModeFor`.
+   *
+   * @param stream CUDA stream for GPU operations.
+   * @param problem The optimization problem.
+   * @param minimizer_state Current minimizer state.
+   * @param[out] residuals Output residual vector.
+   * @param[out] jacobians Output per-factor dense Jacobian blocks.
+   */
+  void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
+                                  const MinimizerState &minimizer_state, dvector<float> &residuals,
+                                  PerFactorJacobians &jacobians, dvector<uint8_t> &buffer);
+
  protected:
   const MinimizerOptions options_;  ///< Optimizer configuration options.
 
@@ -373,6 +415,9 @@ class GaussNewtonMinimizer {
   cuSPARSEHandle cusparse_handle_;  ///< cuSPARSE handle for sparse operations.
 
   StateBatchOps state_ops_;  ///< Operations on state batches.
+
+  /// Builds finite-difference Jacobians for residual batches in kNumeric mode.
+  NumericDiffJacobianBuilder numeric_diff_builder_;
 
   dvector<float> residuals_;  ///< Residual vector storage.
 
