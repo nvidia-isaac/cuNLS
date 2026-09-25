@@ -30,6 +30,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 
 // Convert a Python object to a raw device pointer (uintptr_t).
@@ -72,6 +73,32 @@ void bind_types(nb::module_ &m) {
       .value("none", cunls::ColumnScaling::None)
       .value("hessian_diagonal", cunls::ColumnScaling::HessianDiagonal);
 
+  nb::enum_<cunls::JacobianMode>(
+      m, "JacobianMode",
+      "Selects how a factor batch's Jacobian is obtained: analytic (the "
+      "factor's own hand-derived Evaluate() output) or numeric (finite "
+      "differences on the manifold tangent space of each referenced state "
+      "block, via Problem.add_factor_batch's jacobian_mode_override or "
+      "MinimizerOptions.jacobian_mode).")
+      .value("analytic", cunls::JacobianMode::kAnalytic)
+      .value("numeric", cunls::JacobianMode::kNumeric);
+
+  nb::enum_<cunls::NumericDiffOptions::Method>(
+      m, "NumericDiffMethod",
+      "Finite-difference scheme used when a factor batch resolves to "
+      "JacobianMode.numeric.")
+      .value("forward", cunls::NumericDiffOptions::Method::kForward,
+             "One-sided: (f(x+eps) - f(x)) / eps. Cheaper, less accurate.")
+      .value("central", cunls::NumericDiffOptions::Method::kCentral,
+             "Two-sided: (f(x+eps) - f(x-eps)) / (2*eps). Default.");
+
+  nb::class_<cunls::NumericDiffOptions>(
+      m, "NumericDiffOptions", "Tuning knobs for numeric (finite-difference) Jacobian computation.")
+      .def(nb::init<>())
+      .def_rw("method", &cunls::NumericDiffOptions::method)
+      .def_rw("relative_step_size", &cunls::NumericDiffOptions::relative_step_size,
+              "Per-tangent-coordinate perturbation step size. Default: 1e-4.");
+
   // --- Minimizer configuration structs ---
   // All fields are read/write so users can tune convergence behaviour
   // from Python before passing the options to a minimizer constructor.
@@ -86,6 +113,13 @@ void bind_types(nb::module_ &m) {
               &cunls::MinimizerOptions::max_consecutive_rejected_steps)
       .def_rw("sparse_linear_solver_type", &cunls::MinimizerOptions::sparse_linear_solver_type)
       .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
+      .def_rw("jacobian_mode", &cunls::MinimizerOptions::jacobian_mode,
+              "Global default JacobianMode for every factor batch, unless "
+              "overridden per group via Problem.add_factor_batch's "
+              "jacobian_mode_override. Default: JacobianMode.analytic.")
+      .def_rw("numeric_diff_options", &cunls::MinimizerOptions::numeric_diff_options,
+              "Tuning knobs used whenever a factor batch is evaluated with "
+              "JacobianMode.numeric; ignored otherwise.")
       .def_rw("disable_safety_checks", &cunls::MinimizerOptions::disable_safety_checks,
               "When False, the minimizer enables all optional runtime "
               "validation.  Currently this covers post-factorization "

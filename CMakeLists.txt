@@ -222,6 +222,7 @@ if(BUILD_TESTING)
     tests/numeric_diff_jacobian_test.cpp
     tests/numeric_diff_minimizer_test.cpp
     tests/numeric_diff_perf_test.cpp
+    tests/numeric_diff_e2e_perf_test.cpp
   )
 
   set_target_properties(nls_tests PROPERTIES

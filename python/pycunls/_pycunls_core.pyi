@@ -61,9 +61,32 @@ class ColumnScaling(enum.IntEnum):
     none = ...
     hessian_diagonal = ...
 
+class JacobianMode(enum.IntEnum):
+    """Selects how a factor batch's Jacobian is obtained: the factor's own
+    analytic Evaluate() output, or finite differences on the manifold
+    tangent space of each referenced state block."""
+
+    analytic = ...
+    numeric = ...
+
+class NumericDiffMethod(enum.IntEnum):
+    """Finite-difference scheme used when a factor batch resolves to
+    JacobianMode.numeric."""
+
+    forward = ...
+    central = ...
+
 # ===================================================================
 # Options and summary
 # ===================================================================
+
+class NumericDiffOptions:
+    """Tuning knobs for numeric (finite-difference) Jacobian computation."""
+
+    method: NumericDiffMethod
+    relative_step_size: float
+
+    def __init__(self) -> None: ...
 
 class MinimizerOptions:
     """Options for Gauss-Newton and Levenberg-Marquardt minimizers."""
@@ -74,6 +97,8 @@ class MinimizerOptions:
     max_consecutive_rejected_steps: int
     sparse_linear_solver_type: SparseLinearSolverType
     column_scaling: ColumnScaling
+    jacobian_mode: JacobianMode
+    numeric_diff_options: NumericDiffOptions
     disable_safety_checks: bool
 
     def __init__(self) -> None: ...
@@ -848,8 +873,14 @@ class Problem:
         self,
         factor_batch: FactorBatch,
         state_pointers: Sequence[int],
+        jacobian_mode_override: JacobianMode | None = None,
     ) -> None:
-        """Add a factor batch with its state pointer connectivity."""
+        """Add a factor batch with its state pointer connectivity.
+
+        jacobian_mode_override, when set, forces this factor batch to always
+        use the given JacobianMode regardless of the minimizer's
+        MinimizerOptions.jacobian_mode default.
+        """
         ...
     @overload
     def add_factor_batch(
@@ -857,8 +888,14 @@ class Problem:
         factor_batch: FactorBatch,
         loss_function: LossFunctionBatch,
         state_pointers: Sequence[int],
+        jacobian_mode_override: JacobianMode | None = None,
     ) -> None:
-        """Add a factor batch with a loss function and state pointer connectivity."""
+        """Add a factor batch with a loss function and state pointer connectivity.
+
+        jacobian_mode_override, when set, forces this factor batch to always
+        use the given JacobianMode regardless of the minimizer's
+        MinimizerOptions.jacobian_mode default.
+        """
         ...
     def check_consistency(self) -> bool:
         """Validate that all state batches and factor batches are consistent."""

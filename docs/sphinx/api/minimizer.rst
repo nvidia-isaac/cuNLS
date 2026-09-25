@@ -163,6 +163,55 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
   validation), which can reduce per-iteration latency for small systems
   but may produce silently incorrect results for singular or ill-conditioned
   matrices. Default: ``true``.
+- **jacobian_mode** [in]: Global default :code:`JacobianMode` used to
+  evaluate every factor batch's Jacobian, unless overridden per group via
+  :cpp:func:`Problem::AddFactorBatch`. See
+  :ref:`minimizer-jacobian-mode-label` below and :doc:`../numeric_jacobians`
+  for the full picture. Default: ``kAnalytic``.
+- **numeric_diff_options** [in]: Tuning knobs (finite-difference scheme, step
+  size) used whenever a factor batch is evaluated with
+  ``JacobianMode::kNumeric``; see :code:`NumericDiffOptions` below. Ignored
+  for factor batches evaluated with ``kAnalytic``.
+
+.. _minimizer-jacobian-mode-label:
+
+--------------------------------------------------------------------------------
+:code:`JacobianMode` / :code:`NumericDiffOptions`
+--------------------------------------------------------------------------------
+
+Header: :code:`cunls/minimizer/jacobian_mode.h`. Selects, per factor batch,
+whether its Jacobian comes from the factor's own hand-derived
+:cpp:func:`FactorBatch::Evaluate` output, or from cuNLS differentiating the
+factor's residual numerically. See :doc:`../numeric_jacobians` for a full
+walkthrough (manifold-aware perturbation, accuracy/performance tradeoffs,
+worked example).
+
+:code:`JacobianMode` (enum):
+
+- **kAnalytic**: Use the factor batch's own Jacobian output. Default.
+- **kNumeric**: Ignore any Jacobian the factor batch would compute; instead
+  perturb each referenced state block along its manifold tangent space (via
+  :cpp:func:`StateBatch::Plus`) and finite-difference the residual. Requires
+  only that the factor batch support residual-only evaluation
+  (``jacobians == nullptr``), which every :cpp:class:`FactorBatch` must
+  already do.
+
+:code:`NumericDiffOptions` (struct, only consulted when a factor batch
+resolves to ``kNumeric``):
+
+- **method** [in]: ``kForward`` (one-sided, :math:`(f(x+\epsilon)-f(x))/\epsilon`,
+  cheaper and less accurate) or ``kCentral`` (two-sided,
+  :math:`(f(x+\epsilon)-f(x-\epsilon))/(2\epsilon)`). Default: ``kCentral``.
+- **relative_step_size** [in]: Per-tangent-coordinate perturbation step
+  :math:`\epsilon`. Default: 1e-4.
+
+Where the mode for a given factor batch comes from:
+
+.. cpp:function:: JacobianMode Problem::JacobianModeFor(size_t residual_batch_index, JacobianMode global_default) const
+
+  :param ``residual_batch_index``: [in] Index into :cpp:func:`Problem::GetResidualBatches`.
+  :param ``global_default``: [in] Typically :code:`MinimizerOptions::jacobian_mode`.
+  :returns: [out] The per-group override passed to :cpp:func:`Problem::AddFactorBatch`, if one was given; otherwise ``global_default``.
 
 --------------------------------------------------------------------------------
 :code:`LevenbergMarquardtMinimizerOptions`
@@ -259,17 +308,19 @@ the problem and binds its factor instances to state block pointers. The
 ordering of :code:`state_pointers` must match the factor batch’s expected
 state layout (see :doc:`factor`).
 
-.. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, const std::vector<float*>& state_pointers)
+.. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, const std::vector<float*>& state_pointers, std::optional<JacobianMode> jacobian_mode_override = std::nullopt)
 
   :param ``factor_batch``: [in] Factor batch pointer (non-owning).
   :param ``state_pointers``: [in] Flattened device pointers: one per (factor index, state block), mapping factors to state. The problem stores a **host** copy of this list (each entry is still a device ``float*``); no device allocation is used for the table itself.
+  :param ``jacobian_mode_override``: [in] When set, this factor batch always uses the given :code:`JacobianMode` regardless of the minimizer's :code:`MinimizerOptions::jacobian_mode` default; see :ref:`minimizer-jacobian-mode-label`. Default: ``std::nullopt`` (use the minimizer's global default).
   :returns: [out] No return value.
 
-.. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, LossFunctionBatch* loss_function_batch, const std::vector<float*>& state_pointers)
+.. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, LossFunctionBatch* loss_function_batch, const std::vector<float*>& state_pointers, std::optional<JacobianMode> jacobian_mode_override = std::nullopt)
 
   :param ``factor_batch``: [in] Factor batch pointer (non-owning).
   :param ``loss_function_batch``: [in] Robust loss batch pointer (non-owning).
   :param ``state_pointers``: [in] Flattened state pointer mapping for all factors in the batch (stored on the host as above).
+  :param ``jacobian_mode_override``: [in] Same meaning as the other overload.
   :returns: [out] No return value.
 
 .. _problem-add-state-label:

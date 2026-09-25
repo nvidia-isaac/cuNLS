@@ -278,8 +278,8 @@ TYPED_TEST(ResidualBatchTest, Jacobians) {
 
     std::vector<std::vector<float>> gt_jacobian(this->num_vectors_);
     {
-      // Calculate the ground truth robustified jacobian,
-      // Refer to http://ceres-solver.org/nnls_modeling.html#lossfunction
+      // Calculate the ground truth robustified jacobian using the standard
+      // Triggs-correction rescaling for a robust loss function rho(s).
 
       float jac_value = -sqrt_rho1 * alpha * residual * residual;
       for (auto &x : gt_jacobian) {

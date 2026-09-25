@@ -168,16 +168,69 @@ class TestMinimizerOptions:
         assert (opts.sparse_linear_solver_type
                 == pycunls.SparseLinearSolverType.BlockSparsePCG)
         assert opts.column_scaling == pycunls.ColumnScaling.none
+        assert opts.jacobian_mode == pycunls.JacobianMode.analytic
+        assert opts.numeric_diff_options.method == pycunls.NumericDiffMethod.central
+        assert opts.numeric_diff_options.relative_step_size == pytest.approx(1e-4)
         assert opts.disable_safety_checks is True
 
     def test_modification(self):
         opts = pycunls.MinimizerOptions()
         opts.max_num_iterations = 100
         opts.state_tolerance = 1e-9
+        opts.jacobian_mode = pycunls.JacobianMode.numeric
         assert opts.max_num_iterations == 100
         assert opts.state_tolerance == pytest.approx(1e-9)
+        assert opts.jacobian_mode == pycunls.JacobianMode.numeric
 
     def test_lm_defaults(self):
         lm = pycunls.LevenbergMarquardtMinimizerOptions()
         assert lm.initial_lambda == pytest.approx(1e-3)
         assert lm.lambda_upscale == pytest.approx(2.0)
+
+
+class TestJacobianMode:
+    """Numeric (finite-difference) Jacobians via JacobianMode.numeric."""
+    def test_global_default_converges(self, stream):
+        problem, states_gpu, target = _make_prior_problem()
+
+        opts = pycunls.MinimizerOptions()
+        opts.max_num_iterations = 20
+        opts.jacobian_mode = pycunls.JacobianMode.numeric
+        minimizer = pycunls.GaussNewtonMinimizer(opts)
+        summary = minimizer.minimize(stream, problem)
+
+        cp.cuda.runtime.streamSynchronize(stream.get_stream())
+
+        assert summary.final_cost < 1e-3
+        result = cp.asnumpy(states_gpu)
+        np.testing.assert_allclose(result, target, atol=1e-2)
+
+    def test_per_group_override_converges(self, stream):
+        # Same problem, but forced to numeric mode via the per-group
+        # override on add_factor_batch instead of the global default.
+        target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        initial = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+        states_gpu = cp.asarray(initial)
+        obs_gpu = cp.asarray(target)
+
+        sb = pycunls.VectorStateBatch3(states_gpu, 1)
+        fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
+
+        problem = pycunls.Problem()
+        problem.add_state_batch(sb)
+        problem.add_factor_batch(
+            fb, [sb.state_block_device_ptr(0)],
+            jacobian_mode_override=pycunls.JacobianMode.numeric)
+        assert problem.check_consistency()
+
+        opts = pycunls.MinimizerOptions()
+        opts.max_num_iterations = 20
+        minimizer = pycunls.GaussNewtonMinimizer(opts)
+        summary = minimizer.minimize(stream, problem)
+
+        cp.cuda.runtime.streamSynchronize(stream.get_stream())
+
+        assert summary.final_cost < 1e-3
+        result = cp.asnumpy(states_gpu)
+        np.testing.assert_allclose(result, target, atol=1e-2)

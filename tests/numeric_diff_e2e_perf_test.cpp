@@ -16,39 +16,30 @@
  */
 
 /**
- * @file numeric_diff_perf_test.cpp
- * @brief Wall-clock comparison of JacobianMode::kAnalytic vs kNumeric, across
- * problem types (PGO / SBA / PnP) and named problem sizes.
+ * @file numeric_diff_e2e_perf_test.cpp
+ * @brief Wall-clock comparison of JacobianMode::kAnalytic vs kNumeric across
+ * problem types (PGO / SBA / PnP) and named problem sizes, this time timing
+ * full `LevenbergMarquardtMinimizer::Minimize()` calls rather than just
+ * `GaussNewtonMinimizer::BuildSystem()` (tests/numeric_diff_perf_test.cpp).
  *
- * Times repeated `GaussNewtonMinimizer::BuildSystem` calls (not full
- * `Minimize()` runs) via CUDA events: `BuildSystem` is exactly the call that
- * computes residuals + Jacobians and assembles the normal equations, so it
- * isolates the cost the two Jacobian modes actually differ on. A full
- * `Minimize()` would also fold in the sparse linear solve, whose cost is
- * independent of `JacobianMode` and (per the profiling note in commit
- * e5c4612) dominates total GPU time -- mixing it in would wash out the very
- * difference this benchmark exists to measure.
+ * The synthetic problem generators/sizes here are copy-identical to
+ * numeric_diff_perf_test.cpp so the two benchmarks are directly comparable
+ * in problem definition -- only what's timed differs. `Minimize()` also
+ * folds in the sparse linear solve, which is independent of JacobianMode
+ * and (per the profiling note in commit e5c4612) dominates total GPU time;
+ * this file exists to show the realistic end-to-end overhead of picking
+ * numeric diff for a real solve, complementing (not replacing) the
+ * BuildSystem-only isolation benchmark.
  *
- * Modeled directly on tests/motion_prior_perf_test.cpp's structure (gtest
- * TestWithParam, NVTX instrumentation gated by ENABLE_PROFILING) and on the
- * `SystemBuilder` BuildSystem-exposing pattern from
- * tests/block_hessian_assembler_test.cpp. Meant to be run under `nsys
- * profile`; also appends CUDA-event timings to a CSV for offline plotting.
+ * Modeled on tests/motion_prior_perf_test.cpp's structure (gtest
+ * TestWithParam, NVTX instrumentation) and reuses LevenbergMarquardtMinimizer
+ * since that's what examples/pose_graph_optimization, examples/pnp and
+ * examples/sparse_bundle_adjustment all default to.
  *
- * Problem sizes (each problem type sweeps 3 named sizes, small->large):
- *  - PGO: 10k / 100k / 1M poses, an SE3 chain (SE3BetweenFactorBatch).
- *  - SBA: (1k poses, 5k landmarks) / (5k poses, 25k landmarks) /
- *    (10k poses, 100k landmarks), via ReprojectionFactorBatch, with a
- *    *sparse* visibility pattern (each landmark observed by a small fixed
- *    number of poses -- see SBAConfig::obs_per_landmark below) rather than a
- *    dense pose x landmark grid. A dense grid at these sizes would produce
- *    an infeasible number of factors (e.g. 10k poses x 100k landmarks would
- *    be 1e9 factors); this codebase's GPU-safety guidance caps any single
- *    FactorBatch at roughly 1.3M factors (much beyond ~6M states in one
- *    batch has been observed to crash the GPU process), so sparse
- *    visibility is required to stay in a safe, realistic regime.
- *  - PnP: 1k / 100k / 1M correspondences (landmarks observed by the single
- *    pose being estimated), via PnPFactorBatch.
+ * See the size-selection comment in numeric_diff_perf_test.cpp for how the
+ * PGO / SBA / PnP problem sizes (and, for SBA, the sparse visibility
+ * pattern) were chosen; the same reasoning/config tables are duplicated
+ * here verbatim.
  */
 
 #include <cublas_v2.h>
@@ -59,6 +50,7 @@
 #include <array>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <string>
 #include <vector>
@@ -75,6 +67,7 @@
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/jacobian_mode.h"
+#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
@@ -101,31 +94,9 @@ const char *ToString(JacobianMode m) {
   return m == JacobianMode::kAnalytic ? "analytic" : "numeric";
 }
 
-/**
- * @brief Exposes GaussNewtonMinimizer::Initialize/BuildSystem (both
- * protected). Same rationale/pattern as SystemBuilder in
- * tests/block_hessian_assembler_test.cpp: least invasive way to time
- * assembly in isolation from the rest of Minimize().
- */
-class SystemBuilder : public GaussNewtonMinimizer {
- public:
-  explicit SystemBuilder(const MinimizerOptions &options) : GaussNewtonMinimizer(options) {}
-
-  void Prepare(cudaStream_t stream, Problem &problem) {
-    Initialize(stream, problem);
-    current_state_.Recreate(stream, problem);
-  }
-
-  void Build(cudaStream_t stream, const Problem &problem) {
-    BuildSystem(stream, problem, current_state_);
-  }
-};
-
 // ---------------------------------------------------------------------------
-// Synthetic dataset generators (kept minimal; correctness of these factor
-// types is already covered by synthetic_pgo_test.cpp / synthetic_sba_test.cpp
-// / pnp_factor_batch_test.cpp -- this file only needs *some* well-posed
-// problem of the right scale to time BuildSystem on).
+// Synthetic dataset generators -- copy-identical to numeric_diff_perf_test.cpp
+// so the two benchmarks time the exact same problems.
 // ---------------------------------------------------------------------------
 
 SE3Transform ComposeSE3Host(const SE3Transform &a, const SE3Transform &b) {
@@ -158,8 +129,45 @@ std::vector<SE3Transform> RandomPoses(size_t n, std::mt19937 &rng) {
   return poses;
 }
 
+// Perturbs each pose in `gt_poses` by a small random right-multiplied twist
+// (poses[skip_first_n:] only, so an anchor pose used as a fixed/constant
+// state block stays exactly at ground truth). Used to build an initial
+// state that is *not* already at the ground-truth optimum: the
+// BuildSystem-only benchmark (numeric_diff_perf_test.cpp) doesn't care
+// about this since it never runs the solve loop, but a full end-to-end
+// Minimize() benchmark does -- an exact-ground-truth start converges in 0
+// iterations (Minimize's `initial_cost < cost_tolerance` early exit) and
+// never exercises the linear solve this benchmark exists to include.
+std::vector<SE3Transform> PerturbPoses(const std::vector<SE3Transform> &gt_poses, std::mt19937 &rng,
+                                       size_t skip_first_n = 0) {
+  const size_t n = gt_poses.size();
+  std::uniform_real_distribution<float> rot(-0.05f, 0.05f);
+  std::uniform_real_distribution<float> trans(-0.1f, 0.1f);
+  std::vector<Vector<6>> twists(n, Vector<6>{0, 0, 0, 0, 0, 0});
+  for (size_t i = skip_first_n; i < n; ++i) {
+    twists[i] = {rot(rng), rot(rng), rot(rng), trans(rng), trans(rng), trans(rng)};
+  }
+  CudaStream stream;
+  dvector<Vector<6>> d_twists(twists);
+  dvector<SE3Transform> d_disturb(n);
+  ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(d_twists.data()), 6, 4, 16, n,
+                reinterpret_cast<float *>(d_disturb.data()));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  std::vector<SE3Transform> disturb(n);
+  d_disturb.CopyToHost(disturb.data(), n);
+
+  std::vector<SE3Transform> init_poses(n);
+  for (size_t i = 0; i < n; ++i) init_poses[i] = ComposeSE3Host(gt_poses[i], disturb[i]);
+  return init_poses;
+}
+
+Vector<3> PerturbPoint(const Vector<3> &p, std::mt19937 &rng) {
+  std::uniform_real_distribution<float> trans(-0.1f, 0.1f);
+  return {p[0] + trans(rng), p[1] + trans(rng), p[2] + trans(rng)};
+}
+
 // ---------------------------------------------------------------------------
-// Named problem sizes.
+// Named problem sizes -- see numeric_diff_perf_test.cpp for full rationale.
 // ---------------------------------------------------------------------------
 
 struct PGOConfig {
@@ -172,16 +180,6 @@ constexpr std::array<PGOConfig, 3> kPGOConfigs = {{
     {1000000, "1M_poses"},
 }};
 
-// Sparse SBA visibility: each landmark is observed by `obs_per_landmark`
-// poses (one deterministic "primary" pose -- landmark_idx % n_poses, which
-// guarantees every pose is observed at least once since n_points >=
-// n_poses in every config below -- plus obs_per_landmark - 1 further
-// distinct poses chosen pseudo-randomly). This keeps total factor counts
-// (n_points * obs_per_landmark) far below the ~1.3M/FactorBatch safety
-// limit for all three sizes while giving every landmark >1 observation
-// (needed to constrain its 3D position) and every pose several
-// observations, unlike a dense pose x landmark grid which would be
-// infeasible at these sizes.
 struct SBAConfig {
   int n_poses;
   int n_points;
@@ -229,43 +227,54 @@ std::string ParamLabel(const PerfParams &p) {
 
 std::ostream &operator<<(std::ostream &os, const PerfParams &p) { return os << ParamLabel(p); }
 
-class NumericDiffPerfTest : public ::testing::TestWithParam<PerfParams> {
+class NumericDiffE2EPerfTest : public ::testing::TestWithParam<PerfParams> {
  protected:
+  // Same iteration counts as numeric_diff_perf_test.cpp, for consistency
+  // between the two benchmarks.
   static constexpr int kWarmupIters = 3;
   static constexpr int kTimedIters = 10;
 
-  // Appends one CSV row; writes the header once (file created fresh at
-  // SetUpTestSuite time).
   static void AppendCsvRow(const std::string &problem_type, const std::string &size_label,
                            int size_index, size_t n_primary, size_t n_secondary,
-                           const std::string &mode, double mean_ms) {
+                           const std::string &mode, double mean_ms, size_t num_iterations) {
     std::ofstream f(CsvPath(), std::ios::app);
     f << problem_type << "," << size_label << "," << size_index << "," << n_primary << ","
-      << n_secondary << "," << mode << "," << mean_ms << "\n";
+      << n_secondary << "," << mode << "," << mean_ms << "," << num_iterations << "\n";
   }
 
-  static std::string CsvPath() { return "/tmp/cunls_numeric_diff_perf/results.csv"; }
+  static std::string CsvPath() { return "/tmp/cunls_numeric_diff_perf/e2e_results.csv"; }
 
   static void SetUpTestSuite() {
     ::mkdir("/tmp/cunls_numeric_diff_perf", 0755);
     std::ofstream f(CsvPath(), std::ios::trunc);
     f << "problem_type,size_label,size_index,n_primary,n_secondary,jacobian_mode,"
-         "mean_ms_per_build_system\n";
+         "mean_ms_per_minimize,num_iterations_to_convergence\n";
   }
 
   /**
-   * @brief Runs kWarmupIters untimed + kTimedIters CUDA-event-timed
-   * BuildSystem calls, wrapped in a per-iteration NVTX range named after
-   * (problem_type, size, mode) so it is identifiable in an nsys timeline.
-   * Records the mean elapsed ms to the CSV and returns it.
+   * @brief Runs kWarmupIters untimed + kTimedIters CUDA-event-timed full
+   * `Minimize()` calls (a fresh minimizer instance per call), wrapped in a
+   * per-iteration NVTX range named after (problem_type, size, mode).
+   * Records the mean elapsed ms and the last run's iteration count to the
+   * CSV.
+   *
+   * `Minimize()` writes the converged state back into the state batches'
+   * backing device buffers (GaussNewtonMinimizer::Minimize's final `Copy(
+   * stream, current_state_, problem)`), so without `reset_state` every call
+   * after the first would start from the previous call's converged (or
+   * near-converged) state and trivially finish in ~1 iteration. `reset_state`
+   * re-uploads the original (unconverged) initial values before every
+   * warmup and timed call so each run solves the exact same problem.
    */
-  double TimeBuildSystem(SystemBuilder &builder, Problem &problem, const PerfParams &p,
-                         size_t n_primary, size_t n_secondary) {
+  double TimeMinimize(const LevenbergMarquardtMinimizerOptions &lm_options, Problem &problem,
+                      const PerfParams &p, size_t n_primary, size_t n_secondary,
+                      const std::function<void()> &reset_state, size_t &num_iterations) {
     CudaStream stream;
-    builder.Prepare(stream.GetStream(), problem);
 
     for (int i = 0; i < kWarmupIters; ++i) {
-      builder.Build(stream.GetStream(), problem);
+      reset_state();
+      LevenbergMarquardtMinimizer minimizer(lm_options);
+      minimizer.Minimize(stream.GetStream(), problem);
     }
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
@@ -273,12 +282,15 @@ class NumericDiffPerfTest : public ::testing::TestWithParam<PerfParams> {
     THROW_ON_CUDA_ERROR(cudaEventCreate(&start));
     THROW_ON_CUDA_ERROR(cudaEventCreate(&stop));
 
-    profiler::Domain domain("NumericDiffPerfTest");
+    profiler::Domain domain("NumericDiffE2EPerfTest");
     double total_ms = 0.0;
+    MinimizerSummary summary;
     for (int i = 0; i < kTimedIters; ++i) {
-      auto range = domain.CreateDomainRange(ParamLabel(p) + "/BuildSystem");
+      reset_state();
+      LevenbergMarquardtMinimizer minimizer(lm_options);
+      auto range = domain.CreateDomainRange(ParamLabel(p) + "/Minimize");
       THROW_ON_CUDA_ERROR(cudaEventRecord(start, stream.GetStream()));
-      builder.Build(stream.GetStream(), problem);
+      summary = minimizer.Minimize(stream.GetStream(), problem);
       THROW_ON_CUDA_ERROR(cudaEventRecord(stop, stream.GetStream()));
       THROW_ON_CUDA_ERROR(cudaEventSynchronize(stop));
       float ms = 0.f;
@@ -290,27 +302,32 @@ class NumericDiffPerfTest : public ::testing::TestWithParam<PerfParams> {
     THROW_ON_CUDA_ERROR(cudaEventDestroy(stop));
 
     double mean_ms = total_ms / kTimedIters;
+    num_iterations = summary.num_iterations;
     AppendCsvRow(ToString(p.problem_type), SizeLabel(p.problem_type, p.size_index), p.size_index,
-                 n_primary, n_secondary, ToString(p.mode), mean_ms);
+                 n_primary, n_secondary, ToString(p.mode), mean_ms, num_iterations);
     return mean_ms;
   }
 
-  MinimizerOptions MakeOptions(JacobianMode mode) {
+  LevenbergMarquardtMinimizerOptions MakeOptions(JacobianMode mode) {
     MinimizerOptions options;
     options.jacobian_mode = mode;
     options.disable_safety_checks = true;
     options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-    return options;
+
+    LevenbergMarquardtMinimizerOptions lm_options;
+    lm_options.base_options = options;
+    return lm_options;
   }
 
   cuBLASHandle cublas_handle_;
 };
 
-TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
+TEST_P(NumericDiffE2EPerfTest, MinimizeTiming) {
   const PerfParams p = GetParam();
   SCOPED_TRACE(ParamLabel(p));
 
   double mean_ms = 0.0;
+  size_t num_iterations = 0;
 
   switch (p.problem_type) {
     case ProblemType::kPGO: {
@@ -319,13 +336,8 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       std::mt19937 rng(1000);
       std::vector<SE3Transform> gt_poses = RandomPoses(num_poses, rng);
 
-      // Deltas satisfying delta_i = T_i^{-1} * T_{i+1} exactly, so the
-      // problem is well-posed (not required for a timing-only benchmark, but
-      // cheap and keeps BuildSystem's cost path realistic).
       std::vector<SE3Transform> deltas(num_factors);
       {
-        // delta = T_i^{-1} * T_{i+1}; computed via device inverse, matching
-        // other tests' conventions.
         CudaStream stream;
         dvector<SE3Transform> d_poses(gt_poses);
         dvector<SE3Transform> d_inv(num_poses);
@@ -339,7 +351,13 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
         }
       }
 
-      dvector<SE3Transform> poses_device(gt_poses);
+      // Initial state (what the state batch is constructed from) is
+      // perturbed off ground truth -- pose 0 is the anchor/constant state,
+      // so it's left exact -- so Minimize() actually has to iterate/solve
+      // instead of hitting the initial_cost < cost_tolerance early exit.
+      std::vector<SE3Transform> init_poses = PerturbPoses(gt_poses, rng, /*skip_first_n=*/1);
+
+      dvector<SE3Transform> poses_device(init_poses);
       dvector<SE3Transform> deltas_device(deltas);
       std::vector<int> const_ids = {0};
       dvector<int> const_ids_device(const_ids);
@@ -361,8 +379,9 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       problem.AddFactorBatch(&between_factor, state_pointers);
       ASSERT_TRUE(problem.CheckConsistency());
 
-      SystemBuilder builder(MakeOptions(p.mode));
-      mean_ms = TimeBuildSystem(builder, problem, p, num_poses, 0);
+      auto reset_state = [&]() { poses_device.CopyFromHost(init_poses.data(), num_poses); };
+      mean_ms =
+          TimeMinimize(MakeOptions(p.mode), problem, p, num_poses, 0, reset_state, num_iterations);
       break;
     }
     case ProblemType::kSBA: {
@@ -378,20 +397,24 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       std::vector<Vector<3>> points(n_points);
       for (int i = 0; i < n_points; ++i) points[i] = {xy(rng), xy(rng), zz(rng)};
 
-      // Sparse visibility: each landmark observed by `obs_per_landmark`
-      // poses -- one deterministic primary pose (landmark_idx % n_poses,
-      // guaranteeing full pose coverage since n_points >= n_poses here) plus
-      // (obs_per_landmark - 1) further distinct random poses. See the
-      // SBAConfig comment above for the full rationale.
+      // Sparse visibility -- see numeric_diff_perf_test.cpp / the SBAConfig
+      // comment there for the full rationale (dense pose x landmark grid is
+      // infeasible at these sizes; this stays well under the ~1.3M
+      // factors/FactorBatch GPU-safety limit while guaranteeing every pose
+      // and landmark is observed).
       std::uniform_int_distribution<int> pose_pick(0, n_poses - 1);
-      std::vector<Vector<2>> observations;
-      std::vector<float *> state_pointers;
-      const size_t expected_factors = static_cast<size_t>(n_points) * obs_per_landmark;
-      observations.reserve(expected_factors);
-      state_pointers.reserve(2 * expected_factors);
 
-      dvector<SE3Transform> poses_device(gt_poses);
-      dvector<Vector<3>> points_device(points);
+      // State batches are initialized from perturbed poses/points (pose 0 is
+      // the anchor/constant state, left exact); observations below are
+      // still computed from the exact ground truth, so the problem is
+      // well-posed and Minimize() has real work to do instead of hitting
+      // the initial_cost < cost_tolerance early exit.
+      std::vector<SE3Transform> init_poses = PerturbPoses(gt_poses, rng, /*skip_first_n=*/1);
+      std::vector<Vector<3>> init_points(n_points);
+      for (int i = 0; i < n_points; ++i) init_points[i] = PerturbPoint(points[i], rng);
+
+      dvector<SE3Transform> poses_device(init_poses);
+      dvector<Vector<3>> points_device(init_points);
       std::vector<int> const_pose_ids = {0};
       dvector<int> const_pose_ids_device(const_pose_ids);
 
@@ -400,6 +423,12 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
                                 const_pose_ids_device.data(), 1);
       VectorStateBatch<3> point_states(reinterpret_cast<const float *>(points_device.data()),
                                        n_points);
+
+      std::vector<Vector<2>> observations;
+      std::vector<float *> state_pointers;
+      const size_t expected_factors = static_cast<size_t>(n_points) * obs_per_landmark;
+      observations.reserve(expected_factors);
+      state_pointers.reserve(2 * expected_factors);
 
       std::vector<int> chosen_poses;
       chosen_poses.reserve(obs_per_landmark);
@@ -438,8 +467,12 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       problem.AddFactorBatch(&reproj, state_pointers);
       ASSERT_TRUE(problem.CheckConsistency());
 
-      SystemBuilder builder(MakeOptions(p.mode));
-      mean_ms = TimeBuildSystem(builder, problem, p, n_poses, n_points);
+      auto reset_state = [&]() {
+        poses_device.CopyFromHost(init_poses.data(), n_poses);
+        points_device.CopyFromHost(init_points.data(), n_points);
+      };
+      mean_ms = TimeMinimize(MakeOptions(p.mode), problem, p, n_poses, n_points, reset_state,
+                             num_iterations);
       break;
     }
     case ProblemType::kPnP: {
@@ -462,9 +495,15 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
         observations[i] = {pc[0] / pc[2], pc[1] / pc[2]};
       }
 
+      // Pose is fully optimizable (no constant ids here), so perturb it off
+      // ground truth -- otherwise Minimize() starts exactly at the optimum
+      // (zero residual) and hits the initial_cost < cost_tolerance early
+      // exit without ever running the linear solve.
+      std::vector<SE3Transform> init_pose_vec = PerturbPoses(gt_pose_vec, rng);
+
       dvector<Vector<3>> points_device(points);
       dvector<Vector<2>> observations_device(observations);
-      dvector<SE3Transform> pose_device(gt_pose_vec);
+      dvector<SE3Transform> pose_device(init_pose_vec);
 
       SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(pose_device.data()),
                                 1);
@@ -477,14 +516,15 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       problem.AddFactorBatch(&pnp, state_pointers);
       ASSERT_TRUE(problem.CheckConsistency());
 
-      SystemBuilder builder(MakeOptions(p.mode));
-      mean_ms = TimeBuildSystem(builder, problem, p, n, 0);
+      auto reset_state = [&]() { pose_device.CopyFromHost(init_pose_vec.data(), 1); };
+      mean_ms = TimeMinimize(MakeOptions(p.mode), problem, p, n, 0, reset_state, num_iterations);
       break;
     }
   }
 
   EXPECT_GT(mean_ms, 0.0);
-  std::cout << "[NumericDiffPerfTest] " << ParamLabel(p) << ": " << mean_ms << " ms/BuildSystem\n";
+  std::cout << "[NumericDiffE2EPerfTest] " << ParamLabel(p) << ": " << mean_ms << " ms/Minimize ("
+            << num_iterations << " iterations)\n";
 }
 
 std::vector<PerfParams> AllParams() {
@@ -499,7 +539,7 @@ std::vector<PerfParams> AllParams() {
   return out;
 }
 
-INSTANTIATE_TEST_SUITE_P(Sweep, NumericDiffPerfTest, ::testing::ValuesIn(AllParams()),
+INSTANTIATE_TEST_SUITE_P(Sweep, NumericDiffE2EPerfTest, ::testing::ValuesIn(AllParams()),
                          [](const ::testing::TestParamInfo<PerfParams> &info) {
                            return ParamLabel(info.param);
                          });
