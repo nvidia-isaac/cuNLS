@@ -157,6 +157,10 @@ if(NOT BUILD_PYTHON_BINDINGS)
   )
 endif()
 
+option(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST
+  "Build the numeric-diff end-to-end Minimize() perf sweep (slow: up to 1M-pose/point problems, several minutes)"
+  OFF)
+
 if(BUILD_TESTING)
   FetchContent_Declare(
     googletest
@@ -222,8 +226,11 @@ if(BUILD_TESTING)
     tests/numeric_diff_jacobian_test.cpp
     tests/numeric_diff_minimizer_test.cpp
     tests/numeric_diff_perf_test.cpp
-    tests/numeric_diff_e2e_perf_test.cpp
   )
+
+  if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)
+    target_sources(nls_tests PRIVATE tests/numeric_diff_e2e_perf_test.cpp)
+  endif()
 
   set_target_properties(nls_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

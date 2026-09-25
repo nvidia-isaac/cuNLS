@@ -118,18 +118,20 @@ class NumericDiffJacobianBuilder {
    * @param options Finite-difference method and step size.
    */
   void Compute(cudaStream_t stream, const Problem &problem, size_t residual_batch_index,
-              const MinimizerState &minimizer_state, const float *baseline_residuals,
-              float *jacobian_out, const NumericDiffOptions &options);
+               const MinimizerState &minimizer_state, const float *baseline_residuals,
+               float *jacobian_out, const NumericDiffOptions &options);
 
  private:
   /** @brief Per-residual-batch structural perturbation plan (host-only). */
   struct BatchPlan {
     size_t num_factors = 0;
     size_t num_positions = 0;
-    std::vector<size_t> state_block_sizes;   ///< Per position b.
-    std::vector<size_t> col_offsets;         ///< Per position b, prefix sum of state_block_sizes.
-    std::vector<size_t> owner_batch_index;   ///< Per position b: index into problem.GetStateBatches().
-    std::vector<size_t> block_idx;           ///< Flattened [f * num_positions + b] -> block index within owner.
+    std::vector<size_t> state_block_sizes;  ///< Per position b.
+    std::vector<size_t> col_offsets;        ///< Per position b, prefix sum of state_block_sizes.
+    std::vector<size_t>
+        owner_batch_index;  ///< Per position b: index into problem.GetStateBatches().
+    std::vector<size_t>
+        block_idx;  ///< Flattened [f * num_positions + b] -> block index within owner.
   };
 
   /**
@@ -183,6 +185,31 @@ class NumericDiffJacobianBuilder {
     dvector<int> plus_slot_scratch;
     dvector<int> minus_slot_scratch;
     dvector<float> eps_scratch;
+
+    // Small pinned host staging buffers for this cache's (rare -- only on
+    // rebuild) H2D uploads, reused/grown across calls; pageable
+    // std::vector-backed uploads showed up as ~35x slower cudaMemcpyAsync
+    // calls under nsys (internally staged through a driver bounce buffer).
+    // Deliberately per-cache, not shared across residual batches: a shared
+    // buffer could be overwritten by a second residual batch's rebuild
+    // before the first batch's async H2D copy had actually finished reading
+    // from it (the event/stream dependencies below only order *device*
+    // work, not host-side reuse of the pinned source buffer).
+    float *pinned_delta_host = nullptr;
+    size_t pinned_delta_capacity = 0;
+    const float **pinned_ptrs_host = nullptr;
+    size_t pinned_ptrs_capacity = 0;
+    int *pinned_int_host = nullptr;  // Holds col_idx/plus_slot/minus_slot back-to-back.
+    size_t pinned_int_capacity = 0;
+    float *pinned_eps_host = nullptr;
+    size_t pinned_eps_capacity = 0;
+
+    ComputeCache() = default;
+    ~ComputeCache();
+    ComputeCache(ComputeCache &&) = default;
+    ComputeCache &operator=(ComputeCache &&) = default;
+    ComputeCache(const ComputeCache &) = delete;
+    ComputeCache &operator=(const ComputeCache &) = delete;
   };
 
   void EnsureStreamPool(size_t num_streams);
@@ -193,24 +220,6 @@ class NumericDiffJacobianBuilder {
   std::vector<cudaStream_t> pool_streams_;
   std::vector<cudaEvent_t> pool_events_;
   cudaEvent_t delta_ready_event_ = nullptr;
-
-  // Small pinned host staging buffers for the (now rare -- only on cache
-  // rebuild) H2D uploads, reused/grown across calls; pageable
-  // std::vector-backed uploads showed up as ~35x slower cudaMemcpyAsync
-  // calls under nsys (internally staged through a driver bounce buffer).
-  float *pinned_delta_host_ = nullptr;
-  size_t pinned_delta_capacity_ = 0;
-  const float **pinned_ptrs_host_ = nullptr;
-  size_t pinned_ptrs_capacity_ = 0;
-  int *pinned_int_host_ = nullptr;      // Holds col_idx/plus_slot/minus_slot back-to-back.
-  size_t pinned_int_capacity_ = 0;
-  float *pinned_eps_host_ = nullptr;
-  size_t pinned_eps_capacity_ = 0;
-
-  float *PinnedDeltaHost(size_t n);
-  const float **PinnedPtrsHost(size_t n);
-  int *PinnedIntHost(size_t n);
-  float *PinnedEpsHost(size_t n);
 };
 
 }  // namespace cunls

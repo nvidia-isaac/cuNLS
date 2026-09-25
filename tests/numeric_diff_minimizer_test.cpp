@@ -49,9 +49,9 @@ namespace {
 constexpr size_t kNumPoses = 24;
 constexpr uint32_t kFixedSeed = 7;
 
-std::vector<SE3Transform> GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
-                                              std::uniform_real_distribution<float> &rotation_dist,
-                                              std::uniform_real_distribution<float> &translation_dist) {
+std::vector<SE3Transform> GenerateRandomPoses(
+    size_t num_poses, std::mt19937 &rng, std::uniform_real_distribution<float> &rotation_dist,
+    std::uniform_real_distribution<float> &translation_dist) {
   hvector<Vector<6>> twists(num_poses);
   for (size_t i = 0; i < num_poses; i++) {
     Vector<6> &twist = twists[i];
@@ -66,8 +66,8 @@ std::vector<SE3Transform> GenerateRandomPoses(size_t num_poses, std::mt19937 &rn
   CudaStream stream;
   dvector<Vector<6>> twists_device(twists);
   dvector<SE3Transform> poses_device(num_poses);
-  ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(twists_device.data()), 6, 4,
-               16, num_poses, reinterpret_cast<float *>(poses_device.data()));
+  ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(twists_device.data()), 6, 4, 16,
+                num_poses, reinterpret_cast<float *>(poses_device.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<SE3Transform> poses(num_poses);
@@ -127,10 +127,10 @@ struct SyntheticPGOProblem {
                       JacobianMode second_half_mode) {
     const size_t half = kNumPoses / 2;
 
-    dvector<SE3Transform> deltas_first(std::vector<SE3Transform>(pose_deltas.begin(),
-                                                                  pose_deltas.begin() + half));
-    dvector<SE3Transform> deltas_second(std::vector<SE3Transform>(
-        pose_deltas.begin() + half, pose_deltas.end()));
+    dvector<SE3Transform> deltas_first(
+        std::vector<SE3Transform>(pose_deltas.begin(), pose_deltas.begin() + half));
+    dvector<SE3Transform> deltas_second(
+        std::vector<SE3Transform>(pose_deltas.begin() + half, pose_deltas.end()));
     // Keep the underlying device storage alive for the lifetime of this
     // object (factor batches only store the raw pointer).
     extra_owned_deltas.push_back(std::move(deltas_first));

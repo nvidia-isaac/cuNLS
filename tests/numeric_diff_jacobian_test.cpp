@@ -22,6 +22,8 @@
  * SO(3), and SE(3) manifolds.
  */
 
+#include "cunls/minimizer/numeric_diff_jacobian.h"
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -39,7 +41,6 @@
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/minimizer_state.h"
-#include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/so3_state_batch.h"
@@ -163,8 +164,8 @@ TEST(NumericDiffJacobianTest, SO3BetweenMatchesAnalytic) {
   }
   dvector<Vector<3>> state_twists_d(state_twists);
   dvector<SO3Rotation> states_d(kNumStates);
-  ComputeExpSO3(stream.GetStream(), reinterpret_cast<const float *>(state_twists_d.data()), 3, 3,
-               9, kNumStates, reinterpret_cast<float *>(states_d.data()));
+  ComputeExpSO3(stream.GetStream(), reinterpret_cast<const float *>(state_twists_d.data()), 3, 3, 9,
+                kNumStates, reinterpret_cast<float *>(states_d.data()));
 
   hvector<Vector<3>> delta_twists(kNumFactors);
   for (auto &t : delta_twists) {
@@ -173,7 +174,7 @@ TEST(NumericDiffJacobianTest, SO3BetweenMatchesAnalytic) {
   dvector<Vector<3>> delta_twists_d(delta_twists);
   dvector<SO3Rotation> deltas_d(kNumFactors);
   ComputeExpSO3(stream.GetStream(), reinterpret_cast<const float *>(delta_twists_d.data()), 3, 3, 9,
-               kNumFactors, reinterpret_cast<float *>(deltas_d.data()));
+                kNumFactors, reinterpret_cast<float *>(deltas_d.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   SO3StateBatch state_batch(cublas, reinterpret_cast<const float *>(states_d.data()), kNumStates);
@@ -255,13 +256,13 @@ TEST(NumericDiffJacobianTest, SE3BetweenMatchesAnalytic) {
   dvector<Vector<6>> state_twists_d(state_twists);
   dvector<SE3Transform> states_d(kNumStates);
   ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(state_twists_d.data()), 6, 4,
-               16, kNumStates, reinterpret_cast<float *>(states_d.data()));
+                16, kNumStates, reinterpret_cast<float *>(states_d.data()));
 
   hvector<Vector<6>> delta_twists = make_twists(kNumFactors);
   dvector<Vector<6>> delta_twists_d(delta_twists);
   dvector<SE3Transform> deltas_d(kNumFactors);
-  ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(delta_twists_d.data()), 6, 4, 16,
-               kNumFactors, reinterpret_cast<float *>(deltas_d.data()));
+  ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(delta_twists_d.data()), 6, 4,
+                16, kNumFactors, reinterpret_cast<float *>(deltas_d.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   SE3StateBatch state_batch(cublas, reinterpret_cast<const float *>(states_d.data()), kNumStates);

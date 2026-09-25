@@ -17,6 +17,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <random>
@@ -120,8 +121,8 @@ RunResult RunPnP(const PnPDataset &data, cunls::JacobianMode jacobian_mode) {
   dvector<SE3Transform> pose_device(pose_host);
 
   cunls::cuBLASHandle cublas_handle;
-  cunls::SE3StateBatch pose_states(
-      cublas_handle, reinterpret_cast<const float *>(pose_device.data()), 1);
+  cunls::SE3StateBatch pose_states(cublas_handle,
+                                   reinterpret_cast<const float *>(pose_device.data()), 1);
 
   cunls::PnPFactorBatch pnp_factor(observations_device.data(), points_device.data(), num_points,
                                    kZThreshold);
@@ -176,17 +177,38 @@ void PrintResult(const char *label, const RunResult &r) {
 int main(int argc, char **argv) {
   try {
     // CLI: --num-points N (default 2000), --jacobian-mode {analytic,numeric,both}
+    const std::string usage = std::string("Usage: ") + argv[0] +
+                              " [--num-points N] [--jacobian-mode analytic|numeric|both]\n";
     size_t num_points = 2000;
     std::string mode_arg = "both";
     for (int i = 1; i < argc; ++i) {
-      if (std::strcmp(argv[i], "--num-points") == 0 && i + 1 < argc) {
-        num_points = static_cast<size_t>(std::stoul(argv[++i]));
-      } else if (std::strcmp(argv[i], "--jacobian-mode") == 0 && i + 1 < argc) {
+      if (std::strcmp(argv[i], "--num-points") == 0) {
+        if (i + 1 >= argc) {
+          std::cerr << "Missing value for --num-points\n" << usage;
+          return 1;
+        }
+        const char *value = argv[++i];
+        char *end = nullptr;
+        const long long parsed = std::strtoll(value, &end, 10);
+        if (end == value || *end != '\0' || parsed <= 0) {
+          std::cerr << "Invalid --num-points value '" << value
+                    << "' (expected a positive integer)\n"
+                    << usage;
+          return 1;
+        }
+        num_points = static_cast<size_t>(parsed);
+      } else if (std::strcmp(argv[i], "--jacobian-mode") == 0) {
+        if (i + 1 >= argc) {
+          std::cerr << "Missing value for --jacobian-mode\n" << usage;
+          return 1;
+        }
         mode_arg = argv[++i];
       } else if (std::strcmp(argv[i], "--help") == 0) {
-        std::cout << "Usage: " << argv[0]
-                  << " [--num-points N] [--jacobian-mode analytic|numeric|both]\n";
+        std::cout << usage;
         return 0;
+      } else {
+        std::cerr << "Unknown argument '" << argv[i] << "'\n" << usage;
+        return 1;
       }
     }
 

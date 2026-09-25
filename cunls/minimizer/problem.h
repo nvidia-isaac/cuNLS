@@ -42,7 +42,7 @@ namespace cunls {
  * instance to its corresponding state blocks on the GPU.
  */
 class Problem {
-public:
+ public:
   /**
    * @brief Adds a factor batch without a loss function.
    *
@@ -60,8 +60,7 @@ public:
    * default; when `std::nullopt` (default), the minimizer's global default
    * applies. See `JacobianModeFor`.
    */
-  void AddFactorBatch(FactorBatch *factor_batch,
-                      const std::vector<float *> &state_pointers,
+  void AddFactorBatch(FactorBatch *factor_batch, const std::vector<float *> &state_pointers,
                       std::optional<JacobianMode> jacobian_mode_override = std::nullopt);
 
   /**
@@ -80,8 +79,7 @@ public:
    * minimizer's global `MinimizerOptions::jacobian_mode`; see the other
    * `AddFactorBatch` overload.
    */
-  void AddFactorBatch(FactorBatch *factor_batch,
-                      LossFunctionBatch *loss_function_batch,
+  void AddFactorBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_function_batch,
                       const std::vector<float *> &state_pointers,
                       std::optional<JacobianMode> jacobian_mode_override = std::nullopt);
 
@@ -146,7 +144,7 @@ public:
    */
   JacobianMode JacobianModeFor(size_t residual_batch_index, JacobianMode global_default) const;
 
-private:
+ private:
   /**
    * @brief Validates that all inputs are non-null and sizes are consistent.
    *
@@ -164,17 +162,15 @@ private:
    */
   bool CheckGraphConnectivity() const;
 
-private:
-  std::vector<ResidualBatch>
-      residual_batches_;                    ///< Registered residual batches.
-  std::vector<StateBatch *> state_batches_; ///< Registered state batches.
-  std::vector<std::vector<float *>>
-      state_pointers_; ///< Host copies of per-residual-batch state pointer
-                       ///< lists.
+ private:
+  std::vector<ResidualBatch> residual_batches_;       ///< Registered residual batches.
+  std::vector<StateBatch *> state_batches_;           ///< Registered state batches.
+  std::vector<std::vector<float *>> state_pointers_;  ///< Host copies of per-residual-batch state
+                                                      ///< pointer lists.
   std::vector<std::optional<JacobianMode>>
-      jacobian_mode_overrides_; ///< Per-residual-batch JacobianMode
-                                ///< override, index-aligned with
-                                ///< residual_batches_.
+      jacobian_mode_overrides_;  ///< Per-residual-batch JacobianMode
+                                 ///< override, index-aligned with
+                                 ///< residual_batches_.
 };
 
-} // namespace cunls
+}  // namespace cunls

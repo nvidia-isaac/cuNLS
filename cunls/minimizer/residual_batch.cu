@@ -217,8 +217,8 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *resid
   return ApplyLoss(stream, workspace, residuals, cost, jacobians);
 }
 
-bool ResidualBatch::ApplyLoss(cudaStream_t stream, float *workspace, float *residuals,
-                              float *cost, float *jacobians) const {
+bool ResidualBatch::ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
+                              float *jacobians) const {
   int num_residuals = static_cast<int>(factor_batch_->NumFactors());
   int residual_dim = static_cast<int>(factor_batch_->ResidualsSize());
 

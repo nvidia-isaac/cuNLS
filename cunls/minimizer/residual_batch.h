@@ -17,9 +17,9 @@
 
 #pragma once
 
-#include <cstddef>
-
 #include <cuda_runtime.h>
+
+#include <cstddef>
 
 #include "cunls/factor/factor_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
@@ -53,8 +53,7 @@ inline size_t ResidualBatchWorkspaceSizeBytes(size_t num_residuals) {
  * `buffer_`).
  */
 inline size_t ResidualBatchWorkspaceNumFloats(size_t num_residuals) {
-  return (ResidualBatchWorkspaceSizeBytes(num_residuals) + sizeof(float) - 1u) /
-         sizeof(float);
+  return (ResidualBatchWorkspaceSizeBytes(num_residuals) + sizeof(float) - 1u) / sizeof(float);
 }
 
 /**
@@ -66,7 +65,7 @@ inline size_t ResidualBatchWorkspaceNumFloats(size_t num_residuals) {
  * scale residuals and Jacobians, and optionally computes per-residual costs.
  */
 class ResidualBatch {
-public:
+ public:
   /**
    * @brief Constructs a residual batch from a factor batch and loss function.
    *
@@ -109,8 +108,7 @@ public:
    * @return True on success.
    */
   bool Evaluate(cudaStream_t stream, float *workspace, float *residuals,
-                float const *const *state_pointers, float *cost,
-                float *jacobians) const;
+                float const *const *state_pointers, float *cost, float *jacobians) const;
 
   /**
    * @brief Applies this batch's loss function to an already-computed raw
@@ -136,7 +134,7 @@ public:
    * @return True on success.
    */
   bool ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
-                float *jacobians) const;
+                 float *jacobians) const;
 
   /**
    * @brief Gets the factor batch.
@@ -152,9 +150,8 @@ public:
    */
   LossFunctionBatch *GetLossFunction() const { return loss_function_; }
 
-private:
-  FactorBatch *factor_batch_ = nullptr; ///< Factor batch.
-  LossFunctionBatch *loss_function_ =
-      nullptr; ///< Optional loss function batch.
+ private:
+  FactorBatch *factor_batch_ = nullptr;         ///< Factor batch.
+  LossFunctionBatch *loss_function_ = nullptr;  ///< Optional loss function batch.
 };
-} // namespace cunls
+}  // namespace cunls

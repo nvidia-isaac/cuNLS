@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-#include "cunls/minimizer/numeric_diff_jacobian.h"
-
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -24,6 +22,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/factor/factor_batch.h"
 #include "cunls/minimizer/minimizer_state.h"
+#include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/state_batch.h"
 
@@ -38,14 +37,11 @@ constexpr int kBlockSize = 256;
 // writes the finite-difference column directly into the dense per-factor
 // Jacobian layout (`ResidualsSize() x sum(StateBlockSizes())`, row-major,
 // per factor) that analytic Jacobians also use.
-__global__ void NumericDiffColumnKernel(const float *__restrict__ perturbed_residuals,
-                                        const float *__restrict__ baseline_residuals,
-                                        const int *__restrict__ col_idx,
-                                        const int *__restrict__ plus_slot,
-                                        const int *__restrict__ minus_slot,
-                                        const float *__restrict__ eps_arr, bool central, int F,
-                                        int W, int residual_size, int total_cols,
-                                        float *__restrict__ jacobian_out) {
+__global__ void NumericDiffColumnKernel(
+    const float *__restrict__ perturbed_residuals, const float *__restrict__ baseline_residuals,
+    const int *__restrict__ col_idx, const int *__restrict__ plus_slot,
+    const int *__restrict__ minus_slot, const float *__restrict__ eps_arr, bool central, int F,
+    int W, int residual_size, int total_cols, float *__restrict__ jacobian_out) {
   long long idx = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
   long long total = static_cast<long long>(F) * W * residual_size;
   if (idx >= total) return;
@@ -73,7 +69,28 @@ __global__ void NumericDiffColumnKernel(const float *__restrict__ perturbed_resi
   jacobian_out[(static_cast<long long>(f) * residual_size + r) * total_cols + col_idx[j]] = deriv;
 }
 
+// Grows *ptr (a pinned host allocation) to at least `n` elements if needed,
+// then returns it. Kept per-ComputeCache (never shared across residual
+// batches) so that one batch's rebuild can never overwrite host memory a
+// prior batch's still-in-flight async H2D upload is reading from.
+template <typename T>
+T *EnsurePinnedHost(T *&ptr, size_t &capacity, size_t n) {
+  if (n > capacity) {
+    if (ptr != nullptr) THROW_ON_CUDA_ERROR(cudaFreeHost(ptr));
+    THROW_ON_CUDA_ERROR(cudaMallocHost(&ptr, n * sizeof(T)));
+    capacity = n;
+  }
+  return ptr;
+}
+
 }  // namespace
+
+NumericDiffJacobianBuilder::ComputeCache::~ComputeCache() {
+  if (pinned_delta_host != nullptr) cudaFreeHost(pinned_delta_host);
+  if (pinned_ptrs_host != nullptr) cudaFreeHost(pinned_ptrs_host);
+  if (pinned_int_host != nullptr) cudaFreeHost(pinned_int_host);
+  if (pinned_eps_host != nullptr) cudaFreeHost(pinned_eps_host);
+}
 
 NumericDiffJacobianBuilder::NumericDiffJacobianBuilder() {
   THROW_ON_CUDA_ERROR(cudaEventCreateWithFlags(&delta_ready_event_, cudaEventDisableTiming));
@@ -89,46 +106,6 @@ NumericDiffJacobianBuilder::~NumericDiffJacobianBuilder() {
   if (delta_ready_event_ != nullptr) {
     cudaEventDestroy(delta_ready_event_);
   }
-  if (pinned_delta_host_ != nullptr) cudaFreeHost(pinned_delta_host_);
-  if (pinned_ptrs_host_ != nullptr) cudaFreeHost(pinned_ptrs_host_);
-  if (pinned_int_host_ != nullptr) cudaFreeHost(pinned_int_host_);
-  if (pinned_eps_host_ != nullptr) cudaFreeHost(pinned_eps_host_);
-}
-
-float *NumericDiffJacobianBuilder::PinnedDeltaHost(size_t n) {
-  if (n > pinned_delta_capacity_) {
-    if (pinned_delta_host_ != nullptr) THROW_ON_CUDA_ERROR(cudaFreeHost(pinned_delta_host_));
-    THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned_delta_host_, n * sizeof(float)));
-    pinned_delta_capacity_ = n;
-  }
-  return pinned_delta_host_;
-}
-
-const float **NumericDiffJacobianBuilder::PinnedPtrsHost(size_t n) {
-  if (n > pinned_ptrs_capacity_) {
-    if (pinned_ptrs_host_ != nullptr) THROW_ON_CUDA_ERROR(cudaFreeHost(pinned_ptrs_host_));
-    THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned_ptrs_host_, n * sizeof(const float *)));
-    pinned_ptrs_capacity_ = n;
-  }
-  return pinned_ptrs_host_;
-}
-
-int *NumericDiffJacobianBuilder::PinnedIntHost(size_t n) {
-  if (n > pinned_int_capacity_) {
-    if (pinned_int_host_ != nullptr) THROW_ON_CUDA_ERROR(cudaFreeHost(pinned_int_host_));
-    THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned_int_host_, n * sizeof(int)));
-    pinned_int_capacity_ = n;
-  }
-  return pinned_int_host_;
-}
-
-float *NumericDiffJacobianBuilder::PinnedEpsHost(size_t n) {
-  if (n > pinned_eps_capacity_) {
-    if (pinned_eps_host_ != nullptr) THROW_ON_CUDA_ERROR(cudaFreeHost(pinned_eps_host_));
-    THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned_eps_host_, n * sizeof(float)));
-    pinned_eps_capacity_ = n;
-  }
-  return pinned_eps_host_;
 }
 
 void NumericDiffJacobianBuilder::EnsureStreamPool(size_t num_streams) {
@@ -143,10 +120,11 @@ void NumericDiffJacobianBuilder::EnsureStreamPool(size_t num_streams) {
 }
 
 void NumericDiffJacobianBuilder::PrepareResidualBatch(const Problem &problem,
-                                                       size_t residual_batch_index) {
+                                                      size_t residual_batch_index) {
   const auto &residual_batches = problem.GetResidualBatches();
   if (residual_batch_index >= residual_batches.size()) {
-    throw std::runtime_error("NumericDiffJacobianBuilder::PrepareResidualBatch: index out of range");
+    throw std::runtime_error(
+        "NumericDiffJacobianBuilder::PrepareResidualBatch: index out of range");
   }
   const auto &rb = residual_batches[residual_batch_index];
   const FactorBatch *factor_batch = rb.GetFactorBatch();
@@ -273,7 +251,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   bool needs_rebuild = !cache.uploaded || cache.central != central ||
                        cache.step_size != options.relative_step_size || cache.F != F ||
                        cache.P != P || cache.residual_size != residual_size ||
-                       cache.total_cols != total_cols || cache.last_owner_data_ptr != owner_data_ptr;
+                       cache.total_cols != total_cols ||
+                       cache.last_owner_data_ptr != owner_data_ptr;
 
   if (!needs_rebuild) {
     // x_plus_delta_scratch's own address can only change if it needed to
@@ -339,7 +318,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     // ---- Build & upload the one-hot tangent deltas for every slot, via a
     // ---- pinned staging buffer (true async DMA, not an internally-staged
     // ---- copy through a driver bounce buffer). ----
-    float *delta_host = PinnedDeltaHost(delta_total);
+    float *delta_host =
+        EnsurePinnedHost(cache.pinned_delta_host, cache.pinned_delta_capacity, delta_total);
     std::fill(delta_host, delta_host + delta_total, 0.0f);
     for (size_t s = 0; s < S; ++s) {
       const size_t b = cache.slot_b[s];
@@ -399,7 +379,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
         baseline_ptr[f * P + b] = states[owner_idx].data() + blk * ambient_size[b];
       }
     }
-    const float **ptrs_host = PinnedPtrsHost(S * F * P);
+    const float **ptrs_host =
+        EnsurePinnedHost(cache.pinned_ptrs_host, cache.pinned_ptrs_capacity, S * F * P);
     for (size_t s = 0; s < S; ++s) {
       const size_t b = cache.slot_b[s];
       const float *xpd_base = cache.x_plus_delta_scratch.data() + cache.xpd_offset[s];
@@ -422,7 +403,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     // ---- structure-only, uploaded once via one merged pinned staging
     // ---- buffer (col_idx | plus_slot | minus_slot back-to-back) instead of
     // ---- three separate transfers. ----
-    int *int_host = PinnedIntHost(3 * W);
+    int *int_host = EnsurePinnedHost(cache.pinned_int_host, cache.pinned_int_capacity, 3 * W);
     std::copy(cache.col_idx_h.begin(), cache.col_idx_h.end(), int_host);
     std::copy(cache.plus_slot_h.begin(), cache.plus_slot_h.end(), int_host + W);
     std::copy(cache.minus_slot_h.begin(), cache.minus_slot_h.end(), int_host + 2 * W);
@@ -433,7 +414,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(cache.minus_slot_scratch.data(), int_host + 2 * W,
                                         W * sizeof(int), cudaMemcpyHostToDevice, stream));
 
-    float *eps_host = PinnedEpsHost(W);
+    float *eps_host = EnsurePinnedHost(cache.pinned_eps_host, cache.pinned_eps_capacity, W);
     std::copy(cache.eps_h.begin(), cache.eps_h.end(), eps_host);
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(cache.eps_scratch.data(), eps_host, W * sizeof(float),
                                         cudaMemcpyHostToDevice, stream));

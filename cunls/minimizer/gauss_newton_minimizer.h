@@ -19,10 +19,9 @@
 
 #include <cuda_runtime.h>
 
-#include <vector>
-
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "cunls/common/cusparse_helper.h"
 #include "cunls/common/pinned_vector.h"

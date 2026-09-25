@@ -164,10 +164,10 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream, const Problem &prob
  * @param[out] jacobians Output per-factor dense Jacobian blocks.
  */
 void GaussNewtonMinimizer::ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
-                                                       const MinimizerState &minimizer_state,
-                                                       dvector<float> &residuals,
-                                                       PerFactorJacobians &jacobians,
-                                                       dvector<uint8_t> &buffer) {
+                                                      const MinimizerState &minimizer_state,
+                                                      dvector<float> &residuals,
+                                                      PerFactorJacobians &jacobians,
+                                                      dvector<uint8_t> &buffer) {
   const auto &state_pointers = minimizer_state.GetStatePointers();
   const auto &residual_batches = problem.GetResidualBatches();
   size_t max_n = 0;
