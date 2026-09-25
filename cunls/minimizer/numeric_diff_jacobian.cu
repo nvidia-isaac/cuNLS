@@ -86,6 +86,15 @@ T *EnsurePinnedHost(T *&ptr, size_t &capacity, size_t n) {
 }  // namespace
 
 NumericDiffJacobianBuilder::ComputeCache::~ComputeCache() {
+  // A prior rebuild's async H2D uploads may still be in flight when this
+  // cache is torn down (e.g. Problem structure changed and
+  // PrepareResidualBatch erased it): wait for them before freeing the
+  // pinned host memory they read from, or the driver could still be
+  // DMA-reading from memory we're about to release.
+  if (pinned_upload_done_event != nullptr) {
+    cudaEventSynchronize(pinned_upload_done_event);
+    cudaEventDestroy(pinned_upload_done_event);
+  }
   if (pinned_delta_host != nullptr) cudaFreeHost(pinned_delta_host);
   if (pinned_ptrs_host != nullptr) cudaFreeHost(pinned_ptrs_host);
   if (pinned_int_host != nullptr) cudaFreeHost(pinned_int_host);
@@ -269,6 +278,14 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   cache.total_cols = total_cols;
 
   if (needs_rebuild) {
+    // A previous rebuild's async H2D uploads may still be reading from this
+    // cache's pinned host buffers; wait for them to finish before this
+    // rebuild grows, overwrites, or (via EnsurePinnedHost's cudaFreeHost
+    // path) frees any of them.
+    if (cache.pinned_upload_done_event != nullptr) {
+      THROW_ON_CUDA_ERROR(cudaEventSynchronize(cache.pinned_upload_done_event));
+    }
+
     // ---- Slot layout: one (position b, tangent dof k, sign) per slot. ----
     cache.slot_b.assign(S, 0);
     cache.slot_k.assign(S, 0);
@@ -418,6 +435,16 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     std::copy(cache.eps_h.begin(), cache.eps_h.end(), eps_host);
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(cache.eps_scratch.data(), eps_host, W * sizeof(float),
                                         cudaMemcpyHostToDevice, stream));
+
+    // Mark all of this cache's pinned buffers as "safe to touch again once
+    // this event completes" -- checked at the top of the next rebuild (or
+    // in the destructor, on teardown) before any of them are reused, grown,
+    // or freed.
+    if (cache.pinned_upload_done_event == nullptr) {
+      THROW_ON_CUDA_ERROR(
+          cudaEventCreateWithFlags(&cache.pinned_upload_done_event, cudaEventDisableTiming));
+    }
+    THROW_ON_CUDA_ERROR(cudaEventRecord(cache.pinned_upload_done_event, stream));
 
     cache.uploaded = true;
     cache.central = central;

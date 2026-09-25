@@ -204,6 +204,12 @@ class NumericDiffJacobianBuilder {
     float *pinned_eps_host = nullptr;
     size_t pinned_eps_capacity = 0;
 
+    // Recorded on `stream` right after the last H2D copy that reads from
+    // the pinned buffers above; synchronized before those buffers are ever
+    // touched again (grown, overwritten, or freed) so a still-in-flight
+    // async upload from a prior rebuild can never race with the next one.
+    cudaEvent_t pinned_upload_done_event = nullptr;
+
     ComputeCache() = default;
     ~ComputeCache();
     ComputeCache(ComputeCache &&) = default;
