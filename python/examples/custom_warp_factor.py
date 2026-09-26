@@ -15,13 +15,22 @@
 
 """Custom factor defined with NVIDIA Warp, solved via pycunls.
 
-This is a Python port of ``examples/custom_factor/main.cu``.  It builds a
-chain of scalar states connected by "difference" constraints:
+This is a Python port of ``examples/custom_factor/main.cu``. Like that C++
+example, it solves the same chain problem two ways:
+
+* **Part 1** (``ScalarDiffFactor``): the Warp kernel computes both the
+  residual and its (constant) analytic Jacobian.
+* **Part 2** (``ScalarDiffResidualOnlyFactor``): the Warp kernel computes
+  only the residual and is registered with
+  ``jacobian_mode_override=pycunls.JacobianMode.numeric`` so pycunls
+  differentiates it via finite differences instead. See
+  :doc:`../numeric_jacobians` for how this works.
+
+Both parts solve:
 
     residual_i = (x_{i+1} - x_i) - measurement_i
 
-The Warp kernel computes residuals and Jacobians, and pycunls runs
-Levenberg-Marquardt to recover the ground truth.
+with Levenberg-Marquardt.
 
 Pointer-gathering strategy
 --------------------------
@@ -147,9 +156,69 @@ class ScalarDiffFactor(WarpFactorBatch):
         return True
 
 
+# ── Part 2: residual-only Warp kernel, numeric Jacobian ────────────────────
+# Same residual as scalar_diff_kernel, but no Jacobian code path at all.
+
+@wp.kernel
+def scalar_diff_residual_only_kernel(
+    measurements: wp.array(dtype=wp.float32),
+    left_vals: wp.array(dtype=wp.float32),
+    right_vals: wp.array(dtype=wp.float32),
+    residuals: wp.array(dtype=wp.float32),
+    num_factors: int,
+):
+    i = wp.tid()
+    if i >= num_factors:
+        return
+    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[i]
+
+
+class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
+    """Same factor as ScalarDiffFactor, but only implements the residual.
+
+    Register this factor group with
+    ``jacobian_mode_override=pycunls.JacobianMode.numeric`` (see main()
+    below) and pycunls differentiates it via finite differences on the
+    manifold tangent space of each referenced state block -- there is
+    nothing else to write.
+    """
+
+    def __init__(self, measurements_wp: wp.array, num_factors: int):
+        super().__init__(
+            residual_size=1,
+            state_block_sizes=[1, 1],
+            num_factors=num_factors,
+        )
+        self.measurements = measurements_wp
+        self._num_factors = num_factors
+
+    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle):
+        n = self._num_factors
+
+        all_vals = _gather_state_values(state_pointers_ptr, n * 2)
+        left_vals = all_vals[0::2].copy()
+        right_vals = all_vals[1::2].copy()
+
+        left_wp = wp.array(ptr=int(left_vals.data.ptr), dtype=wp.float32,
+                           shape=(n,), device=self._device, copy=False)
+        right_wp = wp.array(ptr=int(right_vals.data.ptr), dtype=wp.float32,
+                            shape=(n,), device=self._device, copy=False)
+
+        res = self.wrap_array(residuals_ptr, wp.float32, n)
+
+        stream = self.make_warp_stream(stream_handle)
+        wp.launch(
+            scalar_diff_residual_only_kernel,
+            dim=n,
+            inputs=[self.measurements, left_wp, right_wp, res, n],
+            stream=stream,
+        )
+        return True
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
-def main():
+def run_chain_example(title: str, use_numeric_jacobian: bool):
     num_states = 256
     num_diff = num_states - 1
 
@@ -178,7 +247,6 @@ def main():
     stream = pycunls.CudaStream()
 
     state_batch = pycunls.VectorStateBatch1(states_gpu, num_states)
-    diff_factor = ScalarDiffFactor(measurements_wp, num_diff)
     prior_factor = pycunls.PriorVectorFactorBatch1(prior_obs_gpu, 1)
 
     diff_ptrs = []
@@ -190,7 +258,18 @@ def main():
 
     problem = pycunls.Problem()
     problem.add_state_batch(state_batch)
-    problem.add_factor_batch(diff_factor, diff_ptrs)
+    if use_numeric_jacobian:
+        # Force this factor group to numeric differentiation via the
+        # per-group override; the anchor prior below still uses its own
+        # analytic Jacobian either way (it's a built-in factor), so this
+        # also demonstrates mixing modes within a single Problem.
+        diff_factor = ScalarDiffResidualOnlyFactor(measurements_wp, num_diff)
+        problem.add_factor_batch(
+            diff_factor, diff_ptrs,
+            jacobian_mode_override=pycunls.JacobianMode.numeric)
+    else:
+        diff_factor = ScalarDiffFactor(measurements_wp, num_diff)
+        problem.add_factor_batch(diff_factor, diff_ptrs)
     problem.add_factor_batch(prior_factor, prior_ptrs)
     assert problem.check_consistency(), "Problem consistency check failed"
 
@@ -214,11 +293,21 @@ def main():
     mse_before = float(np.mean((initial - gt) ** 2))
     mse_after = float(np.mean((optimized - gt) ** 2))
 
-    print("Custom Warp Factor Example (pycunls)")
+    print(title)
     print(f"  Initial cost : {summary.initial_cost:.6f}")
     print(f"  Final cost   : {summary.final_cost:.6f}")
     print(f"  Iterations   : {summary.num_iterations}")
     print(f"  State MSE    : {mse_before:.6f} -> {mse_after:.6f}")
+
+
+def main():
+    # Part 1: analytic Jacobian, computed by the Warp kernel itself.
+    run_chain_example("Part 1: analytic Jacobian (Warp)", use_numeric_jacobian=False)
+    print()
+    # Part 2: residual-only Warp kernel; pycunls supplies the Jacobian via
+    # finite differences.
+    run_chain_example("Part 2: residual-only, numeric Jacobian (Warp)",
+                      use_numeric_jacobian=True)
 
 
 if __name__ == "__main__":

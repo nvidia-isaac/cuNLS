@@ -26,8 +26,7 @@
 
 namespace cunls {
 
-constexpr size_t block_size =
-    256; ///< Default thread block size for CUDA kernels.
+constexpr size_t block_size = 256;  ///< Default thread block size for CUDA kernels.
 
 /**
  * @brief Device helper to swap two values.
@@ -36,7 +35,8 @@ constexpr size_t block_size =
  * @param a First value (swapped with b).
  * @param b Second value (swapped with a).
  */
-template <typename T> __device__ void swap(T &a, T &b) {
+template <typename T>
+__device__ void swap(T &a, T &b) {
   T temp = a;
   a = b;
   b = temp;
@@ -51,8 +51,7 @@ template <typename T> __device__ void swap(T &a, T &b) {
  * @param ptr Output matrix pointer (3x3, row-major)
  * @param pitch Pitch (stride between rows) of the output matrix
  */
-__device__ void compute_skew_matrix(const float *translation, float *ptr,
-                                    const size_t pitch) {
+__device__ void compute_skew_matrix(const float *translation, float *ptr, const size_t pitch) {
   ptr[0 * pitch + 0] = 0;
   ptr[0 * pitch + 1] = -translation[2];
   ptr[0 * pitch + 2] = translation[1];
@@ -82,9 +81,8 @@ __device__ void compute_skew_matrix(const float *translation, float *ptr,
  * @param pitch Pitch (stride between rows) of the output matrix
  * @param tol Tolerance for small angle approximation
  */
-__device__ void compute_rodrigues_matrix(const float *phi, float k1, float k2,
-                                         float k3, float k4, float *ptr,
-                                         const size_t pitch, float tol = 1e-5) {
+__device__ void compute_rodrigues_matrix(const float *phi, float k1, float k2, float k3, float k4,
+                                         float *ptr, const size_t pitch, float tol = 1e-5) {
   float theta = norm3df(phi[0], phi[1], phi[2]);
   assert(theta >= 0);
   if (theta < tol) {
@@ -134,8 +132,7 @@ __device__ void compute_rodrigues_matrix(const float *phi, float k1, float k2,
  * @param ptr Output rotation matrix pointer (3x3, row-major)
  * @param pitch Pitch (stride between rows) of the output matrix
  */
-__device__ void compute_exp_so3(const float *phi, float *ptr,
-                                const size_t pitch) {
+__device__ void compute_exp_so3(const float *phi, float *ptr, const size_t pitch) {
   float theta = norm3df(phi[0], phi[1], phi[2]);
   float theta_squared = powf(theta, 2);
 
@@ -155,8 +152,7 @@ __device__ void compute_exp_so3(const float *phi, float *ptr,
  * @param ptr Output Jacobian matrix pointer (3x3, row-major)
  * @param pitch Pitch (stride between rows) of the output matrix
  */
-__device__ void compute_so3_jacobian_left(const float *phi, float *ptr,
-                                          const size_t pitch) {
+__device__ void compute_so3_jacobian_left(const float *phi, float *ptr, const size_t pitch) {
   float theta = norm3df(phi[0], phi[1], phi[2]);
   float theta_squared = powf(theta, 2);
 
@@ -199,9 +195,8 @@ __device__ void compute_so3_jacobian_left_inverse(const float *phi, float *ptr,
  * @param twist Output 3D twist vector
  * @param tol Tolerance for detecting identity rotation
  */
-__device__ void compute_log_so3(const float *rotation_matrix,
-                                const size_t rotation_pitch, float *twist,
-                                float tol = 1e-5) {
+__device__ void compute_log_so3(const float *rotation_matrix, const size_t rotation_pitch,
+                                float *twist, float tol = 1e-5) {
   float trace = 0;
 #pragma unroll
   for (int i = 0; i < 3; i++) {
@@ -238,10 +233,8 @@ __device__ void compute_log_so3(const float *rotation_matrix,
 
     // Read only the chosen column of (R + I) and normalize
     float v0 = rotation_matrix[best] + ((best == 0) ? 1.0f : 0.0f);
-    float v1 =
-        rotation_matrix[rotation_pitch + best] + ((best == 1) ? 1.0f : 0.0f);
-    float v2 = rotation_matrix[2 * rotation_pitch + best] +
-               ((best == 2) ? 1.0f : 0.0f);
+    float v1 = rotation_matrix[rotation_pitch + best] + ((best == 1) ? 1.0f : 0.0f);
+    float v2 = rotation_matrix[2 * rotation_pitch + best] + ((best == 2) ? 1.0f : 0.0f);
     float sq = v0 * v0 + v1 * v1 + v2 * v2;
     if (sq > 0.0f) {
       float scale = theta * __frsqrt_rn(sq);
@@ -254,12 +247,12 @@ __device__ void compute_log_so3(const float *rotation_matrix,
 
   float k = (0.5f * theta) / sin_theta;
 
-  twist[0] = k * (rotation_matrix[2 * rotation_pitch + 1] -
-                  rotation_matrix[1 * rotation_pitch + 2]);
-  twist[1] = k * (rotation_matrix[0 * rotation_pitch + 2] -
-                  rotation_matrix[2 * rotation_pitch + 0]);
-  twist[2] = k * (rotation_matrix[1 * rotation_pitch + 0] -
-                  rotation_matrix[0 * rotation_pitch + 1]);
+  twist[0] =
+      k * (rotation_matrix[2 * rotation_pitch + 1] - rotation_matrix[1 * rotation_pitch + 2]);
+  twist[1] =
+      k * (rotation_matrix[0 * rotation_pitch + 2] - rotation_matrix[2 * rotation_pitch + 0]);
+  twist[2] =
+      k * (rotation_matrix[1 * rotation_pitch + 0] - rotation_matrix[0 * rotation_pitch + 1]);
 }
 
 /**
@@ -277,8 +270,8 @@ __device__ void matmul_3x3(const float *A, const float *B, float *C) {
   for (uint8_t i = 0; i < 3; i++) {
 #pragma unroll
     for (uint8_t j = 0; j < 3; j++) {
-      C[i * 3 + j] = A[i * 3 + 0] * B[0 * 3 + j] + A[i * 3 + 1] * B[1 * 3 + j] +
-                     A[i * 3 + 2] * B[2 * 3 + j];
+      C[i * 3 + j] =
+          A[i * 3 + 0] * B[0 * 3 + j] + A[i * 3 + 1] * B[1 * 3 + j] + A[i * 3 + 2] * B[2 * 3 + j];
     }
   }
 }
@@ -306,15 +299,13 @@ __device__ void scale_add_3x3(const float *A, float scale, float *B) {
  * @param scale Scalar multiplier applied to the product.
  * @param C Output matrix (3x3, contiguous row-major), accumulated in-place.
  */
-__device__ void matmul_add_3x3(const float *A, const float *B, float scale,
-                               float *C) {
+__device__ void matmul_add_3x3(const float *A, const float *B, float scale, float *C) {
 #pragma unroll
   for (uint8_t i = 0; i < 3; i++) {
 #pragma unroll
     for (uint8_t j = 0; j < 3; j++) {
-      C[i * 3 + j] +=
-          scale * (A[i * 3 + 0] * B[0 * 3 + j] + A[i * 3 + 1] * B[1 * 3 + j] +
-                   A[i * 3 + 2] * B[2 * 3 + j]);
+      C[i * 3 + j] += scale * (A[i * 3 + 0] * B[0 * 3 + j] + A[i * 3 + 1] * B[1 * 3 + j] +
+                               A[i * 3 + 2] * B[2 * 3 + j]);
     }
   }
 }
@@ -332,8 +323,8 @@ __device__ void matmul_add_3x3(const float *A, const float *B, float scale,
  * @param Q Output Q matrix pointer (3x3, row-major)
  * @param tol Tolerance for small angle approximation
  */
-__device__ void compute_Q_left(const float *twist, const size_t Q_pitch,
-                               float *Q, float tol = 1e-5) {
+__device__ void compute_Q_left(const float *twist, const size_t Q_pitch, float *Q,
+                               float tol = 1e-5) {
   float phi = norm3df(twist[0], twist[1], twist[2]);
 
   float A = 1.f / 6.f;
@@ -404,9 +395,8 @@ __device__ void compute_Q_left(const float *twist, const size_t Q_pitch,
  * @param skew_stride Stride between skew matrices
  * @param size Number of twists to process
  */
-__global__ void skew_so3_kernel(const float *twist, const size_t twist_stride,
-                                float *skew, const size_t skew_pitch,
-                                const size_t skew_stride, size_t size) {
+__global__ void skew_so3_kernel(const float *twist, const size_t twist_stride, float *skew,
+                                const size_t skew_pitch, const size_t skew_stride, size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -442,9 +432,8 @@ __global__ void skew_so3_kernel(const float *twist, const size_t twist_stride,
  * @param exp_stride Stride between consecutive rotation matrices.
  * @param size Number of twist vectors to process.
  */
-__global__ void exp_so3_kernel(const float *twist, const size_t twist_stride,
-                               float *exp, const size_t exp_pitch,
-                               const size_t exp_stride, size_t size) {
+__global__ void exp_so3_kernel(const float *twist, const size_t twist_stride, float *exp,
+                               const size_t exp_pitch, const size_t exp_stride, size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -469,10 +458,8 @@ __global__ void exp_so3_kernel(const float *twist, const size_t twist_stride,
  * @param size Number of rotation matrices to process.
  * @param twist Output twist vectors (3D, device pointer).
  */
-__global__ void log_so3_kernel(const float *rotation_matrix,
-                               const size_t rotation_pitch,
-                               const size_t rotation_stride,
-                               const size_t twist_stride, size_t size,
+__global__ void log_so3_kernel(const float *rotation_matrix, const size_t rotation_pitch,
+                               const size_t rotation_stride, const size_t twist_stride, size_t size,
                                float *twist) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
@@ -500,9 +487,9 @@ __global__ void log_so3_kernel(const float *rotation_matrix,
  * @param transform_stride Stride between consecutive transform matrices.
  * @param size Number of twist vectors to process.
  */
-__global__ void exp_se3_kernel(const float *twist, const size_t twist_stride,
-                               float *transform, const size_t transform_pitch,
-                               const size_t transform_stride, size_t size) {
+__global__ void exp_se3_kernel(const float *twist, const size_t twist_stride, float *transform,
+                               const size_t transform_pitch, const size_t transform_stride,
+                               size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -519,7 +506,7 @@ __global__ void exp_se3_kernel(const float *twist, const size_t twist_stride,
   for (int i = 12; i < 15; i++) {
     update[i] = 0;
   }
-  update[15] = 1; // set last row to [0, 0, 0, 1]
+  update[15] = 1;  // set last row to [0, 0, 0, 1]
 
   const size_t update_pitch = 4;
 
@@ -561,9 +548,8 @@ __global__ void exp_se3_kernel(const float *twist, const size_t twist_stride,
  * @param jacobian_stride Stride between consecutive Jacobian matrices.
  * @param size Number of twist vectors to process.
  */
-__global__ void jacobian_so3_kernel(bool left, const float *twist,
-                                    const size_t twist_stride, float *jacobian,
-                                    const size_t jacobian_pitch,
+__global__ void jacobian_so3_kernel(bool left, const float *twist, const size_t twist_stride,
+                                    float *jacobian, const size_t jacobian_pitch,
                                     const size_t jacobian_stride, size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
@@ -604,9 +590,8 @@ __global__ void jacobian_so3_kernel(bool left, const float *twist,
  * @param size Number of twist vectors to process.
  */
 __global__ void __launch_bounds__(256, 4)
-    jacobian_inverse_so3_kernel(bool left, const float *twist,
-                                const size_t twist_stride, float *jacobian_inv,
-                                const size_t jacobian_inv_pitch,
+    jacobian_inverse_so3_kernel(bool left, const float *twist, const size_t twist_stride,
+                                float *jacobian_inv, const size_t jacobian_inv_pitch,
                                 const size_t jacobian_inv_stride, size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
@@ -641,9 +626,9 @@ __global__ void __launch_bounds__(256, 4)
  * @param dst_matrix Output negated matrices (device pointer).
  */
 __global__ void negate_matrices_kernel(const size_t rows, const size_t cols,
-                                       const float *src_matrix,
-                                       const size_t pitch, const size_t stride,
-                                       size_t num_matrices, float *dst_matrix) {
+                                       const float *src_matrix, const size_t pitch,
+                                       const size_t stride, size_t num_matrices,
+                                       float *dst_matrix) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_matrices) {
     return;
@@ -676,11 +661,9 @@ __global__ void negate_matrices_kernel(const size_t rows, const size_t cols,
  * @param size Number of transforms to process.
  * @param twist Output twist vectors (6D, device pointer).
  */
-__global__ void log_se3_kernel(const float *transform,
-                               const size_t transform_pitch,
-                               const size_t transform_stride,
-                               const size_t twist_stride, size_t size,
-                               float *twist) {
+__global__ void log_se3_kernel(const float *transform, const size_t transform_pitch,
+                               const size_t transform_stride, const size_t twist_stride,
+                               size_t size, float *twist) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -700,14 +683,11 @@ __global__ void log_se3_kernel(const float *transform,
   float J_inv[9];
   compute_so3_jacobian_left_inverse(twist_se3, J_inv, 3);
 
-  twist_se3[3] = J_inv[0 * 3 + 0] * translation[0] +
-                 J_inv[0 * 3 + 1] * translation[1] +
+  twist_se3[3] = J_inv[0 * 3 + 0] * translation[0] + J_inv[0 * 3 + 1] * translation[1] +
                  J_inv[0 * 3 + 2] * translation[2];
-  twist_se3[4] = J_inv[1 * 3 + 0] * translation[0] +
-                 J_inv[1 * 3 + 1] * translation[1] +
+  twist_se3[4] = J_inv[1 * 3 + 0] * translation[0] + J_inv[1 * 3 + 1] * translation[1] +
                  J_inv[1 * 3 + 2] * translation[2];
-  twist_se3[5] = J_inv[2 * 3 + 0] * translation[0] +
-                 J_inv[2 * 3 + 1] * translation[1] +
+  twist_se3[5] = J_inv[2 * 3 + 0] * translation[0] + J_inv[2 * 3 + 1] * translation[1] +
                  J_inv[2 * 3 + 2] * translation[2];
 
   memcpy(twist_ptr, twist_se3, 6 * sizeof(float));
@@ -729,11 +709,9 @@ __global__ void log_se3_kernel(const float *transform,
  * @param adjoint Output adjoint matrices (6x6, device pointer).
  */
 __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
-                                   const size_t transform_pitch,
-                                   const size_t transform_stride,
-                                   const size_t adjoint_pitch,
-                                   const size_t adjoint_stride, size_t size,
-                                   float *adjoint) {
+                                   const size_t transform_pitch, const size_t transform_stride,
+                                   const size_t adjoint_pitch, const size_t adjoint_stride,
+                                   size_t size, float *adjoint) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -742,12 +720,10 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
   float *adjoint_ptr = adjoint + tid * adjoint_stride;
   const float *transform_ptr = transform + tid * transform_stride;
 
-  float k = inverse ? -1.0f : 1.0f;
-
   float translation[3];
-  translation[0] = k * transform_ptr[0 * transform_pitch + 3];
-  translation[1] = k * transform_ptr[1 * transform_pitch + 3];
-  translation[2] = k * transform_ptr[2 * transform_pitch + 3];
+  translation[0] = transform_ptr[0 * transform_pitch + 3];
+  translation[1] = transform_ptr[1 * transform_pitch + 3];
+  translation[2] = transform_ptr[2 * transform_pitch + 3];
 
   float R[9];
 #pragma unroll
@@ -757,21 +733,31 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
     memcpy(dst, src, 3 * sizeof(float));
   }
 
+  // For Ad(T) with T = (R, t): Ad(T) = [[R, 0], [skew(t) * R, R]].
+  // For Ad(T^{-1}) = Ad(T)^{-1}, use R' = R^T and t' = -R^T * t (the
+  // rotation/translation of T^{-1}), then the same block formula applies:
+  // Ad(T^{-1}) = [[R', 0], [skew(t') * R', R']].
   if (inverse) {
-    // transpose R
+    // transpose R in place -> R'
     swap(R[0 * 3 + 1], R[1 * 3 + 0]);
     swap(R[0 * 3 + 2], R[2 * 3 + 0]);
     swap(R[1 * 3 + 2], R[2 * 3 + 1]);
+
+    // t' = -R' * t = -R^T * t
+    float t0 = translation[0], t1 = translation[1], t2 = translation[2];
+    translation[0] = -(R[0] * t0 + R[1] * t1 + R[2] * t2);
+    translation[1] = -(R[3] * t0 + R[4] * t1 + R[5] * t2);
+    translation[2] = -(R[6] * t0 + R[7] * t1 + R[8] * t2);
   }
 
 #pragma unroll
   for (uint8_t i = 0; i < 3; i++) {
-    // adjoint[0:3, 0:3] = R
+    // adjoint[0:3, 0:3] = R (or R' for the inverse)
     float *src = &R[i * 3];
     float *dst = &adjoint_ptr[i * adjoint_pitch];
     memcpy(dst, src, 3 * sizeof(float));
 
-    // adjoint[3:6, 3:6] = R
+    // adjoint[3:6, 3:6] = R (or R' for the inverse)
     dst = &adjoint_ptr[(i + 3) * adjoint_pitch + 3];
     memcpy(dst, src, 3 * sizeof(float));
 
@@ -780,15 +766,13 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
     memset(dst, 0, 3 * sizeof(float));
   }
 
+  // adjoint[3:6, 0:3] = skew(translation) * R  (matrix product order matters:
+  // this must be skew(t) * R, NOT R * skew(t))
   float skew[9];
   compute_skew_matrix(translation, skew, 3);
 
   float temp[9];
-  if (inverse) {
-    matmul_3x3(skew, R, temp);
-  } else {
-    matmul_3x3(R, skew, temp);
-  }
+  matmul_3x3(skew, R, temp);
 
 #pragma unroll
   for (uint8_t i = 0; i < 3; i++) {
@@ -814,9 +798,8 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
  * @param jacobian_stride Stride between consecutive Jacobian matrices.
  * @param size Number of twist vectors to process.
  */
-__global__ void jacobian_se3_kernel(bool left, const float *twist,
-                                    const size_t twist_stride, float *jacobian,
-                                    const size_t jacobian_pitch,
+__global__ void jacobian_se3_kernel(bool left, const float *twist, const size_t twist_stride,
+                                    float *jacobian, const size_t jacobian_pitch,
                                     const size_t jacobian_stride, size_t size) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
@@ -877,16 +860,14 @@ __global__ void jacobian_se3_kernel(bool left, const float *twist,
  *   - Q-block negation fused into the final store (eliminates separate negate
  * loop)
  */
-constexpr size_t se3_jac_inv_block_size =
-    128; ///< Block size for SE(3) inverse Jacobian kernel (tuned for register
-         ///< pressure).
+constexpr size_t se3_jac_inv_block_size = 128;  ///< Block size for SE(3) inverse Jacobian kernel
+                                                ///< (tuned for register pressure).
 
 __global__ void __launch_bounds__(128, 4)
     jacobian_inverse_se3_kernel(bool left, const float *__restrict__ twist,
-                                const size_t twist_stride,
-                                float *__restrict__ jacobian,
-                                const size_t jacobian_pitch,
-                                const size_t jacobian_stride, size_t size) {
+                                const size_t twist_stride, float *__restrict__ jacobian,
+                                const size_t jacobian_pitch, const size_t jacobian_stride,
+                                size_t size) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= size) {
     return;
@@ -965,10 +946,8 @@ __global__ void __launch_bounds__(128, 4)
  * @param inverse_transform Output inverse transformation matrices (4x4, device
  * pointer).
  */
-__global__ void inverse_se3_kernel(const float *transform,
-                                   const size_t transform_pitch,
-                                   const size_t transform_stride,
-                                   const size_t inverse_pitch,
+__global__ void inverse_se3_kernel(const float *transform, const size_t transform_pitch,
+                                   const size_t transform_stride, const size_t inverse_pitch,
                                    const size_t inverse_stride, size_t size,
                                    float *inverse_transform) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -999,12 +978,9 @@ __global__ void inverse_se3_kernel(const float *transform,
   swap(pose[0 * 4 + 2], pose[2 * 4 + 0]);
   swap(pose[1 * 4 + 2], pose[2 * 4 + 1]);
 
-  pose[0 * 4 + 3] =
-      -(pose[0 * 4 + 0] * t1 + pose[0 * 4 + 1] * t2 + pose[0 * 4 + 2] * t3);
-  pose[1 * 4 + 3] =
-      -(pose[1 * 4 + 0] * t1 + pose[1 * 4 + 1] * t2 + pose[1 * 4 + 2] * t3);
-  pose[2 * 4 + 3] =
-      -(pose[2 * 4 + 0] * t1 + pose[2 * 4 + 1] * t2 + pose[2 * 4 + 2] * t3);
+  pose[0 * 4 + 3] = -(pose[0 * 4 + 0] * t1 + pose[0 * 4 + 1] * t2 + pose[0 * 4 + 2] * t3);
+  pose[1 * 4 + 3] = -(pose[1 * 4 + 0] * t1 + pose[1 * 4 + 1] * t2 + pose[1 * 4 + 2] * t3);
+  pose[2 * 4 + 3] = -(pose[2 * 4 + 0] * t1 + pose[2 * 4 + 1] * t2 + pose[2 * 4 + 2] * t3);
 
 #pragma unroll
   for (uint8_t i = 0; i < 4; i++) {
@@ -1021,128 +997,114 @@ __global__ void inverse_se3_kernel(const float *transform,
  * Launches the CUDA kernel to compute skew-symmetric matrices from twist
  * vectors.
  */
-void ComputeSkewSO3(cudaStream_t stream, const float *twist,
-                    const size_t twist_stride, const size_t skew_pitch,
-                    const size_t skew_stride, size_t size, float *skew) {
+void ComputeSkewSO3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                    const size_t skew_pitch, const size_t skew_stride, size_t size, float *skew) {
   size_t num_blocks = (size + block_size - 1) / block_size;
-  skew_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      twist, twist_stride, skew, skew_pitch, skew_stride, size);
+  skew_so3_kernel<<<num_blocks, block_size, 0, stream>>>(twist, twist_stride, skew, skew_pitch,
+                                                         skew_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeNegateMatrix */
-void ComputeNegateMatrix(cudaStream_t stream, const float *matrix, size_t rows,
-                         size_t cols, const size_t pitch, const size_t stride,
-                         size_t size, float *negated_matrix) {
+void ComputeNegateMatrix(cudaStream_t stream, const float *matrix, size_t rows, size_t cols,
+                         const size_t pitch, const size_t stride, size_t size,
+                         float *negated_matrix) {
   size_t num_blocks = (size + block_size - 1) / block_size;
-  negate_matrices_kernel<<<num_blocks, block_size, 0, stream>>>(
-      rows, cols, matrix, pitch, stride, size, negated_matrix);
+  negate_matrices_kernel<<<num_blocks, block_size, 0, stream>>>(rows, cols, matrix, pitch, stride,
+                                                                size, negated_matrix);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeInverseSE3 */
-void ComputeInverseSE3(cudaStream_t stream, const float *transform,
-                       const size_t transform_pitch,
-                       const size_t transform_stride,
-                       const size_t inverse_pitch, const size_t inverse_stride,
-                       size_t size, float *inverse_transform) {
+void ComputeInverseSE3(cudaStream_t stream, const float *transform, const size_t transform_pitch,
+                       const size_t transform_stride, const size_t inverse_pitch,
+                       const size_t inverse_stride, size_t size, float *inverse_transform) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   inverse_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      transform, transform_pitch, transform_stride, inverse_pitch,
-      inverse_stride, size, inverse_transform);
+      transform, transform_pitch, transform_stride, inverse_pitch, inverse_stride, size,
+      inverse_transform);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeExpSO3 */
-void ComputeExpSO3(cudaStream_t stream, const float *twist,
-                   const size_t twist_stride, const size_t rotation_pitch,
-                   const size_t rotation_stride, size_t size, float *rotation) {
+void ComputeExpSO3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                   const size_t rotation_pitch, const size_t rotation_stride, size_t size,
+                   float *rotation) {
   size_t num_blocks = (size + block_size - 1) / block_size;
-  exp_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      twist, twist_stride, rotation, rotation_pitch, rotation_stride, size);
+  exp_so3_kernel<<<num_blocks, block_size, 0, stream>>>(twist, twist_stride, rotation,
+                                                        rotation_pitch, rotation_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 /** @copydoc ComputeLogSO3 */
-void ComputeLogSO3(cudaStream_t stream, const float *rotation,
-                   const size_t rotation_pitch, const size_t rotation_stride,
-                   const size_t twist_stride, size_t size, float *twist) {
+void ComputeLogSO3(cudaStream_t stream, const float *rotation, const size_t rotation_pitch,
+                   const size_t rotation_stride, const size_t twist_stride, size_t size,
+                   float *twist) {
   size_t num_blocks = (size + block_size - 1) / block_size;
-  log_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      rotation, rotation_pitch, rotation_stride, twist_stride, size, twist);
+  log_so3_kernel<<<num_blocks, block_size, 0, stream>>>(rotation, rotation_pitch, rotation_stride,
+                                                        twist_stride, size, twist);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianLeftSO3 */
-void ComputeJacobianLeftSO3(cudaStream_t stream, const float *twist,
-                            const size_t twist_stride,
-                            const size_t jacobian_pitch,
-                            const size_t jacobian_stride, size_t size,
+void ComputeJacobianLeftSO3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                            const size_t jacobian_pitch, const size_t jacobian_stride, size_t size,
                             float *jacobian) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   constexpr bool left = true;
-  jacobian_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      left, twist, twist_stride, jacobian, jacobian_pitch, jacobian_stride,
-      size);
+  jacobian_so3_kernel<<<num_blocks, block_size, 0, stream>>>(left, twist, twist_stride, jacobian,
+                                                             jacobian_pitch, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianRightSO3 */
-void ComputeJacobianRightSO3(cudaStream_t stream, const float *twist,
-                             const size_t twist_stride,
-                             const size_t jacobian_pitch,
-                             const size_t jacobian_stride, size_t size,
+void ComputeJacobianRightSO3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                             const size_t jacobian_pitch, const size_t jacobian_stride, size_t size,
                              float *jacobian) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   constexpr bool left = false;
-  jacobian_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      left, twist, twist_stride, jacobian, jacobian_pitch, jacobian_stride,
-      size);
+  jacobian_so3_kernel<<<num_blocks, block_size, 0, stream>>>(left, twist, twist_stride, jacobian,
+                                                             jacobian_pitch, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianLeftInverseSO3 */
 void ComputeJacobianLeftInverseSO3(cudaStream_t stream, const float *twist,
-                                   const size_t twist_stride,
-                                   const size_t jacobian_inv_pitch,
-                                   const size_t jacobian_inv_stride,
-                                   size_t size, float *jacobian_inv) {
+                                   const size_t twist_stride, const size_t jacobian_inv_pitch,
+                                   const size_t jacobian_inv_stride, size_t size,
+                                   float *jacobian_inv) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   constexpr bool left = true;
   jacobian_inverse_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      left, twist, twist_stride, jacobian_inv, jacobian_inv_pitch,
-      jacobian_inv_stride, size);
+      left, twist, twist_stride, jacobian_inv, jacobian_inv_pitch, jacobian_inv_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianRightInverseSO3 */
 void ComputeJacobianRightInverseSO3(cudaStream_t stream, const float *twist,
-                                    const size_t twist_stride,
-                                    const size_t jacobian_inv_pitch,
-                                    const size_t jacobian_inv_stride,
-                                    size_t size, float *jacobian_inv) {
+                                    const size_t twist_stride, const size_t jacobian_inv_pitch,
+                                    const size_t jacobian_inv_stride, size_t size,
+                                    float *jacobian_inv) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   constexpr bool left = false;
   jacobian_inverse_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      left, twist, twist_stride, jacobian_inv, jacobian_inv_pitch,
-      jacobian_inv_stride, size);
+      left, twist, twist_stride, jacobian_inv, jacobian_inv_pitch, jacobian_inv_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeExpSE3 */
-void ComputeExpSE3(cudaStream_t stream, const float *twist,
-                   const size_t twist_stride, const size_t transform_pitch,
-                   const size_t transform_stride, size_t size,
+void ComputeExpSE3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                   const size_t transform_pitch, const size_t transform_stride, size_t size,
                    float *transform) {
   size_t num_blocks = (size + block_size - 1) / block_size;
-  exp_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      twist, twist_stride, transform, transform_pitch, transform_stride, size);
+  exp_se3_kernel<<<num_blocks, block_size, 0, stream>>>(twist, twist_stride, transform,
+                                                        transform_pitch, transform_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeLogSE3 */
-void ComputeLogSE3(cudaStream_t stream, const float *transform,
-                   const size_t transform_pitch, const size_t transform_stride,
-                   const size_t twist_stride, size_t size, float *twist) {
+void ComputeLogSE3(cudaStream_t stream, const float *transform, const size_t transform_pitch,
+                   const size_t transform_stride, const size_t twist_stride, size_t size,
+                   float *twist) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   log_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
       transform, transform_pitch, transform_stride, twist_stride, size, twist);
@@ -1150,91 +1112,71 @@ void ComputeLogSE3(cudaStream_t stream, const float *transform,
 }
 
 /** @copydoc ComputeAdjointSE3 */
-void ComputeAdjointSE3(cudaStream_t stream, const float *transform,
-                       const size_t transform_pitch,
-                       const size_t transform_stride,
-                       const size_t adjoint_pitch, const size_t adjoint_stride,
-                       size_t size, float *adjoint) {
+void ComputeAdjointSE3(cudaStream_t stream, const float *transform, const size_t transform_pitch,
+                       const size_t transform_stride, const size_t adjoint_pitch,
+                       const size_t adjoint_stride, size_t size, float *adjoint) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   bool inverse = false;
-  adjoint_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      inverse, transform, transform_pitch, transform_stride, adjoint_pitch,
-      adjoint_stride, size, adjoint);
+  adjoint_se3_kernel<<<num_blocks, block_size, 0, stream>>>(inverse, transform, transform_pitch,
+                                                            transform_stride, adjoint_pitch,
+                                                            adjoint_stride, size, adjoint);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeInverseAdjointSE3 */
 void ComputeInverseAdjointSE3(cudaStream_t stream, const float *transform,
-                              const size_t transform_pitch,
-                              const size_t transform_stride,
-                              const size_t inv_adjoint_pitch,
-                              const size_t inv_adjoint_stride, size_t size,
-                              float *inv_adjoint) {
+                              const size_t transform_pitch, const size_t transform_stride,
+                              const size_t inv_adjoint_pitch, const size_t inv_adjoint_stride,
+                              size_t size, float *inv_adjoint) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   bool inverse = true;
-  adjoint_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      inverse, transform, transform_pitch, transform_stride, inv_adjoint_pitch,
-      inv_adjoint_stride, size, inv_adjoint);
+  adjoint_se3_kernel<<<num_blocks, block_size, 0, stream>>>(inverse, transform, transform_pitch,
+                                                            transform_stride, inv_adjoint_pitch,
+                                                            inv_adjoint_stride, size, inv_adjoint);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianLeftSE3 */
-void ComputeJacobianLeftSE3(cudaStream_t stream, const float *twist,
-                            const size_t twist_stride,
-                            const size_t jacobian_pitch,
-                            const size_t jacobian_stride, size_t size,
+void ComputeJacobianLeftSE3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                            const size_t jacobian_pitch, const size_t jacobian_stride, size_t size,
                             float *jacobian) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   constexpr bool left = true;
-  jacobian_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      left, twist, twist_stride, jacobian, jacobian_pitch, jacobian_stride,
-      size);
+  jacobian_se3_kernel<<<num_blocks, block_size, 0, stream>>>(left, twist, twist_stride, jacobian,
+                                                             jacobian_pitch, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianLeftInverseSE3 */
 void ComputeJacobianLeftInverseSE3(cudaStream_t stream, const float *twist,
-                                   const size_t twist_stride,
-                                   const size_t jacobian_pitch,
-                                   const size_t jacobian_stride, size_t size,
-                                   float *jacobian) {
-  size_t num_blocks =
-      (size + se3_jac_inv_block_size - 1) / se3_jac_inv_block_size;
+                                   const size_t twist_stride, const size_t jacobian_pitch,
+                                   const size_t jacobian_stride, size_t size, float *jacobian) {
+  size_t num_blocks = (size + se3_jac_inv_block_size - 1) / se3_jac_inv_block_size;
   constexpr bool left = true;
-  jacobian_inverse_se3_kernel<<<num_blocks, se3_jac_inv_block_size, 0,
-                                stream>>>(left, twist, twist_stride, jacobian,
-                                          jacobian_pitch, jacobian_stride,
-                                          size);
+  jacobian_inverse_se3_kernel<<<num_blocks, se3_jac_inv_block_size, 0, stream>>>(
+      left, twist, twist_stride, jacobian, jacobian_pitch, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianRightSE3 */
-void ComputeJacobianRightSE3(cudaStream_t stream, const float *twist,
-                             const size_t twist_stride,
-                             const size_t jacobian_pitch,
-                             const size_t jacobian_stride, size_t size,
+void ComputeJacobianRightSE3(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                             const size_t jacobian_pitch, const size_t jacobian_stride, size_t size,
                              float *jacobian) {
   size_t num_blocks = (size + block_size - 1) / block_size;
   constexpr bool left = false;
-  jacobian_se3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      left, twist, twist_stride, jacobian, jacobian_pitch, jacobian_stride,
-      size);
+  jacobian_se3_kernel<<<num_blocks, block_size, 0, stream>>>(left, twist, twist_stride, jacobian,
+                                                             jacobian_pitch, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 /** @copydoc ComputeJacobianRightInverseSE3 */
 void ComputeJacobianRightInverseSE3(cudaStream_t stream, const float *twist,
-                                    const size_t twist_stride,
-                                    const size_t jacobian_pitch,
-                                    const size_t jacobian_stride, size_t size,
-                                    float *jacobian) {
-  size_t num_blocks =
-      (size + se3_jac_inv_block_size - 1) / se3_jac_inv_block_size;
+                                    const size_t twist_stride, const size_t jacobian_pitch,
+                                    const size_t jacobian_stride, size_t size, float *jacobian) {
+  size_t num_blocks = (size + se3_jac_inv_block_size - 1) / se3_jac_inv_block_size;
   constexpr bool left = false;
-  jacobian_inverse_se3_kernel<<<num_blocks, se3_jac_inv_block_size, 0,
-                                stream>>>(left, twist, twist_stride, jacobian,
-                                          jacobian_pitch, jacobian_stride,
-                                          size);
+  jacobian_inverse_se3_kernel<<<num_blocks, se3_jac_inv_block_size, 0, stream>>>(
+      left, twist, twist_stride, jacobian, jacobian_pitch, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 /**
@@ -1242,8 +1184,7 @@ void ComputeJacobianRightInverseSE3(cudaStream_t stream, const float *twist,
  *
  * For R = [[a,b,c],[d,e,f],[g,h,i]], computes R^T = [[a,d,g],[b,e,h],[c,f,i]].
  */
-__global__ void transpose_so3_kernel(const float *rotations,
-                                     size_t input_stride, float *transposed,
+__global__ void transpose_so3_kernel(const float *rotations, size_t input_stride, float *transposed,
                                      size_t output_stride, size_t n) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)n) {
@@ -1263,12 +1204,11 @@ __global__ void transpose_so3_kernel(const float *rotations,
 }
 
 /** @copydoc ComputeTransposeSO3 */
-void ComputeTransposeSO3(cudaStream_t stream, const float *rotation,
-                         size_t input_stride, size_t output_stride, size_t size,
-                         float *transposed) {
+void ComputeTransposeSO3(cudaStream_t stream, const float *rotation, size_t input_stride,
+                         size_t output_stride, size_t size, float *transposed) {
   size_t num_blocks = (size + block_size - 1) / block_size;
-  transpose_so3_kernel<<<num_blocks, block_size, 0, stream>>>(
-      rotation, input_stride, transposed, output_stride, size);
+  transpose_so3_kernel<<<num_blocks, block_size, 0, stream>>>(rotation, input_stride, transposed,
+                                                              output_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -1286,9 +1226,8 @@ constexpr size_t kSO2MathBlockSize = 256;
  *        [sin(theta),  cos(theta)]]
  * stored in row-major order (4 floats).
  */
-__global__ void exp_so2_kernel(const float *angles, size_t angle_stride,
-                               float *rotations, size_t rotation_stride,
-                               size_t size) {
+__global__ void exp_so2_kernel(const float *angles, size_t angle_stride, float *rotations,
+                               size_t rotation_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -1311,9 +1250,8 @@ __global__ void exp_so2_kernel(const float *angles, size_t angle_stride,
  * Extracts the angle from R via Log(R) = atan2(R[1,0], R[0,0]).
  * For R = [[c,-s],[s,c]], this returns atan2(s, c) = theta.
  */
-__global__ void log_so2_kernel(const float *rotations, size_t rotation_stride,
-                               float *angles, size_t angle_stride,
-                               size_t size) {
+__global__ void log_so2_kernel(const float *rotations, size_t rotation_stride, float *angles,
+                               size_t angle_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -1329,8 +1267,7 @@ __global__ void log_so2_kernel(const float *rotations, size_t rotation_stride,
  * For R = [[a,b],[c,d]], computes R^T = [[a,c],[b,d]].
  * Since R is orthogonal, R^T = R^{-1}.
  */
-__global__ void transpose_so2_kernel(const float *rotations,
-                                     size_t input_stride, float *transposed,
+__global__ void transpose_so2_kernel(const float *rotations, size_t input_stride, float *transposed,
                                      size_t output_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
@@ -1346,27 +1283,24 @@ __global__ void transpose_so2_kernel(const float *rotations,
   Rt[3] = R[3];
 }
 
-void ComputeExpSO2(cudaStream_t stream, const float *angles,
-                   size_t angle_stride, size_t rotation_stride, size_t size,
-                   float *rotations) {
+void ComputeExpSO2(cudaStream_t stream, const float *angles, size_t angle_stride,
+                   size_t rotation_stride, size_t size, float *rotations) {
   size_t num_blocks = (size + kSO2MathBlockSize - 1) / kSO2MathBlockSize;
-  exp_so2_kernel<<<num_blocks, kSO2MathBlockSize, 0, stream>>>(
-      angles, angle_stride, rotations, rotation_stride, size);
+  exp_so2_kernel<<<num_blocks, kSO2MathBlockSize, 0, stream>>>(angles, angle_stride, rotations,
+                                                               rotation_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSO2(cudaStream_t stream, const float *rotations,
-                   size_t rotation_stride, size_t angle_stride, size_t size,
-                   float *angles) {
+void ComputeLogSO2(cudaStream_t stream, const float *rotations, size_t rotation_stride,
+                   size_t angle_stride, size_t size, float *angles) {
   size_t num_blocks = (size + kSO2MathBlockSize - 1) / kSO2MathBlockSize;
-  log_so2_kernel<<<num_blocks, kSO2MathBlockSize, 0, stream>>>(
-      rotations, rotation_stride, angles, angle_stride, size);
+  log_so2_kernel<<<num_blocks, kSO2MathBlockSize, 0, stream>>>(rotations, rotation_stride, angles,
+                                                               angle_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeTransposeSO2(cudaStream_t stream, const float *rotations,
-                         size_t input_stride, size_t output_stride, size_t size,
-                         float *transposed) {
+void ComputeTransposeSO2(cudaStream_t stream, const float *rotations, size_t input_stride,
+                         size_t output_stride, size_t size, float *transposed) {
   size_t num_blocks = (size + kSO2MathBlockSize - 1) / kSO2MathBlockSize;
   transpose_so2_kernel<<<num_blocks, kSO2MathBlockSize, 0, stream>>>(
       rotations, input_stride, transposed, output_stride, size);
@@ -1393,9 +1327,8 @@ constexpr size_t kSE2MathBlockSize = 256;
  *
  * For |theta| < 1e-3, V approaches I and [tx, ty] ~ [v_x, v_y].
  */
-__global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride,
-                               float *transforms, size_t transform_stride,
-                               size_t size) {
+__global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, float *transforms,
+                               size_t transform_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -1446,9 +1379,8 @@ __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride,
  *   V^{-1} = (theta / (2*(1-cos))) * R_pi/2 * ((c-1)*I + s*J) * [tx,ty]
  * where R_pi/2 rotates by 90 degrees: (x,y) -> (-y, x).
  */
-__global__ void log_se2_kernel(const float *transforms, size_t transform_stride,
-                               float *tangent, size_t tangent_stride,
-                               size_t size) {
+__global__ void log_se2_kernel(const float *transforms, size_t transform_stride, float *tangent,
+                               size_t tangent_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -1486,10 +1418,8 @@ __global__ void log_se2_kernel(const float *transforms, size_t transform_stride,
  * For a 2D rigid transform T = [R t; 0 1] with R orthogonal,
  * the inverse is [R^T, -R^T*t; 0 1].
  */
-__global__ void inverse_se2_kernel(const float *transforms,
-                                   size_t transform_stride,
-                                   float *inverse_transforms,
-                                   size_t inverse_stride, size_t size) {
+__global__ void inverse_se2_kernel(const float *transforms, size_t transform_stride,
+                                   float *inverse_transforms, size_t inverse_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -1527,8 +1457,7 @@ __global__ void inverse_se2_kernel(const float *transforms,
  * For |alpha| < 1e-3 (near identity): J_r^{-1} ~ I + small corrections.
  */
 __global__ void __launch_bounds__(256, 4)
-    jacobian_right_inverse_se2_kernel(const float *tangent,
-                                      size_t tangent_stride, float *jacobians,
+    jacobian_right_inverse_se2_kernel(const float *tangent, size_t tangent_stride, float *jacobians,
                                       size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
@@ -1568,27 +1497,24 @@ __global__ void __launch_bounds__(256, 4)
   }
 }
 
-void ComputeExpSE2(cudaStream_t stream, const float *tangent,
-                   size_t tangent_stride, size_t transform_stride, size_t size,
-                   float *transforms) {
+void ComputeExpSE2(cudaStream_t stream, const float *tangent, size_t tangent_stride,
+                   size_t transform_stride, size_t size, float *transforms) {
   size_t num_blocks = (size + kSE2MathBlockSize - 1) / kSE2MathBlockSize;
-  exp_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0, stream>>>(
-      tangent, tangent_stride, transforms, transform_stride, size);
+  exp_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0, stream>>>(tangent, tangent_stride, transforms,
+                                                               transform_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSE2(cudaStream_t stream, const float *transforms,
-                   size_t transform_stride, size_t tangent_stride, size_t size,
-                   float *tangent) {
+void ComputeLogSE2(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                   size_t tangent_stride, size_t size, float *tangent) {
   size_t num_blocks = (size + kSE2MathBlockSize - 1) / kSE2MathBlockSize;
-  log_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0, stream>>>(
-      transforms, transform_stride, tangent, tangent_stride, size);
+  log_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0, stream>>>(transforms, transform_stride,
+                                                               tangent, tangent_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeInverseSE2(cudaStream_t stream, const float *transforms,
-                       size_t transform_stride, size_t inverse_stride,
-                       size_t size, float *inverse_transforms) {
+void ComputeInverseSE2(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                       size_t inverse_stride, size_t size, float *inverse_transforms) {
   size_t num_blocks = (size + kSE2MathBlockSize - 1) / kSE2MathBlockSize;
   inverse_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0, stream>>>(
       transforms, transform_stride, inverse_transforms, inverse_stride, size);
@@ -1596,14 +1522,12 @@ void ComputeInverseSE2(cudaStream_t stream, const float *transforms,
 }
 
 void ComputeJacobianRightInverseSE2(cudaStream_t stream, const float *tangent,
-                                    size_t tangent_stride,
-                                    size_t jacobian_stride, size_t size,
+                                    size_t tangent_stride, size_t jacobian_stride, size_t size,
                                     float *jacobians) {
   size_t num_blocks = (size + kSE2MathBlockSize - 1) / kSE2MathBlockSize;
-  jacobian_right_inverse_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0,
-                                      stream>>>(
+  jacobian_right_inverse_se2_kernel<<<num_blocks, kSE2MathBlockSize, 0, stream>>>(
       tangent, tangent_stride, jacobians, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-} // namespace cunls
+}  // namespace cunls

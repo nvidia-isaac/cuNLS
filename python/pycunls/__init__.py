@@ -57,8 +57,11 @@ from pycunls._pycunls_core import (
     # --- Enumerations ---
     SparseLinearSolverType,
     ColumnScaling,
+    JacobianMode,
+    NumericDiffMethod,
     # --- Minimizer options & summary ---
     MinimizerOptions,
+    NumericDiffOptions,
     MinimizerSummary,
     LevenbergMarquardtMinimizerOptions,
     # --- Minimizers ---
@@ -129,7 +132,10 @@ __all__ = [
     "CublasHandle",
     "SparseLinearSolverType",
     "ColumnScaling",
+    "JacobianMode",
+    "NumericDiffMethod",
     "MinimizerOptions",
+    "NumericDiffOptions",
     "MinimizerSummary",
     "LevenbergMarquardtMinimizerOptions",
     "GaussNewtonMinimizer",

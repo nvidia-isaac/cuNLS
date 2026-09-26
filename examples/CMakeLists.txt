@@ -54,3 +54,8 @@ add_cunls_example(
   motion_prior_example
   "${CMAKE_CURRENT_SOURCE_DIR}/motion_prior/main.cpp"
 )
+
+add_cunls_example(
+  pnp_example
+  "${CMAKE_CURRENT_SOURCE_DIR}/pnp/main.cpp"
+)

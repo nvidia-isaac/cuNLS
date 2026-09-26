@@ -25,6 +25,7 @@ User Guide
    installation
    tutorial
    quick_start
+   numeric_jacobians
    testing
    licensing
 

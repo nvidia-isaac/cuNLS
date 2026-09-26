@@ -37,7 +37,9 @@ namespace cunls {
  * matrix)
  *
  * The Jacobians are computed with respect to both state blocks using the
- * left and right Jacobians of SE(3).
+ * left and right Jacobians of SE(3): J_left = -J_l^{-1}(r) * Ad(Delta),
+ * J_right = J_r^{-1}(r). These follow from SE3StateBatch::Plus applying a
+ * right-multiplicative local update (T' = T * Exp(eps)).
  *
  * @note The pose_deltas pointer must point to GPU device memory and remain
  *       valid for the lifetime of this object. The memory layout is:

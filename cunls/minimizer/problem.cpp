@@ -30,10 +30,11 @@ namespace cunls {
  * @param factor_batch Pointer to the factor batch.
  * @param state_pointers Device pointers to state blocks.
  */
-void Problem::AddFactorBatch(FactorBatch *factor_batch,
-                             const std::vector<float *> &state_pointers) {
+void Problem::AddFactorBatch(FactorBatch *factor_batch, const std::vector<float *> &state_pointers,
+                             std::optional<JacobianMode> jacobian_mode_override) {
   state_pointers_.emplace_back(state_pointers);
   residual_batches_.emplace_back(factor_batch, nullptr);
+  jacobian_mode_overrides_.emplace_back(jacobian_mode_override);
 }
 
 /**
@@ -46,11 +47,12 @@ void Problem::AddFactorBatch(FactorBatch *factor_batch,
  * @param loss_function_batch Pointer to the loss function batch.
  * @param state_pointers Device pointers to state blocks.
  */
-void Problem::AddFactorBatch(FactorBatch *factor_batch,
-                             LossFunctionBatch *loss_function_batch,
-                             const std::vector<float *> &state_pointers) {
+void Problem::AddFactorBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_function_batch,
+                             const std::vector<float *> &state_pointers,
+                             std::optional<JacobianMode> jacobian_mode_override) {
   state_pointers_.emplace_back(state_pointers);
   residual_batches_.emplace_back(factor_batch, loss_function_batch);
+  jacobian_mode_overrides_.emplace_back(jacobian_mode_override);
 }
 
 /**
@@ -58,9 +60,7 @@ void Problem::AddFactorBatch(FactorBatch *factor_batch,
  *
  * @param state_batch Pointer to the state batch.
  */
-void Problem::AddStateBatch(StateBatch *state_batch) {
-  state_batches_.push_back(state_batch);
-}
+void Problem::AddStateBatch(StateBatch *state_batch) { state_batches_.push_back(state_batch); }
 
 /**
  * @brief Validates that all inputs are non-null and sizes are consistent.
@@ -181,18 +181,24 @@ bool Problem::CheckConsistency() const {
 }
 
 /** @brief Gets the residual batches. */
-const std::vector<ResidualBatch> &Problem::GetResidualBatches() const {
-  return residual_batches_;
-}
+const std::vector<ResidualBatch> &Problem::GetResidualBatches() const { return residual_batches_; }
 
 /** @brief Gets the state batches. */
-const std::vector<StateBatch *> &Problem::GetStateBatches() const {
-  return state_batches_;
-}
+const std::vector<StateBatch *> &Problem::GetStateBatches() const { return state_batches_; }
 
 /** @brief Gets the per-residual-batch state pointer arrays. */
 const std::vector<std::vector<float *>> &Problem::GetStatePointers() const {
   return state_pointers_;
 }
 
-} // namespace cunls
+/** @brief Resolves the effective Jacobian mode for a residual batch. */
+JacobianMode Problem::JacobianModeFor(size_t residual_batch_index,
+                                      JacobianMode global_default) const {
+  if (residual_batch_index < jacobian_mode_overrides_.size() &&
+      jacobian_mode_overrides_[residual_batch_index].has_value()) {
+    return *jacobian_mode_overrides_[residual_batch_index];
+  }
+  return global_default;
+}
+
+}  // namespace cunls

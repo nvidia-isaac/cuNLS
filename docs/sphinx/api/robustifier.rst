@@ -324,9 +324,9 @@ gradient and Gauss-Newton system without recomputing :math:`\rho`.
   output :math:`(\rho(s), \rho'(s), \rho''(s))` is used to compute
   :math:`\alpha` and the scaling factors :math:`\sqrt{\rho'}` and
   :math:`(1-\alpha)^{-1}` applied to residuals and Jacobians in the solver.
-  For more detail, see the Ceres Solver documentation on
-  `LossFunction <http://ceres-solver.org/nnls_modeling.html#lossfunction>`_
-  and the references therein (e.g. Triggs).
+  This is the standard "Triggs correction" used by robust nonlinear
+  least-squares solvers to keep a Gauss-Newton-style Jacobian approximation
+  valid under a robust loss.
 
 ================================================================================
 Python API (``pycunls``)

@@ -150,6 +150,12 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream, const Problem &prob
  *
  * Evaluates all factor batches to compute residual values and their Jacobian
  * matrices.  Both are dense per-factor blocks, concatenated across batches.
+ * Per residual batch, either the FactorBatch's analytic Jacobian is used
+ * directly (via ResidualBatch::Evaluate, which also applies any registered
+ * loss function), or a finite-difference Jacobian is built via
+ * `numeric_diff_builder_` from the raw residual-only evaluation, with loss
+ * scaling then applied via `ResidualBatch::ApplyLoss` so both paths see
+ * identical loss handling.
  *
  * @param stream CUDA stream for GPU operations.
  * @param problem The optimization problem.
@@ -157,9 +163,11 @@ float GaussNewtonMinimizer::ComputeCost(cudaStream_t stream, const Problem &prob
  * @param[out] residuals Output residual vector.
  * @param[out] jacobians Output per-factor dense Jacobian blocks.
  */
-void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
-                                const MinimizerState &minimizer_state, dvector<float> &residuals,
-                                PerFactorJacobians &jacobians, dvector<uint8_t> &buffer) {
+void GaussNewtonMinimizer::ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
+                                                      const MinimizerState &minimizer_state,
+                                                      dvector<float> &residuals,
+                                                      PerFactorJacobians &jacobians,
+                                                      dvector<uint8_t> &buffer) {
   const auto &state_pointers = minimizer_state.GetStatePointers();
   const auto &residual_batches = problem.GetResidualBatches();
   size_t max_n = 0;
@@ -178,10 +186,24 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto &rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
-
-    rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, nullptr, jacobian_ptr);
-
     const auto &factor_batch = rb.GetFactorBatch();
+
+    JacobianMode mode = problem.JacobianModeFor(i, options_.jacobian_mode);
+    if (mode == JacobianMode::kAnalytic) {
+      rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, nullptr, jacobian_ptr);
+    } else {
+      // Raw (pre-loss) residual + finite-difference Jacobian, then apply any
+      // registered loss function to both in place -- exactly mirrors what
+      // ResidualBatch::Evaluate would have done after an analytic
+      // FactorBatch::Evaluate call.
+      factor_batch->Evaluate(residuals_ptr, nullptr, ptrs, stream);
+      numeric_diff_builder_.Compute(stream, problem, i, minimizer_state, residuals_ptr,
+                                    jacobian_ptr, options_.numeric_diff_options);
+      if (rb.GetLossFunction() != nullptr) {
+        rb.ApplyLoss(stream, workspace_ptr, residuals_ptr, nullptr, jacobian_ptr);
+      }
+    }
+
     size_t num_residuals = factor_batch->NumFactors() * factor_batch->ResidualsSize();
     residuals_ptr += num_residuals;
 

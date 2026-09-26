@@ -52,6 +52,15 @@ Abstract base (:code:`cunls/factor/factor_batch.h`).
 
   :returns: [out] Number of factors in the batch.
 
+**Residual-only factors.** ``Evaluate`` must support ``jacobians == nullptr``
+(residual-only evaluation) — this is required for cost-only evaluation, and
+it is also all that's needed to opt a factor into cuNLS's numeric
+(finite-difference) Jacobians: a factor whose ``Evaluate`` never writes to
+``jacobians`` at all still satisfies this interface, and can be solved by
+registering it with ``JacobianMode::kNumeric`` (see
+:doc:`../numeric_jacobians` and :ref:`minimizer-jacobian-mode-label`) instead
+of implementing a Jacobian by hand.
+
 SizedFactorBatch<kResidualSize, ...kStateBlockSizes>
 ----------------------------------------------------
 
@@ -1800,6 +1809,16 @@ and Jacobian computation that is not available as a built-in factor.
 
   Return ``True`` on success.  The default implementation raises
   ``NotImplementedError``.
+
+**Skipping the Jacobian entirely.** ``evaluate`` only has to write to
+``jacobians_ptr`` when it is non-zero and you intend to supply an analytic
+Jacobian. A custom factor that never writes to it — even when
+``jacobians_ptr`` is non-zero — still satisfies the contract, and can be
+registered with ``jacobian_mode_override=pycunls.JacobianMode.numeric`` in
+:py:meth:`Problem.add_factor_batch` to have cuNLS differentiate it via
+finite differences instead. See :doc:`../numeric_jacobians` for details and
+:ref:`pycunls_tutorial:Custom Factor with a Numeric Jacobian` for a worked
+Python example.
 
 .. _py-warp-factor-batch:
 

@@ -17,10 +17,12 @@
 
 #pragma once
 
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
 #include "cunls/factor/factor_batch.h"
+#include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/residual_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
 #include "cunls/state/state_batch.h"
@@ -40,7 +42,7 @@ namespace cunls {
  * instance to its corresponding state blocks on the GPU.
  */
 class Problem {
-public:
+ public:
   /**
    * @brief Adds a factor batch without a loss function.
    *
@@ -52,9 +54,14 @@ public:
    * @param state_pointers Host-side list of device pointers to state blocks for
    * each factor instance, flattened in row-major order: [cf0_state0,
    * cf0_state1, ..., cfN_stateM]. The problem stores a copy on the host.
+   * @param jacobian_mode_override Optional per-group override of the
+   * minimizer's global `MinimizerOptions::jacobian_mode`. When set, this
+   * factor batch always uses the given mode regardless of the minimizer's
+   * default; when `std::nullopt` (default), the minimizer's global default
+   * applies. See `JacobianModeFor`.
    */
-  void AddFactorBatch(FactorBatch *factor_batch,
-                      const std::vector<float *> &state_pointers);
+  void AddFactorBatch(FactorBatch *factor_batch, const std::vector<float *> &state_pointers,
+                      std::optional<JacobianMode> jacobian_mode_override = std::nullopt);
 
   /**
    * @brief Adds a factor batch with a robust loss function.
@@ -68,10 +75,13 @@ public:
    * @param state_pointers Host-side list of device pointers to state blocks for
    * each factor instance, flattened in row-major order: [cf0_state0,
    * cf0_state1, ..., cfN_stateM]. The problem stores a copy on the host.
+   * @param jacobian_mode_override Optional per-group override of the
+   * minimizer's global `MinimizerOptions::jacobian_mode`; see the other
+   * `AddFactorBatch` overload.
    */
-  void AddFactorBatch(FactorBatch *factor_batch,
-                      LossFunctionBatch *loss_function_batch,
-                      const std::vector<float *> &state_pointers);
+  void AddFactorBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_function_batch,
+                      const std::vector<float *> &state_pointers,
+                      std::optional<JacobianMode> jacobian_mode_override = std::nullopt);
 
   /**
    * @brief Adds a state batch to the problem.
@@ -121,7 +131,20 @@ public:
    */
   const std::vector<std::vector<float *>> &GetStatePointers() const;
 
-private:
+  /**
+   * @brief Resolves the effective Jacobian mode for a residual batch.
+   *
+   * Returns the per-group override registered via `AddFactorBatch` if one
+   * was given, otherwise `global_default` (typically
+   * `MinimizerOptions::jacobian_mode`).
+   *
+   * @param residual_batch_index Index into `GetResidualBatches()`.
+   * @param global_default Minimizer-wide default mode.
+   * @return The effective JacobianMode for this residual batch.
+   */
+  JacobianMode JacobianModeFor(size_t residual_batch_index, JacobianMode global_default) const;
+
+ private:
   /**
    * @brief Validates that all inputs are non-null and sizes are consistent.
    *
@@ -139,13 +162,15 @@ private:
    */
   bool CheckGraphConnectivity() const;
 
-private:
-  std::vector<ResidualBatch>
-      residual_batches_;                    ///< Registered residual batches.
-  std::vector<StateBatch *> state_batches_; ///< Registered state batches.
-  std::vector<std::vector<float *>>
-      state_pointers_; ///< Host copies of per-residual-batch state pointer
-                       ///< lists.
+ private:
+  std::vector<ResidualBatch> residual_batches_;       ///< Registered residual batches.
+  std::vector<StateBatch *> state_batches_;           ///< Registered state batches.
+  std::vector<std::vector<float *>> state_pointers_;  ///< Host copies of per-residual-batch state
+                                                      ///< pointer lists.
+  std::vector<std::optional<JacobianMode>>
+      jacobian_mode_overrides_;  ///< Per-residual-batch JacobianMode
+                                 ///< override, index-aligned with
+                                 ///< residual_batches_.
 };
 
-} // namespace cunls
+}  // namespace cunls

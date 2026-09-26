@@ -7,6 +7,7 @@ add_library(cunls_minimizer OBJECT
   levenberg_marquardt_minimizer.cpp
   minimizer_state.cu
   normal_equations.cu
+  numeric_diff_jacobian.cu
   problem.cpp
   residual_batch.cu
   sparse_matrix.cu
