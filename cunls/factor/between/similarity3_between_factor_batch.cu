@@ -48,16 +48,13 @@ __global__ void collect_and_compute_sim3_between_error_kernel(float const *const
   const float l_inv_s = L[15];
   const float s = 1.0f / l_inv_s;
 
-  // L^{-1}: rotation part = R^T/s^2 (where sR = upper-left 3x3 of L)
-  // det(sR) = s^3*det(R) = s^3, so (sR)^{-1} = adj(sR)/s^3
-  // For orthogonal R: (sR)^{-1} = R^T/s
-  const float inv_s = l_inv_s;
-  const float i00 = l00 * inv_s, i01 = l10 * inv_s, i02 = l20 * inv_s;
-  const float i10 = l01 * inv_s, i11 = l11 * inv_s, i12 = l21 * inv_s;
-  const float i20 = l02 * inv_s, i21 = l12 * inv_s, i22 = l22 * inv_s;
-  const float i03 = -(i00 * l03 + i01 * l13 + i02 * l23);
-  const float i13 = -(i10 * l03 + i11 * l13 + i12 * l23);
-  const float i23 = -(i20 * l03 + i21 * l13 + i22 * l23);
+  // L = [R t; 0 1/s]  =>  L^{-1} = [R^T, -s*R^T*t; 0, s]
+  const float i00 = l00, i01 = l10, i02 = l20;
+  const float i10 = l01, i11 = l11, i12 = l21;
+  const float i20 = l02, i21 = l12, i22 = l22;
+  const float i03 = -s * (i00 * l03 + i01 * l13 + i02 * l23);
+  const float i13 = -s * (i10 * l03 + i11 * l13 + i12 * l23);
+  const float i23 = -s * (i20 * l03 + i21 * l13 + i22 * l23);
   const float i33 = s;
 
   // Load R

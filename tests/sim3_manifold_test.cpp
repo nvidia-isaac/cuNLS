@@ -276,7 +276,7 @@ TEST(Sim3ManifoldTest, BetweenLMConvergence) {
 
   for (size_t i = 0; i < kN; ++i) {
     for (size_t j = 0; j < 16; ++j) {
-      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 0.1f) << "transform " << i << ", element " << j;
+      ASSERT_NEAR(opt_left[i][j], opt_right[i][j], 1e-4f) << "transform " << i << ", element " << j;
     }
   }
 }
