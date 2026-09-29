@@ -123,6 +123,8 @@ cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=87-real
 
 The cuDSS archive (`CUDSS_PLATFORM=auto`) follows the CUDA Toolkit target: `linux-x86_64`,
 `linux-aarch64` for Jetson toolkits, or `linux-sbsa` for Arm server toolkits and CUDA 13 on Jetson.
+Toolkits installed without a `targets/` directory (e.g. distro packages under `/usr`) fall back to
+`linux-x86_64` on x86_64 and require an explicit platform on aarch64.
 Set `-DCUDSS_PLATFORM` explicitly to override it.
 
 ## Quick Start

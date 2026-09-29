@@ -60,9 +60,15 @@ function(add_cudss)
         break()
       endif()
     endforeach()
+    # Scattered installations (e.g. distro packages under /usr) have no targets/<target>-linux directory.
+    # x86_64 has a single cuDSS platform, but aarch64 could be either Jetson or SBSA.
     if(_cudss_platform STREQUAL "auto")
-      message(FATAL_ERROR "Cannot determine the CUDA Toolkit target from '${CUDAToolkit_INCLUDE_DIRS}'. "
-                          "Set CUDSS_PLATFORM to linux-x86_64, linux-aarch64, or linux-sbsa.")
+      if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+        set(_cudss_platform "linux-x86_64")
+      else()
+        message(FATAL_ERROR "Cannot determine the CUDA Toolkit target from '${CUDAToolkit_INCLUDE_DIRS}'. "
+                            "Set CUDSS_PLATFORM to linux-aarch64 (Jetson) or linux-sbsa.")
+      endif()
     endif()
   endif()
 
