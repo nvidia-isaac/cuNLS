@@ -113,6 +113,20 @@ cmake --install build
 By default this builds a shared library. Pass `-DBUILD_SHARED_LIBS=OFF` to
 build a static library instead.
 
+CUDA compiler and architecture selections supplied by the caller are preserved. Without one,
+`/usr/local/cuda/bin/nvcc` is used when it exists. For example, a native Jetson Orin build can avoid
+PTX JIT compatibility requirements by compiling an SM 87 cubin:
+
+```bash
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=87-real
+```
+
+The cuDSS archive (`CUDSS_PLATFORM=auto`) follows the CUDA Toolkit target: `linux-x86_64`,
+`linux-aarch64` for Jetson toolkits, or `linux-sbsa` for Arm server toolkits and CUDA 13 on Jetson.
+Toolkits installed without a `targets/` directory (e.g. distro packages under `/usr`) fall back to
+`linux-x86_64` on x86_64 and require an explicit platform on aarch64.
+Set `-DCUDSS_PLATFORM` explicitly to override it.
+
 ## Quick Start
 
 The following minimal program solves a 1-D prior problem: a scalar variable $x$ pulled toward a target $o = 2$.
