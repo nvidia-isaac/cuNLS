@@ -53,6 +53,11 @@ class PnPFactorBatch : public SizedFactorBatch<2, 6> {
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream) const final;
 
+  /** @copydoc FactorBatch::EvaluateIndexed */
+  bool EvaluateIndexed(float *residuals, float *jacobians, float const *const *state_pointers,
+                       const int *factor_ids, size_t num_items,
+                       cudaStream_t stream) const override;
+
   size_t NumFactors() const final { return num_observations_; }
 
  private:

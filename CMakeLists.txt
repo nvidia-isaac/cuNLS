@@ -226,6 +226,10 @@ if(BUILD_TESTING)
     tests/numeric_diff_jacobian_test.cpp
     tests/numeric_diff_minimizer_test.cpp
     tests/numeric_diff_perf_test.cpp
+    tests/ransac_test_support.cu
+    tests/ransac_minimizer_test.cpp
+    tests/ransac_benchmark_test.cpp
+    tests/indexed_evaluation_test.cpp
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)

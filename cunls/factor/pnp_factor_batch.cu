@@ -24,6 +24,7 @@
  */
 
 #include "cunls/factor/pnp_factor_batch.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 
 namespace cunls {
 
@@ -39,20 +40,22 @@ constexpr size_t kPnPBlockSize = 256;
 __global__ void pnp_fused_kernel(const Vector<2> *observations, const Vector<3> *points_world,
                                  float const *const *state_pointers,
                                  const SE3Transform *poses_camera_from_rig, float *residuals,
-                                 float *jacobians, float z_threshold, int num_observations) {
+                                 float *jacobians, float z_threshold, int num_items,
+    const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_observations) return;
+  if (tid >= num_items) return;
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   constexpr int kResidualDim = 2;
   constexpr int kJacobianCols = 6;
 
   const float *__restrict__ rig = state_pointers[tid];
-  const Vector<3> &P = points_world[tid];
+  const Vector<3> &P = points_world[m];
 
   float pose[12];
 
   if (poses_camera_from_rig != nullptr) {
-    const float *__restrict__ E = poses_camera_from_rig[tid].data();
+    const float *__restrict__ E = poses_camera_from_rig[m].data();
 
     const float e00 = E[0], e01 = E[1], e02 = E[2], e03 = E[3];
     const float e10 = E[4], e11 = E[5], e12 = E[6], e13 = E[7];
@@ -94,7 +97,7 @@ __global__ void pnp_fused_kernel(const Vector<2> *observations, const Vector<3> 
       res_ptr[1] = 0.0f;
     } else {
       inv_z = __frcp_rn(point_cam[2]);
-      const auto &obs = observations[tid];
+      const auto &obs = observations[m];
       res_ptr[0] = point_cam[0] * inv_z - obs[0];
       res_ptr[1] = point_cam[1] * inv_z - obs[1];
     }
@@ -166,16 +169,19 @@ PnPFactorBatch::PnPFactorBatch(const Vector<2> *observations,
 
 bool PnPFactorBatch::Evaluate(float *residuals, float *jacobians,
                               float const *const *state_pointers, cudaStream_t stream) const {
-  if (num_observations_ == 0) {
+  return EvaluateIndexed(residuals, jacobians, state_pointers, nullptr, num_observations_, stream);
+}
+
+bool PnPFactorBatch::EvaluateIndexed(float *residuals, float *jacobians,
+                                     float const *const *state_pointers, const int *factor_ids,
+                                     size_t num_items, cudaStream_t stream) const {
+  if (num_items == 0 || num_observations_ == 0) {
     return true;
   }
-
-  size_t num_blocks = (num_observations_ + kPnPBlockSize - 1) / kPnPBlockSize;
-
+  const size_t num_blocks = (num_items + kPnPBlockSize - 1) / kPnPBlockSize;
   pnp_fused_kernel<<<num_blocks, kPnPBlockSize, 0, stream>>>(
       observations_, points_world_, state_pointers, poses_camera_from_rig_, residuals, jacobians,
-      z_threshold_, static_cast<int>(num_observations_));
-
+      z_threshold_, static_cast<int>(num_items), factor_ids, static_cast<int>(num_observations_));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }

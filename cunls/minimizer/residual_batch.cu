@@ -219,7 +219,26 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *resid
 
 bool ResidualBatch::ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
                               float *jacobians) const {
-  int num_residuals = static_cast<int>(factor_batch_->NumFactors());
+  return ApplyLossToItems(stream, workspace, residuals, cost, jacobians,
+                          factor_batch_->NumFactors());
+}
+
+bool ResidualBatch::EvaluateIndexed(cudaStream_t stream, float *workspace, float *residuals,
+                                    float const *const *state_pointers, const int *factor_ids,
+                                    size_t num_items, float *cost, float *jacobians) const {
+  if (num_items == 0) {
+    return true;
+  }
+  if (!factor_batch_->EvaluateIndexed(residuals, jacobians, state_pointers, factor_ids, num_items,
+                                      stream)) {
+    return false;
+  }
+  return ApplyLossToItems(stream, workspace, residuals, cost, jacobians, num_items);
+}
+
+bool ResidualBatch::ApplyLossToItems(cudaStream_t stream, float *workspace, float *residuals,
+                                     float *cost, float *jacobians, size_t num_items) const {
+  int num_residuals = static_cast<int>(num_items);
   int residual_dim = static_cast<int>(factor_batch_->ResidualsSize());
 
   if (num_residuals == 0) {

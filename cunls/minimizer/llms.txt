@@ -20,6 +20,12 @@ optimization.
 - `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
 - `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
 - `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
+- `ransac_minimizer.h`: `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
+  `RansacMinimizerOptions`, `RansacSummary` (RANSAC over an ordinary `Problem`
+  whose total free tangent dimension is <= `kMaxRansacTangentDim` = 64)
+- `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout`, `SlotReplicas`,
+  `SlotEvaluator`, `SlotSet`, `HypothesisSampler`, `HypothesisScorer`,
+  `RansacContext`, and kernels (`ransac_kernels.h` declares all launchers)
 
 ## Solver flow
 
@@ -39,3 +45,19 @@ optimization.
   factor and the solver supports it, otherwise as scalar CSR. This is chosen
   automatically inside `NormalEquations`; no user-facing option, and no storage
   branch outside that class.
+
+## RANSAC minimizers
+
+- Use only `FactorBatch::Evaluate` and `StateBatch::Plus`; no extra API for
+  factor or state authors. Design: `docs/design/ransac_minimizers.md`.
+- Each hypothesis (slot) owns a replica of every state batch with a free block;
+  fully constant batches are shared.
+- Minimal samples are disjoint within a "wave" (keyed Feistel permutation, no
+  sort), so one `Evaluate` per sampled batch serves every hypothesis of a wave.
+  `Plus`, always-on factors and scoring take one call per hypothesis.
+- Per-hypothesis normal equations (register-tiled, no atomics), Jacobi-
+  equilibrated Cholesky / pivoted LDLT (warp or block per slot) and scoring are
+  deterministic (fixed reduction order): same seed, same bits.
+- By default an inlier must have a non-zero Jacobian on a free block
+  (`require_informative_inliers`), which stops zero-residual degenerate
+  configurations (e.g. PnP points behind the camera) from scoring as perfect.

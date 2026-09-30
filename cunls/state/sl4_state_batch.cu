@@ -69,6 +69,10 @@ SL4StateBatch::SL4StateBatch(cuBLASHandle &cublas_handle,
 void SL4StateBatch::Plus(const float *x, const float *delta,
                          float *x_plus_delta, cudaStream_t stream) {
   const int n = static_cast<int>(NumStateBlocks());
+  // Scratch follows the call-time count (PlusReplicated presents several copies
+  // as one batch); resize keeps capacity, so this allocates at most once.
+  twists_.resize(static_cast<size_t>(n) * 15);
+  delta_transforms_.resize(static_cast<size_t>(n));
 
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
       twists_.data(), delta, static_cast<size_t>(n) * 15 * sizeof(float),

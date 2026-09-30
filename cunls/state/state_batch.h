@@ -74,6 +74,32 @@ public:
                     cudaStream_t stream) = 0;
 
   /**
+   * @brief Applies Plus() to `num_replicas` contiguous copies of this batch.
+   *
+   * Copy r of each argument starts at r * NumStateBlocks() blocks:
+   * x + r * NumStateBlocks() * AmbientSize() (same for x_plus_delta) and
+   * delta + r * NumStateBlocks() * TangentSize().
+   *
+   * Optional. The default calls Plus() once per copy, which is always correct;
+   * built-in state batches override it with a single launch. Used by the
+   * RANSAC minimizers, which keep one copy of each state batch per hypothesis.
+   *
+   * @param x            Device pointer to num_replicas copies of the states.
+   * @param delta        Device pointer to num_replicas copies of the updates.
+   * @param x_plus_delta Device pointer to num_replicas output copies.
+   * @param num_replicas Number of copies.
+   * @param stream       CUDA stream for asynchronous execution.
+   */
+  virtual void PlusReplicated(const float *x, const float *delta, float *x_plus_delta,
+                              size_t num_replicas, cudaStream_t stream) {
+    const size_t states = NumStateBlocks() * AmbientSize();
+    const size_t tangents = NumStateBlocks() * TangentSize();
+    for (size_t r = 0; r < num_replicas; ++r) {
+      Plus(x + r * states, delta + r * tangents, x_plus_delta + r * states, stream);
+    }
+  }
+
+  /**
    * @brief Returns a mutable device pointer to a specific state block.
    *
    * @param state_block_idx Zero-based index of the state block.

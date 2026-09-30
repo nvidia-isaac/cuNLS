@@ -23,6 +23,9 @@ operations for applying tangent-space updates.
 - Backed by user-provided contiguous device memory.
 - Optional constant state IDs mark fixed blocks excluded from optimization.
 - `StateBlockDevicePtr(i)` returns pointers into underlying batch storage.
+- Optional `PlusReplicated(x, delta, out, copies, stream)` applies Plus to
+  contiguous copies; default loops over `Plus`, built-ins launch once via
+  `SizedStateBatch::PlusReplicatedAsOneBatch`.
 
 ## Related modules
 

@@ -54,6 +54,40 @@ class FactorBatch {
   virtual bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                         cudaStream_t stream) const = 0;
 
+  /**
+   * @brief Evaluates arbitrary (factor, state set) items in one call.
+   *
+   * Item t evaluates the measurement of factor `factor_ids[t]` against the
+   * state blocks `state_pointers[t * StateBlockSizes().size() + b]`. Outputs
+   * are laid out exactly as by Evaluate(), per item: residuals +
+   * t * ResidualsSize(), jacobians + t * ResidualsSize() * (sum of block
+   * sizes). With `factor_ids == nullptr`, item t uses factor t % NumFactors(),
+   * i.e. the batch evaluated against num_items / NumFactors() state sets.
+   *
+   * Optional. The default returns false ("not supported") and callers fall
+   * back to one Evaluate() per state set. Built-in factor batches implement
+   * it; the RANSAC minimizers use it to evaluate every hypothesis in one launch.
+   *
+   * @param residuals Output, num_items * ResidualsSize() floats.
+   * @param jacobians Output or nullptr.
+   * @param state_pointers Device array of num_items * StateBlockSizes().size() pointers.
+   * @param factor_ids Device array of num_items factor indices, or nullptr.
+   * @param num_items Number of items.
+   * @param stream CUDA stream for asynchronous execution.
+   * @return true if evaluated, false if not supported (nothing was written).
+   */
+  virtual bool EvaluateIndexed(float *residuals, float *jacobians,
+                               float const *const *state_pointers, const int *factor_ids,
+                               size_t num_items, cudaStream_t stream) const {
+    (void)residuals;
+    (void)jacobians;
+    (void)state_pointers;
+    (void)factor_ids;
+    (void)num_items;
+    (void)stream;
+    return false;
+  }
+
   /** @brief Virtual destructor for safe polymorphic deletion. */
   virtual ~FactorBatch() = default;
 

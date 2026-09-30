@@ -41,6 +41,10 @@ manifold-generic, compile-time-deduced facade:
 - `Evaluate()` writes residuals and optionally Jacobians in contiguous batched
   layouts documented in each header.
 - `state_pointers` is a flattened pointer array, grouped per factor.
+- Optional `EvaluateIndexed(residuals, jacobians, state_pointers, factor_ids,
+  num_items, stream)`: item t evaluates factor `factor_ids[t]` (or t % N) with
+  its own pointer row; default returns false. Implemented by PnP,
+  Reprojection, SE3 prior and SE3 between (`indexed_evaluation.cuh` helper).
 
 ## Related modules
 

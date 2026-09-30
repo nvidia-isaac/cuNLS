@@ -137,6 +137,32 @@ class ResidualBatch {
                  float *jacobians) const;
 
   /**
+   * @brief Evaluates items through FactorBatch::EvaluateIndexed and applies
+   * the loss, like Evaluate() does for the whole batch.
+   *
+   * @param workspace Device scratch of ResidualBatchWorkspaceNumFloats(num_items) floats.
+   * @param residuals Output, num_items * ResidualsSize() floats.
+   * @param state_pointers Device array, num_items * StateBlockSizes().size() pointers.
+   * @param factor_ids Device array of num_items factor indices, or nullptr
+   *        (item t uses factor t % NumFactors()).
+   * @param num_items Number of items.
+   * @param cost Optional per-item cost output.
+   * @param jacobians Optional Jacobian output.
+   * @return False if the factor batch does not support indexed evaluation;
+   *         nothing is written then.
+   */
+  bool EvaluateIndexed(cudaStream_t stream, float *workspace, float *residuals,
+                       float const *const *state_pointers, const int *factor_ids,
+                       size_t num_items, float *cost, float *jacobians) const;
+
+ private:
+  /** @brief ApplyLoss over `num_items` residual blocks. */
+  bool ApplyLossToItems(cudaStream_t stream, float *workspace, float *residuals, float *cost,
+                        float *jacobians, size_t num_items) const;
+
+ public:
+
+  /**
    * @brief Gets the factor batch.
    *
    * @return Pointer to the associated factor batch.
