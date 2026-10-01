@@ -476,13 +476,14 @@ read ``ids[t]``, whether or not the caller passed factor ids:
                     num_factor_ids):
            n = num_factor_ids
            ids = self.factor_ids(factor_ids_ptr, n)
-           ab = gather_states(sp_ptr, n)   # item t's state -> ab[t] (see note below)
+           ab = gather_states(sp_ptr, n, stream_handle)  # item t's state -> ab[t] (see note)
            ...                             # wrap res / jac, launch line_kernel with dim=n
            return True
 
 Warp kernels cannot dereference the ``float*`` table directly, so the Warp
 examples first gather the item states into a contiguous array with a small
-CuPy kernel (``_gather_state_values`` in ``python/examples/custom_warp_factor.py``).
+CuPy kernel on cuNLS's stream (``gather_state_values`` / ``gather_state_pairs``
+in ``python/examples/example_utils/gpu.py``).
 Gather **per item** (``n * B`` pointers), not per factor. Complete Warp
 versions: ``python/examples/custom_warp_factor.py`` and
 ``python/examples/custom_warp_state.py``, and the :doc:`pycunls_tutorial`.

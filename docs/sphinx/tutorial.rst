@@ -162,165 +162,87 @@ BA code walkthrough
 ~~~~~~~~~~~~~~~~~~~
 
 **Step 1 — Generate synthetic data.**
-We create random camera poses via the SE(3) exponential map. Random 3D
-points are sampled and filtered so that every point has positive depth in all
-cameras. Each ground-truth point is perturbed to create a noisy initial
-estimate. Poses :math:`T_1, \ldots, T_{M-1}` are also perturbed with small
-SE(3) transforms while :math:`T_0` stays at ground truth.
+``MakeBundleAdjustmentScene`` returns ground-truth SE(3) poses and 3D points
+(every point in front of every camera), a perturbed initial guess (pose
+:math:`T_0` stays exact), and the normalized observation of every point in
+every camera.
+The scene comes from ``examples/utils/datasets.h``; the generators are ordinary
+host code and are not part of the lesson.
 
-.. code-block:: cpp
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 1.
+   :end-before: // 2.
+   :dedent: 4
 
-   const size_t num_poses  = 6;
-   const size_t num_points = 800;
-   const size_t num_observations = num_poses * num_points;
+**Step 2 — Upload to the GPU.**
+``dvector`` owns device memory. The initial guess is uploaded into the
+buffers the solver will update in place; ``constant_pose_ids`` lists the
+gauge anchor.
 
-   // Generate ground-truth SE(3) camera poses from random twists.
-   std::vector<SE3Transform> gt_poses;
-   GenerateRandomPoses(num_poses, gt_poses);
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 2.
+   :end-before: // 3.
+   :dedent: 4
 
-   // Sample 3D points that are visible from every camera (positive depth).
-   std::vector<Vector<3>> gt_points(num_points);
-   std::vector<Vector<3>> initial_points(num_points);
-   for (size_t i = 0; i < num_points; ++i) {
-     // ... sample until depth > kMinDepth in all cameras ...
-     initial_points[i] = gt_points[i];
-     initial_points[i][0] += noise_dist(rng);
-     initial_points[i][1] += noise_dist(rng);
-     initial_points[i][2] += noise_dist(rng);
-   }
+**Step 3 — Wrap the device memory in state batches.**
+A state batch wraps device memory without copying it. Poses use
+`SE3StateBatch` with block 0 marked constant; points use `VectorStateBatch<3>`
+(see :doc:`api/state`).
 
-   // Perturb poses T_1...T_{M-1}; T_0 stays at ground truth.
-   const size_t num_perturbed = num_poses - 1;
-   std::vector<SE3Transform> perturbations;
-   examples::GenerateRandomSE3(num_perturbed, rng, perturbations, 0.02f, 0.1f);
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 3.
+   :end-before: // 4.
+   :dedent: 4
 
-   std::vector<SE3Transform> initial_poses(num_poses);
-   initial_poses[0] = gt_poses[0];
-   for (size_t i = 0; i < num_perturbed; ++i) {
-     initial_poses[i + 1] =
-         examples::ComposeSE3(perturbations[i], gt_poses[i + 1]);
-   }
+**Step 4 — Build the reprojection factor batch and its state pointers.**
+Each reprojection factor reads two state blocks, ``[pose, point]``. The
+state-pointer list is flattened in factor order, two pointers per factor, and
+tells cuNLS which blocks every factor reads. ``z_threshold`` guards points
+almost behind a camera (see :doc:`api/factor`).
 
-**Step 2 — Create 2D observations.**
-Each camera observes every 3D point. Observations are in **normalized** image
-coordinates (no intrinsics). This is the format
-`ReprojectionFactorBatch` expects (see :doc:`api/factor`).
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 4.
+   :end-before: // 5.
+   :dedent: 4
 
-.. code-block:: cpp
+**Step 5 — Assemble the problem.**
+`Problem` connects state batches and factor batches. ``CheckConsistency``
+verifies that every state pointer lies inside a registered state batch.
 
-   // Project ground-truth points through each camera to get observations.
-   // Normalized coordinates: p_cam = T * p_world, obs = (x/z, y/z).
-   std::vector<Vector<2>> observations(num_observations);
-   for (size_t pose_idx = 0; pose_idx < num_poses; ++pose_idx) {
-     for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
-       const size_t obs_idx = pose_idx * num_points + point_idx;
-       observations[obs_idx] =
-           examples::ProjectNormalized(gt_poses[pose_idx], gt_points[point_idx]);
-     }
-   }
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 5.
+   :end-before: // 6.
+   :dedent: 4
 
-**Step 3 — Upload data to the GPU and build state batches.**
-The perturbed poses and noisy points are uploaded to the device. Camera
-poses are wrapped in an `SE3StateBatch` with only :math:`T_0` marked
-constant (gauge anchor); the remaining poses are optimized jointly with
-the 3D points in a `VectorStateBatch<3>`.
-
-.. code-block:: cpp
-
-   dvector<SE3Transform> poses_device(initial_poses);
-   dvector<Vector<3>>    points_device(initial_points);
-   dvector<Vector<2>>    observations_device(observations);
-
-   // Mark only the first camera pose as constant (gauge anchor).
-   std::vector<int> const_pose_ids = {0};
-   dvector<int> const_pose_ids_device(const_pose_ids);
-
-   cunls::cuBLASHandle cublas_handle;
-   cunls::SE3StateBatch pose_states(
-       cublas_handle, reinterpret_cast<const float*>(poses_device.data()),
-       num_poses, const_pose_ids_device.data(), 1);
-   cunls::VectorStateBatch<3> point_states(
-       reinterpret_cast<const float*>(points_device.data()), num_points);
-
-**Step 4 — Build the reprojection factor batch.**
-Each factor consumes two state blocks: one camera pose and one 3D point.
-The ``z_threshold`` guards against numerical instability when a point
-is nearly behind the camera.
-
-.. code-block:: cpp
-
-   cunls::ReprojectionFactorBatch reproj_factor(
-       observations_device.data(), num_observations, kZThreshold);
-
-**Step 5 — Create the state-pointer map and assemble the problem.**
-The state-pointer vector is a flattened list of device pointers, two per
-factor: ``[pose_ptr, point_ptr]``. This tells the solver which state
-blocks each factor reads. The ordering must match
-`ReprojectionFactorBatch`'s expected layout
-(see :doc:`api/factor`).
-
-.. code-block:: cpp
-
-   // Flatten factor connectivity: [pose_0, point_0, pose_0, point_1, ...].
-   std::vector<float*> state_pointers;
-   state_pointers.reserve(2 * num_observations);
-   for (size_t pose_idx = 0; pose_idx < num_poses; ++pose_idx) {
-     for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
-       state_pointers.push_back(pose_states.StateBlockDevicePtr(pose_idx));
-       state_pointers.push_back(point_states.StateBlockDevicePtr(point_idx));
-     }
-   }
-
-   cunls::Problem problem;
-   problem.AddStateBatch(&pose_states);
-   problem.AddStateBatch(&point_states);
-   problem.AddFactorBatch(&reproj_factor, state_pointers);
-   problem.CheckConsistency();
-
-**Step 6 — Configure and run the Levenberg-Marquardt solver.**
+**Step 6 — Solve with Levenberg-Marquardt.**
 `LevenbergMarquardtMinimizer` (see :doc:`api/minimizer`) solves the damped
-normal equations at each iteration and adapts the damping parameter
-:math:`\lambda` based on step quality. The minimizer attaches GPU workspace
-from an internal pool during initialization when needed.
+normal equations each iteration and adapts :math:`\lambda` from the step
+quality. ``Minimize`` writes the solution back into the state batches'
+memory.
 
-.. code-block:: cpp
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 6.
+   :end-before: // 7.
+   :dedent: 4
 
-   cunls::MinimizerOptions options;
-   options.max_num_iterations = 80;
-   options.state_tolerance    = 1e-8f;
-   options.cost_tolerance     = 1e-8f;
+**Step 7 — Read back and validate.**
+Copy the optimized poses and points back to the host, compare them with
+the ground truth, print the summary, and turn the quality check into the
+exit code.
 
-   cunls::LevenbergMarquardtMinimizerOptions lm_options;
-   lm_options.base_options  = options;
-   lm_options.initial_lambda = 1e-3f;
-   cunls::LevenbergMarquardtMinimizer minimizer(lm_options);
+.. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
+   :language: cpp
+   :start-at: // 7.
+   :end-before: } catch
+   :dedent: 4
 
-   cunls::CudaStream stream;
-   const auto summary = minimizer.Minimize(stream.GetStream(), problem);
-   cudaStreamSynchronize(stream.GetStream());
 
-**Step 7 — Read back results.**
-After optimization, copy the updated poses and 3D points from the device
-and compare against ground truth. Both point MSE and pose MSE are reported.
-
-.. code-block:: cpp
-
-   std::vector<SE3Transform> optimized_poses(num_poses);
-   poses_device.CopyToHost(optimized_poses.data(), num_poses);
-
-   std::vector<Vector<3>> optimized_points(num_points);
-   points_device.CopyToHost(optimized_points.data(), num_points);
-
-   const float initial_point_mse = examples::ComputeVectorMSE(initial_points, gt_points);
-   const float final_point_mse   = examples::ComputeVectorMSE(optimized_points, gt_points);
-   const float initial_pose_mse  = examples::ComputePoseMSE(initial_poses, gt_poses);
-   const float final_pose_mse    = examples::ComputePoseMSE(optimized_poses, gt_poses);
-
-   std::cout << "Initial cost: " << summary.initial_cost << "\n";
-   std::cout << "Final cost:   " << summary.final_cost   << "\n";
-   std::cout << "Iterations:   " << summary.num_iterations << "\n";
-   std::cout << "Point MSE:    " << initial_point_mse << " -> " << final_point_mse << "\n";
-   std::cout << "Pose MSE:     " << initial_pose_mse  << " -> " << final_pose_mse  << "\n";
 
 ===============================================================================
 Pose Graph Optimization
@@ -426,126 +348,77 @@ PGO API used
 PGO code walkthrough
 ~~~~~~~~~~~~~~~~~~~~
 
-**Step 1 — Generate synthetic pose chain and measurements.**
-A random anchor pose and random relative transforms are generated.
-Ground-truth poses are built by chaining the transforms, then all poses
-except the anchor are perturbed to create the initial estimate. The
-perturbations are kept small so that the initial residuals stay within
-the well-conditioned region of the SE(3) log map.
+**Step 1 — Generate the pose chain and its measurements.**
+``MakePoseChainScene`` returns a ground-truth chain of SE(3) poses, the
+relative transform (``delta``) between each consecutive pair, and a disturbed
+initial guess.
+The scene comes from ``examples/utils/datasets.h``; the generators are ordinary
+host code and are not part of the lesson.
 
-.. code-block:: cpp
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 1.
+   :end-before: // 2.
+   :dedent: 4
 
-   const size_t num_poses = 201;
-   const size_t num_constraints = num_poses - 1;
-   std::mt19937 rng(9012);
+**Step 2 — Upload to the GPU.**
+Upload the initial guess (updated in place by the solver) and the
+measurements. Pose :math:`T_0` is the gauge anchor.
 
-   // Random anchor and measured relative transforms.
-   std::vector<SE3Transform> anchor_pose, deltas;
-   examples::GenerateRandomSE3(1, rng, anchor_pose);
-   examples::GenerateRandomSE3(num_constraints, rng, deltas);
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 2.
+   :end-before: // 3.
+   :dedent: 4
 
-   // Ground-truth chain: delta * T_i^{-1} * T_{i+1} = I
-   // => T_{i+1} = T_i * delta^{-1}
-   std::vector<SE3Transform> gt_poses(num_poses);
-   gt_poses[0] = anchor_pose[0];
-   for (size_t i = 0; i < num_constraints; ++i) {
-     gt_poses[i + 1] =
-         examples::ComposeSE3(gt_poses[i], examples::InverseSE3(deltas[i]));
-   }
+**Step 3 — Wrap the chain in one state batch.**
+All poses live in a single `SE3StateBatch`; only block 0 is constant.
 
-   // Perturb all poses except the fixed anchor.
-   // Small rotation (0.05 rad) and translation (0.3 m) perturbations.
-   std::vector<SE3Transform> disturbance;
-   examples::GenerateRandomSE3(num_constraints, rng, disturbance, 0.05f, 0.3f);
-   std::vector<SE3Transform> initial_poses(num_poses);
-   initial_poses[0] = gt_poses[0];
-   for (size_t i = 0; i < num_constraints; ++i) {
-     initial_poses[i + 1] =
-         examples::ComposeSE3(disturbance[i], gt_poses[i + 1]);
-   }
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 3.
+   :end-before: // 4.
+   :dedent: 4
 
-**Step 2 — Upload data and build the state batch.**
-A single `SE3StateBatch` holds the entire pose chain. Only
-:math:`T_0` is marked constant; the remaining poses are optimizable.
+**Step 4 — Build the between factors and their state pointers.**
+`BetweenFactorBatch` deduces its manifold (SE(3)) from the type of the
+measurements. Factor :math:`i` reads ``[T_i, T_{i+1}]``.
 
-.. code-block:: cpp
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 4.
+   :end-before: // 5.
+   :dedent: 4
 
-   dvector<SE3Transform> poses_device(initial_poses);
-   dvector<SE3Transform> deltas_device(deltas);
+**Step 5 — Assemble the problem.**
+Register the state batch and the factor batch with their state pointers.
 
-   // Mark only T_0 as constant (gauge anchor).
-   std::vector<int> const_ids = {0};
-   dvector<int> const_ids_device(const_ids);
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 5.
+   :end-before: // 6.
+   :dedent: 4
 
-   cunls::cuBLASHandle cublas_handle;
-   cunls::SE3StateBatch pose_states(
-       cublas_handle,
-       reinterpret_cast<const float*>(poses_device.data()),
-       num_poses,
-       const_ids_device.data(), 1);
+**Step 6 — Solve with Levenberg-Marquardt.**
+Same solver as in the bundle adjustment example.
 
-**Step 3 — Build the between-factor batch.**
-`BetweenFactorBatch` takes the measured relative transforms and internally
-computes the residual and 6 × 12 Jacobian for each factor. Its manifold is
-deduced via CTAD from ``deltas_device``'s type (`SE3Transform`), so no
-``<Manifold>`` is written — prefer this over the per-manifold
-`SE3BetweenFactorBatch` it wraps.
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 6.
+   :end-before: // 7.
+   :dedent: 4
 
-.. code-block:: cpp
+**Step 7 — Read back and validate.**
+Copy the chain back and measure how well it satisfies its relative
+constraints before and after the solve.
 
-   cunls::BetweenFactorBatch between_factor(deltas_device.data(), num_constraints);
+.. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
+   :language: cpp
+   :start-at: // 7.
+   :end-before: } catch
+   :dedent: 4
 
-**Step 4 — Wire state pointers and assemble the problem.**
-Each between factor reads two state blocks: ``[T_i, T_{i+1}]``. The
-state-pointer vector is flattened in consecutive order.
 
-.. code-block:: cpp
-
-   // [T_0, T_1, T_1, T_2, ..., T_{N-2}, T_{N-1}]
-   std::vector<float*> state_pointers;
-   state_pointers.reserve(2 * num_constraints);
-   for (size_t i = 0; i < num_constraints; ++i) {
-     state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
-     state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
-   }
-
-   cunls::Problem problem;
-   problem.AddStateBatch(&pose_states);
-   problem.AddFactorBatch(&between_factor, state_pointers);
-   problem.CheckConsistency();
-
-**Step 5 — Solve with Levenberg-Marquardt.**
-
-.. code-block:: cpp
-
-   cunls::MinimizerOptions options;
-   options.max_num_iterations = 60;
-   options.state_tolerance    = 1e-8f;
-   options.cost_tolerance     = 1e-8f;
-
-   cunls::LevenbergMarquardtMinimizerOptions lm_options;
-   lm_options.base_options   = options;
-   lm_options.initial_lambda = 1e-3f;
-   cunls::LevenbergMarquardtMinimizer minimizer(lm_options);
-
-   cunls::CudaStream stream;
-   const auto summary = minimizer.Minimize(stream.GetStream(), problem);
-   cudaStreamSynchronize(stream.GetStream());
-
-**Step 6 — Read back and validate.**
-The optimized poses are downloaded and chain constraint satisfaction is
-evaluated by measuring
-:math:`\|\Delta_i \cdot T_i^{-1} \cdot T_{i+1} - I\|` for every
-consecutive pair.
-
-.. code-block:: cpp
-
-   std::vector<SE3Transform> optimized_poses(num_poses);
-   poses_device.CopyToHost(optimized_poses.data(), num_poses);
-
-   std::cout << "Initial cost: " << summary.initial_cost << "\n";
-   std::cout << "Final cost:   " << summary.final_cost   << "\n";
-   std::cout << "Iterations:   " << summary.num_iterations << "\n";
 
 ===============================================================================
 Custom Factor
@@ -652,6 +525,8 @@ Custom factor API used
 Custom factor code walkthrough
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+All steps of the solve live in ``RunChainExample``, which ``main`` calls twice: Part 1 with the analytic factor, Part 2 with the residual-only factor and numeric Jacobians.
+
 **Step 1 — Implement the CUDA kernel.**
 The kernel is launched with one thread per *item*: one factor evaluated
 against its own set of state blocks. Item ``idx`` reads the measurement of its
@@ -659,155 +534,90 @@ factor (``factor_ids[idx]``, or ``idx % num_factors`` when ``factor_ids`` is
 null), its two state block pointers ``state_pointers[2 * idx ..]``, and writes
 row ``idx`` of the outputs. The regular minimizers pass ``factor_ids ==
 nullptr`` and one item per factor; the RANSAC minimizers evaluate many items
-per factor (see `FactorBatch::Evaluate` in :doc:`api/factor`).
+per factor (see :doc:`custom_factors_and_states`).
 
-.. code-block:: cuda
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cuda
+   :start-at: __global__ void ScalarDifferenceKernel
+   :end-before: // -------
 
-   __global__ void ScalarDifferenceKernel(
-       const float* measurements, const int* factor_ids, size_t num_factors,
-       float const* const* state_pointers,
-       float* residuals, float* jacobians,
-       size_t num_items) {
-     const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-     if (idx >= num_items) return;
+**Step 2 — Subclass SizedFactorBatch<1, 1, 1>.**
+The template arguments encode the residual dimension (1) and the tangent
+dimensions of the two state blocks (1, 1). The class stores a device pointer to
+the measurements and launches the kernel in ``Evaluate``.
 
-     const size_t factor = factor_ids ? factor_ids[idx] : idx % num_factors;
-     const float* left  = state_pointers[idx * 2];
-     const float* right = state_pointers[idx * 2 + 1];
-     const float residual = (right[0] - left[0]) - measurements[factor];
-
-     if (residuals) residuals[idx] = residual;
-     if (jacobians) {
-       jacobians[idx * 2]     = -1.0f;   // dr/dleft
-       jacobians[idx * 2 + 1] = +1.0f;   // dr/dright
-     }
-   }
-
-**Step 2 — Subclass** `SizedFactorBatch<1, 1, 1>`.
-The template arguments ``<1, 1, 1>`` encode: residual dim = 1, first state
-block tangent dim = 1, second state block tangent dim = 1. The subclass
-stores a device pointer to measurements and implements `Evaluate` by
-launching the kernel above.
-
-.. code-block:: cpp
-
-   class ScalarDifferenceFactorBatch
-       : public cunls::SizedFactorBatch<1, 1, 1> {
-    public:
-     ScalarDifferenceFactorBatch(const float* measurements,
-                                 size_t num_factors)
-         : measurements_(measurements), num_factors_(num_factors) {}
-
-     bool Evaluate(float* residuals, float* jacobians,
-                   float const* const* state_pointers,
-                   cudaStream_t stream, const int* factor_ids = nullptr,
-                   size_t num_factor_ids = 0) const final {
-       const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
-       constexpr int kBlockSize = 256;
-       const int grid = (num_items + kBlockSize - 1) / kBlockSize;
-       ScalarDifferenceKernel<<<grid, kBlockSize, 0, stream>>>(
-           measurements_, factor_ids, num_factors_, state_pointers,
-           residuals, jacobians, num_items);
-       return true;
-     }
-
-     size_t NumFactors() const final { return num_factors_; }
-
-    private:
-     const float* measurements_;
-     size_t num_factors_;
-   };
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: class ScalarDifferenceFactorBatch
+   :end-at: };
 
 **Step 3 — Generate synthetic data.**
-A monotonic ground-truth chain is created, then perturbed. Measurements
-are exact consecutive differences of the ground truth.
+``MakeScalarChainScene`` returns a monotonic ground-truth chain, a noisy
+initial guess, and the exact differences of consecutive states.
+The scene comes from ``examples/utils/datasets.h``; the generators are ordinary
+host code and are not part of the lesson.
 
-.. code-block:: cpp
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 1.
+   :end-before: // 2.
+   :dedent: 2
 
-   const size_t num_states       = 256;
-   const size_t num_diff_factors = num_states - 1;
+**Step 4 — Upload to the GPU.**
+Upload the states and the differences. The prior's target anchors
+:math:`x_0`: without it, adding a constant to every state would leave all
+differences unchanged.
 
-   std::vector<Vector<1>> gt_states(num_states);
-   std::vector<Vector<1>> initial_states(num_states);
-   std::vector<float>     measurements(num_diff_factors);
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 2.
+   :end-before: // 3.
+   :dedent: 2
 
-   gt_states[0][0] = 0.5f;
-   for (size_t i = 1; i < num_states; ++i)
-     gt_states[i][0] = gt_states[i - 1][0] + step_dist(rng);
+**Step 5 — Build the state batch.**
+All scalar states share one `VectorStateBatch<1>`.
 
-   for (size_t i = 0; i < num_states; ++i)
-     initial_states[i][0] = gt_states[i][0] + noise_dist(rng);
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 3.
+   :end-before: // 4.
+   :dedent: 2
 
-   for (size_t i = 0; i < num_diff_factors; ++i)
-     measurements[i] = gt_states[i + 1][0] - gt_states[i][0];
+**Step 6 — Build the factor batches and their state pointers.**
+Difference factors read ``[x_i, x_{i+1}]``; the shipped prior reads
+``x_0``. The residual-only class is used in Part 2 (see
+:doc:`numeric_jacobians`).
 
-**Step 4 — Build state batch and factor batches.**
-All states share a single `VectorStateBatch<1>`. Two factor batches are
-added: the custom difference factors and a built-in prior anchor.
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 4.
+   :end-before: // 5.
+   :dedent: 2
 
-.. code-block:: cpp
+**Step 7 — Assemble the problem.**
+Part 2 registers the residual-only factor with
+``JacobianMode::kNumeric``; the prior stays analytic in the same problem.
 
-   dvector<Vector<1>> states_device(initial_states);
-   dvector<float>     measurements_device(measurements);
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 5.
+   :end-before: // 6.
+   :dedent: 2
 
-   // Anchor observation: pin x_0 to its ground-truth value.
-   std::vector<Vector<1>> anchor_obs = { gt_states[0] };
-   dvector<Vector<1>> anchor_obs_device(anchor_obs);
+**Step 8 — Solve with Levenberg-Marquardt.**
+Same solver as in the previous examples.
 
-   const float* states_ptr =
-       reinterpret_cast<const float*>(states_device.data());
-   cunls::VectorStateBatch<1> state_batch(states_ptr, num_states);
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 6.
+   :end-before: // 7.
+   :dedent: 2
 
-   ScalarDifferenceFactorBatch difference_factor(
-       measurements_device.data(), num_diff_factors);
-   cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(
-       anchor_obs_device.data(), 1);
+**Step 9 — Read back and validate.**
+Compare the solved chain with the ground truth and report.
 
-**Step 5 — Wire state pointers and assemble the problem.**
-Difference factors read ``[x_i, x_{i+1}]``; the prior reads only ``[x_0]``.
-
-.. code-block:: cpp
-
-   // Difference factor state pointers: [x_0, x_1, x_1, x_2, ...].
-   std::vector<float*> diff_state_pointers;
-   diff_state_pointers.reserve(2 * num_diff_factors);
-   for (size_t i = 0; i < num_diff_factors; ++i) {
-     diff_state_pointers.push_back(state_batch.StateBlockDevicePtr(i));
-     diff_state_pointers.push_back(state_batch.StateBlockDevicePtr(i + 1));
-   }
-
-   // Anchor factor state pointers: just x_0.
-   std::vector<float*> anchor_state_pointers = {
-       state_batch.StateBlockDevicePtr(0)
-   };
-
-   cunls::Problem problem;
-   problem.AddStateBatch(&state_batch);
-   problem.AddFactorBatch(&difference_factor, diff_state_pointers);
-   problem.AddFactorBatch(&anchor_factor, anchor_state_pointers);
-   problem.CheckConsistency();
-
-**Step 6 — Solve and inspect results.**
-
-.. code-block:: cpp
-
-   cunls::MinimizerOptions options;
-   options.max_num_iterations = 50;
-   options.state_tolerance    = 1e-8f;
-   options.cost_tolerance     = 1e-8f;
-
-   cunls::LevenbergMarquardtMinimizerOptions lm_options;
-   lm_options.base_options   = options;
-   lm_options.initial_lambda = 1e-3f;
-   cunls::LevenbergMarquardtMinimizer minimizer(lm_options);
-
-   cunls::CudaStream stream;
-   const auto summary = minimizer.Minimize(stream.GetStream(), problem);
-   cudaStreamSynchronize(stream.GetStream());
-
-   std::vector<Vector<1>> optimized_states(num_states);
-   states_device.CopyToHost(optimized_states.data(), num_states);
-
-   std::cout << "Initial cost: " << summary.initial_cost  << "\n";
-   std::cout << "Final cost:   " << summary.final_cost    << "\n";
-   std::cout << "Iterations:   " << summary.num_iterations << "\n";
+.. literalinclude:: ../../examples/custom_factor/main.cu
+   :language: cpp
+   :start-at: // 7.
+   :end-at: mse_after <= mse_before * 0.02f);
+   :dedent: 2

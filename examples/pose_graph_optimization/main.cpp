@@ -15,20 +15,25 @@
  * limitations under the License.
  */
 
+// Pose graph optimization: recover a chain of SE(3) poses
+// T_0 -> T_1 -> ... -> T_{N-1} from relative-transform measurements between
+// consecutive poses. T_0 is held fixed (gauge anchor).
+
 #include <cuda_runtime.h>
 
 #include <iostream>
-#include <random>
 #include <vector>
 
 #include "cunls/common/cublas_helper.h"
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/between_factor_batch.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
-#include "utils/se3_utils.h"
+#include "utils/datasets.h"
+#include "utils/report.h"
 #include "utils/validation.h"
 
 using cunls::dvector;
@@ -37,113 +42,65 @@ using cunls::SE3Transform;
 
 int main() {
   try {
-    // A chain of poses connected by between constraints:
-    //   T_0 -> T_1 -> T_2 -> ... -> T_{N-1}
-    // The first pose T_0 is held fixed as the gauge anchor.
     const size_t num_poses = 201;
     const size_t num_constraints = num_poses - 1;
 
-    std::mt19937 rng(9012);
+    // 1. Synthetic data: ground-truth chain, disturbed initial guess, and the
+    //    relative transforms (deltas) between consecutive poses.
+    const examples::PoseChainScene scene = examples::MakePoseChainScene(num_poses);
 
-    // Synthetic problem ingredients:
-    // - A random anchor pose T_0
-    // - Random relative transforms (deltas) between consecutive poses
-    std::vector<SE3Transform> anchor_pose;
-    std::vector<SE3Transform> deltas;
-    examples::GenerateRandomSE3(1, rng, anchor_pose);
-    examples::GenerateRandomSE3(num_constraints, rng, deltas);
+    // 2. Upload the initial guess and the measurements to the GPU.
+    dvector<SE3Transform> poses(scene.initial_poses);
+    dvector<SE3Transform> deltas(scene.deltas);
+    dvector<int> constant_pose_ids(std::vector<int>{0});  // T_0 is the gauge anchor
 
-    // Build ground-truth chain that satisfies every constraint:
-    // delta * T_i^{-1} * T_{i+1} = I  =>  T_{i+1} = T_i * delta^{-1}
-    std::vector<SE3Transform> gt_poses(num_poses);
-    gt_poses[0] = anchor_pose[0];
-    for (size_t i = 0; i < num_constraints; ++i) {
-      gt_poses[i + 1] = examples::ComposeSE3(gt_poses[i], examples::InverseSE3(deltas[i]));
-    }
+    // 3. One state batch for the whole chain.
+    cunls::cuBLASHandle cublas;
+    cunls::SE3StateBatch pose_states(cublas, reinterpret_cast<const float *>(poses.data()),
+                                     num_poses, constant_pose_ids.data(), 1);
 
-    // Disturb all poses except the fixed anchor T_0. Small perturbations keep
-    // the initial estimate within the convergence basin of the SE(3) log map.
-    std::vector<SE3Transform> disturbance;
-    examples::GenerateRandomSE3(num_constraints, rng, disturbance, 0.05f, 0.3f);
-    std::vector<SE3Transform> initial_poses(num_poses);
-    initial_poses[0] = gt_poses[0];
-    for (size_t i = 0; i < num_constraints; ++i) {
-      initial_poses[i + 1] = examples::ComposeSE3(disturbance[i], gt_poses[i + 1]);
-    }
-
-    // Copy host data to GPU.
-    dvector<SE3Transform> poses_device(initial_poses);
-    dvector<SE3Transform> deltas_device(deltas);
-
-    // Mark the first pose T_0 as constant (gauge anchor).
-    std::vector<int> const_ids = {0};
-    dvector<int> const_ids_device(const_ids);
-
-    const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
-
-    // Single state batch for the entire chain, with T_0 fixed.
-    cunls::cuBLASHandle cublas_handle;
-    cunls::SE3StateBatch pose_states(cublas_handle, poses_ptr, num_poses, const_ids_device.data(),
-                                     1);
-
-    // Build the between factor batch for consecutive constraints; the
-    // manifold (SE(3)) is deduced via CTAD from deltas_device's type.
-    cunls::BetweenFactorBatch between_factor(deltas_device.data(), num_constraints);
-
-    // Flatten factor-to-state connectivity:
-    // [T_0, T_1, T_1, T_2, ..., T_{N-2}, T_{N-1}]
+    // 4. Between factors; the manifold (SE(3)) is deduced from the deltas' type.
+    //    Factor i reads [T_i, T_{i+1}].
+    cunls::BetweenFactorBatch between(deltas.data(), num_constraints);
     std::vector<float *> state_pointers;
-    state_pointers.reserve(2 * num_constraints);
     for (size_t i = 0; i < num_constraints; ++i) {
       state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
       state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
     }
 
-    // Assemble optimization problem.
+    // 5. The problem.
     cunls::Problem problem;
     problem.AddStateBatch(&pose_states);
-    problem.AddFactorBatch(&between_factor, state_pointers);
+    problem.AddFactorBatch(&between, state_pointers);
     if (!problem.CheckConsistency()) {
       std::cerr << "Problem consistency check failed\n";
       return 1;
     }
 
-    // LM configuration.
-    cunls::MinimizerOptions options;
-    options.max_num_iterations = 60;
-    options.state_tolerance = 1e-8f;
-    options.cost_tolerance = 1e-8f;
-
-    cunls::LevenbergMarquardtMinimizerOptions lm_options;
-    lm_options.base_options = options;
-    lm_options.initial_lambda = 1e-3f;
-    cunls::LevenbergMarquardtMinimizer minimizer(lm_options);
-
-    // Solve and synchronize before reading back result states.
+    // 6. Solve with Levenberg-Marquardt; the result is written into poses.
+    cunls::LevenbergMarquardtMinimizerOptions options;
+    options.base_options.max_num_iterations = 60;
+    options.base_options.state_tolerance = 1e-8f;
+    options.base_options.cost_tolerance = 1e-8f;
+    options.initial_lambda = 1e-3f;
+    cunls::LevenbergMarquardtMinimizer minimizer(options);
     cunls::CudaStream stream;
-    const auto summary = minimizer.Minimize(stream.GetStream(), problem);
+    const cunls::MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
-    // Download optimized poses and evaluate chain constraint satisfaction.
-    std::vector<SE3Transform> optimized_poses(num_poses);
-    poses_device.CopyToHost(optimized_poses.data(), num_poses);
+    // 7. Read back and measure how well the chain satisfies its constraints.
+    std::vector<SE3Transform> final_poses(num_poses);
+    poses.CopyToHost(final_poses.data(), num_poses);
+    const float error_before = examples::ChainConstraintError(scene.initial_poses, scene.deltas);
+    const float error_after = examples::ChainConstraintError(final_poses, scene.deltas);
 
-    const float initial_error = examples::ChainConstraintError(initial_poses, deltas);
-    const float final_error = examples::ChainConstraintError(optimized_poses, deltas);
-
-    std::cout << "Pose Graph Optimization Example (Chain)\n";
-    std::cout << "  Num poses:              " << num_poses << "\n";
-    std::cout << "  Num constraints:        " << num_constraints << "\n";
-    std::cout << "  Initial cost:           " << summary.initial_cost << "\n";
-    std::cout << "  Final cost:             " << summary.final_cost << "\n";
-    std::cout << "  Iterations:             " << summary.num_iterations << "\n";
-    std::cout << "  Constraint MSE:         " << initial_error << " -> " << final_error << "\n";
-
-    if (summary.final_cost > 1e-2f || final_error > initial_error * 0.05f) {
-      std::cerr << "Optimization quality check failed.\n";
-      return 2;
-    }
-    return 0;
+    examples::PrintTitle("Pose Graph Optimization Example (Chain)");
+    examples::PrintValue("Num poses", num_poses);
+    examples::PrintValue("Num constraints", num_constraints);
+    examples::PrintSummary(summary);
+    examples::PrintChange("Constraint MSE", error_before, error_after);
+    return examples::QualityExitCode(summary.final_cost <= 1e-2f &&
+                                     error_after <= error_before * 0.05f);
   } catch (const std::exception &e) {
     std::cerr << "Exception: " << e.what() << "\n";
     return 3;

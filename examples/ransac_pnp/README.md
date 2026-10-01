@@ -48,16 +48,25 @@ const uint8_t *mask = minimizer.InlierMask(0);  // device, 1 byte per factor, 1 
 
 See `docs/sphinx/ransac.rst` for how the algorithm works and how to tune it.
 
+## Files
+
+- `main.cpp`: the cuNLS workflow (`PnPProblem` builds the same problem for
+  both minimizers).
+- `../utils/`: header-only helpers kept out of `main` so it reads as the cuNLS
+  workflow: `datasets.h` (synthetic scenes), `validation.h` (error metrics),
+  `report.h` (printing and the quality verdict), `cli.h` (command-line flags),
+  `se3_utils.h` / `camera_utils.h` (host SE(3) math and projection).
+
 ## Walkthrough
 
-1. Generate a ground-truth pose, random 3D points in front of the camera
-   and their noisy normalized projections.
-2. Replace `--outlier-ratio` of the observations by random image points at
-   least four thresholds away from the true projection.
-3. Perturb the pose to get the initial guess.
-4. Solve with `LevenbergMarquardtMinimizer` (no outlier handling) and with
+1. `examples::MakePnPScene` generates a ground-truth pose, random 3D points
+   in front of the camera, their noisy normalized projections, and a
+   perturbed initial guess. `--outlier-ratio` of the observations are
+   replaced by random image points at least four thresholds away from the
+   true projection.
+2. Solve with `LevenbergMarquardtMinimizer` (no outlier handling) and with
    `RansacLevenbergMarquardtMinimizer`, each on a fresh copy of the problem.
-5. Report the pose errors, the RANSAC summary, and the inlier mask against
+3. Report the pose errors, the RANSAC summary, and the inlier mask against
    the generated ground truth.
 
 ## Build locally (all examples)

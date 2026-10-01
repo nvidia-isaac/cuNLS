@@ -33,25 +33,25 @@ so they can be compared directly.
 
 ## Files
 
-- `main.cpp`: synthetic PnP dataset generation and the analytic-vs-numeric
-  optimization pipeline.
-- `../utils/`: shared host-side utilities (`camera_utils.h` for
-  projection/depth, `se3_utils.h` for pose composition and random SE(3)
-  sampling, `validation.h` for MSE metrics).
+- `main.cpp`: the cuNLS workflow; `SolvePnP` builds and solves the problem
+  once per Jacobian mode.
+- `../utils/`: header-only helpers kept out of `main` so it reads as the cuNLS
+  workflow: `datasets.h` (synthetic scenes), `validation.h` (error metrics),
+  `report.h` (printing and the quality verdict), `cli.h` (command-line flags),
+  `se3_utils.h` / `camera_utils.h` (host SE(3) math and projection).
 - Built by the shared `examples/CMakeLists.txt`.
 
 ## Walkthrough
 
-1. Generate a ground-truth camera pose (`T_cam_from_world`) and `--num-points`
-   random 3D world points visible from it.
-2. Project each point to a normalized 2D observation and add pixel noise.
-3. Perturb the pose to create a non-trivial initial estimate.
-4. Build a single `SE3StateBatch` (one pose) and a `PnPFactorBatch` with one
+1. `examples::MakePnPScene` generates a ground-truth camera pose
+   (`T_cam_from_world`), `--num-points` random 3D world points visible from
+   it, their noisy normalized 2D observations, and a perturbed initial pose.
+2. Build a single `SE3StateBatch` (one pose) and a `PnPFactorBatch` with one
    factor per correspondence, all referencing the same pose state block.
-5. Solve with `LevenbergMarquardtMinimizer`, once per requested Jacobian
+3. Solve with `LevenbergMarquardtMinimizer`, once per requested Jacobian
    mode, each on a fresh device copy of the perturbed pose so the two runs
    are directly comparable.
-6. Compare initial vs. final cost and pose MSE for each mode.
+4. Compare initial vs. final cost and pose MSE for each mode.
 
 ## Build locally (all examples)
 

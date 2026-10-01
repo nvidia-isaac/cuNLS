@@ -18,9 +18,9 @@
 #include <cuda_runtime.h>
 
 #include <iostream>
-#include <random>
 #include <vector>
 
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/manifold.h"
 #include "cunls/common/types.h"
@@ -30,6 +30,8 @@
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
+#include "utils/datasets.h"
+#include "utils/report.h"
 #include "utils/validation.h"
 
 using cunls::dvector;
@@ -172,144 +174,80 @@ class ScalarDifferenceResidualOnlyFactorBatch : public cunls::SizedFactorBatch<1
   size_t num_factors_;
 };
 
-}  // namespace
-
-namespace {
-
-// Shared setup: a 1D chain x_0..x_{N-1} with noisy differences, solved via
-// a custom "difference" factor plus an anchor prior. Part 1 uses the
-// analytic-Jacobian factor; Part 2 uses the residual-only one and asks the
-// minimizer to numerically differentiate it. `use_numeric_jacobian` controls
-// which factor class is registered and how.
+// Solves a 1D chain x_0 -- x_1 -- ... -- x_{N-1} from its consecutive
+// differences: N-1 custom difference factors plus a prior anchoring x_0.
+// Part 1 registers the analytic-Jacobian factor; Part 2 the residual-only one,
+// with JacobianMode::kNumeric so cuNLS differentiates it numerically.
 int RunChainExample(const char *title, bool use_numeric_jacobian) {
-  // We model a chain of scalar states:
-  //   x_0 -- x_1 -- ... -- x_{N-1}
-  //
-  // For N states we have N-1 custom "difference" factors.
   const size_t num_states = 256;
   const size_t num_diff_factors = num_states - 1;
 
-  // Ground truth states, noisy initialization, and measured differences.
-  std::vector<Vector<1>> gt_states(num_states);
-  std::vector<Vector<1>> initial_states(num_states);
-  std::vector<float> measurements(num_diff_factors);
+  // 1. Synthetic data: ground truth, a noisy initial guess, exact differences.
+  const examples::ScalarChainScene scene = examples::MakeScalarChainScene(num_states);
 
-  std::mt19937 rng(121314);
-  std::uniform_real_distribution<float> step_dist(0.2f, 0.6f);
-  std::uniform_real_distribution<float> noise_dist(-0.35f, 0.35f);
+  // 2. Upload to the GPU. Without the anchor, adding a constant to every
+  //    state leaves all differences unchanged (rank-deficient system).
+  dvector<Vector<1>> states(scene.initial_states);
+  dvector<float> differences(scene.differences);
+  dvector<Vector<1>> anchor(std::vector<Vector<1>>{scene.gt_states[0]});
 
-  // Create a monotonic synthetic trajectory.
-  gt_states[0][0] = 0.5f;
-  for (size_t i = 1; i < num_states; ++i) {
-    gt_states[i][0] = gt_states[i - 1][0] + step_dist(rng);
-  }
+  // 3. One state batch with all scalar states.
+  cunls::VectorStateBatch<1> state_batch(reinterpret_cast<const float *>(states.data()),
+                                         num_states);
 
-  // Disturb all states to create a non-trivial initial estimate.
-  for (size_t i = 0; i < num_states; ++i) {
-    initial_states[i][0] = gt_states[i][0] + noise_dist(rng);
-  }
-
-  // Measurements come from ground truth consecutive differences.
+  // 4. Factors: the custom difference factor (one of the two classes above)
+  //    reads [x_i, x_{i+1}]; the shipped prior reads x_0.
+  ScalarDifferenceFactorBatch analytic_factor(differences.data(), num_diff_factors);
+  ScalarDifferenceResidualOnlyFactorBatch residual_only_factor(differences.data(),
+                                                               num_diff_factors);
+  cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(anchor.data(), 1);
+  std::vector<float *> diff_pointers;
   for (size_t i = 0; i < num_diff_factors; ++i) {
-    measurements[i] = gt_states[i + 1][0] - gt_states[i][0];
+    diff_pointers.push_back(state_batch.StateBlockDevicePtr(i));
+    diff_pointers.push_back(state_batch.StateBlockDevicePtr(i + 1));
   }
 
-  // Copy initial data to device.
-  dvector<Vector<1>> states_device(initial_states);
-  dvector<float> measurements_device(measurements);
-
-  // Anchor x_0 to remove gauge freedom:
-  // without this prior, adding a constant offset to all states leaves every
-  // difference residual unchanged, so the system is rank-deficient.
-  std::vector<Vector<1>> anchor_observation(1);
-  anchor_observation[0][0] = gt_states[0][0];
-  dvector<Vector<1>> anchor_observation_device(anchor_observation);
-
-  // Build a single state batch containing all scalar states.
-  const float *states_ptr = reinterpret_cast<const float *>(states_device.data());
-  cunls::VectorStateBatch<1> state_batch(states_ptr, num_states);
-
-  // Build the anchor prior (always analytic -- it's a shipped factor).
-  cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(
-      anchor_observation_device.data(), 1);
-
-  // Build one of the two difference factors depending on which part of the
-  // example we're running. Only one of these is actually constructed.
-  ScalarDifferenceFactorBatch analytic_difference_factor(measurements_device.data(),
-                                                         num_diff_factors);
-  ScalarDifferenceResidualOnlyFactorBatch numeric_difference_factor(measurements_device.data(),
-                                                                    num_diff_factors);
-
-  // Create state pointer map for all custom factors.
-  std::vector<float *> diff_state_pointers;
-  diff_state_pointers.reserve(2 * num_diff_factors);
-  for (size_t i = 0; i < num_diff_factors; ++i) {
-    diff_state_pointers.push_back(state_batch.StateBlockDevicePtr(i));
-    diff_state_pointers.push_back(state_batch.StateBlockDevicePtr(i + 1));
-  }
-
-  // State pointer map for the anchor factor: just x_0.
-  std::vector<float *> anchor_state_pointers = {state_batch.StateBlockDevicePtr(0)};
-
-  // Assemble the optimization problem graph.
+  // 5. The problem. The per-group JacobianMode::kNumeric override makes cuNLS
+  //    differentiate the residual-only factor; the prior stays analytic, so one
+  //    Problem can mix both modes.
   cunls::Problem problem;
   problem.AddStateBatch(&state_batch);
   if (use_numeric_jacobian) {
-    // Force this factor group to numeric differentiation via the per-group
-    // override, regardless of the minimizer's global default -- the anchor
-    // prior above still uses its own analytic Jacobian either way, so this
-    // also demonstrates mixing modes within a single Problem.
-    problem.AddFactorBatch(&numeric_difference_factor, diff_state_pointers,
-                           cunls::JacobianMode::kNumeric);
+    problem.AddFactorBatch(&residual_only_factor, diff_pointers, cunls::JacobianMode::kNumeric);
   } else {
-    problem.AddFactorBatch(&analytic_difference_factor, diff_state_pointers);
+    problem.AddFactorBatch(&analytic_factor, diff_pointers);
   }
-  problem.AddFactorBatch(&anchor_factor, anchor_state_pointers);
+  problem.AddFactorBatch(&anchor_factor, {state_batch.StateBlockDevicePtr(0)});
   if (!problem.CheckConsistency()) {
     std::cerr << "Problem consistency check failed\n";
     return 1;
   }
 
-  // Levenberg-Marquardt options: fairly strict tolerances for this small
-  // dense-in-logic but sparse-in-structure toy problem.
-  cunls::MinimizerOptions options;
-  options.max_num_iterations = 50;
-  options.state_tolerance = 1e-8f;
-  options.cost_tolerance = 1e-8f;
-
-  cunls::LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = options;
-  lm_options.initial_lambda = 1e-3f;
-  cunls::LevenbergMarquardtMinimizer minimizer(lm_options);
-
-  // Solve on CUDA stream, then synchronize before reading back outputs.
+  // 6. Solve with Levenberg-Marquardt.
+  cunls::LevenbergMarquardtMinimizerOptions options;
+  options.base_options.max_num_iterations = 50;
+  options.base_options.state_tolerance = 1e-8f;
+  options.base_options.cost_tolerance = 1e-8f;
+  options.initial_lambda = 1e-3f;
+  cunls::LevenbergMarquardtMinimizer minimizer(options);
   cunls::CudaStream stream;
-  const auto summary = minimizer.Minimize(stream.GetStream(), problem);
+  const cunls::MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
-  // Copy optimized states back to host and evaluate reconstruction quality.
-  std::vector<Vector<1>> optimized_states(num_states);
-  states_device.CopyToHost(optimized_states.data(), num_states);
+  // 7. Read back and compare with the ground truth.
+  std::vector<Vector<1>> final_states(num_states);
+  states.CopyToHost(final_states.data(), num_states);
+  const float mse_before = examples::ComputeVectorMSE(scene.initial_states, scene.gt_states);
+  const float mse_after = examples::ComputeVectorMSE(final_states, scene.gt_states);
+  examples::PrintTitle(title);
+  examples::PrintSummary(summary);
+  examples::PrintChange("State MSE", mse_before, mse_after);
 
-  const float initial_mse = examples::ComputeVectorMSE(initial_states, gt_states);
-  const float final_mse = examples::ComputeVectorMSE(optimized_states, gt_states);
-
-  std::cout << title << "\n";
-  std::cout << "  Initial cost: " << summary.initial_cost << "\n";
-  std::cout << "  Final cost:   " << summary.final_cost << "\n";
-  std::cout << "  Iterations:   " << summary.num_iterations << "\n";
-  std::cout << "  State MSE:    " << initial_mse << " -> " << final_mse << "\n";
-
-  // Numeric-diff Jacobians are finite-difference approximations (float32,
-  // central difference by default -- see NumericDiffOptions), so Part 2
-  // converges to the same optimum but needs a slightly looser cost
-  // tolerance than Part 1's exact analytic Jacobian.
+  // Numeric Jacobians are float32 finite differences, so Part 2 reaches the
+  // same optimum with a slightly looser cost tolerance.
   const float cost_tolerance = use_numeric_jacobian ? 5e-4f : 1e-5f;
-  if (summary.final_cost > cost_tolerance || final_mse > initial_mse * 0.02f) {
-    std::cerr << "Optimization quality check failed.\n";
-    return 2;
-  }
-  return 0;
+  return examples::QualityExitCode(summary.final_cost <= cost_tolerance &&
+                                   mse_after <= mse_before * 0.02f);
 }
 
 }  // namespace

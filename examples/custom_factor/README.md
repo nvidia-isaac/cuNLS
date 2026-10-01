@@ -42,25 +42,28 @@ mixing Jacobian modes within a single `Problem`.
 
 ## Files
 
-- `main.cu`: both custom factor classes, kernels, and the shared
-  optimization pipeline (`RunChainExample`, called once per part).
-- `../utils/`: shared host-side utilities (validation metrics).
+- `main.cu`: both custom factor classes and their kernels (the lesson), and
+  the cuNLS workflow (`RunChainExample`, called once per part).
+- `../utils/`: header-only helpers kept out of `main` so it reads as the cuNLS
+  workflow: `datasets.h` (synthetic scenes), `validation.h` (error metrics),
+  `report.h` (printing and the quality verdict), `cli.h` (command-line flags),
+  `se3_utils.h` / `camera_utils.h` (host SE(3) math and projection).
 - Built by the shared `examples/CMakeLists.txt`.
 - Exported by the shared `examples/build_in_docker.sh`.
 
 ## Walkthrough
 
-1. Generate a 1D ground-truth chain `x_0..x_n`.
-2. Create measurements `m_i = x_{i+1} - x_i`.
-3. Disturb all states to create an initial estimate.
-4. Build `VectorStateBatch<1>` for all states.
-5. Add:
+1. `examples::MakeScalarChainScene` generates a 1D ground-truth chain
+   `x_0..x_n`, measurements `m_i = x_{i+1} - x_i`, and a disturbed initial
+   estimate.
+2. Build `VectorStateBatch<1>` for all states.
+3. Add:
    - the difference factor batch for all edges (analytic in Part 1,
      numeric-diff in Part 2)
    - anchor prior factor for the first node (always analytic)
-6. Solve with `LevenbergMarquardtMinimizer` (the minimizer allocates GPU
+4. Solve with `LevenbergMarquardtMinimizer` (the minimizer allocates GPU
    workspace during initialization).
-7. Compare initial vs final MSE to validate improvement.
+5. Compare initial vs final MSE to validate improvement.
 
 ## Notes on memory layout
 

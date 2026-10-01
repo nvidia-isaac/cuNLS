@@ -15,8 +15,12 @@ The setup is intentionally compact but complete:
 
 ## Files
 
-- `main.cpp`: full end-to-end example.
-- `../utils/`: shared host-side utilities (SE(3) math, projection, validation).
+- `main.cpp`: the cuNLS workflow, step by step (data, upload, state and factor
+  batches, problem, solve, read back, report).
+- `../utils/`: header-only helpers kept out of `main` so it reads as the cuNLS
+  workflow: `datasets.h` (synthetic scenes), `validation.h` (error metrics),
+  `report.h` (printing and the quality verdict), `cli.h` (command-line flags),
+  `se3_utils.h` / `camera_utils.h` (host SE(3) math and projection).
 - Built by the shared `examples/CMakeLists.txt`.
 - Exported by the shared `examples/build_in_docker.sh`.
 
@@ -24,8 +28,9 @@ The setup is intentionally compact but complete:
 
 ### Data generation
 
-`GenerateRandomPoses()` creates random twists with a positive tz bias and
-converts them into SE(3) transforms via `examples::TwistsToSE3`.
+`examples::MakeBundleAdjustmentScene()` (`utils/datasets.h`) creates cameras
+looking at the origin, points visible from every camera, a perturbed initial
+guess (camera 0 kept exact as the gauge anchor), and the observations.
 
 `examples::ProjectNormalized()` (from `utils/camera_utils.h`) computes
 observations in normalized camera coordinates:

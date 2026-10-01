@@ -94,122 +94,76 @@ SBA code walkthrough
 ~~~~~~~~~~~~~~~~~~~~
 
 **Step 1 — Generate synthetic data.**
-Random camera poses and 3D points are created on the host using NumPy.
-Each ground-truth point is filtered so that it has positive depth in all
-cameras. Poses :math:`T_1, \ldots, T_{M-1}` and all points are perturbed
-to create noisy initial estimates; :math:`T_0` stays at ground truth.
+``bundle_adjustment_scene`` returns ground-truth SE(3) poses and 3D points,
+a perturbed initial guess (pose 0 stays exact) and the normalized observation of
+every point in every camera, as NumPy arrays.
+The data comes from ``python/examples/example_utils/datasets.py``; the
+generators are ordinary NumPy code and are not part of the lesson.
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 1.
+   :end-before: # 2.
+   :dedent: 4
 
-   import numpy as np
-   import cupy as cp
-   import pycunls
-   from se3_utils import twist_to_se3, compose_se3, project_normalized
+**Step 2 — Upload to the GPU.**
+CuPy arrays hold the device data. Poses are row-major 4x4 matrices
+(16 floats each). The solver updates ``poses_gpu`` and ``points_gpu`` in place.
 
-   num_poses  = 6
-   num_points = 800
-   num_observations = num_poses * num_points
-   rng = np.random.default_rng(1234)
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 2.
+   :end-before: # 3.
+   :dedent: 4
 
-   # Ground-truth SE(3) camera poses from random twists.
-   gt_poses = [twist_to_se3(twist) for twist in ...]
+**Step 3 — Build the state batches.**
+:ref:`SE3StateBatch <py-lie-state-batches>` with pose 0 constant (gauge
+anchor) and :ref:`VectorStateBatch3 <py-vector-state-batches>` for the points.
 
-   # 3D points visible from all cameras (positive depth).
-   gt_points = ...  # (num_points, 3) float32
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 3.
+   :end-before: # 4.
+   :dedent: 4
 
-   # Perturbed initial estimates.
-   initial_points = gt_points + rng.uniform(-0.35, 0.35, gt_points.shape)
-   initial_poses  = [...]  # T_0 at ground truth, T_1..T_{M-1} perturbed
+**Step 4 — Build the reprojection factor batch and its state pointers.**
+Each factor reads ``[pose, point]``: the state-pointer list is flattened in
+factor order, two device pointers per factor.
 
-**Step 2 — Create 2D observations.**
-Each camera observes every 3D point. Observations are in normalized image
-coordinates — the format
-:ref:`ReprojectionFactorBatch <py-reprojection-factor>` expects.
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 4.
+   :end-before: # 5.
+   :dedent: 4
 
-.. code-block:: python
+**Step 5 — Assemble the problem.**
+Register the state batches and the factor batch.
 
-   observations = np.empty((num_observations, 2), dtype=np.float32)
-   for pi in range(num_poses):
-       for qi in range(num_points):
-           observations[pi * num_points + qi] = project_normalized(
-               gt_poses[pi], gt_points[qi])
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 5.
+   :end-before: # 6.
+   :dedent: 4
 
-**Step 3 — Upload data to the GPU and build state batches.**
-CuPy arrays serve as GPU storage.
-:ref:`SE3StateBatch <py-lie-state-batches>` wraps the pose memory with only
-:math:`T_0` marked constant;
-:ref:`VectorStateBatch3 <py-vector-state-batches>` wraps the landmark
-memory.
+**Step 6 — Solve with Levenberg-Marquardt.**
+``minimize`` writes the solution into the state batches' memory.
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 6.
+   :end-before: # 7.
+   :dedent: 4
 
-   poses_gpu  = cp.asarray(initial_poses_flat, dtype=cp.float32)
-   points_gpu = cp.asarray(initial_points.reshape(-1), dtype=cp.float32)
-   obs_gpu    = cp.asarray(observations.reshape(-1), dtype=cp.float32)
-   const_ids  = cp.array([0], dtype=cp.int32)
+**Step 7 — Read back and validate.**
+Copy the points back, compare with the ground truth, print and check.
 
-   cublas = pycunls.CublasHandle()
-   pose_states  = pycunls.SE3StateBatch(cublas, poses_gpu, num_poses, const_ids, 1)
-   point_states = pycunls.VectorStateBatch3(points_gpu, num_points)
+.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
+   :language: python
+   :start-at: # 7.
+   :end-before: if __name__
+   :dedent: 4
 
-**Step 4 — Build the reprojection factor batch.**
 
-.. code-block:: python
-
-   reproj_factor = pycunls.ReprojectionFactorBatch(
-       obs_gpu, num_observations, z_threshold=1e-3)
-
-**Step 5 — Create the state-pointer list and assemble the problem.**
-The state-pointer list is a flat sequence of device pointers, two per
-factor: ``[pose_ptr, point_ptr]``. This tells the solver which state
-blocks each factor reads.
-
-.. code-block:: python
-
-   state_pointers = []
-   for pi in range(num_poses):
-       for qi in range(num_points):
-           state_pointers.append(pose_states.state_block_device_ptr(pi))
-           state_pointers.append(point_states.state_block_device_ptr(qi))
-
-   problem = pycunls.Problem()
-   problem.add_state_batch(pose_states)
-   problem.add_state_batch(point_states)
-   problem.add_factor_batch(reproj_factor, state_pointers)
-   assert problem.check_consistency()
-
-**Step 6 — Configure and run** :ref:`Levenberg-Marquardt <py-lm-label>` **.**
-
-.. code-block:: python
-
-   opts = pycunls.MinimizerOptions()
-   opts.max_num_iterations = 80
-   opts.state_tolerance = 1e-8
-   opts.cost_tolerance  = 1e-8
-
-   lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
-   lm_opts.base_options  = opts
-   lm_opts.initial_lambda = 1e-3
-
-   stream    = pycunls.CudaStream()
-   minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-   summary   = minimizer.minimize(stream, problem)
-
-   cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-**Step 7 — Read back results.**
-After optimization, the CuPy arrays contain the updated state. Copy them
-to the host with ``cp.asnumpy`` and compare against ground truth.
-
-.. code-block:: python
-
-   optimized_points = cp.asnumpy(points_gpu).reshape(-1, 3)
-   point_mse = float(np.mean((optimized_points - gt_points) ** 2))
-
-   print(f"Initial cost: {summary.initial_cost:.6f}")
-   print(f"Final cost:   {summary.final_cost:.6f}")
-   print(f"Iterations:   {summary.num_iterations}")
-   print(f"Point MSE:    {point_mse:.6f}")
 
 ===============================================================================
 Pose Graph Optimization
@@ -257,85 +211,66 @@ PGO API used
 PGO code walkthrough
 ~~~~~~~~~~~~~~~~~~~~
 
-**Step 1 — Generate synthetic pose chain and measurements.**
-A random anchor and random relative transforms are generated on the host.
-Ground-truth poses are built by chaining the transforms, then all poses
-except the anchor are perturbed.
+**Step 1 — Generate the pose chain and its measurements.**
+``pose_chain`` returns a ground-truth chain, the relative transform between
+each consecutive pair, and a perturbed initial guess.
+The data comes from ``python/examples/example_utils/datasets.py``; the
+generators are ordinary NumPy code and are not part of the lesson.
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/pose_graph_optimization.py
+   :language: python
+   :start-at: # 1.
+   :end-before: # 2.
+   :dedent: 4
 
-   num_poses = 201
-   num_constraints = num_poses - 1
-   rng = np.random.default_rng(9012)
+**Step 2 — Upload to the GPU.**
+Poses and measurements as row-major 4x4 matrices; pose 0 is the gauge
+anchor.
 
-   anchor = random_se3()
-   deltas = [random_se3() for _ in range(num_constraints)]
+.. literalinclude:: ../../python/examples/pose_graph_optimization.py
+   :language: python
+   :start-at: # 2.
+   :end-before: # 3.
+   :dedent: 4
 
-   gt_poses = [anchor]
-   for i in range(num_constraints):
-       gt_poses.append(compose_se3(gt_poses[-1], se3_inverse(deltas[i])))
+**Step 3 — Build the state batch and the between factors.**
+One :ref:`SE3StateBatch <py-lie-state-batches>`; factor :math:`i` of the
+:ref:`SE3BetweenFactorBatch <py-se3-between-factor>` reads ``[T_i, T_{i+1}]``.
 
-   initial_poses = [gt_poses[0].copy()]
-   for i in range(1, num_poses):
-       perturbation = random_se3(rot_scale=0.05, trans_scale=0.3)
-       initial_poses.append(compose_se3(perturbation, gt_poses[i]))
+.. literalinclude:: ../../python/examples/pose_graph_optimization.py
+   :language: python
+   :start-at: # 3.
+   :end-before: # 4.
+   :dedent: 4
 
-**Step 2 — Upload data and build the state batch.**
+**Step 4 — Assemble the problem.**
+Register the state batch and the factor batch.
 
-.. code-block:: python
-
-   poses_gpu  = cp.asarray(np.stack(initial_poses).reshape(-1), dtype=cp.float32)
-   deltas_gpu = cp.asarray(np.stack(deltas).reshape(-1), dtype=cp.float32)
-   const_ids  = cp.array([0], dtype=cp.int32)
-
-   cublas = pycunls.CublasHandle()
-   pose_states = pycunls.SE3StateBatch(
-       cublas, poses_gpu, num_poses, const_ids, 1)
-
-**Step 3 — Build the between-factor batch.**
-
-.. code-block:: python
-
-   between_factor = pycunls.SE3BetweenFactorBatch(
-       deltas_gpu, num_constraints)
-
-**Step 4 — Wire state pointers and assemble the problem.**
-Each between factor reads two state blocks: ``[T_i, T_{i+1}]``.
-
-.. code-block:: python
-
-   state_pointers = []
-   for i in range(num_constraints):
-       state_pointers.append(pose_states.state_block_device_ptr(i))
-       state_pointers.append(pose_states.state_block_device_ptr(i + 1))
-
-   problem = pycunls.Problem()
-   problem.add_state_batch(pose_states)
-   problem.add_factor_batch(between_factor, state_pointers)
-   assert problem.check_consistency()
+.. literalinclude:: ../../python/examples/pose_graph_optimization.py
+   :language: python
+   :start-at: # 4.
+   :end-before: # 5.
+   :dedent: 4
 
 **Step 5 — Solve with Levenberg-Marquardt.**
+Same solver as in the bundle adjustment example.
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/pose_graph_optimization.py
+   :language: python
+   :start-at: # 5.
+   :end-before: # 6.
+   :dedent: 4
 
-   opts = pycunls.MinimizerOptions()
-   opts.max_num_iterations = 60
-   opts.state_tolerance = 1e-8
-   opts.cost_tolerance  = 1e-8
+**Step 6 — Report and check.**
+Print the summary and check that the cost dropped.
 
-   lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
-   lm_opts.base_options  = opts
-   lm_opts.initial_lambda = 1e-3
+.. literalinclude:: ../../python/examples/pose_graph_optimization.py
+   :language: python
+   :start-at: # 6.
+   :end-before: if __name__
+   :dedent: 4
 
-   stream    = pycunls.CudaStream()
-   minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-   summary   = minimizer.minimize(stream, problem)
 
-   cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-   print(f"Initial cost: {summary.initial_cost:.6f}")
-   print(f"Final cost:   {summary.final_cost:.6f}")
-   print(f"Iterations:   {summary.num_iterations}")
 
 ===============================================================================
 Custom Warp Factor
@@ -392,113 +327,104 @@ Warp factor API used
      - Solves the nonlinear system.
 
 Warp factor code walkthrough
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The solve lives in ``run_chain_example``, which ``main`` calls twice: Part 1
+with ``ScalarDiffFactor``, Part 2 with the residual-only factor and numeric
+Jacobians.
 
 **Step 1 — Define the Warp kernel.**
-The kernel computes the scalar difference residual and constant Jacobian
-``[-1, +1]`` for each *item*: one factor evaluated against one set of state
-blocks. Item ``i`` reads the measurement of its factor ``factor_ids[i]``
-(see :ref:`WarpFactorBatch <py-warp-factor-batch>` for the full contract;
-the regular minimizers pass ``factor_ids[i] == i``, the RANSAC minimizers
-evaluate many items per factor). State values are first gathered into
-contiguous buffers (since Warp kernels operate on contiguous
-``wp.array`` objects and cannot perform the double-pointer indirection
-that raw CUDA kernels do).
+One thread per *item*: one factor evaluated at one set of states. Item ``t``
+reads the measurement of its factor ``ids[t]`` and its own two state values,
+and writes row ``t``. The regular minimizers evaluate each factor once
+(``ids[t] == t``); the RANSAC minimizers evaluate many items per factor (see
+:doc:`custom_factors_and_states`).
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :pyobject: scalar_diff_kernel
 
-   import warp as wp
-   from pycunls.warp import WarpFactorBatch
+**Step 2 — Subclass WarpFactorBatch.**
+``evaluate`` receives raw device pointers. ``factor_ids`` gives the factor
+of every item (``t % num_factors`` when cuNLS passes none),
+``gather_state_pairs`` copies each item's two state values into contiguous
+arrays (Warp cannot dereference the pointer table), and the kernel runs on
+cuNLS's stream. When ``jacobians_ptr`` is 0 only residuals are wanted.
 
-   @wp.kernel
-   def scalar_diff_kernel(
-       measurements: wp.array(dtype=wp.float32),
-       factor_ids:   wp.array(dtype=wp.int32),
-       left_vals:    wp.array(dtype=wp.float32),
-       right_vals:   wp.array(dtype=wp.float32),
-       residuals:    wp.array(dtype=wp.float32),
-       jacobians:    wp.array(dtype=wp.float32),
-       num_items:    int,
-       write_jacobians: int,
-   ):
-       i = wp.tid()
-       if i >= num_items:
-           return
-       residuals[i] = (right_vals[i] - left_vals[i]) - measurements[factor_ids[i]]
-       if write_jacobians != 0:
-           jacobians[i * 2]     = -1.0
-           jacobians[i * 2 + 1] =  1.0
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :pyobject: ScalarDiffFactor
 
-**Step 2 — Subclass** :ref:`WarpFactorBatch <py-warp-factor-batch>`.
-The ``evaluate`` method gathers scattered state pointers into contiguous
-CuPy arrays, wraps them as ``wp.array`` objects, and launches the Warp
-kernel.
+**Step 3 — The gather helper.**
+``gather_state_pairs`` lives in ``example_utils/gpu.py`` and is reusable
+for any factor with two scalar state blocks:
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/example_utils/gpu.py
+   :language: python
+   :pyobject: gather_state_pairs
 
-   class ScalarDiffFactor(WarpFactorBatch):
-       def __init__(self, measurements_wp, num_factors):
-           super().__init__(
-               residual_size=1,
-               state_block_sizes=[1, 1],
-               num_factors=num_factors,
-           )
-           self.measurements = measurements_wp
-           self._num_factors = num_factors
+**Step 4 — Generate synthetic data.**
+``scalar_chain`` returns a monotonic chain, exact consecutive differences and a
+noisy initial guess.
+The data comes from ``python/examples/example_utils/datasets.py``; the
+generators are ordinary NumPy code and are not part of the lesson.
 
-       def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr,
-                    stream_handle, factor_ids_ptr, num_factor_ids):
-           n = num_factor_ids  # number of items
-           ids = self.factor_ids(factor_ids_ptr, n)
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :start-at: # 1.
+   :end-before: # 2.
+   :dedent: 4
 
-           all_vals   = _gather_state_values(state_pointers_ptr, n * 2)
-           left_vals  = all_vals[0::2].copy()
-           right_vals = all_vals[1::2].copy()
+**Step 5 — Upload to the GPU.**
+States and the prior target go to CuPy arrays; the measurements, read inside
+the Warp kernel, to a Warp array.
 
-           left_wp  = wp.array(ptr=int(left_vals.data.ptr), ...)
-           right_wp = wp.array(ptr=int(right_vals.data.ptr), ...)
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :start-at: # 2.
+   :end-before: # 3.
+   :dedent: 4
 
-           res = self.wrap_array(residuals_ptr, wp.float32, n)
-           jac = self.wrap_array(jacobians_ptr, wp.float32, n * 2)
+**Step 6 — Build states, factors and state pointers.**
+Difference factors read ``[x_i, x_{i+1}]``; the built-in prior anchors
+``x_0``.
 
-           stream = self.make_warp_stream(stream_handle)
-           wp.launch(scalar_diff_kernel, dim=n,
-                     inputs=[self.measurements, ids, left_wp, right_wp,
-                             res, jac, n, 1],
-                     stream=stream)
-           return True
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :start-at: # 3.
+   :end-before: # 4.
+   :dedent: 4
 
-**Step 3 — Build the problem and solve.**
-A :ref:`VectorStateBatch1 <py-vector-state-batches>` holds all scalar
-states.  Two factor batches are added: the custom Warp difference factor
-and a built-in :ref:`prior anchor <py-prior-vector-factor>` on
-:math:`x_0`.
+**Step 7 — Assemble the problem.**
+Part 2 registers the residual-only variant (same file,
+``ScalarDiffResidualOnlyFactor``) with ``JacobianMode.numeric``; the prior
+keeps its analytic Jacobian (see :doc:`numeric_jacobians`).
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :start-at: # 4.
+   :end-before: # 5.
+   :dedent: 4
 
-   states_gpu      = cp.asarray(initial)
-   measurements_wp = wp.array(measurements_np, dtype=wp.float32, device="cuda:0")
-   prior_obs_gpu   = cp.asarray(gt[:1])
+**Step 8 — Solve with Levenberg-Marquardt.**
+Same solver as in the previous examples.
 
-   state_batch  = pycunls.VectorStateBatch1(states_gpu, num_states)
-   diff_factor  = ScalarDiffFactor(measurements_wp, num_diff)
-   prior_factor = pycunls.PriorVectorFactorBatch1(prior_obs_gpu, 1)
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :start-at: # 5.
+   :end-before: # 6.
+   :dedent: 4
 
-   diff_ptrs = []
-   for i in range(num_diff):
-       diff_ptrs.append(state_batch.state_block_device_ptr(i))
-       diff_ptrs.append(state_batch.state_block_device_ptr(i + 1))
+**Step 9 — Report and check.**
+Compare with the ground truth and check.
 
-   prior_ptrs = [state_batch.state_block_device_ptr(0)]
+.. literalinclude:: ../../python/examples/custom_warp_factor.py
+   :language: python
+   :start-at: # 6.
+   :end-before: def main
+   :dedent: 4
 
-   problem = pycunls.Problem()
-   problem.add_state_batch(state_batch)
-   problem.add_factor_batch(diff_factor, diff_ptrs)
-   problem.add_factor_batch(prior_factor, prior_ptrs)
-   assert problem.check_consistency()
 
-   minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-   summary   = minimizer.minimize(stream, problem)
 
 ===============================================================================
 Custom Warp State
@@ -551,72 +477,93 @@ Warp state API used
      - Solves the nonlinear system.
 
 Warp state code walkthrough
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Step 1 — Define the Warp Plus kernel.**
-The kernel computes the multiplicative retraction for each state block.
+**Step 1 — Define the Plus kernel.**
+The retraction :math:`x \oplus \delta = x\,e^{\delta}` keeps every state
+positive.
 
-.. code-block:: python
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :pyobject: positive_plus_kernel
 
-   @wp.kernel
-   def positive_plus_kernel(
-       x:             wp.array(dtype=wp.float32),
-       delta:         wp.array(dtype=wp.float32),
-       x_plus_delta:  wp.array(dtype=wp.float32),
-       n: int,
-   ):
-       i = wp.tid()
-       if i >= n:
-           return
-       x_plus_delta[i] = x[i] * wp.exp(delta[i])
+**Step 2 — Subclass WarpStateBatch.**
+``plus`` receives ``num_replicas`` contiguous copies of the batch (1 for the
+regular minimizers, one per hypothesis for RANSAC). Every block is independent,
+so all copies are one flat launch over ``num_replicas * num_blocks`` blocks.
 
-**Step 2 — Subclass** :ref:`WarpStateBatch <py-warp-state-batch>`.
-The ``plus`` method wraps the raw device pointers as ``wp.array`` objects
-and launches the kernel. The buffers hold ``num_replicas`` contiguous copies
-of the batch (1 for the regular minimizers), so it processes
-``num_replicas * num_blocks`` independent blocks.
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :pyobject: PositiveScalarStateBatch
 
-.. code-block:: python
+**Step 3 — Define the factors.**
+Two custom factors in log space: a prior on ``x_0`` and a log-ratio between
+consecutive states. Both follow the same item pattern as in the custom factor
+example: measurement by ``ids[t]``, states and outputs by ``t``.
 
-   from pycunls.warp import WarpStateBatch
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :pyobject: log_ratio_kernel
 
-   class PositiveScalarStateBatch(WarpStateBatch):
-       def __init__(self, data, num_blocks, **kwargs):
-           super().__init__(data, ambient_size=1, tangent_size=1,
-                            num_blocks=num_blocks, **kwargs)
-           self._num = num_blocks
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :pyobject: LogRatioBetweenFactor
 
-       def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle,
-                num_replicas):
-           n = self._num * num_replicas
-           x     = self.wrap_array(x_ptr, wp.float32, n)
-           delta  = self.wrap_array(delta_ptr, wp.float32, n)
-           x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)
-           stream = self.make_warp_stream(stream_handle)
-           wp.launch(positive_plus_kernel, dim=n,
-                     inputs=[x, delta, x_out, n], stream=stream)
+**Step 4 — Generate synthetic data.**
+``positive_chain`` returns a growing positive chain, its log-ratio
+measurements and a noisy initial guess.
+The data comes from ``python/examples/example_utils/datasets.py``; the
+generators are ordinary NumPy code and are not part of the lesson.
 
-**Step 3 — Define custom factors and build the problem.**
-Two custom :ref:`WarpFactorBatch <py-warp-factor-batch>` subclasses compute
-the log-prior and log-ratio residuals.  The problem is assembled the same
-way as previous examples.
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :start-at: # 1.
+   :end-before: # 2.
+   :dedent: 4
 
-.. code-block:: python
+**Step 5 — Upload to the GPU.**
+States go to a CuPy array; factor data to Warp arrays.
 
-   states_gpu = cp.asarray(initial)
-   state_batch = PositiveScalarStateBatch(states_gpu, num_states)
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :start-at: # 2.
+   :end-before: # 3.
+   :dedent: 4
 
-   between_factor = LogRatioBetweenFactor(log_ratios_wp, num_between)
-   prior_factor   = LogPriorFactor(prior_obs_wp, 1)
+**Step 6 — Build the custom state and factor batches.**
+The custom state batch wraps the CuPy array; the factors read
+``[x_i, x_{i+1}]`` and ``x_0``.
 
-   problem = pycunls.Problem()
-   problem.add_state_batch(state_batch)
-   problem.add_factor_batch(between_factor, between_ptrs)
-   problem.add_factor_batch(prior_factor, prior_ptrs)
-   assert problem.check_consistency()
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :start-at: # 3.
+   :end-before: # 4.
+   :dedent: 4
 
-   minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-   summary   = minimizer.minimize(stream, problem)
+**Step 7 — Assemble the problem.**
+Register the state batch and both factor batches.
 
-Because the problem is linear in log-space, Gauss-Newton converges in a
-single iteration.
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :start-at: # 4.
+   :end-before: # 5.
+   :dedent: 4
+
+**Step 8 — Solve with Levenberg-Marquardt.**
+Same solver as in the previous examples; every step goes through the custom
+``plus``.
+
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :start-at: # 5.
+   :end-before: # 6.
+   :dedent: 4
+
+**Step 9 — Report and check.**
+Errors are compared in log space; all states must stay positive.
+
+.. literalinclude:: ../../python/examples/custom_warp_state.py
+   :language: python
+   :start-at: # 6.
+   :end-before: if __name__
+   :dedent: 4
