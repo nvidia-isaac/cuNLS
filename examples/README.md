@@ -38,6 +38,11 @@ Available examples:
   constant-velocity motion-prior factor with the closed-form process-noise
   covariance fused in) to optimize a chain of SE(3) poses and body-velocity
   states, with the first pose and velocity fixed as gauge anchors.
+- `pnp`: Uses `PnPFactorBatch` to recover a camera pose from 3D-2D
+  correspondences, with analytic and numeric Jacobians.
+- `ransac_pnp`: The same PnP problem with 50% gross outliers, solved with
+  `RansacLevenbergMarquardtMinimizer`; compares against plain
+  Levenberg-Marquardt and reports the inlier mask.
 
 ## Build all examples locally
 

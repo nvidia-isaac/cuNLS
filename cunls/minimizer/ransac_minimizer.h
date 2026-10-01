@@ -238,17 +238,19 @@ class RansacContext;
  * @brief RANSAC over an ordinary Problem, with Gauss-Newton hypotheses and
  * refinement.
  *
- * The problem is built exactly as for GaussNewtonMinimizer; only the existing
- * FactorBatch::Evaluate and StateBatch::Plus are used. The one restriction is
+ * The problem is built exactly as for GaussNewtonMinimizer. Every factor and
+ * state batch must honor the item parameters of FactorBatch::Evaluate
+ * (factor_ids, num_factor_ids) and the num_replicas parameter of
+ * StateBatch::Plus; all built-in batches do. The one restriction is
  * the total free tangent dimension (see kMaxRansacTangentDim); any number of
  * state batches of any supported types, and any number of factor batches and
  * factors, are allowed.
  *
  * Minimize() samples minimal sets of kSampled factors, turns each into a
  * hypothesis by a few iterations from the current state values, scores every
- * hypothesis against all kSampled factors, optionally re-solves the best ones
- * on their inliers, refines the winner on its inliers and writes it back into
- * the problem's state batches. InlierMask() then exposes the classification.
+ * hypothesis against all kSampled factors, refines the best one on its
+ * inliers and writes it back into the problem's state batches. InlierMask()
+ * then exposes the classification. See docs/sphinx/ransac.rst.
  *
  * Invalid configurations (D > kMaxRansacTangentDim, D == 0, no kSampled
  * factors, fewer sampled factors than the sample size, numeric Jacobians,

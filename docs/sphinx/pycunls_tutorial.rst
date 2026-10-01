@@ -20,7 +20,9 @@ flow described in the :doc:`introduction`:
 5. Run a :ref:`minimizer <py-lm-label>` and inspect
    :ref:`MinimizerSummary <py-minimizer-summary-label>`.
 
-The examples increase in complexity:
+The examples increase in complexity. For problems with gross outliers, see
+:doc:`ransac` and ``python/examples/ransac_pnp.py``; for the full custom-type
+contract (needed by RANSAC), see :doc:`custom_factors_and_states`.
 
 - :ref:`pycunls_tutorial:Sparse Bundle Adjustment` — uses
   :ref:`ReprojectionFactorBatch <py-reprojection-factor>` to jointly
@@ -340,6 +342,13 @@ Custom Warp Factor
 ===============================================================================
 
 - **Source**: python/examples/custom_warp_factor.py
+
+.. note::
+
+   For the full ``evaluate`` / ``plus`` contract (items, ``factor_ids_ptr``,
+   ``num_factor_ids``, ``num_replicas``), plain-CuPy versions of a custom
+   factor and state, and how to use them with the RANSAC minimizers, see
+   :doc:`custom_factors_and_states`.
 
 Custom Warp factor problem statement
 -------------------------------------

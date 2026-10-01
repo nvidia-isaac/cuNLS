@@ -18,6 +18,7 @@ nanobind_add_module(_pycunls_core
   src/bind_factor.cpp
   src/bind_loss.cpp
   src/bind_minimizer.cpp
+  src/bind_ransac.cpp
   src/bind_problem.cpp
 )
 

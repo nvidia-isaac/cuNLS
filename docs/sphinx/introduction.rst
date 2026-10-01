@@ -140,6 +140,10 @@ Core concepts
 - **Minimizers** (`GaussNewtonMinimizer`, `LevenbergMarquardtMinimizer`) solve
   for state updates.
 - **Loss functions** robustify residuals to reduce outlier influence.
+- **RANSAC minimizers** (`RansacGaussNewtonMinimizer`,
+  `RansacLevenbergMarquardtMinimizer`) solve the same problems when many
+  measurements are gross outliers, and return the inlier set
+  (:doc:`ransac`).
 
 ===============================================================================
 High-level solve flow

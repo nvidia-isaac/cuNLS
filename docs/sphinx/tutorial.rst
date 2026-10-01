@@ -553,6 +553,13 @@ Custom Factor
 
 - **Source**: examples/custom_factor/main.cu
 
+.. note::
+
+   This walkthrough shows the mechanics on a small example. The complete
+   contract of ``Evaluate`` (items, ``factor_ids``, ``num_factor_ids``) and
+   ``Plus`` (``num_replicas``), which every custom type must honor to work
+   with the RANSAC minimizers, is explained in :doc:`custom_factors_and_states`.
+
 Custom factor problem statement
 -------------------------------
 

@@ -38,4 +38,5 @@ void bind_state(nb::module_ &m);  // StateBatch hierarchy (vector, Lie groups)
 void bind_factor(nb::module_ &m); // FactorBatch hierarchy + CustomFactorBatch
 void bind_loss(nb::module_ &m);   // LossFunctionBatch hierarchy
 void bind_minimizer(nb::module_ &m); // GaussNewton / LevenbergMarquardt
+void bind_ransac(nb::module_ &m);    // RANSAC minimizers, options, summary
 void bind_problem(nb::module_ &m);   // Problem (assembles states + factors)

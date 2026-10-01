@@ -10,6 +10,10 @@ cuNLS organizes optimization into:
 - `FactorBatch` implementations for batched residual/Jacobian evaluation.
 - `Problem` for factor-graph composition.
 - `GaussNewtonMinimizer` and `LevenbergMarquardtMinimizer` for solving.
+- `RansacGaussNewtonMinimizer` and `RansacLevenbergMarquardtMinimizer` for
+  robust estimation with gross outliers (free tangent dimension <= 64);
+  guide: `docs/sphinx/ransac.rst`, examples: `examples/ransac_pnp`,
+  `python/examples/ransac_pnp.py`.
 - Sparse backends (`BlockSparsePCG` default, plus `cuDSS` direct and
   dense LDLT/Cholesky/QR fallbacks) and robust losses.
 
@@ -45,3 +49,7 @@ cuNLS organizes optimization into:
 - Inputs are device pointers unless explicitly documented otherwise.
 - Factor/state objects typically do not own user-provided observation/state memory.
 - Constant state IDs are supported via state-batch constructors.
+- Custom factors/states must honor the item parameters of
+  `FactorBatch::Evaluate` (`factor_ids`, `num_factor_ids`) and the
+  `num_replicas` parameter of `StateBatch::Plus` (RANSAC relies on them);
+  guide: `docs/sphinx/custom_factors_and_states.rst`.

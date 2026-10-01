@@ -59,3 +59,8 @@ add_cunls_example(
   pnp_example
   "${CMAKE_CURRENT_SOURCE_DIR}/pnp/main.cpp"
 )
+
+add_cunls_example(
+  ransac_pnp_example
+  "${CMAKE_CURRENT_SOURCE_DIR}/ransac_pnp/main.cpp"
+)

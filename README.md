@@ -5,7 +5,7 @@
 <h3 align="center">GPU-Accelerated Nonlinear Least-Squares Solver</h3>
 
 <p align="center">
-  <code>CUDA/C++</code>&ensp;·&ensp;<code>Gauss-Newton</code>&ensp;·&ensp;<code>Factor Graph</code>&ensp;·&ensp;<code>Manifold Optimization</code>&ensp;·&ensp;<code>Sparse Linear Algebra</code>
+  <code>CUDA/C++</code>&ensp;·&ensp;<code>Gauss-Newton</code>&ensp;·&ensp;<code>RANSAC</code>&ensp;·&ensp;<code>Factor Graph</code>&ensp;·&ensp;<code>Manifold Optimization</code>&ensp;·&ensp;<code>Sparse Linear Algebra</code>
 </p>
 
 ---
@@ -13,7 +13,9 @@
 **cuNLS** is a CUDA/C++ library for solving nonlinear least-squares problems on the GPU.
 It is built around batched factor evaluation, sparse Jacobian assembly, and sparse linear
 solvers — designed for large-scale geometric estimation workloads such as bundle adjustment,
-pose graph optimization, and ICP-style alignment.
+pose graph optimization, and ICP-style alignment. For problems where many measurements are
+gross outliers (wrong matches), its GPU **RANSAC minimizers** solve the same problems robustly
+and return the inlier set.
 
 cuNLS solves optimization problems of the form:
 
@@ -48,9 +50,10 @@ cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per 
 |---|---|
 | **Manifold support** | SO(2), SO(3), SE(2), SE(3), Sim(2), Sim(3), SL(4), Euclidean vectors |
 | **Solvers** | Gauss-Newton, Levenberg-Marquardt with adaptive damping |
+| **Robust estimation (RANSAC)** | `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`: hundreds of hypotheses solved in parallel on the GPU from minimal samples, MSAC scoring, adaptive stopping, refinement on the inliers, per-factor inlier mask. Works with any factor and state type (built-in or custom) whose total free dimension is ≤ 64; any number of factors. Deterministic for a fixed seed; see [RANSAC](docs/sphinx/ransac.rst) |
 | **Robust losses** | Huber, Cauchy, Arctan, SoftL1, Tolerant, Tukey, Scaled |
 | **Built-in factors** | Reprojection, PnP, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, symmetric point-to-plane, prior, constant-velocity/constant-acceleration motion priors (SO(2)/SO(3)/SE(2)/SE(3)) |
-| **Custom factors** | User-defined CUDA kernels via `SizedFactorBatch` |
+| **Custom factors and states** | User-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++, or CuPy / NVIDIA Warp kernels in Python; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
 | **Numeric Jacobians** | Finite-difference Jacobians for any factor batch (manifold-aware, reuses each state's `Plus` retraction), selectable globally (`MinimizerOptions::jacobian_mode`) or per factor group (`Problem::AddFactorBatch`'s override) — write a factor with only a residual and let cuNLS differentiate it; see [Numeric Jacobians](docs/sphinx/numeric_jacobians.rst) |
 | **Linear solver** | Block-sparse PCG (variable block-Jacobi preconditioner, default), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [Installation](docs/sphinx/installation.rst)), dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
 | **Safety checks** | Optional runtime validation (linear-solver diagnostics and more) — disable via `MinimizerOptions::disable_safety_checks` for low-latency solves |
@@ -190,6 +193,36 @@ cmake --build build -j
 ./build/minimal
 ```
 
+## Robust Estimation with RANSAC
+
+When a fraction of the measurements are gross outliers, swap the minimizer — the problem stays
+the same. Mark each residual batch as sampled (may contain outliers, classified with an inlier
+threshold in residual units) or always-on (trusted priors):
+
+```cpp
+cunls::RansacLevenbergMarquardtMinimizerOptions options;
+options.base_options.factor_batches = {{cunls::RansacRole::kSampled, /*inlier_threshold=*/0.01f}};
+
+cunls::RansacLevenbergMarquardtMinimizer minimizer(options);
+cunls::RansacSummary summary = minimizer.Minimize(stream, problem);  // estimate written back
+const uint8_t *inliers = minimizer.InlierMask(0);                    // device, 1 byte per factor
+```
+
+```python
+options = pycunls.RansacLevenbergMarquardtMinimizerOptions()
+options.base_options.factor_batches = [
+    pycunls.RansacFactorBatchOptions(pycunls.RansacRole.sampled, 0.01)]
+minimizer = pycunls.RansacLevenbergMarquardtMinimizer(options)
+summary = minimizer.minimize(stream, problem)
+mask = minimizer.inlier_mask(problem, 0)  # numpy uint8
+```
+
+On PnP it recovers the pose at up to 90% outliers, where least squares (even with a Huber loss)
+fails, in 1.4 ms for 1,000 correspondences and 15 ms for 1,000,000. See
+[RANSAC](docs/sphinx/ransac.rst) for the theory, options and tuning, and
+[`examples/ransac_pnp`](examples/ransac_pnp) / [`python/examples/ransac_pnp.py`](python/examples/ransac_pnp.py)
+for complete programs.
+
 ## Tutorial Examples
 
 The `examples/` directory contains complete working pipelines:
@@ -199,6 +232,8 @@ The `examples/` directory contains complete working pipelines:
 | **Sparse Bundle Adjustment** | Jointly optimize camera poses and 3D landmarks from multi-view reprojection error | `ReprojectionFactorBatch`, `SE3StateBatch`, `VectorStateBatch<3>` |
 | **Pose Graph Optimization** | Recover a chain of SE(3) poses from consecutive relative-transform measurements | `SE3BetweenFactorBatch`, `SE3StateBatch` |
 | **Custom Factor** | User-defined CUDA kernel for a 1-D difference chain | `SizedFactorBatch<1,1,1>`, `PriorVectorFactorBatch<1>` |
+| **PnP** | Camera pose from 3D-2D correspondences, analytic vs. numeric Jacobians | `PnPFactorBatch`, `SE3StateBatch` |
+| **RANSAC PnP** | Camera pose from correspondences with 50% gross outliers; inlier mask | `RansacLevenbergMarquardtMinimizer`, `PnPFactorBatch` |
 
 Build all examples:
 
@@ -284,6 +319,7 @@ The `python/examples/` directory contains end-to-end pipelines using `pycunls`:
 | `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
 | `custom_warp_factor.py` | Custom factor kernel using NVIDIA Warp |
 | `custom_warp_state.py` | Custom state batch (positive-scalar manifold) using NVIDIA Warp |
+| `ransac_pnp.py` | Robust PnP with 50% outliers using `RansacLevenbergMarquardtMinimizer` |
 
 ## C++ Testing
 

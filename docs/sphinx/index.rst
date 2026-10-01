@@ -25,6 +25,8 @@ User Guide
    installation
    tutorial
    quick_start
+   ransac
+   custom_factors_and_states
    numeric_jacobians
    testing
    licensing

@@ -34,4 +34,5 @@ NB_MODULE(_pycunls_core, m) {
   bind_loss(m);      // Robust loss functions (Huber, Cauchy, Tukey, ...)
   bind_minimizer(m); // GaussNewtonMinimizer, LevenbergMarquardtMinimizer
   bind_problem(m);   // Problem (assembles states, factors, and losses)
+  bind_ransac(m);    // RansacGaussNewtonMinimizer, RansacLevenbergMarquardtMinimizer
 }
