@@ -20,10 +20,10 @@
  * @brief Main umbrella header for the cuNLS library.
  *
  * Including this header provides access to all public cuNLS components:
- * factors, minimizers, state blocks, and robustifier loss functions.
+ * factors, minimizers, states, and robustifier loss functions.
  *
  * API terminology: optimization variables are referred to as **states** (and
- * state blocks). Factor batches consume state pointers and produce residuals
+ * states). Factor batches consume state pointers and produce residuals
  * and Jacobians; minimizers update states via state batch operations.
  */
 

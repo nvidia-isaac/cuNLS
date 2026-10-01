@@ -33,10 +33,10 @@ namespace cunls {
  *
  * The factor has:
  * - 6 residuals (6D twist vector)
- * - 2 state blocks, each with 6 state components (SE(3) transform stored as 4x4
+ * - 2 states, each with 6 state components (SE(3) transform stored as 4x4
  * matrix)
  *
- * The Jacobians are computed with respect to both state blocks using the
+ * The Jacobians are computed with respect to both states using the
  * left and right Jacobians of SE(3): J_left = -J_l^{-1}(r) * Ad(Delta),
  * J_right = J_r^{-1}(r). These follow from SE3StateBatch::Plus applying a
  * right-multiplicative local update (T' = T * Exp(eps)).
@@ -57,7 +57,7 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
    * allocated memory. Each delta represents the constraint Delta = T_right^{-1}
    * * T_left for some true transforms T_left and T_right.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
   SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity);
 
@@ -66,12 +66,12 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
    *
    * Computes residuals = Log(T_left^{-1} * T_right) for each factor in the
    * batch. If jacobians is not nullptr, also computes the Jacobians with
-   * respect to both state blocks.
+   * respect to both states.
    *
    * @param residuals Output residuals (6 floats per factor, device pointer)
    * @param jacobians Output Jacobians (12x6 floats per factor, device pointer).
    *                  Can be nullptr if Jacobians are not needed.
-   * @param state_pointers Array of state block pointers (device pointer to
+   * @param state_pointers Array of state pointers (device pointer to
    * device pointers)
    * @param stream CUDA stream for asynchronous execution
    * @return true if evaluation succeeded, false otherwise

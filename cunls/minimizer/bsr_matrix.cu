@@ -360,7 +360,7 @@ void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix
 int ChooseHessianBlockSize(const Problem &problem, int max_block_size) {
   int block_size = 0;
   for (const auto *state_batch : problem.GetStateBatches()) {
-    const size_t num_free = state_batch->NumStateBlocks() - state_batch->NumConstStateBlocks();
+    const size_t num_free = state_batch->NumActiveStates() - state_batch->NumConstStates();
     if (num_free == 0) {
       continue;  // Contributes no columns, so its tangent size is irrelevant.
     }

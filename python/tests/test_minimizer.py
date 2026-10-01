@@ -42,11 +42,11 @@ def _make_prior_problem():
     obs_gpu = cp.asarray(target)
 
     sb = pycunls.VectorStateBatch3(states_gpu, 1)
-    sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
+    sb.set_num_active_states(sb.capacity, sb.const_capacity)
     fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
-    fb.set_num_factors(fb.capacity)
+    fb.set_num_active_factors(fb.capacity)
 
-    ptrs = [sb.state_block_device_ptr(0)]
+    ptrs = [sb.state_device_ptr(0)]
 
     problem = pycunls.Problem()
     problem.add_state_batch(sb)
@@ -145,14 +145,14 @@ class TestLevenbergMarquardtMinimizer:
         obs_gpu = cp.asarray(target)
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
-        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
-        fb.set_num_factors(fb.capacity)
+        fb.set_num_active_factors(fb.capacity)
         loss = pycunls.HuberLossFunctionBatch(1.0)
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)
-        problem.add_factor_batch(fb, loss, [sb.state_block_device_ptr(0)])
+        problem.add_factor_batch(fb, loss, [sb.state_device_ptr(0)])
         assert problem.check_consistency()
 
         minimizer = pycunls.LevenbergMarquardtMinimizer()
@@ -219,14 +219,14 @@ class TestJacobianMode:
         obs_gpu = cp.asarray(target)
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
-        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
-        fb.set_num_factors(fb.capacity)
+        fb.set_num_active_factors(fb.capacity)
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)
         problem.add_factor_batch(
-            fb, [sb.state_block_device_ptr(0)],
+            fb, [sb.state_device_ptr(0)],
             jacobian_mode_override=pycunls.JacobianMode.numeric)
         assert problem.check_consistency()
 

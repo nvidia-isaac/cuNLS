@@ -23,7 +23,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
@@ -134,7 +133,6 @@ class DenseCholeskySolverTestFixture : public ::testing::Test {
   float linear_solver_solution_tolerance_ = 1e-3f;
 
   CudaStream stream_;
-  cuBLASHandle cublas_handle_;
   profiler::Domain profiler_domain_{"DenseCholeskySolverTestFixture"};
 };
 
@@ -326,19 +324,19 @@ TEST_F(DenseCholeskySolverTestFixture, SolvePnPWithCholeskySolver) {
   auto point_const_ids = test_utils::MakeSequentialIds(num_points);
   dvector<int> point_const_ids_device(point_const_ids);
 
-  SE3StateBatch pose_batch(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()), 1);
-  pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
+  SE3StateBatch pose_batch(reinterpret_cast<const float *>(poses_device.data()), 1);
+  pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
   VectorStateBatch<3> point_batch(reinterpret_cast<const float *>(points_device.data()), num_points,
                                   point_const_ids_device.data(), point_const_ids.size());
-  point_batch.SetNumStateBlocks(point_batch.Capacity(), point_batch.ConstCapacity());
+  point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
   ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
-  reprojection_factor.SetNumFactors(reprojection_factor.Capacity());
+  reprojection_factor.SetNumActiveFactors(reprojection_factor.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(num_points * 2);
   for (size_t i = 0; i < num_points; ++i) {
-    state_pointers.push_back(pose_batch.StateBlockDevicePtr(0));
-    state_pointers.push_back(point_batch.StateBlockDevicePtr(i));
+    state_pointers.push_back(pose_batch.StateDevicePtr(0));
+    state_pointers.push_back(point_batch.StateDevicePtr(i));
   }
 
   Problem problem;

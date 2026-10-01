@@ -3,8 +3,6 @@
  * All rights reserved. SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cublas_v2.h>
-
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -440,10 +438,9 @@ __global__ void __launch_bounds__(128, 2)
 }
 
 Similarity3BetweenFactorBatch::Similarity3BetweenFactorBatch(
-    cuBLASHandle &cublas_handle, const Similarity3Transform *pose_deltas_ptr, size_t capacity)
+    const Similarity3Transform *pose_deltas_ptr, size_t capacity)
     : SizedFactorBatch(capacity),
       pose_deltas_ptr_(pose_deltas_ptr),
-      cublas_handle_(cublas_handle),
       poses_left_(capacity),
       poses_right_(capacity),
       poses_left_inverse_(capacity),
@@ -455,11 +452,11 @@ bool Similarity3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                              float const *const *state_pointers,
                                              cudaStream_t stream, const int *factor_ids,
                                              size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
-  const int num_factors = static_cast<int>(NumFactors());
+  const int num_factors = static_cast<int>(NumActiveFactors());
   poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 

@@ -21,7 +21,7 @@
  * (docs/design/reusable_buffers.md):
  *  - a factor batch built for N factors and resized to n < N evaluates bitwise
  *    like a batch built for exactly n factors; resizing above N throws;
- *  - a state batch resized to n blocks updates exactly its first n blocks, also
+ *  - a state batch resized to n states updates exactly its first n states, also
  *    with replicas, and honors the active constant-id count;
  *  - factors cache nothing derived from their measurements: rewriting the
  *    measurements in place changes the next evaluation (the factors that used
@@ -39,7 +39,6 @@
 #include <type_traits>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -74,11 +73,6 @@ using evaluate_items_test::ToDevice;
 using evaluate_items_test::ToHost;
 using FactorPtr = std::unique_ptr<FactorBatch>;
 
-cuBLASHandle &Cublas() {
-  static cuBLASHandle handle;
-  return handle;
-}
-
 std::vector<float> RandomVector(size_t n, float lo, float hi, uint32_t seed) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> dist(lo, hi);
@@ -99,8 +93,8 @@ dvector<float> LieElements(size_t count, int ambient, int tangent, float scale, 
   auto delta = ToDevice(RandomVector(count * tangent, -scale, scale, seed));
   dvector<float> out(identity.size());
   CudaStream stream;
-  State states(Cublas(), base.data(), count);
-  states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
+  State states(base.data(), count);
+  states.SetNumActiveStates(states.Capacity(), states.ConstCapacity());
   states.Plus(base.data(), delta.data(), out.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   return out;
@@ -109,7 +103,7 @@ dvector<float> LieElements(size_t count, int ambient, int tangent, float scale, 
 /** Residuals and Jacobians of the first `n` factors (pointer table of n * B entries). */
 std::pair<std::vector<float>, std::vector<float>> EvaluateFirst(const FactorBatch &factor, size_t n,
                                                                 const dvector<float *> &pointers) {
-  const auto sizes = factor.StateBlockSizes();
+  const auto sizes = factor.StateSizes();
   size_t cols = 0;
   for (size_t s : sizes) cols += s;
   const size_t m = factor.ResidualsSize();
@@ -134,24 +128,24 @@ void CheckActiveSize(const std::function<FactorPtr(size_t)> &make, size_t capaci
                      const std::vector<float *> &pointers) {
   FactorPtr resized = make(capacity);
   ASSERT_EQ(resized->Capacity(), capacity);
-  ASSERT_EQ(resized->NumFactors(), 0u);  // zero until set
-  resized->SetNumFactors(n);
-  EXPECT_EQ(resized->NumFactors(), n);
+  ASSERT_EQ(resized->NumActiveFactors(), 0u);  // zero until set
+  resized->SetNumActiveFactors(n);
+  EXPECT_EQ(resized->NumActiveFactors(), n);
   EXPECT_EQ(resized->Capacity(), capacity);
 
-  const size_t b = resized->StateBlockSizes().size();
+  const size_t b = resized->StateSizes().size();
   dvector<float *> d_pointers(std::vector<float *>(pointers.begin(), pointers.begin() + n * b));
   FactorPtr exact = make(n);
-  exact->SetNumFactors(n);
+  exact->SetNumActiveFactors(n);
   const auto got = EvaluateFirst(*resized, n, d_pointers);
   const auto want = EvaluateFirst(*exact, n, d_pointers);
   EXPECT_TRUE(SameBits(got.first, want.first)) << "residuals";
   EXPECT_TRUE(SameBits(got.second, want.second)) << "Jacobians";
 
-  EXPECT_THROW(resized->SetNumFactors(capacity + 1), std::invalid_argument);
-  EXPECT_EQ(resized->NumFactors(), n);  // unchanged by the failed call
-  resized->SetNumFactors(capacity);
-  EXPECT_EQ(resized->NumFactors(), capacity);
+  EXPECT_THROW(resized->SetNumActiveFactors(capacity + 1), std::invalid_argument);
+  EXPECT_EQ(resized->NumActiveFactors(), n);  // unchanged by the failed call
+  resized->SetNumActiveFactors(capacity);
+  EXPECT_EQ(resized->NumActiveFactors(), capacity);
 }
 
 constexpr size_t kCapacity = 300;
@@ -250,7 +244,7 @@ TEST(FactorCapacity, InformationWrapperForwardsTheSize) {
   CheckActiveSize(
       [&](size_t count) {
         return std::make_unique<Wrapped>(
-            Cublas(), reinterpret_cast<const Wrapped::InformationMatrix *>(matrices.data()), count,
+            reinterpret_cast<const Wrapped::InformationMatrix *>(matrices.data()), count,
             reinterpret_cast<const SE3Transform *>(targets.data()), count);
       },
       kCapacity, kActive, pointers);
@@ -270,7 +264,7 @@ TEST(FactorCapacity, WeightedWrapperForwardsTheSize) {
       kCapacity, kActive, pointers);
 }
 
-/** A custom factor that overrides NumFactors() without passing a capacity to its base. */
+/** A custom factor that overrides NumActiveFactors() without passing a capacity to its base. */
 class FixedSizeFactor : public FactorBatch {
  public:
   bool Evaluate(float *, float *, float const *const *, cudaStream_t, const int *,
@@ -278,23 +272,23 @@ class FixedSizeFactor : public FactorBatch {
     return true;
   }
   size_t ResidualsSize() const override { return 1; }
-  std::vector<size_t> StateBlockSizes() const override { return {1}; }
-  size_t NumFactors() const override { return 5; }
+  std::vector<size_t> StateSizes() const override { return {1}; }
+  size_t NumActiveFactors() const override { return 5; }
 };
 
-TEST(FactorCapacity, OverridingNumFactorsWithoutCapacityIsRejected) {
+TEST(FactorCapacity, OverridingNumActiveFactorsWithoutCapacityIsRejected) {
   FixedSizeFactor factor;
-  EXPECT_EQ(factor.NumFactors(), 5u);
+  EXPECT_EQ(factor.NumActiveFactors(), 5u);
   EXPECT_EQ(factor.Capacity(), 0u);  // capacity is what the base was constructed with
-  EXPECT_THROW(factor.SetNumFactors(3), std::invalid_argument);
+  EXPECT_THROW(factor.SetNumActiveFactors(3), std::invalid_argument);
 
-  // The problem reports NumFactors() > Capacity().
+  // The problem reports NumActiveFactors() > Capacity().
   std::vector<float> zeros(5, 0.f);
   auto x = ToDevice(zeros);
   VectorStateBatch<1> states(x.data(), 5);
-  states.SetNumStateBlocks(5);
+  states.SetNumActiveStates(5);
   std::vector<float *> pointers;
-  for (size_t i = 0; i < 5; ++i) pointers.push_back(states.StateBlockDevicePtr(i));
+  for (size_t i = 0; i < 5; ++i) pointers.push_back(states.StateDevicePtr(i));
   Problem problem;
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&factor, pointers);
@@ -305,21 +299,21 @@ TEST(FactorCapacity, ActiveCountStartsAtZero) {
   auto targets = ToDevice(std::vector<float>(16 * 4, 0.f));
   SE3PriorFactorBatch prior(reinterpret_cast<const SE3Transform *>(targets.data()), 4);
   EXPECT_EQ(prior.Capacity(), 4u);
-  EXPECT_EQ(prior.NumFactors(), 0u);
-  prior.SetNumFactors(4);
-  EXPECT_EQ(prior.NumFactors(), 4u);
+  EXPECT_EQ(prior.NumActiveFactors(), 0u);
+  prior.SetNumActiveFactors(4);
+  EXPECT_EQ(prior.NumActiveFactors(), 4u);
   VectorStateBatch<3> states(targets.data(), 8);
   EXPECT_EQ(states.Capacity(), 8u);
-  EXPECT_EQ(states.NumStateBlocks(), 0u);
+  EXPECT_EQ(states.NumActiveStates(), 0u);
 }
 
 // ============================================================================
-// States: Plus touches exactly the active blocks
+// States: Plus touches exactly the active states
 // ============================================================================
 
 /**
- * Plus over a batch resized to `n` blocks (and `replicas` replicas) must equal
- * Plus over an exact-size batch and leave everything past the active blocks
+ * Plus over a batch resized to `n` states (and `replicas` replicas) must equal
+ * Plus over an exact-size batch and leave everything past the active states
  * untouched.
  */
 template <class State, class Make>
@@ -331,11 +325,11 @@ void CheckStateActiveSize(Make make, int ambient, int tangent, size_t capacity, 
   dvector<float> want(capacity * replicas * ambient);
   std::unique_ptr<State> resized = make(capacity);
   ASSERT_EQ(resized->Capacity(), capacity);
-  ASSERT_EQ(resized->NumStateBlocks(), 0u);  // zero until set
-  resized->SetNumStateBlocks(n);
-  EXPECT_EQ(resized->NumStateBlocks(), n);
+  ASSERT_EQ(resized->NumActiveStates(), 0u);  // zero until set
+  resized->SetNumActiveStates(n);
+  EXPECT_EQ(resized->NumActiveStates(), n);
   std::unique_ptr<State> exact = make(n);
-  exact->SetNumStateBlocks(n);
+  exact->SetNumActiveStates(n);
   CudaStream stream;
   resized->Plus(x.data(), delta.data(), got.data(), stream.GetStream(), replicas);
   exact->Plus(x.data(), delta.data(), want.data(), stream.GetStream(), replicas);
@@ -345,9 +339,9 @@ void CheckStateActiveSize(Make make, int ambient, int tangent, size_t capacity, 
   const size_t active = n * replicas * ambient;
   EXPECT_EQ(0, std::memcmp(g.data(), w.data(), active * sizeof(float)));
   for (size_t i = active; i < g.size(); ++i) {
-    ASSERT_EQ(g[i], sentinel) << "Plus wrote past the active blocks at " << i;
+    ASSERT_EQ(g[i], sentinel) << "Plus wrote past the active states at " << i;
   }
-  EXPECT_THROW(resized->SetNumStateBlocks(capacity + 1), std::invalid_argument);
+  EXPECT_THROW(resized->SetNumActiveStates(capacity + 1), std::invalid_argument);
 }
 
 TEST(StateCapacity, VectorStateBatch) {
@@ -363,8 +357,8 @@ TEST(StateCapacity, SE3StateBatch) {
   for (size_t replicas : {1, 2}) {
     auto x = LieElements<SE3StateBatch>(kCapacity * replicas, 16, 6, 0.3f, 23);
     CheckStateActiveSize<SE3StateBatch>(
-        [&](size_t count) { return std::make_unique<SE3StateBatch>(Cublas(), x.data(), count); },
-        16, 6, kCapacity, kActive, replicas, x);
+        [&](size_t count) { return std::make_unique<SE3StateBatch>(x.data(), count); }, 16, 6,
+        kCapacity, kActive, replicas, x);
   }
 }
 
@@ -372,32 +366,32 @@ TEST(StateCapacity, SL4StateBatch) {
   for (size_t replicas : {1, 2}) {
     auto x = LieElements<SL4StateBatch>(kCapacity * replicas, 16, 15, 0.05f, 24);
     CheckStateActiveSize<SL4StateBatch>(
-        [&](size_t count) { return std::make_unique<SL4StateBatch>(Cublas(), x.data(), count); },
-        16, 15, kCapacity, kActive, replicas, x);
+        [&](size_t count) { return std::make_unique<SL4StateBatch>(x.data(), count); }, 16, 15,
+        kCapacity, kActive, replicas, x);
   }
 }
 
 TEST(StateCapacity, ConstantIdCount) {
   auto x = LieElements<SE3StateBatch>(10, 16, 6, 0.3f, 25);
   auto ids = ToDevice(std::vector<int>{1, 3, 5});
-  SE3StateBatch states(Cublas(), x.data(), 10, ids.data(), 3);
+  SE3StateBatch states(x.data(), 10, ids.data(), 3);
   EXPECT_EQ(states.Capacity(), 10u);
   EXPECT_EQ(states.ConstCapacity(), 3u);
-  EXPECT_EQ(states.NumStateBlocks(), 0u);
-  EXPECT_EQ(states.NumConstStateBlocks(), 0u);
-  states.SetNumStateBlocks(4, 2);
-  EXPECT_EQ(states.NumStateBlocks(), 4u);
-  EXPECT_EQ(states.NumConstStateBlocks(), 2u);
+  EXPECT_EQ(states.NumActiveStates(), 0u);
+  EXPECT_EQ(states.NumConstStates(), 0u);
+  states.SetNumActiveStates(4, 2);
+  EXPECT_EQ(states.NumActiveStates(), 4u);
+  EXPECT_EQ(states.NumConstStates(), 2u);
   EXPECT_EQ(states.ConstStateIds(), ids.data());
-  // Inactive blocks stay addressable up to the capacity, so connectivity for a
+  // Inactive states stay addressable up to the capacity, so connectivity for a
   // coming solve can be built before resizing.
-  EXPECT_EQ(states.StateBlockDevicePtr(4), states.StateBlockDevicePtr(0) + 4 * 16);
-  EXPECT_NE(states.StateBlockDevicePtr(9), nullptr);
-  EXPECT_EQ(states.StateBlockDevicePtr(10), nullptr);  // past the capacity
-  EXPECT_THROW(states.SetNumStateBlocks(4, 4), std::invalid_argument);
-  EXPECT_THROW(states.SetNumStateBlocks(11, 0), std::invalid_argument);
-  states.SetNumStateBlocks(10, 3);
-  EXPECT_EQ(states.NumConstStateBlocks(), 3u);
+  EXPECT_EQ(states.StateDevicePtr(4), states.StateDevicePtr(0) + 4 * 16);
+  EXPECT_NE(states.StateDevicePtr(9), nullptr);
+  EXPECT_EQ(states.StateDevicePtr(10), nullptr);  // past the capacity
+  EXPECT_THROW(states.SetNumActiveStates(4, 4), std::invalid_argument);
+  EXPECT_THROW(states.SetNumActiveStates(11, 0), std::invalid_argument);
+  states.SetNumActiveStates(10, 3);
+  EXPECT_EQ(states.NumConstStates(), 3u);
 }
 
 // ============================================================================
@@ -406,13 +400,8 @@ TEST(StateCapacity, ConstantIdCount) {
 
 template <class Factor, class Obs>
 FactorPtr MakeLieFactor(const float *measurements, size_t count) {
-  FactorPtr factor;
-  if constexpr (std::is_constructible_v<Factor, cuBLASHandle &, const Obs *, size_t>) {
-    factor = std::make_unique<Factor>(Cublas(), reinterpret_cast<const Obs *>(measurements), count);
-  } else {
-    factor = std::make_unique<Factor>(reinterpret_cast<const Obs *>(measurements), count);
-  }
-  factor->SetNumFactors(count);
+  FactorPtr factor = std::make_unique<Factor>(reinterpret_cast<const Obs *>(measurements), count);
+  factor->SetNumActiveFactors(count);
   return factor;
 }
 

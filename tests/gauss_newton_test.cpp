@@ -96,8 +96,8 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
    * @param states Optimized state batch to verify.
    */
   void CheckConvergence(const StatesType &states, const std::vector<int> &const_state_ids = {}) {
-    size_t num_blocks = states.NumStateBlocks();
-    auto ptr = reinterpret_cast<const VectorType *>(states.StateBlockDevicePtr(0));
+    size_t num_blocks = states.NumActiveStates();
+    auto ptr = reinterpret_cast<const VectorType *>(states.StateDevicePtr(0));
 
     std::vector<VectorType> host_states(num_blocks);
     THROW_ON_CUDA_ERROR(cudaMemcpy(host_states.data(), ptr, num_blocks * sizeof(VectorType),
@@ -122,7 +122,7 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
     }
   }
 
-  const size_t num_vectors_ = 10000;  ///< Number of state blocks in test.
+  const size_t num_vectors_ = 10000;  ///< Number of states in test.
 
   std::vector<VectorType> observations_;  ///< Target values for optimization.
   std::vector<VectorType> state_values_;  ///< Initial state values.
@@ -355,7 +355,7 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   CudaStream stream;
   GaussNewtonMinimizer minimizer(opts);
 
-  float *state_base = vector_states.StateBlockDevicePtr(0);
+  float *state_base = vector_states.StateDevicePtr(0);
   const size_t num_floats = n * 1;
   std::vector<float> initial_host(num_floats);
   THROW_ON_CUDA_ERROR(cudaMemcpy(initial_host.data(), state_base, num_floats * sizeof(float),

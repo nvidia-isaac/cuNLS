@@ -18,7 +18,6 @@
 Fixtures
 --------
 stream   – A fresh CudaStream for each test; many pycunls operations require one.
-cublas   – A cuBLAS handle needed by Lie-group state batches and some factors.
 sync     – Yields, then synchronises the stream *after* the test body finishes.
            Use as ``usefixtures("sync")`` or request it directly when a test
            needs the GPU work to have completed before it reads results back.
@@ -34,12 +33,6 @@ import pycunls
 def stream():
     """Create a CUDA stream scoped to a single test."""
     return pycunls.CudaStream()
-
-
-@pytest.fixture
-def cublas():
-    """Create a cuBLAS handle scoped to a single test."""
-    return pycunls.CublasHandle()
 
 
 @pytest.fixture

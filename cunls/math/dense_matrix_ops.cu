@@ -30,7 +30,7 @@
 
 namespace cunls {
 
-constexpr size_t block_size = 256; ///< Thread block size for CUDA kernels
+constexpr size_t block_size = 256;  ///< Thread block size for CUDA kernels
 
 /**
  * @brief CUDA kernel to scale matrix rows by square root of eigenvalues.
@@ -45,9 +45,8 @@ constexpr size_t block_size = 256; ///< Thread block size for CUDA kernels
  * @param eigenvalues Eigenvalues for each matrix (device pointer)
  * @param num_matrices Number of matrices in the batch
  */
-__global__ void scale_row_kernel(float *matrices, size_t matrix_size,
-                                 size_t pitch, float *eigenvalues,
-                                 size_t num_matrices) {
+__global__ void scale_row_kernel(float *matrices, size_t matrix_size, size_t pitch,
+                                 float *eigenvalues, size_t num_matrices) {
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= num_matrices) {
     return;
@@ -77,15 +76,13 @@ __global__ void scale_row_kernel(float *matrices, size_t matrix_size,
  * 2. Scale eigenvectors by square root of eigenvalues
  * 3. Reconstruct matrix square root using matrix multiplication
  *
- * @param cublas_handle Reference to an externally-owned cuBLAS handle.
  * @param stream CUDA stream for asynchronous operations.
  * @param spd_matrix Input/output matrices (device pointer, modified in-place).
  * @param matrix_size Size of each matrix (number of rows/columns).
  * @param pitch Pitch (leading dimension) of each matrix.
  * @param num_matrices Number of matrices in the batch.
  */
-void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
-                       float *spd_matrix, size_t matrix_size, size_t pitch,
+void ComputeSqrtMatrix(cudaStream_t stream, float *spd_matrix, size_t matrix_size, size_t pitch,
                        size_t num_matrices) {
   if (spd_matrix == nullptr) {
     const std::string msg = "spd_matrix cannot be null";
@@ -98,14 +95,14 @@ void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
     throw std::invalid_argument(msg);
   }
   if (num_matrices == 0) {
-    return; // Nothing to do
+    return;  // Nothing to do
   }
 
   cuSolverHandle solver_handle;
+  cuBLASHandle cublas_handle;
   cuSolverInfo solver_info;
 
-  auto handle =
-      static_cast<cusolverDnHandle_t>(solver_handle.GetHandle(stream));
+  auto handle = static_cast<cusolverDnHandle_t>(solver_handle.GetHandle(stream));
   auto params = static_cast<syevjInfo_t>(solver_info.GetInfo());
 
   /// Temporary storage for eigenvector matrices (before scaling)
@@ -127,8 +124,8 @@ void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
   // Query workspace size
   int lwork = 0;
   THROW_ON_CUSOLVER_ERROR(cusolverDnSsyevjBatched_bufferSize(
-      handle, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, matrix_size,
-      spd_matrix, pitch, eigenvalues_ptr, &lwork, params, num_matrices));
+      handle, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, matrix_size, spd_matrix, pitch,
+      eigenvalues_ptr, &lwork, params, num_matrices));
 
   /// Workspace buffer for cuSolver
   dvector<uint8_t> buffer(lwork);
@@ -137,23 +134,21 @@ void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
   // Perform eigenvalue decomposition (spd_matrix contains eigenvectors on
   // output)
   THROW_ON_CUSOLVER_ERROR(cusolverDnSsyevjBatched(
-      handle, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, matrix_size,
-      spd_matrix, pitch, eigenvalues_ptr, buffer_ptr, lwork, info_ptr, params,
-      num_matrices));
+      handle, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, matrix_size, spd_matrix, pitch,
+      eigenvalues_ptr, buffer_ptr, lwork, info_ptr, params, num_matrices));
 
   // Copy eigenvectors to temporary storage before scaling
   thrust::device_ptr<float> ptr = thrust::device_pointer_cast(spd_matrix);
   thrust::device_ptr<float> temp_dst_ptr(temp_matrix.data());
-  thrust::copy(stream_policy, ptr, ptr + num_matrices * matrix_size * pitch,
-               temp_dst_ptr);
+  thrust::copy(stream_policy, ptr, ptr + num_matrices * matrix_size * pitch, temp_dst_ptr);
 
   // Step 2: Scale eigenvectors by square root of eigenvalues
   // temp_matrix = Q * D^{1/2}
   {
     size_t num_blocks = (num_matrices + block_size - 1) / block_size;
 
-    scale_row_kernel<<<num_blocks, block_size, 0, stream>>>(
-        temp_matrix_ptr, matrix_size, pitch, eigenvalues_ptr, num_matrices);
+    scale_row_kernel<<<num_blocks, block_size, 0, stream>>>(temp_matrix_ptr, matrix_size, pitch,
+                                                            eigenvalues_ptr, num_matrices);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
@@ -161,21 +156,19 @@ void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
 
-  auto cublas_handle_ =
-      static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream));
+  auto cublas_handle_ = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream));
   size_t stride = matrix_size * pitch;
 
   // Compute spd_matrix = temp_matrix * Q^T = (Q * D^{1/2}) * Q^T
-  THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      cublas_handle_, CUBLAS_OP_N, CUBLAS_OP_T, matrix_size, matrix_size,
-      matrix_size, &alpha, temp_matrix_ptr, pitch, stride, spd_matrix, pitch,
-      stride, &beta, spd_matrix, pitch, stride, num_matrices));
+  THROW_ON_CUBLAS_ERROR(
+      cublasSgemmStridedBatched(cublas_handle_, CUBLAS_OP_N, CUBLAS_OP_T, matrix_size, matrix_size,
+                                matrix_size, &alpha, temp_matrix_ptr, pitch, stride, spd_matrix,
+                                pitch, stride, &beta, spd_matrix, pitch, stride, num_matrices));
 }
 
-__global__ void
-scatter_to_right_block_kernel(const float *src, size_t block_dim,
-                              size_t src_stride, float *dst, size_t dst_pitch,
-                              size_t dst_stride, size_t num_blocks_count) {
+__global__ void scatter_to_right_block_kernel(const float *src, size_t block_dim, size_t src_stride,
+                                              float *dst, size_t dst_pitch, size_t dst_stride,
+                                              size_t num_blocks_count) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_blocks_count) {
     return;
@@ -189,14 +182,12 @@ scatter_to_right_block_kernel(const float *src, size_t block_dim,
   }
 }
 
-void ScatterToRightBlock(cudaStream_t stream, const float *src,
-                         size_t block_dim, size_t src_stride, float *dst,
-                         size_t dst_pitch, size_t dst_stride,
-                         size_t num_blocks) {
+void ScatterToRightBlock(cudaStream_t stream, const float *src, size_t block_dim, size_t src_stride,
+                         float *dst, size_t dst_pitch, size_t dst_stride, size_t num_blocks) {
   size_t num_cuda_blocks = (num_blocks + block_size - 1) / block_size;
   scatter_to_right_block_kernel<<<num_cuda_blocks, block_size, 0, stream>>>(
       src, block_dim, src_stride, dst, dst_pitch, dst_stride, num_blocks);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-} // namespace cunls
+}  // namespace cunls

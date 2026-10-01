@@ -13,7 +13,7 @@
 namespace cunls {
 
 /**
- * @brief Batch factor for SO(2) between constraints (no cuBLAS handle).
+ * @brief Batch factor for SO(2) between constraints.
  *
  * residual = Log(R_delta^T * R_left^T * R_right) (scalar angle).
  * Since SO(2) is abelian, Jacobians are exact: H_left = -1, H_right = 1.

@@ -115,7 +115,7 @@ class LinearRegressionFactorBatch : public SizedFactorBatch<1, Dim> {
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override {
-    const size_t n = this->NumFactors();
+    const size_t n = this->NumActiveFactors();
     LaunchLinearRegression(Dim, a_, y_, n, residuals, jacobians, state_pointers, factor_ids,
                            num_factor_ids == 0 ? n : num_factor_ids, stream);
     return true;
@@ -155,10 +155,12 @@ class SyncingFactorBatch : public FactorBatch {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
   size_t ResidualsSize() const override { return inner_->ResidualsSize(); }
-  std::vector<size_t> StateBlockSizes() const override { return inner_->StateBlockSizes(); }
-  size_t NumFactors() const override { return inner_->NumFactors(); }
+  std::vector<size_t> StateSizes() const override { return inner_->StateSizes(); }
+  size_t NumActiveFactors() const override { return inner_->NumActiveFactors(); }
   size_t Capacity() const override { return inner_->Capacity(); }
-  void SetNumFactors(size_t num_factors) override { inner_->SetNumFactors(num_factors); }
+  void SetNumActiveFactors(size_t num_active_factors) override {
+    inner_->SetNumActiveFactors(num_active_factors);
+  }
 
  private:
   FactorBatch *inner_;

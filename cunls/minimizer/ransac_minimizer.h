@@ -31,8 +31,8 @@ namespace cunls {
 /**
  * @brief Largest total free tangent dimension a RANSAC minimizer accepts.
  *
- * The sum of TangentSize() over every non-constant state block of every state
- * batch in the problem must not exceed this value. Constant blocks do not
+ * The sum of TangentSize() over every non-constant state of every state
+ * batch in the problem must not exceed this value. Constant states do not
  * count, whatever their number.
  */
 constexpr int kMaxRansacTangentDim = 64;
@@ -129,7 +129,7 @@ struct RansacMinimizerOptions {
 
   /**
    * @brief Count a factor as an inlier only if its Jacobian has a non-zero
-   * entry on a free state block.
+   * entry on a free state.
    *
    * Some factors report a zero residual (and zero Jacobian) for configurations
    * they cannot evaluate, e.g. PnPFactorBatch for points behind the camera.

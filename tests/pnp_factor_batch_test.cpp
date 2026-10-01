@@ -173,10 +173,10 @@ float PoseFrobeniusSq(const SE3Transform &a, const SE3Transform &b) {
  */
 void RegisterPnPMinimizationProblem(Problem &problem, PnPFactorBatch &pnp_batch,
                                     SE3StateBatch &pose_state_batch) {
-  const size_t n = pnp_batch.NumFactors();
+  const size_t n = pnp_batch.NumActiveFactors();
   std::vector<float *> state_ptrs;
   state_ptrs.reserve(n);
-  float *pose_block = pose_state_batch.StateBlockDevicePtr(0);
+  float *pose_block = pose_state_batch.StateDevicePtr(0);
   for (size_t i = 0; i < n; ++i) {
     state_ptrs.push_back(pose_block);
   }
@@ -219,22 +219,22 @@ class PnPFactorBatchTest : public ::testing::Test {
 TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
   const size_t n = 6;
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  pnp.SetNumFactors(pnp.Capacity());
+  pnp.SetNumActiveFactors(pnp.Capacity());
   ReprojectionFactorBatch reproj(obs_device_.data(), n, kZThr);
-  reproj.SetNumFactors(reproj.Capacity());
+  reproj.SetNumActiveFactors(reproj.Capacity());
   VectorStateBatch<3> point_batch(reinterpret_cast<float *>(points_device_.data()), n);
-  point_batch.SetNumStateBlocks(point_batch.Capacity(), point_batch.ConstCapacity());
-  SE3StateBatch pose_state(cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
-  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
+  point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
+  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose_device_.data()), 1);
+  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
 
   std::vector<const float *> sp_reproj;
   sp_reproj.reserve(2 * n);
   std::vector<const float *> sp_pnp;
   sp_pnp.reserve(n);
   for (size_t i = 0; i < n; i++) {
-    sp_reproj.push_back(reinterpret_cast<const float *>(pose_state.StateBlockDevicePtr(0)));
-    sp_reproj.push_back(reinterpret_cast<const float *>(point_batch.StateBlockDevicePtr(i)));
-    sp_pnp.push_back(reinterpret_cast<const float *>(pose_state.StateBlockDevicePtr(0)));
+    sp_reproj.push_back(reinterpret_cast<const float *>(pose_state.StateDevicePtr(0)));
+    sp_reproj.push_back(reinterpret_cast<const float *>(point_batch.StateDevicePtr(i)));
+    sp_pnp.push_back(reinterpret_cast<const float *>(pose_state.StateDevicePtr(0)));
   }
 
   dvector<float> r_pnp(n * 2);
@@ -265,14 +265,14 @@ TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
 TEST_F(PnPFactorBatchTest, EvaluateNearZeroAtGroundTruth) {
   const size_t n = 20;
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  pnp.SetNumFactors(pnp.Capacity());
-  SE3StateBatch pose_state(cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
-  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
+  pnp.SetNumActiveFactors(pnp.Capacity());
+  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose_device_.data()), 1);
+  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
 
   std::vector<const float *> sp;
   sp.reserve(n);
   for (size_t i = 0; i < n; i++) {
-    sp.push_back(reinterpret_cast<const float *>(pose_state.StateBlockDevicePtr(0)));
+    sp.push_back(reinterpret_cast<const float *>(pose_state.StateDevicePtr(0)));
   }
   dvector<const float *> dev_sp(sp);
 
@@ -296,9 +296,9 @@ TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  pnp.SetNumFactors(pnp.Capacity());
-  SE3StateBatch pose_state(cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
-  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
+  pnp.SetNumActiveFactors(pnp.Capacity());
+  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose_device_.data()), 1);
+  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
 
   Problem problem;
   RegisterPnPMinimizationProblem(problem, pnp, pose_state);
@@ -360,9 +360,9 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
   EXPECT_GT(PoseFrobeniusSq(PoseOnHostFromDevice(), gt_pose_), 1e-4f);
 
   PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  pnp.SetNumFactors(pnp.Capacity());
-  SE3StateBatch pose_state(cublas_handle_, reinterpret_cast<const float *>(pose_device_.data()), 1);
-  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
+  pnp.SetNumActiveFactors(pnp.Capacity());
+  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose_device_.data()), 1);
+  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
 
   Problem problem_1;
   RegisterPnPMinimizationProblem(problem_1, pnp, pose_state);

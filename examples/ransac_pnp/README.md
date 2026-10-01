@@ -24,7 +24,7 @@ RANSAC PnP example: 2000 correspondences, 50% outliers
 
 Nothing in the problem: the states, the `PnPFactorBatch` and the `Problem`
 are built exactly as in `examples/pnp` (constructed with their **capacity**,
-then activated with `SetNumStateBlocks` / `SetNumFactors`; here every slot
+then activated with `SetNumActiveStates` / `SetNumActiveFactors`; here every slot
 is used, so active = capacity). Only the minimizer differs:
 
 ```cpp

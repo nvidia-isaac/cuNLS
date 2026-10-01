@@ -142,7 +142,7 @@ __global__ void point_to_point_cost_kernel(const float *p_observations, const fl
   constexpr int kDim = 3;
   constexpr int kTangentDim = 6;
 
-  // Read the SE3 transform from the state block
+  // Read the SE3 transform from the state
   auto param_ptr = state_pointers[tid];
   assert(param_ptr != nullptr);
 
@@ -213,8 +213,8 @@ __global__ void point_to_point_cost_kernel(const float *p_observations, const fl
 bool PointToPointFactorBatch::Evaluate(float *residuals, float *jacobians,
                                        float const *const *state_pointers, cudaStream_t stream,
                                        const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   auto p_data_ptr = reinterpret_cast<const float *>(p_observations_ptr_);
@@ -223,7 +223,7 @@ bool PointToPointFactorBatch::Evaluate(float *residuals, float *jacobians,
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
   point_to_point_cost_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
       p_data_ptr, q_data_ptr, state_pointers, residuals, jacobians, static_cast<int>(num_items),
-      factor_ids, static_cast<int>(NumFactors()));
+      factor_ids, static_cast<int>(NumActiveFactors()));
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;

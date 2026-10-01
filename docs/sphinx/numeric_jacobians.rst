@@ -54,7 +54,7 @@ How it works
 ===============================================================================
 
 Numeric differentiation is manifold-aware: for each tangent-space
-coordinate of each state block a factor references, cuNLS perturbs the
+coordinate of each state a factor references, cuNLS perturbs the
 state via that state batch's own :cpp:func:`StateBatch::Plus` (the same
 retraction the minimizer uses to apply solved steps), evaluates the
 residual at the perturbed state, and differences against a second
@@ -89,7 +89,7 @@ coordinate (twice per coordinate for central differences), whereas an
 analytic factor computes residual and Jacobian together in one kernel.
 Internal benchmarking across PGO/SBA/PnP-scale problems shows numeric-diff
 Jacobian evaluation taking roughly 3-12x longer than the equivalent analytic
-kernel, with the gap widening for factors that touch more state-block tangent
+kernel, with the gap widening for factors that touch more state tangent
 dimensions. In practice this cost is often small relative to the sparse
 linear solve that dominates most iterations — but for factors that run at
 scale and are worth the extra effort, prefer writing an analytic Jacobian.
@@ -130,7 +130,7 @@ residual-only factor:
      bool Evaluate(float *residuals, float * /*jacobians*/,
                    float const *const *state_pointers, cudaStream_t stream,
                    const int *factor_ids = nullptr, size_t num_factor_ids = 0) const final {
-       const size_t num_factors = NumFactors();
+       const size_t num_factors = NumActiveFactors();
        const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
        if (num_items == 0 || num_factors == 0) {
          return true;

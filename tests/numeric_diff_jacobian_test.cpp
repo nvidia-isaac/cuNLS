@@ -30,7 +30,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -96,14 +95,14 @@ TEST(NumericDiffJacobianTest, VectorBetweenMatchesAnalytic) {
 
   VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(states_device.data()),
                                      kNumStates);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_device.data(), kNumFactors);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
-    state_pointers[2 * f + 0] = state_batch.StateBlockDevicePtr(f);
-    state_pointers[2 * f + 1] = state_batch.StateBlockDevicePtr(f + 1);
+    state_pointers[2 * f + 0] = state_batch.StateDevicePtr(f);
+    state_pointers[2 * f + 1] = state_batch.StateDevicePtr(f + 1);
   }
 
   Problem problem;
@@ -158,7 +157,6 @@ TEST(NumericDiffJacobianTest, SO3BetweenMatchesAnalytic) {
   std::uniform_real_distribution<float> rot_dist(-0.5f, 0.5f);
 
   CudaStream stream;
-  cuBLASHandle cublas;
 
   hvector<Vector<3>> state_twists(kNumStates);
   for (auto &t : state_twists) {
@@ -179,15 +177,15 @@ TEST(NumericDiffJacobianTest, SO3BetweenMatchesAnalytic) {
                 kNumFactors, reinterpret_cast<float *>(deltas_d.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
-  SO3StateBatch state_batch(cublas, reinterpret_cast<const float *>(states_d.data()), kNumStates);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  SO3StateBatch state_batch(reinterpret_cast<const float *>(states_d.data()), kNumStates);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   SO3BetweenFactorBatch factor_batch(deltas_d.data(), kNumFactors);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
-    state_pointers[2 * f + 0] = state_batch.StateBlockDevicePtr(f);
-    state_pointers[2 * f + 1] = state_batch.StateBlockDevicePtr(f + 1);
+    state_pointers[2 * f + 0] = state_batch.StateDevicePtr(f);
+    state_pointers[2 * f + 1] = state_batch.StateDevicePtr(f + 1);
   }
 
   Problem problem;
@@ -241,7 +239,6 @@ TEST(NumericDiffJacobianTest, SE3BetweenMatchesAnalytic) {
   std::uniform_real_distribution<float> trans_dist(-2.0f, 2.0f);
 
   CudaStream stream;
-  cuBLASHandle cublas;
 
   auto make_twists = [&](size_t n) {
     hvector<Vector<6>> twists(n);
@@ -269,15 +266,15 @@ TEST(NumericDiffJacobianTest, SE3BetweenMatchesAnalytic) {
                 16, kNumFactors, reinterpret_cast<float *>(deltas_d.data()));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
-  SE3StateBatch state_batch(cublas, reinterpret_cast<const float *>(states_d.data()), kNumStates);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  SE3StateBatch state_batch(reinterpret_cast<const float *>(states_d.data()), kNumStates);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   SE3BetweenFactorBatch factor_batch(deltas_d.data(), kNumFactors);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
-    state_pointers[2 * f + 0] = state_batch.StateBlockDevicePtr(f);
-    state_pointers[2 * f + 1] = state_batch.StateBlockDevicePtr(f + 1);
+    state_pointers[2 * f + 0] = state_batch.StateDevicePtr(f);
+    state_pointers[2 * f + 1] = state_batch.StateDevicePtr(f + 1);
   }
 
   Problem problem;
@@ -340,14 +337,14 @@ TEST(NumericDiffJacobianTest, ForwardDiffMatchesAnalytic) {
 
   VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(states_device.data()),
                                      kNumStates);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_device.data(), kNumFactors);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
-    state_pointers[2 * f + 0] = state_batch.StateBlockDevicePtr(f);
-    state_pointers[2 * f + 1] = state_batch.StateBlockDevicePtr(f + 1);
+    state_pointers[2 * f + 0] = state_batch.StateDevicePtr(f);
+    state_pointers[2 * f + 1] = state_batch.StateDevicePtr(f + 1);
   }
 
   Problem problem;

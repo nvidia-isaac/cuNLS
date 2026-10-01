@@ -43,19 +43,19 @@ namespace cunls {
  * LevenbergMarquardtMinimizer.
  *
  * Factor batches define residual computations, state batches
- * hold the optimization variables, and the *connectivity* tells which state
- * blocks each factor reads.
+ * hold the optimization variables, and the *connectivity* tells which
+ * states each factor reads.
  *
  * Connectivity comes in three forms, chosen per factor batch at registration:
- *  - a host list of state-block pointers (copied once into a device table);
- *  - a user-owned device table of state-block pointers;
+ *  - a host list of state pointers (copied once into a device table);
+ *  - a user-owned device table of state pointers;
  *  - a user-owned device table of state indices, with the state batch of
- *    every block slot fixed at registration.
+ *    every state slot fixed at registration.
  * Device tables are bound once and read at every minimization, so the user
  * can rewrite them in place between solves (ordered before Minimize on the
  * GPU), together with measurements, states and the sizes set through
- * FactorBatch::SetNumFactors / StateBatch::SetNumStateBlocks. Only the first
- * NumFactors() x B entries of a table are read (B = StateBlockSizes().size()).
+ * FactorBatch::SetNumActiveFactors / StateBatch::SetNumActiveStates. Only the first
+ * NumActiveFactors() x B entries of a table are read (B = StateSizes().size()).
  * See docs/design/reusable_buffers.md.
  */
 class Problem {
@@ -68,7 +68,7 @@ class Problem {
    * A trivial (identity) loss function is used.
    *
    * @param factor_batch Pointer to the factor batch (not owned).
-   * @param state_pointers Host-side list of device pointers to state blocks for
+   * @param state_pointers Host-side list of device pointers to states for
    * each factor instance, flattened in row-major order: [cf0_state0,
    * cf0_state1, ..., cfN_stateM]. The problem stores a copy on the host.
    * @param jacobian_mode_override Optional per-group override of the
@@ -89,7 +89,7 @@ class Problem {
    *
    * @param factor_batch Pointer to the factor batch (not owned).
    * @param loss_function_batch Pointer to the loss function batch (not owned).
-   * @param state_pointers Host-side list of device pointers to state blocks for
+   * @param state_pointers Host-side list of device pointers to states for
    * each factor instance, flattened in row-major order: [cf0_state0,
    * cf0_state1, ..., cfN_stateM]. The problem stores a copy on the host.
    * @param jacobian_mode_override Optional per-group override of the
@@ -102,10 +102,10 @@ class Problem {
 
   /**
    * @brief Adds a factor batch whose connectivity is a user-owned device table
-   * of state-block pointers.
+   * of state pointers.
    *
-   * Entry `f * B + b` (B = StateBlockSizes().size()) points at the state block
-   * that factor f reads in its block slot b. The table must hold
+   * Entry `f * B + b` (B = StateSizes().size()) points at the state
+   * that factor f reads in its state slot b. The table must hold
    * `Capacity() * B` entries and stay valid for the problem's lifetime; its
    * contents may be rewritten between solves.
    *
@@ -122,15 +122,15 @@ class Problem {
    * @brief Adds a factor batch whose connectivity is a user-owned device table
    * of state indices.
    *
-   * Block slot b of every factor reads from `slot_state_batches[b]` (one entry
-   * per slot, B in total); factor f reads block `device_state_indices[f * B + b]`
-   * of it. Indices must be below that batch's NumStateBlocks(). The table must
+   * State slot b of every factor reads from `slot_state_batches[b]` (one entry
+   * per slot, B in total); factor f reads state `device_state_indices[f * B + b]`
+   * of it. Indices must be below that batch's NumActiveStates(). The table must
    * hold `Capacity() * B` ints and stay valid for the problem's lifetime; its
    * contents may be rewritten between solves.
    *
    * @param factor_batch Pointer to the factor batch (not owned).
    * @param loss_function_batch Loss function batch, or nullptr for none (not owned).
-   * @param slot_state_batches State batch of each block slot (registered with
+   * @param slot_state_batches State batch of each state slot (registered with
    *        AddStateBatch, before or after this call).
    * @param device_state_indices Device array of `Capacity() * B` ints (not owned).
    * @param jacobian_mode_override See the host-list overload.
@@ -155,7 +155,7 @@ class Problem {
    * with a host list (synchronous copy into its device table).
    *
    * @param residual_batch_index Index into GetResidualBatches().
-   * @param state_pointers `NumFactors() * B` state-block pointers (at most
+   * @param state_pointers `NumActiveFactors() * B` state pointers (at most
    *        `Capacity() * B`).
    */
   void SetStatePointers(size_t residual_batch_index, const std::vector<float *> &state_pointers);
@@ -163,8 +163,8 @@ class Problem {
   /**
    * @brief Adds a state batch to the problem.
    *
-   * Registers a batch of state blocks as optimization variables.
-   * Every state block referenced by factors must belong to
+   * Registers a batch of states as optimization variables.
+   * Every state referenced by factors must belong to
    * a registered state batch.
    *
    * @param state_batch Pointer to the state batch (not owned).
@@ -201,11 +201,11 @@ class Problem {
    * @brief GPU validation of every active connection, for problems whose
    * connectivity is rewritten on the device.
    *
-   * Checks that every pointer of the first `NumFactors() * B` entries lies in an
-   * active block of a registered state batch with the slot's tangent size (or
-   * every index is below the slot batch's NumStateBlocks()), that every active
-   * constant id is below its batch's NumStateBlocks(), and that every active,
-   * non-constant state block is read by at least one factor. One kernel per
+   * Checks that every pointer of the first `NumActiveFactors() * B` entries lies in an
+   * active state of a registered state batch with the slot's tangent size (or
+   * every index is below the slot batch's NumActiveStates()), that every active
+   * constant id is below its batch's NumActiveStates(), and that every active,
+   * non-constant state is read by at least one factor. One kernel per
    * table and one readback; the first failure is logged.
    *
    * @param stream CUDA stream; synchronized before returning.
@@ -221,7 +221,7 @@ class Problem {
   void PrepareStatePointers(cudaStream_t stream) const;
 
   /**
-   * @brief Device table of `NumFactors() * B` state-block pointers of a
+   * @brief Device table of `NumActiveFactors() * B` state pointers of a
    * residual batch. Valid after PrepareStatePointers() on the same stream.
    */
   float *const *DeviceStatePointers(size_t residual_batch_index) const;
@@ -229,7 +229,7 @@ class Problem {
   /** @brief True if the residual batch's connectivity is a user-owned device table. */
   bool HasDeviceConnectivity(size_t residual_batch_index) const;
 
-  /** @brief Number of active state pointers of a residual batch: NumFactors() * B. */
+  /** @brief Number of active state pointers of a residual batch: NumActiveFactors() * B. */
   size_t NumStatePointers(size_t residual_batch_index) const;
 
   /**
@@ -260,7 +260,7 @@ class Problem {
   /**
    * @brief Host copies of the active connectivity of every residual batch.
    *
-   * Element i holds the first `NumFactors() * B` state-block pointers of
+   * Element i holds the first `NumActiveFactors() * B` state pointers of
    * residual batch i. Host-list batches are returned as stored; device tables
    * are expanded and downloaded first, which synchronizes the device (call it
    * only where a host copy is really needed).
@@ -296,8 +296,8 @@ class Problem {
   /**
    * @brief Validates that the factor graph is properly connected.
    *
-   * Ensures every factor references existing state blocks and every
-   * state block is constrained by at least one factor.
+   * Ensures every factor references existing states and every
+   * state is constrained by at least one factor.
    *
    * @return True if the graph is connected, false otherwise.
    */
@@ -310,7 +310,7 @@ class Problem {
     float *const *user_pointers = nullptr;   ///< kDevicePointers: user table.
     const int *user_indices = nullptr;       ///< kDeviceIndices: user table.
     std::vector<float *> host;               ///< kHostList: the user's list.
-    std::vector<StateBatch *> slot_batches;  ///< kDeviceIndices: state batch per block slot.
+    std::vector<StateBatch *> slot_batches;  ///< kDeviceIndices: state batch per state slot.
     /// Library-owned device pointer table: the copied host list (kHostList) or
     /// the expanded index table (kDeviceIndices).
     mutable dvector<float *> table;

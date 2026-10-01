@@ -37,7 +37,7 @@ namespace cunls {
  *
  * The factor has:
  * - 1 residual (scalar signed distance to plane)
- * - 1 state block with 6 state_pointers (SE(3) tangent space dimension)
+ * - 1 state with 6 state_pointers (SE(3) tangent space dimension)
  *
  * The Jacobian is computed with respect to the SE(3) tangent vector
  * delta = [omega; rho] (rotation, translation) using right perturbation
@@ -69,7 +69,7 @@ class PointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
    * vectors at each source point (in the source/q frame). Must point to at
    * least capacity * 3 floats of allocated memory.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
   PointToPlaneFactorBatch(const Vector3 *p_observations_ptr, const Vector3 *q_observations_ptr,
                           const Vector3 *nq_observations_ptr, size_t capacity)
@@ -89,13 +89,13 @@ class PointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
    *                  factor). Can be nullptr to skip residual computation.
    * @param jacobians Output device pointer for Jacobians (1 x 6 = 6 floats per
    *                  factor). Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state block pointers. Each entry
+   * @param state_pointers Device pointer to state pointers. Each entry
    *                   points to an SE(3) transform (16 floats) on the device.
    * @param stream CUDA stream for asynchronous execution.
    * @param factor_ids Optional per-item factor index (see
    *                   FactorBatch::Evaluate's item contract).
    * @param num_factor_ids Number of items (the length of factor_ids when it
-   *        is given); 0 means NumFactors().
+   *        is given); 0 means NumActiveFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,

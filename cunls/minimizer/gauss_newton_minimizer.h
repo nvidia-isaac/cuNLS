@@ -330,8 +330,8 @@ class GaussNewtonMinimizer {
   /**
    * @brief Updates states with the computed step.
    *
-   * Computes updated_state = curr_state + step using state block
-   * operations that respect state block manifolds.
+   * Computes updated_state = curr_state + step using state
+   * operations that respect state manifolds.
    *
    * @param stream CUDA stream for GPU operations.
    * @param curr_state Current minimizer state.

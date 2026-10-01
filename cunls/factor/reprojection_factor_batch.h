@@ -36,8 +36,8 @@ namespace cunls {
  *
  * Inherits from SizedFactorBatch<2, 6, 3>:
  *   - 2: Residual dimension (2D reprojection error)
- *   - 6: First state block (SE3 pose tangent)
- *   - 3: Second state block (3D point)
+ *   - 6: First state (SE3 pose tangent)
+ *   - 3: Second state (3D point)
  */
 class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
  public:
@@ -46,7 +46,7 @@ class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
    *
    * @param observations  Device pointer to normalized 2D observations.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    * @param z_threshold  Minimum depth for valid projection.
    */
   ReprojectionFactorBatch(const Vector<2> *observations, size_t capacity,
@@ -62,7 +62,7 @@ class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
    * @param poses_camera_from_rig  Per-observation camera-from-rig SE3
    * transforms.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    * @param z_threshold  Minimum depth for valid projection.
    */
   ReprojectionFactorBatch(const Vector<2> *observations, const SE3Transform *poses_camera_from_rig,

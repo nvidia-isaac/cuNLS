@@ -39,17 +39,17 @@ manifold-generic, compile-time-deduced facade:
 
 - Inputs are typically device pointers and must remain valid for factor lifetime.
 - Constructed with a capacity (measurements the buffers hold), fixed for the
-  batch's lifetime. The active count `NumFactors()` starts at 0:
-  `SetNumFactors(n)` (host-only) must be called before the first solve and may
+  batch's lifetime. The active count `NumActiveFactors()` starts at 0:
+  `SetNumActiveFactors(n)` (host-only) must be called before the first solve and may
   change it between solves up to `Capacity()`. Custom factors pass the
   capacity to `SizedFactorBatch(capacity)` instead of overriding
-  `NumFactors()`; wrappers forward the size calls to the wrapped batch.
+  `NumActiveFactors()`; wrappers forward the size calls to the wrapped batch.
 - `Evaluate()` writes residuals and optionally Jacobians in contiguous batched
   layouts documented in each header.
 - `state_pointers` is a flattened pointer array, grouped per factor.
 - `Evaluate(residuals, jacobians, state_pointers, stream, factor_ids = nullptr,
-  num_factor_ids = 0)` evaluates n items (n = num_factor_ids, or NumFactors()
-  when 0): item t is factor `factor_ids[t]` (or t % NumFactors()) with its own
+  num_factor_ids = 0)` evaluates n items (n = num_factor_ids, or NumActiveFactors()
+  when 0): item t is factor `factor_ids[t]` (or t % NumActiveFactors()) with its own
   pointer row `state_pointers[t * B ..]`; outputs are item-major. Results must
   match a plain evaluation bitwise. All built-in factors implement it (device
   helper `FactorMeasurementIndex` in `indexed_evaluation.cuh`); RANSAC relies
@@ -57,5 +57,5 @@ manifold-generic, compile-time-deduced facade:
 
 ## Related modules
 
-- State blocks consumed from `state/`.
+- States consumed from `state/`.
 - Optional robustification through `robustifier/` via `ResidualBatch`.

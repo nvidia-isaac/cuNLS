@@ -183,7 +183,7 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    * layout is derived automatically from
    * `problem.GetStateBatches()`: each batch contributes one layout
    * segment with `size = TangentSize()` and
-   * `count = NumStateBlocks() - NumConstStateBlocks()`.  Consecutive
+   * `count = NumActiveStates() - NumConstStates()`.  Consecutive
    * segments of equal size are merged so the dispatch loop only sees
    * distinct-size groups.  An explicit layout previously set via
    * @c options_.block_layout takes precedence; passing an empty problem

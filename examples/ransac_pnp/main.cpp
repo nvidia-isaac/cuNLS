@@ -27,7 +27,6 @@
 #include <iostream>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -53,20 +52,19 @@ constexpr float kInlierThreshold = 0.01f;  // ~3.3 sigma of the 2D residual norm
 // The PnP problem on the GPU: one SE(3) pose state and one PnP factor per
 // correspondence, all reading that pose. Built exactly as for any minimizer.
 struct PnPProblem {
-  // Capacity vs. active count. A batch is constructed with its capacity: how many state blocks (or
+  // Capacity vs. active count. A batch is constructed with its capacity: how many states (or
   // factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime; size it
   // once for the largest problem you expect. Right after construction nothing is active:
-  // SetNumStateBlocks / SetNumFactors set the active count, how many of the first slots the next
-  // solve uses (a solve without it throws). The setter is host-only (no allocation, no device work)
-  // and may change the count between solves up to the capacity, which is what lets a real-time
-  // application allocate once and reuse the same buffers every frame while the problem size
-  // changes. This example solves every slot once, so each active count equals its capacity.
+  // SetNumActiveStates / SetNumActiveFactors set the active count, how many of the first slots the
+  // next solve uses (a solve without it throws). The setter is host-only (no allocation, no device
+  // work) and may change the count between solves up to the capacity, which is what lets a
+  // real-time application allocate once and reuse the same buffers every frame while the problem
+  // size changes. This example solves every slot once, so each active count equals its capacity.
   static constexpr size_t kPoseCapacity = 1;
   size_t points_capacity;  // correspondences the observation / point buffers hold
   dvector<Vector<3>> points;
   dvector<Vector<2>> observations;
   dvector<SE3Transform> pose;
-  cunls::cuBLASHandle cublas;
   cunls::SE3StateBatch pose_state;
   cunls::PnPFactorBatch pnp;
   cunls::Problem problem;
@@ -76,15 +74,14 @@ struct PnPProblem {
         points(scene.points_world),
         observations(scene.observations),
         pose(std::vector<SE3Transform>{scene.initial_pose}),
-        pose_state(cublas, reinterpret_cast<const float *>(pose.data()), kPoseCapacity),
+        pose_state(reinterpret_cast<const float *>(pose.data()), kPoseCapacity),
         pnp(observations.data(), points.data(), points_capacity, /*z_threshold=*/1e-3f) {
     const size_t num_poses = 1;
     const size_t num_points = points_capacity;  // every slot solved: active = capacity
-    pose_state.SetNumStateBlocks(num_poses);
-    pnp.SetNumFactors(num_points);
+    pose_state.SetNumActiveStates(num_poses);
+    pnp.SetNumActiveFactors(num_points);
     problem.AddStateBatch(&pose_state);
-    problem.AddFactorBatch(&pnp,
-                           std::vector<float *>(num_points, pose_state.StateBlockDevicePtr(0)));
+    problem.AddFactorBatch(&pnp, std::vector<float *>(num_points, pose_state.StateDevicePtr(0)));
   }
 
   SE3Transform Pose() const {

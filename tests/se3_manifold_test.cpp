@@ -92,13 +92,12 @@ TEST(SE3ManifoldTest, StateDimensions) {
   hvector<SE3Transform> transforms(kN, MakeSE3Identity());
   dvector<SE3Transform> transforms_dev(transforms);
 
-  cuBLASHandle cublas;
-  SE3StateBatch states(cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
-  states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
+  SE3StateBatch states(reinterpret_cast<const float *>(transforms_dev.data()), kN);
+  states.SetNumActiveStates(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), 6u);
   EXPECT_EQ(states.AmbientSize(), 16u);
-  EXPECT_EQ(states.NumStateBlocks(), kN);
+  EXPECT_EQ(states.NumActiveStates(), kN);
 }
 
 // ============================================================================
@@ -112,15 +111,15 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
   dvector<SE3Transform> targets = GenerateRandomSE3(kN, 42, 0.5f, 2.0f);
   dvector<SE3Transform> initials = PerturbSE3(targets, kN, 43, 0.1f, 0.3f, cublas);
 
-  SE3StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials.data()), kN);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  SE3StateBatch state_batch(reinterpret_cast<const float *>(initials.data()), kN);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   SE3PriorFactorBatch factor_batch(targets.data(), kN);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_batch.StateBlockDevicePtr(i));
+    ptrs.push_back(state_batch.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -147,7 +146,7 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SE3Transform> optimized(kN), target_host(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateDevicePtr(0),
                                  kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
   targets.CopyToHost(target_host.data(), kN);
 
@@ -172,19 +171,18 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
   hvector<SE3Transform> deltas(kN, MakeSE3Identity());
   dvector<SE3Transform> deltas_dev(deltas);
 
-  cuBLASHandle cublas;
-  SE3StateBatch state_left(cublas, reinterpret_cast<const float *>(poses_left.data()), kN);
-  state_left.SetNumStateBlocks(state_left.Capacity(), state_left.ConstCapacity());
-  SE3StateBatch state_right(cublas, reinterpret_cast<const float *>(poses_right.data()), kN);
-  state_right.SetNumStateBlocks(state_right.Capacity(), state_right.ConstCapacity());
+  SE3StateBatch state_left(reinterpret_cast<const float *>(poses_left.data()), kN);
+  state_left.SetNumActiveStates(state_left.Capacity(), state_left.ConstCapacity());
+  SE3StateBatch state_right(reinterpret_cast<const float *>(poses_right.data()), kN);
+  state_right.SetNumActiveStates(state_right.Capacity(), state_right.ConstCapacity());
   SE3BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_left.StateBlockDevicePtr(i));
-    ptrs.push_back(state_right.StateBlockDevicePtr(i));
+    ptrs.push_back(state_left.StateDevicePtr(i));
+    ptrs.push_back(state_right.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -211,9 +209,9 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SE3Transform> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateDevicePtr(0),
                                  kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateDevicePtr(0),
                                  kN * sizeof(SE3Transform), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {

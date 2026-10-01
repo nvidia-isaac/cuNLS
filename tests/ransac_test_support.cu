@@ -416,7 +416,7 @@ void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_
 bool FocalPnPFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,
                                    const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_factors = NumFactors();
+  const size_t num_factors = NumActiveFactors();
   const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
   if (num_factors == 0 || num_items == 0) {
     return true;

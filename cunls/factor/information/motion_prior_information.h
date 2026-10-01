@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -199,7 +198,6 @@ class MotionPriorInformationFactorBatch : private detail::MotionPriorSqrtInforma
    * @brief Constructs the motion-prior factor batch with fused covariance
    * weighting.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param stream CUDA stream used to compute the sqrt-information matrices
    * up front (the factor's own Evaluate() still takes its stream as a
    * per-call argument, as usual).
@@ -209,13 +207,12 @@ class MotionPriorInformationFactorBatch : private detail::MotionPriorSqrtInforma
    * @param qc_diag_ptr Device pointer to the continuous-time process-noise
    * PSD diagonal (Dim floats), constant across the batch.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
-  MotionPriorInformationFactorBatch(cuBLASHandle &cublas_handle, cudaStream_t stream,
-                                    const float *dt_ptr, const float *qc_diag_ptr, size_t capacity)
+  MotionPriorInformationFactorBatch(cudaStream_t stream, const float *dt_ptr,
+                                    const float *qc_diag_ptr, size_t capacity)
       : Storage(stream, dt_ptr, qc_diag_ptr, capacity),
-        Base(cublas_handle,
-             reinterpret_cast<const typename Base::InformationMatrix *>(
+        Base(reinterpret_cast<const typename Base::InformationMatrix *>(
                  this->Storage::sqrt_information.data()),
              capacity, dt_ptr, capacity) {}
 
@@ -225,7 +222,7 @@ class MotionPriorInformationFactorBatch : private detail::MotionPriorSqrtInforma
    *
    * The matrices are derived from `dt` once, at construction, and cached; this
    * refreshes the first `num` of them from the current contents of the dt and
-   * Qc buffers. Typically called each frame together with SetNumFactors(num).
+   * Qc buffers. Typically called each frame together with SetNumActiveFactors(num).
    * Asynchronous on `stream`: issue it on the stream later passed to
    * Minimize / Evaluate (or synchronize), and not while a minimization that
    * uses this batch is running.

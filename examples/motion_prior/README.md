@@ -67,9 +67,9 @@ and velocity except the fixed anchor to create the initial estimate.
 5. Build one `ConstantVelocityInformationSE3FactorBatch` factor per
    consecutive pair, from per-factor `dt` and a shared `Qc` diagonal.
 
-Each batch is constructed with its **capacity** (how many blocks / factors
+Each batch is constructed with its **capacity** (how many states / factors
 its bound device buffers hold, fixed for the batch's lifetime) and starts
-with 0 active; `SetNumStateBlocks` / `SetNumFactors` set the **active
+with 0 active; `SetNumActiveStates` / `SetNumActiveFactors` set the **active
 count** the next solve uses (host-only: no allocation, no device work; a
 solve without it throws). Size the capacity once for the largest problem you
 expect; the active count may change between solves up to it, so a real-time

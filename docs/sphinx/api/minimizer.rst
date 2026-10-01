@@ -198,7 +198,7 @@ worked example).
 
 - **kAnalytic**: Use the factor batch's own Jacobian output. Default.
 - **kNumeric**: Ignore any Jacobian the factor batch would compute; instead
-  perturb each referenced state block along its manifold tangent space (via
+  perturb each referenced state along its manifold tangent space (via
   :cpp:func:`StateBatch::Plus`) and finite-difference the residual. Requires
   only that the factor batch support residual-only evaluation
   (``jacobians == nullptr``), which every :cpp:class:`FactorBatch` must
@@ -254,8 +254,8 @@ Header: :code:`cunls/minimizer/ransac_minimizer.h` (included by
 :code:`cunls/cunls.h`). See :doc:`../ransac` for how each option is used.
 
 **kMaxRansacTangentDim** — ``constexpr int kMaxRansacTangentDim = 64``. The
-sum of ``TangentSize()`` over every **non-constant** state block of the problem
-(the free tangent dimension :math:`D`) must not exceed it. Constant blocks do
+sum of ``TangentSize()`` over every **non-constant** state of the problem
+(the free tangent dimension :math:`D`) must not exceed it. Constant states do
 not count, whatever their number.
 
 :code:`RansacRole` (enum) — role of a residual batch:
@@ -311,7 +311,7 @@ not count, whatever their number.
 - **score_always_on** [in]: Add 2 × (cost of the ``kAlwaysOn`` factors) to
   each hypothesis score. Default: true.
 - **require_informative_inliers** [in]: Count a factor as an inlier only if its
-  Jacobian has a non-zero entry on a free state block. Guards against factors
+  Jacobian has a non-zero entry on a free state. Guards against factors
   that report a zero residual for configurations they cannot evaluate (e.g.
   :code:`PnPFactorBatch` for points behind the camera). Costs one Jacobian
   evaluation per scored factor. Default: true.
@@ -520,20 +520,20 @@ parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
 .. important::
 
    **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / state blocks their buffers hold) and
-   start with **zero** active entries: call ``SetNumFactors(n)`` /
-   ``SetNumStateBlocks(n)`` before solving, and again whenever the problem size
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``SetNumActiveFactors(n)`` /
+   ``SetNumActiveStates(n)`` before solving, and again whenever the problem size
    changes. See :ref:`capacity-and-active-count`.
 
 **Purpose:** Registers a factor batch (and optionally a robust loss batch) with
-the problem and binds its factor instances to state block pointers. The
+the problem and binds its factor instances to state pointers. The
 ordering of :code:`state_pointers` must match the factor batch’s expected
 state layout (see :doc:`factor`).
 
 .. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, const std::vector<float*>& state_pointers, std::optional<JacobianMode> jacobian_mode_override = std::nullopt)
 
   :param ``factor_batch``: [in] Factor batch pointer (non-owning).
-  :param ``state_pointers``: [in] Flattened device pointers: one per (factor index, state block), mapping factors to state, at least ``NumFactors() * B`` entries (B = ``StateBlockSizes().size()``). The problem keeps the list and copies it once into a library-owned device table sized for the batch's capacity; replace it later with :cpp:func:`SetStatePointers`.
+  :param ``state_pointers``: [in] Flattened device pointers: one per (factor index, state), mapping factors to state, at least ``NumActiveFactors() * B`` entries (B = ``StateSizes().size()``). The problem keeps the list and copies it once into a library-owned device table sized for the batch's capacity; replace it later with :cpp:func:`SetStatePointers`.
   :param ``jacobian_mode_override``: [in] When set, this factor batch always uses the given :code:`JacobianMode` regardless of the minimizer's :code:`MinimizerOptions::jacobian_mode` default; see :ref:`minimizer-jacobian-mode-label`. Default: ``std::nullopt`` (use the minimizer's global default).
   :returns: [out] No return value.
 
@@ -548,18 +548,18 @@ state layout (see :doc:`factor`).
 **Device connectivity tables.** For problems rewritten every solve, the
 connectivity can be a user-owned device table bound once and rewritten in place
 (ordered before :cpp:func:`Minimize` on the GPU). Only the first
-``NumFactors() * B`` entries are read. See :ref:`capacity-and-active-count`.
+``NumActiveFactors() * B`` entries are read. See :ref:`capacity-and-active-count`.
 
 .. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, LossFunctionBatch* loss_function_batch, float* const* device_state_pointers, std::optional<JacobianMode> jacobian_mode_override = std::nullopt)
 
   :param ``loss_function_batch``: [in] Robust loss batch, or ``nullptr``. An overload without this argument exists.
-  :param ``device_state_pointers``: [in] Device array of ``Capacity() * B`` state-block pointers; entry ``f * B + b`` is the block factor ``f`` reads in slot ``b``. Not owned; must outlive the problem.
+  :param ``device_state_pointers``: [in] Device array of ``Capacity() * B`` state pointers; entry ``f * B + b`` is the state factor ``f`` reads in slot ``b``. Not owned; must outlive the problem.
   :returns: [out] No return value.
 
 .. cpp:function:: void AddFactorBatch(FactorBatch* factor_batch, LossFunctionBatch* loss_function_batch, const std::vector<StateBatch*>& slot_state_batches, const int* device_state_indices, std::optional<JacobianMode> jacobian_mode_override = std::nullopt)
 
-  :param ``slot_state_batches``: [in] State batch of each block slot (B entries; registered with :cpp:func:`AddStateBatch`).
-  :param ``device_state_indices``: [in] Device array of ``Capacity() * B`` ints: factor ``f`` reads block ``device_state_indices[f * B + b]`` of ``slot_state_batches[b]``. Indices must be below that batch's ``NumStateBlocks()``. Not owned; must outlive the problem. An overload without the loss argument exists.
+  :param ``slot_state_batches``: [in] State batch of each state slot (B entries; registered with :cpp:func:`AddStateBatch`).
+  :param ``device_state_indices``: [in] Device array of ``Capacity() * B`` ints: factor ``f`` reads state ``device_state_indices[f * B + b]`` of ``slot_state_batches[b]``. Indices must be below that batch's ``NumActiveStates()``. Not owned; must outlive the problem. An overload without the loss argument exists.
   :returns: [out] No return value.
 
 **Example** (index table, rewritten every frame):
@@ -569,7 +569,7 @@ connectivity can be a user-owned device table bound once and rewritten in place
    cunls::dvector<int> obs_indices(2 * max_observations);  // [pose, point] per factor
    problem.AddFactorBatch(&reprojection, {&pose_states, &point_states}, obs_indices.data());
    // every frame: write obs_indices[0 .. 2 * num_observations) on `stream`, then
-   reprojection.SetNumFactors(num_observations);
+   reprojection.SetNumActiveFactors(num_observations);
    minimizer.Minimize(stream, problem);
 
 .. _problem-add-state-label:
@@ -579,7 +579,7 @@ connectivity can be a user-owned device table bound once and rewritten in place
 --------------------------------------------------------------------------------
 
 **Purpose:** Registers a state batch with the problem. State batches supply the
-manifold Plus operation and state block pointers used when building
+manifold Plus operation and state pointers used when building
 :code:`state_pointers` for :cpp:func:`Problem::AddFactorBatch` and when
 applying steps during :cpp:func:`Minimize`.
 
@@ -615,7 +615,7 @@ changed.
 .. cpp:function:: void SetStatePointers(size_t residual_batch_index, const std::vector<float*>& state_pointers)
 
   :param ``residual_batch_index``: [in] Index into :cpp:func:`GetResidualBatches`; the batch must have been registered with a host list (device tables are rewritten directly).
-  :param ``state_pointers``: [in] ``NumFactors() * B`` state-block pointers, at most ``Capacity() * B``.
+  :param ``state_pointers``: [in] ``NumActiveFactors() * B`` state pointers, at most ``Capacity() * B``.
   :returns: [out] No return value. Throws ``std::logic_error`` for device-table batches.
 
 --------------------------------------------------------------------------------
@@ -630,7 +630,7 @@ no device work). **Every minimizer calls it at the start of** :cpp:func:`Minimiz
   Throws ``std::invalid_argument`` with an actionable message when no factor
   batch has active factors (sizes never set), a factor or state count exceeds
   its capacity, the active constant ids exceed their capacity or the active
-  blocks, or a connectivity table does not cover the active factors. Warns
+  states, or a connectivity table does not cover the active factors. Warns
   about residual batches with no active factors.
 
 --------------------------------------------------------------------------------
@@ -642,10 +642,10 @@ is rewritten on the device. Opt-in (one kernel per table and one readback).
 
 .. cpp:function:: bool Validate(cudaStream_t stream) const
 
-  Checks that every active pointer lies in an active block of a registered
+  Checks that every active pointer lies in an active state of a registered
   state batch with the slot's tangent size (index tables: every index is below
-  the slot batch's ``NumStateBlocks()``), that every active constant id is
-  below ``NumStateBlocks()``, that every active state block is read by some
+  the slot batch's ``NumActiveStates()``), that every active constant id is
+  below ``NumActiveStates()``, that every active state is read by some
   factor, and that state batches do not overlap.
 
   :param ``stream``: [in] CUDA stream; synchronized before returning.
@@ -654,7 +654,7 @@ is rewritten on the device. Opt-in (one kernel per table and one readback).
 **Advanced:** :cpp:func:`PrepareStatePointers` (expands index tables, called
 by the minimizers at the start of every solve), :cpp:func:`DeviceStatePointers`
 (device table of a residual batch), :cpp:func:`NumStatePointers`
-(``NumFactors() * B``) and :cpp:func:`HostStatePointers` (host view; downloads
+(``NumActiveFactors() * B``) and :cpp:func:`HostStatePointers` (host view; downloads
 device tables, which synchronizes).
 
 .. _residual-batch-evaluate-label:
@@ -671,20 +671,20 @@ triplets; see ``ResidualBatchWorkspaceSizeBytes`` / ``ResidualBatchWorkspaceNumF
 
 .. cpp:function:: size_t ResidualBatchWorkspaceSizeBytes(size_t num_residuals)
 
-  :param ``num_residuals``: [in] Number of factors (``NumFactors()`` for the batch).
+  :param ``num_residuals``: [in] Number of factors (``NumActiveFactors()`` for the batch).
   :returns: [out] Minimum device scratch size in bytes for ``Evaluate``\ 's ``workspace`` pointer.
 
 .. cpp:function:: size_t ResidualBatchWorkspaceNumFloats(size_t num_residuals)
 
-  :param ``num_residuals``: [in] Number of factors (``NumFactors()`` for the batch).
+  :param ``num_residuals``: [in] Number of factors (``NumActiveFactors()`` for the batch).
   :returns: [out] Same scratch as ``ResidualBatchWorkspaceSizeBytes``, expressed in ``float`` elements (rounded up), for sub-allocating inside a ``float`` arena.
 
 .. cpp:function:: bool Evaluate(cudaStream_t stream, float* workspace, float* residuals, float const* const* state_pointers, float* cost, float* jacobians) const
 
   :param ``stream``: [in] CUDA stream for factor, loss, and scaling kernels.
-  :param ``workspace``: [in] Device scratch; size at least ``ResidualBatchWorkspaceSizeBytes(NumFactors())`` bytes (see layout in the header). Must not overlap ``residuals``, ``jacobians``, or ``cost``.
-  :param ``residuals``: [out] Residual output buffer of length ``NumFactors() * ResidualsSize()`` (after loss scaling if present).
-  :param ``state_pointers``: [in] Device pointer array mapping factor inputs to state blocks.
+  :param ``workspace``: [in] Device scratch; size at least ``ResidualBatchWorkspaceSizeBytes(NumActiveFactors())`` bytes (see layout in the header). Must not overlap ``residuals``, ``jacobians``, or ``cost``.
+  :param ``residuals``: [out] Residual output buffer of length ``NumActiveFactors() * ResidualsSize()`` (after loss scaling if present).
+  :param ``state_pointers``: [in] Device pointer array mapping factor inputs to states.
   :param ``cost``: [out] Optional per-residual cost (e.g. :math:`\frac{1}{2}\rho(\|r\|^2)`); can be ``nullptr``.
   :param ``jacobians``: [out] Optional Jacobian output (after loss scaling); can be ``nullptr``.
   :returns: [out] ``true`` on successful evaluation.
@@ -748,7 +748,7 @@ only place either layout is named; the minimizers work in terms of "the Hessian"
 and "the left-hand side" and never branch on storage.
 
 The layout is chosen automatically, with no user-facing switch. Block storage
-requires a tile edge dividing every state block's tangent dimension (the gcd of
+requires a tile edge dividing every state's tangent dimension (the gcd of
 the tangent sizes; see :code:`ChooseHessianBlockSize` in
 ``cunls/minimizer/bsr_matrix.h``) **and** a solver that reports
 :code:`SparseLinearSolver::SupportsBlockStorage`. When either does not hold —
@@ -772,8 +772,7 @@ arrays; every constructor argument documented as ``DevicePointer`` accepts
 either a ``cupy.ndarray`` (the device pointer is extracted automatically) or
 a raw ``int`` device address.
 
-The utility types :ref:`CudaStream <py-cuda-stream-label>` and
-:ref:`CublasHandle <py-cublas-handle-label>` are documented in
+The utility type :ref:`CudaStream <py-cuda-stream-label>` is documented in
 :doc:`common`.
 
 .. _py-minimizer-options-label:
@@ -1090,9 +1089,9 @@ and defaults: **hypotheses_per_round** (``int``, 256), **max_rounds**
 .. important::
 
    **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / state blocks their buffers hold) and
-   start with **zero** active entries: call ``set_num_factors(n)`` /
-   ``set_num_state_blocks(n)`` before solving, and again whenever the problem
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` before solving, and again whenever the problem
    size changes. See :ref:`capacity-and-active-count`.
 
 Assembles a factor graph from state batches and factor batches.  The problem
@@ -1109,18 +1108,18 @@ Creates an empty problem with no states or factors.
 **Methods**
 
 - ``add_state_batch(state_batch: StateBatch) -> None`` — registers a state
-  batch with the problem.  Every state batch whose blocks are referenced by
+  batch with the problem.  Every state batch whose states are referenced by
   any factor batch must be added here **before** calling ``minimize``.  The
   problem does **not** take ownership; the caller must keep the state batch
   alive for the lifetime of the problem.
 
 - ``add_factor_batch(factor_batch, state_pointers) -> None`` — registers a
-  factor batch and binds it to state blocks.  ``state_pointers`` is a flat
+  factor batch and binds it to states.  ``state_pointers`` is a flat
   ``list[int]`` of device pointers obtained from
-  ``state_batch.state_block_device_ptr(i)``.  For a factor with *K* state
-  block inputs and *N* factors, the list must contain *N* × *K* pointers in
-  row-major order: ``[factor_0_block_0, factor_0_block_1, ...,
-  factor_{N-1}_block_{K-1}]``.
+  ``state_batch.state_device_ptr(i)``.  For a factor with *K* state
+  inputs and *N* active factors, the list must contain *N* × *K* pointers in
+  row-major order: ``[factor_0_state_0, factor_0_state_1, ...,
+  factor_{N-1}_state_{K-1}]``.
 
 - ``add_factor_batch(factor_batch, loss_function, state_pointers) -> None``
   — same as above, but also attaches a ``LossFunctionBatch`` (see
@@ -1135,12 +1134,12 @@ Creates an empty problem with no states or factors.
 - ``add_factor_batch(factor_batch, slot_state_batches, state_indices,
   loss_function=None, jacobian_mode_override=None) -> None`` — connectivity is
   a **device** table of state indices (CuPy ``int32`` array, ``capacity * K``
-  entries): factor *f* reads block ``state_indices[f * K + k]`` of
+  entries): factor *f* reads state ``state_indices[f * K + k]`` of
   ``slot_state_batches[k]``.
 
 - ``set_state_pointers(residual_batch_index, state_pointers) -> None`` —
   replaces the host-list connectivity of a residual batch
-  (``num_factors * K`` pointers).
+  (``num_active_factors * K`` pointers).
 
 - ``validate(stream) -> bool`` — GPU check of every active connection (see
   ``Problem::Validate``); synchronizes the stream.
@@ -1151,7 +1150,7 @@ Creates an empty problem with no states or factors.
   ``True`` when the graph is valid.  Call this before ``minimize`` to catch
   configuration errors early. Every ``minimize`` also runs a quick size check
   and raises ``ValueError`` when no factor batch has active factors
-  (``set_num_factors`` never called) or a count exceeds its capacity.
+  (``set_num_active_factors`` never called) or a count exceeds its capacity.
 
 .. _py-enums-label:
 
@@ -1191,12 +1190,12 @@ Minimal Python example
 
    sb = pycunls.VectorStateBatch1(state_gpu, 1)       # capacity 1
    fb = pycunls.PriorVectorFactorBatch1(obs_gpu, 1)
-   sb.set_num_state_blocks(1)                         # active sizes start at 0
-   fb.set_num_factors(1)
+   sb.set_num_active_states(1)                         # active sizes start at 0
+   fb.set_num_active_factors(1)
 
    problem = pycunls.Problem()
    problem.add_state_batch(sb)
-   problem.add_factor_batch(fb, [sb.state_block_device_ptr(0)])
+   problem.add_factor_batch(fb, [sb.state_device_ptr(0)])
 
    minimizer = pycunls.LevenbergMarquardtMinimizer()
    summary   = minimizer.minimize(stream, problem)

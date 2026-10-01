@@ -103,16 +103,16 @@ TYPED_TEST(PriorVectorCostTest, Residual) {
   }
 }
 
-/** @brief Verifies that StateBlockSizes() reports the correct single block
+/** @brief Verifies that StateSizes() reports the correct single state
  * size. */
-TYPED_TEST(PriorVectorCostTest, StateBlockSizes) {
+TYPED_TEST(PriorVectorCostTest, StateSizes) {
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors_, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
   auto &factor_batch = factor_data.get();
 
-  auto state_block_sizes = factor_batch.StateBlockSizes();
-  ASSERT_EQ(state_block_sizes.size(), 1);
-  ASSERT_EQ(state_block_sizes[0], TypeParam::size);
+  auto state_sizes = factor_batch.StateSizes();
+  ASSERT_EQ(state_sizes.size(), 1);
+  ASSERT_EQ(state_sizes[0], TypeParam::size);
 }
 
 /** @brief Verifies that Jacobian evaluation produces the expected identity

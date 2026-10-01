@@ -26,29 +26,28 @@
 namespace cunls {
 
 /**
- * @brief Computes each state block's starting column in the reduced system.
+ * @brief Computes each state's starting column in the reduced system.
  *
- * The reduced system omits constant state blocks, so a block's column offset is
- * the running sum of the tangent sizes of the non-constant blocks before it.
- * Constant blocks are marked with -1 so callers can distinguish "column 0" from
+ * The reduced system omits constant states, so a state's column offset is
+ * the running sum of the tangent sizes of the non-constant states before it.
+ * Constant states are marked with -1 so callers can distinguish "column 0" from
  * "no column at all".
  *
  * @param stream CUDA stream for GPU operations.
- * @param first_column Column index at which this batch's blocks start, i.e. the
- *        total tangent size of all preceding batches' non-constant blocks.
+ * @param first_column Column index at which this batch's states start, i.e. the
+ *        total tangent size of all preceding batches' non-constant states.
  * @param state_batch The state batch.
- * @param[out] column_offsets One entry per state block; resized as needed.
+ * @param[out] column_offsets One entry per state; resized as needed.
  */
-void ComputeStateBlockColumnOffsets(cudaStream_t stream, int first_column,
-                                    const StateBatch *state_batch,
-                                    DeviceVector<int> &column_offsets);
+void ComputeStateColumnOffsets(cudaStream_t stream, int first_column, const StateBatch *state_batch,
+                               DeviceVector<int> &column_offsets);
 
 /**
  * @brief Orchestrates manifold Plus operations across multiple state batches.
  *
  * StateBatchOps manages the mapping between a reduced (optimizable)
- * state vector and the full set of state blocks, automatically excluding
- * any blocks marked as constant. It handles scattering the reduced delta vector
+ * state vector and the full set of states, automatically excluding
+ * any states marked as constant. It handles scattering the reduced delta vector
  * into per-batch update segments and dispatching the Plus operation on each
  * batch.
  */
@@ -135,12 +134,12 @@ class StateBatchOps {
   /** @brief Pointers into state_updates_ for each state batch's segment. */
   std::vector<float *> delta_ptrs_;
 
-  /** @brief Device buffer storing the full tangent-space updates for all state
-   * blocks. */
+  /** @brief Device buffer storing the full tangent-space updates for all
+   * states. */
   DeviceVector<float> state_updates_;
 
   /** @brief Number of scalar state components remaining after excluding
-   * constant blocks. */
+   * constant states. */
   size_t num_reduced_states_ = 0;
 };
 }  // namespace cunls

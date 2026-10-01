@@ -5,9 +5,9 @@ Quick Start
 .. important::
 
    **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / state blocks their buffers hold) and
-   start with **zero** active entries: call ``SetNumFactors(n)`` /
-   ``SetNumStateBlocks(n)`` before solving, and again whenever the problem size
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``SetNumActiveFactors(n)`` /
+   ``SetNumActiveStates(n)`` before solving, and again whenever the problem size
    changes. See :ref:`capacity-and-active-count`.
 
 This section shows a minimal end-to-end setup:
@@ -68,27 +68,27 @@ host vectors to device memory on construction.
 
 **Create the state batch.**
 A `VectorStateBatch<1>` (see :doc:`api/state`) wraps the device memory as a
-batch of 1-dimensional Euclidean state blocks. The template argument ``1``
-means each block has one float. The second constructor argument is the
-batch's capacity: the number of state blocks the buffer holds (here just
-one). A batch starts with 0 active blocks; ``SetNumStateBlocks`` sets how
+batch of 1-dimensional Euclidean states. The template argument ``1``
+means each state has one float. The second constructor argument is the
+batch's capacity: the number of states the buffer holds (here just
+one). A batch starts with 0 active states; ``SetNumActiveStates`` sets how
 many of them the solver uses, and must be called before the first solve.
 The capacity is fixed, so the same batch can be reused for problems of any
 size up to it.
 
 .. code-block:: cpp
 
-     // Wrap the device state memory in a VectorStateBatch with one block of
+     // Wrap the device state memory in a VectorStateBatch with one state of
      // dimension 1.  The solver will update this memory in-place.
      cunls::VectorStateBatch<1> state_batch(d_state.data(), /*capacity=*/1);
-     state_batch.SetNumStateBlocks(1);  // active blocks: zero until set
+     state_batch.SetNumActiveStates(1);  // active states: zero until set
 
 **Create the factor batch.**
 A `PriorFactorBatch<manifold::Vector<1>>` (see :doc:`api/factor`) computes
 the residual :math:`r = x - o` and Jacobian :math:`J = I` for each factor.
 The constructor takes a device pointer to the observation vectors and the
 capacity (the number of observations the buffer holds); like the state
-batch, it starts with 0 active factors until ``SetNumFactors`` is called. `PriorFactorBatch<Manifold>` is the manifold-generic
+batch, it starts with 0 active factors until ``SetNumActiveFactors`` is called. `PriorFactorBatch<Manifold>` is the manifold-generic
 facade — prefer it over the per-manifold class it wraps
 (`PriorVectorFactorBatch<Dim>` here) so the same factor name works
 regardless of which manifold the state lives on.
@@ -100,19 +100,19 @@ regardless of which manifold the state lives on.
      cunls::PriorFactorBatch<cunls::manifold::Vector<1>> prior(
          reinterpret_cast<const cunls::Vector<1>*>(d_obs.data()),
          /*capacity=*/1);
-     prior.SetNumFactors(1);  // active factors: zero until set
+     prior.SetNumActiveFactors(1);  // active factors: zero until set
 
 **Wire state pointers and assemble the problem.**
-The state-pointer vector tells the solver which state block each factor
+The state-pointer vector tells the solver which state each factor
 reads. For a prior factor with one state input, there is exactly one
 pointer per factor. `Problem` (see :doc:`api/minimizer`) collects all
 state and factor batches into a single factor graph.
 
 .. code-block:: cpp
 
-     // Each factor needs a list of device pointers to its input state blocks.
-     // The prior factor reads one state block, so we provide one pointer.
-     std::vector<float*> state_ptrs = {state_batch.StateBlockDevicePtr(0)};
+     // Each factor needs a list of device pointers to its input states.
+     // The prior factor reads one state, so we provide one pointer.
+     std::vector<float*> state_ptrs = {state_batch.StateDevicePtr(0)};
 
      // Assemble the factor graph.
      cunls::Problem problem;

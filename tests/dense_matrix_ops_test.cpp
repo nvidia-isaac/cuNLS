@@ -134,7 +134,7 @@ void GenerateRandomSPDMatrix(float *matrix, size_t size, std::mt19937 &rng) {
  */
 template <class MatrixSize>
 class ComputeSqrtMatrixTest : public ::testing::Test {
-public:
+ public:
   void SetUp() override {
     // Initialize random number generator with fixed seed for reproducibility
     std::mt19937 rng(42);
@@ -144,15 +144,14 @@ public:
     // Generate random SPD matrices on host
     matrices_host_.resize(num_matrices_ * matrix_size_ * matrix_size_);
     for (size_t i = 0; i < num_matrices_; ++i) {
-      GenerateRandomSPDMatrix(&matrices_host_[i * matrix_size_ * matrix_size_],
-                              matrix_size_, rng);
+      GenerateRandomSPDMatrix(&matrices_host_[i * matrix_size_ * matrix_size_], matrix_size_, rng);
     }
 
     // Copy to device
     matrices_device_ = DeviceVector<float>(matrices_host_);
   }
 
-protected:
+ protected:
   const size_t num_matrices_ = 10000;
   dvector<float> matrices_device_;
   hvector<float> matrices_host_;
@@ -161,8 +160,8 @@ protected:
 };
 
 /// Test with different matrix sizes (2x2, 3x3, and 6x6)
-using MatrixSizes = ::testing::Types<test_utils::SizeT<2>, test_utils::SizeT<3>,
-                                     test_utils::SizeT<6>>;
+using MatrixSizes =
+    ::testing::Types<test_utils::SizeT<2>, test_utils::SizeT<3>, test_utils::SizeT<6>>;
 
 TYPED_TEST_SUITE(ComputeSqrtMatrixTest, MatrixSizes);
 
@@ -180,24 +179,21 @@ TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
 
   // Make a copy for verification (device-to-device copy)
   dvector<float> matrices_copy(this->matrices_device_.size());
-  THROW_ON_CUDA_ERROR(cudaMemcpy(
-      matrices_copy.data(), this->matrices_device_.data(),
-      this->matrices_device_.size() * sizeof(float), cudaMemcpyDeviceToDevice));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(matrices_copy.data(), this->matrices_device_.data(),
+                                 this->matrices_device_.size() * sizeof(float),
+                                 cudaMemcpyDeviceToDevice));
   float *matrices_copy_ptr = matrices_copy.data();
 
-  { // Compute matrix square root on GPU
+  {  // Compute matrix square root on GPU
     auto range = this->profiler_domain_.CreateDomainRange("ComputeSqrtMatrix");
-    cuBLASHandle cublas_handle;
-    ComputeSqrtMatrix(cublas_handle, stream.GetStream(), matrices_ptr, size,
-                      size, this->num_matrices_);
+    ComputeSqrtMatrix(stream.GetStream(), matrices_ptr, size, size, this->num_matrices_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
   // Verify: (A^0.5)^2 should equal A
   // Compute (A^0.5)^2 using matrix multiplication
   cuBLASHandle cublas_handle;
-  auto handle =
-      static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
+  auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
   constexpr float alpha = 1.0f;
   constexpr float beta = 0.0f;
 
@@ -207,9 +203,8 @@ TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
   // Compute squared_result = result * result (matrix multiplication)
   size_t stride = size * size;
   THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N, size, size, size, &alpha, matrices_ptr,
-      size, stride, matrices_ptr, size, stride, &beta, squared_result_ptr, size,
-      stride, this->num_matrices_));
+      handle, CUBLAS_OP_N, CUBLAS_OP_N, size, size, size, &alpha, matrices_ptr, size, stride,
+      matrices_ptr, size, stride, &beta, squared_result_ptr, size, stride, this->num_matrices_));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   // Copy squared result to host
@@ -227,4 +222,4 @@ TYPED_TEST(ComputeSqrtMatrixTest, PowerHalf) {
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

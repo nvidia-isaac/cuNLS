@@ -50,7 +50,7 @@ except the fixed anchor.
 
 Each batch is constructed with its **capacity** (how many poses /
 constraints its bound device buffers hold, fixed for the batch's lifetime)
-and starts with 0 active; `SetNumStateBlocks` / `SetNumFactors` set the
+and starts with 0 active; `SetNumActiveStates` / `SetNumActiveFactors` set the
 **active count** the next solve uses (host-only: no allocation, no device
 work; a solve without it throws). Size the capacity once for the largest
 problem you expect; the active count may change between solves up to it, so

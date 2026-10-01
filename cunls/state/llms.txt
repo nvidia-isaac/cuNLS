@@ -21,16 +21,16 @@ operations for applying tangent-space updates.
 ## Memory model
 
 - Backed by user-provided contiguous device memory.
-- Optional constant state IDs mark fixed blocks excluded from optimization.
-- Constructed with a capacity (blocks the buffer holds; `const_capacity` for
+- Optional constant state IDs mark fixed states excluded from optimization.
+- Constructed with a capacity (states the buffer holds; `const_capacity` for
   the constant-id buffer), fixed for the batch's lifetime. The active counts
-  start at 0: `SetNumStateBlocks(n, num_const)` (host-only) must be called
+  start at 0: `SetNumActiveStates(n, num_const)` (host-only) must be called
   before the first solve and may change them between solves up to the
-  capacity. `NumStateBlocks()` is the active count, `Capacity()` the capacity.
-- `StateBlockDevicePtr(i)` returns pointers into underlying batch storage,
+  capacity. `NumActiveStates()` is the active count, `Capacity()` the capacity.
+- `StateDevicePtr(i)` returns pointers into underlying batch storage,
   valid for any i < Capacity().
 - `Plus(x, delta, out, stream, num_replicas = 1)` processes `num_replicas`
-  contiguous copies of the batch (replica r = blocks [r*N, (r+1)*N)); out does
+  contiguous copies of the batch (replica r = states [r*N, (r+1)*N)); out does
   not overlap the inputs. RANSAC passes one replica per hypothesis.
 
 ## Related modules

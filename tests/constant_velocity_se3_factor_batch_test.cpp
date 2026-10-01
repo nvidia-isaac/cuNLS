@@ -27,7 +27,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -144,7 +143,7 @@ SingleFactorResult EvaluateOne(const SE3Transform &pose_k, const SE3Transform &p
   dvector<const float *> ptrs_dev(ptrs);
 
   ConstantVelocitySE3FactorBatch fb(dt_dev.data(), 1);
-  fb.SetNumFactors(fb.Capacity());
+  fb.SetNumActiveFactors(fb.Capacity());
   dvector<float> res_dev(12);
   dvector<float> jac_dev(want_jacobian ? 12 * 24 : 0);
 
@@ -294,24 +293,22 @@ TEST_F(ConstantVelocitySE3FactorBatchTest, RecoversVelocityWithPosesFixed) {
   dvector<SE3Transform> poses_dev(std::vector<SE3Transform>{pose_k, pose_k1});
   std::vector<int> const_ids = {0, 1};
   dvector<int> const_ids_dev(const_ids);
-  cuBLASHandle cublas_handle;
-  SE3StateBatch pose_batch(cublas_handle, reinterpret_cast<const float *>(poses_dev.data()), 2,
+  SE3StateBatch pose_batch(reinterpret_cast<const float *>(poses_dev.data()), 2,
                            const_ids_dev.data(), 2);
-  pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
+  pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
 
   // Initialize velocities away from the expected solution.
   std::vector<Vector<6>> vel_init = {Vector<6>{0, 0, 0, 0, 0, 0}, Vector<6>{0, 0, 0, 0, 0, 0}};
   dvector<Vector<6>> vel_dev(vel_init);
   VectorStateBatch<6> vel_batch(reinterpret_cast<const float *>(vel_dev.data()), 2);
-  vel_batch.SetNumStateBlocks(vel_batch.Capacity(), vel_batch.ConstCapacity());
+  vel_batch.SetNumActiveStates(vel_batch.Capacity(), vel_batch.ConstCapacity());
 
   dvector<float> dt_dev(std::vector<float>{dt});
   ConstantVelocitySE3FactorBatch factor(dt_dev.data(), 1);
-  factor.SetNumFactors(factor.Capacity());
+  factor.SetNumActiveFactors(factor.Capacity());
 
-  std::vector<float *> state_pointers = {
-      pose_batch.StateBlockDevicePtr(0), pose_batch.StateBlockDevicePtr(1),
-      vel_batch.StateBlockDevicePtr(0), vel_batch.StateBlockDevicePtr(1)};
+  std::vector<float *> state_pointers = {pose_batch.StateDevicePtr(0), pose_batch.StateDevicePtr(1),
+                                         vel_batch.StateDevicePtr(0), vel_batch.StateDevicePtr(1)};
 
   Problem problem;
   problem.AddStateBatch(&pose_batch);

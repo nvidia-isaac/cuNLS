@@ -217,11 +217,11 @@ struct CSRSparseMatrix {
  *   (CUSPARSE_DIRECTION_ROW).
  *
  * The Hessian of a factor graph is naturally block structured: every state
- * block contributes a dense tile per neighbour. Storing it this way keeps one
+ * contributes a dense tile per neighbour. Storing it this way keeps one
  * column index per tile instead of one per scalar entry, which is where the
  * SpMV bandwidth saving comes from — the values are identical either way.
  *
- * Requires every state block's tangent dimension to be a multiple of
+ * Requires every state's tangent dimension to be a multiple of
  * `block_size`; see ChooseHessianBlockSize().
  */
 struct BSRSparseMatrix {
@@ -255,8 +255,8 @@ struct BSRSparseMatrix {
  * @brief Per-factor dense Jacobian blocks, concatenated across residual
  * batches.
  *
- * Each factor batch writes `NumFactors()` dense row-major blocks of
- * `ResidualsSize() x sum(StateBlockSizes())` floats, and the batches are laid
+ * Each factor batch writes `NumActiveFactors()` dense row-major blocks of
+ * `ResidualsSize() x sum(StateSizes())` floats, and the batches are laid
  * out back to back.  There is no global sparse Jacobian: the Hessian is
  * assembled from these blocks directly (see BlockHessianAssembler).
  */

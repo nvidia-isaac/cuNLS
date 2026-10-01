@@ -33,7 +33,7 @@ namespace cunls {
 
 namespace {
 
-size_t NumSlots(const FactorBatch &factor_batch) { return factor_batch.StateBlockSizes().size(); }
+size_t NumSlots(const FactorBatch &factor_batch) { return factor_batch.StateSizes().size(); }
 
 }  // namespace
 
@@ -62,7 +62,7 @@ void Problem::AddFactorBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_
   c.kind = Connectivity::Kind::kHostList;
   c.host = state_pointers;
   // The device table holds the whole capacity, so a later SetStatePointers
-  // after SetNumFactors never reallocates.
+  // after SetNumActiveFactors never reallocates.
   const size_t capacity =
       factor_batch == nullptr ? 0 : factor_batch->Capacity() * NumSlots(*factor_batch);
   c.table.resize(std::max(capacity, state_pointers.size()));
@@ -134,7 +134,7 @@ void Problem::AddStateBatch(StateBatch *state_batch) { state_batches_.push_back(
 
 size_t Problem::NumStatePointers(size_t residual_batch_index) const {
   const FactorBatch *f = residual_batches_[residual_batch_index].GetFactorBatch();
-  return f->NumFactors() * NumSlots(*f);
+  return f->NumActiveFactors() * NumSlots(*f);
 }
 
 bool Problem::HasDeviceConnectivity(size_t residual_batch_index) const {
@@ -146,7 +146,7 @@ void Problem::ExpandIndices(size_t residual_batch_index, cudaStream_t stream) co
   problem_internal::SlotTable slots;
   slots.num_slots = static_cast<int>(c.slot_batches.size());
   for (size_t b = 0; b < c.slot_batches.size(); ++b) {
-    slots.base[b] = c.slot_batches[b]->StateBlockDevicePtr(0);
+    slots.base[b] = c.slot_batches[b]->StateDevicePtr(0);
     slots.ambient[b] = static_cast<int>(c.slot_batches[b]->AmbientSize());
   }
   problem_internal::LaunchExpandIndices(
@@ -209,7 +209,7 @@ const std::vector<std::vector<float *>> &Problem::GetStatePointers() const {
  * @brief Host-only check of the inputs and active sizes; returns an error
  * message, or an empty string when everything is consistent.
  *
- * Loops over batches only (never over factors or state blocks), so it is cheap
+ * Loops over batches only (never over factors or states), so it is cheap
  * enough to run at the start of every minimization.
  */
 std::string Problem::SizeError() const {
@@ -219,15 +219,15 @@ std::string Problem::SizeError() const {
     if (sb == nullptr) {
       return "State batch " + std::to_string(j) + " is nullptr.";
     }
-    if (sb->NumStateBlocks() > sb->Capacity()) {
-      err << "State batch " << j << ": NumStateBlocks() = " << sb->NumStateBlocks()
+    if (sb->NumActiveStates() > sb->Capacity()) {
+      err << "State batch " << j << ": NumActiveStates() = " << sb->NumActiveStates()
           << " exceeds Capacity() = " << sb->Capacity() << ".";
       return err.str();
     }
-    if (sb->NumConstStateBlocks() > sb->ConstCapacity() ||
-        sb->NumConstStateBlocks() > sb->NumStateBlocks()) {
-      err << "State batch " << j << ": " << sb->NumConstStateBlocks() << " constant blocks for "
-          << sb->NumStateBlocks() << " active blocks (constant-id "
+    if (sb->NumConstStates() > sb->ConstCapacity() ||
+        sb->NumConstStates() > sb->NumActiveStates()) {
+      err << "State batch " << j << ": " << sb->NumConstStates() << " constant states for "
+          << sb->NumActiveStates() << " active states (constant-id "
           << "capacity " << sb->ConstCapacity() << ").";
       return err.str();
     }
@@ -238,22 +238,23 @@ std::string Problem::SizeError() const {
     if (factor_batch == nullptr) {
       return "Factor batch of residual batch " + std::to_string(i) + " is nullptr.";
     }
-    if (factor_batch->NumFactors() > factor_batch->Capacity()) {
-      err << "Residual batch " << i << ": NumFactors() = " << factor_batch->NumFactors()
+    if (factor_batch->NumActiveFactors() > factor_batch->Capacity()) {
+      err << "Residual batch " << i << ": NumActiveFactors() = " << factor_batch->NumActiveFactors()
           << " exceeds Capacity() = " << factor_batch->Capacity()
           << "; custom factor batches must pass their capacity to the base constructor "
              "(SizedFactorBatch(capacity)).";
       return err.str();
     }
-    active_factors += factor_batch->NumFactors();
+    active_factors += factor_batch->NumActiveFactors();
     const Connectivity &c = connectivity_[i];
     const size_t needed = NumStatePointers(i);
     switch (c.kind) {
       case Connectivity::Kind::kHostList:
         if (c.host.size() < needed) {
           err << "Residual batch " << i << ": " << c.host.size()
-              << " state pointers for NumFactors() x blocks = " << needed
-              << "; pass a list of that size (Problem::SetStatePointers after SetNumFactors).";
+              << " state pointers for NumActiveFactors() x StateSizes().size() = " << needed
+              << "; pass a list of that size (Problem::SetStatePointers after "
+                 "SetNumActiveFactors).";
           return err.str();
         }
         break;
@@ -266,11 +267,11 @@ std::string Problem::SizeError() const {
         if (c.user_indices == nullptr && needed > 0) {
           return "Residual batch " + std::to_string(i) + ": device state-index table is nullptr.";
         }
-        const auto sizes = factor_batch->StateBlockSizes();
+        const auto sizes = factor_batch->StateSizes();
         if (c.slot_batches.size() != sizes.size() ||
             sizes.size() > static_cast<size_t>(problem_internal::kMaxSlots)) {
           err << "Residual batch " << i << ": " << c.slot_batches.size()
-              << " slot state batches for " << sizes.size() << " block slots (at most "
+              << " slot state batches for " << sizes.size() << " state slots (at most "
               << problem_internal::kMaxSlots << ").";
           return err.str();
         }
@@ -294,7 +295,8 @@ std::string Problem::SizeError() const {
   }
   if (!residual_batches_.empty() && active_factors == 0) {
     return "No residual batch has active factors: factor and state batches start with zero "
-           "active elements; call SetNumFactors(n) and SetNumStateBlocks(n, num_const) before "
+           "active elements; call SetNumActiveFactors(n) and SetNumActiveStates(n, num_const) "
+           "before "
            "solving.";
   }
   return "";
@@ -316,22 +318,22 @@ void Problem::CheckSizes() const {
     throw std::invalid_argument(error);
   }
   for (size_t i = 0; i < residual_batches_.size(); ++i) {
-    if (residual_batches_[i].GetFactorBatch()->NumFactors() == 0) {
-      LogWarning("Residual batch {} has no active factors (SetNumFactors not called?).", i);
+    if (residual_batches_[i].GetFactorBatch()->NumActiveFactors() == 0) {
+      LogWarning("Residual batch {} has no active factors (SetNumActiveFactors not called?).", i);
     }
   }
 }
 
 /**
  * @brief Host check of the graph for problems whose connectivity is all host
- * lists: no two state batches share a block, every factor references an
- * existing state block, and every state block is constrained by a factor.
+ * lists: no two state batches share a state, every factor references an
+ * existing state, and every state is constrained by a factor.
  */
 bool Problem::CheckGraphConnectivity() const {
   std::unordered_map<float *, bool> visited;
   for (const auto &state_batch : state_batches_) {
-    for (size_t i = 0; i < state_batch->NumStateBlocks(); ++i) {
-      float *p = state_batch->StateBlockDevicePtr(i);
+    for (size_t i = 0; i < state_batch->NumActiveStates(); ++i) {
+      float *p = state_batch->StateDevicePtr(i);
       if (visited.find(p) != visited.end()) {
         LogError("Same pointer to a state in different state batches.");
         return false;
@@ -353,7 +355,7 @@ bool Problem::CheckGraphConnectivity() const {
   }
   for (const auto &[p, constrained] : visited) {
     if (!constrained) {
-      LogError("State block is not constrained by any factor.");
+      LogError("State is not constrained by any factor.");
       return false;
     }
   }
@@ -371,7 +373,7 @@ bool Problem::Validate(cudaStream_t stream) const {
   int total_blocks = 0;
   for (size_t j = 0; j < state_batches_.size(); ++j) {
     const StateBatch *sb = state_batches_[j];
-    ranges[j] = {sb->StateBlockDevicePtr(0), static_cast<int>(sb->NumStateBlocks()),
+    ranges[j] = {sb->StateDevicePtr(0), static_cast<int>(sb->NumActiveStates()),
                  static_cast<int>(sb->AmbientSize()), static_cast<int>(sb->TangentSize()),
                  total_blocks};
     total_blocks += ranges[j].num_blocks;
@@ -394,7 +396,7 @@ bool Problem::Validate(cudaStream_t stream) const {
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(used.data(), 0, used.size() * sizeof(int), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(error.data(), 0, sizeof(ValidationError), stream));
   for (size_t i = 0; i < residual_batches_.size(); ++i) {
-    const auto sizes = residual_batches_[i].GetFactorBatch()->StateBlockSizes();
+    const auto sizes = residual_batches_[i].GetFactorBatch()->StateSizes();
     problem_internal::SlotTangents slots;
     slots.num_slots = static_cast<int>(std::min<size_t>(sizes.size(), problem_internal::kMaxSlots));
     for (int b = 0; b < slots.num_slots; ++b) slots.tangent[b] = static_cast<int>(sizes[b]);
@@ -409,7 +411,7 @@ bool Problem::Validate(cudaStream_t stream) const {
     problem_internal::LaunchCheckUsed(stream, used.data(), static_cast<int>(j), ranges[j],
                                       error.data());
     problem_internal::LaunchCheckConstantIds(
-        stream, state_batches_[j]->ConstStateIds(), state_batches_[j]->NumConstStateBlocks(),
+        stream, state_batches_[j]->ConstStateIds(), state_batches_[j]->NumConstStates(),
         ranges[j].num_blocks, static_cast<int>(j), error.data());
   }
   ValidationError result;
@@ -421,22 +423,22 @@ bool Problem::Validate(cudaStream_t stream) const {
       return true;
     case 1:
       LogError(
-          "Residual batch {}: state pointer {} does not point at an active block of a "
+          "Residual batch {}: state pointer {} does not point at an active state of a "
           "registered state batch.",
           result.batch, result.entry);
       break;
     case 2:
       LogError(
           "Residual batch {}: state pointer {} points into a state batch whose tangent size "
-          "differs from the block slot's.",
+          "differs from the state slot's.",
           result.batch, result.entry);
       break;
     case 3:
-      LogError("State batch {}: block {} is not constrained by any factor.", result.batch,
+      LogError("State batch {}: state {} is not constrained by any factor.", result.batch,
                result.entry);
       break;
     case 4:
-      LogError("State batch {}: constant id #{} is not below NumStateBlocks().", result.batch,
+      LogError("State batch {}: constant id #{} is not below NumActiveStates().", result.batch,
                result.entry);
       break;
     default:

@@ -48,14 +48,14 @@ struct PriorProblem {
 
   PriorProblem() {
     std::vector<float *> ptrs;
-    for (size_t i = 0; i < kCapacity; ++i) ptrs.push_back(state_batch.StateBlockDevicePtr(i));
+    for (size_t i = 0; i < kCapacity; ++i) ptrs.push_back(state_batch.StateDevicePtr(i));
     problem.AddStateBatch(&state_batch);
     problem.AddFactorBatch(&prior, ptrs);
   }
 
   void SetSizes(size_t n) {
-    state_batch.SetNumStateBlocks(n);
-    prior.SetNumFactors(n);
+    state_batch.SetNumActiveStates(n);
+    prior.SetNumActiveFactors(n);
   }
 };
 
@@ -74,13 +74,13 @@ TEST(SizeCheck, EveryMinimizerRejectsUnsetSizes) {
   PriorProblem p;  // constructed, sizes never set: nothing active
   CudaStream stream;
   ExpectInvalid([&] { GaussNewtonMinimizer().Minimize(stream.GetStream(), p.problem); },
-                "SetNumFactors");
+                "SetNumActiveFactors");
   ExpectInvalid([&] { LevenbergMarquardtMinimizer().Minimize(stream.GetStream(), p.problem); },
-                "SetNumFactors");
+                "SetNumActiveFactors");
   RansacMinimizerOptions o;
   o.default_inlier_threshold = 0.1f;
   ExpectInvalid([&] { RansacGaussNewtonMinimizer(o).Minimize(stream.GetStream(), p.problem); },
-                "SetNumFactors");
+                "SetNumActiveFactors");
 }
 
 TEST(SizeCheck, SetSizesSolve) {
@@ -94,7 +94,7 @@ TEST(SizeCheck, SetSizesSolve) {
 TEST(SizeCheck, HostListMustCoverActiveFactors) {
   PriorProblem p;
   p.SetSizes(kCapacity);
-  p.problem.SetStatePointers(0, {p.state_batch.StateBlockDevicePtr(0)});  // one pointer for 8
+  p.problem.SetStatePointers(0, {p.state_batch.StateDevicePtr(0)});  // one pointer for 8
   CudaStream stream;
   ExpectInvalid([&] { GaussNewtonMinimizer().Minimize(stream.GetStream(), p.problem); },
                 "SetStatePointers");
@@ -108,14 +108,14 @@ class OverCapacityFactor : public SizedFactorBatch<1, 1> {
                 size_t) const override {
     return true;
   }
-  size_t NumFactors() const override { return 3; }
+  size_t NumActiveFactors() const override { return 3; }
 };
 
-TEST(SizeCheck, NumFactorsAboveCapacityIsRejected) {
+TEST(SizeCheck, NumActiveFactorsAboveCapacityIsRejected) {
   PriorProblem p;
   p.SetSizes(kCapacity);
   OverCapacityFactor bad;
-  p.problem.AddFactorBatch(&bad, std::vector<float *>(3, p.state_batch.StateBlockDevicePtr(0)));
+  p.problem.AddFactorBatch(&bad, std::vector<float *>(3, p.state_batch.StateDevicePtr(0)));
   CudaStream stream;
   ExpectInvalid([&] { GaussNewtonMinimizer().Minimize(stream.GetStream(), p.problem); },
                 "exceeds Capacity()");

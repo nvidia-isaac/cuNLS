@@ -58,8 +58,8 @@ dvector<T> ToDevice(const std::vector<T> &h) {
 /**
  * @brief Checks one factor batch.
  *
- * pointers_for_copy(k) returns the NumFactors() * B state pointers of state
- * set k (B = StateBlockSizes().size()), as a plain evaluation would use them.
+ * pointers_for_copy(k) returns the NumActiveFactors() * B state pointers of state
+ * set k (B = StateSizes().size()), as a plain evaluation would use them.
  * Compares, bitwise:
  *  1. Evaluate(..., nullptr, copies * N) against one plain Evaluate per set;
  *  2. Evaluate(..., factor_ids, M) for random (factor, set) items with
@@ -70,9 +70,9 @@ inline void CheckEvaluateItems(const FactorBatch &factor, int copies,
                                const std::function<std::vector<float *>(int)> &pointers_for_copy,
                                bool jacobians = true) {
   CudaStream stream;
-  const int n_f = static_cast<int>(factor.NumFactors());
+  const int n_f = static_cast<int>(factor.NumActiveFactors());
   const int m = static_cast<int>(factor.ResidualsSize());
-  const auto sizes = factor.StateBlockSizes();
+  const auto sizes = factor.StateSizes();
   const int nb = static_cast<int>(sizes.size());
   const int n = static_cast<int>(std::accumulate(sizes.begin(), sizes.end(), size_t{0}));
   std::vector<float *> table;

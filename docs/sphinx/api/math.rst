@@ -162,14 +162,13 @@ Dense matrix API (`dense_matrix_ops.h`)
 
 .. code-block:: cpp
 
-   void ComputeSqrtMatrix(cuBLASHandle& cublas_handle, cudaStream_t stream,
-                          float* spd_matrix, size_t matrix_size,
-                          size_t pitch, size_t num_matrices)
+   void ComputeSqrtMatrix(cudaStream_t stream, float* spd_matrix,
+                          size_t matrix_size, size_t pitch,
+                          size_t num_matrices)
 
 ComputeSqrtMatrix parameters
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- `cublas_handle` - [in] external cuBLAS handle wrapper.
 - `stream` - [in] CUDA stream.
 - `spd_matrix` - [in,out] Device pointer to SPD matrices; replaced in-place by
   square-root factors.

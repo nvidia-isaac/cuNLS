@@ -155,9 +155,10 @@ Capacity and active count
 
    Every factor batch and state batch has **two sizes**. The constructor takes
    the **capacity**; the **active count** starts at **0** and must be set with
-   ``SetNumFactors`` / ``SetNumStateBlocks`` (Python: ``set_num_factors`` /
-   ``set_num_state_blocks``) before solving. A solve with nothing active throws
-   ``std::invalid_argument`` (Python ``ValueError``).
+   ``SetNumActiveFactors`` / ``SetNumActiveStates`` (Python:
+   ``set_num_active_factors`` / ``set_num_active_states``) before solving. A
+   solve with nothing active throws ``std::invalid_argument`` (Python
+   ``ValueError``).
 
 .. list-table::
    :header-rows: 1
@@ -165,14 +166,15 @@ Capacity and active count
 
    * -
      - **Capacity**
-     - **Active count** (``NumFactors()`` / ``NumStateBlocks()``)
+     - **Active count** (``NumActiveFactors()`` / ``NumActiveStates()``)
    * - What it is
-     - How many factors (state blocks) the batch's device buffers hold.
-     - How many of the *first* factors (blocks) the next solve uses.
+     - How many factors (states) the batch's device buffers hold.
+     - How many of the *first* factors (states) the next solve uses.
    * - Set by
      - The constructor. Fixed for the batch's lifetime.
-     - ``SetNumFactors(n)`` / ``SetNumStateBlocks(n, num_const)``, any
-       ``n <= Capacity()``. Starts at 0.
+     - ``SetNumActiveFactors(n)`` /
+       ``SetNumActiveStates(n, num_const_states)``, any ``n <= Capacity()``.
+       Starts at 0.
    * - Cost of changing
      - Not changeable.
      - Host-only assignment: no allocation, no device work, no sync.
@@ -199,29 +201,30 @@ to the capacity.
    // ... state batch, problem, minimizer ...
 
    // Every frame: write the first num_points entries, then set the active count.
-   pnp.SetNumFactors(num_points);       // num_points <= max_points
-   pose_state.SetNumStateBlocks(1);
+   pnp.SetNumActiveFactors(num_points);       // num_points <= max_points
+   pose_state.SetNumActiveStates(1);
    minimizer.Minimize(stream, problem);
 
 .. code-block:: python
 
    pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, max_points)   # capacity
-   pnp.set_num_factors(num_points)                                # active count
+   pnp.set_num_active_factors(num_points)                        # active count
 
 **Rules.**
 
 - Every buffer bound to a batch must hold its **capacity**: measurements,
   state values, constant ids, connectivity tables.
 - Only the **active** part is read and written by a solve: factors
-  ``[0, NumFactors())``, state blocks ``[0, NumStateBlocks())``, the first
-  ``num_const`` constant ids. Results are written back to the active state
-  blocks only.
-- Factors may only reference **active** state blocks. Block addresses
-  (``StateBlockDevicePtr(i)``) are valid for every ``i < Capacity()``, so the
+  ``[0, NumActiveFactors())``, states ``[0, NumActiveStates())``, the first
+  ``num_const_states`` constant ids. Results are written back to the active
+  states only.
+- Factors may only reference **active** states. State addresses
+  (``StateDevicePtr(i)``) are valid for every ``i < Capacity()``, so the
   connectivity of the next solve can be built before the counts are set.
 - Connectivity must cover the active factors: a host pointer list needs at
-  least ``NumFactors() * B`` entries (``Problem::SetStatePointers`` replaces
-  it); device tables are read for their first ``NumFactors() * B`` entries.
+  least ``NumActiveFactors() * B`` entries (``Problem::SetStatePointers``
+  replaces it); device tables are read for their first
+  ``NumActiveFactors() * B`` entries.
 - Never change sizes or buffer contents while a solve that uses them runs.
 - Every minimizer checks the sizes at the start of ``Minimize``
   (``Problem::CheckSizes``, host-only): nothing active, a count above its
@@ -243,7 +246,7 @@ High-level solve flow
    their capacity).
 3. Build one or more `FactorBatch` objects from observations (constructed
    with their capacity).
-4. Set the active counts: ``SetNumStateBlocks`` / ``SetNumFactors``
+4. Set the active counts: ``SetNumActiveStates`` / ``SetNumActiveFactors``
    (see :ref:`capacity-and-active-count`).
 5. Add state batches and factor batches to a `Problem`.
 6. Run a minimizer and inspect `MinimizerSummary`. To solve the next problem,

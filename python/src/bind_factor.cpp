@@ -18,7 +18,7 @@
 // Bindings for all FactorBatch subclasses and the CustomFactorBatch trampoline.
 //
 // A FactorBatch represents a batch of N residual functions that share the same
-// structure (residual dimension, number and sizes of state blocks).  cuNLS
+// structure (residual dimension, number and sizes of states).  cuNLS
 // ships many built-in factor types (reprojection, SE3 between, ICP variants,
 // priors); each is bound below as a nanobind class that inherits FactorBatch.
 //
@@ -70,9 +70,9 @@ void bind_prior_vector_factor(nb::module_ &m, const char *name) {
             new (self) Class(ptr, capacity);
           },
           nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &Class::NumFactors)
+      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
       .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_block_sizes", &Class::StateBlockSizes);
+      .def("state_sizes", &Class::StateSizes);
 }
 
 template <int Dim>
@@ -87,9 +87,9 @@ void bind_vector_between_factor(nb::module_ &m, const char *name) {
             new (self) Class(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &Class::NumFactors)
+      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
       .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_block_sizes", &Class::StateBlockSizes);
+      .def("state_sizes", &Class::StateSizes);
 }
 
 }  // namespace
@@ -98,17 +98,18 @@ void bind_factor(nb::module_ &m) {
   nb::class_<cunls::FactorBatch>(m, "FactorBatch", "Abstract base class for batched factors.")
       .def_prop_ro("capacity", &cunls::FactorBatch::Capacity,
                    "Factors the measurement buffers hold (the constructor's capacity).")
-      .def("set_num_factors", &cunls::FactorBatch::SetNumFactors, nb::arg("num_factors"),
-           "Sets the active factor count (the first num_factors measurements are used). Factor "
-           "batches start with 0 active factors: call this before the first solve, and again "
-           "whenever the size changes. Host-only; takes effect at the next minimize(). Raises "
-           "ValueError above the capacity.");
+      .def("set_num_active_factors", &cunls::FactorBatch::SetNumActiveFactors,
+           nb::arg("num_active_factors"),
+           "Sets the active factor count (the first num_active_factors measurements are used). "
+           "Factor batches start with 0 active factors: call this before the first solve, and "
+           "again whenever the size changes. Host-only; takes effect at the next minimize(). "
+           "Raises ValueError above the capacity.");
 
   // --- Custom factor trampoline ---
   nb::class_<PyFactorBatch, cunls::FactorBatch>(
       m, "CustomFactorBatch", "Base class for user-defined factors. Override evaluate() in Python.")
       .def(nb::init<size_t, std::vector<size_t>, size_t>(), nb::arg("residual_size"),
-           nb::arg("state_block_sizes"), nb::arg("capacity"))
+           nb::arg("state_sizes"), nb::arg("capacity"))
       .def(
           "evaluate",
           [](PyFactorBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
@@ -119,9 +120,9 @@ void bind_factor(nb::module_ &m) {
           },
           nb::arg("residuals_ptr"), nb::arg("jacobians_ptr"), nb::arg("state_pointers_ptr"),
           nb::arg("stream_handle"), nb::arg("factor_ids_ptr"), nb::arg("num_factor_ids"))
-      .def_prop_ro("num_factors", &PyFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &PyFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &PyFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &PyFactorBatch::StateBlockSizes);
+      .def("state_sizes", &PyFactorBatch::StateSizes);
 
   // --- Reprojection ---
   nb::class_<cunls::ReprojectionFactorBatch, cunls::FactorBatch>(
@@ -137,9 +138,9 @@ void bind_factor(nb::module_ &m) {
           },
           nb::arg("observations"), nb::arg("capacity"), nb::arg("z_threshold") = 1e-3f,
           nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::ReprojectionFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::ReprojectionFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::ReprojectionFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::ReprojectionFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::ReprojectionFactorBatch::StateSizes);
 
   nb::class_<cunls::PnPFactorBatch, cunls::FactorBatch>(
       m, "PnPFactorBatch",
@@ -173,9 +174,9 @@ void bind_factor(nb::module_ &m) {
           nb::arg("observations"), nb::arg("poses_camera_from_rig"), nb::arg("points_world"),
           nb::arg("capacity"), nb::arg("z_threshold") = 1e-3f, nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>())
-      .def_prop_ro("num_factors", &cunls::PnPFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::PnPFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::PnPFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::PnPFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::PnPFactorBatch::StateSizes);
 
   // --- SE3 Between ---
   nb::class_<cunls::SE3BetweenFactorBatch, cunls::FactorBatch>(
@@ -188,9 +189,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SE3BetweenFactorBatch(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SE3BetweenFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SE3BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SE3BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SE3BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SE3BetweenFactorBatch::StateSizes);
 
   // --- SE2 Between ---
   nb::class_<cunls::SE2BetweenFactorBatch, cunls::FactorBatch>(
@@ -203,9 +204,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SE2BetweenFactorBatch(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SE2BetweenFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SE2BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SE2BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SE2BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SE2BetweenFactorBatch::StateSizes);
 
   // --- SO2 Between ---
   nb::class_<cunls::SO2BetweenFactorBatch, cunls::FactorBatch>(
@@ -218,9 +219,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SO2BetweenFactorBatch(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SO2BetweenFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SO2BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SO2BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SO2BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SO2BetweenFactorBatch::StateSizes);
 
   // --- SO3 Between ---
   nb::class_<cunls::SO3BetweenFactorBatch, cunls::FactorBatch>(
@@ -233,9 +234,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SO3BetweenFactorBatch(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SO3BetweenFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SO3BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SO3BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SO3BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SO3BetweenFactorBatch::StateSizes);
 
   // --- Similarity2 Between ---
   nb::class_<cunls::Similarity2BetweenFactorBatch, cunls::FactorBatch>(
@@ -249,9 +250,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::Similarity2BetweenFactorBatch(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::Similarity2BetweenFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::Similarity2BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::Similarity2BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::Similarity2BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::Similarity2BetweenFactorBatch::StateSizes);
 
   // --- Similarity3 Between ---
   nb::class_<cunls::Similarity3BetweenFactorBatch, cunls::FactorBatch>(
@@ -259,17 +260,15 @@ void bind_factor(nb::module_ &m) {
       "Batched Sim(3) between factor. Residual=7, States=[Sim3(7), Sim3(7)].")
       .def(
           "__init__",
-          [](cunls::Similarity3BetweenFactorBatch *self, cunls::cuBLASHandle &cublas,
-             nb::handle deltas, size_t capacity) {
+          [](cunls::Similarity3BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
             auto ptr =
                 reinterpret_cast<const cunls::Similarity3Transform *>(extract_device_ptr(deltas));
-            new (self) cunls::Similarity3BetweenFactorBatch(cublas, ptr, capacity);
+            new (self) cunls::Similarity3BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("cublas_handle"), nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>())
-      .def_prop_ro("num_factors", &cunls::Similarity3BetweenFactorBatch::NumFactors)
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::Similarity3BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::Similarity3BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::Similarity3BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::Similarity3BetweenFactorBatch::StateSizes);
 
   // --- SL4 Between ---
   nb::class_<cunls::SL4BetweenFactorBatch, cunls::FactorBatch>(
@@ -282,9 +281,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SL4BetweenFactorBatch(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SL4BetweenFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SL4BetweenFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SL4BetweenFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SL4BetweenFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SL4BetweenFactorBatch::StateSizes);
 
   // --- SE3 Prior ---
   nb::class_<cunls::SE3PriorFactorBatch, cunls::FactorBatch>(
@@ -297,9 +296,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SE3PriorFactorBatch(ptr, capacity);
           },
           nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SE3PriorFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SE3PriorFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SE3PriorFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SE3PriorFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SE3PriorFactorBatch::StateSizes);
 
   // --- SL4 Prior ---
   nb::class_<cunls::SL4PriorFactorBatch, cunls::FactorBatch>(
@@ -312,9 +311,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SL4PriorFactorBatch(ptr, capacity);
           },
           nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SL4PriorFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SL4PriorFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SL4PriorFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SL4PriorFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SL4PriorFactorBatch::StateSizes);
 
   // --- SO3 Prior ---
   nb::class_<cunls::SO3PriorFactorBatch, cunls::FactorBatch>(
@@ -327,9 +326,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SO3PriorFactorBatch(ptr, capacity);
           },
           nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SO3PriorFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SO3PriorFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SO3PriorFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SO3PriorFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SO3PriorFactorBatch::StateSizes);
 
   // --- SO2 Prior ---
   nb::class_<cunls::SO2PriorFactorBatch, cunls::FactorBatch>(
@@ -342,9 +341,9 @@ void bind_factor(nb::module_ &m) {
             new (self) cunls::SO2PriorFactorBatch(ptr, capacity);
           },
           nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_factors", &cunls::SO2PriorFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SO2PriorFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SO2PriorFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SO2PriorFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SO2PriorFactorBatch::StateSizes);
 
   // --- Prior Vector Factors ---
   bind_prior_vector_factor<1>(m, "PriorVectorFactorBatch1");
@@ -372,9 +371,9 @@ void bind_factor(nb::module_ &m) {
           },
           nb::arg("p_observations"), nb::arg("q_observations"), nb::arg("capacity"),
           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
-      .def_prop_ro("num_factors", &cunls::PointToPointFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::PointToPointFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::PointToPointFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::PointToPointFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::PointToPointFactorBatch::StateSizes);
 
   // --- Point-to-Plane ---
   nb::class_<cunls::PointToPlaneFactorBatch, cunls::FactorBatch>(
@@ -393,9 +392,9 @@ void bind_factor(nb::module_ &m) {
           nb::arg("p_observations"), nb::arg("q_observations"), nb::arg("nq_observations"),
           nb::arg("capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
           nb::keep_alive<1, 4>())
-      .def_prop_ro("num_factors", &cunls::PointToPlaneFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::PointToPlaneFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::PointToPlaneFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::PointToPlaneFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::PointToPlaneFactorBatch::StateSizes);
 
   // --- Symmetric Point-to-Plane ---
   nb::class_<cunls::SymmetricPointToPlaneFactorBatch, cunls::FactorBatch>(
@@ -414,9 +413,9 @@ void bind_factor(nb::module_ &m) {
           nb::arg("p_observations"), nb::arg("q_observations"), nb::arg("np_observations"),
           nb::arg("nq_observations"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>())
-      .def_prop_ro("num_factors", &cunls::SymmetricPointToPlaneFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &cunls::SymmetricPointToPlaneFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SymmetricPointToPlaneFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &cunls::SymmetricPointToPlaneFactorBatch::StateBlockSizes);
+      .def("state_sizes", &cunls::SymmetricPointToPlaneFactorBatch::StateSizes);
 
   // --- InformationFactorBatch (polymorphic wrapper) ---
   nb::class_<PyInformationFactorBatch, cunls::FactorBatch>(
@@ -428,8 +427,6 @@ void bind_factor(nb::module_ &m) {
       "J.\n\n"
       "Parameters\n"
       "----------\n"
-      "cublas_handle : CublasHandle\n"
-      "    Shared cuBLAS handle.\n"
       "inner_factor : FactorBatch\n"
       "    The factor batch to wrap.\n"
       "sqrt_information_matrices : DevicePointer\n"
@@ -440,16 +437,15 @@ void bind_factor(nb::module_ &m) {
       "    stored contiguously in row-major order.")
       .def(
           "__init__",
-          [](PyInformationFactorBatch *self, cunls::cuBLASHandle &cublas, cunls::FactorBatch *inner,
-             nb::handle sqrt_info) {
+          [](PyInformationFactorBatch *self, cunls::FactorBatch *inner, nb::handle sqrt_info) {
             auto ptr = reinterpret_cast<const float *>(extract_device_ptr(sqrt_info));
-            new (self) PyInformationFactorBatch(cublas, inner, ptr);
+            new (self) PyInformationFactorBatch(inner, ptr);
           },
-          nb::arg("cublas_handle"), nb::arg("inner_factor"), nb::arg("sqrt_information_matrices"),
-          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>())
-      .def_prop_ro("num_factors", &PyInformationFactorBatch::NumFactors)
+          nb::arg("inner_factor"), nb::arg("sqrt_information_matrices"), nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>())
+      .def_prop_ro("num_active_factors", &PyInformationFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &PyInformationFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &PyInformationFactorBatch::StateBlockSizes);
+      .def("state_sizes", &PyInformationFactorBatch::StateSizes);
 
   // --- WeightedFactorBatch (polymorphic wrapper) ---
   nb::class_<PyWeightedFactorBatch, cunls::FactorBatch>(
@@ -483,7 +479,7 @@ void bind_factor(nb::module_ &m) {
           },
           nb::arg("inner_factor"), nb::arg("weights"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>())
-      .def_prop_ro("num_factors", &PyWeightedFactorBatch::NumFactors)
+      .def_prop_ro("num_active_factors", &PyWeightedFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &PyWeightedFactorBatch::ResidualsSize)
-      .def("state_block_sizes", &PyWeightedFactorBatch::StateBlockSizes);
+      .def("state_sizes", &PyWeightedFactorBatch::StateSizes);
 }

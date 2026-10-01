@@ -13,7 +13,7 @@
 namespace cunls {
 
 /**
- * @brief Batch factor for SL(4) between constraints (no cuBLAS handle).
+ * @brief Batch factor for SL(4) between constraints.
  *
  * residual = Vee(Log(Delta * T_left^{-1} * T_right))  (15-vector).
  *

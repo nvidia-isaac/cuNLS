@@ -41,7 +41,7 @@ cuNLS organizes optimization into:
 1. Allocate GPU state memory.
 2. Wrap memory with state batches.
 3. Construct factor batches from observations.
-4. Set the active sizes (`SetNumStateBlocks` / `SetNumFactors`; 0 after
+4. Set the active sizes (`SetNumActiveStates` / `SetNumActiveFactors`; 0 after
    construction).
 5. Add states/factors to a `Problem`.
 6. Run a minimizer and read `MinimizerSummary`.
@@ -52,7 +52,7 @@ cuNLS organizes optimization into:
 - Factor/state objects typically do not own user-provided observation/state memory.
 - Constant state IDs are supported via state-batch constructors.
 - Batch constructors take a capacity; active sizes start at 0 and are set
-  with `SetNumFactors` / `SetNumStateBlocks` before every solve whose sizes
+  with `SetNumActiveFactors` / `SetNumActiveStates` before every solve whose sizes
   differ (always before the first one).
 - Custom factors/states must honor the item parameters of
   `FactorBatch::Evaluate` (`factor_ids`, `num_factor_ids`) and the

@@ -48,9 +48,9 @@ Use the RANSAC minimizers when:
   (feature mismatches, wrong loop closures, spurious returns);
 - you need the inlier set, not just the estimate;
 - the **free state is small**: the sum of the tangent dimensions of all
-  non-constant state blocks must be at most ``kMaxRansacTangentDim = 64``
+  non-constant states must be at most ``kMaxRansacTangentDim = 64``
   (a camera pose is 6, a pose plus a focal length is 7, a rig of 10 poses
-  is 60). Constant blocks (e.g. known 3D points) do not count, however many
+  is 60). Constant states (e.g. known 3D points) do not count, however many
   there are, and the number of factors is unlimited.
 
 Typical problems: PnP (pose from 3D-2D matches), point-cloud registration
@@ -144,7 +144,7 @@ configurations they cannot evaluate. ``PnPFactorBatch``, for example,
 returns zero residual and zero Jacobian for points behind the camera. A
 hypothesis that puts every point behind the camera would then look perfect.
 With ``require_informative_inliers`` (default on), a factor counts as an
-inlier only if its Jacobian has a non-zero entry on a free state block.
+inlier only if its Jacobian has a non-zero entry on a free state.
 
 -------------------------------------------------------------------------------
 How many hypotheses?
@@ -269,7 +269,7 @@ What the implementation does
 One call to ``Minimize(stream, problem)``:
 
 1. **Validate and lay out** the problem (see :ref:`ransac-limits`): find the
-   free blocks and their tangent columns (:math:`D` total), the role of every
+   free states and their tangent columns (:math:`D` total), the role of every
    residual batch, the sample size :math:`s`.
 2. **Rounds** (at most ``max_rounds``), each with :math:`K` =
    ``hypotheses_per_round`` hypotheses solved **in parallel on the GPU**:
@@ -325,11 +325,11 @@ Usage
 .. important::
 
    **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / state blocks their buffers hold) and
-   start with **zero** active entries: call ``SetNumFactors(n)`` /
-   ``SetNumStateBlocks(n)`` (Python: ``set_num_factors`` /
-   ``set_num_state_blocks``) before solving, and again whenever the problem size
-   changes. See :ref:`capacity-and-active-count`.
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``SetNumActiveFactors(n)`` /
+   ``SetNumActiveStates(n)`` (Python: ``set_num_active_factors`` /
+   ``set_num_active_states``) before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
 
 Build the problem exactly as for the regular minimizers. Then choose the
 roles and thresholds, run the minimizer, and read the inlier mask. The
@@ -346,8 +346,8 @@ C++
    #include "cunls/cunls.h"
 
    // ... states, factors and problem built as usual:
-   //   pose_state.SetNumStateBlocks(1);
-   //   pnp.SetNumFactors(num_matches);
+   //   pose_state.SetNumActiveStates(1);
+   //   pnp.SetNumActiveFactors(num_matches);
    //   problem.AddStateBatch(&pose_state);
    //   problem.AddFactorBatch(&pnp, pointers);          // residual batch 0
 
@@ -420,7 +420,7 @@ Roles in practice
   ``kSampled`` with its own threshold. Samples are drawn from the union of all
   sampled factors, and ``InlierMask(i)`` gives the mask of batch ``i``.
 - **Known quantities** (3D landmarks in PnP, rig extrinsics): put them in
-  state batches with constant blocks (``const_state_ids``); they cost nothing
+  state batches with constant states (``const_state_ids``); they cost nothing
   towards :math:`D`.
 
 -------------------------------------------------------------------------------
@@ -489,7 +489,7 @@ Defaults are tuned on PnP and work for most small problems.
    * - ``require_informative_inliers``
      - true
      - Count a factor as an inlier only if its Jacobian is non-zero on a free
-       block. Disable only for factors that never report zero residuals for
+       state. Disable only for factors that never report zero residuals for
        invalid configurations; it saves one Jacobian evaluation per scored
        factor.
    * - ``scoring_subset_size``
@@ -559,7 +559,7 @@ explanatory message when:
   sampled factors;
 - ``factor_batches`` is non-empty but its length differs from the number of
   residual batches, or a sampled batch has a non-positive threshold;
-- a factor references more than 8 state blocks, or a state block that
+- a factor references more than 8 states, or a state that
   belongs to no registered state batch;
 - a residual batch uses numeric Jacobians (``JacobianMode::kNumeric``), which
   RANSAC does not support yet;

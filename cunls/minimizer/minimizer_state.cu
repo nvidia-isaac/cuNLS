@@ -61,8 +61,8 @@ __global__ void set_state_pointers_kernel(float **new_pointers, float *const *ol
 /**
  * @brief Allocates state storage vectors.
  *
- * Creates one device vector per state batch, sized to hold all state
- * blocks in that batch flattened into a single vector.
+ * Creates one device vector per state batch, sized to hold all
+ * states in that batch flattened into a single vector.
  *
  * @param problem The problem containing state batch information.
  */
@@ -79,7 +79,7 @@ void MinimizerState::CreateStates(const Problem &problem) {
     const auto &param_batch_ptr = state_batches[i];
     auto &state_vec = states_[i];
 
-    size_t size = param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
+    size_t size = param_batch_ptr->NumActiveStates() * param_batch_ptr->AmbientSize();
 
     if (state_vec.size() != size) {
       state_vec.resize(size);
@@ -130,8 +130,8 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
       const auto &param_batch_ptr = state_batches[i];
       auto &state_vec = states_[i];
 
-      float *ptr = param_batch_ptr->StateBlockDevicePtr(0);
-      size_t size = param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
+      float *ptr = param_batch_ptr->StateDevicePtr(0);
+      size_t size = param_batch_ptr->NumActiveStates() * param_batch_ptr->AmbientSize();
 
       thrust::device_ptr<float> src_ptr(ptr);
       thrust::device_ptr<float> dst_ptr(state_vec.data());
@@ -164,13 +164,13 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
         auto &new_states = states_[j];
 
         size_t num_states_in_batch =
-            param_batch_ptr->NumStateBlocks() * param_batch_ptr->AmbientSize();
+            param_batch_ptr->NumActiveStates() * param_batch_ptr->AmbientSize();
 
         assert(num_states_in_batch == new_states.size());
 
         float *new_param_ptr = new_states.data();
 
-        float *state_batch_ptr = param_batch_ptr->StateBlockDevicePtr(0);
+        float *state_batch_ptr = param_batch_ptr->StateDevicePtr(0);
 
         size_t num_blocks = (num_pointers + block_size - 1) / block_size;
 
@@ -232,7 +232,7 @@ void Copy(cudaStream_t stream, const MinimizerState &state, Problem &problem) {
     auto &param_batch_ptr = state_batches[i];
     const auto &dvec = state_values[i];
 
-    float *ptr = param_batch_ptr->StateBlockDevicePtr(0);
+    float *ptr = param_batch_ptr->StateDevicePtr(0);
     thrust::device_ptr<const float> src_ptr(dvec.data());
     thrust::device_ptr<float> dst_ptr(ptr);
     thrust::copy(stream_policy, src_ptr, src_ptr + dvec.size(), dst_ptr);

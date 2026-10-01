@@ -124,6 +124,10 @@ cuBLASHandle
 
 Header: `cunls/common/cublas_helper.h`
 
+Low-level utility, like the cuSPARSE, cuSOLVER and cuDSS wrappers below. No
+factor batch, state batch, or minimizer takes one: components that call
+cuBLAS own their handles.
+
 Method:
 
 - ``cublasHandle_t GetHandle(cudaStream_t stream)`` — ``stream`` [in] stream to bind; returns [out] cuBLAS handle.
@@ -168,9 +172,8 @@ Header: `cunls/common/profiler.h`
 Python API (``pycunls``)
 ------------------------
 
-The Python bindings expose CUDA stream and cuBLAS handle wrappers through the
-``pycunls`` package.  These are utility types shared by state batches, factor
-batches, and minimizers.
+The Python bindings expose the CUDA stream wrapper through the ``pycunls``
+package.  It is shared by state batches, factor batches, and minimizers.
 
 .. _py-cuda-stream-label:
 
@@ -199,28 +202,3 @@ linear algebra, state updates).
   wait for all GPU work issued on this stream, or to `NVIDIA Warp
   <https://developer.nvidia.com/warp-python>`_
   (``wp.Stream(cuda_stream=handle)``) when authoring custom kernels.
-
-.. _py-cublas-handle-label:
-
-``pycunls.CublasHandle``
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-RAII wrapper around a ``cublasHandle_t``.  Required as the first argument by
-every Lie-group and similarity state batch constructor
-(``SE3StateBatch``, ``SO3StateBatch``, ``SO2StateBatch``, ``SE2StateBatch``,
-``Similarity2StateBatch``, ``Similarity3StateBatch``) and by factor batches
-that operate on those manifolds (``SE3BetweenFactorBatch``,
-``ReprojectionFactorBatch``, ``PnPFactorBatch``, ``SE3PriorFactorBatch``,
-``SO3PriorFactorBatch``).
-Euclidean state and factor batches (``VectorStateBatch*``,
-``PriorVectorFactorBatch*``, ICP factors) do **not** need it.
-
-**Constructor**
-
-.. code-block:: python
-
-   cublas = pycunls.CublasHandle()
-
-Creates the handle lazily; the first cuBLAS call binds it to the active CUDA
-device.  A single ``CublasHandle`` instance may be shared across all state
-and factor batches in a problem.

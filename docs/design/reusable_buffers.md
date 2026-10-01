@@ -26,7 +26,7 @@ Today that is not possible:
 - several factor batches copy derived data from the measurements once, in the
   constructor (inverted targets, measurement adjoints), so rewriting the
   measurements in place silently uses stale data;
-- a state batch's block count and constant set are fixed at construction;
+- a state batch's state count and constant set are fixed at construction;
 - the connectivity is a host `std::vector<float *>` per factor batch, copied
   into `Problem` at `AddFactorBatch` and never replaceable.
 
@@ -54,7 +54,7 @@ design is its foundation and conflicts with nothing in it (§9).
 ## 1. Current conventions (read from the code at `a9ac4c6`)
 
 - **Factor batches** keep `ptr` and `num_factors_` from the constructor (e.g.
-  `PnPFactorBatch(observations, points, num, z_threshold)`). `NumFactors()`
+  `PnPFactorBatch(observations, points, num, z_threshold)`). `NumActiveFactors()`
   drives every launch and every buffer size.
 - **Derived data.** These batches compute data from the measurements in the
   constructor, on a private `CudaStream` with a synchronize:
@@ -92,14 +92,14 @@ design is its foundation and conflicts with nothing in it (§9).
   The constructors keep their shapes; the count they take is the *capacity*
   (the parameter is named `capacity` / `const_capacity`), constant for the
   batch's lifetime. The active sizes start at 0: every user calls
-  `SetNumFactors(n)` / `SetNumStateBlocks(n, num_const)` before the first
+  `SetNumActiveFactors(n)` / `SetNumActiveStates(n, num_const_states)` before the first
   solve, and `Minimize` rejects a problem with no active factors.
-- **D2 Sizes are host setters.** `FactorBatch::SetNumFactors(n)` and
-  `StateBatch::SetNumStateBlocks(n, num_const)`, with `n <= Capacity()`. They
+- **D2 Sizes are host setters.** `FactorBatch::SetNumActiveFactors(n)` and
+  `StateBatch::SetNumActiveStates(n, num_const_states)`, with `n <= Capacity()`. They
   are plain host assignments: no stream, no kernel, no allocation.
 - **D3 Factors cache nothing derived from measurements.** Derived data is
   computed inside the evaluation kernels. Rewriting measurements in place is
-  then always correct, and `SetNumFactors` needs no recomputation.
+  then always correct, and `SetNumActiveFactors` needs no recomputation.
 - **D4 Scratch is reserved at capacity** in the constructors. Solves never
   allocate (RANSAC's item counts above capacity grow it once).
 - **D5 Connectivity is a device table.** A factor batch's connectivity is a
@@ -121,9 +121,9 @@ design is its foundation and conflicts with nothing in it (§9).
 ```cpp
 class FactorBatch {
  public:
-  virtual size_t NumFactors() const;          // the active count n (0 after construction)
+  virtual size_t NumActiveFactors() const;          // the active count n (0 after construction)
   virtual size_t Capacity() const;            // fixed at construction
-  virtual void SetNumFactors(size_t n);       // n <= Capacity(), host only
+  virtual void SetNumActiveFactors(size_t n);       // n <= Capacity(), host only
  protected:
   FactorBatch() = default;
   explicit FactorBatch(size_t capacity);      // SizedFactorBatch(capacity) forwards it
@@ -131,11 +131,11 @@ class FactorBatch {
 ```
 
 `FactorBatch` holds `capacity_` and `num_factors_`, set by the protected
-constructor (capacity) and `SetNumFactors` (active count, 0 until called).
-Every built-in factor passes its capacity to the base and reads `NumFactors()`.
+constructor (capacity) and `SetNumActiveFactors` (active count, 0 until called).
+Every built-in factor passes its capacity to the base and reads `NumActiveFactors()`.
 The three methods stay virtual only so wrappers (`InformationFactorBatch`,
 `WeightedFactorBatch`) can forward them to the wrapped batch; custom factors
-pass their capacity to the base instead of overriding `NumFactors()` (one that
+pass their capacity to the base instead of overriding `NumActiveFactors()` (one that
 still overrides it reports `Capacity() == 0` and is rejected by
 `Problem::CheckSizes`).
 
@@ -167,7 +167,7 @@ optimization, not required here.
 ### 3.4 Wrappers and helpers
 
 - `WeightedFactorBatch<T>`, `InformationFactorBatch<T>`: forward
-  `SetNumFactors` to the wrapped batch. Their per-factor arrays (weights,
+  `SetNumActiveFactors` to the wrapped batch. Their per-factor arrays (weights,
   sqrt-information matrices) are user buffers with the same capacity and are
   read through `factor_ids` / item index as today.
 - `MotionPriorInformation` (helper that fills sqrt-information matrices from
@@ -178,7 +178,7 @@ optimization, not required here.
 
 ```python
 pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, capacity)  # unchanged signature
-pnp.set_num_factors(n)
+pnp.set_num_active_factors(n)
 pnp.capacity                                               # read-only
 ```
 
@@ -189,41 +189,41 @@ pnp.capacity                                               # read-only
 ```cpp
 class StateBatch {
  public:
-  // Existing: NumStateBlocks(), StateBlockDevicePtr(i), ConstStateIds(),
-  //           NumConstStateBlocks(), Plus(...)
+  // Existing: NumActiveStates(), StateDevicePtr(i), ConstStateIds(),
+  //           NumConstStates(), Plus(...)
   // New:
   size_t Capacity() const;
   size_t ConstCapacity() const;
-  void SetNumStateBlocks(size_t n, size_t num_const = 0);  // host only
+  void SetNumActiveStates(size_t n, size_t num_const_states = 0);  // host only
 };
 ```
 
 Implemented once in `SizedStateBatch`:
 
-- the state buffer passed to the constructor has `Capacity()` blocks; the
-  active blocks are `[0, n)`;
+- the state buffer passed to the constructor has `Capacity()` states; the
+  active states are `[0, n)`;
 - the constant-id buffer passed to the constructor (if any) has
-  `ConstCapacity()` entries; the first `num_const` are active and must be
+  `ConstCapacity()` entries; the first `num_const_states` are active and must be
   `< n`;
-- Lie-group batches reserve their `Plus` scratch for `capacity` blocks.
+- Lie-group batches reserve their `Plus` scratch for `capacity` states.
 
-`Plus` already processes `NumStateBlocks() * num_replicas` blocks of the
+`Plus` already processes `NumActiveStates() * num_replicas` states of the
 arrays it is given, so it needs no change.
 
 ### 4.2 What the minimizer does with a new size
 
-On every `Minimize` the minimizer already copies the `NumStateBlocks()`
-active blocks into its private copies, builds the column map from the active
-constant ids, and writes the result back to the first `n` blocks of the user
-buffer. Blocks `[n, Capacity())` are never read or written.
+On every `Minimize` the minimizer already copies the `NumActiveStates()`
+active states into its private copies, builds the column map from the active
+constant ids, and writes the result back to the first `n` states of the user
+buffer. States `[n, Capacity())` are never read or written.
 
 ### 4.3 Python
 
 ```python
 landmarks = pycunls.VectorStateBatch3(pts_gpu, capacity)
-landmarks.set_num_state_blocks(m)
-poses = pycunls.SE3StateBatch(cublas, poses_gpu, capacity, const_ids_gpu, const_capacity)
-poses.set_num_state_blocks(k, num_const=1)
+landmarks.set_num_active_states(m)
+poses = pycunls.SE3StateBatch(poses_gpu, capacity, const_ids_gpu, const_capacity)
+poses.set_num_active_states(k, num_const_states=1)
 ```
 
 ## 5. Connectivity
@@ -231,8 +231,8 @@ poses.set_num_state_blocks(k, num_const=1)
 ### 5.1 The two forms
 
 **Pointer table (general).** A device array of `float *`, `Capacity() × B`
-entries (`B = StateBlockSizes().size()`), entry `f * B + b` pointing at the
-state block that factor `f` reads in its slot `b`. This is today's format,
+entries (`B = StateSizes().size()`), entry `f * B + b` pointing at the
+state that factor `f` reads in its slot `b`. This is today's format,
 moved to the device.
 
 ```cpp
@@ -261,7 +261,7 @@ problem.AddFactorBatch(&factor, host_pointer_vector);   // copied to a library-o
 problem.SetStatePointers(residual_batch_index, host_pointer_vector);  // replace later
 ```
 
-Only the first `NumFactors() × B` entries of any table are read.
+Only the first `NumActiveFactors() × B` entries of any table are read.
 
 ### 5.2 How connectivity is updated every solve
 
@@ -273,7 +273,7 @@ frame k:
   user stream S:  write measurements[0..n)      (kernel or cudaMemcpyAsync)
                   write state values[0..m)       (initial guess)
                   write connectivity[0..n*B)     (indices or pointers)
-  host:           factor.SetNumFactors(n); states.SetNumStateBlocks(m, c)
+  host:           factor.SetNumActiveFactors(n); states.SetNumActiveStates(m, c)
   host:           minimizer.Minimize(S, problem)
                     ├─ (index form) one kernel: indices -> pointers into the
                     │    minimizer's state copies (replaces today's remap)
@@ -308,7 +308,7 @@ disappear, replaced by one elementwise kernel (index form) or nothing
 `AddFactorBatch(&factor, host_vector)` allocates a device table of
 `Capacity() × B` entries and copies the vector into it.
 `SetStatePointers(i, host_vector)` copies again (size must be
-`NumFactors() × B`). The rest of the pipeline only sees device tables.
+`NumActiveFactors() × B`). The rest of the pipeline only sees device tables.
 
 ### 5.5 Validation
 
@@ -317,8 +317,8 @@ host walk, defeating the purpose. Instead:
 
 - `Problem::Validate(cudaStream_t stream)` runs one GPU kernel over all active
   connections and one readback, and reports the first failure. It checks:
-  every pointer lies in an active block of a registered state batch (pointer
-  form) or every index is `< NumStateBlocks()` (index form); every active
+  every pointer lies in an active state of a registered state batch (pointer
+  form) or every index is `< NumActiveStates()` (index form); every active
   constant id is `< n`; every active, non-constant state is referenced by at
   least one active factor (the current "unconstrained state" rule).
 - `MinimizerOptions::validate_problem` (default `false`) calls it at the start
@@ -345,8 +345,7 @@ cunls::dvector<cunls::Vector<2>> observations(kMaxObs);
 cunls::dvector<int> obs_indices(2 * kMaxObs);        // [pose index, landmark index] per factor
 cunls::dvector<int> fixed_poses(1);                  // oldest pose is the gauge anchor
 
-cunls::cuBLASHandle cublas;
-cunls::SE3StateBatch pose_states(cublas, reinterpret_cast<float *>(poses.data()), kMaxPoses,
+cunls::SE3StateBatch pose_states(reinterpret_cast<float *>(poses.data()), kMaxPoses,
                                  fixed_poses.data(), /*const capacity=*/1);
 cunls::VectorStateBatch<3> landmark_states(reinterpret_cast<float *>(landmarks.data()),
                                            kMaxLandmarks);
@@ -371,9 +370,9 @@ for (const Frame &frame : frames) {
                       observations.data(), obs_indices.data(),  // measurements, connectivity
                       fixed_poses.data());                       // gauge: index of oldest pose
   // 2. Set the active sizes (host values the tracker already knows).
-  pose_states.SetNumStateBlocks(frame.num_poses, /*num_const=*/1);
-  landmark_states.SetNumStateBlocks(frame.num_landmarks);
-  reprojection.SetNumFactors(frame.num_observations);
+  pose_states.SetNumActiveStates(frame.num_poses, /*num_const_states=*/1);
+  landmark_states.SetNumActiveStates(frame.num_landmarks);
+  reprojection.SetNumActiveFactors(frame.num_observations);
   // 3. Solve; results land in poses[0..num_poses) and landmarks[0..num_landmarks).
   const cunls::MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
   tracker.ReadWindow(stream.GetStream(), poses.data(), landmarks.data());
@@ -393,7 +392,7 @@ cunls::dvector<cunls::Vector<3>> pts(kMaxMatches);
 cunls::dvector<int> pose_index(kMaxMatches);
 cudaMemset(pose_index.data(), 0, kMaxMatches * sizeof(int));  // every factor reads pose 0
 
-cunls::SE3StateBatch pose_state(cublas, reinterpret_cast<float *>(pose.data()), 1);
+cunls::SE3StateBatch pose_state(reinterpret_cast<float *>(pose.data()), 1);
 cunls::PnPFactorBatch pnp(obs.data(), pts.data(), kMaxMatches);
 cunls::Problem problem;
 problem.AddStateBatch(&pose_state);
@@ -407,7 +406,7 @@ cunls::RansacLevenbergMarquardtMinimizer ransac(options);
 matcher.Match(stream, frame, obs.data(), pts.data(), &num_matches);  // device writes, host count
 cudaMemcpyAsync(pose.data(), &predicted_pose, sizeof(cunls::SE3Transform),
                 cudaMemcpyHostToDevice, stream);                      // initial guess
-pnp.SetNumFactors(num_matches);
+pnp.SetNumActiveFactors(num_matches);
 const cunls::RansacSummary summary = ransac.Minimize(stream, problem);
 // pose[0] holds the estimate; ransac.InlierMask(0) / InlierMaskSize(0) the inliers.
 ```
@@ -426,7 +425,7 @@ int *host_indices;  cudaMallocHost(&host_indices, 2 * kMaxObs * sizeof(int));
 association.Fill(host_indices, &n);                                   // CPU
 cudaMemcpyAsync(obs_indices.data(), host_indices, 2 * n * sizeof(int),
                 cudaMemcpyHostToDevice, stream);
-reprojection.SetNumFactors(n);
+reprojection.SetNumActiveFactors(n);
 minimizer.Minimize(stream, problem);
 ```
 
@@ -445,8 +444,7 @@ obs_gpu = cp.zeros(MAX_OBS * 2, dtype=cp.float32)
 indices_gpu = cp.zeros(MAX_OBS * 2, dtype=cp.int32)        # [pose, landmark] per factor
 fixed_gpu = cp.zeros(1, dtype=cp.int32)
 
-cublas = pycunls.CublasHandle()
-poses = pycunls.SE3StateBatch(cublas, poses_gpu, MAX_POSES, fixed_gpu, 1)
+poses = pycunls.SE3StateBatch(poses_gpu, MAX_POSES, fixed_gpu, 1)
 landmarks = pycunls.VectorStateBatch3(landmarks_gpu, MAX_LANDMARKS)
 reprojection = pycunls.ReprojectionFactorBatch(obs_gpu, MAX_OBS, 1e-3)
 
@@ -465,9 +463,9 @@ for frame in frames:
     landmarks_gpu[: m * 3] = cp.asarray(frame.landmarks.reshape(-1))
     obs_gpu[: n * 2] = cp.asarray(frame.observations.reshape(-1))
     indices_gpu[: n * 2] = cp.asarray(frame.indices.reshape(-1))
-    poses.set_num_state_blocks(k, num_const=1)
-    landmarks.set_num_state_blocks(m)
-    reprojection.set_num_factors(n)
+    poses.set_num_active_states(k, num_const_states=1)
+    landmarks.set_num_active_states(m)
+    reprojection.set_num_active_factors(n)
     summary = minimizer.minimize(stream, problem)
 ```
 
@@ -491,8 +489,8 @@ for frame in frames:
 ## 8. Implementation plan
 
 1. **Base classes.** `FactorBatch` capacity/size members and setters;
-   `SizedStateBatch` capacity, constant capacity, `SetNumStateBlocks`.
-   Tests: setters, bounds checks, `NumFactors()` follows the setter.
+   `SizedStateBatch` capacity, constant capacity, `SetNumActiveStates`.
+   Tests: setters, bounds checks, `NumActiveFactors()` follows the setter.
 2. **Derived data into kernels** (§3.2), one factor family at a time, each
    with a test that capacity-built factors evaluated at `n < capacity` match
    exact-size factors, and that rewriting measurements in place between two
@@ -526,19 +524,19 @@ active sizes here correspond to its high-water marks.
 
 ## 10. Open questions
 
-1. **Naming.** `SetNumFactors` / `SetNumStateBlocks` mirror the getters.
+1. **Naming.** `SetNumActiveFactors` / `SetNumActiveStates` mirror the getters.
    Alternatives: `SetActiveSize`, `Resize` (rejected: implies allocation).
 2. **Device-side sizes.** Sizes are host values, so a GPU-computed match count
    costs one readback. A later option: a device size pointer, with kernels
    launched over capacity and early exit; the minimizer would size for
    capacity. Needs the incremental design's high-water marks.
 3. **Constant states.** Keep the constant-id list (proposed), or switch to a
-   per-block constant mask that the user rewrites (simpler to update, one
-   byte per block, matches the incremental design's `fixed[s]`)?
-4. **Index width.** `int32` indices cap a state batch at 2³¹ blocks; enough?
+   per-state constant mask that the user rewrites (simpler to update, one
+   byte per state, matches the incremental design's `fixed[s]`)?
+4. **Index width.** `int32` indices cap a state batch at 2³¹ states; enough?
 5. **Mixed forms.** Should one residual batch allow some slots by index and
    others by pointer? Proposed: no; one form per batch.
-6. **Deprecating virtual `NumFactors()`.** Custom factors override it today.
+6. **Deprecating virtual `NumActiveFactors()`.** Custom factors override it today.
    Keep it virtual, or make it final in the base after one release?
 
 ## 11. Implementation notes and measured performance
@@ -547,9 +545,9 @@ active sizes here correspond to its high-water marks.
 
 - Constructor counts are renamed `capacity` (`const_capacity` for constant
   ids), and **the active counts start at 0**: a batch must be activated with
-  `SetNumFactors` / `SetNumStateBlocks` before it is solved (user decision).
-- `StateBlockDevicePtr(i)` is valid for `i < Capacity()`, not only for active
-  blocks, so the connectivity of the next solve can be built before resizing.
+  `SetNumActiveFactors` / `SetNumActiveStates` before it is solved (user decision).
+- `StateDevicePtr(i)` is valid for `i < Capacity()`, not only for active
+  states, so the connectivity of the next solve can be built before resizing.
 - Every minimizer runs `Problem::CheckSizes()` at the start of `Minimize`: a
   host-only loop over batches that throws when nothing is active, a count
   exceeds its capacity, or connectivity does not cover the active factors.

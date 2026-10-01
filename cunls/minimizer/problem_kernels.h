@@ -30,10 +30,10 @@
 namespace cunls {
 namespace problem_internal {
 
-/** @brief Most block slots a factor may have (state batches per index table). */
+/** @brief Most state slots a factor may have (state batches per index table). */
 constexpr int kMaxSlots = 8;
 
-/** @brief Base address and ambient size of the state batch of each block slot. */
+/** @brief Base address and ambient size of the state batch of each state slot. */
 struct SlotTable {
   const float *base[kMaxSlots] = {};
   int ambient[kMaxSlots] = {};
@@ -50,7 +50,7 @@ void LaunchExpandIndices(cudaStream_t stream, const int *indices, size_t count,
 /** @brief Active range of one state batch, for validation. */
 struct StateRange {
   const float *base = nullptr;
-  int num_blocks = 0;  ///< Active blocks.
+  int num_blocks = 0;  ///< Active states.
   int ambient = 0;
   int tangent = 0;
   int used_offset = 0;  ///< Offset of the batch's flags in the `used` array.
@@ -58,13 +58,13 @@ struct StateRange {
 
 /** @brief First validation failure found on the device (code 0 = none). */
 struct ValidationError {
-  int code = 0;         ///< 1 dangling pointer, 2 tangent mismatch, 3 unconstrained block,
+  int code = 0;         ///< 1 dangling pointer, 2 tangent mismatch, 3 unconstrained state,
                         ///< 4 constant id out of range.
   int batch = 0;        ///< Residual batch (codes 1, 2) or state batch (codes 3, 4).
-  long long entry = 0;  ///< Table entry (1, 2), block (3) or constant-id slot (4).
+  long long entry = 0;  ///< Table entry (1, 2), state (3) or constant-id slot (4).
 };
 
-/** @brief Tangent size of each block slot of one residual batch. */
+/** @brief Tangent size of each state slot of one residual batch. */
 struct SlotTangents {
   int tangent[kMaxSlots] = {};
   int num_slots = 0;
@@ -72,14 +72,14 @@ struct SlotTangents {
 
 /**
  * @brief Checks `count` pointers of residual batch `batch`: each must point at
- * the start of an active block of a state batch whose tangent size matches the
- * slot's; marks used[range.used_offset + block] = 1.
+ * the start of an active state of a state batch whose tangent size matches the
+ * slot's; marks used[range.used_offset + state] = 1.
  */
 void LaunchCheckPointers(cudaStream_t stream, float *const *pointers, size_t count, int batch,
                          const SlotTangents &slots, const StateRange *ranges, int num_ranges,
                          int *used, ValidationError *error);
 
-/** @brief Reports the first active block of `range` that no factor reads. */
+/** @brief Reports the first active state of `range` that no factor reads. */
 void LaunchCheckUsed(cudaStream_t stream, const int *used, int batch, const StateRange &range,
                      ValidationError *error);
 

@@ -35,7 +35,7 @@ namespace cunls {
  *
  * The factor has:
  * - 3 residuals (3D rotation vector)
- * - 1 state block with tangent dimension 3 (rotation stored as 3x3 matrix)
+ * - 1 state with tangent dimension 3 (rotation stored as 3x3 matrix)
  *
  * @note The observations_ptr must point to GPU device memory containing target
  *       rotation matrices and remain valid for the lifetime of this object.
@@ -51,7 +51,7 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
    * @param observations_ptr Pointer to GPU device memory containing target
    * rotations. Must point to at least capacity * 9 floats.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
   SO3PriorFactorBatch(const SO3Rotation *observations_ptr, size_t capacity);
 
@@ -61,11 +61,11 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
    * @param residuals Output residuals (3 floats per factor, device pointer).
    * @param jacobians Output Jacobians (3x3 floats per factor, device pointer).
    *                  Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state block pointers.
+   * @param state_pointers Device pointer to state pointers.
    * @param stream CUDA stream for asynchronous execution.
    * @param factor_ids Optional per-item factor indices (device pointer).
    * @param num_factor_ids Number of items (the length of factor_ids when it
-   *        is given); 0 means NumFactors().
+   *        is given); 0 means NumActiveFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,

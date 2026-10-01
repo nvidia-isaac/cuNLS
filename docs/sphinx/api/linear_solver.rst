@@ -116,8 +116,8 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   with ``size_i``-square diagonal tiles.  When empty (default),
   ``Initialize`` derives the layout automatically from the
   ``Problem``'s state batches (segment per non-empty batch with
-  ``size = TangentSize()``, ``count = NumStateBlocks() -
-  NumConstStateBlocks()``).
+  ``size = TangentSize()``, ``count = NumActiveStates() -
+  NumConstStates()``).
 - ``max_iterations`` - [in] PCG iteration cap.  Default: ``200``.
 - ``relative_tolerance`` - [in] Stop when
   ``||r_k|| <= relative_tolerance * ||b||``.  Default: ``1e-3``.

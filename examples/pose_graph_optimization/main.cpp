@@ -24,7 +24,6 @@
 #include <iostream>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -55,34 +54,32 @@ int main() {
     dvector<int> constant_pose_ids(std::vector<int>{0});  // T_0 is the gauge anchor
 
     // 3. One state batch for the whole chain.
-    //    Capacity vs. active count. A batch is constructed with its capacity: how many state blocks
-    //    (or factors) its bound device buffers hold. The capacity is fixed for the batch's
-    //    lifetime; size it once for the largest problem you expect. Right after construction
-    //    nothing is active: SetNumStateBlocks / SetNumFactors set the active count, how many of the
+    //    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
+    //    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    //    size it once for the largest problem you expect. Right after construction nothing is
+    //    active: SetNumActiveStates / SetNumActiveFactors set the active count, how many of the
     //    first slots the next solve uses (a solve without it throws). The setter is host-only (no
     //    allocation, no device work) and may change the count between solves up to the capacity,
     //    which is what lets a real-time application allocate once and reuse the same buffers every
     //    frame while the problem size changes. This example solves every slot once, so each active
     //    count equals its capacity.
-    cunls::cuBLASHandle cublas;
     const size_t poses_capacity = num_poses;  // every slot solved: active = capacity
     const size_t const_poses_capacity = 1;    // entries of constant_pose_ids
-    cunls::SE3StateBatch pose_states(cublas, reinterpret_cast<const float *>(poses.data()),
-                                     poses_capacity, constant_pose_ids.data(),
-                                     const_poses_capacity);
+    cunls::SE3StateBatch pose_states(reinterpret_cast<const float *>(poses.data()), poses_capacity,
+                                     constant_pose_ids.data(), const_poses_capacity);
     const size_t num_const_poses = 1;  // active constant ids: the gauge anchor
-    pose_states.SetNumStateBlocks(num_poses, num_const_poses);  // active counts
+    pose_states.SetNumActiveStates(num_poses, num_const_poses);  // active counts
 
     // 4. Between factors; the manifold (SE(3)) is deduced from the deltas' type.
     //    Factor i reads [T_i, T_{i+1}]. Capacity (fixed, sizes the buffers) vs.
     //    active count (set per solve): see step 3.
     const size_t constraints_capacity = num_constraints;  // every slot solved
     cunls::BetweenFactorBatch between(deltas.data(), constraints_capacity);
-    between.SetNumFactors(num_constraints);  // active count
+    between.SetNumActiveFactors(num_constraints);  // active count
     std::vector<float *> state_pointers;
     for (size_t i = 0; i < num_constraints; ++i) {
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
+      state_pointers.push_back(pose_states.StateDevicePtr(i));
+      state_pointers.push_back(pose_states.StateDevicePtr(i + 1));
     }
 
     // 5. The problem.

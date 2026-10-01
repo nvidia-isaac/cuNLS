@@ -77,8 +77,8 @@ SE2PriorFactorBatch::SE2PriorFactorBatch(const SE2Transform *observations_ptr, s
 bool SE2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,
                                    const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   transforms_error_.resize(num_items);  // keeps capacity: allocates at most once per size
@@ -87,7 +87,7 @@ bool SE2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_se2_prior_kernel<<<num_blocks, kSE2PriorBlockSize, 0, stream>>>(
       state_pointers, observations_ptr_, num_items, transforms_error_.data(), factor_ids,
-      static_cast<int>(NumFactors()));
+      static_cast<int>(NumActiveFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 3: residual = Log(T_error)

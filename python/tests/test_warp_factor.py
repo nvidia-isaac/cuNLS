@@ -64,7 +64,7 @@ def _prior_kernel(
                     jacobians[i * dim * dim + d * dim + d2] = 0.0
 
 
-# Copies each item's dim-float state block (one pointer per item) into a
+# Copies each item's dim-float state (one pointer per item) into a
 # contiguous array: Warp kernels cannot dereference raw pointers themselves.
 _gather_blocks_kernel = cp.RawKernel(r"""
 extern "C" __global__
@@ -81,13 +81,13 @@ void gather_blocks(const unsigned long long* ptrs, float* out, int items, int di
 class WarpPriorFactor(WarpFactorBatch):
     """Dim-D vector-prior factor implemented entirely in Warp.
 
-    ``evaluate`` gathers each item's state block through the ``state_pointers``
+    ``evaluate`` gathers each item's state through the ``state_pointers``
     device array (a CuPy kernel), then launches ``_prior_kernel`` on the
     provided CUDA stream with one thread per item.
     """
 
     def __init__(self, observations_wp, dim, capacity):
-        super().__init__(residual_size=dim, state_block_sizes=[dim],
+        super().__init__(residual_size=dim, state_sizes=[dim],
                          capacity=capacity)
         self.observations = observations_wp
         self._dim = dim
@@ -135,13 +135,13 @@ class TestWarpFactorBatch:
         obs_wp = wp.array(target, dtype=wp.float32, device="cuda:0")
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
-        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = WarpPriorFactor(obs_wp, 3, 1)
-        fb.set_num_factors(fb.capacity)
+        fb.set_num_active_factors(fb.capacity)
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)
-        problem.add_factor_batch(fb, [sb.state_block_device_ptr(0)])
+        problem.add_factor_batch(fb, [sb.state_device_ptr(0)])
         assert problem.check_consistency()
 
         opts = pycunls.MinimizerOptions()

@@ -392,8 +392,8 @@ class ReprojectionFactorBatchTest : public ::testing::Test {
 
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
-        state_pointers.push_back(state_batch_poses.StateBlockDevicePtr(pose_idx));
-        state_pointers.push_back(state_batch_points.StateBlockDevicePtr(point_idx));
+        state_pointers.push_back(state_batch_poses.StateDevicePtr(pose_idx));
+        state_pointers.push_back(state_batch_points.StateDevicePtr(point_idx));
       }
     }
 
@@ -453,8 +453,6 @@ class ReprojectionFactorBatchTest : public ::testing::Test {
   std::vector<Point3D> ground_truth_points_;      ///< Ground truth 3D points
   std::vector<Observation2D> observations_;       ///< 2D observations (normalized)
 
-  cuBLASHandle cublas_handle_;  ///< cuBLAS handle for factor constructors
-
   profiler::Domain profiler_domain_{"ReprojectionFactorBatchTest"};
 };
 
@@ -476,7 +474,7 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
   size_t num_observations = num_poses_ * num_points_;
   ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
                                        kDefaultZThreshold);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
   // Set up state pointers
   std::vector<const float *> state_pointers;
   for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
@@ -547,19 +545,18 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
   const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
   const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
-  SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_,
-                                  const_pose_ids_device.data(), num_poses_);
-  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
-                                      state_batch_poses.ConstCapacity());
+  SE3StateBatch state_batch_poses(poses_ptr, num_poses_, const_pose_ids_device.data(), num_poses_);
+  state_batch_poses.SetNumActiveStates(state_batch_poses.Capacity(),
+                                       state_batch_poses.ConstCapacity());
   VectorStateBatch<3> state_batch_points(points_ptr, num_points_);
-  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
-                                       state_batch_points.ConstCapacity());
+  state_batch_points.SetNumActiveStates(state_batch_points.Capacity(),
+                                        state_batch_points.ConstCapacity());
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
   ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
                                        kDefaultZThreshold);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
   std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
@@ -646,19 +643,19 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
   const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
   const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
-  SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_);
-  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
-                                      state_batch_poses.ConstCapacity());
+  SE3StateBatch state_batch_poses(poses_ptr, num_poses_);
+  state_batch_poses.SetNumActiveStates(state_batch_poses.Capacity(),
+                                       state_batch_poses.ConstCapacity());
   VectorStateBatch<3> state_batch_points(points_ptr, num_points_, const_point_ids_device.data(),
                                          num_points_);
-  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
-                                       state_batch_points.ConstCapacity());
+  state_batch_points.SetNumActiveStates(state_batch_points.Capacity(),
+                                        state_batch_points.ConstCapacity());
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
   ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
                                        kDefaultZThreshold);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
   std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
@@ -731,18 +728,18 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeJoint) {
   const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
   const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
-  SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_);
-  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
-                                      state_batch_poses.ConstCapacity());
+  SE3StateBatch state_batch_poses(poses_ptr, num_poses_);
+  state_batch_poses.SetNumActiveStates(state_batch_poses.Capacity(),
+                                       state_batch_poses.ConstCapacity());
   VectorStateBatch<3> state_batch_points(points_ptr, num_points_);
-  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
-                                       state_batch_points.ConstCapacity());
+  state_batch_points.SetNumActiveStates(state_batch_points.Capacity(),
+                                        state_batch_points.ConstCapacity());
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
   ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
                                        kDefaultZThreshold);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
   std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
@@ -816,7 +813,7 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
   // Create factor batch with explicit positive z_threshold to test the check
   constexpr float z_threshold_for_test = 1e-3f;
   ReprojectionFactorBatch factor_batch(obs_device.data(), 1, z_threshold_for_test);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
   // Set up state pointers
   std::vector<const float *> param_ptrs = {reinterpret_cast<const float *>(pose_device.data()),
                                            reinterpret_cast<const float *>(point_device.data())};
@@ -877,12 +874,12 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
   ReprojectionFactorBatch factor_batch_with_rig(observations_device.data(),
                                                 rig_transforms_device.data(), num_observations,
                                                 kDefaultZThreshold);
-  factor_batch_with_rig.SetNumFactors(factor_batch_with_rig.Capacity());
+  factor_batch_with_rig.SetNumActiveFactors(factor_batch_with_rig.Capacity());
 
   // Create factor batch without rig transforms for comparison
   ReprojectionFactorBatch factor_batch_no_rig(observations_device.data(), num_observations,
                                               kDefaultZThreshold);
-  factor_batch_no_rig.SetNumFactors(factor_batch_no_rig.Capacity());
+  factor_batch_no_rig.SetNumActiveFactors(factor_batch_no_rig.Capacity());
 
   // Set up state pointers
   std::vector<const float *> state_pointers;
@@ -1054,18 +1051,18 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   const float *poses_ptr = reinterpret_cast<const float *>(rig_poses_device.data());
   const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
-  SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_);
-  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
-                                      state_batch_poses.ConstCapacity());
+  SE3StateBatch state_batch_poses(poses_ptr, num_poses_);
+  state_batch_poses.SetNumActiveStates(state_batch_poses.Capacity(),
+                                       state_batch_poses.ConstCapacity());
   VectorStateBatch<3> state_batch_points(points_ptr, num_points_, const_point_ids_device.data(),
                                          num_points_);
-  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
-                                       state_batch_points.ConstCapacity());
+  state_batch_points.SetNumActiveStates(state_batch_points.Capacity(),
+                                        state_batch_points.ConstCapacity());
 
   // Create factor batch with camera-from-rig transforms
   ReprojectionFactorBatch factor_batch(observations_device.data(), camera_from_rig_device.data(),
                                        num_observations, kDefaultZThreshold);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
   std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
@@ -1176,7 +1173,7 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   // Create factor batch with rig transforms
   ReprojectionFactorBatch factor_batch(observations_device.data(), camera_from_rig_device.data(),
                                        num_observations, kDefaultZThreshold);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
   // Set up state pointers
   std::vector<const float *> state_pointers;
   for (size_t point_idx = 0; point_idx < test_num_points; point_idx++) {

@@ -55,14 +55,14 @@ class ConstantVelocitySE3FactorBatch : public SizedFactorBatch<12, 6, 6, 6, 6> {
    *               at least capacity floats. Not owned; must outlive this
    *               object.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
   ConstantVelocitySE3FactorBatch(const float *dt_ptr, size_t capacity);
 
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
    * FactorBatch::Evaluate's item contract: item t reads the time delta of
-   * factor `factor_ids[t]` (or `t % NumFactors()`) and the states of item t.
+   * factor `factor_ids[t]` (or `t % NumActiveFactors()`) and the states of item t.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,

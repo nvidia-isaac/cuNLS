@@ -26,7 +26,6 @@ Typical workflow::
     import pycunls
 
     stream  = pycunls.CudaStream()
-    cublas  = pycunls.CublasHandle()
 
     # 1. Allocate state(s) on the GPU
     states_gpu = cp.zeros(num * dim, dtype=cp.float32)
@@ -39,7 +38,7 @@ Typical workflow::
     # 3. Assemble the problem
     problem = pycunls.Problem()
     problem.add_state_batch(sb)
-    problem.add_factor_batch(fb, [sb.state_block_device_ptr(i) for i in range(num)])
+    problem.add_factor_batch(fb, [sb.state_device_ptr(i) for i in range(num)])
 
     # 4. Solve (optional: set ``MinimizerOptions.column_scaling`` for scaled
     #    normal equations, or ``LevenbergMarquardtMinimizerOptions.base_options``)
@@ -53,7 +52,6 @@ For user-defined GPU factors implemented in NVIDIA Warp, see
 from pycunls._pycunls_core import (
     # --- CUDA helpers ---
     CudaStream,
-    CublasHandle,
     # --- Enumerations ---
     SparseLinearSolverType,
     ColumnScaling,
@@ -139,7 +137,6 @@ __version__ = "0.2.0"
 
 __all__ = [
     "CudaStream",
-    "CublasHandle",
     "SparseLinearSolverType",
     "ColumnScaling",
     "JacobianMode",

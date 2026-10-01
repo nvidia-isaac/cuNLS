@@ -108,7 +108,7 @@ SingleFactorResult EvaluateOne(const SE3Transform &pose_k, const SE3Transform &p
   dvector<const float *> ptrs_dev(ptrs);
 
   ConstantAccelerationSE3FactorBatch fb(dt_dev.data(), 1);
-  fb.SetNumFactors(fb.Capacity());
+  fb.SetNumActiveFactors(fb.Capacity());
   dvector<float> res_dev(18);
   dvector<float> jac_dev(want_jacobian ? 18 * 36 : 0);
 

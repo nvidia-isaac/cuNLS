@@ -47,7 +47,7 @@ namespace {
 //   residual_i = (x_{i+1} - x_i) - measurement_i
 //
 // One thread evaluates one *item*: a factor evaluated against its own set of
-// state blocks (see FactorBatch::Evaluate). Regular minimizers pass
+// states (see FactorBatch::Evaluate). Regular minimizers pass
 // factor_ids == nullptr and num_items == num_factors, so item idx is factor
 // idx; the RANSAC minimizers evaluate many items per factor. For item idx:
 //   measurement:  measurements[factor_ids ? factor_ids[idx] : idx % num_factors]
@@ -84,13 +84,13 @@ __global__ void ScalarDifferenceKernel(const float *measurements, const int *fac
 // ---------------------------------------------------------------------------
 // SizedFactorBatch<1, 1, 1> means:
 // - residual size: 1
-// - first state block tangent size: 1
-// - second state block tangent size: 1
+// - first state tangent size: 1
+// - second state tangent size: 1
 //
 // The class only stores pointers to device memory (measurements) and launches
 // the kernel in Evaluate(). The constructor passes the capacity (how many
 // measurements the bound buffer holds) to the base class, which also keeps the
-// active count NumFactors() that Evaluate() works on (see "Capacity vs. active
+// active count NumActiveFactors() that Evaluate() works on (see "Capacity vs. active
 // count" in RunChainExample). cuNLS handles assembly and optimization using the
 // residuals/Jacobians we provide here.
 class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
@@ -101,7 +101,7 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final {
-    const size_t num_factors = NumFactors();
+    const size_t num_factors = NumActiveFactors();
     const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
     if (num_items == 0 || num_factors == 0) {
       return true;
@@ -124,7 +124,7 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
 // Deriving a closed-form Jacobian by hand isn't always worth it -- for
 // prototyping, or for factors whose residual is awkward to differentiate,
 // cuNLS can compute the Jacobian for you via finite differences on the
-// manifold tangent space of each referenced state block (see
+// manifold tangent space of each referenced state (see
 // `cunls/minimizer/jacobian_mode.h`). All a factor has to do is support
 // residual-only evaluation (`jacobians == nullptr`), which every FactorBatch
 // must already do for cost-only evaluation.
@@ -162,7 +162,7 @@ class ScalarDifferenceResidualOnlyFactorBatch : public cunls::SizedFactorBatch<1
   bool Evaluate(float *residuals, float * /*jacobians*/, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final {
-    const size_t num_factors = NumFactors();
+    const size_t num_factors = NumActiveFactors();
     const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
     if (num_items == 0 || num_factors == 0) {
       return true;
@@ -197,18 +197,19 @@ int RunChainExample(const char *title, bool use_numeric_jacobian) {
   dvector<Vector<1>> anchor(std::vector<Vector<1>>{scene.gt_states[0]});
 
   // 3. One state batch with all scalar states.
-  //    Capacity vs. active count. A batch is constructed with its capacity: how many state blocks
+  //    Capacity vs. active count. A batch is constructed with its capacity: how many states
   //    (or factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
   //    size it once for the largest problem you expect. Right after construction nothing is active:
-  //    SetNumStateBlocks / SetNumFactors set the active count, how many of the first slots the next
-  //    solve uses (a solve without it throws). The setter is host-only (no allocation, no device
-  //    work) and may change the count between solves up to the capacity, which is what lets a
-  //    real-time application allocate once and reuse the same buffers every frame while the problem
-  //    size changes. This example solves every slot once, so each active count equals its capacity.
+  //    SetNumActiveStates / SetNumActiveFactors set the active count, how many of the first slots
+  //    the next solve uses (a solve without it throws). The setter is host-only (no allocation, no
+  //    device work) and may change the count between solves up to the capacity, which is what lets
+  //    a real-time application allocate once and reuse the same buffers every frame while the
+  //    problem size changes. This example solves every slot once, so each active count equals its
+  //    capacity.
   const size_t states_capacity = num_states;  // every slot solved: active = capacity
   cunls::VectorStateBatch<1> state_batch(reinterpret_cast<const float *>(states.data()),
                                          states_capacity);
-  state_batch.SetNumStateBlocks(num_states);  // active count
+  state_batch.SetNumActiveStates(num_states);  // active count
 
   // 4. Factors: the custom difference factor (one of the two classes above)
   //    reads [x_i, x_{i+1}]; the shipped prior reads x_0. Capacity (fixed,
@@ -219,13 +220,13 @@ int RunChainExample(const char *title, bool use_numeric_jacobian) {
   ScalarDifferenceResidualOnlyFactorBatch residual_only_factor(differences.data(), diff_capacity);
   cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(anchor.data(), anchor_capacity);
   const size_t num_anchor_factors = 1;
-  analytic_factor.SetNumFactors(num_diff_factors);  // active counts
-  residual_only_factor.SetNumFactors(num_diff_factors);
-  anchor_factor.SetNumFactors(num_anchor_factors);
+  analytic_factor.SetNumActiveFactors(num_diff_factors);  // active counts
+  residual_only_factor.SetNumActiveFactors(num_diff_factors);
+  anchor_factor.SetNumActiveFactors(num_anchor_factors);
   std::vector<float *> diff_pointers;
   for (size_t i = 0; i < num_diff_factors; ++i) {
-    diff_pointers.push_back(state_batch.StateBlockDevicePtr(i));
-    diff_pointers.push_back(state_batch.StateBlockDevicePtr(i + 1));
+    diff_pointers.push_back(state_batch.StateDevicePtr(i));
+    diff_pointers.push_back(state_batch.StateDevicePtr(i + 1));
   }
 
   // 5. The problem. The per-group JacobianMode::kNumeric override makes cuNLS
@@ -238,7 +239,7 @@ int RunChainExample(const char *title, bool use_numeric_jacobian) {
   } else {
     problem.AddFactorBatch(&analytic_factor, diff_pointers);
   }
-  problem.AddFactorBatch(&anchor_factor, {state_batch.StateBlockDevicePtr(0)});
+  problem.AddFactorBatch(&anchor_factor, {state_batch.StateDevicePtr(0)});
   if (!problem.CheckConsistency()) {
     std::cerr << "Problem consistency check failed\n";
     return 1;

@@ -53,7 +53,7 @@ optimization.
   (`factor_ids`, `num_factor_ids`) and replica (`num_replicas`) parameters;
   every factor and state batch must honor them. Guide:
   `docs/sphinx/ransac.rst`; design: `docs/design/ransac_minimizers.md`.
-- Each hypothesis (slot) owns a replica of every state batch with a free block;
+- Each hypothesis (slot) owns a replica of every state batch with a free state;
   fully constant batches are shared.
 - Sampling (`SlotSet::DrawSamples`): slot p's minimal sample is the first s
   elements of a keyed Feistel permutation (no sort) with the slot-specific key
@@ -65,6 +65,6 @@ optimization.
 - Per-hypothesis normal equations (register-tiled, no atomics), Jacobi-
   equilibrated Cholesky / pivoted LDLT (warp or block per slot) and scoring are
   deterministic (fixed reduction order): same seed, same bits.
-- By default an inlier must have a non-zero Jacobian on a free block
+- By default an inlier must have a non-zero Jacobian on a free state
   (`require_informative_inliers`), which stops zero-residual degenerate
   configurations (e.g. PnP points behind the camera) from scoring as perfect.

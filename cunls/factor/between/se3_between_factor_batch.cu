@@ -445,10 +445,9 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
  * the measurements here: the Jacobian kernel computes Ad(Delta) per item, so
  * the deltas may be rewritten in place between evaluations.
  *
- * @param cublas_handle Reference to an externally-owned cuBLAS handle.
  * @param pose_deltas_ptr    Device pointer to SE3 pose delta constraints.
  * @param capacity Number of factors the measurement buffers hold. The active
- *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+ *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
  */
 SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity)
     : SizedFactorBatch(capacity),
@@ -467,18 +466,18 @@ SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr
  * @param residuals   Output device pointer for residuals (6 floats per factor).
  * @param jacobians   Output device pointer for Jacobians (6x12 floats per
  *                    factor), or nullptr to skip Jacobian computation.
- * @param state_pointers  Device pointer to state block pointers.
+ * @param state_pointers  Device pointer to state pointers.
  * @param stream      CUDA stream for asynchronous execution.
  * @return true on success.
  */
 bool SE3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
                                      const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
-  const int num_factors = static_cast<int>(NumFactors());
+  const int num_factors = static_cast<int>(NumActiveFactors());
   poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
   const size_t num_blocks = (num_items + block_size - 1) / block_size;
 

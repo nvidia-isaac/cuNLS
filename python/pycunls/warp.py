@@ -56,12 +56,12 @@ class WarpFactorBatch(CustomFactorBatch):
     ----------
     residual_size : int
         Dimension of the residual vector per factor.
-    state_block_sizes : list[int]
-        Tangent dimensions of each state block consumed by one factor.
+    state_sizes : list[int]
+        Tangent dimensions of each state consumed by one factor.
     capacity : int
         Number of factors the measurement buffers hold. The batch starts
-        with 0 active factors: call :meth:`set_num_factors` before solving.
-        The active count is :attr:`num_factors`.
+        with 0 active factors: call :meth:`set_num_active_factors` before solving.
+        The active count is :attr:`num_active_factors`.
     device : str
         Warp device string, e.g. ``"cuda:0"``.
     """
@@ -69,11 +69,11 @@ class WarpFactorBatch(CustomFactorBatch):
     def __init__(
         self,
         residual_size: int,
-        state_block_sizes: list[int],
+        state_sizes: list[int],
         capacity: int,
         device: str = "cuda:0",
     ) -> None:
-        super().__init__(residual_size, state_block_sizes, capacity)
+        super().__init__(residual_size, state_sizes, capacity)
         self._device = device
         self._default_ids: dict[Tuple[int, int], wp.array] = {}
 
@@ -107,16 +107,16 @@ class WarpFactorBatch(CustomFactorBatch):
         """Factor (measurement) index of every item, as an ``int32`` array.
 
         Wraps ``factor_ids_ptr`` when it is non-null; otherwise returns
-        ``t % num_factors`` for ``t < num_items`` (built once per item count
+        ``t % num_active_factors`` for ``t < num_items`` (built once per item count
         and active factor count, and cached). Kernels can then always read
         ``ids[t]``.
         """
         if factor_ids_ptr != 0:
             return self.wrap_array(factor_ids_ptr, wp.int32, num_items)
-        key = (num_items, self.num_factors)
+        key = (num_items, self.num_active_factors)
         ids = self._default_ids.get(key)
         if ids is None:
-            values = np.arange(num_items, dtype=np.int32) % self.num_factors
+            values = np.arange(num_items, dtype=np.int32) % self.num_active_factors
             ids = wp.array(values, dtype=wp.int32, device=self._device)
             self._default_ids[key] = ids
         return ids
@@ -147,18 +147,19 @@ class WarpFactorBatch(CustomFactorBatch):
         """Evaluate residuals and Jacobians of ``num_factor_ids`` items.
 
         An *item* is one factor of this batch evaluated against one set of
-        state blocks (the same contract as C++ ``FactorBatch::Evaluate``).
-        The regular minimizers call this with ``num_factor_ids == num_factors``
+        states (the same contract as C++ ``FactorBatch::Evaluate``).
+        The regular minimizers call this with
+        ``num_factor_ids == num_active_factors``
         and ``factor_ids_ptr == 0``, i.e. item *t* is factor *t*. The RANSAC
         minimizers also evaluate the same factors against many state sets in
         one call. Launch one thread per item; for item *t*:
 
         * its factor (measurement) index is ``factor_ids[t]`` if
-          ``factor_ids_ptr != 0``, otherwise ``t % num_factors``;
-        * its *K* state blocks are ``state_pointers[t * K + k]``;
+          ``factor_ids_ptr != 0``, otherwise ``t % num_active_factors``;
+        * its *K* states are ``state_pointers[t * K + k]``;
         * it writes ``residual_size`` residuals at ``t * residual_size`` and,
-          if requested, its row-major ``residual_size x sum(state_block_sizes)``
-          Jacobian block at ``t * residual_size * sum(state_block_sizes)``.
+          if requested, its row-major ``residual_size x sum(state_sizes)``
+          Jacobian block at ``t * residual_size * sum(state_sizes)``.
 
         Override this method in your subclass.  Use :meth:`wrap_array` to
         convert the raw device pointers into ``warp.array`` objects and
@@ -172,20 +173,20 @@ class WarpFactorBatch(CustomFactorBatch):
             (``num_factor_ids * residual_size`` floats).
         jacobians_ptr : int
             Device pointer to the output Jacobians
-            (``num_factor_ids * residual_size * sum(state_block_sizes)`` floats).
+            (``num_factor_ids * residual_size * sum(state_sizes)`` floats).
             ``0`` (null) when only residuals are needed.
         state_pointers_ptr : int
-            Device pointer to ``num_factor_ids * K`` ``float*`` state block
+            Device pointer to ``num_factor_ids * K`` ``float*`` state
             pointers, item-major.
         stream_handle : int
             ``cudaStream_t`` handle for asynchronous kernel launches.
         factor_ids_ptr : int
             Device pointer to ``num_factor_ids`` ``int32`` factor indices in
-            ``[0, num_factors)``, or ``0`` for item *t* -> factor
-            ``t % num_factors``.
+            ``[0, num_active_factors)``, or ``0`` for item *t* -> factor
+            ``t % num_active_factors``.
         num_factor_ids : int
             Number of items to evaluate, always > 0 (unlike C++, where 0
-            means ``num_factors``, the actual count is passed here).
+            means ``num_active_factors``, the actual count is passed here).
 
         Returns
         -------
@@ -214,14 +215,14 @@ class WarpStateBatch(CustomStateBatch):
         CuPy array (or raw int pointer) to the contiguous GPU buffer
         holding ``capacity * ambient_size`` floats.
     ambient_size : int
-        Number of floats stored per state block (storage dimension).
+        Number of floats stored per state (storage dimension).
     tangent_size : int
         Number of floats per tangent-space update vector.
     capacity : int
-        Number of state blocks the buffer holds. The batch starts with 0
-        active blocks: call :meth:`set_num_state_blocks` before solving.
+        Number of states the buffer holds. The batch starts with 0
+        active states: call :meth:`set_num_active_states` before solving.
     const_state_ids : DevicePointer, optional
-        CuPy array of ``int32`` indices of blocks held constant.
+        CuPy array of ``int32`` indices of states held constant.
     const_capacity : int
         Number of entries the *const_state_ids* buffer holds.
     device : str
@@ -297,10 +298,11 @@ class WarpStateBatch(CustomStateBatch):
 
         The arrays hold ``num_replicas`` contiguous copies of the batch
         (the same contract as C++ ``StateBatch::Plus``): with
-        ``N = num_state_blocks`` (the active count), replica *r* is blocks ``[r * N, (r + 1) * N)``.
+        ``N = num_active_states`` (the active count), replica *r* is states
+        ``[r * N, (r + 1) * N)``.
         The regular minimizers pass ``num_replicas == 1``; the RANSAC
         minimizers update one replica per hypothesis in a single call.
-        Process all ``num_replicas * N`` blocks, each independently.
+        Process all ``num_replicas * N`` states, each independently.
 
         Override this method in your subclass.  Use :meth:`wrap_array` to
         convert the raw device pointers into ``warp.array`` objects and

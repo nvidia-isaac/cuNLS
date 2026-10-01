@@ -42,7 +42,7 @@ class ConstantAccelerationSO2FactorBatch : public SizedFactorBatch<3, 1, 1, 1, 1
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
    * FactorBatch::Evaluate's item contract: item t reads the time delta of
-   * factor `factor_ids[t]` (or `t % NumFactors()`) and the states of item t.
+   * factor `factor_ids[t]` (or `t % NumActiveFactors()`) and the states of item t.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,

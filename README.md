@@ -134,11 +134,11 @@ Set `-DCUDSS_PLATFORM` explicitly to override it.
 
 > [!IMPORTANT]
 > **Capacity vs. active count.** Every factor and state batch has two sizes. The constructor takes
-> the **capacity**: how many factors / state blocks its device buffers hold, fixed for the batch's
-> lifetime. The **active count** starts at **zero** and is set with `SetNumFactors(n)` /
-> `SetNumStateBlocks(n)` (Python: `set_num_factors` / `set_num_state_blocks`), any `n` up to the
-> capacity. It is a host-only setter, so a real-time application allocates once for its largest
-> problem and changes the active counts every frame. A solve with nothing active throws. See
+> the **capacity**: how many factors / states its device buffers hold, fixed for the batch's
+> lifetime. The **active count** starts at **zero** and is set with `SetNumActiveFactors(n)` /
+> `SetNumActiveStates(n)` (Python: `set_num_active_factors` / `set_num_active_states`), any `n`
+> up to the capacity. It is a host-only setter, so a real-time application allocates once for its
+> largest problem and changes the active counts every frame. A solve with nothing active throws. See
 > [Capacity and active count](docs/sphinx/introduction.rst).
 
 The following minimal program solves a 1-D prior problem: a scalar variable $x$ pulled toward a target $o = 2$.
@@ -161,7 +161,7 @@ int main() {
   cunls::dvector<float> d_state(h_state);
   cunls::dvector<float> d_obs(h_obs);
 
-  // Capacity: how many blocks / factors the buffers hold (fixed per batch).
+  // Capacity: how many states / factors the buffers hold (fixed per batch).
   // Batches start with 0 active entries; the active count is set separately and
   // may change between solves up to the capacity. Here every slot is used.
   const size_t capacity = 1;
@@ -169,10 +169,10 @@ int main() {
   cunls::VectorStateBatch<1> state_batch(d_state.data(), capacity);
   cunls::PriorVectorFactorBatch<1> prior(
       reinterpret_cast<const cunls::Vector<1>*>(d_obs.data()), capacity);
-  state_batch.SetNumStateBlocks(num_states);  // active count
-  prior.SetNumFactors(num_factors);           // active count
+  state_batch.SetNumActiveStates(num_states);  // active count
+  prior.SetNumActiveFactors(num_factors);       // active count
 
-  std::vector<float*> state_ptrs = {state_batch.StateBlockDevicePtr(0)};
+  std::vector<float*> state_ptrs = {state_batch.StateDevicePtr(0)};
 
   cunls::Problem problem;
   problem.AddStateBatch(&state_batch);

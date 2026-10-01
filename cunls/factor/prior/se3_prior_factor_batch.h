@@ -36,7 +36,7 @@ namespace cunls {
  *
  * The factor has:
  * - 6 residuals (6D twist vector)
- * - 1 state block with tangent dimension 6 (transform stored as 4x4 matrix)
+ * - 1 state with tangent dimension 6 (transform stored as 4x4 matrix)
  *
  * @note The observations_ptr must point to GPU device memory containing target
  *       transformation matrices and remain valid for the lifetime of this
@@ -54,7 +54,7 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
    * @param observations_ptr Pointer to GPU device memory containing target
    * transforms. Must point to at least capacity * 16 floats.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
   SE3PriorFactorBatch(const SE3Transform *observations_ptr, size_t capacity);
 
@@ -64,7 +64,7 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
    * @param residuals Output residuals (6 floats per factor, device pointer).
    * @param jacobians Output Jacobians (6x6 floats per factor, device pointer).
    *                  Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state block pointers.
+   * @param state_pointers Device pointer to state pointers.
    * @param stream CUDA stream for asynchronous execution.
    * @return true on success.
    */

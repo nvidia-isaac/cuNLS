@@ -34,7 +34,7 @@ namespace {
 /** Host copy of a state batch's constant flags. */
 std::vector<int> ConstantFlags(const StateBatch &batch, int num_blocks) {
   std::vector<int> flags(num_blocks, 0);
-  const size_t count = batch.NumConstStateBlocks();
+  const size_t count = batch.NumConstStates();
   if (count == 0 || batch.ConstStateIds() == nullptr) {
     return flags;
   }
@@ -75,13 +75,12 @@ void RansacLayout::BuildStates(const Problem &problem) {
   for (size_t j = 0; j < batches.size(); ++j) {
     const int free_blocks = BuildState(j, batches[j]);
     if (free_blocks > 0) {
-      breakdown << "\n  state batch " << j << ": " << free_blocks << " free block(s) x tangent "
+      breakdown << "\n  state batch " << j << ": " << free_blocks << " free state(s) x tangent "
                 << states_[j].tangent << " = " << free_blocks * states_[j].tangent;
     }
   }
   if (dim_ == 0) {
-    FailConfiguration(
-        "RANSAC: the problem has no free state blocks (free tangent dimension D = 0)");
+    FailConfiguration("RANSAC: the problem has no free states (free tangent dimension D = 0)");
   }
   if (dim_ > kMaxRansacTangentDim) {
     FailConfiguration("RANSAC: free tangent dimension D = " + Str(dim_) + " exceeds " +
@@ -94,7 +93,7 @@ void RansacLayout::BuildStates(const Problem &problem) {
 int RansacLayout::BuildState(size_t index, StateBatch *batch) {
   StateLayout &s = states_[index];
   s.batch = batch;
-  s.num_blocks = static_cast<int>(batch->NumStateBlocks());
+  s.num_blocks = static_cast<int>(batch->NumActiveStates());
   s.ambient = static_cast<int>(batch->AmbientSize());
   s.tangent = static_cast<int>(batch->TangentSize());
   s.slot_floats = static_cast<size_t>(s.num_blocks) * s.ambient;
@@ -114,8 +113,8 @@ int RansacLayout::BuildState(size_t index, StateBatch *batch) {
   s.block_col.CopyFromHost(s.block_col_host.data(), s.num_blocks);
   if (free_blocks > 0 && free_blocks * 2 < s.num_blocks) {
     LogMessage(
-        "RANSAC: state batch {} is copied per hypothesis but only {} of its {} blocks "
-        "are free; keep constant blocks in their own state batch to save memory",
+        "RANSAC: state batch {} is copied per hypothesis but only {} of its {} states "
+        "are free; keep constant states in their own state batch to save memory",
         index, free_blocks, s.num_blocks);
   }
   return free_blocks;
@@ -172,13 +171,12 @@ void RansacLayout::BuildResidual(const Problem &problem, size_t index,
     FailConfiguration("RANSAC: inlier_threshold of residual batch " + Str(index) + " must be > 0");
   }
   r.m = static_cast<int>(r.factor->ResidualsSize());
-  r.num_factors = static_cast<int>(r.factor->NumFactors());
-  const auto sizes = r.factor->StateBlockSizes();
+  r.num_factors = static_cast<int>(r.factor->NumActiveFactors());
+  const auto sizes = r.factor->StateSizes();
   r.nb = static_cast<int>(sizes.size());
   if (r.nb > kMaxBlocksPerFactor) {
     FailConfiguration("RANSAC: residual batch " + Str(index) + " references " + Str(r.nb) +
-                      " state blocks per factor; at most " + Str(kMaxBlocksPerFactor) +
-                      " are supported");
+                      " states per factor; at most " + Str(kMaxBlocksPerFactor) + " are supported");
   }
   r.block_off.assign(r.nb, 0);
   r.block_size.assign(r.nb, 0);
@@ -204,14 +202,14 @@ void RansacLayout::ResolveBlocks(ResidualLayout &r, size_t index,
     bool found = false;
     for (size_t j = 0; j < states_.size() && !found; ++j) {
       const StateLayout &s = states_[j];
-      const ptrdiff_t diff = pointers[e] - s.batch->StateBlockDevicePtr(0);
+      const ptrdiff_t diff = pointers[e] - s.batch->StateDevicePtr(0);
       if (diff < 0 || diff >= static_cast<ptrdiff_t>(s.slot_floats) || diff % s.ambient != 0) {
         continue;
       }
       if (s.tangent != r.block_size[slot_block]) {
-        FailConfiguration("RANSAC: residual batch " + Str(index) + " block " + Str(slot_block) +
-                          " has size " + Str(r.block_size[slot_block]) + " but state batch " +
-                          Str(j) + " has tangent size " + Str(s.tangent));
+        FailConfiguration("RANSAC: residual batch " + Str(index) + " state slot " +
+                          Str(slot_block) + " has size " + Str(r.block_size[slot_block]) +
+                          " but state batch " + Str(j) + " has tangent size " + Str(s.tangent));
       }
       const int k = static_cast<int>(diff / s.ambient);
       blocks[e] = make_int2(static_cast<int>(j), k);
@@ -220,7 +218,7 @@ void RansacLayout::ResolveBlocks(ResidualLayout &r, size_t index,
     }
     if (!found) {
       FailConfiguration("RANSAC: residual batch " + Str(index) +
-                        " references a state block that belongs to no registered state batch");
+                        " references a state that belongs to no registered state batch");
     }
   }
   r.blocks.resize(blocks.size());

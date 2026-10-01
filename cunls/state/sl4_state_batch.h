@@ -6,14 +6,13 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/types.h"
 #include "cunls/state/sized_state_batch.h"
 
 namespace cunls {
 
 /**
- * @brief Batch processing for SL(4) Lie group state blocks (projective special
+ * @brief Batch processing for SL(4) Lie group states (projective special
  * linear).
  *
  * Tangent space dimension is 15 (Lie algebra sl(4)); ambient storage is a 4x4
@@ -25,16 +24,15 @@ class SL4StateBatch : public SizedStateBatch<16, 15> {
  public:
   using Base = SizedStateBatch<16, 15>;
 
-  SL4StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity);
+  SL4StateBatch(const float *device_ptr, size_t capacity);
 
-  SL4StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity,
-                const int *device_constant_state_ids, size_t const_capacity);
+  SL4StateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                size_t const_capacity);
 
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
 
  private:
-  cuBLASHandle &cublas_handle_;
   mutable dvector<SL4Transform> delta_transforms_;
   mutable dvector<float> twists_;
 };

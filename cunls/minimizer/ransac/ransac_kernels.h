@@ -40,7 +40,7 @@
 namespace cunls {
 namespace ransac_internal {
 
-/** @brief Most state blocks a single factor may reference. */
+/** @brief Most states a single factor may reference. */
 constexpr int kMaxBlocksPerFactor = 8;
 
 /** @brief Largest supported free tangent dimension (mirrors kMaxRansacTangentDim). */
@@ -52,7 +52,7 @@ constexpr int kBlockGroupWords = 8192;
 /**
  * @brief Shared-memory words the normal-equation kernel needs to stage one item:
  * m_max Jacobian rows padded to a multiple of 4 columns plus a residual each,
- * two index words, and the item's local block columns.
+ * two index words, and the item's local column per state slot.
  */
 __host__ __device__ inline int NormalEquationsItemWords(int m_max, int dim) {
   return m_max * (((dim + 3) & ~3) + 1) + 2 + kMaxBlocksPerFactor;
@@ -76,13 +76,13 @@ enum ViewKind : int { kViewSamples = 0, kViewPerSlot = 1, kViewPerSlotMasked = 2
 struct BatchView {
   int kind = kViewPerSlot;
   int m = 0;            ///< Residual dimension.
-  int n = 0;            ///< Sum of the factor's block tangent sizes.
-  int nb = 0;           ///< State blocks per factor.
+  int n = 0;            ///< Sum of the factor's state tangent sizes.
+  int nb = 0;           ///< States per factor.
   int num_factors = 0;  ///< Factors in the batch.
   int u_offset = -1;    ///< Offset in the concatenated sampled index; -1 if not sampled.
-  int block_col_off[kMaxBlocksPerFactor] = {};  ///< Column offset of each block within n.
-  int block_size[kMaxBlocksPerFactor] = {};     ///< Tangent size of each block.
-  const int *local_col = nullptr;  ///< num_factors * nb local columns; -1 = constant block.
+  int block_col_off[kMaxBlocksPerFactor] = {};  ///< Column offset of each state slot within n.
+  int block_size[kMaxBlocksPerFactor] = {};     ///< Tangent size of each state slot.
+  const int *local_col = nullptr;  ///< num_factors * nb local columns; -1 = constant state.
   const float *res = nullptr;      ///< Residual buffer base.
   const float *jac = nullptr;      ///< Jacobian buffer base (may be null for cost-only use).
   const float *cost = nullptr;     ///< Per-factor cost buffer base (may be null).
@@ -242,9 +242,9 @@ void LaunchFill(cudaStream_t stream, float *data, size_t n, float value);
 
 /**
  * @brief Expands per-slot local steps into one state batch's full tangent
- * layout (zeros for constant blocks).
+ * layout (zeros for constant states).
  *
- * @param block_col num_blocks entries: local column of each block or -1.
+ * @param block_col num_blocks entries: local column of each state or -1.
  */
 void LaunchScatterDelta(cudaStream_t stream, int num_slots, int dim, const float *delta,
                         int num_blocks, int tangent, const int *block_col, float *delta_full);
@@ -358,7 +358,7 @@ struct ScoreInputs {
   int add_always_on = 0;
   /**
    * When set, a factor is an inlier only if its Jacobian has a non-zero entry
-   * on a free block (sampled views must then carry jac / local_col). Guards
+   * on a free state (sampled views must then carry jac / local_col). Guards
    * against factors that report a zero residual for configurations they
    * cannot evaluate, e.g. points behind the camera.
    */

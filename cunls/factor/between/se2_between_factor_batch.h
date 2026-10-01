@@ -13,7 +13,7 @@
 namespace cunls {
 
 /**
- * @brief Batch factor for SE(2) between constraints (no cuBLAS handle).
+ * @brief Batch factor for SE(2) between constraints.
  *
  * residual = Log(Delta * T_left^{-1} * T_right) (3-vector).
  *

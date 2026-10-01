@@ -65,13 +65,13 @@ def _solve_fresh(gt, initial, deltas, edges, stream):
     state_batch = pycunls.VectorStateBatch3(states, n)
     between = pycunls.VectorBetweenFactorBatch3(deltas_gpu, m)
     prior = pycunls.PriorVectorFactorBatch3(anchor, 1)
-    state_batch.set_num_state_blocks(n)
-    between.set_num_factors(m)
-    prior.set_num_factors(1)
+    state_batch.set_num_active_states(n)
+    between.set_num_active_factors(m)
+    prior.set_num_active_factors(1)
     problem = pycunls.Problem()
     problem.add_state_batch(state_batch)
-    problem.add_factor_batch(between, [state_batch.state_block_device_ptr(int(i)) for i in edges])
-    problem.add_factor_batch(prior, [state_batch.state_block_device_ptr(0)])
+    problem.add_factor_batch(between, [state_batch.state_device_ptr(int(i)) for i in edges])
+    problem.add_factor_batch(prior, [state_batch.state_device_ptr(0)])
     pycunls.LevenbergMarquardtMinimizer(_options()).minimize(stream, problem)
     cp.cuda.runtime.streamSynchronize(stream.get_stream())
     return cp.asnumpy(states).reshape(-1, 3)
@@ -91,11 +91,11 @@ class BoundProblem:
         self.state_batch = pycunls.VectorStateBatch3(self.states, CAP_STATES)
         self.between = pycunls.VectorBetweenFactorBatch3(self.deltas, CAP_EDGES)
         self.prior = pycunls.PriorVectorFactorBatch3(self.anchor, 1)
-        self.prior.set_num_factors(1)  # the anchor; states and edges are sized per frame
+        self.prior.set_num_active_factors(1)  # the anchor; states and edges are sized per frame
         self.problem = pycunls.Problem()
         self.problem.add_state_batch(self.state_batch)
         if form == "host_list":
-            first = self.state_batch.state_block_device_ptr(0)
+            first = self.state_batch.state_device_ptr(0)
             self.problem.add_factor_batch(self.between, [first] * (2 * CAP_EDGES))
         elif form == "device_pointers":
             self.problem.add_factor_batch(self.between, state_pointer_table=self.pointers)
@@ -112,10 +112,10 @@ class BoundProblem:
         self.states[:n * 3] = cp.asarray(initial.reshape(-1))
         self.deltas[:m * 3] = cp.asarray(deltas.reshape(-1))
         self.anchor[:] = cp.asarray(gt[0])
-        ptrs = [self.state_batch.state_block_device_ptr(int(i)) for i in edges]
+        ptrs = [self.state_batch.state_device_ptr(int(i)) for i in edges]
         # 2. Sizes.
-        self.state_batch.set_num_state_blocks(n)
-        self.between.set_num_factors(m)
+        self.state_batch.set_num_active_states(n)
+        self.between.set_num_active_factors(m)
         # 3. Connectivity.
         if self.form == "host_list":
             self.problem.set_state_pointers(0, ptrs)
@@ -146,13 +146,13 @@ def test_every_frame_matches_a_fresh_problem(form, stream):
 def test_batches_start_empty():
     bound = BoundProblem("device_indices")
     assert bound.state_batch.capacity == CAP_STATES
-    assert bound.state_batch.num_state_blocks == 0
+    assert bound.state_batch.num_active_states == 0
     assert bound.between.capacity == CAP_EDGES
-    assert bound.between.num_factors == 0
+    assert bound.between.num_active_factors == 0
     with pytest.raises(ValueError):
-        bound.between.set_num_factors(CAP_EDGES + 1)
+        bound.between.set_num_active_factors(CAP_EDGES + 1)
     with pytest.raises(ValueError):
-        bound.state_batch.set_num_state_blocks(CAP_STATES + 1)
+        bound.state_batch.set_num_active_states(CAP_STATES + 1)
 
 
 def test_validation_catches_bad_connectivity():
@@ -169,7 +169,7 @@ def test_validation_catches_bad_connectivity():
     # States no factor reads: keep only the first between factor.
     bound.indices[:len(edges)] = cp.asarray(edges)
     assert bound.problem.validate(bound.stream)
-    bound.between.set_num_factors(1)
+    bound.between.set_num_active_factors(1)
     assert not bound.problem.validate(bound.stream)
 
 

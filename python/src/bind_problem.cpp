@@ -34,7 +34,7 @@
 //   DevicePointer objects (a CuPy array or an int): a uint64 table of state
 //   pointers (keyword-only `state_pointer_table`, so a CuPy array is never
 //   mistaken for a host list), or an int32 table of state indices together
-//   with the state batch of each block slot.
+//   with the state batch of each factor slot.
 
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/unique_ptr.h>
@@ -113,7 +113,7 @@ void bind_problem(nb::module_ &m) {
           nb::arg("jacobian_mode_override") = std::nullopt, nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(),
           "Add a factor batch whose connectivity is a device table of state pointers "
-          "(uint64, capacity * B entries; entry f * B + b points at the block that factor f "
+          "(uint64, capacity * B entries; entry f * B + b points at the state that factor f "
           "reads in slot b). Bound once; rewrite its contents between solves.")
       // Device table of state indices.
       .def(
@@ -131,7 +131,7 @@ void bind_problem(nb::module_ &m) {
           nb::arg("jacobian_mode_override") = std::nullopt, nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>(),
           "Add a factor batch whose connectivity is a device table of state indices "
-          "(int32, capacity * B entries): factor f reads block state_indices[f * B + b] of "
+          "(int32, capacity * B entries): factor f reads state state_indices[f * B + b] of "
           "slot_state_batches[b]. Bound once; rewrite its contents between solves.")
       .def(
           "set_state_pointers",
@@ -143,7 +143,8 @@ void bind_problem(nb::module_ &m) {
             self.SetStatePointers(residual_batch_index, ptrs);
           },
           nb::arg("residual_batch_index"), nb::arg("state_pointers"),
-          "Replace the host-list connectivity of a residual batch (num_factors * B pointers).")
+          "Replace the host-list connectivity of a residual batch "
+          "(num_active_factors * B pointers).")
       .def(
           "validate",
           [](const cunls::Problem &self, cunls::CudaStream &stream) {

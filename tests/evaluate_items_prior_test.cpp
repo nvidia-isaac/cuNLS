@@ -28,7 +28,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -55,11 +54,6 @@ using evaluate_items_test::ToDevice;
 
 constexpr int kNumFactors = 23;
 constexpr int kCopies = 4;
-
-cuBLASHandle &Cublas() {
-  static cuBLASHandle handle;
-  return handle;
-}
 
 std::vector<float> RandomVector(size_t n, float scale, uint32_t seed) {
   std::mt19937 rng(seed);
@@ -90,8 +84,8 @@ struct LieElements {
     auto base = ToDevice(identity);
     auto delta = ToDevice(RandomVector(static_cast<size_t>(count) * tangent_size, scale, seed));
     CudaStream stream;
-    StateT states(Cublas(), base.data(), count);
-    states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
+    StateT states(base.data(), count);
+    states.SetNumActiveStates(states.Capacity(), states.ConstCapacity());
     states.Plus(base.data(), delta.data(), d.data(), stream.GetStream());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
@@ -112,7 +106,7 @@ template <typename FactorT, typename ObsT, typename StateT>
 void CheckLiePrior(int ambient, int tangent, uint32_t seed, float scale = 0.5f) {
   LieElements<StateT> targets(kNumFactors, ambient, tangent, scale, seed);
   FactorT prior(reinterpret_cast<const ObsT *>(targets.d.data()), kNumFactors);
-  prior.SetNumFactors(kNumFactors);
+  prior.SetNumActiveFactors(kNumFactors);
   LieElements<StateT> states(kCopies * kNumFactors, ambient, tangent, scale, seed + 1);
   CheckEvaluateItems(prior, kCopies, [&](int k) { return PointersForCopy(states, k); });
 }
@@ -122,7 +116,7 @@ TEST(EvaluateItemsPrior, PriorVectorMatchesEvaluate) {
   auto targets = ToDevice(RandomVector(kNumFactors * kDim, 1.f, 30));
   PriorVectorFactorBatch<kDim> prior(reinterpret_cast<const Vector<kDim> *>(targets.data()),
                                      kNumFactors);
-  prior.SetNumFactors(prior.Capacity());
+  prior.SetNumActiveFactors(prior.Capacity());
   auto states = ToDevice(RandomVector(kCopies * kNumFactors * kDim, 1.f, 31));
   CheckEvaluateItems(prior, kCopies, [&](int k) {
     std::vector<float *> p;

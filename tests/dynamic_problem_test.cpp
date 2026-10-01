@@ -111,17 +111,17 @@ std::vector<Vector<3>> SolveFresh(const Frame &frame) {
   dvector<Vector<3>> states(frame.initial), deltas(frame.deltas),
       anchor(std::vector<Vector<3>>{frame.gt[0]});
   VectorStateBatch<3> state_batch(reinterpret_cast<const float *>(states.data()), n);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   VectorBetweenFactorBatch<3> between(deltas.data(), m);
-  between.SetNumFactors(between.Capacity());
+  between.SetNumActiveFactors(between.Capacity());
   PriorVectorFactorBatch<3> prior(anchor.data(), 1);
-  prior.SetNumFactors(1);
+  prior.SetNumActiveFactors(1);
   std::vector<float *> ptrs;
-  for (int idx : frame.edges) ptrs.push_back(state_batch.StateBlockDevicePtr(idx));
+  for (int idx : frame.edges) ptrs.push_back(state_batch.StateDevicePtr(idx));
   Problem problem;
   problem.AddStateBatch(&state_batch);
   problem.AddFactorBatch(&between, ptrs);
-  problem.AddFactorBatch(&prior, {state_batch.StateBlockDevicePtr(0)});
+  problem.AddFactorBatch(&prior, {state_batch.StateDevicePtr(0)});
   CudaStream stream;
   LevenbergMarquardtMinimizer(SolverOptions()).Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
@@ -148,12 +148,12 @@ struct BoundProblem {
   explicit BoundProblem(Form f, const LevenbergMarquardtMinimizerOptions &options = SolverOptions())
       : form(f), minimizer(options) {
     THROW_ON_CUDA_ERROR(cudaMemset(anchor_index.data(), 0, sizeof(int)));
-    prior.SetNumFactors(1);  // the anchor; states and edges are sized per frame
+    prior.SetNumActiveFactors(1);  // the anchor; states and edges are sized per frame
     problem.AddStateBatch(&state_batch);
     switch (form) {
       case Form::kHostList:
-        problem.AddFactorBatch(
-            &between, std::vector<float *>(2 * kCapEdges, state_batch.StateBlockDevicePtr(0)));
+        problem.AddFactorBatch(&between,
+                               std::vector<float *>(2 * kCapEdges, state_batch.StateDevicePtr(0)));
         break;
       case Form::kDevicePointers:
         problem.AddFactorBatch(&between, pointers.data());
@@ -172,10 +172,10 @@ struct BoundProblem {
     deltas.CopyFromHost(frame.deltas.data(), m);
     anchor.CopyFromHost(&frame.gt[0], 1);
     std::vector<float *> ptrs;
-    for (int idx : frame.edges) ptrs.push_back(state_batch.StateBlockDevicePtr(idx));
+    for (int idx : frame.edges) ptrs.push_back(state_batch.StateDevicePtr(idx));
     // 2. Sizes.
-    state_batch.SetNumStateBlocks(n);
-    between.SetNumFactors(m);
+    state_batch.SetNumActiveStates(n);
+    between.SetNumActiveFactors(m);
     // 3. Connectivity.
     switch (form) {
       case Form::kHostList:
@@ -236,15 +236,15 @@ TEST(DynamicProblem, ValidationCatchesBadConnectivity) {
   // States no factor reads: keep only the first between factor.
   bound.indices.CopyFromHost(frame.edges.data(), frame.edges.size());
   EXPECT_TRUE(bound.problem.Validate(stream.GetStream()));
-  bound.between.SetNumFactors(1);
+  bound.between.SetNumActiveFactors(1);
   EXPECT_FALSE(bound.problem.Validate(stream.GetStream()));
 }
 
 TEST(DynamicProblem, HostListMustCoverTheActiveFactors) {
   BoundProblem bound(BoundProblem::Form::kHostList);
-  bound.problem.SetStatePointers(
-      0, std::vector<float *>(2 * 10, bound.state_batch.StateBlockDevicePtr(0)));
-  bound.between.SetNumFactors(11);
+  bound.problem.SetStatePointers(0,
+                                 std::vector<float *>(2 * 10, bound.state_batch.StateDevicePtr(0)));
+  bound.between.SetNumActiveFactors(11);
   EXPECT_FALSE(bound.problem.CheckConsistency());
   EXPECT_THROW(bound.problem.SetStatePointers(1, {}), std::logic_error);  // index-table batch
 }
@@ -270,11 +270,10 @@ TEST(DynamicProblem, RansacWithDeviceIndexTable) {
   dvector<Vector<3>> pts(kCap);
   dvector<int> pose_index(kCap);
   THROW_ON_CUDA_ERROR(cudaMemset(pose_index.data(), 0, kCap * sizeof(int)));
-  cuBLASHandle cublas;
-  SE3StateBatch pose_state(cublas, reinterpret_cast<const float *>(pose.data()), 1);
-  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
+  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose.data()), 1);
+  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
   PnPFactorBatch pnp(obs.data(), pts.data(), kCap);
-  pnp.SetNumFactors(pnp.Capacity());
+  pnp.SetNumActiveFactors(pnp.Capacity());
   Problem problem;
   problem.AddStateBatch(&pose_state);
   problem.AddFactorBatch(&pnp, {&pose_state}, pose_index.data());
@@ -288,7 +287,7 @@ TEST(DynamicProblem, RansacWithDeviceIndexTable) {
     pts.CopyFromHost(scene.points_world.data(), n);
     pose.CopyFromHost(&scene.world_to_cam,
                       1);  // start at the truth: robustness is tested elsewhere
-    pnp.SetNumFactors(n);
+    pnp.SetNumActiveFactors(n);
     const RansacSummary s = ransac.Minimize(stream.GetStream(), problem);
     EXPECT_EQ(ransac.InlierMaskSize(0), static_cast<size_t>(n));
     std::vector<uint8_t> mask(n);

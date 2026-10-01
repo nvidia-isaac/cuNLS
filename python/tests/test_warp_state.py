@@ -105,7 +105,7 @@ class PositiveScalarStateBatch(WarpStateBatch):
                          capacity=capacity, **kwargs)
 
     def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
-        n = self.num_state_blocks * num_replicas  # contiguous replicas, per-block manifold
+        n = self.num_active_states * num_replicas  # contiguous replicas, per-state manifold
         x = self.wrap_array(x_ptr, wp.float32, n)
         delta = self.wrap_array(delta_ptr, wp.float32, n)
         x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)
@@ -124,7 +124,7 @@ class LogPriorFactor(WarpFactorBatch):
     """
 
     def __init__(self, observations_wp: wp.array, capacity: int):
-        super().__init__(residual_size=1, state_block_sizes=[1],
+        super().__init__(residual_size=1, state_sizes=[1],
                          capacity=capacity)
         self.observations = observations_wp
 
@@ -158,18 +158,18 @@ class TestCustomStateBatch:
         data = cp.ones(10, dtype=cp.float32)
         sb = PositiveScalarStateBatch(data, 10)
         assert sb.capacity == 10
-        assert sb.num_state_blocks == 0  # zero until set
-        sb.set_num_state_blocks(10)
-        assert sb.num_state_blocks == 10
+        assert sb.num_active_states == 0  # zero until set
+        sb.set_num_active_states(10)
+        assert sb.num_active_states == 10
         assert sb.ambient_size == 1
         assert sb.tangent_size == 1
 
-    def test_state_block_device_ptr(self):
+    def test_state_device_ptr(self):
         data = cp.ones(5, dtype=cp.float32)
         sb = PositiveScalarStateBatch(data, 5)
-        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
-        p0 = sb.state_block_device_ptr(0)
-        p1 = sb.state_block_device_ptr(1)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
+        p0 = sb.state_device_ptr(0)
+        p1 = sb.state_device_ptr(1)
         assert p0 != 0
         assert p1 - p0 == 4  # 1 float * 4 bytes
 
@@ -186,8 +186,8 @@ class TestCustomStateBatch:
                                       const_state_ids=const_ids,
                                       const_capacity=1)
         assert (sb.capacity, sb.const_capacity) == (10, 1)
-        sb.set_num_state_blocks(10, 1)
-        assert sb.num_state_blocks == 10
+        sb.set_num_active_states(10, 1)
+        assert sb.num_active_states == 10
 
 
 class TestPositiveScalarEndToEnd:
@@ -205,11 +205,11 @@ class TestPositiveScalarEndToEnd:
         obs_wp = wp.array(targets, dtype=wp.float32, device="cuda:0")
 
         sb = PositiveScalarStateBatch(states_gpu, n)
-        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = LogPriorFactor(obs_wp, n)
-        fb.set_num_factors(fb.capacity)
+        fb.set_num_active_factors(fb.capacity)
 
-        ptrs = [sb.state_block_device_ptr(i) for i in range(n)]
+        ptrs = [sb.state_device_ptr(i) for i in range(n)]
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)

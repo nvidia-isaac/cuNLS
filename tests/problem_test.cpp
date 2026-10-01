@@ -120,8 +120,8 @@ TYPED_TEST(ProblemConsistencyTest, CheckConsistencyManyToOne) {
 
   std::vector<float *> state_pointers;
   for (size_t i = 0; i < this->num_vectors; i++) {
-    state_pointers.push_back(state_batch_1.StateBlockDevicePtr(i));
-    state_pointers.push_back(state_batch_2.StateBlockDevicePtr(i));
+    state_pointers.push_back(state_batch_1.StateDevicePtr(i));
+    state_pointers.push_back(state_batch_2.StateDevicePtr(i));
   }
   auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors * 2, 1.f);
   test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);

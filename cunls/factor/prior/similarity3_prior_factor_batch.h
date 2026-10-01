@@ -36,7 +36,7 @@ namespace cunls {
  *
  * The factor has:
  * - 7 residuals (7D tangent vector [w, u, lambda])
- * - 1 state block with tangent dimension 7 (transform stored as 4x4 matrix)
+ * - 1 state with tangent dimension 7 (transform stored as 4x4 matrix)
  *
  * @note The observations_ptr must point to GPU device memory containing target
  *       transformation matrices and remain valid for the lifetime of this
@@ -56,7 +56,7 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
    * @param observations_ptr Pointer to GPU device memory containing target
    * transforms. Must point to at least capacity * 16 floats.
    * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
   Similarity3PriorFactorBatch(const Similarity3Transform *observations_ptr, size_t capacity);
 
@@ -66,11 +66,11 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
    * @param residuals Output residuals (7 floats per factor, device pointer).
    * @param jacobians Output Jacobians (7x7 floats per factor, device pointer).
    *                  Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state block pointers.
+   * @param state_pointers Device pointer to state pointers.
    * @param stream CUDA stream for asynchronous execution.
    * @param factor_ids Optional per-item factor indices (device pointer).
    * @param num_factor_ids Number of items (the length of factor_ids when it
-   *        is given); 0 means NumFactors().
+   *        is given); 0 means NumActiveFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,

@@ -32,7 +32,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -225,8 +224,8 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
     state_pointers.reserve(2 * num_poses_ * num_points);
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points; point_idx++) {
-        state_pointers.push_back(state_batch_poses.StateBlockDevicePtr(pose_idx));
-        state_pointers.push_back(state_batch_points.StateBlockDevicePtr(point_idx));
+        state_pointers.push_back(state_batch_poses.StateDevicePtr(pose_idx));
+        state_pointers.push_back(state_batch_points.StateDevicePtr(point_idx));
       }
     }
     return state_pointers;
@@ -253,9 +252,6 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
   std::vector<SE3Transform> ground_truth_poses_;
   std::vector<Point3D> ground_truth_points_;
   std::vector<Observation2D> observations_;
-
-  // cuBLAS handle for factor and state batch constructors
-  cuBLASHandle cublas_handle_;
 };
 
 /**
@@ -318,16 +314,16 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
     const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
     const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
-    SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_,
-                                    const_pose_ids_device.data(), num_poses_);
-    state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
-                                        state_batch_poses.ConstCapacity());
+    SE3StateBatch state_batch_poses(poses_ptr, num_poses_, const_pose_ids_device.data(),
+                                    num_poses_);
+    state_batch_poses.SetNumActiveStates(state_batch_poses.Capacity(),
+                                         state_batch_poses.ConstCapacity());
     VectorStateBatch<3> state_batch_points(points_ptr, num_points);
-    state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
-                                         state_batch_points.ConstCapacity());
+    state_batch_points.SetNumActiveStates(state_batch_points.Capacity(),
+                                          state_batch_points.ConstCapacity());
 
     ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations, kZThreshold);
-    factor_batch.SetNumFactors(factor_batch.Capacity());
+    factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
     std::vector<float *> state_pointers =
         CreateStatePointers(state_batch_poses, state_batch_points, num_points);

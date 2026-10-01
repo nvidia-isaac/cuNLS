@@ -88,13 +88,12 @@ TEST(SO3ManifoldTest, StateDimensions) {
   hvector<Matrix<3>> rots(kN, MakeSO3Identity());
   dvector<Matrix<3>> rots_dev(rots);
 
-  cuBLASHandle cublas;
-  SO3StateBatch states(cublas, reinterpret_cast<const float *>(rots_dev.data()), kN);
-  states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
+  SO3StateBatch states(reinterpret_cast<const float *>(rots_dev.data()), kN);
+  states.SetNumActiveStates(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), 3u);
   EXPECT_EQ(states.AmbientSize(), 9u);
-  EXPECT_EQ(states.NumStateBlocks(), kN);
+  EXPECT_EQ(states.NumActiveStates(), kN);
 }
 
 // ============================================================================
@@ -108,15 +107,15 @@ TEST(SO3ManifoldTest, PriorLMConvergence) {
   dvector<Matrix<3>> targets = GenerateRandomSO3(kN, 42, 0.5f);
   dvector<Matrix<3>> initials = PerturbSO3(targets, kN, 43, 0.3f, cublas);
 
-  SO3StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials.data()), kN);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  SO3StateBatch state_batch(reinterpret_cast<const float *>(initials.data()), kN);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   SO3PriorFactorBatch factor_batch(reinterpret_cast<const SO3Rotation *>(targets.data()), kN);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_batch.StateBlockDevicePtr(i));
+    ptrs.push_back(state_batch.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -142,7 +141,7 @@ TEST(SO3ManifoldTest, PriorLMConvergence) {
   EXPECT_LT(summary.final_cost, summary.initial_cost);
 
   hvector<Matrix<3>> optimized(kN), target_host(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateDevicePtr(0),
                                  kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
   targets.CopyToHost(target_host.data(), kN);
 
@@ -167,19 +166,18 @@ TEST(SO3ManifoldTest, BetweenLMConvergence) {
   hvector<Matrix<3>> deltas(kN, MakeSO3Identity());
   dvector<Matrix<3>> deltas_dev(deltas);
 
-  cuBLASHandle cublas;
-  SO3StateBatch state_left(cublas, reinterpret_cast<const float *>(rots_left.data()), kN);
-  state_left.SetNumStateBlocks(state_left.Capacity(), state_left.ConstCapacity());
-  SO3StateBatch state_right(cublas, reinterpret_cast<const float *>(rots_right.data()), kN);
-  state_right.SetNumStateBlocks(state_right.Capacity(), state_right.ConstCapacity());
+  SO3StateBatch state_left(reinterpret_cast<const float *>(rots_left.data()), kN);
+  state_left.SetNumActiveStates(state_left.Capacity(), state_left.ConstCapacity());
+  SO3StateBatch state_right(reinterpret_cast<const float *>(rots_right.data()), kN);
+  state_right.SetNumActiveStates(state_right.Capacity(), state_right.ConstCapacity());
   SO3BetweenFactorBatch factor_batch(reinterpret_cast<const SO3Rotation *>(deltas_dev.data()), kN);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_left.StateBlockDevicePtr(i));
-    ptrs.push_back(state_right.StateBlockDevicePtr(i));
+    ptrs.push_back(state_left.StateDevicePtr(i));
+    ptrs.push_back(state_right.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -206,9 +204,9 @@ TEST(SO3ManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Matrix<3>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateDevicePtr(0),
                                  kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateDevicePtr(0),
                                  kN * sizeof(Matrix<3>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {

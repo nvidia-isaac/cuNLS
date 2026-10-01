@@ -33,7 +33,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -181,20 +180,20 @@ class PointToPointFactorBatchTest : public ::testing::Test {
 };
 
 /**
- * @brief Tests that StateBlockSizes() reports the correct single block size.
+ * @brief Tests that StateSizes() reports the correct single state size.
  */
-TEST_F(PointToPointFactorBatchTest, StateBlockSizes) {
+TEST_F(PointToPointFactorBatchTest, StateSizes) {
   dvector<Point3D> p_device(p_points_);
   dvector<Point3D> q_device(q_points_);
 
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
-  auto state_block_sizes = factor_batch.StateBlockSizes();
-  ASSERT_EQ(state_block_sizes.size(), 1);
-  EXPECT_EQ(state_block_sizes[0], 6);
+  auto state_sizes = factor_batch.StateSizes();
+  ASSERT_EQ(state_sizes.size(), 1);
+  EXPECT_EQ(state_sizes[0], 6);
   EXPECT_EQ(factor_batch.ResidualsSize(), 3);
-  EXPECT_EQ(factor_batch.NumFactors(), num_correspondences_);
+  EXPECT_EQ(factor_batch.NumActiveFactors(), num_correspondences_);
 }
 
 /**
@@ -213,7 +212,7 @@ TEST_F(PointToPointFactorBatchTest, ResidualIdentity) {
   dvector<Point3D> q_device(q_points_);
 
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   // Set up state pointers: all correspondences share the same pose
   std::vector<const float *> param_ptrs(num_correspondences_,
@@ -250,7 +249,7 @@ TEST_F(PointToPointFactorBatchTest, ResidualGroundTruth) {
   dvector<Point3D> q_device(q_points_);
 
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   // All correspondences share the same ground truth pose
   std::vector<const float *> param_ptrs(
@@ -289,7 +288,7 @@ TEST_F(PointToPointFactorBatchTest, JacobianIdentity) {
   dvector<Point3D> q_device(q_points_);
 
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<const float *> param_ptrs(num_correspondences_,
                                         reinterpret_cast<const float *>(pose_device.data()));
@@ -365,7 +364,7 @@ TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
 
   // Get analytical Jacobian at the ground truth pose
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_test_points);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<const float *> param_ptrs(
       num_test_points, reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
@@ -447,7 +446,7 @@ TEST_F(PointToPointFactorBatchTest, EvaluateWithoutJacobians) {
   dvector<Point3D> q_device(q_points_);
 
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<const float *> param_ptrs(
       num_correspondences_, reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
@@ -499,16 +498,15 @@ TEST_F(PointToPointFactorBatchTest, OptimizeDisturbedPose) {
 
   // Create state batch
   const float *pose_ptr = reinterpret_cast<const float *>(pose_device.data());
-  cuBLASHandle cublas_handle;
-  SE3StateBatch state_batch(cublas_handle, pose_ptr, 1);
-  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
+  SE3StateBatch state_batch(pose_ptr, 1);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
 
   // Create factor batch
   PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
-  factor_batch.SetNumFactors(factor_batch.Capacity());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
-  // All correspondences share the same pose (state block 0)
-  std::vector<float *> state_pointers(num_correspondences_, state_batch.StateBlockDevicePtr(0));
+  // All correspondences share the same pose (state 0)
+  std::vector<float *> state_pointers(num_correspondences_, state_batch.StateDevicePtr(0));
 
   // Build problem
   Problem problem;

@@ -7,7 +7,6 @@ add_library(cunls_factor OBJECT
   between/so2_between_factor_batch.cu
   between/so3_between_factor_batch.cu
   between/vector_between_factor_batch.cu
-  information/information_factor_batch.cpp
   information/information_factor_batch_kernels.cu
   information/motion_prior_information.cu
   motion/constant_acceleration_se2_factor_batch.cu

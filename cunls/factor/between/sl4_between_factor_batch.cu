@@ -163,11 +163,11 @@ SL4BetweenFactorBatch::SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr
 bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
                                      const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
-  const int num_factors = static_cast<int>(NumFactors());
+  const int num_factors = static_cast<int>(NumActiveFactors());
   poses_left_.resize(num_items);  // keeps capacity: allocates at most once per size
   poses_left_inverse_.resize(num_items);
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;

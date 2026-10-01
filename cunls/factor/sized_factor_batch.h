@@ -23,17 +23,17 @@ namespace cunls {
 /**
  * @brief Compile-time sized base class for batched factors.
  *
- * This CRTP-style base class fixes the residual dimension and state block
+ * This CRTP-style base class fixes the residual dimension and state
  * sizes at compile time via template arguments, enabling compile-time
  * optimizations in derived classes (e.g., fixed-size matrix operations).
  *
  * @tparam kResidualSize Dimension of the residual vector for each factor.
- * @tparam kStateBlockSizes Variadic list of state block dimensions.
- *         Each value specifies the number of scalar components in that block.
+ * @tparam kStateSizes Variadic list of state dimensions.
+ *         Each value specifies the number of scalar components in that state.
  *
  * @see FactorBatch for the polymorphic base interface.
  */
-template <int kResidualSize, int... kStateBlockSizes>
+template <int kResidualSize, int... kStateSizes>
 class SizedFactorBatch : public FactorBatch {
  public:
   /**
@@ -41,11 +41,11 @@ class SizedFactorBatch : public FactorBatch {
    * types).
    *
    * Enables patterns like ``class Wrapper<T> : public T::sized_layout`` so
-   * wrappers share the compile-time residual and state-block layout of T.
+   * wrappers share the compile-time residual and state layout of T.
    */
-  using sized_layout = SizedFactorBatch<kResidualSize, kStateBlockSizes...>;
+  using sized_layout = SizedFactorBatch<kResidualSize, kStateSizes...>;
 
-  /** @brief Batch without a capacity (subclasses that override NumFactors()). */
+  /** @brief Batch without a capacity (subclasses that override NumActiveFactors()). */
   SizedFactorBatch() = default;
 
   /** @brief Batch whose buffers hold `capacity` factors; see FactorBatch(size_t). */
@@ -58,10 +58,10 @@ class SizedFactorBatch : public FactorBatch {
   size_t ResidualsSize() const final { return kResidualSize; };
 
   /**
-   * @brief Returns the compile-time state block sizes.
-   * @return Vector containing {kStateBlockSizes...}.
+   * @brief Returns the compile-time state sizes.
+   * @return Vector containing {kStateSizes...}.
    */
-  std::vector<size_t> StateBlockSizes() const final { return {kStateBlockSizes...}; };
+  std::vector<size_t> StateSizes() const final { return {kStateSizes...}; };
 
   /** @brief Compile-time constant for the residual dimension. */
   static constexpr size_t residual_size_ = kResidualSize;

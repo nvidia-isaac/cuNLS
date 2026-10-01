@@ -48,7 +48,7 @@ Test modules
    * - ``test_cupy_interop.py``
      - CuPy array and raw pointer interop with pycunls constructors.
    * - ``test_state_batches.py``
-     - State batch creation, block pointer access, and constant-state
+     - State batch creation, state pointer access, and constant-state
        marking for all Euclidean and Lie group state types.
    * - ``test_factor_batches.py``
      - Built-in factor batch creation and connectivity for all factor

@@ -28,7 +28,7 @@ namespace cunls {
 class Problem;
 
 /**
- * @brief Largest uniform tile size that divides every state block's tangent
+ * @brief Largest uniform tile size that divides every state's tangent
  * dimension.
  *
  * Uniform BSR needs one tile edge for the whole matrix, but cuNLS problems mix

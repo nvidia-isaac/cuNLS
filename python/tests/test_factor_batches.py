@@ -16,8 +16,8 @@
 """Tests for factor batch bindings.
 
 Each test class constructs one factor type with dummy (zeroed) CuPy observation
-data and verifies that ``num_factors``, ``residuals_size``, and
-``state_block_sizes()`` report the expected values.  These are pure
+data and verifies that ``num_active_factors``, ``residuals_size``, and
+``state_sizes()`` report the expected values.  These are pure
 construction/metadata tests — evaluation correctness is tested end-to-end in
 ``test_minimizer.py`` and ``test_warp_factor.py``.
 """
@@ -34,16 +34,16 @@ class TestReprojectionFactorBatch:
         num_obs = 100
         obs = cp.zeros(num_obs * 2, dtype=cp.float32)
         fb = pycunls.ReprojectionFactorBatch(obs, num_obs)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num_obs
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num_obs
         assert fb.residuals_size == 2
-        assert fb.state_block_sizes() == [6, 3]
+        assert fb.state_sizes() == [6, 3]
 
     def test_custom_z_threshold(self):
         obs = cp.zeros(20, dtype=cp.float32)
         fb = pycunls.ReprojectionFactorBatch(obs, 10, z_threshold=0.1)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == 10
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == 10
 
 
 class TestPnPFactorBatch:
@@ -53,10 +53,10 @@ class TestPnPFactorBatch:
         obs = cp.zeros(num_obs * 2, dtype=cp.float32)
         pts = cp.zeros(num_obs * 3, dtype=cp.float32)
         fb = pycunls.PnPFactorBatch(obs, pts, num_obs)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num_obs
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num_obs
         assert fb.residuals_size == 2
-        assert fb.state_block_sizes() == [6]
+        assert fb.state_sizes() == [6]
 
     def test_creation_with_camera_from_rig(self):
         n = 8
@@ -68,21 +68,21 @@ class TestPnPFactorBatch:
         rig[15::16] = 1.0
         pts = cp.zeros(n * 3, dtype=cp.float32)
         fb = pycunls.PnPFactorBatch(obs, rig, pts, n, z_threshold=0.02)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == n
-        assert fb.state_block_sizes() == [6]
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == n
+        assert fb.state_sizes() == [6]
 
 
 class TestSE3BetweenFactorBatch:
     """SE(3) between factor: residual=6, states=[SE3(6), SE3(6)]."""
-    def test_creation(self, cublas):
+    def test_creation(self):
         num = 50
         deltas = cp.zeros(num * 16, dtype=cp.float32)
         fb = pycunls.SE3BetweenFactorBatch(deltas, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 6
-        assert fb.state_block_sizes() == [6, 6]
+        assert fb.state_sizes() == [6, 6]
 
 
 class TestSE3PriorFactorBatch:
@@ -91,10 +91,10 @@ class TestSE3PriorFactorBatch:
         num = 10
         obs = cp.zeros(num * 16, dtype=cp.float32)
         fb = pycunls.SE3PriorFactorBatch(obs, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 6
-        assert fb.state_block_sizes() == [6]
+        assert fb.state_sizes() == [6]
 
 
 class TestSO3PriorFactorBatch:
@@ -103,10 +103,10 @@ class TestSO3PriorFactorBatch:
         num = 10
         obs = cp.zeros(num * 9, dtype=cp.float32)
         fb = pycunls.SO3PriorFactorBatch(obs, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 3
-        assert fb.state_block_sizes() == [3]
+        assert fb.state_sizes() == [3]
 
 
 class TestSO2PriorFactorBatch:
@@ -115,10 +115,10 @@ class TestSO2PriorFactorBatch:
         num = 10
         obs = cp.zeros(num * 4, dtype=cp.float32)
         fb = pycunls.SO2PriorFactorBatch(obs, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 1
-        assert fb.state_block_sizes() == [1]
+        assert fb.state_sizes() == [1]
 
 
 class TestPriorVectorFactorBatches:
@@ -134,11 +134,11 @@ class TestPriorVectorFactorBatches:
         obs = cp.zeros(num * dim, dtype=cp.float32)
         fb = cls(obs, num)
         assert fb.capacity == num
-        assert fb.num_factors == 0  # zero until set
-        fb.set_num_factors(num)
-        assert fb.num_factors == num
+        assert fb.num_active_factors == 0  # zero until set
+        fb.set_num_active_factors(num)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == dim
-        assert fb.state_block_sizes() == [dim]
+        assert fb.state_sizes() == [dim]
 
 
 class TestPointToPointFactorBatch:
@@ -148,10 +148,10 @@ class TestPointToPointFactorBatch:
         p = cp.zeros(num * 3, dtype=cp.float32)
         q = cp.zeros(num * 3, dtype=cp.float32)
         fb = pycunls.PointToPointFactorBatch(p, q, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 3
-        assert fb.state_block_sizes() == [6]
+        assert fb.state_sizes() == [6]
 
 
 class TestPointToPlaneFactorBatch:
@@ -162,10 +162,10 @@ class TestPointToPlaneFactorBatch:
         q = cp.zeros(num * 3, dtype=cp.float32)
         nq = cp.zeros(num * 3, dtype=cp.float32)
         fb = pycunls.PointToPlaneFactorBatch(p, q, nq, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 1
-        assert fb.state_block_sizes() == [6]
+        assert fb.state_sizes() == [6]
 
 
 class TestSymmetricPointToPlaneFactorBatch:
@@ -177,52 +177,52 @@ class TestSymmetricPointToPlaneFactorBatch:
         np_ = cp.zeros(num * 3, dtype=cp.float32)
         nq = cp.zeros(num * 3, dtype=cp.float32)
         fb = pycunls.SymmetricPointToPlaneFactorBatch(p, q, np_, nq, num)
-        fb.set_num_factors(fb.capacity)
-        assert fb.num_factors == num
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 1
-        assert fb.state_block_sizes() == [6]
+        assert fb.state_sizes() == [6]
 
 
 class TestInformationFactorBatch:
     """Wraps any factor and applies per-factor sqrt-information matrices."""
-    def test_creation(self, cublas):
+    def test_creation(self):
         num = 20
         dim = 3
         obs = cp.zeros(num * dim, dtype=cp.float32)
         inner = pycunls.PriorVectorFactorBatch3(obs, num)
-        inner.set_num_factors(inner.capacity)
+        inner.set_num_active_factors(inner.capacity)
         sqrt_info = cp.eye(dim, dtype=cp.float32).reshape(-1)
         sqrt_info = cp.tile(sqrt_info, num)
-        fb = pycunls.InformationFactorBatch(cublas, inner, sqrt_info)
-        assert fb.num_factors == num
+        fb = pycunls.InformationFactorBatch(inner, sqrt_info)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == dim
-        assert fb.state_block_sizes() == [dim]
+        assert fb.state_sizes() == [dim]
 
-    def test_wraps_se3_between(self, cublas):
+    def test_wraps_se3_between(self):
         num = 10
         deltas = cp.zeros(num * 16, dtype=cp.float32)
         inner = pycunls.SE3BetweenFactorBatch(deltas, num)
-        inner.set_num_factors(inner.capacity)
+        inner.set_num_active_factors(inner.capacity)
         sqrt_info = cp.eye(6, dtype=cp.float32).reshape(-1)
         sqrt_info = cp.tile(sqrt_info, num)
-        fb = pycunls.InformationFactorBatch(cublas, inner, sqrt_info)
-        assert fb.num_factors == num
+        fb = pycunls.InformationFactorBatch(inner, sqrt_info)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 6
-        assert fb.state_block_sizes() == [6, 6]
+        assert fb.state_sizes() == [6, 6]
 
-    def test_wraps_weighted_prior_vector(self, cublas):
+    def test_wraps_weighted_prior_vector(self):
         num = 20
         dim = 3
         obs = cp.zeros(num * dim, dtype=cp.float32)
         base = pycunls.PriorVectorFactorBatch3(obs, num)
-        base.set_num_factors(base.capacity)
+        base.set_num_active_factors(base.capacity)
         weighted = pycunls.WeightedFactorBatch(base, weight=1.5)
         sqrt_info = cp.eye(dim, dtype=cp.float32).reshape(-1)
         sqrt_info = cp.tile(sqrt_info, num)
-        fb = pycunls.InformationFactorBatch(cublas, weighted, sqrt_info)
-        assert fb.num_factors == num
+        fb = pycunls.InformationFactorBatch(weighted, sqrt_info)
+        assert fb.num_active_factors == num
         assert fb.residuals_size == dim
-        assert fb.state_block_sizes() == [dim]
+        assert fb.state_sizes() == [dim]
 
 
 class TestWeightedFactorBatch:
@@ -232,50 +232,50 @@ class TestWeightedFactorBatch:
         dim = 3
         obs = cp.zeros(num * dim, dtype=cp.float32)
         inner = pycunls.PriorVectorFactorBatch3(obs, num)
-        inner.set_num_factors(inner.capacity)
+        inner.set_num_active_factors(inner.capacity)
         fb = pycunls.WeightedFactorBatch(inner, weight=2.0)
-        assert fb.num_factors == num
+        assert fb.num_active_factors == num
         assert fb.residuals_size == dim
-        assert fb.state_block_sizes() == [dim]
+        assert fb.state_sizes() == [dim]
 
     def test_per_factor_weights(self):
         num = 20
         dim = 3
         obs = cp.zeros(num * dim, dtype=cp.float32)
         inner = pycunls.PriorVectorFactorBatch3(obs, num)
-        inner.set_num_factors(inner.capacity)
+        inner.set_num_active_factors(inner.capacity)
         weights = cp.ones(num, dtype=cp.float32)
         fb = pycunls.WeightedFactorBatch(inner, weights=weights)
-        assert fb.num_factors == num
+        assert fb.num_active_factors == num
         assert fb.residuals_size == dim
-        assert fb.state_block_sizes() == [dim]
+        assert fb.state_sizes() == [dim]
 
-    def test_wraps_se3_between(self, cublas):
+    def test_wraps_se3_between(self):
         num = 10
         deltas = cp.zeros(num * 16, dtype=cp.float32)
         inner = pycunls.SE3BetweenFactorBatch(deltas, num)
         fb = pycunls.WeightedFactorBatch(inner, weight=0.5)
         assert fb.capacity == num
-        assert fb.num_factors == 0
-        fb.set_num_factors(num)  # forwarded to the wrapped batch
-        assert inner.num_factors == num
-        assert fb.num_factors == num
+        assert fb.num_active_factors == 0
+        fb.set_num_active_factors(num)  # forwarded to the wrapped batch
+        assert inner.num_active_factors == num
+        assert fb.num_active_factors == num
         assert fb.residuals_size == 6
-        assert fb.state_block_sizes() == [6, 6]
+        assert fb.state_sizes() == [6, 6]
 
-    def test_wraps_information_prior_vector(self, cublas):
+    def test_wraps_information_prior_vector(self):
         num = 20
         dim = 3
         obs = cp.zeros(num * dim, dtype=cp.float32)
         base = pycunls.PriorVectorFactorBatch3(obs, num)
-        base.set_num_factors(base.capacity)
+        base.set_num_active_factors(base.capacity)
         sqrt_info = cp.eye(dim, dtype=cp.float32).reshape(-1)
         sqrt_info = cp.tile(sqrt_info, num)
-        info_inner = pycunls.InformationFactorBatch(cublas, base, sqrt_info)
+        info_inner = pycunls.InformationFactorBatch(base, sqrt_info)
         fb = pycunls.WeightedFactorBatch(info_inner, weight=1.5)
-        assert fb.num_factors == num
+        assert fb.num_active_factors == num
         assert fb.residuals_size == dim
-        assert fb.state_block_sizes() == [dim]
+        assert fb.state_sizes() == [dim]
 
 
 class TestCustomFactorBatch:
@@ -283,13 +283,13 @@ class TestCustomFactorBatch:
     def test_creation(self):
         fb = pycunls.CustomFactorBatch(2, [6, 3], 100)
         assert fb.capacity == 100
-        assert fb.num_factors == 0  # zero until set
-        fb.set_num_factors(40)
-        assert fb.num_factors == 40
+        assert fb.num_active_factors == 0  # zero until set
+        fb.set_num_active_factors(40)
+        assert fb.num_active_factors == 40
         with pytest.raises(ValueError):
-            fb.set_num_factors(101)
+            fb.set_num_active_factors(101)
         assert fb.residuals_size == 2
-        assert fb.state_block_sizes() == [6, 3]
+        assert fb.state_sizes() == [6, 3]
 
     def test_evaluate_raises_without_override(self):
         fb = pycunls.CustomFactorBatch(1, [1], 10)
