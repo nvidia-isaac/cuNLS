@@ -26,8 +26,8 @@
 #include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/robustifier/scaled_loss_function_batch.h"
 
-PyFactorBatch::PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t num)
-    : residual_size_(res_size), state_block_sizes_(std::move(block_sizes)), num_factors_(num) {}
+PyFactorBatch::PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t capacity)
+    : FactorBatch(capacity), residual_size_(res_size), state_block_sizes_(std::move(block_sizes)) {}
 
 bool PyFactorBatch::Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                              cudaStream_t stream, const int *factor_ids,
@@ -46,8 +46,6 @@ size_t PyFactorBatch::ResidualsSize() const { return residual_size_; }
 
 std::vector<size_t> PyFactorBatch::StateBlockSizes() const { return state_block_sizes_; }
 
-size_t PyFactorBatch::NumFactors() const { return num_factors_; }
-
 PyInformationFactorBatch::PyInformationFactorBatch(cunls::cuBLASHandle &cublas_handle,
                                                    cunls::FactorBatch *inner,
                                                    const float *sqrt_information_matrices_ptr)
@@ -56,6 +54,12 @@ PyInformationFactorBatch::PyInformationFactorBatch(cunls::cuBLASHandle &cublas_h
 size_t PyInformationFactorBatch::ResidualsSize() const { return inner_->ResidualsSize(); }
 
 size_t PyInformationFactorBatch::NumFactors() const { return inner_->NumFactors(); }
+
+size_t PyInformationFactorBatch::Capacity() const { return inner_->Capacity(); }
+
+void PyInformationFactorBatch::SetNumFactors(size_t num_factors) {
+  inner_->SetNumFactors(num_factors);
+}
 
 std::vector<size_t> PyInformationFactorBatch::StateBlockSizes() const {
   return inner_->StateBlockSizes();
@@ -98,6 +102,12 @@ PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner,
 size_t PyWeightedFactorBatch::ResidualsSize() const { return inner_->ResidualsSize(); }
 
 size_t PyWeightedFactorBatch::NumFactors() const { return inner_->NumFactors(); }
+
+size_t PyWeightedFactorBatch::Capacity() const { return inner_->Capacity(); }
+
+void PyWeightedFactorBatch::SetNumFactors(size_t num_factors) {
+  inner_->SetNumFactors(num_factors);
+}
 
 std::vector<size_t> PyWeightedFactorBatch::StateBlockSizes() const {
   return inner_->StateBlockSizes();

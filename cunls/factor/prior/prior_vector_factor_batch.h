@@ -66,12 +66,13 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
    * @brief Constructs a batch of prior vector factors.
    *
    * @param observations_ptr Pointer to GPU device memory containing
-   * observations. Must point to at least num_factors * Dim floats of allocated
+   * observations. Must point to at least capacity * Dim floats of allocated
    * memory.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  PriorVectorFactorBatch(const VectorType *observations_ptr, size_t num_factors)
-      : observations_ptr_(observations_ptr), num_factors_(num_factors) {}
+  PriorVectorFactorBatch(const VectorType *observations_ptr, size_t capacity)
+      : SizedFactorBatch<Dim, Dim>(capacity), observations_ptr_(observations_ptr) {}
 
   /**
    * @brief Evaluates prior vector residuals and optionally Jacobians.
@@ -106,20 +107,11 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
     return true;
   }
 
-  /**
-   * @brief Returns the number of prior vector factors in this batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   PriorVectorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing observations.
   const VectorType *observations_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
 };
 
 }  // namespace cunls

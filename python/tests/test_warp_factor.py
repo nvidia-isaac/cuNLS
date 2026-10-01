@@ -86,9 +86,9 @@ class WarpPriorFactor(WarpFactorBatch):
     provided CUDA stream with one thread per item.
     """
 
-    def __init__(self, observations_wp, dim, num_factors):
+    def __init__(self, observations_wp, dim, capacity):
         super().__init__(residual_size=dim, state_block_sizes=[dim],
-                         num_factors=num_factors)
+                         capacity=capacity)
         self.observations = observations_wp
         self._dim = dim
 
@@ -135,7 +135,9 @@ class TestWarpFactorBatch:
         obs_wp = wp.array(target, dtype=wp.float32, device="cuda:0")
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
+        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
         fb = WarpPriorFactor(obs_wp, 3, 1)
+        fb.set_num_factors(fb.capacity)
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)

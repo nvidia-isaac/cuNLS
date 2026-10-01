@@ -291,11 +291,14 @@ TEST_P(SyntheticSbaTest, Optimize) {
 
   SE3StateBatch pose_batch(cublas_handle_, poses_ptr, static_cast<size_t>(params.n_poses),
                            const_pose_ids_d.data(), const_pose_ids.size());
+  pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
   VectorStateBatch<3> point_batch(points_ptr, init_points.size(), const_point_ids_d.data(),
                                   const_point_ids.size());
+  point_batch.SetNumStateBlocks(point_batch.Capacity(), point_batch.ConstCapacity());
 
   InformationFactorBatch<ReprojectionFactorBatch> info_factor(
       cublas_handle_, info_d.data(), n_obs, obs_d.data(), cam_from_rig_d.data(), n_obs, 1e-3f);
+  info_factor.SetNumFactors(info_factor.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(n_obs * 2);

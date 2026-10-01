@@ -94,6 +94,7 @@ TEST(SE3ManifoldTest, StateDimensions) {
 
   cuBLASHandle cublas;
   SE3StateBatch states(cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
+  states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), 6u);
   EXPECT_EQ(states.AmbientSize(), 16u);
@@ -112,7 +113,9 @@ TEST(SE3ManifoldTest, PriorLMConvergence) {
   dvector<SE3Transform> initials = PerturbSE3(targets, kN, 43, 0.1f, 0.3f, cublas);
 
   SE3StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials.data()), kN);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   SE3PriorFactorBatch factor_batch(targets.data(), kN);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
@@ -171,8 +174,11 @@ TEST(SE3ManifoldTest, BetweenLMConvergence) {
 
   cuBLASHandle cublas;
   SE3StateBatch state_left(cublas, reinterpret_cast<const float *>(poses_left.data()), kN);
+  state_left.SetNumStateBlocks(state_left.Capacity(), state_left.ConstCapacity());
   SE3StateBatch state_right(cublas, reinterpret_cast<const float *>(poses_right.data()), kN);
+  state_right.SetNumStateBlocks(state_right.Capacity(), state_right.ConstCapacity());
   SE3BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);

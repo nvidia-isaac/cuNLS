@@ -138,15 +138,16 @@ class WeightedFactorBatch : public T::sized_layout {
    *
    * Each factor i has its residual and Jacobian multiplied by weights[i].
    *
-   * @param per_factor_weights Device pointer to an array of per-factor weights.
-   *                           Must point to at least num_weights floats.
-   * @param num_weights Number of weights; must equal the wrapped batch's
-   *                    ``NumFactors()``.
+   * @param per_factor_weights Device pointer to an array of per-factor weights,
+   *                           one per factor slot (at least `capacity` floats).
+   * @param capacity Number of weights the buffer holds; must equal the wrapped
+   *        batch's ``Capacity()``. The active count starts at 0: call
+   *        SetNumFactors(n) before evaluating or solving.
    * @param sized_factor_batch_args Arguments forwarded to the wrapped
    *        factor batch constructor.
    */
   template <class... Args>
-  WeightedFactorBatch(const float *per_factor_weights, size_t num_weights,
+  WeightedFactorBatch(const float *per_factor_weights, size_t capacity,
                       Args &&...sized_factor_batch_args)
       : factor_batch_(std::forward<Args>(sized_factor_batch_args)...),
         uniform_weight_(0.0f),
@@ -157,16 +158,32 @@ class WeightedFactorBatch : public T::sized_layout {
       LogError(ss.str());
       throw std::invalid_argument(ss.str());
     }
-    if (num_weights != factor_batch_.NumFactors()) {
+    if (capacity != factor_batch_.Capacity()) {
       std::stringstream ss;
-      ss << "WeightedFactorBatch: num_weights (" << num_weights
-         << ") must match wrapped factor batch size (" << factor_batch_.NumFactors() << ")";
+      ss << "WeightedFactorBatch: capacity (" << capacity
+         << ") must match the wrapped factor batch's capacity (" << factor_batch_.Capacity() << ")";
       LogError(ss.str());
       throw std::invalid_argument(ss.str());
     }
   }
 
-  size_t NumFactors() const final { return factor_batch_.NumFactors(); }
+  size_t NumFactors() const override { return factor_batch_.NumFactors(); }
+
+  /**
+   * @brief Capacity of the wrapped factor batch. The per-factor weights buffer (if used) must
+   * hold one entry per factor of this capacity.
+   */
+  size_t Capacity() const override { return factor_batch_.Capacity(); }
+
+  /**
+   * @brief Sets the number of active factors of the wrapped batch (see
+   * FactorBatch::SetNumFactors). Factor f keeps using entry f of the
+   * per-factor weights (if any).
+   *
+   * @param num_factors Active count, at most Capacity().
+   * @throws std::invalid_argument if num_factors > Capacity().
+   */
+  void SetNumFactors(size_t num_factors) override { factor_batch_.SetNumFactors(num_factors); }
 
   /**
    * @brief Evaluates the factor with weight scaling.

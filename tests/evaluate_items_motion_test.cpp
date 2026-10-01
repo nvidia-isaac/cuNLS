@@ -163,6 +163,7 @@ void CheckMotionFactor(Group g, int num_blocks, uint32_t seed) {
   auto d_states = ToDevice(states);
 
   Factor factor(d_dt.data(), kNumFactors);
+  factor.SetNumFactors(kNumFactors);
   ASSERT_EQ(factor.StateBlockSizes(), std::vector<size_t>(num_blocks, tangent));
   CheckEvaluateItems(factor, kCopies, [&](int k) {
     std::vector<float *> pointers;

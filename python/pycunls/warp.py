@@ -58,8 +58,10 @@ class WarpFactorBatch(CustomFactorBatch):
         Dimension of the residual vector per factor.
     state_block_sizes : list[int]
         Tangent dimensions of each state block consumed by one factor.
-    num_factors : int
-        Number of factors in the batch.
+    capacity : int
+        Number of factors the measurement buffers hold. The batch starts
+        with 0 active factors: call :meth:`set_num_factors` before solving.
+        The active count is :attr:`num_factors`.
     device : str
         Warp device string, e.g. ``"cuda:0"``.
     """
@@ -68,12 +70,12 @@ class WarpFactorBatch(CustomFactorBatch):
         self,
         residual_size: int,
         state_block_sizes: list[int],
-        num_factors: int,
+        capacity: int,
         device: str = "cuda:0",
     ) -> None:
-        super().__init__(residual_size, state_block_sizes, num_factors)
+        super().__init__(residual_size, state_block_sizes, capacity)
         self._device = device
-        self._default_ids: dict[int, wp.array] = {}
+        self._default_ids: dict[Tuple[int, int], wp.array] = {}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -106,15 +108,17 @@ class WarpFactorBatch(CustomFactorBatch):
 
         Wraps ``factor_ids_ptr`` when it is non-null; otherwise returns
         ``t % num_factors`` for ``t < num_items`` (built once per item count
-        and cached). Kernels can then always read ``ids[t]``.
+        and active factor count, and cached). Kernels can then always read
+        ``ids[t]``.
         """
         if factor_ids_ptr != 0:
             return self.wrap_array(factor_ids_ptr, wp.int32, num_items)
-        ids = self._default_ids.get(num_items)
+        key = (num_items, self.num_factors)
+        ids = self._default_ids.get(key)
         if ids is None:
             values = np.arange(num_items, dtype=np.int32) % self.num_factors
             ids = wp.array(values, dtype=wp.int32, device=self._device)
-            self._default_ids[num_items] = ids
+            self._default_ids[key] = ids
         return ids
 
     def make_warp_stream(self, stream_handle: int) -> wp.Stream:
@@ -208,17 +212,18 @@ class WarpStateBatch(CustomStateBatch):
     ----------
     data : DevicePointer
         CuPy array (or raw int pointer) to the contiguous GPU buffer
-        holding ``num_blocks * ambient_size`` floats.
+        holding ``capacity * ambient_size`` floats.
     ambient_size : int
         Number of floats stored per state block (storage dimension).
     tangent_size : int
         Number of floats per tangent-space update vector.
-    num_blocks : int
-        Number of state blocks in the batch.
+    capacity : int
+        Number of state blocks the buffer holds. The batch starts with 0
+        active blocks: call :meth:`set_num_state_blocks` before solving.
     const_state_ids : DevicePointer, optional
         CuPy array of ``int32`` indices of blocks held constant.
-    num_const_state_blocks : int
-        Number of constant blocks (length of *const_state_ids*).
+    const_capacity : int
+        Number of entries the *const_state_ids* buffer holds.
     device : str
         Warp device string, e.g. ``"cuda:0"``.
     """
@@ -228,16 +233,16 @@ class WarpStateBatch(CustomStateBatch):
         data: Any,
         ambient_size: int,
         tangent_size: int,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: Any = None,
-        num_const_state_blocks: int = 0,
+        const_capacity: int = 0,
         device: str = "cuda:0",
     ) -> None:
         if const_state_ids is not None:
-            super().__init__(data, ambient_size, tangent_size, num_blocks,
-                             const_state_ids, num_const_state_blocks)
+            super().__init__(data, ambient_size, tangent_size, capacity,
+                             const_state_ids, const_capacity)
         else:
-            super().__init__(data, ambient_size, tangent_size, num_blocks)
+            super().__init__(data, ambient_size, tangent_size, capacity)
         self._device = device
 
     # ------------------------------------------------------------------
@@ -292,7 +297,7 @@ class WarpStateBatch(CustomStateBatch):
 
         The arrays hold ``num_replicas`` contiguous copies of the batch
         (the same contract as C++ ``StateBatch::Plus``): with
-        ``N = num_blocks``, replica *r* is blocks ``[r * N, (r + 1) * N)``.
+        ``N = num_state_blocks`` (the active count), replica *r* is blocks ``[r * N, (r + 1) * N)``.
         The regular minimizers pass ``num_replicas == 1``; the RANSAC
         minimizers update one replica per hypothesis in a single call.
         Process all ``num_replicas * N`` blocks, each independently.
@@ -306,13 +311,13 @@ class WarpStateBatch(CustomStateBatch):
         ----------
         x_ptr : int
             Device pointer to the current state values
-            (``num_replicas * num_blocks * ambient_size`` floats).
+            (``num_replicas * N * ambient_size`` floats).
         delta_ptr : int
             Device pointer to the tangent-space update
-            (``num_replicas * num_blocks * tangent_size`` floats).
+            (``num_replicas * N * tangent_size`` floats).
         x_plus_delta_ptr : int
             Device pointer to the output buffer for the retracted state
-            (``num_replicas * num_blocks * ambient_size`` floats); does not
+            (``num_replicas * N * ambient_size`` floats); does not
             overlap the inputs.
         stream_handle : int
             ``cudaStream_t`` handle for asynchronous kernel launches.

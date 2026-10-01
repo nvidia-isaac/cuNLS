@@ -27,6 +27,15 @@ required state batch types (e.g. :code:`VectorStateBatch<Dim>`, :code:`SO3StateB
 FactorBatch
 -----------
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``SetNumFactors(n)`` /
+   ``SetNumStateBlocks(n)`` (Python: ``set_num_factors`` /
+   ``set_num_state_blocks``) before solving, and again whenever the problem size
+   changes. See :ref:`capacity-and-active-count`.
+
 Abstract base (:code:`cunls/factor/factor_batch.h`).
 
 .. math::
@@ -116,9 +125,32 @@ Abstract base (:code:`cunls/factor/factor_batch.h`).
 
   :returns: [out] State block **tangent** dimensions consumed by each factor.
 
+.. _factor-active-size:
+
 .. cpp:function:: size_t NumFactors() const
 
-  :returns: [out] Number of factors in the batch.
+  :returns: [out] Number of active factors: the first ``NumFactors()``
+    measurements are used. 0 after construction, until ``SetNumFactors``.
+
+.. cpp:function:: size_t Capacity() const
+
+  :returns: [out] Number of factors the measurement buffers hold: the
+    ``capacity`` passed to the constructor. Constant for the batch's lifetime.
+
+.. cpp:function:: void SetNumFactors(size_t num_factors)
+
+  Sets the active factor count. Every batch starts with 0 active factors:
+  call this before the first solve, and again whenever the count changes
+  (e.g. per frame, after rewriting the measurement buffers in place).
+  Host-only (no allocation, no device work); takes effect at the next
+  ``Minimize``. Wrappers (``InformationFactorBatch``,
+  ``WeightedFactorBatch``) forward it to the wrapped batch.
+
+  :param ``num_factors``: [in] Active count, at most ``Capacity()``.
+  :throws std::invalid_argument: if ``num_factors > Capacity()``.
+  :throws std::logic_error: if a subclass overrides ``NumFactors()``, so the
+    set would have no effect. Custom batches pass their capacity to
+    ``SizedFactorBatch(capacity)`` instead.
 
 **Residual-only factors.** ``Evaluate`` must support ``jacobians == nullptr``
 (residual-only evaluation) — this is required for cost-only evaluation, and
@@ -169,10 +201,10 @@ Constructor:
 
 .. code-block:: cpp
 
-   PriorVectorFactorBatch(const Vector<Dim>* observations_ptr, size_t num_factors)
+   PriorVectorFactorBatch(const Vector<Dim>* observations_ptr, size_t capacity)
 
 - ``observations_ptr`` — [in] Device pointer to observed vectors.
-- ``num_factors`` — [in] Number of factors in this batch.
+- ``capacity`` — [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
 
 SO2PriorFactorBatch
 -------------------
@@ -198,10 +230,10 @@ Prior on a 2D rotation (e.g. heading). Penalizes deviation from a target rotatio
 
 **Inputs:** :math:`R` = current rotation (state). State: one block from :code:`SO2StateBatch` (see :doc:`state`).
 
-.. cpp:function:: SO2PriorFactorBatch(const Matrix<2>* observations_ptr, size_t num_factors)
+.. cpp:function:: SO2PriorFactorBatch(const Matrix<2>* observations_ptr, size_t capacity)
 
   :param ``observations_ptr``: [in] Device pointer to SO(2) observations (2×2 row-major).
-  :param ``num_factors``: [in] Number of factors.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SO3PriorFactorBatch
@@ -228,10 +260,10 @@ Prior on a 3D rotation. Penalizes deviation from a target orientation.
 
 **Inputs:** :math:`R` = current rotation (state). State: one block from :code:`SO3StateBatch` (see :doc:`state`).
 
-.. cpp:function:: SO3PriorFactorBatch(const Matrix<3>* observations_ptr, size_t num_factors)
+.. cpp:function:: SO3PriorFactorBatch(const Matrix<3>* observations_ptr, size_t capacity)
 
   :param ``observations_ptr``: [in] Device pointer to SO(3) observations (3×3 row-major).
-  :param ``num_factors``: [in] Number of factors.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SE2PriorFactorBatch
@@ -324,10 +356,10 @@ Prior on 3D similarity transform. State: one block from :code:`Similarity3StateB
 
 **Constructors (all four prior classes above):**
 
-.. cpp:function:: ClassName(const ObsType* observations_ptr, size_t num_factors)
+.. cpp:function:: ClassName(const ObsType* observations_ptr, size_t capacity)
 
   :param ``observations_ptr``: [in] Device pointer to observation transforms.
-  :param ``num_factors``: [in] Number of factors.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SL4PriorFactorBatch
@@ -352,10 +384,10 @@ Prior on an SL(4) transform. State: one block from :code:`SL4StateBatch` (see :d
      - :math:`15 \times 15`
      - SL(4)
 
-.. cpp:function:: SL4PriorFactorBatch(const SL4Transform* observations_ptr, size_t num_factors)
+.. cpp:function:: SL4PriorFactorBatch(const SL4Transform* observations_ptr, size_t capacity)
 
   :param ``observations_ptr``: [in] Device pointer to SL(4) target transforms (row-major 4×4).
-  :param ``num_factors``: [in] Number of factors.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SE3BetweenFactorBatch
@@ -385,10 +417,10 @@ Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closu
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two poses (state blocks). State: two blocks from :code:`SE3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SE3BetweenFactorBatch(const SE3Transform* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: SE3BetweenFactorBatch(const SE3Transform* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms.
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SE2BetweenFactorBatch
@@ -418,10 +450,10 @@ Constrains the relative transform between two SE(2) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two poses (state blocks). State: two blocks from :code:`SE2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SE2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: SE2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SO2BetweenFactorBatch
@@ -451,10 +483,10 @@ Constrains the relative rotation between two SO(2) frames.
 
 **Inputs:** :math:`R_{\mathrm{left}}`, :math:`R_{\mathrm{right}}` = two rotations (state blocks). State: two blocks from :code:`SO2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative rotation (constructor).
 
-.. cpp:function:: SO2BetweenFactorBatch(const Matrix<2>* rotation_deltas_ptr, size_t num_factors)
+.. cpp:function:: SO2BetweenFactorBatch(const Matrix<2>* rotation_deltas_ptr, size_t capacity)
 
   :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 2×2).
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SO3BetweenFactorBatch
@@ -484,10 +516,10 @@ Constrains the relative rotation between two SO(3) frames.
 
 **Inputs:** :math:`R_{\mathrm{left}}`, :math:`R_{\mathrm{right}}` = two rotations (state blocks). State: two blocks from :code:`SO3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative rotation (constructor).
 
-.. cpp:function:: SO3BetweenFactorBatch(const Matrix<3>* rotation_deltas_ptr, size_t num_factors)
+.. cpp:function:: SO3BetweenFactorBatch(const Matrix<3>* rotation_deltas_ptr, size_t capacity)
 
   :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 3×3).
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 Similarity2BetweenFactorBatch
@@ -517,10 +549,10 @@ Constrains the relative transform between two Sim(2) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (state blocks). State: two blocks from :code:`Similarity2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: Similarity2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: Similarity2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 Similarity3BetweenFactorBatch
@@ -550,11 +582,11 @@ Constrains the relative transform between two Sim(3) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (state blocks). State: two blocks from :code:`Similarity3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: Similarity3BetweenFactorBatch(cuBLASHandle& cublas_handle, const Matrix<4>* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: Similarity3BetweenFactorBatch(cuBLASHandle& cublas_handle, const Matrix<4>* pose_deltas_ptr, size_t capacity)
 
   :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 4×4).
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SL4BetweenFactorBatch
@@ -584,10 +616,10 @@ Constrains the relative transform between two SL(4) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (state blocks). State: two blocks from :code:`SL4StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SL4BetweenFactorBatch(const SL4Transform* pose_deltas_ptr, size_t num_factors)
+.. cpp:function:: SL4BetweenFactorBatch(const SL4Transform* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 4×4, unit determinant).
-  :param ``num_factors``: [in] Number of between constraints.
+  :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 VectorBetweenFactorBatch<Dim>
@@ -621,10 +653,10 @@ Constructor:
 
 .. code-block:: cpp
 
-   VectorBetweenFactorBatch(const Vector<Dim>* deltas_ptr, size_t num_factors)
+   VectorBetweenFactorBatch(const Vector<Dim>* deltas_ptr, size_t capacity)
 
 - ``deltas_ptr`` — [in] Device pointer to measured difference vectors.
-- ``num_factors`` — [in] Number of factors in this batch.
+- ``capacity`` — [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
 
 Manifold facade
 ----------------
@@ -649,7 +681,7 @@ names:
 
   .. code-block:: cpp
 
-     cunls::BetweenFactorBatch between(deltas_ptr, num_factors);  // manifold deduced
+     cunls::BetweenFactorBatch between(deltas_ptr, capacity);  // manifold deduced
 
   CTAD deduction is unavailable for ``Vector<Dim>`` (a C++ template-argument-deduction
   limitation: ``Vector``'s ``int Dim`` cannot be deduced from the ``size_t``
@@ -668,12 +700,12 @@ names:
   Header: :code:`cunls/factor/motion/constant_velocity_factor_batch.h`. Same
   zero-cost specialization mechanism, but **always requires the manifold as
   an explicit template argument**: every ``ConstantVelocityXxxFactorBatch``
-  constructor is ``(const float* dt_ptr, size_t num_factors)``, so there is
+  constructor is ``(const float* dt_ptr, size_t capacity)``, so there is
   no manifold-specific argument type to deduce from.
 
   .. code-block:: cpp
 
-     cunls::ConstantVelocityFactorBatch<cunls::manifold::SE3> factor(dt_ptr, num_factors);
+     cunls::ConstantVelocityFactorBatch<cunls::manifold::SE3> factor(dt_ptr, capacity);
 
 .. cpp:class:: template <class Manifold> ConstantAccelerationFactorBatch
 
@@ -735,10 +767,10 @@ Header: :code:`cunls/factor/motion/constant_velocity_se3_factor_batch.h`
 
 **Inputs:** :math:`T_k, T_{k+1}` = two blocks from :code:`SE3StateBatch`; :math:`v_k, v_{k+1}` = two blocks from :code:`VectorStateBatch<6>` (body twist). :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantVelocitySE3FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantVelocitySE3FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantVelocitySO3FactorBatch
@@ -765,10 +797,10 @@ construction as ``ConstantVelocitySE3FactorBatch``, specialized to SO(3)
 
 **Inputs:** :math:`R_k, R_{k+1}` = two blocks from :code:`SO3StateBatch`; :math:`v_k, v_{k+1}` = two blocks from :code:`VectorStateBatch<3>`. :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantVelocitySO3FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantVelocitySO3FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantVelocitySE2FactorBatch
@@ -794,10 +826,10 @@ construction, specialized to SE(2).
 
 **Inputs:** :math:`T_k, T_{k+1}` = two blocks from :code:`SE2StateBatch`; :math:`v_k, v_{k+1}` = two blocks from :code:`VectorStateBatch<3>` (body twist). :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantVelocitySE2FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantVelocitySE2FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantVelocitySO2FactorBatch
@@ -823,10 +855,10 @@ abelian, so the residual/Jacobian reduce to scalar arithmetic.
 
 **Inputs:** :math:`\theta_k, \theta_{k+1}` = two blocks from :code:`SO2StateBatch`; :math:`v_k, v_{k+1}` = two blocks from :code:`VectorStateBatch<1>`. :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantVelocitySO2FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantVelocitySO2FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantAccelerationSE3FactorBatch
@@ -853,10 +885,10 @@ see the general formula above.
 
 **Inputs:** :math:`T_k, T_{k+1}` = two blocks from :code:`SE3StateBatch`; :math:`v_k, v_{k+1}, a_k, a_{k+1}` = four blocks from :code:`VectorStateBatch<6>`. :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantAccelerationSE3FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantAccelerationSE3FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantAccelerationSO3FactorBatch
@@ -882,10 +914,10 @@ construction, specialized to SO(3).
 
 **Inputs:** :math:`R_k, R_{k+1}` = two blocks from :code:`SO3StateBatch`; :math:`v_k, v_{k+1}, a_k, a_{k+1}` = four blocks from :code:`VectorStateBatch<3>`. :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantAccelerationSO3FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantAccelerationSO3FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantAccelerationSE2FactorBatch
@@ -911,10 +943,10 @@ construction, specialized to SE(2).
 
 **Inputs:** :math:`T_k, T_{k+1}` = two blocks from :code:`SE2StateBatch`; :math:`v_k, v_{k+1}, a_k, a_{k+1}` = four blocks from :code:`VectorStateBatch<3>`. :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantAccelerationSE2FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantAccelerationSE2FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 ConstantAccelerationSO2FactorBatch
@@ -940,10 +972,10 @@ is abelian, so the residual/Jacobian reduce to scalar arithmetic.
 
 **Inputs:** :math:`\theta_k, \theta_{k+1}` = two blocks from :code:`SO2StateBatch`; :math:`v_k, v_{k+1}, a_k, a_{k+1}` = four blocks from :code:`VectorStateBatch<1>`. :math:`\Delta t` (constructor).
 
-.. cpp:function:: ConstantAccelerationSO2FactorBatch(const float* dt_ptr, size_t num_factors)
+.. cpp:function:: ConstantAccelerationSO2FactorBatch(const float* dt_ptr, size_t capacity)
 
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas.
-  :param ``num_factors``: [in] Number of factors in this batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 Motion prior covariance weighting
@@ -962,7 +994,8 @@ Kronecker-product math or manage a separate information buffer:
 .. code-block:: cpp
 
    ConstantVelocityInformationSE3FactorBatch factor(
-       cublas_handle, stream, dt_ptr, qc_diag_ptr, num_factors);
+       cublas_handle, stream, dt_ptr, qc_diag_ptr, capacity);
+   factor.SetNumFactors(num_factors);  // active count, at most capacity
 
 Available aliases (one per factor above, same residual/Jacobian shape as
 the wrapped factor): :code:`ConstantVelocityInformationSE3FactorBatch`,
@@ -983,13 +1016,13 @@ the wrapped factor): :code:`ConstantVelocityInformationSE3FactorBatch`,
   aliases; only spell this out directly for a factor/Dim combination that
   doesn't have one yet.
 
-.. cpp:function:: MotionPriorInformationFactorBatch(cuBLASHandle& cublas_handle, cudaStream_t stream, const float* dt_ptr, const float* qc_diag_ptr, size_t num_factors)
+.. cpp:function:: MotionPriorInformationFactorBatch(cuBLASHandle& cublas_handle, cudaStream_t stream, const float* dt_ptr, const float* qc_diag_ptr, size_t capacity)
 
   :param ``cublas_handle``: [in] Reference to an externally-owned cuBLAS handle.
   :param ``stream``: [in] CUDA stream used to precompute the sqrt-information matrices at construction time.
   :param ``dt_ptr``: [in] Device pointer to per-factor time deltas; also forwarded to the wrapped factor's own constructor.
   :param ``qc_diag_ptr``: [in] Device pointer to the continuous-time process-noise PSD diagonal (``Dim`` floats), constant across the batch.
-  :param ``num_factors``: [in] Number of factors in the batch.
+  :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 The two function templates behind this wrapper,
@@ -1029,12 +1062,12 @@ Reprojection error for bundle adjustment. Observations in **normalized** image c
 
 **Inputs:** Pose :math:`T_{\mathrm{cam}}` (state block 1), 3D point :math:`P` (state block 2). State: :code:`SE3StateBatch` then :code:`VectorStateBatch<3>` (see :doc:`state`). Observations :math:`(x_n, y_n)` and optional camera-from-rig from constructor.
 
-.. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, size_t num_observations, float z_threshold = 1e-3f)
-.. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, size_t num_observations, float z_threshold = 1e-3f)
+.. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, size_t capacity, float z_threshold = 1e-3f)
+.. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, size_t capacity, float z_threshold = 1e-3f)
 
   :param ``observations``: [in] Device pointer to normalized observations.
   :param ``poses_camera_from_rig``: [in] Optional device pointer to camera extrinsics (second overload).
-  :param ``num_observations``: [in] Number of reprojection factors.
+  :param ``capacity``: [in] Number of reprojection factors the buffers hold. 0 are active until ``SetNumFactors``.
   :param ``z_threshold``: [in] Minimum valid depth.
   :returns: Constructor has no return value.
 
@@ -1075,13 +1108,13 @@ world-to-camera according to your convention—match how you built the
 observations). Optional ``poses_camera_from_rig`` uses the same composition as
 `ReprojectionFactorBatch`.
 
-.. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const Vector<3>* points_world, size_t num_observations, float z_threshold = 1e-3f)
-.. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, const Vector<3>* points_world, size_t num_observations, float z_threshold = 1e-3f)
+.. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const Vector<3>* points_world, size_t capacity, float z_threshold = 1e-3f)
+.. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, const Vector<3>* points_world, size_t capacity, float z_threshold = 1e-3f)
 
   :param ``observations``: [in] Device pointer to normalized 2-D observations.
   :param ``points_world``: [in] Device pointer to fixed world points :math:`P`.
   :param ``poses_camera_from_rig``: [in] Optional per-factor rig extrinsics (second overload).
-  :param ``num_observations``: [in] Number of PnP correspondences.
+  :param ``capacity``: [in] Number of PnP correspondences the buffers hold. 0 are active until ``SetNumFactors``.
   :param ``z_threshold``: [in] Minimum valid camera-frame depth.
   :returns: Constructor has no return value.
 
@@ -1112,11 +1145,11 @@ Point cloud registration (e.g. ICP). Residual = target point minus transformed s
 
 **Inputs:** :math:`T` = pose (state). State: one block from :code:`SE3StateBatch` (see :doc:`state`). :math:`p`, :math:`q` = target/source points (constructor).
 
-.. cpp:function:: PointToPointFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, size_t num_factors)
+.. cpp:function:: PointToPointFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, size_t capacity)
 
   :param ``p_observations_ptr``: [in] Device pointer to target points.
   :param ``q_observations_ptr``: [in] Device pointer to source points.
-  :param ``num_factors``: [in] Number of correspondences.
+  :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 PointToPlaneFactorBatch
@@ -1148,12 +1181,12 @@ With :math:`n' = R^\top n_q`, the Jacobian row is :math:`[n'^\top [q]_\times,\; 
 
 **Inputs:** :math:`T` = pose (state). State: one block from :code:`SE3StateBatch` (see :doc:`state`). :math:`p`, :math:`q`, :math:`n_q` = target point, source point, source normal (constructor).
 
-.. cpp:function:: PointToPlaneFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, const Vector<3>* nq_observations_ptr, size_t num_factors)
+.. cpp:function:: PointToPlaneFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, const Vector<3>* nq_observations_ptr, size_t capacity)
 
   :param ``p_observations_ptr``: [in] Device pointer to target points.
   :param ``q_observations_ptr``: [in] Device pointer to source points.
   :param ``nq_observations_ptr``: [in] Device pointer to source normals.
-  :param ``num_factors``: [in] Number of correspondences.
+  :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 SymmetricPointToPlaneFactorBatch
@@ -1184,13 +1217,13 @@ Symmetric point-to-plane: both frames contribute normals; :math:`N = n_p + n_q`.
 
 **Inputs:** :math:`T` = pose (state). State: one block from :code:`SE3StateBatch` (see :doc:`state`). :math:`p`, :math:`n_p`, :math:`q`, :math:`n_q` = target/source points and normals (constructor).
 
-.. cpp:function:: SymmetricPointToPlaneFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, const Vector<3>* np_observations_ptr, const Vector<3>* nq_observations_ptr, size_t num_factors)
+.. cpp:function:: SymmetricPointToPlaneFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, const Vector<3>* np_observations_ptr, const Vector<3>* nq_observations_ptr, size_t capacity)
 
   :param ``p_observations_ptr``: [in] Device pointer to target points.
   :param ``q_observations_ptr``: [in] Device pointer to source points.
   :param ``np_observations_ptr``: [in] Device pointer to target normals.
   :param ``nq_observations_ptr``: [in] Device pointer to source normals.
-  :param ``num_factors``: [in] Number of correspondences.
+  :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumFactors``.
   :returns: Constructor has no return value.
 
 InformationFactorBatch<T>
@@ -1238,11 +1271,11 @@ Wraps a factor to apply a square-root information matrix :math:`\Omega^{1/2}` (e
 
 **Inputs:** Same state layout as the wrapped factor :code:`T`. Constructor also takes :code:`sqrt_information_matrices_ptr` (per-factor :math:`\Omega^{1/2}`).
 
-.. cpp:function:: template <class... Args> InformationFactorBatch(cuBLASHandle& cublas_handle, const Matrix<T::residual_size_>* sqrt_information_matrices_ptr, size_t num_matrices, Args&&... sized_factor_batch_args)
+.. cpp:function:: template <class... Args> InformationFactorBatch(cuBLASHandle& cublas_handle, const Matrix<T::residual_size_>* sqrt_information_matrices_ptr, size_t capacity, Args&&... sized_factor_batch_args)
 
   :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``sqrt_information_matrices_ptr``: [in] Device pointer to per-factor square-root information matrices.
-  :param ``num_matrices``: [in] Number of square-root information matrices; must equal ``T::NumFactors()`` after ``T`` is constructed.
+  :param ``capacity``: [in] Number of square-root information matrices; must equal ``T::Capacity()`` after ``T`` is constructed. The active count is the wrapped batch's (``SetNumFactors`` is forwarded).
   :param ``sized_factor_batch_args``: [in] Constructor arguments forwarded to wrapped factor ``T`` (same order as ``T``'s constructor — include a leading ``cuBLASHandle`` when ``T`` requires one, or ``(weight, …)`` when ``T`` is ``WeightedFactorBatch<U>``).
   :returns: Constructor has no return value.
 
@@ -1298,13 +1331,13 @@ pointer to per-factor weights.
   :param ``sized_factor_batch_args``: [in] Constructor arguments forwarded to wrapped factor ``T``.
   :returns: Constructor has no return value.
 
-.. cpp:function:: template <class... Args> WeightedFactorBatch(const float* per_factor_weights, size_t num_weights, Args&&... sized_factor_batch_args)
+.. cpp:function:: template <class... Args> WeightedFactorBatch(const float* per_factor_weights, size_t capacity, Args&&... sized_factor_batch_args)
 
   Per-factor weight constructor. Factor *i* has its residual and Jacobian
   multiplied by :code:`per_factor_weights[i]`.
 
-  :param ``per_factor_weights``: [in] Device pointer to per-factor weights (at least ``num_weights`` floats).
-  :param ``num_weights``: [in] Number of weights; must equal ``T::NumFactors()`` for the constructed inner batch.
+  :param ``per_factor_weights``: [in] Device pointer to per-factor weights (at least ``capacity`` floats).
+  :param ``capacity``: [in] Number of weights; must equal ``T::Capacity()`` for the constructed inner batch.
   :param ``sized_factor_batch_args``: [in] Constructor arguments forwarded to wrapped factor ``T``.
   :returns: Constructor has no return value.
 
@@ -1331,12 +1364,19 @@ read-only properties and methods.
 
 **Read-only properties**
 
-- **num_factors** (``int``) — number of factor instances in the batch.
+- **num_factors** (``int``) — number of active factors (0 until
+  ``set_num_factors``; at most ``capacity``).
+- **capacity** (``int``) — number of factors the measurement buffers hold
+  (the constructor's ``capacity``); constant.
 - **residuals_size** (``int``) — residual dimension per factor (e.g. 2 for
   ``ReprojectionFactorBatch``, 6 for ``SE3BetweenFactorBatch``).
 
 **Methods**
 
+- ``set_num_factors(num_factors)`` — sets the active factor count (at most
+  ``capacity``). Every batch starts with 0 active factors: call it before
+  the first solve, and again whenever the count changes. Host-only; takes
+  effect at the next ``minimize``. Raises ``ValueError`` above the capacity.
 - ``state_block_sizes() -> list[int]`` — returns a list of tangent-space
   dimensions for each state block consumed by one factor.  For example,
   ``ReprojectionFactorBatch`` returns ``[6, 3]`` (SE(3) pose then
@@ -1355,13 +1395,13 @@ Jacobian.  The suffix indicates the dimension.
 
 .. code-block:: python
 
-   fb = pycunls.PriorVectorFactorBatch3(observations, num_factors)
+   fb = pycunls.PriorVectorFactorBatch3(observations, capacity)
 
 - **observations** (``DevicePointer``) — contiguous GPU buffer of
-  ``num_factors × Dim`` floats holding the observed (target) vectors.  The
+  ``capacity × Dim`` floats holding the observed (target) vectors.  The
   factor batch does **not** copy the data; the caller must keep the
   allocation alive.
-- **num_factors** (``int``) — number of prior factors.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from the corresponding
 ``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
@@ -1378,11 +1418,11 @@ Does **not** require a ``CublasHandle``.
 
 .. code-block:: python
 
-   fb = pycunls.SO2PriorFactorBatch(observations, num_factors)
+   fb = pycunls.SO2PriorFactorBatch(observations, capacity)
 
-- **observations** (``DevicePointer``) — ``num_factors × 4`` floats holding
+- **observations** (``DevicePointer``) — ``capacity × 4`` floats holding
   row-major 2×2 target rotation matrices.
-- **num_factors** (``int``) — number of prior factors.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from ``SO2StateBatch``
 (see :ref:`py-lie-state-batches`).
@@ -1400,11 +1440,11 @@ Prior on a 3-D rotation.  Residual =
 
 .. code-block:: python
 
-   fb = pycunls.SO3PriorFactorBatch(observations, num_factors)
+   fb = pycunls.SO3PriorFactorBatch(observations, capacity)
 
-- **observations** (``DevicePointer``) — ``num_factors × 9`` floats holding
+- **observations** (``DevicePointer``) — ``capacity × 9`` floats holding
   row-major 3×3 target rotation matrices.
-- **num_factors** (``int``) — number of prior factors.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from ``SO3StateBatch``.
 
@@ -1421,11 +1461,11 @@ Does **not** require a ``CublasHandle``.
 
 .. code-block:: python
 
-   fb = pycunls.SE3PriorFactorBatch(observations, num_factors)
+   fb = pycunls.SE3PriorFactorBatch(observations, capacity)
 
-- **observations** (``DevicePointer``) — ``num_factors × 16`` floats
+- **observations** (``DevicePointer``) — ``capacity × 16`` floats
   holding row-major 4×4 target homogeneous matrices.
-- **num_factors** (``int``) — number of prior factors.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from
 :ref:`SE3StateBatch <py-lie-state-batches>`.
@@ -1443,11 +1483,11 @@ Prior on an SL(4) transform.  Residual =
 
 .. code-block:: python
 
-   fb = pycunls.SL4PriorFactorBatch(observations, num_factors)
+   fb = pycunls.SL4PriorFactorBatch(observations, capacity)
 
-- **observations** (``DevicePointer``) — ``num_factors × 16`` floats
+- **observations** (``DevicePointer``) — ``capacity × 16`` floats
   holding row-major 4×4 SL(4) target transforms.
-- **num_factors** (``int``) — number of prior factors.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from ``SL4StateBatch``.
 
@@ -1464,15 +1504,15 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SE3BetweenFactorBatch(deltas, num_factors)
+   fb = pycunls.SE3BetweenFactorBatch(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × 16`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
   row-major 4×4 measured relative transforms :math:`\Delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[T_left, T_right]`` — both from
 :ref:`SE3StateBatch <py-lie-state-batches>`.  The state-pointer list must
-therefore contain ``2 × num_factors`` entries.
+therefore contain ``2 × num_factors`` entries (the active count).
 
 .. _py-se2-between-factor:
 
@@ -1487,11 +1527,11 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SE2BetweenFactorBatch(deltas, num_factors)
+   fb = pycunls.SE2BetweenFactorBatch(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × 9`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
   row-major 3×3 measured relative transforms :math:`\Delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[T_left, T_right]`` — both from
 ``SE2StateBatch``.
@@ -1509,11 +1549,11 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SO2BetweenFactorBatch(deltas, num_factors)
+   fb = pycunls.SO2BetweenFactorBatch(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × 4`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 4`` floats holding
   row-major 2×2 measured relative rotations :math:`\Delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[R_left, R_right]`` — both from
 ``SO2StateBatch``.
@@ -1531,11 +1571,11 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SO3BetweenFactorBatch(deltas, num_factors)
+   fb = pycunls.SO3BetweenFactorBatch(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × 9`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
   row-major 3×3 measured relative rotations :math:`\Delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[R_left, R_right]`` — both from
 ``SO3StateBatch``.
@@ -1553,11 +1593,11 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.Similarity2BetweenFactorBatch(deltas, num_factors)
+   fb = pycunls.Similarity2BetweenFactorBatch(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × 9`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
   row-major 3×3 measured relative transforms :math:`\Delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[T_left, T_right]`` — both from
 ``Similarity2StateBatch``.
@@ -1575,13 +1615,13 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.Similarity3BetweenFactorBatch(cublas, deltas, num_factors)
+   fb = pycunls.Similarity3BetweenFactorBatch(cublas, deltas, capacity)
 
 - **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
   handle.
-- **deltas** (``DevicePointer``) — ``num_factors × 16`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
   row-major 4×4 measured relative transforms :math:`\Delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[T_left, T_right]`` — both from
 ``Similarity3StateBatch``.
@@ -1599,11 +1639,11 @@ factor.
 
 .. code-block:: python
 
-   fb = pycunls.SL4BetweenFactorBatch(deltas, num_factors)
+   fb = pycunls.SL4BetweenFactorBatch(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × 16`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
   row-major 4×4 measured relative transforms :math:`\Delta` (unit determinant).
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor — ``[T_left, T_right]`` — both from
 ``SL4StateBatch``.
@@ -1620,11 +1660,11 @@ Between factor on Euclidean vectors.  Residual =
 
 .. code-block:: python
 
-   fb = pycunls.VectorBetweenFactorBatch3(deltas, num_factors)
+   fb = pycunls.VectorBetweenFactorBatch3(deltas, capacity)
 
-- **deltas** (``DevicePointer``) — ``num_factors × Dim`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × Dim`` floats holding
   the measured difference vectors :math:`\delta`.
-- **num_factors** (``int``) — number of between constraints.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** two blocks per factor from the corresponding
 ``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
@@ -1643,11 +1683,11 @@ Reprojection error for bundle adjustment.  Observations must be in
 .. code-block:: python
 
    fb = pycunls.ReprojectionFactorBatch(
-       observations, num_observations, z_threshold=1e-3)
+       observations, capacity, z_threshold=1e-3)
 
-- **observations** (``DevicePointer``) — ``num_observations × 2`` floats
+- **observations** (``DevicePointer``) — ``capacity × 2`` floats
   holding normalized 2-D observations :math:`(x_n, y_n)`.
-- **num_observations** (``int``) — number of reprojection factors.
+- **capacity** (``int``) — number of reprojection factors the buffers hold; 0 are active until ``set_num_factors``.
 - **z_threshold** (``float``, default ``1e-3``) — minimum valid depth
   :math:`z` in camera frame.  Points with :math:`z < z_\text{threshold}`
   produce zero residuals and Jacobians to avoid singularities.
@@ -1669,7 +1709,7 @@ state per correspondence (typically the same camera pose pointer repeated).
 .. code-block:: python
 
    fb = pycunls.PnPFactorBatch(
-       observations, points_world, num_observations, z_threshold=1e-3)
+       observations, points_world, capacity, z_threshold=1e-3)
 
 **Constructor (with camera-from-rig extrinsics per factor)**
 
@@ -1677,12 +1717,12 @@ state per correspondence (typically the same camera pose pointer repeated).
 
    fb = pycunls.PnPFactorBatch(
        observations, poses_camera_from_rig, points_world,
-       num_observations, z_threshold=1e-3)
+       capacity, z_threshold=1e-3)
 
-- **observations** — ``num_observations × 2`` normalized image coordinates.
-- **points_world** — ``num_observations × 3`` fixed world points (not
+- **observations** — ``capacity × 2`` normalized image coordinates.
+- **points_world** — ``capacity × 3`` fixed world points (not
   optimized).
-- **poses_camera_from_rig** — ``num_observations × 16`` row-major SE(3)
+- **poses_camera_from_rig** — ``capacity × 16`` row-major SE(3)
   matrices (optional overload).
 - **z_threshold** — minimum valid depth in the camera frame (same role as
   :ref:`ReprojectionFactorBatch <py-reprojection-factor>`).
@@ -1701,13 +1741,13 @@ Point-to-point ICP factor.  Residual = :math:`p - T q`.
 
 .. code-block:: python
 
-   fb = pycunls.PointToPointFactorBatch(p_observations, q_observations, num_factors)
+   fb = pycunls.PointToPointFactorBatch(p_observations, q_observations, capacity)
 
-- **p_observations** (``DevicePointer``) — ``num_factors × 3`` floats
+- **p_observations** (``DevicePointer``) — ``capacity × 3`` floats
   holding target points :math:`p`.
-- **q_observations** (``DevicePointer``) — ``num_factors × 3`` floats
+- **q_observations** (``DevicePointer``) — ``capacity × 3`` floats
   holding source points :math:`q`.
-- **num_factors** (``int``) — number of point correspondences.
+- **capacity** (``int``) — number of point correspondences the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from
 :ref:`SE3StateBatch <py-lie-state-batches>`.
@@ -1722,12 +1762,12 @@ Point-to-plane ICP factor.  Residual = :math:`n_q^\top (p - T q)`.
 .. code-block:: python
 
    fb = pycunls.PointToPlaneFactorBatch(
-       p_observations, q_observations, nq_observations, num_factors)
+       p_observations, q_observations, nq_observations, capacity)
 
 - **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
 - **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
 - **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
-- **num_factors** (``int``) — number of correspondences.
+- **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from
 :ref:`SE3StateBatch <py-lie-state-batches>`.
@@ -1744,13 +1784,13 @@ Symmetric point-to-plane ICP factor.  Both frames contribute normals;
 
    fb = pycunls.SymmetricPointToPlaneFactorBatch(
        p_observations, q_observations,
-       np_observations, nq_observations, num_factors)
+       np_observations, nq_observations, capacity)
 
 - **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
 - **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
 - **np_observations** (``DevicePointer``) — target normals (``× 3`` floats).
 - **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
-- **num_factors** (``int``) — number of correspondences.
+- **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_factors``.
 
 **State layout:** one block per factor from
 :ref:`SE3StateBatch <py-lie-state-batches>`.
@@ -1783,7 +1823,7 @@ per-factor square-root information matrices
   matrices.  The inner factor must be kept alive for the lifetime of the
   wrapper.
 - **sqrt_information_matrices** (``DevicePointer``) —
-  ``num_factors × residual_size × residual_size`` contiguous floats holding
+  ``capacity × residual_size × residual_size`` contiguous floats holding
   one row-major square-root information matrix per factor.
 
 **Example**
@@ -1792,6 +1832,7 @@ per-factor square-root information matrices
 
    inner = pycunls.SE3BetweenFactorBatch(deltas, N)
    info  = pycunls.InformationFactorBatch(cublas, inner, sqrt_info_gpu)
+   info.set_num_factors(N)  # forwarded to inner
 
    problem.add_factor_batch(info, state_pointers)
 
@@ -1822,8 +1863,8 @@ Python wrapper subclasses ``FactorBatch`` only.
 
 - **inner_factor** (``FactorBatch``) — the factor batch to wrap.
 - **weight** (``float``) — uniform scalar weight applied to all factors.
-- **weights** (``DevicePointer``) — ``num_factors`` contiguous floats, one
-  weight per factor.
+- **weights** (``DevicePointer``) — ``inner_factor.capacity`` contiguous
+  floats, one weight per factor.
 
 Exactly one of ``weight`` or ``weights`` must be provided.
 
@@ -1833,6 +1874,7 @@ Exactly one of ``weight`` or ``weights`` must be provided.
 
    inner = pycunls.PriorVectorFactorBatch3(obs_gpu, N)
    wfb   = pycunls.WeightedFactorBatch(inner, weight=5.0)
+   wfb.set_num_factors(N)  # forwarded to inner
 
    problem.add_factor_batch(wfb, state_pointers)
 
@@ -1849,11 +1891,11 @@ and Jacobian computation that is not available as a built-in factor.
 .. code-block:: python
 
    class MyFactor(pycunls.CustomFactorBatch):
-       def __init__(self, num_factors):
+       def __init__(self, capacity):
            super().__init__(
                residual_size=...,
                state_block_sizes=[...],
-               num_factors=num_factors,
+               capacity=capacity,
            )
 
 - **residual_size** (``int``) — dimension of the residual vector per
@@ -1861,7 +1903,7 @@ and Jacobian computation that is not available as a built-in factor.
 - **state_block_sizes** (``Sequence[int]``) — list of tangent-space
   dimensions for each state block consumed by one factor (e.g. ``[1, 1]``
   for a factor reading two scalar states).
-- **num_factors** (``int``) — number of factor instances.
+- **capacity** (``int``) — number of factor instances the buffers hold; 0 are active until ``set_num_factors``.
 
 **Methods to override**
 
@@ -1932,11 +1974,11 @@ zero-copy pointer wrapping so you never need to manually construct
    from pycunls.warp import WarpFactorBatch
 
    class MyWarpFactor(WarpFactorBatch):
-       def __init__(self, num_factors):
+       def __init__(self, capacity):
            super().__init__(
                residual_size=...,
                state_block_sizes=[...],
-               num_factors=num_factors,
+               capacity=capacity,
                device="cuda:0",
            )
 

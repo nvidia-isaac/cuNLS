@@ -133,10 +133,11 @@ class InformationFactorBatch : public T::sized_layout {
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param sqrt_information_matrices_ptr Pointer to GPU device memory
-   * containing square-root information matrices. Must point to at least
-   * num_matrices * residual_size^2 floats of allocated memory.
-   * @param num_matrices Number of square-root information matrices; must equal
-   *                     the wrapped batch's ``NumFactors()``.
+   * containing square-root information matrices, one per factor slot. Must
+   * point to at least capacity * residual_size^2 floats of allocated memory.
+   * @param capacity Number of square-root information matrices the buffer
+   *        holds; must equal the wrapped batch's ``Capacity()``. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    * @param sized_factor_batch_args Arguments forwarded to the wrapped
    * factor batch constructor verbatim (same order as ``T``'s constructor;
    * e.g. ``SE3BetweenFactorBatch`` and ``Similarity3BetweenFactorBatch``
@@ -146,16 +147,16 @@ class InformationFactorBatch : public T::sized_layout {
    */
   template <class... Args>
   InformationFactorBatch(cuBLASHandle &cublas_handle,
-                         const InformationMatrix *sqrt_information_matrices_ptr,
-                         size_t num_matrices, Args &&...sized_factor_batch_args)
+                         const InformationMatrix *sqrt_information_matrices_ptr, size_t capacity,
+                         Args &&...sized_factor_batch_args)
       : cublas_handle_(cublas_handle),
         sqrt_information_matrices_ptr_(sqrt_information_matrices_ptr),
-        num_matrices_(num_matrices),
+        num_matrices_(capacity),
         factor_batch_(std::forward<Args>(sized_factor_batch_args)...) {
-    if (num_matrices_ != factor_batch_.NumFactors()) {
+    if (num_matrices_ != factor_batch_.Capacity()) {
       std::stringstream ss;
-      ss << "Number of sqrt information matrices (" << num_matrices_
-         << ") must match wrapped factor batch size (" << factor_batch_.NumFactors() << ")";
+      ss << "Capacity of the sqrt information matrices (" << num_matrices_
+         << ") must match the wrapped factor batch's capacity (" << factor_batch_.Capacity() << ")";
       LogError(ss.str());
       throw std::invalid_argument(ss.str());
     }
@@ -166,7 +167,23 @@ class InformationFactorBatch : public T::sized_layout {
    *
    * @return Number of factors (same as number of information matrices)
    */
-  size_t NumFactors() const final { return factor_batch_.NumFactors(); }
+  size_t NumFactors() const override { return factor_batch_.NumFactors(); }
+
+  /**
+   * @brief Capacity of the wrapped factor batch. The sqrt-information matrices buffer must
+   * hold one entry per factor of this capacity.
+   */
+  size_t Capacity() const override { return factor_batch_.Capacity(); }
+
+  /**
+   * @brief Sets the number of active factors of the wrapped batch (see
+   * FactorBatch::SetNumFactors). Factor f keeps using entry f of the
+   * sqrt-information matrices.
+   *
+   * @param num_factors Active count, at most Capacity().
+   * @throws std::invalid_argument if num_factors > Capacity().
+   */
+  void SetNumFactors(size_t num_factors) override { factor_batch_.SetNumFactors(num_factors); }
 
   /**
    * @brief Evaluates the factor with information matrix weighting.

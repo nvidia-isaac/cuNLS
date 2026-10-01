@@ -658,9 +658,11 @@ struct PnPSetup {
            const SE3Transform *prior_pose = nullptr, float cauchy_scale = 0.f) {
     pose.CopyFromHost(&init, 1);
     state = std::make_unique<SE3StateBatch>(cublas, reinterpret_cast<float *>(pose.data()), 1);
+    state->SetNumStateBlocks(state->Capacity(), state->ConstCapacity());
     obs = ToDevice(scene.observations);
     pts = ToDevice(scene.points_world);
     pnp = std::make_unique<PnPFactorBatch>(obs.data(), pts.data(), scene.observations.size());
+    pnp->SetNumFactors(pnp->Capacity());
     problem.AddStateBatch(state.get());
     std::vector<float *> ptrs(scene.observations.size(), state->StateBlockDevicePtr(0));
     if (cauchy_scale > 0.f) {
@@ -673,6 +675,7 @@ struct PnPSetup {
     if (with_prior) {
       prior_target.CopyFromHost(prior_pose, 1);
       prior = std::make_unique<SE3PriorFactorBatch>(prior_target.data(), 1);
+      prior->SetNumFactors(prior->Capacity());
       problem.AddFactorBatch(prior.get(), {state->StateBlockDevicePtr(0)});
     }
   }
@@ -856,15 +859,19 @@ TEST(RansacMinimizer, TwoCameraRigWithBetweenFactor) {
   std::vector<SE3Transform> init = {Perturb(a, 1, 0.05, 0.15), Perturb(b, 2, 0.05, 0.15)};
   auto poses = ToDevice(init);
   SE3StateBatch state(cublas, reinterpret_cast<float *>(poses.data()), 2);
+  state.SetNumStateBlocks(state.Capacity(), state.ConstCapacity());
   auto oa = ToDevice(sa.observations);
   auto pa = ToDevice(sa.points_world);
   auto ob = ToDevice(sb.observations);
   auto pb = ToDevice(sb.points_world);
   PnPFactorBatch fa(oa.data(), pa.data(), sa.observations.size());
+  fa.SetNumFactors(fa.Capacity());
   PnPFactorBatch fb(ob.data(), pb.data(), sb.observations.size());
+  fb.SetNumFactors(fb.Capacity());
   std::vector<SE3Transform> delta = {Compose(ransac_test::Inverse(b), a)};
   auto ddelta = ToDevice(delta);
   SE3BetweenFactorBatch between(ddelta.data(), 1);
+  between.SetNumFactors(between.Capacity());
 
   Problem problem;
   problem.AddStateBatch(&state);
@@ -906,14 +913,17 @@ TEST(RansacMinimizer, ReprojectionWithConstantLandmarkBatch) {
   dvector<SE3Transform> pose(1);
   pose.CopyFromHost(&init, 1);
   SE3StateBatch pose_state(cublas, reinterpret_cast<float *>(pose.data()), 1);
+  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
   auto points = ToDevice(scene.points_world);
   std::vector<int> all(scene.points_world.size());
   std::iota(all.begin(), all.end(), 0);
   auto const_ids = ToDevice(all);
   VectorStateBatch<3> landmarks(reinterpret_cast<float *>(points.data()), all.size(),
                                 const_ids.data(), all.size());
+  landmarks.SetNumStateBlocks(landmarks.Capacity(), landmarks.ConstCapacity());
   auto obs = ToDevice(scene.observations);
   ReprojectionFactorBatch reproj(obs.data(), scene.observations.size());
+  reproj.SetNumFactors(reproj.Capacity());
   std::vector<float *> ptrs;
   for (size_t i = 0; i < scene.observations.size(); ++i) {
     ptrs.push_back(pose_state.StateBlockDevicePtr(0));
@@ -956,10 +966,13 @@ TEST(RansacMinimizer, CustomFocalFactorConvergesWithRegularMinimizer) {
   std::vector<float> f0 = {focal * 1.08f};
   auto fdev = ToDevice(f0);
   SE3StateBatch pose_state(cublas, reinterpret_cast<float *>(pose.data()), 1);
+  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
   VectorStateBatch<1> focal_state(fdev.data(), 1);
+  focal_state.SetNumStateBlocks(focal_state.Capacity(), focal_state.ConstCapacity());
   auto obs = ToDevice(pixels);
   auto pts = ToDevice(scene.points_world);
   ransac_test::FocalPnPFactorBatch factor(obs.data(), pts.data(), pixels.size());
+  factor.SetNumFactors(factor.Capacity());
   std::vector<float *> ptrs;
   for (size_t i = 0; i < pixels.size(); ++i) {
     ptrs.push_back(pose_state.StateBlockDevicePtr(0));
@@ -997,10 +1010,13 @@ TEST(RansacMinimizer, CustomFactorMixedStateTypes) {
   std::vector<float> f0 = {focal * 1.08f};
   auto fdev = ToDevice(f0);
   SE3StateBatch pose_state(cublas, reinterpret_cast<float *>(pose.data()), 1);
+  pose_state.SetNumStateBlocks(pose_state.Capacity(), pose_state.ConstCapacity());
   VectorStateBatch<1> focal_state(fdev.data(), 1);
+  focal_state.SetNumStateBlocks(focal_state.Capacity(), focal_state.ConstCapacity());
   auto obs = ToDevice(pixels);
   auto pts = ToDevice(scene.points_world);
   ransac_test::FocalPnPFactorBatch factor(obs.data(), pts.data(), pixels.size());
+  factor.SetNumFactors(factor.Capacity());
   std::vector<float *> ptrs;
   for (size_t i = 0; i < pixels.size(); ++i) {
     ptrs.push_back(pose_state.StateBlockDevicePtr(0));
@@ -1043,7 +1059,9 @@ struct LinearProblem {
     std::vector<float> x0(Dim, 0.f);
     x = ToDevice(x0);
     state = std::make_unique<VectorStateBatch<Dim>>(x.data(), 1);
+    state->SetNumStateBlocks(state->Capacity(), state->ConstCapacity());
     factor = std::make_unique<ransac_test::LinearRegressionFactorBatch<Dim>>(a.data(), y.data(), n);
+    factor->SetNumFactors(factor->Capacity());
     problem.AddStateBatch(state.get());
     problem.AddFactorBatch(factor.get(), std::vector<float *>(n, state->StateBlockDevicePtr(0)));
   }
@@ -1171,9 +1189,11 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
     dvector<SE3Transform> pose(1);
     pose.CopyFromHost(&scene.world_to_cam, 1);
     SE3StateBatch st(cublas, reinterpret_cast<float *>(pose.data()), 1);
+    st.SetNumStateBlocks(st.Capacity(), st.ConstCapacity());
     auto obs = ToDevice(scene.observations);
     auto pts = ToDevice(scene.points_world);
     PnPFactorBatch f(obs.data(), pts.data(), scene.observations.size());
+    f.SetNumFactors(f.Capacity());
     Problem p;
     p.AddStateBatch(&st);
     p.AddFactorBatch(&f, std::vector<float *>(scene.observations.size(), st.StateBlockDevicePtr(0)),
@@ -1189,9 +1209,11 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
     std::vector<int> ids = {0};
     auto did = ToDevice(ids);
     SE3StateBatch st(cublas, reinterpret_cast<float *>(pose.data()), 1, did.data(), 1);
+    st.SetNumStateBlocks(st.Capacity(), st.ConstCapacity());
     auto obs = ToDevice(scene.observations);
     auto pts = ToDevice(scene.points_world);
     PnPFactorBatch f(obs.data(), pts.data(), scene.observations.size());
+    f.SetNumFactors(f.Capacity());
     Problem p;
     p.AddStateBatch(&st);
     p.AddFactorBatch(&f,
@@ -1230,7 +1252,9 @@ TEST(RansacMinimizer, NoValidHypothesisFallsBackToTheInitialGuess) {
   auto d_y = ToDevice(y);
   auto d_x = ToDevice(x0);
   VectorStateBatch<2> state(d_x.data(), 1);
+  state.SetNumStateBlocks(state.Capacity(), state.ConstCapacity());
   ransac_test::LinearRegressionFactorBatch<2> factor(d_a.data(), d_y.data(), n);
+  factor.SetNumFactors(factor.Capacity());
   Problem problem;
   problem.AddStateBatch(&state);
   problem.AddFactorBatch(&factor, std::vector<float *>(n, state.StateBlockDevicePtr(0)));
@@ -1265,6 +1289,7 @@ RunResult RunPnP(const PnPScene &scene, const SE3Transform &init, RansacMinimize
   Problem *problem = &setup.problem;
   if (syncing_factor) {
     syncing = std::make_unique<ransac_test::SyncingFactorBatch>(setup.pnp.get());
+    syncing->SetNumFactors(syncing->Capacity());
     syncing_problem.AddStateBatch(setup.state.get());
     syncing_problem.AddFactorBatch(
         syncing.get(),

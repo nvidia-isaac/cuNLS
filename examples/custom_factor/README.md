@@ -65,6 +65,19 @@ mixing Jacobian modes within a single `Problem`.
    workspace during initialization).
 5. Compare initial vs final MSE to validate improvement.
 
+Each batch is constructed with its **capacity** (how many blocks /
+measurements its bound device buffers hold, fixed for the batch's lifetime)
+and starts with 0 active; `SetNumStateBlocks` / `SetNumFactors` set the
+**active count** the next solve uses (host-only: no allocation, no device
+work; a solve without it throws). Size the capacity once for the largest
+problem you expect; the active count may change between solves up to it, so
+a real-time application allocates once and reuses the same buffers every
+frame while the problem size changes. The example keeps the two in separate
+variables (`*_capacity` vs. `num_*`); it solves every slot once, so each
+active count equals its capacity. The custom factors pass their capacity to
+`SizedFactorBatch(capacity)` and read the active count with `NumFactors()`
+in `Evaluate`.
+
 ## Notes on memory layout
 
 For this custom factor:

@@ -88,30 +88,34 @@ __global__ void ScalarDifferenceKernel(const float *measurements, const int *fac
 // - second state block tangent size: 1
 //
 // The class only stores pointers to device memory (measurements) and launches
-// the kernel in Evaluate(). cuNLS handles assembly and optimization using
-// the residuals/Jacobians we provide here.
+// the kernel in Evaluate(). The constructor passes the capacity (how many
+// measurements the bound buffer holds) to the base class, which also keeps the
+// active count NumFactors() that Evaluate() works on (see "Capacity vs. active
+// count" in RunChainExample). cuNLS handles assembly and optimization using the
+// residuals/Jacobians we provide here.
 class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
  public:
-  ScalarDifferenceFactorBatch(const float *measurements, size_t num_factors)
-      : measurements_(measurements), num_factors_(num_factors) {}
+  ScalarDifferenceFactorBatch(const float *measurements, size_t capacity)
+      : SizedFactorBatch(capacity), measurements_(measurements) {}
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final {
-    const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
+    const size_t num_factors = NumFactors();
+    const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+    if (num_items == 0 || num_factors == 0) {
+      return true;
+    }
     constexpr int kBlockSize = 256;
     const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceKernel<<<grid_size, kBlockSize, 0, stream>>>(
-        measurements_, factor_ids, num_factors_, state_pointers, residuals, jacobians, num_items);
+        measurements_, factor_ids, num_factors, state_pointers, residuals, jacobians, num_items);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return true;
   }
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   const float *measurements_;
-  size_t num_factors_;
 };
 
 // ---------------------------------------------------------------------------
@@ -152,26 +156,27 @@ __global__ void ScalarDifferenceResidualOnlyKernel(const float *measurements, co
 // of calling into a Jacobian code path that doesn't exist here.
 class ScalarDifferenceResidualOnlyFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
  public:
-  ScalarDifferenceResidualOnlyFactorBatch(const float *measurements, size_t num_factors)
-      : measurements_(measurements), num_factors_(num_factors) {}
+  ScalarDifferenceResidualOnlyFactorBatch(const float *measurements, size_t capacity)
+      : SizedFactorBatch(capacity), measurements_(measurements) {}
 
   bool Evaluate(float *residuals, float * /*jacobians*/, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final {
-    const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
+    const size_t num_factors = NumFactors();
+    const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+    if (num_items == 0 || num_factors == 0) {
+      return true;
+    }
     constexpr int kBlockSize = 256;
     const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceResidualOnlyKernel<<<grid_size, kBlockSize, 0, stream>>>(
-        measurements_, factor_ids, num_factors_, state_pointers, residuals, num_items);
+        measurements_, factor_ids, num_factors, state_pointers, residuals, num_items);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return true;
   }
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   const float *measurements_;
-  size_t num_factors_;
 };
 
 // Solves a 1D chain x_0 -- x_1 -- ... -- x_{N-1} from its consecutive
@@ -192,15 +197,31 @@ int RunChainExample(const char *title, bool use_numeric_jacobian) {
   dvector<Vector<1>> anchor(std::vector<Vector<1>>{scene.gt_states[0]});
 
   // 3. One state batch with all scalar states.
+  //    Capacity vs. active count. A batch is constructed with its capacity: how many state blocks
+  //    (or factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+  //    size it once for the largest problem you expect. Right after construction nothing is active:
+  //    SetNumStateBlocks / SetNumFactors set the active count, how many of the first slots the next
+  //    solve uses (a solve without it throws). The setter is host-only (no allocation, no device
+  //    work) and may change the count between solves up to the capacity, which is what lets a
+  //    real-time application allocate once and reuse the same buffers every frame while the problem
+  //    size changes. This example solves every slot once, so each active count equals its capacity.
+  const size_t states_capacity = num_states;  // every slot solved: active = capacity
   cunls::VectorStateBatch<1> state_batch(reinterpret_cast<const float *>(states.data()),
-                                         num_states);
+                                         states_capacity);
+  state_batch.SetNumStateBlocks(num_states);  // active count
 
   // 4. Factors: the custom difference factor (one of the two classes above)
-  //    reads [x_i, x_{i+1}]; the shipped prior reads x_0.
-  ScalarDifferenceFactorBatch analytic_factor(differences.data(), num_diff_factors);
-  ScalarDifferenceResidualOnlyFactorBatch residual_only_factor(differences.data(),
-                                                               num_diff_factors);
-  cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(anchor.data(), 1);
+  //    reads [x_i, x_{i+1}]; the shipped prior reads x_0. Capacity (fixed,
+  //    sizes the buffers) vs. active count (set per solve): see step 3.
+  const size_t diff_capacity = num_diff_factors;  // every slot solved
+  const size_t anchor_capacity = 1;
+  ScalarDifferenceFactorBatch analytic_factor(differences.data(), diff_capacity);
+  ScalarDifferenceResidualOnlyFactorBatch residual_only_factor(differences.data(), diff_capacity);
+  cunls::PriorFactorBatch<cunls::manifold::Vector<1>> anchor_factor(anchor.data(), anchor_capacity);
+  const size_t num_anchor_factors = 1;
+  analytic_factor.SetNumFactors(num_diff_factors);  // active counts
+  residual_only_factor.SetNumFactors(num_diff_factors);
+  anchor_factor.SetNumFactors(num_anchor_factors);
   std::vector<float *> diff_pointers;
   for (size_t i = 0; i < num_diff_factors; ++i) {
     diff_pointers.push_back(state_batch.StateBlockDevicePtr(i));

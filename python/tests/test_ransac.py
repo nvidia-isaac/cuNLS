@@ -69,7 +69,9 @@ class _PnPProblem:
         self.pts_gpu = cp.asarray(pts.reshape(-1))
         self.obs_gpu = cp.asarray(obs.reshape(-1))
         self.state = pycunls.SE3StateBatch(self.cublas, self.pose_gpu, 1)
+        self.state.set_num_state_blocks(self.state.capacity, self.state.const_capacity)
         self.pnp = pycunls.PnPFactorBatch(self.obs_gpu, self.pts_gpu, len(pts))
+        self.pnp.set_num_factors(self.pnp.capacity)
         self.problem = pycunls.Problem()
         self.problem.add_state_batch(self.state)
         ptr = self.state.state_block_device_ptr(0)
@@ -77,6 +79,7 @@ class _PnPProblem:
         if with_prior:
             self.prior_gpu = cp.asarray(init.reshape(-1))
             self.prior = pycunls.SE3PriorFactorBatch(self.prior_gpu, 1)
+            self.prior.set_num_factors(self.prior.capacity)
             self.problem.add_factor_batch(self.prior, [ptr])
 
     def pose(self):
@@ -261,7 +264,9 @@ class TestCustomTypesUnderRansac:
 
         ab = cp.zeros(2, dtype=cp.float32)
         state = LineState(ab)
+        state.set_num_state_blocks(state.capacity, state.const_capacity)
         factor = LineFactor(cp.asarray(xs), cp.asarray(ys))
+        factor.set_num_factors(factor.capacity)
         problem = pycunls.Problem()
         problem.add_state_batch(state)
         problem.add_factor_batch(factor, [state.state_block_device_ptr(0)] * n)

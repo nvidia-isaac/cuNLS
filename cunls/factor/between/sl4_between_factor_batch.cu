@@ -8,6 +8,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/between/sl4_between_factor_batch.h"
 #include "cunls/factor/indexed_evaluation.cuh"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/sl_lie_math.h"
 
 namespace cunls {
@@ -96,64 +97,68 @@ __global__ void collect_sl4_left_poses_kernel(float const *const *state_pointers
   pose_left[tid] = *reinterpret_cast<const SL4Transform *>(state_pointers[2 * tid]);
 }
 
-// Fused kernel: writes the full 15x30 Jacobian with 15 threads per factor.
-// Each thread owns one row of the output:
-//   Left block (cols 0-14):  copy from negated adjoint
-//   Right block (cols 15-29): identity row
-// 30 stores per thread instead of 450. Much better coalescing.
-constexpr size_t kSL4CoopThreads = 15;
+// Fused Jacobian kernel: one warp per item writes the full 15x30 Jacobian.
+//   Left block (cols 0-14):  -Ad(D), derived from the measurement D in place
+//   Right block (cols 15-29): identity
+// Lane 0 inverts D (Inv4); then the 450 outputs of the item are striped over
+// the 32 lanes in memory order, so stores are coalesced. Ad entries use the
+// same basis-support arithmetic as AdjointSL4Kernel (lie_device helpers).
+constexpr int kSL4JacWarpsPerBlock = 8;
+constexpr int kSL4JacBlockSize = kSL4JacWarpsPerBlock * 32;
 
-__global__ void __launch_bounds__(240, 4)
-    sl4_between_fused_jacobian_kernel(const float *__restrict__ neg_adjoint,
+__global__ void __launch_bounds__(kSL4JacBlockSize)
+    sl4_between_fused_jacobian_kernel(const SL4Transform *__restrict__ deltas,
                                       float *__restrict__ jacobians, int num_items,
                                       const int *__restrict__ factor_ids, int num_factors) {
-  const int global_tid = threadIdx.x + blockIdx.x * blockDim.x;
-  const int item = global_tid / kSL4CoopThreads;
-  const int row = global_tid % kSL4CoopThreads;
+  __shared__ lie_device::SL4Basis s_basis;
+  __shared__ float s_T[kSL4JacWarpsPerBlock][16];
+  __shared__ float s_Tinv[kSL4JacWarpsPerBlock][16];
+  __shared__ int s_ok[kSL4JacWarpsPerBlock];
 
+  if (threadIdx.x < 15) {
+    s_basis.nnz[threadIdx.x] = lie_device::SL4BasisColumnSupport(
+        threadIdx.x, s_basis.rows[threadIdx.x], s_basis.vals[threadIdx.x]);
+  }
+  __syncthreads();
+
+  const int lane = threadIdx.x & 31;
+  const int w = threadIdx.x >> 5;
+  const int item = blockIdx.x * kSL4JacWarpsPerBlock + w;
   if (item >= num_items) return;
 
-  const float *A =
-      neg_adjoint + FactorMeasurementIndex(item, factor_ids, num_factors) * 225 + row * 15;
-  float *J = jacobians + item * 450 + row * 30;
-
-  // Left block: copy one row of the negated adjoint
-#pragma unroll
-  for (int c = 0; c < 15; ++c) {
-    J[c] = A[c];
+  if (lane < 16) {
+    s_T[w][lane] = deltas[FactorMeasurementIndex(item, factor_ids, num_factors)].data()[lane];
   }
+  __syncwarp();
+  if (lane == 0) {
+    s_ok[w] = lie_device::Inv4(s_T[w], s_Tinv[w]) ? 1 : 0;
+  }
+  __syncwarp();
+  const bool ok = s_ok[w] != 0;
 
-  // Right block: identity row
-#pragma unroll
-  for (int c = 0; c < 15; ++c) {
-    J[15 + c] = (c == row) ? 1.0f : 0.0f;
+  float *J = jacobians + static_cast<size_t>(item) * 450;
+  for (int o = lane; o < 450; o += 32) {
+    const int row = o / 30;
+    const int col = o - row * 30;
+    float v;
+    if (col < 15) {
+      // Singular D: Ad = identity (as AdjointSL4Kernel), negated below.
+      const float ad = ok ? lie_device::SL4AdjointEntry(s_basis, row, col, s_T[w], s_Tinv[w])
+                          : (row == col ? 1.f : 0.f);
+      v = -ad;
+    } else {
+      v = (col - 15 == row) ? 1.0f : 0.0f;
+    }
+    J[o] = v;
   }
 }
 
-SL4BetweenFactorBatch::SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr,
-                                             size_t num_factors)
-    : pose_deltas_ptr_(pose_deltas_ptr),
-      num_factors_(num_factors),
-      delta_adjoints_(num_factors * 225),
-      poses_left_(num_factors),
-      poses_right_(num_factors),
-      poses_left_inverse_(num_factors) {
-  CudaStream stream;
-  ComputeDeltaAdjoints(stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
-
-void SL4BetweenFactorBatch::ComputeDeltaAdjoints(cudaStream_t stream) {
-  constexpr size_t delta_pitch = 4;
-  constexpr size_t delta_stride = 16;
-  constexpr size_t adjoint_pitch = 15;
-  constexpr size_t adjoint_stride = 225;
-  ComputeAdjointSL4(stream, reinterpret_cast<const float *>(pose_deltas_ptr_), delta_pitch,
-                    delta_stride, adjoint_pitch, adjoint_stride, num_factors_,
-                    delta_adjoints_.data());
-  ComputeNegateMatrix15x15(stream, delta_adjoints_.data(), adjoint_pitch, adjoint_stride,
-                           num_factors_, delta_adjoints_.data());
-}
+SL4BetweenFactorBatch::SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      pose_deltas_ptr_(pose_deltas_ptr),
+      poses_left_(capacity),
+      poses_right_(capacity),
+      poses_left_inverse_(capacity) {}
 
 bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
@@ -191,11 +196,9 @@ bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                 twist_stride, num_items, residuals);
 
   if (jacobians != nullptr) {
-    constexpr size_t kCoopBlockSize = 240;
-    size_t total_threads = num_items * kSL4CoopThreads;
-    size_t coop_blocks = (total_threads + kCoopBlockSize - 1) / kCoopBlockSize;
-    sl4_between_fused_jacobian_kernel<<<coop_blocks, kCoopBlockSize, 0, stream>>>(
-        delta_adjoints_.data(), jacobians, static_cast<int>(num_items), factor_ids, num_factors);
+    const size_t jac_blocks = (num_items + kSL4JacWarpsPerBlock - 1) / kSL4JacWarpsPerBlock;
+    sl4_between_fused_jacobian_kernel<<<jac_blocks, kSL4JacBlockSize, 0, stream>>>(
+        pose_deltas_ptr_, jacobians, static_cast<int>(num_items), factor_ids, num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 

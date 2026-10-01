@@ -64,26 +64,27 @@ class SymmetricPointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
    * @brief Constructs a batch of symmetric point-to-plane factors.
    *
    * @param p_observations_ptr Pointer to GPU device memory containing target
-   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * points. Must point to at least capacity * 3 floats of allocated memory.
    * @param q_observations_ptr Pointer to GPU device memory containing source
-   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * points. Must point to at least capacity * 3 floats of allocated memory.
    * @param np_observations_ptr Pointer to GPU device memory containing normal
    * vectors at each target point (in the p frame). Must point to at least
-   * num_factors * 3 floats of allocated memory.
+   * capacity * 3 floats of allocated memory.
    * @param nq_observations_ptr Pointer to GPU device memory containing normal
    * vectors at each source point (in the q frame). Must point to at least
-   * num_factors * 3 floats of allocated memory.
-   * @param num_factors Number of factors in the batch.
+   * capacity * 3 floats of allocated memory.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
   SymmetricPointToPlaneFactorBatch(const Vector3 *p_observations_ptr,
                                    const Vector3 *q_observations_ptr,
                                    const Vector3 *np_observations_ptr,
-                                   const Vector3 *nq_observations_ptr, size_t num_factors)
-      : p_observations_ptr_(p_observations_ptr),
+                                   const Vector3 *nq_observations_ptr, size_t capacity)
+      : SizedFactorBatch(capacity),
+        p_observations_ptr_(p_observations_ptr),
         q_observations_ptr_(q_observations_ptr),
         np_observations_ptr_(np_observations_ptr),
-        nq_observations_ptr_(nq_observations_ptr),
-        num_factors_(num_factors) {}
+        nq_observations_ptr_(nq_observations_ptr) {}
 
   /**
    * @brief Evaluates symmetric point-to-plane residuals and optionally
@@ -110,13 +111,6 @@ class SymmetricPointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  /**
-   * @brief Returns the number of symmetric point-to-plane factors in
-   *        this batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SymmetricPointToPlaneFactorBatch() = default;
 
@@ -131,9 +125,6 @@ class SymmetricPointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
 
   /// Pointer to user-managed device memory containing source normals (Nq).
   const Vector3 *nq_observations_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
 };
 
 }  // namespace cunls

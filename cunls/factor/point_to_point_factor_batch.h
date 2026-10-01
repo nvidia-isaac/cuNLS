@@ -60,16 +60,17 @@ class PointToPointFactorBatch : public SizedFactorBatch<3, 6> {
    * @brief Constructs a batch of point-to-point factors.
    *
    * @param p_observations_ptr Pointer to GPU device memory containing target
-   * points. Must point to at least num_factors * 3 floats of allocated memory.
+   * points. Must point to at least capacity * 3 floats of allocated memory.
    * @param q_observations_ptr Pointer to GPU device memory containing source
-   * points. Must point to at least num_factors * 3 floats of allocated memory.
-   * @param num_factors Number of factors in the batch.
+   * points. Must point to at least capacity * 3 floats of allocated memory.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
   PointToPointFactorBatch(const Vector3 *p_observations_ptr, const Vector3 *q_observations_ptr,
-                          size_t num_factors)
-      : p_observations_ptr_(p_observations_ptr),
-        q_observations_ptr_(q_observations_ptr),
-        num_factors_(num_factors) {}
+                          size_t capacity)
+      : SizedFactorBatch(capacity),
+        p_observations_ptr_(p_observations_ptr),
+        q_observations_ptr_(q_observations_ptr) {}
 
   /**
    * @brief Evaluates point-to-point residuals and optionally Jacobians.
@@ -95,12 +96,6 @@ class PointToPointFactorBatch : public SizedFactorBatch<3, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  /**
-   * @brief Returns the number of point-to-point factors in this batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   PointToPointFactorBatch() = default;
 
@@ -109,9 +104,6 @@ class PointToPointFactorBatch : public SizedFactorBatch<3, 6> {
 
   /// Pointer to user-managed device memory containing source points (q).
   const Vector3 *q_observations_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
 };
 
 }  // namespace cunls

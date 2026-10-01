@@ -41,9 +41,10 @@ class ConstantVelocitySO3FactorBatch : public SizedFactorBatch<6, 3, 3, 3, 3> {
  public:
   /**
    * @param dt_ptr Device pointer to per-factor time deltas, not owned.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  ConstantVelocitySO3FactorBatch(const float *dt_ptr, size_t num_factors);
+  ConstantVelocitySO3FactorBatch(const float *dt_ptr, size_t capacity);
 
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
@@ -54,13 +55,10 @@ class ConstantVelocitySO3FactorBatch : public SizedFactorBatch<6, 3, 3, 3, 3> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   ConstantVelocitySO3FactorBatch() = delete;
 
   const float *dt_ptr_;
-  size_t num_factors_;
 
   mutable DeviceVector<Matrix<3>> pose_rel_;  ///< R_k^T * R_{k+1}
   mutable DeviceVector<Vector<3>> twist_;     ///< Log(pose_rel)

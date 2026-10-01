@@ -192,7 +192,7 @@ void RansacLayout::BuildResidual(const Problem &problem, size_t index,
   max_factors_ = std::max(max_factors_, r.num_factors);
   r.u_offset = r.sampled ? total_sampled_ : -1;
   total_sampled_ += r.sampled ? r.num_factors : 0;
-  ResolveBlocks(r, index, problem.GetStatePointers()[index]);
+  ResolveBlocks(r, index, problem.HostStatePointers(index));
 }
 
 void RansacLayout::ResolveBlocks(ResidualLayout &r, size_t index,

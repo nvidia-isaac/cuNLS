@@ -25,20 +25,17 @@ class Similarity2BetweenFactorBatch : public SizedFactorBatch<4, 4, 4> {
   using Base = SizedFactorBatch<4, 4, 4>;
 
  public:
-  Similarity2BetweenFactorBatch(const Similarity2Transform *pose_deltas_ptr, size_t num_factors);
+  Similarity2BetweenFactorBatch(const Similarity2Transform *pose_deltas_ptr, size_t capacity);
 
   /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   Similarity2BetweenFactorBatch() = default;
 
   const Matrix<3> *pose_deltas_ptr_;
-  size_t num_factors_;
   mutable DeviceVector<Matrix<3>> poses_left_;
   mutable DeviceVector<Matrix<3>> poses_right_;
   mutable DeviceVector<Matrix<3>> poses_left_inverse_;

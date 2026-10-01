@@ -53,7 +53,7 @@ namespace cunls {
  * residual evaluation, Jacobian correctness, and optimization convergence.
  */
 class PointToPointFactorBatchTest : public ::testing::Test {
-public:
+ public:
   using Point3D = Vector<3>;
 
   void SetUp() override {
@@ -84,8 +84,7 @@ public:
     dvector<Vector<6>> twist_device(ground_truth_twist_);
     ground_truth_pose_device_.resize(1);
 
-    ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float *>(twist_device.data()),
+    ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(twist_device.data()),
                   /*twist_stride=*/6, /*transform_pitch=*/4,
                   /*transform_stride=*/16, /*size=*/1,
                   reinterpret_cast<float *>(ground_truth_pose_device_.data()));
@@ -102,15 +101,14 @@ public:
     }
   }
 
-protected:
+ protected:
   /**
    * @brief Transforms a 3D point by an SE(3) matrix on CPU: result = R*point +
    * t.
    */
-  void TransformPoint(const SE3Transform &pose, const Point3D &point,
-                      Point3D &result) {
+  void TransformPoint(const SE3Transform &pose, const Point3D &point, Point3D &result) {
     for (int i = 0; i < 3; i++) {
-      result[i] = pose[i * 4 + 3]; // translation
+      result[i] = pose[i * 4 + 3];  // translation
       for (int j = 0; j < 3; j++) {
         result[i] += pose[i * 4 + j] * point[j];
       }
@@ -146,8 +144,7 @@ protected:
     dvector<SE3Transform> exp_delta_device(1);
 
     // Compute Exp(delta)
-    ComputeExpSE3(stream.GetStream(),
-                  reinterpret_cast<const float *>(delta_device.data()),
+    ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(delta_device.data()),
                   /*twist_stride=*/6, /*transform_pitch=*/4,
                   /*transform_stride=*/16, /*size=*/1,
                   reinterpret_cast<float *>(exp_delta_device.data()));
@@ -174,12 +171,11 @@ protected:
   const uint32_t fixed_seed_ = 42;
 
   // Data
-  std::vector<Point3D> p_points_;               ///< Target points
-  std::vector<Point3D> q_points_;               ///< Source points
-  std::vector<Vector<6>> ground_truth_twist_;   ///< Ground truth twist
-  std::vector<SE3Transform> ground_truth_pose_; ///< Ground truth pose (host)
-  dvector<SE3Transform>
-      ground_truth_pose_device_; ///< Ground truth pose (device)
+  std::vector<Point3D> p_points_;                   ///< Target points
+  std::vector<Point3D> q_points_;                   ///< Source points
+  std::vector<Vector<6>> ground_truth_twist_;       ///< Ground truth twist
+  std::vector<SE3Transform> ground_truth_pose_;     ///< Ground truth pose (host)
+  dvector<SE3Transform> ground_truth_pose_device_;  ///< Ground truth pose (device)
 
   profiler::Domain profiler_domain_{"PointToPointFactorBatchTest"};
 };
@@ -191,8 +187,8 @@ TEST_F(PointToPointFactorBatchTest, StateBlockSizes) {
   dvector<Point3D> p_device(p_points_);
   dvector<Point3D> q_device(q_points_);
 
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_correspondences_);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   auto state_block_sizes = factor_batch.StateBlockSizes();
   ASSERT_EQ(state_block_sizes.size(), 1);
@@ -216,19 +212,17 @@ TEST_F(PointToPointFactorBatchTest, ResidualIdentity) {
   dvector<Point3D> p_device(p_points_);
   dvector<Point3D> q_device(q_points_);
 
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_correspondences_);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // Set up state pointers: all correspondences share the same pose
-  std::vector<const float *> param_ptrs(
-      num_correspondences_,
-      reinterpret_cast<const float *>(pose_device.data()));
+  std::vector<const float *> param_ptrs(num_correspondences_,
+                                        reinterpret_cast<const float *>(pose_device.data()));
   dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_ * 3);
 
-  factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(),
-                        stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_residuals(num_correspondences_ * 3);
@@ -255,19 +249,17 @@ TEST_F(PointToPointFactorBatchTest, ResidualGroundTruth) {
   dvector<Point3D> p_device(p_points_);
   dvector<Point3D> q_device(q_points_);
 
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_correspondences_);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // All correspondences share the same ground truth pose
   std::vector<const float *> param_ptrs(
-      num_correspondences_,
-      reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
+      num_correspondences_, reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
   dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_ * 3);
 
-  factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(),
-                        stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_residuals(num_correspondences_ * 3);
@@ -277,8 +269,7 @@ TEST_F(PointToPointFactorBatchTest, ResidualGroundTruth) {
   for (float r : host_residuals) {
     max_residual = std::max(max_residual, std::abs(r));
   }
-  EXPECT_LT(max_residual, 1e-5f)
-      << "Residuals should be near zero for ground truth transform";
+  EXPECT_LT(max_residual, 1e-5f) << "Residuals should be near zero for ground truth transform";
 }
 
 /**
@@ -297,19 +288,18 @@ TEST_F(PointToPointFactorBatchTest, JacobianIdentity) {
   dvector<Point3D> p_device(p_points_);
   dvector<Point3D> q_device(q_points_);
 
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_correspondences_);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
-  std::vector<const float *> param_ptrs(
-      num_correspondences_,
-      reinterpret_cast<const float *>(pose_device.data()));
+  std::vector<const float *> param_ptrs(num_correspondences_,
+                                        reinterpret_cast<const float *>(pose_device.data()));
   dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_ * 3);
   dvector<float> jacobians(num_correspondences_ * 3 * 6);
 
-  factor_batch.Evaluate(residuals.data(), jacobians.data(),
-                        param_ptrs_device.data(), stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), jacobians.data(), param_ptrs_device.data(),
+                        stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_jacobians(num_correspondences_ * 3 * 6);
@@ -367,28 +357,25 @@ TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
   // Use a smaller batch for this test (numerical differentiation is expensive)
   const size_t num_test_points = 50;
 
-  std::vector<Point3D> test_p(p_points_.begin(),
-                              p_points_.begin() + num_test_points);
-  std::vector<Point3D> test_q(q_points_.begin(),
-                              q_points_.begin() + num_test_points);
+  std::vector<Point3D> test_p(p_points_.begin(), p_points_.begin() + num_test_points);
+  std::vector<Point3D> test_q(q_points_.begin(), q_points_.begin() + num_test_points);
 
   dvector<Point3D> p_device(test_p);
   dvector<Point3D> q_device(test_q);
 
   // Get analytical Jacobian at the ground truth pose
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_test_points);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_test_points);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<const float *> param_ptrs(
-      num_test_points,
-      reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
+      num_test_points, reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
   dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_test_points * 3);
   dvector<float> jacobians(num_test_points * 3 * 6);
 
-  factor_batch.Evaluate(residuals.data(), jacobians.data(),
-                        param_ptrs_device.data(), stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), jacobians.data(), param_ptrs_device.data(),
+                        stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   std::vector<float> host_jacobians(num_test_points * 3 * 6);
@@ -413,12 +400,10 @@ TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
     dvector<SE3Transform> pose_minus_device({pose_minus});
 
     // Evaluate residuals at perturbed poses
-    std::vector<const float *> ptrs_plus(
-        num_test_points,
-        reinterpret_cast<const float *>(pose_plus_device.data()));
+    std::vector<const float *> ptrs_plus(num_test_points,
+                                         reinterpret_cast<const float *>(pose_plus_device.data()));
     std::vector<const float *> ptrs_minus(
-        num_test_points,
-        reinterpret_cast<const float *>(pose_minus_device.data()));
+        num_test_points, reinterpret_cast<const float *>(pose_minus_device.data()));
 
     dvector<const float *> ptrs_plus_device(ptrs_plus);
     dvector<const float *> ptrs_minus_device(ptrs_minus);
@@ -426,10 +411,10 @@ TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
     dvector<float> residuals_plus(num_test_points * 3);
     dvector<float> residuals_minus(num_test_points * 3);
 
-    factor_batch.Evaluate(residuals_plus.data(), nullptr,
-                          ptrs_plus_device.data(), stream.GetStream());
-    factor_batch.Evaluate(residuals_minus.data(), nullptr,
-                          ptrs_minus_device.data(), stream.GetStream());
+    factor_batch.Evaluate(residuals_plus.data(), nullptr, ptrs_plus_device.data(),
+                          stream.GetStream());
+    factor_batch.Evaluate(residuals_minus.data(), nullptr, ptrs_minus_device.data(),
+                          stream.GetStream());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     std::vector<float> host_res_plus(num_test_points * 3);
@@ -440,15 +425,12 @@ TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
     // Compare numerical Jacobian column k with analytical
     for (size_t i = 0; i < num_test_points; i++) {
       for (int row = 0; row < 3; row++) {
-        float numerical =
-            (host_res_plus[3 * i + row] - host_res_minus[3 * i + row]) /
-            (2.0f * eps);
+        float numerical = (host_res_plus[3 * i + row] - host_res_minus[3 * i + row]) / (2.0f * eps);
         float analytical = host_jacobians[i * 18 + row * kTangentDim + k];
 
         EXPECT_NEAR(analytical, numerical, 1e-2f)
-            << "Jacobian mismatch at correspondence " << i << ", row " << row
-            << ", col " << k << " (analytical=" << analytical
-            << ", numerical=" << numerical << ")";
+            << "Jacobian mismatch at correspondence " << i << ", row " << row << ", col " << k
+            << " (analytical=" << analytical << ", numerical=" << numerical << ")";
       }
     }
   }
@@ -458,25 +440,23 @@ TEST_F(PointToPointFactorBatchTest, NumericalJacobian) {
  * @brief Tests that Evaluate executes without errors when jacobians is nullptr.
  */
 TEST_F(PointToPointFactorBatchTest, EvaluateWithoutJacobians) {
-  auto test_range =
-      profiler_domain_.CreateDomainRange("EvaluateWithoutJacobians");
+  auto test_range = profiler_domain_.CreateDomainRange("EvaluateWithoutJacobians");
   CudaStream stream;
 
   dvector<Point3D> p_device(p_points_);
   dvector<Point3D> q_device(q_points_);
 
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_correspondences_);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<const float *> param_ptrs(
-      num_correspondences_,
-      reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
+      num_correspondences_, reinterpret_cast<const float *>(ground_truth_pose_device_.data()));
   dvector<const float *> param_ptrs_device(param_ptrs);
 
   dvector<float> residuals(num_correspondences_ * 3);
 
-  bool result = factor_batch.Evaluate(
-      residuals.data(), nullptr, param_ptrs_device.data(), stream.GetStream());
+  bool result = factor_batch.Evaluate(residuals.data(), nullptr, param_ptrs_device.data(),
+                                      stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   EXPECT_TRUE(result);
@@ -495,12 +475,12 @@ TEST_F(PointToPointFactorBatchTest, OptimizeDisturbedPose) {
 
   // Create a disturbed pose: T_init = T_gt * Exp(small_delta)
   Vector<6> disturbance;
-  disturbance[0] = 0.05f;  // rotation x
-  disturbance[1] = -0.03f; // rotation y
-  disturbance[2] = 0.04f;  // rotation z
-  disturbance[3] = 0.3f;   // translation x
-  disturbance[4] = -0.2f;  // translation y
-  disturbance[5] = 0.15f;  // translation z
+  disturbance[0] = 0.05f;   // rotation x
+  disturbance[1] = -0.03f;  // rotation y
+  disturbance[2] = 0.04f;   // rotation z
+  disturbance[3] = 0.3f;    // translation x
+  disturbance[4] = -0.2f;   // translation y
+  disturbance[5] = 0.15f;   // translation z
 
   SE3Transform disturbed_pose = PerturbPose(ground_truth_pose_[0], disturbance);
 
@@ -521,14 +501,14 @@ TEST_F(PointToPointFactorBatchTest, OptimizeDisturbedPose) {
   const float *pose_ptr = reinterpret_cast<const float *>(pose_device.data());
   cuBLASHandle cublas_handle;
   SE3StateBatch state_batch(cublas_handle, pose_ptr, 1);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
 
   // Create factor batch
-  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(),
-                                       num_correspondences_);
+  PointToPointFactorBatch factor_batch(p_device.data(), q_device.data(), num_correspondences_);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // All correspondences share the same pose (state block 0)
-  std::vector<float *> state_pointers(num_correspondences_,
-                                      state_batch.StateBlockDevicePtr(0));
+  std::vector<float *> state_pointers(num_correspondences_, state_batch.StateBlockDevicePtr(0));
 
   // Build problem
   Problem problem;
@@ -569,10 +549,9 @@ TEST_F(PointToPointFactorBatchTest, OptimizeDisturbedPose) {
     float diff = ground_truth_pose_[0][i] - optimized_pose[i];
     final_frobenius_sq += diff * diff;
   }
-  EXPECT_LT(final_frobenius_sq, 1e-6f)
-      << "Pose should converge to ground truth";
+  EXPECT_LT(final_frobenius_sq, 1e-6f) << "Pose should converge to ground truth";
   EXPECT_LT(final_frobenius_sq, frobenius_sq * 0.001f)
       << "Final error should be much smaller than initial";
 }
 
-} // namespace cunls
+}  // namespace cunls

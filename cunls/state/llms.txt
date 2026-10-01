@@ -22,7 +22,13 @@ operations for applying tangent-space updates.
 
 - Backed by user-provided contiguous device memory.
 - Optional constant state IDs mark fixed blocks excluded from optimization.
-- `StateBlockDevicePtr(i)` returns pointers into underlying batch storage.
+- Constructed with a capacity (blocks the buffer holds; `const_capacity` for
+  the constant-id buffer), fixed for the batch's lifetime. The active counts
+  start at 0: `SetNumStateBlocks(n, num_const)` (host-only) must be called
+  before the first solve and may change them between solves up to the
+  capacity. `NumStateBlocks()` is the active count, `Capacity()` the capacity.
+- `StateBlockDevicePtr(i)` returns pointers into underlying batch storage,
+  valid for any i < Capacity().
 - `Plus(x, delta, out, stream, num_replicas = 1)` processes `num_replicas`
   contiguous copies of the batch (replica r = blocks [r*N, (r+1)*N)); out does
   not overlap the inputs. RANSAC passes one replica per hypothesis.

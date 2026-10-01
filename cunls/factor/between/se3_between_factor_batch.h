@@ -53,12 +53,13 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
    * @brief Constructs a batch of SE(3) between factors.
    *
    * @param pose_deltas_ptr Pointer to GPU device memory containing pose deltas.
-   *                        Must point to at least num_factors * 16 floats of
+   *                        Must point to at least capacity * 16 floats of
    * allocated memory. Each delta represents the constraint Delta = T_right^{-1}
    * * T_left for some true transforms T_left and T_right.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t num_factors);
+  SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity);
 
   /**
    * @brief Evaluates the factor and optionally computes Jacobians.
@@ -79,35 +80,12 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  /**
-   * @brief Returns the number of factors in the batch.
-   *
-   * @return Number of factors
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   /// Private default constructor to prevent default construction
   SE3BetweenFactorBatch() = default;
 
-  /**
-   * @brief Computes the SE(3) adjoints of the pose deltas.
-   *
-   * The adjoint matrices are used in Jacobian computation. This is called
-   * during construction to precompute values needed for efficient evaluation.
-   *
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ComputeDeltaAdjoints(cudaStream_t stream);
-
   /// Pointer to user-managed device memory containing pose deltas.
   const SE3Transform *pose_deltas_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
-
-  /// SE3 adjoints of the pose deltas (precomputed once at construction)
-  DeviceVector<Matrix<6>> delta_adjoints_;
 
   /// Scratch buffer reused for error = Delta * T_left^{-1} * T_right
   mutable DeviceVector<SE3Transform> poses_left_inverse_;

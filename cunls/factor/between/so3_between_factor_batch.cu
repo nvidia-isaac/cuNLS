@@ -140,7 +140,7 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *r
 // 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
 __global__ void __launch_bounds__(256, 4)
     so3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                       const Matrix<3> *__restrict__ delta_adjoints, int num_items,
+                                       const Matrix<3> *__restrict__ deltas, int num_items,
                                        float *__restrict__ jacobians,
                                        const int *__restrict__ factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -149,7 +149,7 @@ __global__ void __launch_bounds__(256, 4)
   const float *r = residuals + tid * kTwistStride;
   float phi[3] = {r[0], r[1], r[2]};
 
-  const float *D = delta_adjoints[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
+  const float *D = deltas[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
   float *J = jacobians + tid * 18;
 
   // Left block: -J_l_inv(phi)  (right-perturbation retraction; no D factor)
@@ -181,23 +181,12 @@ __global__ void __launch_bounds__(256, 4)
   }
 }
 
-SO3BetweenFactorBatch::SO3BetweenFactorBatch(const SO3Rotation *pose_deltas_ptr, size_t num_factors)
-    : pose_deltas_ptr_(pose_deltas_ptr),
-      num_factors_(num_factors),
-      delta_adjoints_(num_factors),
-      poses_left_(num_factors),
-      poses_right_(num_factors),
-      poses_left_inverse_(num_factors) {
-  CudaStream stream;
-  ComputeDeltaAdjoints(stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
-
-void SO3BetweenFactorBatch::ComputeDeltaAdjoints(cudaStream_t stream) {
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(delta_adjoints_.data(), pose_deltas_ptr_,
-                                      num_factors_ * sizeof(Matrix<3>), cudaMemcpyDeviceToDevice,
-                                      stream));
-}
+SO3BetweenFactorBatch::SO3BetweenFactorBatch(const SO3Rotation *pose_deltas_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      pose_deltas_ptr_(pose_deltas_ptr),
+      poses_left_(capacity),
+      poses_right_(capacity),
+      poses_left_inverse_(capacity) {}
 
 bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
@@ -223,7 +212,7 @@ bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   if (jacobians != nullptr) {
     so3_between_fused_jacobians_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-        residuals, delta_adjoints_.data(), static_cast<int>(num_items), jacobians, factor_ids,
+        residuals, pose_deltas_ptr_, static_cast<int>(num_items), jacobians, factor_ids,
         num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }

@@ -19,6 +19,8 @@
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+
 namespace cunls {
 
 /**
@@ -133,6 +135,47 @@ class StateBatch {
    * @return The number of constant (non-optimized) state blocks.
    */
   virtual size_t NumConstStateBlocks() const = 0;
+
+  /**
+   * @brief Number of state blocks the batch's buffer holds: the capacity
+   * passed to the constructor. SetNumStateBlocks accepts any value up to it.
+   */
+  virtual size_t Capacity() const { return NumStateBlocks(); }
+
+  /**
+   * @brief Number of entries the constant-id buffer holds: the const_capacity
+   * passed to the constructor (0 without a constant-id buffer).
+   */
+  virtual size_t ConstCapacity() const { return NumConstStateBlocks(); }
+
+  /**
+   * @brief Sets the number of active state blocks and of active constant ids,
+   * for buffers that are allocated once and rewritten in place between solves.
+   *
+   * The active blocks are the first `num_blocks` blocks of the state buffer;
+   * the active constant ids are the first `num_const_state_blocks` entries of
+   * the constant-id buffer (each must be below `num_blocks`). Blocks past
+   * `num_blocks` are neither read nor written. Built-in batches start with 0
+   * active blocks: call this before the first solve.
+   *
+   * A host-only assignment: no allocation, no device work. Takes effect at the
+   * next Plus / Minimize. Must not be called while a minimization that uses
+   * this batch is running. Factors may only reference active blocks.
+   *
+   * SizedStateBatch (every built-in state batch) implements it. The default
+   * accepts only the current sizes.
+   *
+   * @param num_blocks Active block count, at most Capacity().
+   * @param num_const_state_blocks Active constant count, at most ConstCapacity().
+   * @throws std::invalid_argument if a count exceeds its capacity.
+   * @throws std::logic_error if the batch cannot be resized (default
+   *         implementation with different sizes).
+   */
+  virtual void SetNumStateBlocks(size_t num_blocks, size_t num_const_state_blocks = 0) {
+    if (num_blocks != NumStateBlocks() || num_const_state_blocks != NumConstStateBlocks()) {
+      throw std::logic_error("SetNumStateBlocks: this state batch cannot be resized");
+    }
+  }
 };
 
 }  // namespace cunls

@@ -17,8 +17,12 @@
 
 #pragma once
 
-#include "state_batch.h"
 #include <cuda_runtime.h>
+
+#include <stdexcept>
+#include <string>
+
+#include "state_batch.h"
 
 namespace cunls {
 
@@ -52,53 +56,51 @@ namespace cunls {
  */
 template <int AmbientDim, int TangentDim>
 class SizedStateBatch : public StateBatch {
-public:
+ public:
   /**
-   * @brief Constructs a batch of state blocks without constant state
-   * constraints.
+   * @brief Constructs a batch of state blocks without constant blocks.
    *
-   * Creates a batch that manages num_blocks state blocks, all of which can be
-   * optimized. The data is stored contiguously in GPU device memory.
+   * The batch wraps user-owned GPU memory holding up to `capacity` blocks of
+   * AmbientDim floats each: [block0][block1]...[block(capacity-1)]. The active
+   * count starts at 0: call SetNumStateBlocks(n) before solving. Only the first
+   * n blocks are read and written; the rest stay addressable through
+   * StateBlockDevicePtr().
    *
-   * @param device_ptr Pointer to GPU device memory containing the state blocks.
-   *                   Must point to at least num_blocks * AmbientDim floats of
-   * allocated memory. The memory layout is: [block0][block1]...[blockN-1],
-   * where each block is AmbientDim floats.
-   * @param num_blocks The number of state blocks in this batch.
+   * @param device_ptr GPU memory of at least capacity * AmbientDim floats.
+   * @param capacity Number of state blocks the buffer holds.
    */
-  SizedStateBatch(const float *device_ptr, size_t num_blocks)
-      : ptr_(device_ptr), num_blocks_(num_blocks), constant_state_ids_(nullptr),
-        num_const_state_blocks_(0) {}
+  SizedStateBatch(const float *device_ptr, size_t capacity)
+      : ptr_(device_ptr),
+        num_blocks_(0),
+        capacity_(capacity),
+        constant_state_ids_(nullptr),
+        num_const_state_blocks_(0),
+        const_capacity_(0) {}
 
   /**
-   * @brief Constructs a batch of state blocks with constant state constraints.
+   * @brief Constructs a batch of state blocks with a buffer of constant-block
+   * ids.
    *
-   * Creates a batch that manages num_blocks state blocks, where some blocks may
-   * be marked as constant (not optimized). The constant_state_ids array
-   * contains the indices of state blocks that should remain fixed during
-   * optimization.
+   * As above, plus a user-owned GPU array of up to `const_capacity` indices of
+   * blocks held constant. The active counts start at 0: call
+   * SetNumStateBlocks(n, num_const) before solving; the first num_const ids
+   * (each below n) are then constant.
    *
-   * @param device_ptr Pointer to GPU device memory containing the state blocks.
-   *                   Must point to at least num_blocks * AmbientDim floats of
-   * allocated memory.
-   * @param device_constant_state_ids Pointer to GPU device memory containing
-   * the indices of state blocks that should remain constant. Can be nullptr if
-   * no blocks are constant. The array should contain sorted, unique indices in
-   * [0, num_blocks).
-   * @param num_blocks The number of state blocks in this batch.
-   * @param num_const_state_blocks The number of state blocks listed in
-   *                               @p device_constant_state_ids.
-   *
-   * @note The constant_state_ids array is not copied; this object stores only
-   * the pointer. The caller must ensure the array remains valid for the
-   * lifetime of this object.
+   * @param device_ptr GPU memory of at least capacity * AmbientDim floats.
+   * @param capacity Number of state blocks the buffer holds.
+   * @param device_constant_state_ids GPU array of at least const_capacity
+   *        ints, or nullptr if const_capacity is 0. Not copied: it must stay
+   *        valid for the lifetime of this object.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  SizedStateBatch(const float *device_ptr, size_t num_blocks,
-                  const int *device_constant_state_ids,
-                  size_t num_const_state_blocks)
-      : ptr_(device_ptr), num_blocks_(num_blocks),
+  SizedStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                  size_t const_capacity)
+      : ptr_(device_ptr),
+        num_blocks_(0),
+        capacity_(capacity),
         constant_state_ids_(device_constant_state_ids),
-        num_const_state_blocks_(num_const_state_blocks) {}
+        num_const_state_blocks_(0),
+        const_capacity_(const_capacity) {}
 
   /**
    * @brief Returns the number of state blocks in this batch.
@@ -133,16 +135,18 @@ public:
    * Computes the device memory address of the state block at the given index.
    * The pointer can be used to read or modify the state block data on the GPU.
    *
-   * @param state_block_idx The zero-based index of the state block.
-   *                        Must be in the range [0, NumStateBlocks()).
-   * @return Device pointer to the state block data (AmbientDim floats).
-   *         Returns nullptr if state_block_idx is out of bounds.
+   * @param state_block_idx The zero-based index of the state block, in
+   *        [0, Capacity()). Blocks at or above NumStateBlocks() are inactive but
+   *        addressable, so connectivity for a coming solve can be built before
+   *        SetNumStateBlocks() is called.
+   * @return Device pointer to the state block data (AmbientDim floats), or
+   *         nullptr if state_block_idx >= Capacity().
    *
    * @note The returned pointer points to GPU device memory. Use CUDA memory
    * operations or kernels to access/modify the data.
    */
   float *StateBlockDevicePtr(size_t state_block_idx) final {
-    if (state_block_idx >= num_blocks_) {
+    if (state_block_idx >= capacity_) {
       return nullptr;
     }
 
@@ -155,16 +159,16 @@ public:
    * Computes the device memory address of the state block at the given index.
    * The pointer provides read-only access to the state block data on the GPU.
    *
-   * @param state_block_idx The zero-based index of the state block.
-   *                        Must be in the range [0, NumStateBlocks()).
-   * @return Const device pointer to the state block data (AmbientDim floats).
-   *         Returns nullptr if state_block_idx is out of bounds.
+   * @param state_block_idx The zero-based index of the state block, in
+   *        [0, Capacity()) (see the non-const overload).
+   * @return Const device pointer to the state block data (AmbientDim floats),
+   *         or nullptr if state_block_idx >= Capacity().
    *
    * @note The returned pointer points to GPU device memory. Use CUDA memory
    * operations or kernels to read the data.
    */
   const float *StateBlockDevicePtr(size_t state_block_idx) const final {
-    if (state_block_idx >= num_blocks_) {
+    if (state_block_idx >= capacity_) {
       return nullptr;
     }
 
@@ -193,7 +197,41 @@ public:
    */
   size_t NumConstStateBlocks() const final { return num_const_state_blocks_; }
 
-protected:
+  /**
+   * @brief Block capacity of the state buffer: the constructor's capacity.
+   */
+  size_t Capacity() const final { return capacity_; }
+
+  /**
+   * @brief Entry capacity of the constant-id buffer: the constructor's
+   * const_capacity.
+   */
+  size_t ConstCapacity() const final { return const_capacity_; }
+
+  /**
+   * @brief Sets the active block and constant-id counts (see
+   * StateBatch::SetNumStateBlocks). Host-only; takes effect at the next Plus /
+   * Minimize.
+   *
+   * @param num_blocks Active blocks: the first `num_blocks` blocks of the
+   *        buffer, at most Capacity().
+   * @param num_const_state_blocks Active constant ids: the first entries of the
+   *        constant-id buffer, at most ConstCapacity(); each must be below
+   *        `num_blocks`.
+   * @throws std::invalid_argument if a count exceeds its capacity.
+   */
+  void SetNumStateBlocks(size_t num_blocks, size_t num_const_state_blocks = 0) override {
+    if (num_blocks > capacity_ || num_const_state_blocks > const_capacity_) {
+      throw std::invalid_argument("SetNumStateBlocks(" + std::to_string(num_blocks) + ", " +
+                                  std::to_string(num_const_state_blocks) +
+                                  ") exceeds the capacity (" + std::to_string(capacity_) + ", " +
+                                  std::to_string(const_capacity_) + ")");
+    }
+    num_blocks_ = num_blocks;
+    num_const_state_blocks_ = num_const_state_blocks;
+  }
+
+ protected:
   /**
    * @brief Device pointer to the contiguous array of state blocks.
    *
@@ -215,6 +253,9 @@ protected:
    */
   size_t num_blocks_;
 
+  /** @brief Block capacity of the buffer (the constructor's capacity). */
+  size_t capacity_;
+
   /**
    * @brief Device pointer to array of constant state block indices.
    *
@@ -232,6 +273,9 @@ protected:
   /** @brief Number of state blocks that are held constant during optimization.
    */
   size_t num_const_state_blocks_ = 0;
+
+  /** @brief Constant-id buffer capacity (the constructor's count). */
+  size_t const_capacity_ = 0;
 };
 
-} // namespace cunls
+}  // namespace cunls

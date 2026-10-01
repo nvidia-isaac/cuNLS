@@ -20,6 +20,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
 #include "cunls/factor/indexed_evaluation.cuh"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -286,15 +287,15 @@ __device__ __forceinline__ void compute_Q_full(const float *tw, float *Q) {
 }
 
 // 6 threads per factor. Each thread computes one row of the 6x12 Jacobian.
-// Shared memory per factor: twist[6] + J_so3[9] + Q[9] = 24 floats
+// Shared memory per factor: twist[6] + J_so3[9] + Q[9] + Ad(Delta)[36] = 60 floats
 constexpr int kThreadsPerFactor = 6;
 constexpr int kFactorsPerBlock = 32;
 constexpr int kJacBlockSize = kFactorsPerBlock * kThreadsPerFactor;  // 192
-constexpr int kSmemPerFactor = 24;
+constexpr int kSmemPerFactor = 60;
 
 __global__ void __launch_bounds__(kJacBlockSize, 5)
     se3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                       const Matrix<6> *__restrict__ delta_adjoints, int num_items,
+                                       const SE3Transform *__restrict__ deltas, int num_items,
                                        float *__restrict__ jacobians,
                                        const int *__restrict__ factor_ids, int num_factors) {
   __shared__ float smem[kFactorsPerBlock * kSmemPerFactor];
@@ -304,14 +305,20 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
   const int global_factor = blockIdx.x * kFactorsPerBlock + local_factor;
 
   float *s_base = smem + local_factor * kSmemPerFactor;
-  float *s_twist = s_base;   // [6]
-  float *s_J = s_base + 6;   // [9]  -- J_so3 (3x3 row-major)
-  float *s_Q = s_base + 15;  // [9]  -- Q (3x3 row-major)
+  float *s_twist = s_base;    // [6]
+  float *s_J = s_base + 6;    // [9]  -- J_so3 (3x3 row-major)
+  float *s_Q = s_base + 15;   // [9]  -- Q (3x3 row-major)
+  float *s_Ad = s_base + 24;  // [36] -- Ad(Delta) (6x6 row-major)
 
   const bool active = global_factor < num_items;
 
-  // --- Phase 1: cooperative load of twist ---
-  if (active && row < 6) s_twist[row] = residuals[global_factor * 6 + row];
+  // --- Phase 1: cooperative load of twist; each thread derives one row of
+  // Ad(Delta) from the measurement (nothing is cached per factor) ---
+  if (active && row < 6) {
+    s_twist[row] = residuals[global_factor * 6 + row];
+    const float *D = deltas[FactorMeasurementIndex(global_factor, factor_ids, num_factors)].data();
+    lie_device::AdjointSE3RowFromTransform(D, 4, row, s_Ad + row * 6);
+  }
   __syncthreads();
 
   // --- Phase 2: threads 0-2 compute J_so3 rows, thread 3 computes Q ---
@@ -376,8 +383,7 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
   if (active) {
     float *out = jacobians + global_factor * (6 * jac_pitch) + row * jac_pitch;
 
-    const float *ad_src =
-        delta_adjoints[FactorMeasurementIndex(global_factor, factor_ids, num_factors)].data();
+    const float *ad_src = s_Ad;
 
 #pragma unroll
     for (int j = 0; j < 6; j++) {
@@ -435,24 +441,19 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
 /**
  * @brief Constructs the SE3 between factor batch.
  *
- * Allocates device memory for intermediate results and precomputes the
- * adjoint matrices of the pose deltas, which are reused during every
- * Evaluate() call for Jacobian computation.
+ * Allocates device scratch for intermediate results. Nothing is derived from
+ * the measurements here: the Jacobian kernel computes Ad(Delta) per item, so
+ * the deltas may be rewritten in place between evaluations.
  *
  * @param cublas_handle Reference to an externally-owned cuBLAS handle.
  * @param pose_deltas_ptr    Device pointer to SE3 pose delta constraints.
- * @param num_factors Number of factors in the batch.
+ * @param capacity Number of factors the measurement buffers hold. The active
+ *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
  */
-SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr,
-                                             size_t num_factors)
-    : pose_deltas_ptr_(pose_deltas_ptr),
-      num_factors_(num_factors),
-      delta_adjoints_(num_factors),
-      poses_left_inverse_(num_factors) {
-  CudaStream stream;
-  ComputeDeltaAdjoints(stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
+SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      pose_deltas_ptr_(pose_deltas_ptr),
+      poses_left_inverse_(capacity) {}
 
 /**
  * @brief Evaluates residuals and optionally Jacobians for the SE3 between
@@ -460,8 +461,8 @@ SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr
  *
  * Computes residual = Log(Delta * T_left^{-1} * T_right) for each pair of
  * poses. If jacobians is non-null, also computes the left and right pose
- * Jacobians using the SE(3) left/right inverse Jacobians and the precomputed
- * delta adjoint matrices.
+ * Jacobians using the SE(3) left/right inverse Jacobians and the adjoint of
+ * each delta, derived in the Jacobian kernel.
  *
  * @param residuals   Output device pointer for residuals (6 floats per factor).
  * @param jacobians   Output device pointer for Jacobians (6x12 floats per
@@ -496,35 +497,11 @@ bool SE3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
   if (jacobians != nullptr) {
     const size_t jac_blocks = (num_items + kFactorsPerBlock - 1) / kFactorsPerBlock;
     se3_between_fused_jacobians_kernel<<<jac_blocks, kJacBlockSize, 0, stream>>>(
-        residuals, delta_adjoints_.data(), static_cast<int>(num_items), jacobians, factor_ids,
+        residuals, pose_deltas_ptr_, static_cast<int>(num_items), jacobians, factor_ids,
         num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   return true;
-}
-
-/**
- * @brief Precomputes SE(3) adjoint matrices for all pose deltas.
- *
- * The adjoint of each delta transform is used during Jacobian computation
- * (specifically for the left pose Jacobian). This is called once during
- * construction and the results are cached in delta_adjoints_.
- *
- * @param stream CUDA stream for asynchronous execution.
- */
-void SE3BetweenFactorBatch::ComputeDeltaAdjoints(cudaStream_t stream) {
-  auto delta_ptr = reinterpret_cast<const float *>(pose_deltas_ptr_);
-  auto delta_adjoints_ptr = reinterpret_cast<float *>(delta_adjoints_.data());
-
-  constexpr size_t delta_pitch = 4;
-  constexpr size_t delta_stride = 16;
-  constexpr size_t delta_adjoint_pitch = 6;
-  constexpr size_t delta_adjoint_stride = 36;
-
-  ComputeAdjointSE3(stream, delta_ptr, delta_pitch, delta_stride, delta_adjoint_pitch,
-                    delta_adjoint_stride, num_factors_, delta_adjoints_ptr);
-
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace cunls

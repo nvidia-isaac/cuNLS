@@ -251,17 +251,23 @@ std::unique_ptr<VectorChainProblem> MakeVectorChain(int num_blocks,
 
   if (constant_indices.empty()) {
     data->state_batch = std::make_unique<VectorStateBatch<kDim>>(data->states.data(), num_blocks);
+    data->state_batch->SetNumStateBlocks(data->state_batch->Capacity(),
+                                         data->state_batch->ConstCapacity());
   } else {
     data->const_ids.resize(constant_indices.size());
     data->const_ids.CopyFromHost(constant_indices.data(), constant_indices.size());
     data->state_batch = std::make_unique<VectorStateBatch<kDim>>(
         data->states.data(), num_blocks, data->const_ids.data(), constant_indices.size());
+    data->state_batch->SetNumStateBlocks(data->state_batch->Capacity(),
+                                         data->state_batch->ConstCapacity());
   }
 
   data->between_batch =
       std::make_unique<VectorBetweenFactorBatch<kDim>>(data->deltas.data(), num_between);
+  data->between_batch->SetNumFactors(data->between_batch->Capacity());
   data->prior_batch =
       std::make_unique<PriorVectorFactorBatch<kDim>>(data->priors.data(), num_blocks);
+  data->prior_batch->SetNumFactors(data->prior_batch->Capacity());
 
   for (int i = 0; i < num_between; i++) {
     float *left = data->states.data() + static_cast<size_t>(i) * kDim;
@@ -330,9 +336,13 @@ std::unique_ptr<MixedDimProblem> MakeMixedDim(int count) {
   data->priors_b.CopyFromHost(pb.data(), pb.size());
 
   data->batch_a = std::make_unique<VectorStateBatch<3>>(data->states_a.data(), count);
+  data->batch_a->SetNumStateBlocks(data->batch_a->Capacity(), data->batch_a->ConstCapacity());
   data->batch_b = std::make_unique<VectorStateBatch<6>>(data->states_b.data(), count);
+  data->batch_b->SetNumStateBlocks(data->batch_b->Capacity(), data->batch_b->ConstCapacity());
   data->prior_a = std::make_unique<PriorVectorFactorBatch<3>>(data->priors_a.data(), count);
+  data->prior_a->SetNumFactors(data->prior_a->Capacity());
   data->prior_b = std::make_unique<PriorVectorFactorBatch<6>>(data->priors_b.data(), count);
+  data->prior_b->SetNumFactors(data->prior_b->Capacity());
 
   for (int i = 0; i < count; i++) {
     data->pointers_a.push_back(data->states_a.data() + static_cast<size_t>(i) * 3);
@@ -394,12 +404,17 @@ std::unique_ptr<PoseGraphProblem> MakePoseGraph(int num_poses, bool fix_first_po
     data->pose_batch = std::make_unique<SE3StateBatch>(
         data->cublas_handle, reinterpret_cast<const float *>(data->poses.data()), num_poses,
         data->const_ids.data(), 1);
+    data->pose_batch->SetNumStateBlocks(data->pose_batch->Capacity(),
+                                        data->pose_batch->ConstCapacity());
   } else {
     data->pose_batch = std::make_unique<SE3StateBatch>(
         data->cublas_handle, reinterpret_cast<const float *>(data->poses.data()), num_poses);
+    data->pose_batch->SetNumStateBlocks(data->pose_batch->Capacity(),
+                                        data->pose_batch->ConstCapacity());
   }
 
   data->between_batch = std::make_unique<SE3BetweenFactorBatch>(data->deltas.data(), num_poses - 1);
+  data->between_batch->SetNumFactors(data->between_batch->Capacity());
 
   auto *base = reinterpret_cast<float *>(data->poses.data());
   for (int i = 0; i + 1 < num_poses; i++) {
@@ -481,9 +496,14 @@ std::unique_ptr<BundleProblem> MakeBundle(int num_poses, int num_points, bool ro
 
   data->pose_batch = std::make_unique<SE3StateBatch>(
       data->cublas_handle, reinterpret_cast<const float *>(data->poses.data()), num_poses);
+  data->pose_batch->SetNumStateBlocks(data->pose_batch->Capacity(),
+                                      data->pose_batch->ConstCapacity());
   data->point_batch = std::make_unique<VectorStateBatch<3>>(data->points.data(), num_points);
+  data->point_batch->SetNumStateBlocks(data->point_batch->Capacity(),
+                                       data->point_batch->ConstCapacity());
   data->reprojection_batch =
       std::make_unique<ReprojectionFactorBatch>(data->observations.data(), host_obs.size());
+  data->reprojection_batch->SetNumFactors(data->reprojection_batch->Capacity());
 
   data->problem.AddStateBatch(data->pose_batch.get());
   data->problem.AddStateBatch(data->point_batch.get());
@@ -1416,6 +1436,7 @@ TEST(BlockHessianAssemblerTest, EmptyFactorBatchIsSkipped) {
   auto data = MakeVectorChain(16, {});
   dvector<Vector<VectorChainProblem::kDim>> empty_priors;
   PriorVectorFactorBatch<VectorChainProblem::kDim> empty_batch(empty_priors.data(), 0);
+  empty_batch.SetNumFactors(empty_batch.Capacity());
   std::vector<float *> no_pointers;
   data->problem.AddFactorBatch(&empty_batch, no_pointers);
 

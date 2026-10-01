@@ -97,8 +97,12 @@ struct SyntheticPGOProblem {
 
     state_batch_set1 = std::make_unique<SE3StateBatch>(
         cublas_handle, reinterpret_cast<const float *>(poses_set1_device.data()), kNumPoses);
+    state_batch_set1->SetNumStateBlocks(state_batch_set1->Capacity(),
+                                        state_batch_set1->ConstCapacity());
     state_batch_set2 = std::make_unique<SE3StateBatch>(
         cublas_handle, reinterpret_cast<const float *>(poses_set2_device.data()), kNumPoses);
+    state_batch_set2->SetNumStateBlocks(state_batch_set2->Capacity(),
+                                        state_batch_set2->ConstCapacity());
   }
 
   /**
@@ -108,6 +112,7 @@ struct SyntheticPGOProblem {
   void AddSingleGroup(Problem &problem, std::optional<JacobianMode> override_mode) {
     between_factor_batches.push_back(
         std::make_unique<SE3BetweenFactorBatch>(pose_deltas_device.data(), kNumPoses));
+    between_factor_batches.back()->SetNumFactors(kNumPoses);
     std::vector<float *> state_pointers;
     for (size_t i = 0; i < kNumPoses; i++) {
       state_pointers.push_back(state_batch_set1->StateBlockDevicePtr(i));
@@ -140,6 +145,8 @@ struct SyntheticPGOProblem {
         std::make_unique<SE3BetweenFactorBatch>(extra_owned_deltas[0].data(), half));
     between_factor_batches.push_back(
         std::make_unique<SE3BetweenFactorBatch>(extra_owned_deltas[1].data(), kNumPoses - half));
+    between_factor_batches[0]->SetNumFactors(half);
+    between_factor_batches[1]->SetNumFactors(kNumPoses - half);
 
     std::vector<float *> ptrs_first, ptrs_second;
     for (size_t i = 0; i < half; i++) {

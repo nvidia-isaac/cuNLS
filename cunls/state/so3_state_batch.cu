@@ -98,20 +98,18 @@ void LaunchFusedSo3Plus(cudaStream_t stream, const float *x, const float *delta,
 
 }  // namespace
 
-SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
+SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity)
+    : Base(device_ptr, capacity),
       cublas_handle_(cublas_handle),
-      delta_rotations_(num_blocks),
-      twists_(num_blocks * 3) {}
+      delta_rotations_(capacity),
+      twists_(capacity * 3) {}
 
-SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks, const int *device_constant_state_ids,
-                             size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
+SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity,
+                             const int *device_constant_state_ids, size_t const_capacity)
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
       cublas_handle_(cublas_handle),
-      delta_rotations_(num_blocks),
-      twists_(num_blocks * 3) {}
+      delta_rotations_(capacity),
+      twists_(capacity * 3) {}
 
 void SO3StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
                                 bool invert_delta, cudaStream_t stream) {

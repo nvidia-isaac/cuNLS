@@ -49,11 +49,12 @@ class SO2PriorFactorBatch : public SizedFactorBatch<1, 1> {
    * @brief Constructs a batch of SO(2) prior factors.
    *
    * @param observations_ptr Pointer to GPU device memory containing target
-   * rotations. Must point to at least num_factors * 4 floats.
-   * @param num_factors Number of factors in the batch.
+   * rotations. Must point to at least capacity * 4 floats.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  SO2PriorFactorBatch(const SO2Rotation *observations_ptr, size_t num_factors)
-      : observations_ptr_(observations_ptr), num_factors_(num_factors) {}
+  SO2PriorFactorBatch(const SO2Rotation *observations_ptr, size_t capacity)
+      : SizedFactorBatch(capacity), observations_ptr_(observations_ptr) {}
 
   /**
    * @brief Evaluates SO(2) prior residuals and optionally Jacobians.
@@ -72,20 +73,11 @@ class SO2PriorFactorBatch : public SizedFactorBatch<1, 1> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final;
 
-  /**
-   * @brief Returns the number of factors in the batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SO2PriorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target rotations.
   const Matrix<2> *observations_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
 };
 
 }  // namespace cunls

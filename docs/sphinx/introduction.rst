@@ -145,15 +145,109 @@ Core concepts
   measurements are gross outliers, and return the inlier set
   (:doc:`ransac`).
 
+.. _capacity-and-active-count:
+
+===============================================================================
+Capacity and active count
+===============================================================================
+
+.. important::
+
+   Every factor batch and state batch has **two sizes**. The constructor takes
+   the **capacity**; the **active count** starts at **0** and must be set with
+   ``SetNumFactors`` / ``SetNumStateBlocks`` (Python: ``set_num_factors`` /
+   ``set_num_state_blocks``) before solving. A solve with nothing active throws
+   ``std::invalid_argument`` (Python ``ValueError``).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 41 41
+
+   * -
+     - **Capacity**
+     - **Active count** (``NumFactors()`` / ``NumStateBlocks()``)
+   * - What it is
+     - How many factors (state blocks) the batch's device buffers hold.
+     - How many of the *first* factors (blocks) the next solve uses.
+   * - Set by
+     - The constructor. Fixed for the batch's lifetime.
+     - ``SetNumFactors(n)`` / ``SetNumStateBlocks(n, num_const)``, any
+       ``n <= Capacity()``. Starts at 0.
+   * - Cost of changing
+     - Not changeable.
+     - Host-only assignment: no allocation, no device work, no sync.
+   * - Typical value
+     - The largest problem you expect.
+     - The size of the problem you are solving now.
+
+**Why two sizes.** Real-time applications (tracking, sliding-window SLAM,
+per-frame registration) solve a new problem every frame, with a different
+number of measurements and states each time. They allocate their device
+buffers *once*, for the largest problem, construct the batches *once* with that
+capacity, and then, every frame, rewrite the buffer contents in place and set
+the active counts. Nothing is reallocated or reconstructed, and the solve only
+pays for the active part. A one-shot solve simply sets the active count equal
+to the capacity.
+
+.. code-block:: cpp
+
+   // Once: buffers and batches sized for the largest problem (the capacity).
+   const size_t max_points = 100000;
+   cunls::dvector<Vector<2>> obs(max_points);
+   cunls::dvector<Vector<3>> pts(max_points);
+   cunls::PnPFactorBatch pnp(obs.data(), pts.data(), /*capacity=*/max_points);
+   // ... state batch, problem, minimizer ...
+
+   // Every frame: write the first num_points entries, then set the active count.
+   pnp.SetNumFactors(num_points);       // num_points <= max_points
+   pose_state.SetNumStateBlocks(1);
+   minimizer.Minimize(stream, problem);
+
+.. code-block:: python
+
+   pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, max_points)   # capacity
+   pnp.set_num_factors(num_points)                                # active count
+
+**Rules.**
+
+- Every buffer bound to a batch must hold its **capacity**: measurements,
+  state values, constant ids, connectivity tables.
+- Only the **active** part is read and written by a solve: factors
+  ``[0, NumFactors())``, state blocks ``[0, NumStateBlocks())``, the first
+  ``num_const`` constant ids. Results are written back to the active state
+  blocks only.
+- Factors may only reference **active** state blocks. Block addresses
+  (``StateBlockDevicePtr(i)``) are valid for every ``i < Capacity()``, so the
+  connectivity of the next solve can be built before the counts are set.
+- Connectivity must cover the active factors: a host pointer list needs at
+  least ``NumFactors() * B`` entries (``Problem::SetStatePointers`` replaces
+  it); device tables are read for their first ``NumFactors() * B`` entries.
+- Never change sizes or buffer contents while a solve that uses them runs.
+- Every minimizer checks the sizes at the start of ``Minimize``
+  (``Problem::CheckSizes``, host-only): nothing active, a count above its
+  capacity, or connectivity shorter than the active factors throws with an
+  explanatory message.
+
+How connectivity is rewritten between solves (host lists, device pointer
+tables, device index tables) is described in
+``docs/design/reusable_buffers.md`` and in the ``Problem`` API reference
+(:doc:`api/minimizer`).
+
 ===============================================================================
 High-level solve flow
 ===============================================================================
 
-1. Allocate state data on the GPU.
-2. Wrap state memory in one or more `StateBatch` objects.
-3. Build one or more `FactorBatch` objects from observations.
-4. Add state batches and factor batches to a `Problem`.
-5. Run a minimizer and inspect `MinimizerSummary`.
+1. Allocate state and measurement data on the GPU, sized for the largest
+   problem (the capacity).
+2. Wrap state memory in one or more `StateBatch` objects (constructed with
+   their capacity).
+3. Build one or more `FactorBatch` objects from observations (constructed
+   with their capacity).
+4. Set the active counts: ``SetNumStateBlocks`` / ``SetNumFactors``
+   (see :ref:`capacity-and-active-count`).
+5. Add state batches and factor batches to a `Problem`.
+6. Run a minimizer and inspect `MinimizerSummary`. To solve the next problem,
+   rewrite the buffers, set the new active counts, and solve again.
 
 ===============================================================================
 Supported optimization patterns

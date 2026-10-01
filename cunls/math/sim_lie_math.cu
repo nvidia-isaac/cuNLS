@@ -4,6 +4,7 @@
  */
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/sim_lie_math.h"
 
 namespace cunls {
@@ -33,8 +34,7 @@ constexpr size_t kSimMathBlockSize = 256;
  * @param[out] X Diagonal element of V
  * @param[out] thetaY Off-diagonal magnitude (theta * Y)
  */
-static __device__ void ComputeVCoeffsSim2(float theta, float lambda, float &X,
-                                          float &thetaY) {
+static __device__ void ComputeVCoeffsSim2(float theta, float lambda, float &X, float &thetaY) {
   const float lambda2 = lambda * lambda;
   const float theta2 = theta * theta;
 
@@ -76,10 +76,9 @@ static __device__ void ComputeVCoeffsSim2(float theta, float lambda, float &X,
 
   float alpha_coeff = lambda2 / d2;
   float s_inv = expf(-lambda);
-  X = alpha_coeff * (1.0f - s_inv) / lambda +
-      (1.0f - alpha_coeff) * (A - lambda * B);
-  float Y = alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 +
-            (1.0f - alpha_coeff) * (B - lambda * C);
+  X = alpha_coeff * (1.0f - s_inv) / lambda + (1.0f - alpha_coeff) * (A - lambda * B);
+  float Y =
+      alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 + (1.0f - alpha_coeff) * (B - lambda * C);
   thetaY = theta * Y;
 }
 
@@ -99,9 +98,8 @@ static __device__ void ComputeVCoeffsSim2(float theta, float lambda, float &X,
  * where [tx, ty] = V(theta, lambda) * [u_x, u_y] and
  * V = [[X, -theta*Y], [theta*Y, X]] is the Sim(2) V-matrix.
  */
-__global__ void exp_sim2_kernel(const float *tangent, size_t tangent_stride,
-                                float *transforms, size_t transform_stride,
-                                size_t size) {
+__global__ void exp_sim2_kernel(const float *tangent, size_t tangent_stride, float *transforms,
+                                size_t transform_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -143,8 +141,7 @@ __global__ void exp_sim2_kernel(const float *tangent, size_t tangent_stride,
  *
  * V^{-1} = [[X, thetaY], [-thetaY, X]] / (X^2 + (thetaY)^2).
  */
-__global__ void log_sim2_kernel(const float *transforms,
-                                size_t transform_stride, float *tangent,
+__global__ void log_sim2_kernel(const float *transforms, size_t transform_stride, float *tangent,
                                 size_t tangent_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
@@ -191,38 +188,19 @@ __global__ void log_sim2_kernel(const float *transforms,
  * Note: unlike SE(2), the translation block includes the scale factor s =
  * 1/(1/s).
  */
-__global__ void inverse_sim2_kernel(const float *transforms,
-                                    size_t transform_stride,
-                                    float *inverse_transforms,
-                                    size_t inverse_stride, size_t size) {
+__global__ void inverse_sim2_kernel(const float *transforms, size_t transform_stride,
+                                    float *inverse_transforms, size_t inverse_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
-
-  const float *T = transforms + idx * transform_stride;
-  float *Ti = inverse_transforms + idx * inverse_stride;
-
-  float r00 = T[0], r01 = T[1], tx = T[2];
-  float r10 = T[3], r11 = T[4], ty = T[5];
-  float inv_s = T[8];
-  float s = 1.0f / inv_s;
-
-  Ti[0] = r00;
-  Ti[1] = r10;
-  Ti[2] = -s * (r00 * tx + r10 * ty);
-  Ti[3] = r01;
-  Ti[4] = r11;
-  Ti[5] = -s * (r01 * tx + r11 * ty);
-  Ti[6] = 0.0f;
-  Ti[7] = 0.0f;
-  Ti[8] = s;
+  lie_device::InverseSim2(transforms + idx * transform_stride,
+                          inverse_transforms + idx * inverse_stride);
 }
 
 __global__ void __launch_bounds__(256, 4)
-    jacobian_right_inverse_sim2_kernel(const float *tangent,
-                                       size_t tangent_stride, float *jacobians,
-                                       size_t jacobian_stride, size_t size) {
+    jacobian_right_inverse_sim2_kernel(const float *tangent, size_t tangent_stride,
+                                       float *jacobians, size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -237,27 +215,24 @@ __global__ void __launch_bounds__(256, 4)
 // Sim(2) Host wrappers
 // ============================================================================
 
-void ComputeExpSim2(cudaStream_t stream, const float *tangent,
-                    size_t tangent_stride, size_t transform_stride, size_t size,
-                    float *transforms) {
+void ComputeExpSim2(cudaStream_t stream, const float *tangent, size_t tangent_stride,
+                    size_t transform_stride, size_t size, float *transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
-  exp_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
-      tangent, tangent_stride, transforms, transform_stride, size);
+  exp_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(tangent, tangent_stride, transforms,
+                                                                transform_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSim2(cudaStream_t stream, const float *transforms,
-                    size_t transform_stride, size_t tangent_stride, size_t size,
-                    float *tangent) {
+void ComputeLogSim2(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                    size_t tangent_stride, size_t size, float *tangent) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
-  log_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
-      transforms, transform_stride, tangent, tangent_stride, size);
+  log_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(transforms, transform_stride,
+                                                                tangent, tangent_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeInverseSim2(cudaStream_t stream, const float *transforms,
-                        size_t transform_stride, size_t inverse_stride,
-                        size_t size, float *inverse_transforms) {
+void ComputeInverseSim2(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                        size_t inverse_stride, size_t size, float *inverse_transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   inverse_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, inverse_transforms, inverse_stride, size);
@@ -265,12 +240,10 @@ void ComputeInverseSim2(cudaStream_t stream, const float *transforms,
 }
 
 void ComputeJacobianRightInverseSim2(cudaStream_t stream, const float *tangent,
-                                     size_t tangent_stride,
-                                     size_t jacobian_stride, size_t size,
+                                     size_t tangent_stride, size_t jacobian_stride, size_t size,
                                      float *jacobians) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
-  jacobian_right_inverse_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0,
-                                       stream>>>(
+  jacobian_right_inverse_sim2_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       tangent, tangent_stride, jacobians, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
@@ -280,8 +253,7 @@ void ComputeJacobianRightInverseSim2(cudaStream_t stream, const float *tangent,
 // ============================================================================
 
 /// C = A * B (3x3, row-major)
-static __device__ void mat3_mul(const float *__restrict__ A,
-                                const float *__restrict__ B,
+static __device__ void mat3_mul(const float *__restrict__ A, const float *__restrict__ B,
                                 float *__restrict__ C) {
 #pragma unroll
   for (int r = 0; r < 3; ++r) {
@@ -298,8 +270,7 @@ static __device__ void mat3_mul(const float *__restrict__ A,
 }
 
 /// out = M * v (3x3 * 3x1)
-static __device__ void mat3_vec(const float *__restrict__ M,
-                                const float *__restrict__ v,
+static __device__ void mat3_vec(const float *__restrict__ M, const float *__restrict__ v,
                                 float *__restrict__ out) {
 #pragma unroll
   for (int r = 0; r < 3; ++r) {
@@ -313,8 +284,7 @@ static __device__ void mat3_vec(const float *__restrict__ M,
 }
 
 /// Invert a 3x3 matrix via cofactors. Returns false if singular.
-static __device__ bool mat3_inv(const float *__restrict__ M,
-                                float *__restrict__ Minv) {
+static __device__ bool mat3_inv(const float *__restrict__ M, float *__restrict__ Minv) {
   float c0 = M[4] * M[8] - M[5] * M[7];
   float c1 = -(M[3] * M[8] - M[5] * M[6]);
   float c2 = M[3] * M[7] - M[4] * M[6];
@@ -367,9 +337,8 @@ static __device__ void skew3(const float *v, float *S) {
  * using a blending between the SE(3)-like and pure-scale regimes
  * (Eade, "Lie Groups for 2D and 3D Transformations").
  */
-__global__ void exp_sim3_kernel(const float *tangent, size_t tangent_stride,
-                                float *transforms, size_t transform_stride,
-                                size_t size) {
+__global__ void exp_sim3_kernel(const float *tangent, size_t tangent_stride, float *transforms,
+                                size_t transform_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -452,8 +421,7 @@ __global__ void exp_sim3_kernel(const float *tangent, size_t tangent_stride,
  * V is assembled as V = diag*I + Q*[w]_x + R_c*w*w^T, then inverted
  * via cofactor expansion of the resulting 3x3 matrix.
  */
-__global__ void log_sim3_kernel(const float *transforms,
-                                size_t transform_stride, float *tangent,
+__global__ void log_sim3_kernel(const float *transforms, size_t transform_stride, float *tangent,
                                 size_t tangent_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
@@ -561,40 +529,14 @@ __global__ void log_sim3_kernel(const float *transforms,
  *
  * For T = [R t; 0 0 0 1/s], the inverse is [R^T, -s*R^T*t; 0 0 0 s].
  */
-__global__ void inverse_sim3_kernel(const float *transforms,
-                                    size_t transform_stride,
-                                    float *inverse_transforms,
-                                    size_t inverse_stride, size_t size) {
+__global__ void inverse_sim3_kernel(const float *transforms, size_t transform_stride,
+                                    float *inverse_transforms, size_t inverse_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
   }
-
-  const float *T = transforms + idx * transform_stride;
-  float *Ti = inverse_transforms + idx * inverse_stride;
-
-  float r00 = T[0], r01 = T[1], r02 = T[2], tx = T[3];
-  float r10 = T[4], r11 = T[5], r12 = T[6], ty = T[7];
-  float r20 = T[8], r21 = T[9], r22 = T[10], tz = T[11];
-  float inv_s = T[15];
-  float s = 1.0f / inv_s;
-
-  Ti[0] = r00;
-  Ti[1] = r10;
-  Ti[2] = r20;
-  Ti[3] = -s * (r00 * tx + r10 * ty + r20 * tz);
-  Ti[4] = r01;
-  Ti[5] = r11;
-  Ti[6] = r21;
-  Ti[7] = -s * (r01 * tx + r11 * ty + r21 * tz);
-  Ti[8] = r02;
-  Ti[9] = r12;
-  Ti[10] = r22;
-  Ti[11] = -s * (r02 * tx + r12 * ty + r22 * tz);
-  Ti[12] = 0.0f;
-  Ti[13] = 0.0f;
-  Ti[14] = 0.0f;
-  Ti[15] = s;
+  lie_device::InverseSim3(transforms + idx * transform_stride,
+                          inverse_transforms + idx * inverse_stride);
 }
 
 /**
@@ -633,9 +575,8 @@ __global__ void inverse_sim3_kernel(const float *transforms,
 constexpr size_t kSim3JacBlockSize = 128;
 
 __global__ void __launch_bounds__(128, 5)
-    jacobian_right_inverse_sim3_kernel(const float *tangent,
-                                       size_t tangent_stride, float *jacobians,
-                                       size_t jacobian_stride, size_t size) {
+    jacobian_right_inverse_sim3_kernel(const float *tangent, size_t tangent_stride,
+                                       float *jacobians, size_t jacobian_stride, size_t size) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= size) {
     return;
@@ -711,10 +652,8 @@ __global__ void __launch_bounds__(128, 5)
   float W2u[3] = {w[0] * dot_wu - theta2 * u[0], w[1] * dot_wu - theta2 * u[1],
                   w[2] * dot_wu - theta2 * u[2]};
 
-  constexpr float c1 = 0.5f, c2 = 1.0f / 12.0f, c4 = -1.0f / 720.0f,
-                  c6 = 1.0f / 30240.0f;
-  constexpr float d0 = 0.5f, d1 = 1.0f / 12.0f, d3 = -1.0f / 720.0f,
-                  d5 = 1.0f / 30240.0f;
+  constexpr float c1 = 0.5f, c2 = 1.0f / 12.0f, c4 = -1.0f / 720.0f, c6 = 1.0f / 30240.0f;
+  constexpr float d0 = 0.5f, d1 = 1.0f / 12.0f, d3 = -1.0f / 720.0f, d5 = 1.0f / 30240.0f;
 
   float ma = lam, mb = 1.0f, mc = 0.0f;
 
@@ -985,117 +924,38 @@ __global__ void __launch_bounds__(128, 5)
  *
  * where [t]_x is the skew-symmetric matrix of t.
  */
-__global__ void compute_adjoint_sim3_kernel(const float *transforms,
-                                            size_t transform_stride,
-                                            float *adjoints,
-                                            size_t adjoint_stride,
+__global__ void compute_adjoint_sim3_kernel(const float *transforms, size_t transform_stride,
+                                            float *adjoints, size_t adjoint_stride,
                                             size_t num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_factors) {
     return;
   }
-
-  const float *T = transforms + tid * transform_stride;
-  float *Ad = adjoints + tid * adjoint_stride;
-
-  float R00 = T[0], R01 = T[1], R02 = T[2];
-  float R10 = T[4], R11 = T[5], R12 = T[6];
-  float R20 = T[8], R21 = T[9], R22 = T[10];
-  float tx = T[3], ty = T[7], tz = T[11];
-  float s = 1.0f / T[15];
-
-  // A = s * [t]_x * R, where [t]_x = [[0,-tz,ty],[tz,0,-tx],[-ty,tx,0]]
-  float A00 = s * (-tz * R10 + ty * R20);
-  float A01 = s * (-tz * R11 + ty * R21);
-  float A02 = s * (-tz * R12 + ty * R22);
-  float A10 = s * (tz * R00 - tx * R20);
-  float A11 = s * (tz * R01 - tx * R21);
-  float A12 = s * (tz * R02 - tx * R22);
-  float A20 = s * (-ty * R00 + tx * R10);
-  float A21 = s * (-ty * R01 + tx * R11);
-  float A22 = s * (-ty * R02 + tx * R12);
-
-  // Row 0-2: [R | 0 | 0]
-  Ad[0] = R00;
-  Ad[1] = R01;
-  Ad[2] = R02;
-  Ad[3] = 0;
-  Ad[4] = 0;
-  Ad[5] = 0;
-  Ad[6] = 0;
-  Ad[7] = R10;
-  Ad[8] = R11;
-  Ad[9] = R12;
-  Ad[10] = 0;
-  Ad[11] = 0;
-  Ad[12] = 0;
-  Ad[13] = 0;
-  Ad[14] = R20;
-  Ad[15] = R21;
-  Ad[16] = R22;
-  Ad[17] = 0;
-  Ad[18] = 0;
-  Ad[19] = 0;
-  Ad[20] = 0;
-
-  // Row 3-5: [A | sR | -s*t]
-  Ad[21] = A00;
-  Ad[22] = A01;
-  Ad[23] = A02;
-  Ad[24] = s * R00;
-  Ad[25] = s * R01;
-  Ad[26] = s * R02;
-  Ad[27] = -s * tx;
-  Ad[28] = A10;
-  Ad[29] = A11;
-  Ad[30] = A12;
-  Ad[31] = s * R10;
-  Ad[32] = s * R11;
-  Ad[33] = s * R12;
-  Ad[34] = -s * ty;
-  Ad[35] = A20;
-  Ad[36] = A21;
-  Ad[37] = A22;
-  Ad[38] = s * R20;
-  Ad[39] = s * R21;
-  Ad[40] = s * R22;
-  Ad[41] = -s * tz;
-
-  // Row 6: [0 0 0 0 0 0 1]
-  Ad[42] = 0;
-  Ad[43] = 0;
-  Ad[44] = 0;
-  Ad[45] = 0;
-  Ad[46] = 0;
-  Ad[47] = 0;
-  Ad[48] = 1;
+  lie_device::AdjointSim3(transforms + tid * transform_stride, adjoints + tid * adjoint_stride);
 }
 
 // ============================================================================
 // Sim(3) Host wrappers
 // ============================================================================
 
-void ComputeExpSim3(cudaStream_t stream, const float *tangent,
-                    size_t tangent_stride, size_t transform_stride, size_t size,
-                    float *transforms) {
+void ComputeExpSim3(cudaStream_t stream, const float *tangent, size_t tangent_stride,
+                    size_t transform_stride, size_t size, float *transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
-  exp_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
-      tangent, tangent_stride, transforms, transform_stride, size);
+  exp_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(tangent, tangent_stride, transforms,
+                                                                transform_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSim3(cudaStream_t stream, const float *transforms,
-                    size_t transform_stride, size_t tangent_stride, size_t size,
-                    float *tangent) {
+void ComputeLogSim3(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                    size_t tangent_stride, size_t size, float *tangent) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
-  log_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
-      transforms, transform_stride, tangent, tangent_stride, size);
+  log_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(transforms, transform_stride,
+                                                                tangent, tangent_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeInverseSim3(cudaStream_t stream, const float *transforms,
-                        size_t transform_stride, size_t inverse_stride,
-                        size_t size, float *inverse_transforms) {
+void ComputeInverseSim3(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                        size_t inverse_stride, size_t size, float *inverse_transforms) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   inverse_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, inverse_transforms, inverse_stride, size);
@@ -1103,23 +963,20 @@ void ComputeInverseSim3(cudaStream_t stream, const float *transforms,
 }
 
 void ComputeJacobianRightInverseSim3(cudaStream_t stream, const float *tangent,
-                                     size_t tangent_stride,
-                                     size_t jacobian_stride, size_t size,
+                                     size_t tangent_stride, size_t jacobian_stride, size_t size,
                                      float *jacobians) {
   size_t num_blocks = (size + kSim3JacBlockSize - 1) / kSim3JacBlockSize;
-  jacobian_right_inverse_sim3_kernel<<<num_blocks, kSim3JacBlockSize, 0,
-                                       stream>>>(
+  jacobian_right_inverse_sim3_kernel<<<num_blocks, kSim3JacBlockSize, 0, stream>>>(
       tangent, tangent_stride, jacobians, jacobian_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeAdjointSim3(cudaStream_t stream, const float *transforms,
-                        size_t transform_stride, float *adjoints,
-                        size_t adjoint_stride, size_t size) {
+void ComputeAdjointSim3(cudaStream_t stream, const float *transforms, size_t transform_stride,
+                        float *adjoints, size_t adjoint_stride, size_t size) {
   size_t num_blocks = (size + kSimMathBlockSize - 1) / kSimMathBlockSize;
   compute_adjoint_sim3_kernel<<<num_blocks, kSimMathBlockSize, 0, stream>>>(
       transforms, transform_stride, adjoints, adjoint_stride, size);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-} // namespace cunls
+}  // namespace cunls

@@ -39,8 +39,7 @@
 namespace cunls {
 namespace {
 
-void GenerateRandomSPDMatrix(int n, int seed, float value_abs_bound,
-                             std::vector<float> &matrix) {
+void GenerateRandomSPDMatrix(int n, int seed, float value_abs_bound, std::vector<float> &matrix) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> dist(-value_abs_bound, value_abs_bound);
   std::vector<float> m(static_cast<size_t>(n) * n);
@@ -63,8 +62,7 @@ void GenerateRandomSPDMatrix(int n, int seed, float value_abs_bound,
   }
 }
 
-std::vector<float> MultiplyMatVec(const std::vector<float> &A,
-                                  const std::vector<float> &x, int n) {
+std::vector<float> MultiplyMatVec(const std::vector<float> &A, const std::vector<float> &x, int n) {
   std::vector<float> out(n, 0.0f);
   for (int i = 0; i < n; ++i) {
     float sum = 0.0f;
@@ -76,9 +74,9 @@ std::vector<float> MultiplyMatVec(const std::vector<float> &A,
   return out;
 }
 
-void DenseToCSR(const std::vector<float> &dense, int n,
-                std::vector<int> &row_ptr, std::vector<int> &col_idx,
-                std::vector<float> &values, float zero_threshold = 0.0f) {
+void DenseToCSR(const std::vector<float> &dense, int n, std::vector<int> &row_ptr,
+                std::vector<int> &col_idx, std::vector<float> &values,
+                float zero_threshold = 0.0f) {
   row_ptr.clear();
   col_idx.clear();
   values.clear();
@@ -108,17 +106,17 @@ SE3Transform MakeIdentityPose() {
 }
 
 Vector<2> ProjectPoint(const SE3Transform &pose, const Vector<3> &point_world) {
-  const float x = pose[0] * point_world[0] + pose[1] * point_world[1] +
-                  pose[2] * point_world[2] + pose[3];
-  const float y = pose[4] * point_world[0] + pose[5] * point_world[1] +
-                  pose[6] * point_world[2] + pose[7];
-  const float z = pose[8] * point_world[0] + pose[9] * point_world[1] +
-                  pose[10] * point_world[2] + pose[11];
+  const float x =
+      pose[0] * point_world[0] + pose[1] * point_world[1] + pose[2] * point_world[2] + pose[3];
+  const float y =
+      pose[4] * point_world[0] + pose[5] * point_world[1] + pose[6] * point_world[2] + pose[7];
+  const float z =
+      pose[8] * point_world[0] + pose[9] * point_world[1] + pose[10] * point_world[2] + pose[11];
   return Vector<2>{x / z, y / z};
 }
 
 class DenseLDLTSolverTestFixture : public ::testing::Test {
-protected:
+ protected:
   int spd_generation_seed_ = 7;
   float spd_value_abs_bound_ = 0.5f;
   std::vector<int> dense_solver_validation_sizes_ = {2, 3, 4, 8, 16, 24, 32};
@@ -131,8 +129,7 @@ protected:
   float pnp_depth_max_ = 8.0f;
   Vector<3> true_pose_translation_ = {0.2f, -0.15f, 0.35f};
   Vector<3> initial_pose_translation_ = {0.45f, -0.45f, 0.8f};
-  std::vector<size_t> pnp_sequential_point_counts_ = {1000, 2000, 3000, 4000,
-                                                      5000};
+  std::vector<size_t> pnp_sequential_point_counts_ = {1000, 2000, 3000, 4000, 5000};
 
   float linear_solver_rhs_scale_ = 0.3f;
   float linear_solver_base_value_ = 0.25f;
@@ -146,8 +143,7 @@ protected:
 TEST_F(DenseLDLTSolverTestFixture, SolvePnPWithDenseSolver) {
   const size_t num_points = pnp_num_points_;
   std::mt19937 rng(pnp_generation_seed_);
-  std::uniform_real_distribution<float> xy_dist(-pnp_xy_abs_bound_,
-                                                pnp_xy_abs_bound_);
+  std::uniform_real_distribution<float> xy_dist(-pnp_xy_abs_bound_, pnp_xy_abs_bound_);
   std::uniform_real_distribution<float> z_dist(pnp_depth_min_, pnp_depth_max_);
 
   std::vector<Vector<3>> points_host(num_points);
@@ -176,13 +172,13 @@ TEST_F(DenseLDLTSolverTestFixture, SolvePnPWithDenseSolver) {
   auto point_const_ids = test_utils::MakeSequentialIds(num_points);
   dvector<int> point_const_ids_device(point_const_ids);
 
-  SE3StateBatch pose_batch(
-      cublas_handle_, reinterpret_cast<const float *>(poses_device.data()), 1);
-  VectorStateBatch<3> point_batch(
-      reinterpret_cast<const float *>(points_device.data()), num_points,
-      point_const_ids_device.data(), point_const_ids.size());
-  ReprojectionFactorBatch reprojection_factor(observations_device.data(),
-                                              num_points);
+  SE3StateBatch pose_batch(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()), 1);
+  pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
+  VectorStateBatch<3> point_batch(reinterpret_cast<const float *>(points_device.data()), num_points,
+                                  point_const_ids_device.data(), point_const_ids.size());
+  point_batch.SetNumStateBlocks(point_batch.Capacity(), point_batch.ConstCapacity());
+  ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
+  reprojection_factor.SetNumFactors(reprojection_factor.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(num_points * 2);
@@ -225,8 +221,7 @@ TEST_F(DenseLDLTSolverTestFixture, SolveDenseSystemAcrossDifferentSizes) {
     SCOPED_TRACE("Matrix size = " + std::to_string(n));
 
     std::vector<float> host_A;
-    GenerateRandomSPDMatrix(n, spd_generation_seed_ + n, spd_value_abs_bound_,
-                            host_A);
+    GenerateRandomSPDMatrix(n, spd_generation_seed_ + n, spd_value_abs_bound_, host_A);
 
     std::vector<float> x_true(n, 0.0f);
     for (int i = 0; i < n; ++i) {
@@ -244,8 +239,7 @@ TEST_F(DenseLDLTSolverTestFixture, SolveDenseSystemAcrossDifferentSizes) {
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(
-        solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -287,8 +281,7 @@ TEST_F(DenseLDLTSolverTestFixture, SolveSymmetricIndefiniteSystem) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(
-      solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -299,8 +292,7 @@ TEST_F(DenseLDLTSolverTestFixture, SolveSymmetricIndefiniteSystem) {
   }
 }
 
-TEST_F(DenseLDLTSolverTestFixture,
-       SolvePnPSequentiallyForDifferentPointCounts) {
+TEST_F(DenseLDLTSolverTestFixture, SolvePnPSequentiallyForDifferentPointCounts) {
   MinimizerOptions options;
   options.max_num_iterations = 20;
   options.state_tolerance = 1e-10f;
@@ -315,10 +307,8 @@ TEST_F(DenseLDLTSolverTestFixture,
     SCOPED_TRACE("PnP point count = " + std::to_string(num_points));
 
     std::mt19937 rng(pnp_generation_seed_ + static_cast<int>(num_points));
-    std::uniform_real_distribution<float> xy_dist(-pnp_xy_abs_bound_,
-                                                  pnp_xy_abs_bound_);
-    std::uniform_real_distribution<float> z_dist(pnp_depth_min_,
-                                                 pnp_depth_max_);
+    std::uniform_real_distribution<float> xy_dist(-pnp_xy_abs_bound_, pnp_xy_abs_bound_);
+    std::uniform_real_distribution<float> z_dist(pnp_depth_min_, pnp_depth_max_);
 
     std::vector<Vector<3>> points_host(num_points);
     for (size_t i = 0; i < num_points; ++i) {
@@ -346,14 +336,15 @@ TEST_F(DenseLDLTSolverTestFixture,
     auto point_const_ids = test_utils::MakeSequentialIds(num_points);
     dvector<int> point_const_ids_device(point_const_ids);
 
-    SE3StateBatch pose_batch(
-        cublas_handle_, reinterpret_cast<const float *>(poses_device.data()),
-        1);
-    VectorStateBatch<3> point_batch(
-        reinterpret_cast<const float *>(points_device.data()), num_points,
-        point_const_ids_device.data(), point_const_ids.size());
-    ReprojectionFactorBatch reprojection_factor(observations_device.data(),
-                                                num_points);
+    SE3StateBatch pose_batch(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()),
+                             1);
+    pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
+    VectorStateBatch<3> point_batch(reinterpret_cast<const float *>(points_device.data()),
+                                    num_points, point_const_ids_device.data(),
+                                    point_const_ids.size());
+    point_batch.SetNumStateBlocks(point_batch.Capacity(), point_batch.ConstCapacity());
+    ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
+    reprojection_factor.SetNumFactors(reprojection_factor.Capacity());
 
     std::vector<float *> state_pointers;
     state_pointers.reserve(num_points * 2);
@@ -401,8 +392,7 @@ TEST_F(DenseLDLTSolverTestFixture, SolveReturnsFalseForZeroMatrix) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(
-      solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
@@ -428,13 +418,11 @@ TEST_F(DenseLDLTSolverTestFixture, SolveReturnsFalseForRankDeficientMatrix) {
   dvector<float> rhs(rhs_host);
   dvector<float> result(n);
 
-  ASSERT_TRUE(
-      solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
   ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
 }
 
-TEST_F(DenseLDLTSolverTestFixture,
-       SolveReturnsTrueForValidSystemAfterSingularOne) {
+TEST_F(DenseLDLTSolverTestFixture, SolveReturnsTrueForValidSystemAfterSingularOne) {
   DenseLDLTSolver solver;
 
   // First, feed a singular system and confirm Solve returns false.
@@ -452,8 +440,7 @@ TEST_F(DenseLDLTSolverTestFixture,
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(
-        solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
   }
 
@@ -477,8 +464,7 @@ TEST_F(DenseLDLTSolverTestFixture,
     dvector<float> rhs(rhs_host);
     dvector<float> result(n);
 
-    ASSERT_TRUE(
-        solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
     ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
 
@@ -490,5 +476,5 @@ TEST_F(DenseLDLTSolverTestFixture,
   }
 }
 
-} // namespace
-} // namespace cunls
+}  // namespace
+}  // namespace cunls

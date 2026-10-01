@@ -53,6 +53,16 @@ constexpr float kInlierThreshold = 0.01f;  // ~3.3 sigma of the 2D residual norm
 // The PnP problem on the GPU: one SE(3) pose state and one PnP factor per
 // correspondence, all reading that pose. Built exactly as for any minimizer.
 struct PnPProblem {
+  // Capacity vs. active count. A batch is constructed with its capacity: how many state blocks (or
+  // factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime; size it
+  // once for the largest problem you expect. Right after construction nothing is active:
+  // SetNumStateBlocks / SetNumFactors set the active count, how many of the first slots the next
+  // solve uses (a solve without it throws). The setter is host-only (no allocation, no device work)
+  // and may change the count between solves up to the capacity, which is what lets a real-time
+  // application allocate once and reuse the same buffers every frame while the problem size
+  // changes. This example solves every slot once, so each active count equals its capacity.
+  static constexpr size_t kPoseCapacity = 1;
+  size_t points_capacity;  // correspondences the observation / point buffers hold
   dvector<Vector<3>> points;
   dvector<Vector<2>> observations;
   dvector<SE3Transform> pose;
@@ -62,14 +72,19 @@ struct PnPProblem {
   cunls::Problem problem;
 
   explicit PnPProblem(const examples::PnPScene &scene)
-      : points(scene.points_world),
+      : points_capacity(scene.points_world.size()),
+        points(scene.points_world),
         observations(scene.observations),
         pose(std::vector<SE3Transform>{scene.initial_pose}),
-        pose_state(cublas, reinterpret_cast<const float *>(pose.data()), 1),
-        pnp(observations.data(), points.data(), scene.points_world.size(), /*z_threshold=*/1e-3f) {
+        pose_state(cublas, reinterpret_cast<const float *>(pose.data()), kPoseCapacity),
+        pnp(observations.data(), points.data(), points_capacity, /*z_threshold=*/1e-3f) {
+    const size_t num_poses = 1;
+    const size_t num_points = points_capacity;  // every slot solved: active = capacity
+    pose_state.SetNumStateBlocks(num_poses);
+    pnp.SetNumFactors(num_points);
     problem.AddStateBatch(&pose_state);
-    problem.AddFactorBatch(
-        &pnp, std::vector<float *>(scene.points_world.size(), pose_state.StateBlockDevicePtr(0)));
+    problem.AddFactorBatch(&pnp,
+                           std::vector<float *>(num_points, pose_state.StateBlockDevicePtr(0)));
   }
 
   SE3Transform Pose() const {

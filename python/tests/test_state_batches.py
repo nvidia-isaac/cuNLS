@@ -41,6 +41,9 @@ class TestVectorStateBatches:
         num = 10
         data = cp.zeros(num * dim, dtype=cp.float32)
         sb = cls(data, num)
+        assert sb.capacity == num
+        assert sb.num_state_blocks == 0  # zero until set
+        sb.set_num_state_blocks(num)
         assert sb.num_state_blocks == num
         assert sb.tangent_size == dim
         assert sb.ambient_size == dim
@@ -48,6 +51,7 @@ class TestVectorStateBatches:
     def test_state_block_device_ptr(self):
         data = cp.arange(9, dtype=cp.float32)
         sb = pycunls.VectorStateBatch3(data, 3)
+        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
         ptr0 = sb.state_block_device_ptr(0)
         ptr1 = sb.state_block_device_ptr(1)
         assert ptr0 != 0
@@ -58,7 +62,11 @@ class TestVectorStateBatches:
         data = cp.zeros(30, dtype=cp.float32)
         const_ids = cp.array([0, 2], dtype=cp.int32)
         sb = pycunls.VectorStateBatch3(data, 10, const_ids, 2)
+        assert (sb.capacity, sb.const_capacity) == (10, 2)
+        sb.set_num_state_blocks(10, 2)
         assert sb.num_state_blocks == 10
+        with pytest.raises(ValueError):
+            sb.set_num_state_blocks(10, 3)
 
 
 class TestSE3StateBatch:
@@ -67,6 +75,8 @@ class TestSE3StateBatch:
         num = 5
         data = cp.zeros(num * 16, dtype=cp.float32)
         sb = pycunls.SE3StateBatch(cublas, data, num)
+        assert sb.num_state_blocks == 0  # zero until set
+        sb.set_num_state_blocks(num)
         assert sb.num_state_blocks == num
         assert sb.tangent_size == 6
         assert sb.ambient_size == 16
@@ -75,12 +85,14 @@ class TestSE3StateBatch:
         data = cp.zeros(3 * 16, dtype=cp.float32)
         const_ids = cp.array([0], dtype=cp.int32)
         sb = pycunls.SE3StateBatch(cublas, data, 3, const_ids, 1)
+        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
         assert sb.num_state_blocks == 3
 
     def test_pointer_stride(self, cublas):
         num = 4
         data = cp.zeros(num * 16, dtype=cp.float32)
         sb = pycunls.SE3StateBatch(cublas, data, num)
+        sb.set_num_state_blocks(sb.capacity, sb.const_capacity)
         p0 = sb.state_block_device_ptr(0)
         p1 = sb.state_block_device_ptr(1)
         assert p1 - p0 == 16 * 4

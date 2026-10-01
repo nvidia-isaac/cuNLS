@@ -248,6 +248,7 @@ struct VectorStateData {
     const int *const_ids_ptr = const_ids.empty() ? nullptr : const_ids.data();
     batch = std::make_unique<VectorStateBatch<Dim>>(data_ptr, num_vectors, const_ids_ptr,
                                                     const_ids.size());
+    batch->SetNumStateBlocks(num_vectors, const_ids.size());
   }
 
   /** @brief Returns a reference to the managed VectorStateBatch. */
@@ -283,6 +284,7 @@ struct PriorFactorData {
     observations_device = DeviceVector<Vector<Dim>>(observations);
     factor_batch = std::make_unique<PriorVectorFactorBatch<Dim>>(observations_device.data(),
                                                                  observations.size());
+    factor_batch->SetNumFactors(observations.size());
   }
 
   /** @brief Returns a reference to the managed factor batch. */

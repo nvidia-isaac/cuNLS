@@ -96,7 +96,9 @@ TEST(NumericDiffJacobianTest, VectorBetweenMatchesAnalytic) {
 
   VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(states_device.data()),
                                      kNumStates);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_device.data(), kNumFactors);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
@@ -178,7 +180,9 @@ TEST(NumericDiffJacobianTest, SO3BetweenMatchesAnalytic) {
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   SO3StateBatch state_batch(cublas, reinterpret_cast<const float *>(states_d.data()), kNumStates);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   SO3BetweenFactorBatch factor_batch(deltas_d.data(), kNumFactors);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
@@ -266,7 +270,9 @@ TEST(NumericDiffJacobianTest, SE3BetweenMatchesAnalytic) {
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   SE3StateBatch state_batch(cublas, reinterpret_cast<const float *>(states_d.data()), kNumStates);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   SE3BetweenFactorBatch factor_batch(deltas_d.data(), kNumFactors);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {
@@ -334,7 +340,9 @@ TEST(NumericDiffJacobianTest, ForwardDiffMatchesAnalytic) {
 
   VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(states_device.data()),
                                      kNumStates);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_device.data(), kNumFactors);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> state_pointers(kNumFactors * 2);
   for (size_t f = 0; f < kNumFactors; f++) {

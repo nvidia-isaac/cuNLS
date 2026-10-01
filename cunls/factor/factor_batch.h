@@ -18,6 +18,8 @@
 #pragma once
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace cunls {
@@ -149,10 +151,62 @@ class FactorBatch {
   virtual std::vector<size_t> StateBlockSizes() const = 0;
 
   /**
-   * @brief Returns the number of factors in this batch.
-   * @return Number of factors to be evaluated in parallel.
+   * @brief Number of active factors n: the first n measurements of the batch's
+   * buffers are evaluated (see Evaluate's item contract for n == 0 calls).
+   *
+   * Built-in batches store it in the base (FactorBatch(capacity) / SetNumFactors).
+   * Custom batches may override it instead; they then cannot be resized with
+   * SetNumFactors.
    */
-  virtual size_t NumFactors() const = 0;
+  virtual size_t NumFactors() const { return num_factors_; }
+
+  /**
+   * @brief Number of factors the batch's buffers hold: the capacity passed to
+   * the constructor. Constant for the lifetime of the batch; SetNumFactors
+   * accepts any value up to it. Custom batches pass it to the base constructor
+   * (FactorBatch(capacity) / SizedFactorBatch(capacity)).
+   */
+  virtual size_t Capacity() const { return capacity_; }
+
+  /**
+   * @brief Sets the number of active factors, for buffers that are allocated
+   * once and rewritten in place between solves.
+   *
+   * A host-only assignment: no allocation, no device work. Takes effect at the
+   * next Evaluate / Minimize, which then read the first `num_factors`
+   * measurements. Must not be called while a minimization that uses this batch
+   * is running.
+   *
+   * @param num_factors Active count, at most Capacity().
+   * @throws std::invalid_argument if num_factors > Capacity().
+   * @throws std::logic_error if the batch overrides NumFactors() and so cannot
+   *         be resized.
+   */
+  virtual void SetNumFactors(size_t num_factors) {
+    if (num_factors > Capacity()) {
+      throw std::invalid_argument("SetNumFactors(" + std::to_string(num_factors) +
+                                  ") exceeds the capacity of " + std::to_string(Capacity()));
+    }
+    num_factors_ = num_factors;
+    if (NumFactors() != num_factors) {
+      throw std::logic_error(
+          "SetNumFactors: this factor batch overrides NumFactors() and cannot be resized");
+    }
+  }
+
+ protected:
+  /** @brief Batch without a capacity: subclasses that override NumFactors(). */
+  FactorBatch() = default;
+
+  /**
+   * @brief Batch whose buffers hold `capacity` factors. The active count starts
+   * at 0: call SetNumFactors(n) before evaluating or solving.
+   */
+  explicit FactorBatch(size_t capacity) : capacity_(capacity), num_factors_(0) {}
+
+ private:
+  size_t capacity_ = 0;     ///< Factors the buffers hold.
+  size_t num_factors_ = 0;  ///< Active factors.
 };
 
 }  // namespace cunls

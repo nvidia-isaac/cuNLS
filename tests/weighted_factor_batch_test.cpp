@@ -123,6 +123,7 @@ TYPED_TEST(WeightedFactorBatchTest, UniformWeightLM) {
 
   const float weight = 2.0f;
   WeightedType weighted_factor(weight, obs_device.data(), this->num_vectors_);
+  weighted_factor.SetNumFactors(weighted_factor.Capacity());
 
   Problem problem;
   problem.AddFactorBatch(&weighted_factor, device_pointers);
@@ -166,6 +167,7 @@ TYPED_TEST(WeightedFactorBatchTest, PerFactorWeightLM) {
 
   WeightedType weighted_factor(weights_device.data(), this->num_vectors_, obs_device.data(),
                                this->num_vectors_);
+  weighted_factor.SetNumFactors(weighted_factor.Capacity());
 
   Problem problem;
   problem.AddFactorBatch(&weighted_factor, device_pointers);
@@ -202,6 +204,7 @@ TYPED_TEST(WeightedFactorBatchTest, UnitWeightMatchesUnweighted) {
     auto device_pointers = test_utils::CollectStatePointers(vector_states);
 
     WeightedType weighted_factor(1.0f, obs_device.data(), this->num_vectors_);
+    weighted_factor.SetNumFactors(weighted_factor.Capacity());
 
     Problem problem;
     problem.AddFactorBatch(&weighted_factor, device_pointers);
@@ -234,6 +237,7 @@ TYPED_TEST(WeightedFactorBatchTest, LargeUniformWeightConverges) {
 
   const float weight = 100.0f;
   WeightedType weighted_factor(weight, obs_device.data(), this->num_vectors_);
+  weighted_factor.SetNumFactors(weighted_factor.Capacity());
 
   Problem problem;
   problem.AddFactorBatch(&weighted_factor, device_pointers);

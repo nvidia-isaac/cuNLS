@@ -215,11 +215,13 @@ class PgoMinimizerTestFixture : public ::testing::Test {
     pose_batch_ =
         std::make_unique<SE3StateBatch>(cublas_handle_, poses_ptr, n_poses,
                                         fixed_pose_ids_device_.data(), host.fixed_pose_ids.size());
+    pose_batch_->SetNumStateBlocks(pose_batch_->Capacity(), pose_batch_->ConstCapacity());
 
     // Upload sqrt-information matrices and create the factor batch
     sqrt_info_device_ = dvector<Matrix<6>>(host.sqrt_info_matrices);
     info_factor_batch_ = std::make_unique<InformationFactorBatch<SE3BetweenFactorBatch>>(
         cublas_handle_, sqrt_info_device_.data(), n_deltas, pose_deltas_device_.data(), n_deltas);
+    info_factor_batch_->SetNumFactors(info_factor_batch_->Capacity());
 
     // Wire each edge to its two pose state blocks
     state_pointers_.clear();

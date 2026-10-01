@@ -97,20 +97,18 @@ __global__ void se3_plus_fused_kernel(const float *__restrict__ x, const float *
 
 }  // namespace
 
-SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
+SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity)
+    : Base(device_ptr, capacity),
       cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      twists_(num_blocks * 6) {}
+      delta_transforms_(capacity),
+      twists_(capacity * 6) {}
 
-SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks, const int *device_constant_state_ids,
-                             size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
+SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity,
+                             const int *device_constant_state_ids, size_t const_capacity)
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
       cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      twists_(num_blocks * 6) {}
+      delta_transforms_(capacity),
+      twists_(capacity * 6) {}
 
 void SE3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {

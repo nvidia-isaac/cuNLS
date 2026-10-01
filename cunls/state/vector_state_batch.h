@@ -54,27 +54,29 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
    * @brief Constructs a batch of vector state blocks.
    *
    * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least num_blocks * Dim floats of
+   *                   Must point to at least capacity * Dim floats of
    * allocated memory.
-   * @param num_blocks The number of vector state blocks in this batch.
+   * @param capacity Number of state blocks the buffer holds. The active count
+   *        starts at 0: call SetNumStateBlocks(n) before solving.
    */
-  VectorStateBatch(const float *device_ptr, size_t num_blocks) : Base(device_ptr, num_blocks) {}
+  VectorStateBatch(const float *device_ptr, size_t capacity) : Base(device_ptr, capacity) {}
 
   /**
    * @brief Constructs a batch of vector state blocks with constant state
    * constraints.
    *
    * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least num_blocks * Dim floats of
+   *                   Must point to at least capacity * Dim floats of
    * allocated memory.
-   * @param num_blocks The number of vector state blocks in this batch.
+   * @param capacity Number of state blocks the buffer holds. The active count
+   *        starts at 0: call SetNumStateBlocks(n) before solving.
    * @param device_constant_state_ids Pointer to GPU device memory containing
    * the indices of state blocks that should remain constant.
-   * @param num_const_state_blocks The number of constant state blocks.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  VectorStateBatch(const float *device_ptr, size_t num_blocks, const int *device_constant_state_ids,
-                   size_t num_const_state_blocks)
-      : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks) {}
+  VectorStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                   size_t const_capacity)
+      : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
   /**
    * @brief Computes x_plus_delta = x + delta element-wise for all blocks.

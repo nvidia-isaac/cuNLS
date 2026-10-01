@@ -67,10 +67,8 @@ __global__ void collect_and_multiply_so3_kernel(float const *const *state_pointe
   out[8] = t2 * c2 + t5 * c5 + t8 * c8;
 }
 
-SO3PriorFactorBatch::SO3PriorFactorBatch(const SO3Rotation *observations_ptr, size_t num_factors)
-    : observations_ptr_(observations_ptr),
-      num_factors_(num_factors),
-      rotations_error_(num_factors) {}
+SO3PriorFactorBatch::SO3PriorFactorBatch(const SO3Rotation *observations_ptr, size_t capacity)
+    : SizedFactorBatch(capacity), observations_ptr_(observations_ptr), rotations_error_(capacity) {}
 
 bool SO3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,

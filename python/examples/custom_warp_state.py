@@ -52,14 +52,14 @@ def positive_plus_kernel(x: wp.array(dtype=wp.float32), delta: wp.array(dtype=wp
 class PositiveScalarStateBatch(WarpStateBatch):
     """Ambient size 1 (the positive value), tangent size 1 (delta in R)."""
 
-    def __init__(self, data, num_blocks, **kwargs):
-        super().__init__(data, ambient_size=1, tangent_size=1, num_blocks=num_blocks, **kwargs)
-        self._num = num_blocks
+    def __init__(self, data, capacity, **kwargs):
+        super().__init__(data, ambient_size=1, tangent_size=1, capacity=capacity, **kwargs)
 
     def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
-        # The arrays hold num_replicas contiguous copies of the batch; every
-        # block is independent, so all copies are one flat launch.
-        n = self._num * num_replicas
+        # The arrays hold num_replicas contiguous copies of the active blocks
+        # (num_state_blocks, at most the capacity); every block is independent,
+        # so all copies are one flat launch.
+        n = self.num_state_blocks * num_replicas
         wp.launch(positive_plus_kernel, dim=n,
                   inputs=[self.wrap_array(x_ptr, wp.float32, n),
                           self.wrap_array(delta_ptr, wp.float32, n),
@@ -94,8 +94,8 @@ def log_ratio_kernel(measurements: wp.array(dtype=wp.float32), ids: wp.array(dty
 class LogPriorFactor(WarpFactorBatch):
     """residual = log(x) - log(target); one state block."""
 
-    def __init__(self, observations, num_factors):
-        super().__init__(residual_size=1, state_block_sizes=[1], num_factors=num_factors)
+    def __init__(self, observations, capacity):
+        super().__init__(residual_size=1, state_block_sizes=[1], capacity=capacity)
         self.observations = observations
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
@@ -115,8 +115,8 @@ class LogPriorFactor(WarpFactorBatch):
 class LogRatioBetweenFactor(WarpFactorBatch):
     """residual = log(x_right / x_left) - m; two state blocks."""
 
-    def __init__(self, measurements, num_factors):
-        super().__init__(residual_size=1, state_block_sizes=[1, 1], num_factors=num_factors)
+    def __init__(self, measurements, capacity):
+        super().__init__(residual_size=1, state_block_sizes=[1, 1], capacity=capacity)
         self.measurements = measurements
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
@@ -146,9 +146,26 @@ def main():
     prior_wp = wp.array(chain.gt[:1], dtype=wp.float32, device="cuda:0")
 
     # 3. The custom state batch and the two custom factor batches.
-    states = PositiveScalarStateBatch(states_gpu, num_states)
-    between = LogRatioBetweenFactor(log_ratios_wp, num_states - 1)
-    prior = LogPriorFactor(prior_wp, 1)
+    #    Capacity vs. active count. A batch is constructed with its capacity: how many state blocks
+    #    (or factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    #    size it once for the largest problem you expect. Right after construction nothing is
+    #    active: set_num_state_blocks / set_num_factors set the active count, how many of the first
+    #    slots the next solve uses (a solve without it throws). The setter is host-only (no
+    #    allocation, no device work) and may change the count between solves up to the capacity,
+    #    which is what lets a real-time application allocate once and reuse the same buffers every
+    #    frame while the problem size changes. This example solves every slot once, so each active
+    #    count equals its capacity.
+    states_capacity = num_states  # every slot solved: active = capacity
+    between_capacity = num_states - 1
+    prior_capacity = 1
+    states = PositiveScalarStateBatch(states_gpu, states_capacity)
+    between = LogRatioBetweenFactor(log_ratios_wp, between_capacity)
+    prior = LogPriorFactor(prior_wp, prior_capacity)
+    num_between_factors = between_capacity
+    num_prior_factors = 1
+    states.set_num_state_blocks(num_states)  # active counts
+    between.set_num_factors(num_between_factors)
+    prior.set_num_factors(num_prior_factors)
     between_pointers = []
     for i in range(num_states - 1):
         between_pointers.append(states.state_block_device_ptr(i))

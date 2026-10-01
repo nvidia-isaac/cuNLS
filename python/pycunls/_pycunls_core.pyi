@@ -137,22 +137,38 @@ class LevenbergMarquardtMinimizerOptions:
 # ===================================================================
 
 class StateBatch:
-    """Abstract base class for batched state blocks on a manifold."""
+    """Abstract base class for batched state blocks on a manifold.
 
-    ...
+    Constructed with a ``capacity`` (blocks the buffer holds) and 0 active
+    blocks: call :meth:`set_num_state_blocks` before the first solve.
+    """
+
+    @property
+    def capacity(self) -> int:
+        """Blocks the state buffer holds (the constructor's capacity)."""
+        ...
+    @property
+    def const_capacity(self) -> int:
+        """Entries the constant-id buffer holds (the constructor's const_capacity)."""
+        ...
+    def set_num_state_blocks(self, num_blocks: int, num_const_state_blocks: int = 0) -> None:
+        """Set the active block count (the first ``num_blocks`` blocks of the buffer)
+        and the active constant-id count. Host-only; takes effect at the next
+        minimize(). Raises ValueError above the capacity."""
+        ...
 
 class VectorStateBatch1(StateBatch):
     """Euclidean 1-D vector state batch."""
 
     @overload
-    def __init__(self, data: DevicePointer, num_blocks: int) -> None: ...
+    def __init__(self, data: DevicePointer, capacity: int) -> None: ...
     @overload
     def __init__(
         self,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -166,14 +182,14 @@ class VectorStateBatch2(StateBatch):
     """Euclidean 2-D vector state batch."""
 
     @overload
-    def __init__(self, data: DevicePointer, num_blocks: int) -> None: ...
+    def __init__(self, data: DevicePointer, capacity: int) -> None: ...
     @overload
     def __init__(
         self,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -187,14 +203,14 @@ class VectorStateBatch3(StateBatch):
     """Euclidean 3-D vector state batch."""
 
     @overload
-    def __init__(self, data: DevicePointer, num_blocks: int) -> None: ...
+    def __init__(self, data: DevicePointer, capacity: int) -> None: ...
     @overload
     def __init__(
         self,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -208,14 +224,14 @@ class VectorStateBatch6(StateBatch):
     """Euclidean 6-D vector state batch."""
 
     @overload
-    def __init__(self, data: DevicePointer, num_blocks: int) -> None: ...
+    def __init__(self, data: DevicePointer, capacity: int) -> None: ...
     @overload
     def __init__(
         self,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -230,16 +246,16 @@ class SE3StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -254,16 +270,16 @@ class SO3StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -278,16 +294,16 @@ class SO2StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -302,16 +318,16 @@ class SE2StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -326,16 +342,16 @@ class Similarity2StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -350,16 +366,16 @@ class Similarity3StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -374,16 +390,16 @@ class SL4StateBatch(StateBatch):
 
     @overload
     def __init__(
-        self, cublas_handle: CublasHandle, data: DevicePointer, num_blocks: int
+        self, cublas_handle: CublasHandle, data: DevicePointer, capacity: int
     ) -> None: ...
     @overload
     def __init__(
         self,
         cublas_handle: CublasHandle,
         data: DevicePointer,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -406,7 +422,7 @@ class CustomStateBatch(StateBatch):
         data: DevicePointer,
         ambient_size: int,
         tangent_size: int,
-        num_blocks: int,
+        capacity: int,
     ) -> None: ...
     @overload
     def __init__(
@@ -414,9 +430,9 @@ class CustomStateBatch(StateBatch):
         data: DevicePointer,
         ambient_size: int,
         tangent_size: int,
-        num_blocks: int,
+        capacity: int,
         const_state_ids: DevicePointer,
-        num_const_state_blocks: int,
+        const_capacity: int,
     ) -> None: ...
     def plus(
         self,
@@ -441,9 +457,21 @@ class CustomStateBatch(StateBatch):
 # ===================================================================
 
 class FactorBatch:
-    """Abstract base class for batched factors."""
+    """Abstract base class for batched factors.
 
-    ...
+    Constructed with a ``capacity`` (factors the measurement buffers hold) and
+    0 active factors: call :meth:`set_num_factors` before the first solve.
+    """
+
+    @property
+    def capacity(self) -> int:
+        """Factors the measurement buffers hold (the constructor's capacity)."""
+        ...
+    def set_num_factors(self, num_factors: int) -> None:
+        """Set the active factor count (the first ``num_factors`` measurements are
+        used). Host-only; takes effect at the next minimize(). Raises ValueError
+        above the capacity."""
+        ...
 
 class CustomFactorBatch(FactorBatch):
     """Base class for user-defined factors. Override ``evaluate()`` in Python."""
@@ -452,7 +480,7 @@ class CustomFactorBatch(FactorBatch):
         self,
         residual_size: int,
         state_block_sizes: Sequence[int],
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     def evaluate(
         self,
@@ -480,7 +508,7 @@ class ReprojectionFactorBatch(FactorBatch):
     def __init__(
         self,
         observations: DevicePointer,
-        num_observations: int,
+        capacity: int,
         z_threshold: float = 1e-3,
     ) -> None: ...
     @property
@@ -500,7 +528,7 @@ class PnPFactorBatch(FactorBatch):
         self,
         observations: DevicePointer,
         points_world: DevicePointer,
-        num_observations: int,
+        capacity: int,
         z_threshold: float = 1e-3,
     ) -> None: ...
     @overload
@@ -509,7 +537,7 @@ class PnPFactorBatch(FactorBatch):
         observations: DevicePointer,
         poses_camera_from_rig: DevicePointer,
         points_world: DevicePointer,
-        num_observations: int,
+        capacity: int,
         z_threshold: float = 1e-3,
     ) -> None: ...
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
@@ -525,7 +553,7 @@ class SE3BetweenFactorBatch(FactorBatch):
     def __init__(
         self,
         deltas: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -539,7 +567,7 @@ class SE3PriorFactorBatch(FactorBatch):
     def __init__(
         self,
         observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -553,7 +581,7 @@ class SO3PriorFactorBatch(FactorBatch):
     def __init__(
         self,
         observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -567,7 +595,7 @@ class SO2PriorFactorBatch(FactorBatch):
     def __init__(
         self,
         observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -578,7 +606,7 @@ class SO2PriorFactorBatch(FactorBatch):
 class PriorVectorFactorBatch1(FactorBatch):
     """Prior factor for 1-D vectors: residual = state - observation."""
 
-    def __init__(self, observations: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, observations: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -588,7 +616,7 @@ class PriorVectorFactorBatch1(FactorBatch):
 class PriorVectorFactorBatch2(FactorBatch):
     """Prior factor for 2-D vectors: residual = state - observation."""
 
-    def __init__(self, observations: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, observations: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -598,7 +626,7 @@ class PriorVectorFactorBatch2(FactorBatch):
 class PriorVectorFactorBatch3(FactorBatch):
     """Prior factor for 3-D vectors: residual = state - observation."""
 
-    def __init__(self, observations: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, observations: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -608,7 +636,7 @@ class PriorVectorFactorBatch3(FactorBatch):
 class PriorVectorFactorBatch6(FactorBatch):
     """Prior factor for 6-D vectors: residual = state - observation."""
 
-    def __init__(self, observations: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, observations: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -618,7 +646,7 @@ class PriorVectorFactorBatch6(FactorBatch):
 class SE2BetweenFactorBatch(FactorBatch):
     """Batched SE(2) between factor. Residual=3, States=[SE2(3), SE2(3)]."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -628,7 +656,7 @@ class SE2BetweenFactorBatch(FactorBatch):
 class SO2BetweenFactorBatch(FactorBatch):
     """Batched SO(2) between factor. Residual=1, States=[SO2(1), SO2(1)]."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -638,7 +666,7 @@ class SO2BetweenFactorBatch(FactorBatch):
 class SO3BetweenFactorBatch(FactorBatch):
     """Batched SO(3) between factor. Residual=3, States=[SO3(3), SO3(3)]."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -648,7 +676,7 @@ class SO3BetweenFactorBatch(FactorBatch):
 class Similarity2BetweenFactorBatch(FactorBatch):
     """Batched Sim(2) between factor. Residual=4, States=[Sim2(4), Sim2(4)]."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -662,7 +690,7 @@ class Similarity3BetweenFactorBatch(FactorBatch):
         self,
         cublas_handle: CublasHandle,
         deltas: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -676,7 +704,7 @@ class SL4PriorFactorBatch(FactorBatch):
     def __init__(
         self,
         observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -687,7 +715,7 @@ class SL4PriorFactorBatch(FactorBatch):
 class SL4BetweenFactorBatch(FactorBatch):
     """Batched SL(4) between factor. Residual=15, States=[SL4(15), SL4(15)]."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -697,7 +725,7 @@ class SL4BetweenFactorBatch(FactorBatch):
 class VectorBetweenFactorBatch1(FactorBatch):
     """Between factor for 1-D vectors: residual = left - right - delta."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -707,7 +735,7 @@ class VectorBetweenFactorBatch1(FactorBatch):
 class VectorBetweenFactorBatch2(FactorBatch):
     """Between factor for 2-D vectors: residual = left - right - delta."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -717,7 +745,7 @@ class VectorBetweenFactorBatch2(FactorBatch):
 class VectorBetweenFactorBatch3(FactorBatch):
     """Between factor for 3-D vectors: residual = left - right - delta."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -727,7 +755,7 @@ class VectorBetweenFactorBatch3(FactorBatch):
 class VectorBetweenFactorBatch6(FactorBatch):
     """Between factor for 6-D vectors: residual = left - right - delta."""
 
-    def __init__(self, deltas: DevicePointer, num_factors: int) -> None: ...
+    def __init__(self, deltas: DevicePointer, capacity: int) -> None: ...
     @property
     def num_factors(self) -> int: ...
     @property
@@ -741,7 +769,7 @@ class PointToPointFactorBatch(FactorBatch):
         self,
         p_observations: DevicePointer,
         q_observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -757,7 +785,7 @@ class PointToPlaneFactorBatch(FactorBatch):
         p_observations: DevicePointer,
         q_observations: DevicePointer,
         nq_observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -774,7 +802,7 @@ class SymmetricPointToPlaneFactorBatch(FactorBatch):
         q_observations: DevicePointer,
         np_observations: DevicePointer,
         nq_observations: DevicePointer,
-        num_factors: int,
+        capacity: int,
     ) -> None: ...
     @property
     def num_factors(self) -> int: ...
@@ -900,6 +928,47 @@ class Problem:
         jacobian_mode_override, when set, forces this factor batch to always
         use the given JacobianMode regardless of the minimizer's
         MinimizerOptions.jacobian_mode default.
+        """
+        ...
+    @overload
+    def add_factor_batch(
+        self,
+        factor_batch: FactorBatch,
+        *,
+        state_pointer_table: DevicePointer,
+        loss_function: LossFunctionBatch | None = None,
+        jacobian_mode_override: JacobianMode | None = None,
+    ) -> None:
+        """Add a factor batch whose connectivity is a device table of state pointers.
+
+        ``state_pointer_table`` is a uint64 device array of ``capacity * B``
+        entries; entry ``f * B + b`` points at the block factor ``f`` reads in
+        slot ``b``. Bound once; rewrite its contents between solves.
+        """
+        ...
+    @overload
+    def add_factor_batch(
+        self,
+        factor_batch: FactorBatch,
+        slot_state_batches: Sequence[StateBatch],
+        state_indices: DevicePointer,
+        loss_function: LossFunctionBatch | None = None,
+        jacobian_mode_override: JacobianMode | None = None,
+    ) -> None:
+        """Add a factor batch whose connectivity is a device table of state indices.
+
+        ``state_indices`` is an int32 device array of ``capacity * B`` entries:
+        factor ``f`` reads block ``state_indices[f * B + b]`` of
+        ``slot_state_batches[b]``. Bound once; rewrite its contents between solves.
+        """
+        ...
+    def set_state_pointers(self, residual_batch_index: int, state_pointers: Sequence[int]) -> None:
+        """Replace the host-list connectivity of a residual batch (num_factors * B pointers)."""
+        ...
+    def validate(self, stream: CudaStream) -> bool:
+        """GPU check of every active connection (for connectivity rewritten on the device).
+
+        Synchronizes the stream; logs the first failure.
         """
         ...
     def check_consistency(self) -> bool:

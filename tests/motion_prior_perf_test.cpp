@@ -170,9 +170,12 @@ TEST_P(MotionPriorPerfTest, UnweightedConverges) {
 
     SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()),
                               p.n_poses, const_ids_device.data(), 1);
+    pose_states.SetNumStateBlocks(pose_states.Capacity(), pose_states.ConstCapacity());
     VectorStateBatch<6> vel_states(reinterpret_cast<const float *>(vels_device.data()), p.n_poses,
                                    const_ids_device.data(), 1);
+    vel_states.SetNumStateBlocks(vel_states.Capacity(), vel_states.ConstCapacity());
     ConstantVelocitySE3FactorBatch motion_prior(dt_device.data(), num_factors);
+    motion_prior.SetNumFactors(motion_prior.Capacity());
 
     std::vector<float *> state_pointers;
     state_pointers.reserve(4 * num_factors);
@@ -248,14 +251,17 @@ TEST_P(MotionPriorPerfTest, InformationWeightedConverges) {
 
     SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()),
                               p.n_poses, const_ids_device.data(), 1);
+    pose_states.SetNumStateBlocks(pose_states.Capacity(), pose_states.ConstCapacity());
     VectorStateBatch<6> vel_states(reinterpret_cast<const float *>(vels_device.data()), p.n_poses,
                                    const_ids_device.data(), 1);
+    vel_states.SetNumStateBlocks(vel_states.Capacity(), vel_states.ConstCapacity());
 
     ConstantVelocityInformationSE3FactorBatch motion_prior = [&] {
       auto build_info_range = profiler_domain_.CreateDomainRange("BuildInformationFactor");
       return ConstantVelocityInformationSE3FactorBatch(
           cublas_handle_, stream_.GetStream(), dt_device.data(), qc_device.data(), num_factors);
     }();
+    motion_prior.SetNumFactors(num_factors);
 
     std::vector<float *> state_pointers;
     state_pointers.reserve(4 * num_factors);

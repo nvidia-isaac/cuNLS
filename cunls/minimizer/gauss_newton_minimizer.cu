@@ -303,6 +303,18 @@ void GaussNewtonMinimizer::UpdateStates(cudaStream_t stream, const MinimizerStat
  */
 void GaussNewtonMinimizer::Initialize(cudaStream_t stream, Problem &problem) {
   auto range = profiler_domain_.CreateDomainRange("Initialize");
+  // Cheap host-only guard (no device work): sizes within capacities,
+  // connectivity covering the active factors, at least one active factor.
+  problem.CheckSizes();
+  // Connectivity, sizes and contents may have been rewritten since the last
+  // solve: expand index tables, and re-plan numeric-diff batches whose
+  // connectivity changed.
+  problem.PrepareStatePointers(stream);
+  for (size_t i = 0; i < problem.GetResidualBatches().size(); ++i) {
+    if (problem.JacobianModeFor(i, options_.jacobian_mode) == JacobianMode::kNumeric) {
+      numeric_diff_builder_.Refresh(problem, i);
+    }
+  }
   InitializeResiduals(problem, residuals_);
   state_ops_.Preprocess(stream, problem.GetStateBatches());
 

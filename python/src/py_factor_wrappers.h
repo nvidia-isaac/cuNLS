@@ -39,9 +39,8 @@ class PyFactorBatch : public cunls::FactorBatch {
  public:
   size_t residual_size_;
   std::vector<size_t> state_block_sizes_;
-  size_t num_factors_;
 
-  PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t num);
+  PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t capacity);
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
@@ -49,7 +48,6 @@ class PyFactorBatch : public cunls::FactorBatch {
 
   size_t ResidualsSize() const override;
   std::vector<size_t> StateBlockSizes() const override;
-  size_t NumFactors() const override;
 };
 
 // Polymorphic wrapper that applies sqrt-information matrices to any
@@ -63,6 +61,8 @@ class PyInformationFactorBatch : public cunls::FactorBatch {
 
   size_t ResidualsSize() const override;
   size_t NumFactors() const override;
+  size_t Capacity() const override;                 // of the wrapped batch
+  void SetNumFactors(size_t num_factors) override;  // forwarded to the wrapped batch
   std::vector<size_t> StateBlockSizes() const override;
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
@@ -85,6 +85,8 @@ class PyWeightedFactorBatch : public cunls::FactorBatch {
 
   size_t ResidualsSize() const override;
   size_t NumFactors() const override;
+  size_t Capacity() const override;                 // of the wrapped batch
+  void SetNumFactors(size_t num_factors) override;  // forwarded to the wrapped batch
   std::vector<size_t> StateBlockSizes() const override;
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,

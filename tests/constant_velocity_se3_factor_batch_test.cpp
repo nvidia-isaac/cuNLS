@@ -144,6 +144,7 @@ SingleFactorResult EvaluateOne(const SE3Transform &pose_k, const SE3Transform &p
   dvector<const float *> ptrs_dev(ptrs);
 
   ConstantVelocitySE3FactorBatch fb(dt_dev.data(), 1);
+  fb.SetNumFactors(fb.Capacity());
   dvector<float> res_dev(12);
   dvector<float> jac_dev(want_jacobian ? 12 * 24 : 0);
 
@@ -296,14 +297,17 @@ TEST_F(ConstantVelocitySE3FactorBatchTest, RecoversVelocityWithPosesFixed) {
   cuBLASHandle cublas_handle;
   SE3StateBatch pose_batch(cublas_handle, reinterpret_cast<const float *>(poses_dev.data()), 2,
                            const_ids_dev.data(), 2);
+  pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
 
   // Initialize velocities away from the expected solution.
   std::vector<Vector<6>> vel_init = {Vector<6>{0, 0, 0, 0, 0, 0}, Vector<6>{0, 0, 0, 0, 0, 0}};
   dvector<Vector<6>> vel_dev(vel_init);
   VectorStateBatch<6> vel_batch(reinterpret_cast<const float *>(vel_dev.data()), 2);
+  vel_batch.SetNumStateBlocks(vel_batch.Capacity(), vel_batch.ConstCapacity());
 
   dvector<float> dt_dev(std::vector<float>{dt});
   ConstantVelocitySE3FactorBatch factor(dt_dev.data(), 1);
+  factor.SetNumFactors(factor.Capacity());
 
   std::vector<float *> state_pointers = {
       pose_batch.StateBlockDevicePtr(0), pose_batch.StateBlockDevicePtr(1),

@@ -2,6 +2,14 @@
 Python Tutorial
 ###############################################################################
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``set_num_factors(n)`` /
+   ``set_num_state_blocks(n)`` before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
+
 ===============================================================================
 Overview
 ===============================================================================
@@ -120,6 +128,16 @@ CuPy arrays hold the device data. Poses are row-major 4x4 matrices
 :ref:`SE3StateBatch <py-lie-state-batches>` with pose 0 constant (gauge
 anchor) and :ref:`VectorStateBatch3 <py-vector-state-batches>` for the points.
 
+**Capacity and active count.** The count passed to a batch constructor is
+its *capacity*: how many blocks (state batches) or measurements (factor
+batches) the bound device buffers hold, fixed for the batch's lifetime.
+Right after construction nothing is active. ``set_num_state_blocks`` /
+``set_num_factors`` set the *active count*: how many of the first blocks or
+factors the next solve uses. They are host-only (no allocation) and may be
+called again between solves with any count up to the capacity, so one set of
+batches serves problems of changing size. In this example every slot is
+used, so active = capacity.
+
 .. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
    :language: python
    :start-at: # 3.
@@ -128,7 +146,8 @@ anchor) and :ref:`VectorStateBatch3 <py-vector-state-batches>` for the points.
 
 **Step 4 — Build the reprojection factor batch and its state pointers.**
 Each factor reads ``[pose, point]``: the state-pointer list is flattened in
-factor order, two device pointers per factor.
+factor order, two device pointers per factor. The factor batch also starts
+with 0 active factors; ``set_num_factors`` activates them.
 
 .. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
    :language: python
@@ -236,6 +255,8 @@ anchor.
 **Step 3 — Build the state batch and the between factors.**
 One :ref:`SE3StateBatch <py-lie-state-batches>`; factor :math:`i` of the
 :ref:`SE3BetweenFactorBatch <py-se3-between-factor>` reads ``[T_i, T_{i+1}]``.
+Both are constructed with their capacity and activated with
+``set_num_state_blocks`` / ``set_num_factors``.
 
 .. literalinclude:: ../../python/examples/pose_graph_optimization.py
    :language: python
@@ -349,7 +370,9 @@ and writes row ``t``. The regular minimizers evaluate each factor once
 of every item (``t % num_factors`` when cuNLS passes none),
 ``gather_state_pairs`` copies each item's two state values into contiguous
 arrays (Warp cannot dereference the pointer table), and the kernel runs on
-cuNLS's stream. When ``jacobians_ptr`` is 0 only residuals are wanted.
+cuNLS's stream. When ``jacobians_ptr`` is 0 only residuals are wanted. The
+constructor passes the capacity (measurements the buffer holds) to the base
+class; ``num_factors`` is the active count, 0 until ``set_num_factors``.
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
    :language: python
@@ -387,7 +410,8 @@ the Warp kernel, to a Warp array.
 
 **Step 6 — Build states, factors and state pointers.**
 Difference factors read ``[x_i, x_{i+1}]``; the built-in prior anchors
-``x_0``.
+``x_0``. Every batch starts with 0 active entries and is activated with
+``set_num_state_blocks`` / ``set_num_factors``.
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
    :language: python
@@ -490,7 +514,8 @@ positive.
 **Step 2 — Subclass WarpStateBatch.**
 ``plus`` receives ``num_replicas`` contiguous copies of the batch (1 for the
 regular minimizers, one per hypothesis for RANSAC). Every block is independent,
-so all copies are one flat launch over ``num_replicas * num_blocks`` blocks.
+so all copies are one flat launch over ``num_replicas * num_state_blocks``
+blocks (``num_state_blocks`` is the active count, at most the capacity).
 
 .. literalinclude:: ../../python/examples/custom_warp_state.py
    :language: python
@@ -532,7 +557,8 @@ States go to a CuPy array; factor data to Warp arrays.
 
 **Step 6 — Build the custom state and factor batches.**
 The custom state batch wraps the CuPy array; the factors read
-``[x_i, x_{i+1}]`` and ``x_0``.
+``[x_i, x_{i+1}]`` and ``x_0``. Custom batches follow the same capacity rule
+as the built-in ones: 0 active entries until ``set_num_*`` is called.
 
 .. literalinclude:: ../../python/examples/custom_warp_state.py
    :language: python

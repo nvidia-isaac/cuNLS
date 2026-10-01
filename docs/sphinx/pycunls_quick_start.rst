@@ -2,6 +2,14 @@
 Python Quick Start
 ###############################################################################
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``set_num_factors(n)`` /
+   ``set_num_state_blocks(n)`` before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
+
 This section shows a minimal end-to-end Python setup:
 
 1. Install pycunls
@@ -41,19 +49,25 @@ every pycunls API call — it controls asynchronous GPU execution.
 
 **Create the state batch.**
 A `VectorStateBatch1` wraps the device memory as a batch of 1-dimensional
-Euclidean state blocks (see :doc:`api/state`).
+Euclidean state blocks (see :doc:`api/state`). The second argument is the
+capacity (blocks the buffer holds). A batch starts with 0 active blocks:
+``set_num_state_blocks`` sets how many the solver uses, before the first
+solve.
 
 .. code-block:: python
 
    state_batch = pycunls.VectorStateBatch1(state_gpu, 1)
+   state_batch.set_num_state_blocks(1)
 
 **Create the factor batch.**
 A `PriorVectorFactorBatch1` computes the residual :math:`r = x - o` and
-Jacobian :math:`J = I` for each factor (see :doc:`api/factor`).
+Jacobian :math:`J = I` for each factor (see :doc:`api/factor`). It is
+also constructed with its capacity and starts with 0 active factors.
 
 .. code-block:: python
 
    prior = pycunls.PriorVectorFactorBatch1(obs_gpu, 1)
+   prior.set_num_factors(1)
 
 **Wire state pointers and assemble the problem.**
 The state-pointer list tells the solver which state block each factor

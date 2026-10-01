@@ -322,6 +322,15 @@ stream.
 Usage
 ===============================================================================
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``SetNumFactors(n)`` /
+   ``SetNumStateBlocks(n)`` (Python: ``set_num_factors`` /
+   ``set_num_state_blocks``) before solving, and again whenever the problem size
+   changes. See :ref:`capacity-and-active-count`.
+
 Build the problem exactly as for the regular minimizers. Then choose the
 roles and thresholds, run the minimizer, and read the inlier mask. The
 example below is the PnP problem from ``examples/ransac_pnp``: one SE(3)
@@ -337,6 +346,8 @@ C++
    #include "cunls/cunls.h"
 
    // ... states, factors and problem built as usual:
+   //   pose_state.SetNumStateBlocks(1);
+   //   pnp.SetNumFactors(num_matches);
    //   problem.AddStateBatch(&pose_state);
    //   problem.AddFactorBatch(&pnp, pointers);          // residual batch 0
 

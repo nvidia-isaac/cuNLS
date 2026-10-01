@@ -131,14 +131,13 @@ __global__ void cv_se3_assemble_kernel(float const *const *state_pointers, const
   }
 }
 
-ConstantVelocitySE3FactorBatch::ConstantVelocitySE3FactorBatch(const float *dt_ptr,
-                                                               size_t num_factors)
-    : dt_ptr_(dt_ptr),
-      num_factors_(num_factors),
-      pose_rel_(num_factors),
-      twist_(num_factors),
-      jl_inv_(num_factors),
-      jr_inv_(num_factors) {}
+ConstantVelocitySE3FactorBatch::ConstantVelocitySE3FactorBatch(const float *dt_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      dt_ptr_(dt_ptr),
+      pose_rel_(capacity),
+      twist_(capacity),
+      jl_inv_(capacity),
+      jr_inv_(capacity) {}
 
 bool ConstantVelocitySE3FactorBatch::Evaluate(float *residuals, float *jacobians,
                                               float const *const *state_pointers,

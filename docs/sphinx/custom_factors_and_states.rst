@@ -2,6 +2,15 @@
 Custom Factors and States (C++ and Python)
 ###############################################################################
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``SetNumFactors(n)`` /
+   ``SetNumStateBlocks(n)`` (Python: ``set_num_factors`` /
+   ``set_num_state_blocks``) before solving, and again whenever the problem size
+   changes. See :ref:`capacity-and-active-count`.
+
 cuNLS ships many factor and state types, but most applications need at least
 one of their own. This page explains, step by step, how to write a custom
 **factor batch** (residuals and Jacobians) and a custom **state batch** (a
@@ -61,7 +70,8 @@ Notation for one factor batch:
    * - Symbol
      - Meaning
    * - :math:`N`
-     - ``NumFactors()``: number of factors (measurements) in the batch.
+     - ``NumFactors()``: number of active factors (measurements) in the batch,
+       at most ``Capacity()``; 0 until ``SetNumFactors`` is called.
    * - :math:`B`
      - ``StateBlockSizes().size()``: state blocks one factor reads.
    * - :math:`m`
@@ -217,8 +227,11 @@ Step 2: the factor batch class
 -------------------------------------------------------------------------------
 
 Derive from ``SizedFactorBatch<m, block sizes...>``, which fixes
-``ResidualsSize()`` and ``StateBlockSizes()`` at compile time. Implement
-``Evaluate`` and ``NumFactors``:
+``ResidualsSize()`` and ``StateBlockSizes()`` at compile time, and pass it the
+capacity: the number of measurements your buffers hold. The base keeps the
+active count ``NumFactors()``, which starts at 0 and is set with
+``SetNumFactors(n)`` (any ``n`` up to the capacity), so the same batch serves
+problems of any size without reallocation. Implement ``Evaluate``:
 
 .. code-block:: cpp
 
@@ -226,30 +239,28 @@ Derive from ``SizedFactorBatch<m, block sizes...>``, which fixes
 
    class LineFitFactorBatch : public cunls::SizedFactorBatch<1, 2> {
     public:
-     // xs, ys: device arrays of num_factors floats; must outlive the batch.
-     LineFitFactorBatch(const float *xs, const float *ys, size_t num_factors)
-         : xs_(xs), ys_(ys), num_factors_(num_factors) {}
+     // xs, ys: device arrays of capacity floats; must outlive the batch.
+     LineFitFactorBatch(const float *xs, const float *ys, size_t capacity)
+         : SizedFactorBatch(capacity), xs_(xs), ys_(ys) {}
 
      bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                    cudaStream_t stream, const int *factor_ids = nullptr,
                    size_t num_factor_ids = 0) const override {
-       const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
-       if (num_items == 0) return true;
+       const size_t num_factors = NumFactors();  // the active count
+       const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+       if (num_items == 0 || num_factors == 0) return true;
        const int block = 256;
        const int grid = static_cast<int>((num_items + block - 1) / block);
        LineFitKernel<<<grid, block, 0, stream>>>(xs_, ys_, factor_ids,
-                                                 static_cast<int>(num_factors_),
+                                                 static_cast<int>(num_factors),
                                                  static_cast<int>(num_items), state_pointers,
                                                  residuals, jacobians);
        return cudaGetLastError() == cudaSuccess;
      }
 
-     size_t NumFactors() const override { return num_factors_; }
-
     private:
      const float *xs_;
      const float *ys_;
-     size_t num_factors_;
    };
 
 -------------------------------------------------------------------------------
@@ -261,7 +272,9 @@ the example needs. A custom state is needed when the variable lives on a
 manifold cuNLS does not ship. As an illustration, here is a **positive
 scalar** parametrized multiplicatively, :math:`x \oplus \delta = x\,e^{\delta}`
 (ambient 1, tangent 1). Derive from ``SizedStateBatch<A, T>``, which provides
-storage, block pointers and constant blocks, and implement ``Plus``:
+storage, block pointers, constant blocks and the active sizes (capacity in
+the constructor, ``SetNumStateBlocks`` for the active counts), and implement
+``Plus`` over the active blocks:
 
 .. code-block:: cuda
 
@@ -273,7 +286,7 @@ storage, block pointers and constant blocks, and implement ``Plus``:
 
    class PositiveScalarStateBatch : public cunls::SizedStateBatch<1, 1> {
     public:
-     using cunls::SizedStateBatch<1, 1>::SizedStateBatch;  // (device_ptr, num_blocks[, ...])
+     using cunls::SizedStateBatch<1, 1>::SizedStateBatch;  // (device_ptr, capacity[, ...])
 
      void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
                size_t num_replicas = 1) override {
@@ -294,6 +307,8 @@ Step 4: use it with any minimizer
    cunls::dvector<float> d_xs(xs), d_ys(ys), d_ab(std::vector<float>{0.f, 0.f});
    cunls::VectorStateBatch<2> line(d_ab.data(), 1);
    LineFitFactorBatch fit(d_xs.data(), d_ys.data(), num_points);
+   line.SetNumStateBlocks(1);  // batches start with 0 active entries
+   fit.SetNumFactors(num_points);
 
    cunls::Problem problem;
    problem.AddStateBatch(&line);
@@ -382,7 +397,7 @@ is ordered with the rest of the minimizer's work:
 
    class LineFitFactorBatch(pycunls.CustomFactorBatch):
        def __init__(self, xs, ys):
-           # residual size 1, one state block of tangent size 2, len(xs) factors
+           # residual size 1, one state block of tangent size 2, capacity len(xs)
            super().__init__(1, [2], len(xs))
            self.xs, self.ys = xs, ys          # cupy arrays; keep them alive
 
@@ -412,7 +427,7 @@ hand (a manifold would change only the kernel body):
 
    class LineState(pycunls.CustomStateBatch):
        def __init__(self, data):
-           super().__init__(data, 2, 2, 1)    # ambient 2, tangent 2, 1 block
+           super().__init__(data, 2, 2, 1)    # ambient 2, tangent 2, capacity 1
 
        def plus(self, x_ptr, delta_ptr, out_ptr, stream_handle, num_replicas):
            n = 2 * self.num_state_blocks * num_replicas   # every float of every replica
@@ -428,6 +443,8 @@ Using them with RANSAC:
    ab = cp.zeros(2, dtype=cp.float32)
    state = LineState(ab)
    factor = LineFitFactorBatch(cp.asarray(xs), cp.asarray(ys))
+   state.set_num_state_blocks(1)          # active sizes start at 0
+   factor.set_num_factors(len(xs))
    problem = pycunls.Problem()
    problem.add_state_batch(state)
    problem.add_factor_batch(factor, [state.state_block_device_ptr(0)] * len(xs))
@@ -469,7 +486,7 @@ read ``ids[t]``, whether or not the caller passed factor ids:
 
    class WarpLineFit(WarpFactorBatch):
        def __init__(self, xs, ys):
-           super().__init__(residual_size=1, state_block_sizes=[2], num_factors=xs.shape[0])
+           super().__init__(residual_size=1, state_block_sizes=[2], capacity=xs.shape[0])
            self.xs, self.ys = xs, ys
 
        def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr,

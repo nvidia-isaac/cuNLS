@@ -365,7 +365,9 @@ TEST_P(NumericDiffE2EPerfTest, MinimizeTiming) {
       SE3StateBatch pose_states(cublas_handle_,
                                 reinterpret_cast<const float *>(poses_device.data()), num_poses,
                                 const_ids_device.data(), 1);
+      pose_states.SetNumStateBlocks(pose_states.Capacity(), pose_states.ConstCapacity());
       SE3BetweenFactorBatch between_factor(deltas_device.data(), num_factors);
+      between_factor.SetNumFactors(between_factor.Capacity());
 
       std::vector<float *> state_pointers;
       state_pointers.reserve(2 * num_factors);
@@ -421,8 +423,10 @@ TEST_P(NumericDiffE2EPerfTest, MinimizeTiming) {
       SE3StateBatch pose_states(cublas_handle_,
                                 reinterpret_cast<const float *>(poses_device.data()), n_poses,
                                 const_pose_ids_device.data(), 1);
+      pose_states.SetNumStateBlocks(pose_states.Capacity(), pose_states.ConstCapacity());
       VectorStateBatch<3> point_states(reinterpret_cast<const float *>(points_device.data()),
                                        n_points);
+      point_states.SetNumStateBlocks(point_states.Capacity(), point_states.ConstCapacity());
 
       std::vector<Vector<2>> observations;
       std::vector<float *> state_pointers;
@@ -460,6 +464,7 @@ TEST_P(NumericDiffE2EPerfTest, MinimizeTiming) {
 
       dvector<Vector<2>> observations_device(observations);
       ReprojectionFactorBatch reproj(observations_device.data(), observations.size(), 1e-3f);
+      reproj.SetNumFactors(reproj.Capacity());
 
       Problem problem;
       problem.AddStateBatch(&pose_states);
@@ -507,7 +512,9 @@ TEST_P(NumericDiffE2EPerfTest, MinimizeTiming) {
 
       SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(pose_device.data()),
                                 1);
+      pose_states.SetNumStateBlocks(pose_states.Capacity(), pose_states.ConstCapacity());
       PnPFactorBatch pnp(observations_device.data(), points_device.data(), n, 1e-3f);
+      pnp.SetNumFactors(pnp.Capacity());
 
       std::vector<float *> state_pointers(n, pose_states.StateBlockDevicePtr(0));
 

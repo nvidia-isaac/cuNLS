@@ -49,6 +49,7 @@ TEST(SO2ManifoldTest, StateDimensions) {
 
   cuBLASHandle cublas;
   SO2StateBatch states(cublas, reinterpret_cast<const float *>(rots_dev.data()), kN);
+  states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), 1u);
   EXPECT_EQ(states.AmbientSize(), 4u);
@@ -77,7 +78,9 @@ TEST(SO2ManifoldTest, PriorLMConvergence) {
 
   cuBLASHandle cublas;
   SO2StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials_dev.data()), kN);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   SO2PriorFactorBatch factor_batch(reinterpret_cast<const SO2Rotation *>(targets_dev.data()), kN);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
@@ -141,8 +144,11 @@ TEST(SO2ManifoldTest, BetweenLMConvergence) {
 
   cuBLASHandle cublas;
   SO2StateBatch state_left(cublas, reinterpret_cast<const float *>(left_dev.data()), kN);
+  state_left.SetNumStateBlocks(state_left.Capacity(), state_left.ConstCapacity());
   SO2StateBatch state_right(cublas, reinterpret_cast<const float *>(right_dev.data()), kN);
+  state_right.SetNumStateBlocks(state_right.Capacity(), state_right.ConstCapacity());
   SO2BetweenFactorBatch factor_batch(reinterpret_cast<const SO2Rotation *>(deltas_dev.data()), kN);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);

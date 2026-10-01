@@ -73,12 +73,12 @@ __global__ void so2_between_jacobian_kernel(float *jacobians, size_t num_items) 
   J[1] = 1.f;
 }
 
-SO2BetweenFactorBatch::SO2BetweenFactorBatch(const SO2Rotation *pose_deltas_ptr, size_t num_factors)
-    : pose_deltas_ptr_(pose_deltas_ptr),
-      num_factors_(num_factors),
-      poses_left_(num_factors),
-      poses_right_(num_factors),
-      poses_left_inverse_(num_factors) {}
+SO2BetweenFactorBatch::SO2BetweenFactorBatch(const SO2Rotation *pose_deltas_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      pose_deltas_ptr_(pose_deltas_ptr),
+      poses_left_(capacity),
+      poses_right_(capacity),
+      poses_left_inverse_(capacity) {}
 
 bool SO2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,

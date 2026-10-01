@@ -49,10 +49,11 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
    * @brief Constructs a batch of SO(3) prior factors.
    *
    * @param observations_ptr Pointer to GPU device memory containing target
-   * rotations. Must point to at least num_factors * 9 floats.
-   * @param num_factors Number of factors in the batch.
+   * rotations. Must point to at least capacity * 9 floats.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  SO3PriorFactorBatch(const SO3Rotation *observations_ptr, size_t num_factors);
+  SO3PriorFactorBatch(const SO3Rotation *observations_ptr, size_t capacity);
 
   /**
    * @brief Evaluates SO(3) prior residuals and optionally Jacobians.
@@ -71,20 +72,11 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final;
 
-  /**
-   * @brief Returns the number of factors in the batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SO3PriorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target rotations.
   const Matrix<3> *observations_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
 
   /// Preallocated memory for rotation error R_target^T * R_current.
   mutable DeviceVector<Matrix<3>> rotations_error_;

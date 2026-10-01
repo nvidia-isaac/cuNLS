@@ -97,6 +97,16 @@ class NumericDiffJacobianBuilder {
   void PrepareResidualBatch(const Problem &problem, size_t residual_batch_index);
 
   /**
+   * @brief Re-plans a residual batch if its connectivity changed since its
+   * plan was built: compares the batch's active state pointers (a host copy;
+   * a download for device tables) with the ones the plan was built from.
+   *
+   * Call once per minimization for every numeric-diff batch, before Compute:
+   * connectivity and sizes may be rewritten between solves.
+   */
+  void Refresh(const Problem &problem, size_t residual_batch_index);
+
+  /**
    * @brief Computes the numeric-diff Jacobian for one residual batch.
    *
    * @param stream CUDA stream on which the result becomes valid once all
@@ -132,7 +142,12 @@ class NumericDiffJacobianBuilder {
         owner_batch_index;  ///< Per position b: index into problem.GetStateBatches().
     std::vector<size_t>
         block_idx;  ///< Flattened [f * num_positions + b] -> block index within owner.
+    std::vector<float *> source;  ///< Active state pointers the plan was built from.
   };
+
+  /** Builds the plan of a residual batch from its active state pointers. */
+  void BuildPlan(const Problem &problem, size_t residual_batch_index,
+                 std::vector<float *> host_ptrs);
 
   /**
    * @brief Per-residual-batch cached slot layout, device scratch, and

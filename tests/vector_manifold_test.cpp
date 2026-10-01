@@ -42,6 +42,7 @@ TEST(VectorManifoldTest, StateDimensions) {
   dvector<Vector<kDim>> vecs_dev(vecs);
 
   VectorStateBatch<kDim> states(reinterpret_cast<const float *>(vecs_dev.data()), kN);
+  states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), static_cast<size_t>(kDim));
   EXPECT_EQ(states.AmbientSize(), static_cast<size_t>(kDim));
@@ -69,7 +70,9 @@ TEST(VectorManifoldTest, PriorLMConvergence) {
   dvector<Vector<kDim>> targets_dev(targets), initials_dev(initials);
 
   VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(initials_dev.data()), kN);
+  state_batch.SetNumStateBlocks(state_batch.Capacity(), state_batch.ConstCapacity());
   PriorVectorFactorBatch<kDim> factor_batch(targets_dev.data(), kN);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
@@ -135,8 +138,11 @@ TEST(VectorManifoldTest, BetweenLMConvergence) {
   dvector<Vector<kDim>> deltas_dev(deltas);
 
   VectorStateBatch<kDim> state_left(reinterpret_cast<const float *>(left_dev.data()), kN);
+  state_left.SetNumStateBlocks(state_left.Capacity(), state_left.ConstCapacity());
   VectorStateBatch<kDim> state_right(reinterpret_cast<const float *>(right_dev.data()), kN);
+  state_right.SetNumStateBlocks(state_right.Capacity(), state_right.ConstCapacity());
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_dev.data(), kN);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);

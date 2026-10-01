@@ -34,7 +34,7 @@ namespace cunls {
  */
 class ConstantAccelerationSE2FactorBatch : public SizedFactorBatch<9, 3, 3, 3, 3, 3, 3> {
  public:
-  ConstantAccelerationSE2FactorBatch(const float *dt_ptr, size_t num_factors);
+  ConstantAccelerationSE2FactorBatch(const float *dt_ptr, size_t capacity);
 
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
@@ -45,13 +45,10 @@ class ConstantAccelerationSE2FactorBatch : public SizedFactorBatch<9, 3, 3, 3, 3
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   ConstantAccelerationSE2FactorBatch() = delete;
 
   const float *dt_ptr_;
-  size_t num_factors_;
 
   mutable DeviceVector<Matrix<3>> pose_rel_;
   mutable DeviceVector<Vector<3>> twist_;

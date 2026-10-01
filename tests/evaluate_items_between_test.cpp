@@ -90,6 +90,7 @@ struct LieElements {
     auto delta = ToDevice(RandomVector(static_cast<size_t>(count) * tangent_size, scale, seed));
     CudaStream stream;
     StateT states(Cublas(), base.data(), count);
+    states.SetNumStateBlocks(states.Capacity(), states.ConstCapacity());
     states.Plus(base.data(), delta.data(), d.data(), stream.GetStream());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
@@ -116,6 +117,7 @@ template <typename FactorT, typename ObsT, typename StateT>
 void CheckLieBetween(int ambient, int tangent, uint32_t seed, float scale = 0.5f) {
   LieElements<StateT> deltas(kNumFactors, ambient, tangent, scale, seed);
   FactorT between(reinterpret_cast<const ObsT *>(deltas.d.data()), kNumFactors);
+  between.SetNumFactors(kNumFactors);
   LieElements<StateT> states(2 * kCopies * kNumFactors, ambient, tangent, scale, seed + 1);
   CheckEvaluateItems(between, kCopies, [&](int k) {
     return PairPointersForCopy([&](int i) { return states.ptr(i); }, k);
@@ -127,6 +129,7 @@ TEST(EvaluateItemsBetween, VectorBetweenMatchesEvaluate) {
   auto deltas = ToDevice(RandomVector(kNumFactors * kDim, 1.f, 130));
   VectorBetweenFactorBatch<kDim> between(reinterpret_cast<const Vector<kDim> *>(deltas.data()),
                                          kNumFactors);
+  between.SetNumFactors(between.Capacity());
   auto states = ToDevice(RandomVector(2 * kCopies * kNumFactors * kDim, 1.f, 131));
   CheckEvaluateItems(between, kCopies, [&](int k) {
     return PairPointersForCopy([&](int i) { return states.data() + static_cast<size_t>(i) * kDim; },
@@ -155,6 +158,7 @@ TEST(EvaluateItemsBetween, Similarity3BetweenMatchesEvaluate) {
   LieElements<Similarity3StateBatch> deltas(kNumFactors, 16, 7, 0.5f, 180);
   Similarity3BetweenFactorBatch between(
       Cublas(), reinterpret_cast<const Similarity3Transform *>(deltas.d.data()), kNumFactors);
+  between.SetNumFactors(between.Capacity());
   LieElements<Similarity3StateBatch> states(2 * kCopies * kNumFactors, 16, 7, 0.5f, 181);
   CheckEvaluateItems(between, kCopies, [&](int k) {
     return PairPointersForCopy([&](int i) { return states.ptr(i); }, k);

@@ -110,21 +110,20 @@ void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_
 template <int Dim>
 class LinearRegressionFactorBatch : public SizedFactorBatch<1, Dim> {
  public:
-  LinearRegressionFactorBatch(const float *a, const float *y, size_t num_factors)
-      : a_(a), y_(y), num_factors_(num_factors) {}
+  LinearRegressionFactorBatch(const float *a, const float *y, size_t capacity)
+      : SizedFactorBatch<1, Dim>(capacity), a_(a), y_(y) {}
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override {
-    LaunchLinearRegression(Dim, a_, y_, num_factors_, residuals, jacobians, state_pointers,
-                           factor_ids, num_factor_ids == 0 ? num_factors_ : num_factor_ids, stream);
+    const size_t n = this->NumFactors();
+    LaunchLinearRegression(Dim, a_, y_, n, residuals, jacobians, state_pointers, factor_ids,
+                           num_factor_ids == 0 ? n : num_factor_ids, stream);
     return true;
   }
-  size_t NumFactors() const override { return num_factors_; }
 
  private:
   const float *a_;
   const float *y_;
-  size_t num_factors_;
 };
 
 /**
@@ -133,18 +132,15 @@ class LinearRegressionFactorBatch : public SizedFactorBatch<1, Dim> {
  */
 class FocalPnPFactorBatch : public SizedFactorBatch<2, 6, 1> {
  public:
-  FocalPnPFactorBatch(const Vector<2> *obs_pixels, const Vector<3> *points_world,
-                      size_t num_factors)
-      : obs_(obs_pixels), points_(points_world), num_factors_(num_factors) {}
+  FocalPnPFactorBatch(const Vector<2> *obs_pixels, const Vector<3> *points_world, size_t capacity)
+      : SizedFactorBatch(capacity), obs_(obs_pixels), points_(points_world) {}
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
-  size_t NumFactors() const override { return num_factors_; }
 
  private:
   const Vector<2> *obs_;
   const Vector<3> *points_;
-  size_t num_factors_;
 };
 
 /**
@@ -161,6 +157,8 @@ class SyncingFactorBatch : public FactorBatch {
   size_t ResidualsSize() const override { return inner_->ResidualsSize(); }
   std::vector<size_t> StateBlockSizes() const override { return inner_->StateBlockSizes(); }
   size_t NumFactors() const override { return inner_->NumFactors(); }
+  size_t Capacity() const override { return inner_->Capacity(); }
+  void SetNumFactors(size_t num_factors) override { inner_->SetNumFactors(num_factors); }
 
  private:
   FactorBatch *inner_;

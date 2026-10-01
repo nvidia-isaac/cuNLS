@@ -22,6 +22,7 @@
 #include <cstring>
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -733,52 +734,27 @@ __global__ void adjoint_se3_kernel(bool inverse, const float *transform,
     memcpy(dst, src, 3 * sizeof(float));
   }
 
-  // For Ad(T) with T = (R, t): Ad(T) = [[R, 0], [skew(t) * R, R]].
   // For Ad(T^{-1}) = Ad(T)^{-1}, use R' = R^T and t' = -R^T * t (the
-  // rotation/translation of T^{-1}), then the same block formula applies:
-  // Ad(T^{-1}) = [[R', 0], [skew(t') * R', R']].
+  // rotation/translation of T^{-1}); the same block formula then applies.
   if (inverse) {
-    // transpose R in place -> R'
     swap(R[0 * 3 + 1], R[1 * 3 + 0]);
     swap(R[0 * 3 + 2], R[2 * 3 + 0]);
     swap(R[1 * 3 + 2], R[2 * 3 + 1]);
 
-    // t' = -R' * t = -R^T * t
     float t0 = translation[0], t1 = translation[1], t2 = translation[2];
     translation[0] = -(R[0] * t0 + R[1] * t1 + R[2] * t2);
     translation[1] = -(R[3] * t0 + R[4] * t1 + R[5] * t2);
     translation[2] = -(R[6] * t0 + R[7] * t1 + R[8] * t2);
   }
 
+  // Ad(T) = [[R, 0], [skew(t) * R, R]], one row at a time (shared with the
+  // factor kernels that derive the adjoint of a measurement inline).
 #pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-    // adjoint[0:3, 0:3] = R (or R' for the inverse)
-    float *src = &R[i * 3];
-    float *dst = &adjoint_ptr[i * adjoint_pitch];
-    memcpy(dst, src, 3 * sizeof(float));
-
-    // adjoint[3:6, 3:6] = R (or R' for the inverse)
-    dst = &adjoint_ptr[(i + 3) * adjoint_pitch + 3];
-    memcpy(dst, src, 3 * sizeof(float));
-
-    // adjoint[0:3, 3:6] = 0
-    dst = &adjoint_ptr[i * adjoint_pitch + 3];
-    memset(dst, 0, 3 * sizeof(float));
-  }
-
-  // adjoint[3:6, 0:3] = skew(translation) * R  (matrix product order matters:
-  // this must be skew(t) * R, NOT R * skew(t))
-  float skew[9];
-  compute_skew_matrix(translation, skew, 3);
-
-  float temp[9];
-  matmul_3x3(skew, R, temp);
-
+  for (int row = 0; row < 6; ++row) {
+    float out[6];
+    lie_device::AdjointSE3Row(R, translation, row, out);
 #pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-    float *dst = &adjoint_ptr[(3 + i) * adjoint_pitch];
-    const float *src = &temp[i * 3];
-    memcpy(dst, src, 3 * sizeof(float));
+    for (int j = 0; j < 6; ++j) adjoint_ptr[row * adjoint_pitch + j] = out[j];
   }
 }
 
@@ -959,28 +935,7 @@ __global__ void inverse_se3_kernel(const float *transform, const size_t transfor
   const float *transform_ptr = transform + tid * transform_stride;
 
   float pose[16];
-  memset(pose, 0, 16 * sizeof(float));
-  pose[15] = 1;
-
-  float t1 = transform_ptr[0 * transform_pitch + 3];
-  float t2 = transform_ptr[1 * transform_pitch + 3];
-  float t3 = transform_ptr[2 * transform_pitch + 3];
-
-#pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-    float *dst = &pose[i * 4];
-    const float *src = &transform_ptr[i * transform_pitch];
-    memcpy(dst, src, 3 * sizeof(float));
-  }
-
-  // transpose R
-  swap(pose[0 * 4 + 1], pose[1 * 4 + 0]);
-  swap(pose[0 * 4 + 2], pose[2 * 4 + 0]);
-  swap(pose[1 * 4 + 2], pose[2 * 4 + 1]);
-
-  pose[0 * 4 + 3] = -(pose[0 * 4 + 0] * t1 + pose[0 * 4 + 1] * t2 + pose[0 * 4 + 2] * t3);
-  pose[1 * 4 + 3] = -(pose[1 * 4 + 0] * t1 + pose[1 * 4 + 1] * t2 + pose[1 * 4 + 2] * t3);
-  pose[2 * 4 + 3] = -(pose[2 * 4 + 0] * t1 + pose[2 * 4 + 1] * t2 + pose[2 * 4 + 2] * t3);
+  lie_device::InverseSE3(transform_ptr, transform_pitch, pose);
 
 #pragma unroll
   for (uint8_t i = 0; i < 4; i++) {
@@ -1424,22 +1379,8 @@ __global__ void inverse_se2_kernel(const float *transforms, size_t transform_str
   if (idx >= size) {
     return;
   }
-
-  const float *T = transforms + idx * transform_stride;
-  float *Ti = inverse_transforms + idx * inverse_stride;
-
-  float r00 = T[0], r01 = T[1], tx = T[2];
-  float r10 = T[3], r11 = T[4], ty = T[5];
-
-  Ti[0] = r00;
-  Ti[1] = r10;
-  Ti[2] = -(r00 * tx + r10 * ty);
-  Ti[3] = r01;
-  Ti[4] = r11;
-  Ti[5] = -(r01 * tx + r11 * ty);
-  Ti[6] = 0.0f;
-  Ti[7] = 0.0f;
-  Ti[8] = 1.0f;
+  lie_device::InverseSE2(transforms + idx * transform_stride,
+                         inverse_transforms + idx * inverse_stride);
 }
 
 /**

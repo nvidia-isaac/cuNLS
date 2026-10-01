@@ -166,6 +166,7 @@ struct PointToPointData {
 TEST(EvaluateItemsRegistration, PointToPointMatchesEvaluate) {
   PointToPointData data(101);
   PointToPointFactorBatch factor(data.p.data(), data.q.data(), kNumFactors);
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 102);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -175,6 +176,7 @@ TEST(EvaluateItemsRegistration, PointToPlaneMatchesEvaluate) {
   auto q = ToDevice(RandomPoints(kNumFactors, 112));
   auto nq = ToDevice(RandomNormals(kNumFactors, 113));
   PointToPlaneFactorBatch factor(p.data(), q.data(), nq.data(), kNumFactors);
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 114);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -185,6 +187,7 @@ TEST(EvaluateItemsRegistration, SymmetricPointToPlaneMatchesEvaluate) {
   auto np = ToDevice(RandomNormals(kNumFactors, 123));
   auto nq = ToDevice(RandomNormals(kNumFactors, 124));
   SymmetricPointToPlaneFactorBatch factor(p.data(), q.data(), np.data(), nq.data(), kNumFactors);
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 125);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -193,6 +196,7 @@ TEST(EvaluateItemsRegistration, WeightedUniformPointToPointMatchesEvaluate) {
   PointToPointData data(131);
   WeightedFactorBatch<PointToPointFactorBatch> factor(1.7f, data.p.data(), data.q.data(),
                                                       static_cast<size_t>(kNumFactors));
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 132);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -203,6 +207,7 @@ TEST(EvaluateItemsRegistration, WeightedPerFactorPointToPointMatchesEvaluate) {
   WeightedFactorBatch<PointToPointFactorBatch> factor(
       weights.data(), static_cast<size_t>(kNumFactors), data.p.data(), data.q.data(),
       static_cast<size_t>(kNumFactors));
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 143);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -213,6 +218,7 @@ TEST(EvaluateItemsRegistration, WeightedPerFactorPnPMatchesEvaluate) {
   WeightedFactorBatch<PnPFactorBatch> factor(weights.data(), static_cast<size_t>(kNumFactors),
                                              data.obs.data(), data.pts.data(),
                                              static_cast<size_t>(kNumFactors));
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 153, 0.05f, 0.1f);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -223,6 +229,7 @@ TEST(EvaluateItemsRegistration, InformationPointToPointMatchesEvaluate) {
   InformationFactorBatch<PointToPointFactorBatch> factor(
       Cublas(), info.data(), static_cast<size_t>(kNumFactors), data.p.data(), data.q.data(),
       static_cast<size_t>(kNumFactors));
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 163);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -233,6 +240,7 @@ TEST(EvaluateItemsRegistration, InformationPnPMatchesEvaluate) {
   InformationFactorBatch<PnPFactorBatch> factor(Cublas(), info.data(),
                                                 static_cast<size_t>(kNumFactors), data.obs.data(),
                                                 data.pts.data(), static_cast<size_t>(kNumFactors));
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 173, 0.05f, 0.1f);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -247,6 +255,7 @@ TEST(EvaluateItemsRegistration, InformationWeightedPointToPlaneMatchesEvaluate) 
       Cublas(), info.data(), static_cast<size_t>(kNumFactors), weights.data(),
       static_cast<size_t>(kNumFactors), p.data(), q.data(), nq.data(),
       static_cast<size_t>(kNumFactors));
+  factor.SetNumFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 186);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }

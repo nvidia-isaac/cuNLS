@@ -52,11 +52,12 @@ class ConstantVelocitySE3FactorBatch : public SizedFactorBatch<12, 6, 6, 6, 6> {
    * @brief Constructs a batch of SE(3) constant-velocity factors.
    *
    * @param dt_ptr Device pointer to per-factor time deltas (t_{k+1} - t_k),
-   *               at least num_factors floats. Not owned; must outlive this
+   *               at least capacity floats. Not owned; must outlive this
    *               object.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  ConstantVelocitySE3FactorBatch(const float *dt_ptr, size_t num_factors);
+  ConstantVelocitySE3FactorBatch(const float *dt_ptr, size_t capacity);
 
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
@@ -67,13 +68,10 @@ class ConstantVelocitySE3FactorBatch : public SizedFactorBatch<12, 6, 6, 6, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   ConstantVelocitySE3FactorBatch() = delete;
 
   const float *dt_ptr_;
-  size_t num_factors_;
 
   /// Scratch: T_k^{-1} * T_{k+1} per factor.
   mutable DeviceVector<SE3Transform> pose_rel_;

@@ -186,29 +186,29 @@ __global__ void reprojection_fused_kernel(const Vector<2> *observations,
   }
 }
 
-ReprojectionFactorBatch::ReprojectionFactorBatch(const Vector<2> *observations,
-                                                 size_t num_observations, float z_threshold)
-    : observations_(observations), num_observations_(num_observations), z_threshold_(z_threshold) {}
+ReprojectionFactorBatch::ReprojectionFactorBatch(const Vector<2> *observations, size_t capacity,
+                                                 float z_threshold)
+    : SizedFactorBatch(capacity), observations_(observations), z_threshold_(z_threshold) {}
 
 ReprojectionFactorBatch::ReprojectionFactorBatch(const Vector<2> *observations,
                                                  const SE3Transform *poses_camera_from_rig,
-                                                 size_t num_observations, float z_threshold)
-    : observations_(observations),
+                                                 size_t capacity, float z_threshold)
+    : SizedFactorBatch(capacity),
+      observations_(observations),
       poses_camera_from_rig_(poses_camera_from_rig),
-      num_observations_(num_observations),
       z_threshold_(z_threshold) {}
 
 bool ReprojectionFactorBatch::Evaluate(float *residuals, float *jacobians,
                                        float const *const *state_pointers, cudaStream_t stream,
                                        const int *factor_ids, size_t num_factor_ids) const {
   const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || num_observations_ == 0) {
+  if (num_items == 0 || NumFactors() == 0) {
     return true;
   }
   const size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
   reprojection_fused_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
       observations_, state_pointers, poses_camera_from_rig_, residuals, jacobians, z_threshold_,
-      static_cast<int>(num_items), factor_ids, static_cast<int>(num_observations_));
+      static_cast<int>(num_items), factor_ids, static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }

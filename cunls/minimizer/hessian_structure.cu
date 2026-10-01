@@ -334,7 +334,6 @@ void HessianStructureBuilder::BuildLayout(const Problem &problem) {
 void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Problem &problem,
                                                    int num_cols, dvector<int> &tangent_at_col) {
   const auto &residual_batches = problem.GetResidualBatches();
-  const auto &host_state_pointers = problem.GetStatePointers();
 
   if (factor_cols_.empty()) {
     return;
@@ -348,22 +347,14 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
         cudaMemsetAsync(tangent_at_col.data(), 0, tangent_at_col.size() * sizeof(int), stream));
   }
 
-  // Staging buffers live only for this call.  State pointers are uploaded once
-  // and reused across the state-batch loop below.
-  dvector<float *> state_pointers(factor_cols_.size());
+  // The state pointers are read from the problem's device tables
+  // (Problem::DeviceStatePointers); only the small block-size arrays are staged.
   std::vector<dvector<int>> block_sizes_device(residual_batches.size());
   for (size_t i = 0; i < residual_batches.size(); i++) {
     auto block_sizes = residual_batches[i].GetFactorBatch()->StateBlockSizes();
     std::vector<int> sizes_host(block_sizes.begin(), block_sizes.end());
     block_sizes_device[i].resize(sizes_host.size());
     block_sizes_device[i].CopyFromHost(sizes_host.data(), sizes_host.size());
-
-    const size_t count = static_cast<size_t>(layout_[i].num_factors) * layout_[i].num_blocks;
-    if (count > 0) {
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(state_pointers.data() + layout_[i].col_offset,
-                                          host_state_pointers[i].data(), count * sizeof(float *),
-                                          cudaMemcpyHostToDevice, stream));
-    }
   }
 
   // A (factor, block) slot is owned by exactly one state batch, so each batch
@@ -387,9 +378,9 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
         continue;
       }
       ResolveFactorColumnsKernel<<<GridFor(count), kBlockSize, 0, stream>>>(
-          static_cast<int>(count), layout_[i].num_blocks,
-          state_pointers.data() + layout_[i].col_offset, block_sizes_device[i].data(),
-          state_batch->StateBlockDevicePtr(0), static_cast<int>(state_batch->AmbientSize()),
+          static_cast<int>(count), layout_[i].num_blocks, problem.DeviceStatePointers(i),
+          block_sizes_device[i].data(), state_batch->StateBlockDevicePtr(0),
+          static_cast<int>(state_batch->AmbientSize()),
           static_cast<int>(state_batch->TangentSize()),
           static_cast<int>(state_batch->NumStateBlocks()), block_col_map.data(),
           factor_cols_.data() + layout_[i].col_offset);
@@ -401,8 +392,8 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
                          state_batch->TangentSize());
   }
 
-  // state_pointers goes out of scope here; the kernels above are ordered behind
-  // its upload on `stream`, so wait before the allocation is released.
+  // block_col_map and block_sizes_device go out of scope here; the kernels
+  // above read them on `stream`, so wait before the allocations are released.
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 

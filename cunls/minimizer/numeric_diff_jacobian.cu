@@ -130,15 +130,27 @@ void NumericDiffJacobianBuilder::EnsureStreamPool(size_t num_streams) {
 
 void NumericDiffJacobianBuilder::PrepareResidualBatch(const Problem &problem,
                                                       size_t residual_batch_index) {
-  const auto &residual_batches = problem.GetResidualBatches();
-  if (residual_batch_index >= residual_batches.size()) {
+  if (residual_batch_index >= problem.GetResidualBatches().size()) {
     throw std::runtime_error(
         "NumericDiffJacobianBuilder::PrepareResidualBatch: index out of range");
   }
-  const auto &rb = residual_batches[residual_batch_index];
+  BuildPlan(problem, residual_batch_index, problem.HostStatePointers(residual_batch_index));
+}
+
+void NumericDiffJacobianBuilder::Refresh(const Problem &problem, size_t residual_batch_index) {
+  const std::vector<float *> &host_ptrs = problem.HostStatePointers(residual_batch_index);
+  const auto it = plans_.find(residual_batch_index);
+  if (it != plans_.end() && it->second.source == host_ptrs) {
+    return;  // same connectivity: the plan and its device cache stay valid
+  }
+  BuildPlan(problem, residual_batch_index, host_ptrs);
+}
+
+void NumericDiffJacobianBuilder::BuildPlan(const Problem &problem, size_t residual_batch_index,
+                                           std::vector<float *> host_ptrs) {
+  const auto &rb = problem.GetResidualBatches()[residual_batch_index];
   const FactorBatch *factor_batch = rb.GetFactorBatch();
   const auto &state_batches = problem.GetStateBatches();
-  const auto &host_ptrs = problem.GetStatePointers()[residual_batch_index];
 
   const size_t F = factor_batch->NumFactors();
   auto block_sizes = factor_batch->StateBlockSizes();
@@ -192,6 +204,7 @@ void NumericDiffJacobianBuilder::PrepareResidualBatch(const Problem &problem,
     }
   }
 
+  plan.source = std::move(host_ptrs);
   plans_[residual_batch_index] = std::move(plan);
   // Structure changed (or is being defined for the first time): any cached
   // slot layout / uploaded device scratch for this residual batch no longer

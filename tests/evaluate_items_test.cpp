@@ -143,11 +143,13 @@ TEST(PlusReplicas, MatchesPlusPerReplicaBitwiseForEveryState) {
     auto x = dvector<float>(states);
     auto delta0 = ToDevice(RandomVector(tangents, 0.3f, 1));
     auto all = c.make(base.data(), replicas * blocks);
+    all->SetNumStateBlocks(replicas * blocks);
     all->Plus(base.data(), delta0.data(), x.data(), stream.GetStream());
 
     auto delta = ToDevice(RandomVector(tangents, 0.2f, 2));
     dvector<float> looped(states), batched(states);
     auto batch = c.make(x.data(), blocks);
+    batch->SetNumStateBlocks(blocks);
     const size_t s = blocks * c.ambient;
     const size_t t = blocks * c.tangent;
     for (size_t r = 0; r < replicas; ++r) {
@@ -186,6 +188,7 @@ TEST(EvaluateItems, PnPMatchesEvaluate) {
   auto obs = ToDevice(scene.observations);
   auto pts = ToDevice(scene.points_world);
   PnPFactorBatch pnp(obs.data(), pts.data(), scene.observations.size());
+  pnp.SetNumFactors(pnp.Capacity());
   Poses poses(4, 12, 0.05, 0.1);
   evaluate_items_test::CheckEvaluateItems(
       pnp, 4, [&](int k) { return std::vector<float *>(60, poses.ptr(k)); });
@@ -197,6 +200,7 @@ TEST(EvaluateItems, PnPWithCameraFromRigMatchesEvaluate) {
   auto pts = ToDevice(scene.points_world);
   Poses rigs(40, 14, 0.02, 0.05);
   PnPFactorBatch pnp(obs.data(), rigs.d.data(), pts.data(), 40);
+  pnp.SetNumFactors(pnp.Capacity());
   Poses poses(3, 15, 0.05, 0.1);
   evaluate_items_test::CheckEvaluateItems(
       pnp, 3, [&](int k) { return std::vector<float *>(40, poses.ptr(k)); });
@@ -207,6 +211,7 @@ TEST(EvaluateItems, ReprojectionMatchesEvaluate) {
   auto obs = ToDevice(scene.observations);
   auto pts = ToDevice(scene.points_world);
   ReprojectionFactorBatch reproj(obs.data(), 50);
+  reproj.SetNumFactors(reproj.Capacity());
   Poses poses(3, 17, 0.05, 0.1);
   evaluate_items_test::CheckEvaluateItems(reproj, 3, [&](int k) {
     std::vector<float *> p;
@@ -221,6 +226,7 @@ TEST(EvaluateItems, ReprojectionMatchesEvaluate) {
 TEST(EvaluateItems, SE3PriorMatchesEvaluate) {
   Poses targets(20, 18);
   SE3PriorFactorBatch prior(targets.d.data(), 20);
+  prior.SetNumFactors(prior.Capacity());
   Poses poses(5, 19);
   evaluate_items_test::CheckEvaluateItems(
       prior, 5, [&](int k) { return std::vector<float *>(20, poses.ptr(k)); });
@@ -229,6 +235,7 @@ TEST(EvaluateItems, SE3PriorMatchesEvaluate) {
 TEST(EvaluateItems, SE3BetweenMatchesEvaluate) {
   Poses deltas(25, 20);
   SE3BetweenFactorBatch between(deltas.d.data(), 25);
+  between.SetNumFactors(between.Capacity());
   Poses poses(6, 21);
   evaluate_items_test::CheckEvaluateItems(between, 3, [&](int k) {
     std::vector<float *> p;
@@ -246,6 +253,7 @@ TEST(EvaluateItems, ResidualBatchWithLossMatchesEvaluate) {
   auto obs = ToDevice(scene.observations);
   auto pts = ToDevice(scene.points_world);
   PnPFactorBatch pnp(obs.data(), pts.data(), n_f);
+  pnp.SetNumFactors(pnp.Capacity());
   CauchyLossFunctionBatch loss(1e-4f, 1e4f);
   ResidualBatch rb(&pnp, &loss);
   Poses poses(copies, 23, 0.05, 0.1);

@@ -35,7 +35,7 @@ namespace cunls {
  */
 template <int kResidualSize, int... kStateBlockSizes>
 class SizedFactorBatch : public FactorBatch {
-public:
+ public:
   /**
    * @brief Same SizedFactorBatch specialization as this base (for wrapper
    * types).
@@ -44,6 +44,12 @@ public:
    * wrappers share the compile-time residual and state-block layout of T.
    */
   using sized_layout = SizedFactorBatch<kResidualSize, kStateBlockSizes...>;
+
+  /** @brief Batch without a capacity (subclasses that override NumFactors()). */
+  SizedFactorBatch() = default;
+
+  /** @brief Batch whose buffers hold `capacity` factors; see FactorBatch(size_t). */
+  explicit SizedFactorBatch(size_t capacity) : FactorBatch(capacity) {}
 
   /**
    * @brief Returns the compile-time residual dimension.
@@ -55,11 +61,9 @@ public:
    * @brief Returns the compile-time state block sizes.
    * @return Vector containing {kStateBlockSizes...}.
    */
-  std::vector<size_t> StateBlockSizes() const final {
-    return {kStateBlockSizes...};
-  };
+  std::vector<size_t> StateBlockSizes() const final { return {kStateBlockSizes...}; };
 
   /** @brief Compile-time constant for the residual dimension. */
   static constexpr size_t residual_size_ = kResidualSize;
 };
-} // namespace cunls
+}  // namespace cunls

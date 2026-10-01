@@ -22,20 +22,17 @@ class SO2BetweenFactorBatch : public SizedFactorBatch<1, 1, 1> {
   using Base = SizedFactorBatch<1, 1, 1>;
 
  public:
-  SO2BetweenFactorBatch(const SO2Rotation *pose_deltas_ptr, size_t num_factors);
+  SO2BetweenFactorBatch(const SO2Rotation *pose_deltas_ptr, size_t capacity);
 
   /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SO2BetweenFactorBatch() = default;
 
   const Matrix<2> *pose_deltas_ptr_;
-  size_t num_factors_;
   mutable DeviceVector<Matrix<2>> poses_left_;
   mutable DeviceVector<Matrix<2>> poses_right_;
   mutable DeviceVector<Matrix<2>> poses_left_inverse_;

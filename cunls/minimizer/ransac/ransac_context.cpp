@@ -77,6 +77,7 @@ RansacSummary RansacContext::Minimize(cudaStream_t stream, Problem &problem) {
 }
 
 void RansacContext::Prepare(cudaStream_t stream, const Problem &problem) {
+  problem.CheckSizes();  // cheap host-only guard; see Problem::CheckSizes
   ValidateOptions(options_);
   has_run_ = false;
   layout_.Build(problem, options_);

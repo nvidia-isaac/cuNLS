@@ -33,6 +33,8 @@
 // state_block_device_ptr(), and read-only num/tangent/ambient properties).
 // The template helpers below factor out the repetitive nanobind boilerplate.
 
+#include <stdexcept>
+
 #include "bindings.h"
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/se3_state_batch.h"
@@ -52,7 +54,8 @@ namespace {
 // This is the state-batch counterpart of PyFactorBatch in bind_factor.cpp.
 //
 // Storage layout mirrors SizedStateBatch: a contiguous GPU buffer of
-// num_blocks * ambient_size floats, with optional const-state indices.
+// capacity * ambient_size floats, with optional const-state indices. Like the
+// built-in batches it starts with 0 active blocks (see set_num_state_blocks).
 class PyStateBatch : public cunls::StateBatch {
  public:
   const float *ptr_;
@@ -61,32 +64,47 @@ class PyStateBatch : public cunls::StateBatch {
   size_t num_blocks_;
   const int *const_ids_;
   size_t num_const_;
+  size_t capacity_;        // blocks the buffer holds
+  size_t const_capacity_;  // entries the constant-id buffer holds
 
-  PyStateBatch(uintptr_t data_ptr, size_t ambient_size, size_t tangent_size, size_t num_blocks,
-               uintptr_t const_ids_ptr, size_t num_const)
+  PyStateBatch(uintptr_t data_ptr, size_t ambient_size, size_t tangent_size, size_t capacity,
+               uintptr_t const_ids_ptr, size_t const_capacity)
       : ptr_(reinterpret_cast<const float *>(data_ptr)),
         ambient_size_(ambient_size),
         tangent_size_(tangent_size),
-        num_blocks_(num_blocks),
+        num_blocks_(0),
         const_ids_(reinterpret_cast<const int *>(const_ids_ptr)),
-        num_const_(num_const) {}
+        num_const_(0),
+        capacity_(capacity),
+        const_capacity_(const_capacity) {}
 
   size_t TangentSize() const override { return tangent_size_; }
   size_t AmbientSize() const override { return ambient_size_; }
   size_t NumStateBlocks() const override { return num_blocks_; }
 
   float *StateBlockDevicePtr(size_t idx) override {
-    if (idx >= num_blocks_) return nullptr;
+    if (idx >= capacity_) return nullptr;
     return const_cast<float *>(ptr_ + idx * ambient_size_);
   }
 
   const float *StateBlockDevicePtr(size_t idx) const override {
-    if (idx >= num_blocks_) return nullptr;
+    if (idx >= capacity_) return nullptr;
     return ptr_ + idx * ambient_size_;
   }
 
   const int *ConstStateIds() const override { return const_ids_; }
   size_t NumConstStateBlocks() const override { return num_const_; }
+  size_t Capacity() const override { return capacity_; }
+  size_t ConstCapacity() const override { return const_capacity_; }
+
+  // Active sizes for buffers reused across solves (see StateBatch::SetNumStateBlocks).
+  void SetNumStateBlocks(size_t num_blocks, size_t num_const = 0) override {
+    if (num_blocks > capacity_ || num_const > const_capacity_) {
+      throw std::invalid_argument("set_num_state_blocks: size exceeds the capacity");
+    }
+    num_blocks_ = num_blocks;
+    num_const_ = num_const;
+  }
 
   // Manifold retraction — forwards to Python ``plus(x, delta, out, stream,
   // num_replicas)`` on the subclass (see StateBatch::Plus for the replica
@@ -103,8 +121,9 @@ class PyStateBatch : public cunls::StateBatch {
 };
 
 // Register a VectorStateBatch<Dim> with two constructor overloads:
-//   1. (data, num_blocks)                     — all blocks are variable
-//   2. (data, num_blocks, const_ids, num_const) — some blocks are held constant
+//   1. (data, capacity)                                  — all blocks are variable
+//   2. (data, capacity, const_state_ids, const_capacity) — some blocks are held constant
+// Both start with 0 active blocks: call set_num_state_blocks() before solving.
 //
 // nb::keep_alive<1, N> prevents the Python objects that own the GPU memory
 // (e.g. CuPy arrays passed as `data`) from being garbage-collected while the
@@ -116,21 +135,21 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
       m, name, "Euclidean vector state batch (Plus = element-wise addition).")
       .def(
           "__init__",
-          [](Class *self, nb::handle data, size_t num_blocks) {
+          [](Class *self, nb::handle data, size_t capacity) {
             auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
-            new (self) Class(ptr, num_blocks);
+            new (self) Class(ptr, capacity);
           },
-          nb::arg("data"), nb::arg("num_blocks"), nb::keep_alive<1, 2>())
+          nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
       .def(
           "__init__",
-          [](Class *self, nb::handle data, size_t num_blocks, nb::handle const_ids,
-             size_t num_const) {
+          [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
+             size_t const_capacity) {
             auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
             auto cids = reinterpret_cast<const int *>(extract_device_ptr(const_ids));
-            new (self) Class(ptr, num_blocks, cids, num_const);
+            new (self) Class(ptr, capacity, cids, const_capacity);
           },
-          nb::arg("data"), nb::arg("num_blocks"), nb::arg("const_state_ids"),
-          nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
+          nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
+          nb::arg("const_capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
       .def(
           "state_block_device_ptr",
           [](Class &self, size_t idx) -> uintptr_t {
@@ -149,22 +168,22 @@ template <typename Class>
 void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
   cls.def(
          "__init__",
-         [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data, size_t num_blocks) {
+         [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data, size_t capacity) {
            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
-           new (self) Class(cublas, ptr, num_blocks);
+           new (self) Class(cublas, ptr, capacity);
          },
-         nb::arg("cublas_handle"), nb::arg("data"), nb::arg("num_blocks"), nb::keep_alive<1, 2>(),
+         nb::arg("cublas_handle"), nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
          nb::keep_alive<1, 3>())
       .def(
           "__init__",
-          [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data, size_t num_blocks,
-             nb::handle const_ids, size_t num_const) {
+          [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data, size_t capacity,
+             nb::handle const_ids, size_t const_capacity) {
             auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
             auto cids = reinterpret_cast<const int *>(extract_device_ptr(const_ids));
-            new (self) Class(cublas, ptr, num_blocks, cids, num_const);
+            new (self) Class(cublas, ptr, capacity, cids, const_capacity);
           },
-          nb::arg("cublas_handle"), nb::arg("data"), nb::arg("num_blocks"),
-          nb::arg("const_state_ids"), nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(),
+          nb::arg("cublas_handle"), nb::arg("data"), nb::arg("capacity"),
+          nb::arg("const_state_ids"), nb::arg("const_capacity"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(), nb::keep_alive<1, 5>())
       .def(
           "state_block_device_ptr",
@@ -181,7 +200,17 @@ void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
 
 void bind_state(nb::module_ &m) {
   nb::class_<cunls::StateBatch>(m, "StateBatch",
-                                "Abstract base class for batched state blocks on a manifold.");
+                                "Abstract base class for batched state blocks on a manifold.")
+      .def_prop_ro("capacity", &cunls::StateBatch::Capacity,
+                   "Blocks the state buffer holds (the constructor's capacity).")
+      .def_prop_ro("const_capacity", &cunls::StateBatch::ConstCapacity,
+                   "Entries the constant-id buffer holds (the constructor's const_capacity).")
+      .def("set_num_state_blocks", &cunls::StateBatch::SetNumStateBlocks, nb::arg("num_blocks"),
+           nb::arg("num_const_state_blocks") = 0,
+           "Sets the active block count (the first num_blocks blocks of the buffer) and the "
+           "active constant-id count. Batches start with 0 active blocks: call this before the "
+           "first solve, and again whenever the sizes change. Host-only; takes effect at the "
+           "next minimize(). Raises ValueError above the capacity.");
 
   bind_vector_state_batch<1>(m, "VectorStateBatch1");
   bind_vector_state_batch<2>(m, "VectorStateBatch2");
@@ -235,22 +264,23 @@ void bind_state(nb::module_ &m) {
       .def(
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
-             size_t num_blocks) {
+             size_t capacity) {
             auto ptr = extract_device_ptr(data);
-            new (self) PyStateBatch(ptr, ambient_size, tangent_size, num_blocks, 0, 0);
+            new (self) PyStateBatch(ptr, ambient_size, tangent_size, capacity, 0, 0);
           },
-          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("num_blocks"),
+          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("capacity"),
           nb::keep_alive<1, 2>())
       .def(
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
-             size_t num_blocks, nb::handle const_ids, size_t num_const) {
+             size_t capacity, nb::handle const_ids, size_t const_capacity) {
             auto ptr = extract_device_ptr(data);
             auto cids = extract_device_ptr(const_ids);
-            new (self) PyStateBatch(ptr, ambient_size, tangent_size, num_blocks, cids, num_const);
+            new (self)
+                PyStateBatch(ptr, ambient_size, tangent_size, capacity, cids, const_capacity);
           },
-          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("num_blocks"),
-          nb::arg("const_state_ids"), nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(),
+          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("capacity"),
+          nb::arg("const_state_ids"), nb::arg("const_capacity"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 6>())
       .def(
           "plus",

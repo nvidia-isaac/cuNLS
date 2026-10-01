@@ -14,6 +14,15 @@ geometric estimation problems.
      </div>
    </div>
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``SetNumFactors(n)`` /
+   ``SetNumStateBlocks(n)`` (Python: ``set_num_factors`` /
+   ``set_num_state_blocks``) before solving, and again whenever the problem size
+   changes. See :ref:`capacity-and-active-count`.
+
 ===============================================================================
 User Guide
 ===============================================================================

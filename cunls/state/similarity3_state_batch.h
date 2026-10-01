@@ -54,11 +54,12 @@ class Similarity3StateBatch : public SizedStateBatch<16, 7> {
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the Sim(3)
-   * transforms. Must point to at least num_blocks * 16 floats of allocated
+   * transforms. Must point to at least capacity * 16 floats of allocated
    * memory.
-   * @param num_blocks The number of Sim(3) state blocks in this batch.
+   * @param capacity Number of state blocks the buffer holds. The active count
+   *        starts at 0: call SetNumStateBlocks(n) before solving.
    */
-  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
+  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity);
 
   /**
    * @brief Constructs a batch of Sim(3) state blocks with constant state
@@ -66,15 +67,16 @@ class Similarity3StateBatch : public SizedStateBatch<16, 7> {
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the Sim(3)
-   * transforms. Must point to at least num_blocks * 16 floats of allocated
+   * transforms. Must point to at least capacity * 16 floats of allocated
    * memory.
-   * @param num_blocks The number of Sim(3) state blocks in this batch.
+   * @param capacity Number of state blocks the buffer holds. The active count
+   *        starts at 0: call SetNumStateBlocks(n) before solving.
    * @param device_constant_state_ids Pointer to GPU device memory containing
    * the indices of state blocks that should remain constant.
-   * @param num_const_state_blocks The number of constant state blocks.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
-                        const int *device_constant_state_ids, size_t num_const_state_blocks);
+  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity,
+                        const int *device_constant_state_ids, size_t const_capacity);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)

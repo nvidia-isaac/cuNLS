@@ -149,12 +149,12 @@ __global__ void __launch_bounds__(256, 4)
 }
 
 Similarity2BetweenFactorBatch::Similarity2BetweenFactorBatch(
-    const Similarity2Transform *pose_deltas_ptr, size_t num_factors)
-    : pose_deltas_ptr_(pose_deltas_ptr),
-      num_factors_(num_factors),
-      poses_left_(num_factors),
-      poses_right_(num_factors),
-      poses_left_inverse_(num_factors) {}
+    const Similarity2Transform *pose_deltas_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      pose_deltas_ptr_(pose_deltas_ptr),
+      poses_left_(capacity),
+      poses_right_(capacity),
+      poses_left_inverse_(capacity) {}
 
 bool Similarity2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                              float const *const *state_pointers,

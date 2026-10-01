@@ -97,29 +97,12 @@ void MinimizerState::CreateStates(const Problem &problem) {
  * @param problem The problem containing residual batch information.
  */
 void MinimizerState::CreateStatePointers(const Problem &problem) {
-  const auto &problem_param_pointers = problem.GetStatePointers();
-  if (state_pointers_.size() != problem_param_pointers.size()) {
-    state_pointers_.resize(problem_param_pointers.size());
+  const size_t num_batches = problem.GetResidualBatches().size();
+  if (state_pointers_.size() != num_batches) {
+    state_pointers_.resize(num_batches);
   }
-
-  for (size_t i = 0; i < problem_param_pointers.size(); i++) {
-    const auto &param_ptrs = problem_param_pointers[i];
-    auto &new_ptrs = state_pointers_[i];
-
-    new_ptrs.resize(param_ptrs.size());
-  }
-}
-
-void MinimizerState::CopyProblemStatePointersFromHost(const Problem &problem) {
-  const auto &host = problem.GetStatePointers();
-  if (problem_state_ptrs_device_.size() != host.size()) {
-    problem_state_ptrs_device_.resize(host.size());
-  }
-  for (size_t i = 0; i < host.size(); ++i) {
-    problem_state_ptrs_device_[i].resize(host[i].size());
-    if (!host[i].empty()) {
-      problem_state_ptrs_device_[i].CopyFromHost(host[i].data(), host[i].size());
-    }
+  for (size_t i = 0; i < num_batches; i++) {
+    state_pointers_[i].resize(problem.NumStatePointers(i));
   }
 }
 
@@ -137,7 +120,6 @@ void MinimizerState::CopyProblemStatePointersFromHost(const Problem &problem) {
 void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
   CreateStates(problem);
   CreateStatePointers(problem);
-  CopyProblemStatePointersFromHost(problem);
 
   const auto &state_batches = problem.GetStateBatches();
   {
@@ -162,19 +144,20 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
     const auto &residual_batches = problem.GetResidualBatches();
 
     for (size_t i = 0; i < residual_batches.size(); i++) {
-      const auto &param_ptrs = problem_state_ptrs_device_[i];
+      // The problem's device table (Problem::PrepareStatePointers has already
+      // run on `stream` for this solve).
+      float *const *old_pointers = problem.DeviceStatePointers(i);
+      const size_t num_pointers = problem.NumStatePointers(i);
       auto &new_ptrs = state_pointers_[i];
-
-      assert(param_ptrs.size() == new_ptrs.size());
+      assert(num_pointers == new_ptrs.size());
 
       // A factor batch may legitimately hold zero factors; a zero-size grid is
       // an invalid launch configuration.
-      if (param_ptrs.empty()) {
+      if (num_pointers == 0) {
         continue;
       }
 
       float **new_pointers = new_ptrs.data();
-      float *const *old_pointers = param_ptrs.data();
 
       for (size_t j = 0; j < state_batches.size(); j++) {
         const auto &param_batch_ptr = state_batches[j];
@@ -189,11 +172,11 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
 
         float *state_batch_ptr = param_batch_ptr->StateBlockDevicePtr(0);
 
-        size_t num_blocks = (param_ptrs.size() + block_size - 1) / block_size;
+        size_t num_blocks = (num_pointers + block_size - 1) / block_size;
 
         set_state_pointers_kernel<<<num_blocks, block_size, 0, stream>>>(
             new_pointers, old_pointers, state_batch_ptr, new_param_ptr, num_states_in_batch,
-            param_ptrs.size());
+            num_pointers);
         THROW_ON_CUDA_ERROR(cudaGetLastError());
       }
     }

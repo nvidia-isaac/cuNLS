@@ -109,15 +109,14 @@ __global__ void cv_se2_assemble_kernel(float const *const *state_pointers, const
   }
 }
 
-ConstantVelocitySE2FactorBatch::ConstantVelocitySE2FactorBatch(const float *dt_ptr,
-                                                               size_t num_factors)
-    : dt_ptr_(dt_ptr),
-      num_factors_(num_factors),
-      pose_rel_(num_factors),
-      twist_(num_factors),
-      neg_twist_(num_factors),
-      jl_inv_(num_factors),
-      jr_inv_(num_factors) {}
+ConstantVelocitySE2FactorBatch::ConstantVelocitySE2FactorBatch(const float *dt_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      dt_ptr_(dt_ptr),
+      pose_rel_(capacity),
+      twist_(capacity),
+      neg_twist_(capacity),
+      jl_inv_(capacity),
+      jr_inv_(capacity) {}
 
 bool ConstantVelocitySE2FactorBatch::Evaluate(float *residuals, float *jacobians,
                                               float const *const *state_pointers,

@@ -62,6 +62,15 @@ for its manifold.
 StateBatch Interface
 ================================================================================
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / state blocks their buffers hold) and
+   start with **zero** active entries: call ``SetNumFactors(n)`` /
+   ``SetNumStateBlocks(n)`` (Python: ``set_num_factors`` /
+   ``set_num_state_blocks``) before solving, and again whenever the problem size
+   changes. See :ref:`capacity-and-active-count`.
+
 .. cpp:function:: size_t TangentSize() const
 
   :returns: [out] Tangent-space dimension per state block.
@@ -72,7 +81,33 @@ StateBatch Interface
 
 .. cpp:function:: size_t NumStateBlocks() const
 
-  :returns: [out] Number of state blocks in this batch.
+  :returns: [out] Number of active state blocks (the first
+    ``NumStateBlocks()`` blocks of the buffer). 0 after construction, until
+    ``SetNumStateBlocks``.
+
+.. cpp:function:: size_t StateBatch::Capacity() const
+
+  :returns: [out] Number of state blocks the buffer holds: the ``capacity``
+    passed to the constructor. Constant for the batch's lifetime.
+    ``StateBlockDevicePtr(i)`` is valid for any ``i < Capacity()``.
+
+.. cpp:function:: size_t ConstCapacity() const
+
+  :returns: [out] Number of entries the constant-id buffer holds (0 without
+    one).
+
+.. cpp:function:: void SetNumStateBlocks(size_t num_blocks, size_t num_const_state_blocks = 0)
+
+  Sets the active block count and the active constant-id count (the first
+  ``num_const_state_blocks`` entries of the constant-id buffer, each below
+  ``num_blocks``). Every batch starts with 0 active blocks: call this before
+  the first solve, and again whenever the sizes change. Host-only (no
+  allocation, no device work); takes effect at the next ``Plus`` /
+  ``Minimize``.
+
+  :param ``num_blocks``: [in] Active block count, at most ``Capacity()``.
+  :param ``num_const_state_blocks``: [in] Active constant count, at most ``ConstCapacity()``.
+  :throws std::invalid_argument: if a count exceeds its capacity.
 
 .. cpp:function:: void Plus(const float* x, const float* delta, float* x_plus_delta, cudaStream_t stream, size_t num_replicas = 1)
 
@@ -134,7 +169,7 @@ StateBatch Interface
 
 .. cpp:function:: size_t NumConstStateBlocks() const
 
-  :returns: [out] Number of constant (non-optimized) state blocks.
+  :returns: [out] Number of active constant (non-optimized) state blocks.
 
 ================================================================================
 State batch types (tables)
@@ -368,18 +403,18 @@ Constructors
 SizedStateBatch<AmbientDim, TangentDim> (constructors)
 --------------------------------------------------------------------------------
 
-.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t num_blocks)
+.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t capacity)
 
-  :param ``device_ptr``: [in] Device pointer to contiguous state storage (num_blocks × AmbientDim floats).
-  :param ``num_blocks``: [in] Number of state blocks.
+  :param ``device_ptr``: [in] Device pointer to contiguous state storage (capacity × AmbientDim floats).
+  :param ``capacity``: [in] Number of state blocks the buffer holds. 0 are active until ``SetNumStateBlocks``.
   :returns: [out] Constructor has no return value.
 
-.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t num_blocks, const int* device_constant_state_ids, size_t num_const_state_blocks)
+.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t capacity, const int* device_constant_state_ids, size_t const_capacity)
 
   :param ``device_ptr``: [in] Device pointer to contiguous state storage.
-  :param ``num_blocks``: [in] Number of state blocks.
+  :param ``capacity``: [in] Number of state blocks the buffer holds. 0 are active until ``SetNumStateBlocks``.
   :param ``device_constant_state_ids``: [in] Device pointer to indices of constant blocks.
-  :param ``num_const_state_blocks``: [in] Number of constant block indices.
+  :param ``const_capacity``: [in] Number of entries the constant-id buffer holds. 0 are active until ``SetNumStateBlocks``.
   :returns: [out] Constructor has no return value.
 
 --------------------------------------------------------------------------------
@@ -395,14 +430,14 @@ StateBatch constructors
 
 Each StateBatch-derived class has constructors equivalent to:
 
-.. cpp:function:: ClassName(cuBLASHandle& cublas_handle, const float* device_ptr, size_t num_blocks)
-.. cpp:function:: ClassName(cuBLASHandle& cublas_handle, const float* device_ptr, size_t num_blocks, const int* device_constant_state_ids, size_t num_const_state_blocks)
+.. cpp:function:: ClassName(cuBLASHandle& cublas_handle, const float* device_ptr, size_t capacity)
+.. cpp:function:: ClassName(cuBLASHandle& cublas_handle, const float* device_ptr, size_t capacity, const int* device_constant_state_ids, size_t const_capacity)
 
   :param ``cublas_handle``: [in] External cuBLAS handle wrapper.
   :param ``device_ptr``: [in] Device pointer to contiguous state storage.
-  :param ``num_blocks``: [in] Number of state blocks.
+  :param ``capacity``: [in] Number of state blocks the buffer holds. 0 are active until ``SetNumStateBlocks``.
   :param ``device_constant_state_ids``: [in] Device pointer to constant block indices.
-  :param ``num_const_state_blocks``: [in] Number of constant block indices.
+  :param ``const_capacity``: [in] Number of entries the constant-id buffer holds. 0 are active until ``SetNumStateBlocks``.
   :returns: [out] Constructor has no return value.
 
 ================================================================================
@@ -466,18 +501,29 @@ and properties.
   the address of the first float in the block's ambient storage.  Use these
   pointers to build the ``state_pointers`` list passed to
   :ref:`Problem.add_factor_batch <py-problem-label>`.  *index* is
-  zero-based; passing a value ``>= num_state_blocks`` returns ``0`` (null
-  pointer).
+  zero-based and may be any slot below ``capacity`` (so connectivity can be
+  built before the active count is set); passing a value ``>= capacity``
+  returns ``0`` (null pointer).
+- ``set_num_state_blocks(num_blocks, num_const_state_blocks=0)`` — sets the
+  active block count (the first ``num_blocks`` blocks of the buffer) and the
+  active constant-id count. Every batch starts with 0 active blocks: call it
+  before the first solve, and again whenever the sizes change. Host-only;
+  takes effect at the next ``minimize``. Raises ``ValueError`` above the
+  capacity.
 
 **Read-only properties**
 
-- **num_state_blocks** (``int``) — total number of state blocks in the
-  batch, including any constant blocks.
+- **num_state_blocks** (``int``) — number of active state blocks, including
+  any active constant blocks (0 until ``set_num_state_blocks``).
+- **capacity** (``int``) — number of state blocks the buffer holds (the
+  constructor's ``capacity``); constant.
+- **const_capacity** (``int``) — number of entries the constant-id buffer
+  holds (the constructor's ``const_capacity``, 0 without one).
 - **tangent_size** (``int``) — tangent-space dimension per state block.
   This is the number of unknowns the solver allocates per block (e.g. 6 for
   SE(3), 3 for SO(3)).
 - **ambient_size** (``int``) — ambient/storage dimension per state block.
-  The GPU buffer stores ``num_state_blocks * ambient_size`` contiguous
+  The GPU buffer stores ``capacity * ambient_size`` contiguous
   floats (e.g. 16 for SE(3) = row-major 4×4 matrix).
 
 .. _py-vector-state-batches:
@@ -495,23 +541,26 @@ suffix indicates the dimension (1, 2, 3, or 6).  Plus is simple addition:
 .. code-block:: python
 
    # All optimizable:
-   sb = pycunls.VectorStateBatch3(data, num_blocks)
+   sb = pycunls.VectorStateBatch3(data, capacity)
 
    # With constant (frozen) blocks:
-   sb = pycunls.VectorStateBatch3(data, num_blocks, const_state_ids, num_const)
+   sb = pycunls.VectorStateBatch3(data, capacity, const_state_ids, const_capacity)
 
 - **data** (``DevicePointer``) — contiguous GPU buffer of
-  ``num_blocks × Dim`` floats.  The state batch does **not** copy the data;
+  ``capacity × Dim`` floats.  The state batch does **not** copy the data;
   it stores the pointer and reads/writes the buffer directly.  The caller
   must keep the underlying allocation alive for the lifetime of the state
   batch.
-- **num_blocks** (``int``) — number of state blocks in the batch.
+- **capacity** (``int``) — number of state blocks the buffer holds. The
+  batch starts with 0 active blocks: call ``set_num_state_blocks`` before
+  solving.
 - **const_state_ids** (``DevicePointer``, optional) — GPU ``int32`` array
   containing the zero-based indices of blocks that should be held constant
   during optimization.  Constant blocks are excluded from the solver's
   tangent vector; their ambient values are never modified.
-- **num_const** (``int``, optional) — number of entries in
-  *const_state_ids*.
+- **const_capacity** (``int``, optional) — number of entries the
+  *const_state_ids* buffer holds (the active count is set with
+  ``set_num_state_blocks``).
 
 .. _py-lie-state-batches:
 
@@ -531,19 +580,21 @@ right-multiplication by the exponential map:
    cublas = pycunls.CublasHandle()
 
    # All optimizable:
-   sb = pycunls.SE3StateBatch(cublas, data, num_blocks)
+   sb = pycunls.SE3StateBatch(cublas, data, capacity)
 
    # With constant blocks:
-   sb = pycunls.SE3StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.SE3StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
 - **cublas** (:ref:`CublasHandle <py-cublas-handle-label>`) — shared cuBLAS
   handle used internally for matrix operations in the exponential map.
 - **data** (``DevicePointer``) — contiguous GPU buffer of
-  ``num_blocks × 16`` floats (row-major 4×4 matrices).
-- **num_blocks** (``int``) — number of state blocks (poses).
+  ``capacity × 16`` floats (row-major 4×4 matrices).
+- **capacity** (``int``) — number of state blocks (poses) the buffer
+  holds; 0 are active until ``set_num_state_blocks``.
 - **const_ids** (``DevicePointer``, optional) — GPU ``int32`` array of
   constant-block indices (e.g. a gauge anchor).
-- **num_const** (``int``, optional) — number of constant blocks.
+- **const_capacity** (``int``, optional) — number of entries the
+  *const_ids* buffer holds.
 
 --------------------------------------------------------------------------------
 ``pycunls.SO3StateBatch``
@@ -557,10 +608,10 @@ Tangent = 3 (rotation vector / axis-angle).  Plus:
 
 .. code-block:: python
 
-   sb = pycunls.SO3StateBatch(cublas, data, num_blocks)
-   sb = pycunls.SO3StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.SO3StateBatch(cublas, data, capacity)
+   sb = pycunls.SO3StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
-- **data** — ``num_blocks × 9`` floats (row-major 3×3).
+- **data** — ``capacity × 9`` floats (row-major 3×3).
 
 --------------------------------------------------------------------------------
 ``pycunls.SO2StateBatch``
@@ -574,10 +625,10 @@ Tangent = 1 (angle in radians).  Plus:
 
 .. code-block:: python
 
-   sb = pycunls.SO2StateBatch(cublas, data, num_blocks)
-   sb = pycunls.SO2StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.SO2StateBatch(cublas, data, capacity)
+   sb = pycunls.SO2StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
-- **data** — ``num_blocks × 4`` floats
+- **data** — ``capacity × 4`` floats
   (:math:`[\cos\theta,\,-\sin\theta,\,\sin\theta,\,\cos\theta]`).
 
 --------------------------------------------------------------------------------
@@ -591,10 +642,10 @@ homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
 
 .. code-block:: python
 
-   sb = pycunls.SE2StateBatch(cublas, data, num_blocks)
-   sb = pycunls.SE2StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.SE2StateBatch(cublas, data, capacity)
+   sb = pycunls.SE2StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
-- **data** — ``num_blocks × 9`` floats (row-major 3×3).
+- **data** — ``capacity × 9`` floats (row-major 3×3).
 
 .. _py-similarity-state-batches:
 
@@ -609,8 +660,8 @@ homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
 
 .. code-block:: python
 
-   sb = pycunls.Similarity2StateBatch(cublas, data, num_blocks)
-   sb = pycunls.Similarity2StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.Similarity2StateBatch(cublas, data, capacity)
+   sb = pycunls.Similarity2StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
 --------------------------------------------------------------------------------
 ``pycunls.Similarity3StateBatch``
@@ -623,8 +674,8 @@ homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
 
 .. code-block:: python
 
-   sb = pycunls.Similarity3StateBatch(cublas, data, num_blocks)
-   sb = pycunls.Similarity3StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.Similarity3StateBatch(cublas, data, capacity)
+   sb = pycunls.Similarity3StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
 --------------------------------------------------------------------------------
 ``pycunls.SL4StateBatch``
@@ -638,10 +689,10 @@ Plus: :math:`T \oplus \delta = T \cdot \mathrm{Exp}(\delta)`.
 
 .. code-block:: python
 
-   sb = pycunls.SL4StateBatch(cublas, data, num_blocks)
-   sb = pycunls.SL4StateBatch(cublas, data, num_blocks, const_ids, num_const)
+   sb = pycunls.SL4StateBatch(cublas, data, capacity)
+   sb = pycunls.SL4StateBatch(cublas, data, capacity, const_ids, const_capacity)
 
-- **data** — ``num_blocks × 16`` floats (row-major 4×4).
+- **data** — ``capacity × 16`` floats (row-major 4×4).
 
 .. _py-custom-state-batch:
 
@@ -658,24 +709,26 @@ scalars, quaternions, constrained subspaces).
 .. code-block:: python
 
    class MyState(pycunls.CustomStateBatch):
-       def __init__(self, data, num_blocks):
+       def __init__(self, data, capacity):
            super().__init__(
                data,
                ambient_size=...,
                tangent_size=...,
-               num_blocks=num_blocks,
+               capacity=capacity,
            )
 
 - **data** (``DevicePointer``) — contiguous GPU buffer of
-  ``num_blocks × ambient_size`` floats.
+  ``capacity × ambient_size`` floats.
 - **ambient_size** (``int``) — number of floats per state block in GPU
   memory.
 - **tangent_size** (``int``) — number of tangent-space unknowns per block.
-- **num_blocks** (``int``) — number of state blocks.
+- **capacity** (``int``) — number of state blocks the buffer holds. The
+  batch starts with 0 active blocks: call ``set_num_state_blocks`` before
+  solving.
 - **const_state_ids** (``DevicePointer``, optional) — GPU ``int32`` array
   of constant-block indices.
-- **num_const_state_blocks** (``int``, default ``0``) — number of constant
-  blocks.
+- **const_capacity** (``int``, default ``0``) — number of entries the
+  *const_state_ids* buffer holds.
 
 **Methods to override**
 
@@ -684,16 +737,16 @@ scalars, quaternions, constrained subspaces).
   :math:`x_{\mathrm{out}} = x \oplus \delta` for **all blocks** in the
   arrays (the same contract as C++ :cpp:func:`StateBatch::Plus`).  The
   arrays hold ``num_replicas`` contiguous copies of the batch, i.e.
-  ``R × num_blocks`` blocks with ``R = num_replicas``; replica *r* is blocks
-  ``[r * num_blocks, (r + 1) * num_blocks)``.  All five arguments are raw
+  ``R × num_state_blocks`` blocks with ``R = num_replicas``; replica *r* is blocks
+  ``[r * num_state_blocks, (r + 1) * num_state_blocks)``.  All five arguments are raw
   ``int`` values:
 
   - *x_ptr* — device pointer to the current ambient state
-    (``R × num_blocks × ambient_size`` floats, read-only).
+    (``R × num_state_blocks × ambient_size`` floats, read-only).
   - *delta_ptr* — device pointer to the tangent-space updates
-    (``R × num_blocks × tangent_size`` floats, read-only).
+    (``R × num_state_blocks × tangent_size`` floats, read-only).
   - *x_plus_delta_ptr* — device pointer to the output buffer
-    (``R × num_blocks × ambient_size`` floats, write; does not overlap the
+    (``R × num_state_blocks × ambient_size`` floats, write; does not overlap the
     inputs).
   - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
     **must** be launched on this stream so the minimizer can serialize
@@ -723,12 +776,12 @@ zero-copy pointer wrapping so you never need to manually construct
    from pycunls.warp import WarpStateBatch
 
    class MyWarpState(WarpStateBatch):
-       def __init__(self, data, num_blocks):
+       def __init__(self, data, capacity):
            super().__init__(
                data,
                ambient_size=...,
                tangent_size=...,
-               num_blocks=num_blocks,
+               capacity=capacity,
                device="cuda:0",
            )
 
@@ -753,7 +806,7 @@ zero-copy pointer wrapping so you never need to manually construct
 - ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas) -> None`` —
   same contract as ``CustomStateBatch.plus``.  Typical implementations wrap
   the pointers with ``self.wrap_array`` (sized for
-  ``num_replicas × num_blocks`` blocks), build a ``wp.Stream`` with
+  ``num_replicas × num_state_blocks`` blocks), build a ``wp.Stream`` with
   ``self.make_warp_stream``, and launch a ``@wp.kernel`` with one thread per
   block.
 

@@ -69,7 +69,7 @@ constexpr float kMinDepth = 1.0f;
  * 2. Disturbed camera poses can be recovered through optimization
  */
 class ReprojectionFactorBatchTest : public ::testing::Test {
-public:
+ public:
   /// Point type: 3D world coordinates
   using Point3D = Vector<3>;
 
@@ -84,12 +84,10 @@ public:
     std::uniform_real_distribution<float> point_dist(-3.0f, 3.0f);
 
     // Generate random camera poses looking at the origin from a distance
-    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist,
-                        ground_truth_poses_);
+    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist, ground_truth_poses_);
 
     // Generate random 3D points ensuring they are visible from all cameras
-    GenerateRandomPointsVisibleFromAllCameras(num_points_, rng, point_dist,
-                                              ground_truth_points_);
+    GenerateRandomPointsVisibleFromAllCameras(num_points_, rng, point_dist, ground_truth_points_);
 
     // Validate that all points are in front of all cameras
     ValidateAllPointsVisible();
@@ -99,7 +97,7 @@ public:
     GenerateObservations();
   }
 
-protected:
+ protected:
   /**
    * @brief Computes the depth (z coordinate) of a point in camera frame.
    *
@@ -112,7 +110,7 @@ protected:
    */
   float ComputePointDepth(const SE3Transform &pose, const Point3D &point) {
     // P_cam.z = R[2,:] * P + t.z
-    float depth = pose[2 * 4 + 3]; // tz
+    float depth = pose[2 * 4 + 3];  // tz
     for (int j = 0; j < 3; j++) {
       depth += pose[2 * 4 + j] * point[j];
     }
@@ -128,16 +126,13 @@ protected:
    * @throws std::runtime_error if any point is behind any camera
    */
   void ValidateAllPointsVisible() {
-    for (size_t pose_idx = 0; pose_idx < ground_truth_poses_.size();
-         pose_idx++) {
-      for (size_t point_idx = 0; point_idx < ground_truth_points_.size();
-           point_idx++) {
-        float depth = ComputePointDepth(ground_truth_poses_[pose_idx],
-                                        ground_truth_points_[point_idx]);
+    for (size_t pose_idx = 0; pose_idx < ground_truth_poses_.size(); pose_idx++) {
+      for (size_t point_idx = 0; point_idx < ground_truth_points_.size(); point_idx++) {
+        float depth =
+            ComputePointDepth(ground_truth_poses_[pose_idx], ground_truth_points_[point_idx]);
         if (depth < kMinDepth) {
-          throw std::runtime_error("Point " + std::to_string(point_idx) +
-                                   " has depth " + std::to_string(depth) +
-                                   " < " + std::to_string(kMinDepth) +
+          throw std::runtime_error("Point " + std::to_string(point_idx) + " has depth " +
+                                   std::to_string(depth) + " < " + std::to_string(kMinDepth) +
                                    " in camera " + std::to_string(pose_idx));
         }
       }
@@ -157,28 +152,26 @@ protected:
    * @param translation_dist Distribution for translation perturbations
    * @param poses Output vector of SE3 transforms
    */
-  void
-  GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
-                      std::uniform_real_distribution<float> &rotation_dist,
-                      std::uniform_real_distribution<float> &translation_dist,
-                      std::vector<SE3Transform> &poses) {
+  void GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
+                           std::uniform_real_distribution<float> &rotation_dist,
+                           std::uniform_real_distribution<float> &translation_dist,
+                           std::vector<SE3Transform> &poses) {
     // Generate random twists and convert to SE3
     // Cameras are placed at distance ~10 from origin, looking at origin
     hvector<Vector<6>> twists(num_poses);
     for (size_t i = 0; i < num_poses; i++) {
       Vector<6> &twist = twists[i];
       // Small rotation perturbations
-      twist[0] = rotation_dist(rng); // rotation x
-      twist[1] = rotation_dist(rng); // rotation y
-      twist[2] = rotation_dist(rng); // rotation z
+      twist[0] = rotation_dist(rng);  // rotation x
+      twist[1] = rotation_dist(rng);  // rotation y
+      twist[2] = rotation_dist(rng);  // rotation z
       // Translation: camera positioned such that origin is ~10 units in front
       // In camera frame, the world origin should have positive z
       // T * [0,0,0,1]^T = [t_x, t_y, t_z, 1]^T
       // So t_z > 0 means origin is in front of camera
-      twist[3] = translation_dist(rng); // translation x (small perturbation)
-      twist[4] = translation_dist(rng); // translation y (small perturbation)
-      twist[5] =
-          10.0f + translation_dist(rng); // translation z (origin ~10 in front)
+      twist[3] = translation_dist(rng);          // translation x (small perturbation)
+      twist[4] = translation_dist(rng);          // translation y (small perturbation)
+      twist[5] = 10.0f + translation_dist(rng);  // translation z (origin ~10 in front)
     }
 
     // Convert twists to SE3 transforms using exponential map
@@ -193,8 +186,8 @@ protected:
     auto twists_ptr = reinterpret_cast<const float *>(twists_device.data());
     auto poses_ptr = reinterpret_cast<float *>(poses_device.data());
 
-    ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch,
-                  transform_stride, num_poses, poses_ptr);
+    ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch, transform_stride,
+                  num_poses, poses_ptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     poses.resize(num_poses);
@@ -212,18 +205,17 @@ protected:
    * @param point_dist Distribution for point coordinates
    * @param points Output vector of 3D points
    */
-  void GenerateRandomPointsVisibleFromAllCameras(
-      size_t num_points, std::mt19937 &rng,
-      std::uniform_real_distribution<float> &point_dist,
-      std::vector<Point3D> &points) {
+  void GenerateRandomPointsVisibleFromAllCameras(size_t num_points, std::mt19937 &rng,
+                                                 std::uniform_real_distribution<float> &point_dist,
+                                                 std::vector<Point3D> &points) {
     points.resize(num_points);
     for (size_t i = 0; i < num_points; i++) {
       // Points centered around origin with small spread
       // Since cameras are ~10 units away looking at origin,
       // points near origin will have depth ~10 in all cameras
-      points[i][0] = point_dist(rng); // x
-      points[i][1] = point_dist(rng); // y
-      points[i][2] = point_dist(rng); // z (can be negative, still in front)
+      points[i][0] = point_dist(rng);  // x
+      points[i][1] = point_dist(rng);  // y
+      points[i][2] = point_dist(rng);  // z (can be negative, still in front)
     }
   }
 
@@ -245,9 +237,9 @@ protected:
   Observation2D ProjectPoint(const SE3Transform &pose, const Point3D &point) {
     // Transform point to camera frame: P_cam = R * P_world + t
     float point_cam[3];
-    point_cam[0] = pose[0 * 4 + 3]; // tx
-    point_cam[1] = pose[1 * 4 + 3]; // ty
-    point_cam[2] = pose[2 * 4 + 3]; // tz
+    point_cam[0] = pose[0 * 4 + 3];  // tx
+    point_cam[1] = pose[1 * 4 + 3];  // ty
+    point_cam[2] = pose[2 * 4 + 3];  // tz
 
     for (int i = 0; i < 3; i++) {
       for (int j = 0; j < 3; j++) {
@@ -258,8 +250,8 @@ protected:
     // Project to normalized coordinates (no intrinsics)
     Observation2D obs;
     float inv_z = 1.0f / point_cam[2];
-    obs[0] = point_cam[0] * inv_z; // x / z
-    obs[1] = point_cam[1] * inv_z; // y / z
+    obs[0] = point_cam[0] * inv_z;  // x / z
+    obs[1] = point_cam[1] * inv_z;  // y / z
 
     return obs;
   }
@@ -280,8 +272,8 @@ protected:
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
         size_t obs_idx = pose_idx * num_points_ + point_idx;
-        observations_[obs_idx] = ProjectPoint(ground_truth_poses_[pose_idx],
-                                              ground_truth_points_[point_idx]);
+        observations_[obs_idx] =
+            ProjectPoint(ground_truth_poses_[pose_idx], ground_truth_points_[point_idx]);
       }
     }
   }
@@ -296,9 +288,8 @@ protected:
    * @param noise_magnitude Maximum noise magnitude per coordinate
    */
   void DisturbPoints(std::vector<Point3D> &points, float noise_magnitude) {
-    std::mt19937 rng(fixed_seed_ + 1); // Different seed for disturbance
-    std::uniform_real_distribution<float> noise_dist(-noise_magnitude,
-                                                     noise_magnitude);
+    std::mt19937 rng(fixed_seed_ + 1);  // Different seed for disturbance
+    std::uniform_real_distribution<float> noise_dist(-noise_magnitude, noise_magnitude);
     for (auto &point : points) {
       Point3D disturbed;
       bool valid = false;
@@ -336,11 +327,9 @@ protected:
    */
   void DisturbPoses(std::vector<SE3Transform> &poses, float rotation_noise,
                     float translation_noise) {
-    std::mt19937 rng(fixed_seed_ + 2); // Different seed for disturbance
-    std::uniform_real_distribution<float> rot_dist(-rotation_noise,
-                                                   rotation_noise);
-    std::uniform_real_distribution<float> trans_dist(-translation_noise,
-                                                     translation_noise);
+    std::mt19937 rng(fixed_seed_ + 2);  // Different seed for disturbance
+    std::uniform_real_distribution<float> rot_dist(-rotation_noise, rotation_noise);
+    std::uniform_real_distribution<float> trans_dist(-translation_noise, translation_noise);
 
     // Generate perturbation twists
     hvector<Vector<6>> deltas(poses.size());
@@ -366,23 +355,21 @@ protected:
     // Compute exp(delta)
     auto deltas_ptr = reinterpret_cast<const float *>(deltas_device.data());
     auto exp_deltas_ptr = reinterpret_cast<float *>(exp_deltas_device.data());
-    ComputeExpSE3(stream.GetStream(), deltas_ptr, twist_stride, transform_pitch,
-                  transform_stride, poses.size(), exp_deltas_ptr);
+    ComputeExpSE3(stream.GetStream(), deltas_ptr, twist_stride, transform_pitch, transform_stride,
+                  poses.size(), exp_deltas_ptr);
 
     // Multiply: pose_disturbed = exp(delta) * pose
     cuBLASHandle cublas_handle;
-    auto handle = static_cast<cublasHandle_t>(
-        cublas_handle.GetHandle(stream.GetStream()));
+    auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream.GetStream()));
     constexpr float alpha = 1.0f;
     constexpr float beta = 0.0f;
     constexpr size_t mat_size = 4;
 
     auto poses_ptr = reinterpret_cast<float *>(poses_device.data());
     THROW_ON_CUBLAS_ERROR(cublasSgemmStridedBatched(
-        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha,
-        poses_ptr, mat_size, transform_stride, exp_deltas_ptr, mat_size,
-        transform_stride, &beta, poses_ptr, mat_size, transform_stride,
-        poses.size()));
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, mat_size, mat_size, mat_size, &alpha, poses_ptr, mat_size,
+        transform_stride, exp_deltas_ptr, mat_size, transform_stride, &beta, poses_ptr, mat_size,
+        transform_stride, poses.size()));
 
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     poses_device.CopyToHost(poses.data(), poses.size());
@@ -398,18 +385,15 @@ protected:
    * @param state_batch_points Vector state batch for points
    * @return Vector of state pointers for all observations
    */
-  std::vector<float *>
-  CreateStatePointers(SE3StateBatch &state_batch_poses,
-                      VectorStateBatch<3> &state_batch_points) {
+  std::vector<float *> CreateStatePointers(SE3StateBatch &state_batch_poses,
+                                           VectorStateBatch<3> &state_batch_points) {
     std::vector<float *> state_pointers;
     state_pointers.reserve(2 * num_poses_ * num_points_);
 
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
-        state_pointers.push_back(
-            state_batch_poses.StateBlockDevicePtr(pose_idx));
-        state_pointers.push_back(
-            state_batch_points.StateBlockDevicePtr(point_idx));
+        state_pointers.push_back(state_batch_poses.StateBlockDevicePtr(pose_idx));
+        state_pointers.push_back(state_batch_points.StateBlockDevicePtr(point_idx));
       }
     }
 
@@ -460,16 +444,16 @@ protected:
   }
 
   // Test configuration
-  const size_t num_poses_ = 10;       ///< Number of camera poses
-  const size_t num_points_ = 5000;    ///< Number of 3D points
-  const uint32_t fixed_seed_ = 12345; ///< Random seed for reproducibility
+  const size_t num_poses_ = 10;        ///< Number of camera poses
+  const size_t num_points_ = 5000;     ///< Number of 3D points
+  const uint32_t fixed_seed_ = 12345;  ///< Random seed for reproducibility
 
   // Ground truth data
-  std::vector<SE3Transform> ground_truth_poses_; ///< Ground truth camera poses
-  std::vector<Point3D> ground_truth_points_;     ///< Ground truth 3D points
-  std::vector<Observation2D> observations_; ///< 2D observations (normalized)
+  std::vector<SE3Transform> ground_truth_poses_;  ///< Ground truth camera poses
+  std::vector<Point3D> ground_truth_points_;      ///< Ground truth 3D points
+  std::vector<Observation2D> observations_;       ///< 2D observations (normalized)
 
-  cuBLASHandle cublas_handle_; ///< cuBLAS handle for factor constructors
+  cuBLASHandle cublas_handle_;  ///< cuBLAS handle for factor constructors
 
   profiler::Domain profiler_domain_{"ReprojectionFactorBatchTest"};
 };
@@ -490,27 +474,26 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                       num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
   // Set up state pointers
   std::vector<const float *> state_pointers;
   for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
     for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
-      state_pointers.push_back(
-          reinterpret_cast<const float *>(poses_device.data() + pose_idx));
-      state_pointers.push_back(
-          reinterpret_cast<const float *>(points_device.data() + point_idx));
+      state_pointers.push_back(reinterpret_cast<const float *>(poses_device.data() + pose_idx));
+      state_pointers.push_back(reinterpret_cast<const float *>(points_device.data() + point_idx));
     }
   }
   dvector<const float *> state_pointers_device(state_pointers);
 
   // Allocate residuals and jacobians
   dvector<float> residuals(num_observations * 2);
-  dvector<float> jacobians(num_observations * 2 * 9); // 2 rows, 9 cols per obs
+  dvector<float> jacobians(num_observations * 2 * 9);  // 2 rows, 9 cols per obs
 
   CudaStream stream;
-  factor_batch.Evaluate(residuals.data(), jacobians.data(),
-                        state_pointers_device.data(), stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), jacobians.data(), state_pointers_device.data(),
+                        stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   // Verify residuals are near zero (ground truth should project exactly)
@@ -521,8 +504,7 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
   for (float r : host_residuals) {
     max_residual = std::max(max_residual, std::abs(r));
   }
-  EXPECT_LT(max_residual, 1e-5f)
-      << "Residuals should be near zero for ground truth";
+  EXPECT_LT(max_residual, 1e-5f) << "Residuals should be near zero for ground truth";
 }
 
 /**
@@ -539,12 +521,11 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
  * Expected: After optimization, points should converge to ground truth.
  */
 TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
-  auto test_range =
-      profiler_domain_.CreateDomainRange("OptimizeDisturbedPoints");
+  auto test_range = profiler_domain_.CreateDomainRange("OptimizeDisturbedPoints");
 
   // Create disturbed copy of points
   std::vector<Point3D> disturbed_points = ground_truth_points_;
-  DisturbPoints(disturbed_points, 0.5f); // Add noise up to 0.5 units
+  DisturbPoints(disturbed_points, 0.5f);  // Add noise up to 0.5 units
 
   // Verify points are actually disturbed
   float initial_mse = ComputePointMSE(disturbed_points, ground_truth_points_);
@@ -564,21 +545,24 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
 
   // Create state batches
   const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
-  const float *points_ptr =
-      reinterpret_cast<const float *>(points_device.data());
+  const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
   SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_,
                                   const_pose_ids_device.data(), num_poses_);
+  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
+                                      state_batch_poses.ConstCapacity());
   VectorStateBatch<3> state_batch_points(points_ptr, num_points_);
+  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
+                                       state_batch_points.ConstCapacity());
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                       num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
-  std::vector<float *> state_pointers =
-      CreateStatePointers(state_batch_poses, state_batch_points);
+  std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
 
   Problem problem;
   problem.AddStateBatch(&state_batch_poses);
@@ -618,8 +602,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
   // Verify points recovered to ground truth
   float final_mse = ComputePointMSE(optimized_points, ground_truth_points_);
   EXPECT_LT(final_mse, 1e-4f) << "Points should converge to ground truth";
-  EXPECT_LT(final_mse, initial_mse * 0.01f)
-      << "Final MSE should be much smaller than initial";
+  EXPECT_LT(final_mse, initial_mse * 0.01f) << "Final MSE should be much smaller than initial";
 }
 
 /**
@@ -636,13 +619,12 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
  * Expected: After optimization, poses should converge to ground truth.
  */
 TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
-  auto test_range =
-      profiler_domain_.CreateDomainRange("OptimizeDisturbedPoses");
+  auto test_range = profiler_domain_.CreateDomainRange("OptimizeDisturbedPoses");
 
   // Create disturbed copy of poses
   std::vector<SE3Transform> disturbed_poses = ground_truth_poses_;
   DisturbPoses(disturbed_poses, 0.05f,
-               0.2f); // Small rotation, moderate translation noise
+               0.2f);  // Small rotation, moderate translation noise
 
   // Verify poses are actually disturbed
   float initial_mse = ComputePoseMSE(disturbed_poses, ground_truth_poses_);
@@ -662,21 +644,24 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
 
   // Create state batches
   const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
-  const float *points_ptr =
-      reinterpret_cast<const float *>(points_device.data());
+  const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
   SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_);
-  VectorStateBatch<3> state_batch_points(
-      points_ptr, num_points_, const_point_ids_device.data(), num_points_);
+  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
+                                      state_batch_poses.ConstCapacity());
+  VectorStateBatch<3> state_batch_points(points_ptr, num_points_, const_point_ids_device.data(),
+                                         num_points_);
+  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
+                                       state_batch_points.ConstCapacity());
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                       num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
-  std::vector<float *> state_pointers =
-      CreateStatePointers(state_batch_poses, state_batch_points);
+  std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
 
   Problem problem;
   problem.AddStateBatch(&state_batch_poses);
@@ -716,8 +701,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
   // Verify poses recovered to ground truth
   float final_mse = ComputePoseMSE(optimized_poses, ground_truth_poses_);
   EXPECT_LT(final_mse, 1e-3f) << "Poses should converge to ground truth";
-  EXPECT_LT(final_mse, initial_mse * 0.1f)
-      << "Final MSE should be much smaller than initial";
+  EXPECT_LT(final_mse, initial_mse * 0.1f) << "Final MSE should be much smaller than initial";
 }
 
 /**
@@ -735,7 +719,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeJoint) {
   // Create disturbed copies
   std::vector<SE3Transform> disturbed_poses = ground_truth_poses_;
   std::vector<Point3D> disturbed_points = ground_truth_points_;
-  DisturbPoses(disturbed_poses, 0.02f, 0.1f); // Small disturbance
+  DisturbPoses(disturbed_poses, 0.02f, 0.1f);  // Small disturbance
   DisturbPoints(disturbed_points, 0.2f);
 
   // Copy data to device
@@ -745,20 +729,23 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeJoint) {
 
   // Create state batches (no constant states)
   const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
-  const float *points_ptr =
-      reinterpret_cast<const float *>(points_device.data());
+  const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
   SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_);
+  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
+                                      state_batch_poses.ConstCapacity());
   VectorStateBatch<3> state_batch_points(points_ptr, num_points_);
+  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
+                                       state_batch_points.ConstCapacity());
 
   // Create factor batch with explicit z_threshold
   size_t num_observations = num_poses_ * num_points_;
-  ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                       num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations,
+                                       kDefaultZThreshold);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
-  std::vector<float *> state_pointers =
-      CreateStatePointers(state_batch_poses, state_batch_points);
+  std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
 
   Problem problem;
   problem.AddStateBatch(&state_batch_points);
@@ -807,15 +794,15 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
   // Position the point behind the camera (negative z in camera frame)
   SE3Transform identity_pose;
   identity_pose.fill(0.0f);
-  identity_pose[0] = 1.0f;  // R(0,0)
-  identity_pose[5] = 1.0f;  // R(1,1)
-  identity_pose[10] = 1.0f; // R(2,2)
-  identity_pose[15] = 1.0f; // homogeneous
+  identity_pose[0] = 1.0f;   // R(0,0)
+  identity_pose[5] = 1.0f;   // R(1,1)
+  identity_pose[10] = 1.0f;  // R(2,2)
+  identity_pose[15] = 1.0f;  // homogeneous
 
   Point3D point_behind;
   point_behind[0] = 1.0f;
   point_behind[1] = 1.0f;
-  point_behind[2] = -1.0f; // Behind camera (negative z)
+  point_behind[2] = -1.0f;  // Behind camera (negative z)
 
   Observation2D dummy_obs;
   dummy_obs[0] = 0.0f;
@@ -828,12 +815,11 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
 
   // Create factor batch with explicit positive z_threshold to test the check
   constexpr float z_threshold_for_test = 1e-3f;
-  ReprojectionFactorBatch factor_batch(obs_device.data(), 1,
-                                       z_threshold_for_test);
+  ReprojectionFactorBatch factor_batch(obs_device.data(), 1, z_threshold_for_test);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
   // Set up state pointers
-  std::vector<const float *> param_ptrs = {
-      reinterpret_cast<const float *>(pose_device.data()),
-      reinterpret_cast<const float *>(point_device.data())};
+  std::vector<const float *> param_ptrs = {reinterpret_cast<const float *>(pose_device.data()),
+                                           reinterpret_cast<const float *>(point_device.data())};
   dvector<const float *> param_ptrs_device(param_ptrs);
 
   // Allocate outputs
@@ -841,8 +827,8 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
   dvector<float> jacobians(2 * 9);
 
   CudaStream stream;
-  factor_batch.Evaluate(residuals.data(), jacobians.data(),
-                        param_ptrs_device.data(), stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), jacobians.data(), param_ptrs_device.data(),
+                        stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   // Verify residuals are zero (point behind camera)
@@ -857,8 +843,7 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
   jacobians.CopyToHost(host_jacobians.data(), 2 * 9);
 
   for (int i = 0; i < 2 * 9; i++) {
-    EXPECT_FLOAT_EQ(host_jacobians[i], 0.0f)
-        << "Jacobian element " << i << " should be zero";
+    EXPECT_FLOAT_EQ(host_jacobians[i], 0.0f) << "Jacobian element " << i << " should be zero";
   }
 }
 
@@ -869,8 +854,7 @@ TEST_F(ReprojectionFactorBatchTest, ZThresholdHandling) {
  * the results are identical to not providing the rig transforms at all.
  */
 TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
-  auto test_range =
-      profiler_domain_.CreateDomainRange("EvaluateWithIdentityRigTransform");
+  auto test_range = profiler_domain_.CreateDomainRange("EvaluateWithIdentityRigTransform");
 
   // Copy data to device
   dvector<SE3Transform> poses_device(ground_truth_poses_);
@@ -881,31 +865,31 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
   size_t num_observations = num_poses_ * num_points_;
   SE3Transform identity;
   identity.fill(0.0f);
-  identity[0] = 1.0f;  // R(0,0)
-  identity[5] = 1.0f;  // R(1,1)
-  identity[10] = 1.0f; // R(2,2)
-  identity[15] = 1.0f; // homogeneous
+  identity[0] = 1.0f;   // R(0,0)
+  identity[5] = 1.0f;   // R(1,1)
+  identity[10] = 1.0f;  // R(2,2)
+  identity[15] = 1.0f;  // homogeneous
 
   std::vector<SE3Transform> identity_rig_transforms(num_observations, identity);
   dvector<SE3Transform> rig_transforms_device(identity_rig_transforms);
 
   // Create factor batch with rig transforms
-  ReprojectionFactorBatch factor_batch_with_rig(
-      observations_device.data(), rig_transforms_device.data(),
-      num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch_with_rig(observations_device.data(),
+                                                rig_transforms_device.data(), num_observations,
+                                                kDefaultZThreshold);
+  factor_batch_with_rig.SetNumFactors(factor_batch_with_rig.Capacity());
 
   // Create factor batch without rig transforms for comparison
-  ReprojectionFactorBatch factor_batch_no_rig(
-      observations_device.data(), num_observations, kDefaultZThreshold);
+  ReprojectionFactorBatch factor_batch_no_rig(observations_device.data(), num_observations,
+                                              kDefaultZThreshold);
+  factor_batch_no_rig.SetNumFactors(factor_batch_no_rig.Capacity());
 
   // Set up state pointers
   std::vector<const float *> state_pointers;
   for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
     for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
-      state_pointers.push_back(
-          reinterpret_cast<const float *>(poses_device.data() + pose_idx));
-      state_pointers.push_back(
-          reinterpret_cast<const float *>(points_device.data() + point_idx));
+      state_pointers.push_back(reinterpret_cast<const float *>(poses_device.data() + pose_idx));
+      state_pointers.push_back(reinterpret_cast<const float *>(points_device.data() + point_idx));
     }
   }
   dvector<const float *> state_pointers_device(state_pointers);
@@ -919,23 +903,19 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
   CudaStream stream;
 
   // Evaluate both factor batches
-  factor_batch_with_rig.Evaluate(
-      residuals_with_rig.data(), jacobians_with_rig.data(),
-      state_pointers_device.data(), stream.GetStream());
+  factor_batch_with_rig.Evaluate(residuals_with_rig.data(), jacobians_with_rig.data(),
+                                 state_pointers_device.data(), stream.GetStream());
 
   factor_batch_no_rig.Evaluate(residuals_no_rig.data(), jacobians_no_rig.data(),
-                               state_pointers_device.data(),
-                               stream.GetStream());
+                               state_pointers_device.data(), stream.GetStream());
 
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
   // Copy results to host and compare
   std::vector<float> host_residuals_with_rig(num_observations * 2);
   std::vector<float> host_residuals_no_rig(num_observations * 2);
-  residuals_with_rig.CopyToHost(host_residuals_with_rig.data(),
-                                host_residuals_with_rig.size());
-  residuals_no_rig.CopyToHost(host_residuals_no_rig.data(),
-                              host_residuals_no_rig.size());
+  residuals_with_rig.CopyToHost(host_residuals_with_rig.data(), host_residuals_with_rig.size());
+  residuals_no_rig.CopyToHost(host_residuals_no_rig.data(), host_residuals_no_rig.size());
 
   // Verify residuals match
   for (size_t i = 0; i < num_observations * 2; i++) {
@@ -946,10 +926,8 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
   // Copy and compare Jacobians
   std::vector<float> host_jacobians_with_rig(num_observations * 2 * 9);
   std::vector<float> host_jacobians_no_rig(num_observations * 2 * 9);
-  jacobians_with_rig.CopyToHost(host_jacobians_with_rig.data(),
-                                host_jacobians_with_rig.size());
-  jacobians_no_rig.CopyToHost(host_jacobians_no_rig.data(),
-                              host_jacobians_no_rig.size());
+  jacobians_with_rig.CopyToHost(host_jacobians_with_rig.data(), host_jacobians_with_rig.size());
+  jacobians_no_rig.CopyToHost(host_jacobians_no_rig.data(), host_jacobians_no_rig.size());
 
   for (size_t i = 0; i < num_observations * 2 * 9; i++) {
     EXPECT_NEAR(host_jacobians_with_rig[i], host_jacobians_no_rig[i], 1e-5f)
@@ -974,8 +952,7 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
  * reprojection error is minimized.
  */
 TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
-  auto test_range =
-      profiler_domain_.CreateDomainRange("OptimizeRigPosesWithCameraOffsets");
+  auto test_range = profiler_domain_.CreateDomainRange("OptimizeRigPosesWithCameraOffsets");
 
   // Create camera-from-rig transforms (different offset per pose index)
   // This simulates a multi-camera rig where cameras have fixed mounting offsets
@@ -992,7 +969,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
     offset.fill(0.0f);
 
     // Small rotation (approximate identity with small perturbation)
-    float rx = offset_dist(rng) * 0.1f; // Small rotation angles
+    float rx = offset_dist(rng) * 0.1f;  // Small rotation angles
     float ry = offset_dist(rng) * 0.1f;
     float rz = offset_dist(rng) * 0.1f;
 
@@ -1008,9 +985,9 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
     offset[10] = 1.0f;
 
     // Small translation offset
-    offset[3] = offset_dist(rng) * 0.05f;  // tx
-    offset[7] = offset_dist(rng) * 0.05f;  // ty
-    offset[11] = offset_dist(rng) * 0.05f; // tz
+    offset[3] = offset_dist(rng) * 0.05f;   // tx
+    offset[7] = offset_dist(rng) * 0.05f;   // ty
+    offset[11] = offset_dist(rng) * 0.05f;  // tz
     offset[15] = 1.0f;
 
     // Apply same camera offset for all points observed by this pose
@@ -1035,8 +1012,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
       for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
           for (int k = 0; k < 4; k++) {
-            T_cam_world[i * 4 + j] +=
-                T_cam_rig[i * 4 + k] * T_rig_world[k * 4 + j];
+            T_cam_world[i * 4 + j] += T_cam_rig[i * 4 + k] * T_rig_world[k * 4 + j];
           }
         }
       }
@@ -1048,8 +1024,8 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
     for (size_t point_idx = 0; point_idx < num_points_; point_idx++) {
       size_t obs_idx = pose_idx * num_points_ + point_idx;
-      observations_with_rig[obs_idx] = ProjectPoint(
-          camera_from_world_poses[obs_idx], ground_truth_points_[point_idx]);
+      observations_with_rig[obs_idx] =
+          ProjectPoint(camera_from_world_poses[obs_idx], ground_truth_points_[point_idx]);
     }
   }
 
@@ -1075,23 +1051,24 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   dvector<int> const_point_ids_device(const_point_ids);
 
   // Create state batches
-  const float *poses_ptr =
-      reinterpret_cast<const float *>(rig_poses_device.data());
-  const float *points_ptr =
-      reinterpret_cast<const float *>(points_device.data());
+  const float *poses_ptr = reinterpret_cast<const float *>(rig_poses_device.data());
+  const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
   SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_);
-  VectorStateBatch<3> state_batch_points(
-      points_ptr, num_points_, const_point_ids_device.data(), num_points_);
+  state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
+                                      state_batch_poses.ConstCapacity());
+  VectorStateBatch<3> state_batch_points(points_ptr, num_points_, const_point_ids_device.data(),
+                                         num_points_);
+  state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
+                                       state_batch_points.ConstCapacity());
 
   // Create factor batch with camera-from-rig transforms
-  ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                       camera_from_rig_device.data(),
+  ReprojectionFactorBatch factor_batch(observations_device.data(), camera_from_rig_device.data(),
                                        num_observations, kDefaultZThreshold);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
 
   // Create state pointers and build problem
-  std::vector<float *> state_pointers =
-      CreateStatePointers(state_batch_poses, state_batch_points);
+  std::vector<float *> state_pointers = CreateStatePointers(state_batch_poses, state_batch_points);
 
   Problem problem;
   problem.AddStateBatch(&state_batch_poses);
@@ -1131,8 +1108,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   // Verify rig poses recovered to ground truth
   float final_mse = ComputePoseMSE(optimized_rig_poses, ground_truth_poses_);
   EXPECT_LT(final_mse, 1e-3f) << "Rig poses should converge to ground truth";
-  EXPECT_LT(final_mse, initial_mse * 0.1f)
-      << "Final MSE should be much smaller than initial";
+  EXPECT_LT(final_mse, initial_mse * 0.1f) << "Final MSE should be much smaller than initial";
 }
 
 /**
@@ -1142,8 +1118,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
  * the same result as optimizing T_cam_world directly (when T_cam_rig is known).
  */
 TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
-  auto test_range =
-      profiler_domain_.CreateDomainRange("RigTransformCompositionCorrectness");
+  auto test_range = profiler_domain_.CreateDomainRange("RigTransformCompositionCorrectness");
 
   // Use a single pose and multiple points for this test
   size_t test_num_poses = 1;
@@ -1153,8 +1128,7 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   // Use the first pose and first 100 points from ground truth
   SE3Transform rig_pose = ground_truth_poses_[0];
   std::vector<Point3D> test_points(ground_truth_points_.begin(),
-                                   ground_truth_points_.begin() +
-                                       test_num_points);
+                                   ground_truth_points_.begin() + test_num_points);
 
   // Create a non-trivial camera-from-rig transform
   SE3Transform camera_from_rig;
@@ -1168,9 +1142,9 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   camera_from_rig[5] = cos45;
   camera_from_rig[10] = 1.0f;
   // Small translation offset
-  camera_from_rig[3] = 0.1f;   // tx
-  camera_from_rig[7] = -0.05f; // ty
-  camera_from_rig[11] = 0.02f; // tz
+  camera_from_rig[3] = 0.1f;    // tx
+  camera_from_rig[7] = -0.05f;  // ty
+  camera_from_rig[11] = 0.02f;  // tz
   camera_from_rig[15] = 1.0f;
 
   // Compute the composed camera pose: T_cam_world = T_cam_rig * T_rig_world
@@ -1179,8 +1153,7 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
       for (int k = 0; k < 4; k++) {
-        camera_from_world[i * 4 + j] +=
-            camera_from_rig[i * 4 + k] * rig_pose[k * 4 + j];
+        camera_from_world[i * 4 + j] += camera_from_rig[i * 4 + k] * rig_pose[k * 4 + j];
       }
     }
   }
@@ -1197,21 +1170,18 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   dvector<Observation2D> observations_device(test_observations);
 
   // Create camera-from-rig transforms for each observation
-  std::vector<SE3Transform> camera_from_rig_vec(num_observations,
-                                                camera_from_rig);
+  std::vector<SE3Transform> camera_from_rig_vec(num_observations, camera_from_rig);
   dvector<SE3Transform> camera_from_rig_device(camera_from_rig_vec);
 
   // Create factor batch with rig transforms
-  ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                       camera_from_rig_device.data(),
+  ReprojectionFactorBatch factor_batch(observations_device.data(), camera_from_rig_device.data(),
                                        num_observations, kDefaultZThreshold);
+  factor_batch.SetNumFactors(factor_batch.Capacity());
   // Set up state pointers
   std::vector<const float *> state_pointers;
   for (size_t point_idx = 0; point_idx < test_num_points; point_idx++) {
-    state_pointers.push_back(
-        reinterpret_cast<const float *>(rig_pose_device.data()));
-    state_pointers.push_back(
-        reinterpret_cast<const float *>(points_device.data() + point_idx));
+    state_pointers.push_back(reinterpret_cast<const float *>(rig_pose_device.data()));
+    state_pointers.push_back(reinterpret_cast<const float *>(points_device.data() + point_idx));
   }
   dvector<const float *> state_pointers_device(state_pointers);
 
@@ -1235,4 +1205,4 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
                                     "transform composition is correct";
 }
 
-} // namespace cunls
+}  // namespace cunls

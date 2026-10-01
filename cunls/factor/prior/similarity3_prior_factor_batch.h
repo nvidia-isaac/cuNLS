@@ -54,10 +54,11 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
    * Pre-computes T_target^{-1} for all targets during construction.
    *
    * @param observations_ptr Pointer to GPU device memory containing target
-   * transforms. Must point to at least num_factors * 16 floats.
-   * @param num_factors Number of factors in the batch.
+   * transforms. Must point to at least capacity * 16 floats.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumFactors(n) before evaluating or solving.
    */
-  Similarity3PriorFactorBatch(const Similarity3Transform *observations_ptr, size_t num_factors);
+  Similarity3PriorFactorBatch(const Similarity3Transform *observations_ptr, size_t capacity);
 
   /**
    * @brief Evaluates Sim(3) prior residuals and optionally Jacobians.
@@ -76,18 +77,10 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final;
 
-  /**
-   * @brief Returns the number of factors in the batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   Similarity3PriorFactorBatch() = default;
 
   const Matrix<4> *observations_ptr_;
-  size_t num_factors_;
-  DeviceVector<Matrix<4>> observations_inverse_;
   mutable DeviceVector<Matrix<4>> transforms_error_;
 };
 

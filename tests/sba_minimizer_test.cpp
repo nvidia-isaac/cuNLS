@@ -261,15 +261,19 @@ class SbaMinimizerTestFixture : public ::testing::Test {
 
     pose_batch_ = std::make_unique<SE3StateBatch>(
         cublas_handle_, poses_ptr, n_poses, const_pose_ids_device_.data(), const_pose_ids.size());
+    pose_batch_->SetNumStateBlocks(pose_batch_->Capacity(), pose_batch_->ConstCapacity());
     point_batch_ = std::make_unique<VectorStateBatch<3>>(
         points_ptr, n_points, const_point_ids_device_.data(), const_point_ids.size());
+    point_batch_->SetNumStateBlocks(point_batch_->Capacity(), point_batch_->ConstCapacity());
 
     reproj_batch_ = std::make_unique<ReprojectionFactorBatch>(
         observations_device_.data(), camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
+    reproj_batch_->SetNumFactors(reproj_batch_->Capacity());
 
     info_factor_batch_ = std::make_unique<InformationFactorBatch<ReprojectionFactorBatch>>(
         cublas_handle_, sqrt_information_device_.data(), n_obs, observations_device_.data(),
         camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
+    info_factor_batch_->SetNumFactors(info_factor_batch_->Capacity());
 
     // Factor i connects pose host.pose_ids[i] and point host.point_ids[i].
     state_pointers_.clear();

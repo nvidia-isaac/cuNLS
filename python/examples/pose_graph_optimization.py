@@ -39,9 +39,25 @@ def main():
     const_ids_gpu = cp.array([0], dtype=cp.int32)  # pose 0 is constant
 
     # 3. One SE(3) state batch; one between factor per consecutive pair.
+    #    Capacity vs. active count. A batch is constructed with its capacity: how many state blocks
+    #    (or factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    #    size it once for the largest problem you expect. Right after construction nothing is
+    #    active: set_num_state_blocks / set_num_factors set the active count, how many of the first
+    #    slots the next solve uses (a solve without it throws). The setter is host-only (no
+    #    allocation, no device work) and may change the count between solves up to the capacity,
+    #    which is what lets a real-time application allocate once and reuse the same buffers every
+    #    frame while the problem size changes. This example solves every slot once, so each active
+    #    count equals its capacity.
     cublas = pycunls.CublasHandle()
-    pose_states = pycunls.SE3StateBatch(cublas, poses_gpu, num_poses, const_ids_gpu, 1)
-    between = pycunls.SE3BetweenFactorBatch(deltas_gpu, num_constraints)
+    poses_capacity = num_poses  # every slot solved: active = capacity
+    const_poses_capacity = 1  # entries of const_ids_gpu
+    constraints_capacity = num_constraints
+    pose_states = pycunls.SE3StateBatch(cublas, poses_gpu, poses_capacity, const_ids_gpu,
+                                        const_poses_capacity)
+    between = pycunls.SE3BetweenFactorBatch(deltas_gpu, constraints_capacity)
+    num_const_poses = 1  # active constant ids: the gauge anchor
+    pose_states.set_num_state_blocks(num_poses, num_const_poses)  # active counts
+    between.set_num_factors(num_constraints)
     state_pointers = []
     for i in range(num_constraints):
         state_pointers.append(pose_states.state_block_device_ptr(i))

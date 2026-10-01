@@ -38,7 +38,7 @@ namespace cunls {
  */
 class ConstantVelocitySO2FactorBatch : public SizedFactorBatch<2, 1, 1, 1, 1> {
  public:
-  ConstantVelocitySO2FactorBatch(const float *dt_ptr, size_t num_factors);
+  ConstantVelocitySO2FactorBatch(const float *dt_ptr, size_t capacity);
 
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
@@ -49,13 +49,10 @@ class ConstantVelocitySO2FactorBatch : public SizedFactorBatch<2, 1, 1, 1, 1> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   ConstantVelocitySO2FactorBatch() = delete;
 
   const float *dt_ptr_;
-  size_t num_factors_;
 
   mutable DeviceVector<Matrix<2>> pose_rel_;  ///< R_k^T * R_{k+1}
   mutable DeviceVector<float> twist_;         ///< Log(pose_rel)

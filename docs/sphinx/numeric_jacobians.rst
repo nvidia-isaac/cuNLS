@@ -124,26 +124,27 @@ residual-only factor:
    class ScalarDifferenceResidualOnlyFactorBatch
        : public cunls::SizedFactorBatch<1, 1, 1> {
     public:
-     ScalarDifferenceResidualOnlyFactorBatch(const float *measurements, size_t num_factors)
-         : measurements_(measurements), num_factors_(num_factors) {}
+     ScalarDifferenceResidualOnlyFactorBatch(const float *measurements, size_t capacity)
+         : SizedFactorBatch(capacity), measurements_(measurements) {}
 
      bool Evaluate(float *residuals, float * /*jacobians*/,
                    float const *const *state_pointers, cudaStream_t stream,
                    const int *factor_ids = nullptr, size_t num_factor_ids = 0) const final {
-       const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
+       const size_t num_factors = NumFactors();
+       const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+       if (num_items == 0 || num_factors == 0) {
+         return true;
+       }
        constexpr int kBlockSize = 256;
        const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
        ScalarDifferenceResidualOnlyKernel<<<grid_size, kBlockSize, 0, stream>>>(
-           measurements_, factor_ids, num_factors_, state_pointers, residuals, num_items);
+           measurements_, factor_ids, num_factors, state_pointers, residuals, num_items);
        THROW_ON_CUDA_ERROR(cudaGetLastError());
        return true;
      }
 
-     size_t NumFactors() const final { return num_factors_; }
-
     private:
      const float *measurements_;
-     size_t num_factors_;
    };
 
 Registering it with the per-group override (while an anchor

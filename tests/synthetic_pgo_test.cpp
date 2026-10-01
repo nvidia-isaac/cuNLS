@@ -214,13 +214,16 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
   const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
   SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  state_batch_set1.SetNumStateBlocks(state_batch_set1.Capacity(), state_batch_set1.ConstCapacity());
   SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
+  state_batch_set2.SetNumStateBlocks(state_batch_set2.Capacity(), state_batch_set2.ConstCapacity());
 
   // Create between constraints for consecutive pairs in set 1
   // For N poses, we have N-1 consecutive constraints
   size_t num_constraints = this->num_poses_;
   dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
   SE3BetweenFactorBatch between_factor_batch(pose_deltas_device.data(), num_constraints);
+  between_factor_batch.SetNumFactors(between_factor_batch.Capacity());
 
   // Create state pointers for set 1 constraints
   // Each constraint connects pose[i] from set1 (left) and pose[i] from set2
@@ -295,7 +298,9 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
   const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
   SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  state_batch_set1.SetNumStateBlocks(state_batch_set1.Capacity(), state_batch_set1.ConstCapacity());
   SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
+  state_batch_set2.SetNumStateBlocks(state_batch_set2.Capacity(), state_batch_set2.ConstCapacity());
 
   // Create between constraints for consecutive pairs in set 1
   // For N poses, we have N-1 consecutive constraints
@@ -313,6 +318,7 @@ TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
   InformationFactorBatch<SE3BetweenFactorBatch> between_factor_batch(
       this->cublas_handle_, sqrt_information_matrices_device.data(), num_constraints,
       pose_deltas_device.data(), num_constraints);
+  between_factor_batch.SetNumFactors(between_factor_batch.Capacity());
 
   // Create state pointers for set 1 constraints
   // Each constraint connects pose[i] from set1 (left) and pose[i] from set2
@@ -380,7 +386,9 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
   const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
   SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  state_batch_set1.SetNumStateBlocks(state_batch_set1.Capacity(), state_batch_set1.ConstCapacity());
   SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
+  state_batch_set2.SetNumStateBlocks(state_batch_set2.Capacity(), state_batch_set2.ConstCapacity());
 
   const size_t num_constraints = this->num_poses_;
   std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
@@ -395,6 +403,7 @@ TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>> between_factor_batch(
       2.0f, this->cublas_handle_, sqrt_information_matrices_device.data(), num_constraints,
       pose_deltas_device.data(), num_constraints);
+  between_factor_batch.SetNumFactors(between_factor_batch.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(num_constraints * 2);
@@ -454,7 +463,9 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
   const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
   SE3StateBatch state_batch_set1(this->cublas_handle_, poses_set1_ptr, this->num_poses_);
+  state_batch_set1.SetNumStateBlocks(state_batch_set1.Capacity(), state_batch_set1.ConstCapacity());
   SE3StateBatch state_batch_set2(this->cublas_handle_, poses_set2_ptr, this->num_poses_);
+  state_batch_set2.SetNumStateBlocks(state_batch_set2.Capacity(), state_batch_set2.ConstCapacity());
 
   const size_t num_constraints = this->num_poses_;
   std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
@@ -469,6 +480,7 @@ TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
   InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>> between_factor_batch(
       this->cublas_handle_, sqrt_information_matrices_device.data(), num_constraints, 2.0f,
       pose_deltas_device.data(), num_constraints);
+  between_factor_batch.SetNumFactors(between_factor_batch.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(num_constraints * 2);
@@ -694,9 +706,11 @@ TEST_P(LoopClosurePGOTest, Optimize) {
   dvector<int> const_ids_d(const_ids);
   SE3StateBatch pose_batch(cublas_handle_, poses_ptr, p.n_poses, const_ids_d.data(),
                            const_ids.size());
+  pose_batch.SetNumStateBlocks(pose_batch.Capacity(), pose_batch.ConstCapacity());
 
   dvector<SE3Transform> deltas_d(deltas);
   SE3BetweenFactorBatch between_batch(deltas_d.data(), deltas.size());
+  between_batch.SetNumFactors(between_batch.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(deltas.size() * 2);

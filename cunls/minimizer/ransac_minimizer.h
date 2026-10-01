@@ -274,6 +274,8 @@ class RansacGaussNewtonMinimizer {
    * @param stream CUDA stream for all work.
    * @param problem The problem; its current state values are the initial guess.
    * @return Summary of the run.
+   * @throws std::invalid_argument for invalid configurations, including active
+   *         sizes that are not set properly (see Problem::CheckSizes).
    */
   RansacSummary Minimize(cudaStream_t stream, Problem &problem);
 

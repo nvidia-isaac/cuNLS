@@ -38,8 +38,9 @@ namespace cunls {
  * - state_pointers_: One device vector per residual batch containing pointers
  *                   to state blocks, remapped to point into the copied state
  * storage.
- * - problem_state_ptrs_device_: Device copy of host problem pointer lists,
- *   used by the pointer-remap kernel.
+ *
+ * The remap reads the problem's device connectivity tables
+ * (Problem::DeviceStatePointers) directly: nothing is uploaded per solve.
  */
 class MinimizerState {
  public:
@@ -128,12 +129,6 @@ class MinimizerState {
   void CreateStatePointers(const Problem &problem);
 
   /**
-   * @brief Copies problem state pointer lists from host to
-   * problem_state_ptrs_device_.
-   */
-  void CopyProblemStatePointersFromHost(const Problem &problem);
-
-  /**
    * @brief State value storage.
    *
    * One device vector per state batch, containing all state values
@@ -149,9 +144,6 @@ class MinimizerState {
    * rather than the original problem's state storage.
    */
   std::vector<dvector<float *>> state_pointers_;
-
-  /// Device copy of problem.GetStatePointers(), used by the remap kernel.
-  std::vector<dvector<float *>> problem_state_ptrs_device_;
 };
 
 /**

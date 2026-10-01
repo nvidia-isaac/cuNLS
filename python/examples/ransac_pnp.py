@@ -47,8 +47,24 @@ class PnPProblem:
         self.points_gpu = cp.asarray(scene.points.reshape(-1))
         self.observations_gpu = cp.asarray(scene.observations.reshape(-1))
 
-        self.pose_state = pycunls.SE3StateBatch(self.cublas, self.pose_gpu, 1)
-        self.pnp = pycunls.PnPFactorBatch(self.observations_gpu, self.points_gpu, n, 1e-3)
+        # Capacity vs. active count. A batch is constructed with its capacity: how many state blocks
+        # (or factors) its bound device buffers hold. The capacity is fixed for the batch's
+        # lifetime; size it once for the largest problem you expect. Right after construction
+        # nothing is active: set_num_state_blocks / set_num_factors set the active count, how many
+        # of the first slots the next solve uses (a solve without it throws). The setter is
+        # host-only (no allocation, no device work) and may change the count between solves up to
+        # the capacity, which is what lets a real-time application allocate once and reuse the same
+        # buffers every frame while the problem size changes. This example solves every slot once,
+        # so each active count equals its capacity.
+        pose_capacity = 1
+        points_capacity = n  # correspondences the observation / point buffers hold
+        self.pose_state = pycunls.SE3StateBatch(self.cublas, self.pose_gpu, pose_capacity)
+        self.pnp = pycunls.PnPFactorBatch(self.observations_gpu, self.points_gpu,
+                                          points_capacity, 1e-3)
+        num_poses = 1
+        num_points = points_capacity  # every slot solved: active = capacity
+        self.pose_state.set_num_state_blocks(num_poses)
+        self.pnp.set_num_factors(num_points)
         self.problem = pycunls.Problem()
         self.problem.add_state_batch(self.pose_state)
         self.problem.add_factor_batch(self.pnp, [self.pose_state.state_block_device_ptr(0)] * n)

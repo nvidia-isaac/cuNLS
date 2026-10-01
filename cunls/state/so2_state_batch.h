@@ -51,11 +51,12 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the SO(2)
-   * rotation matrices. Must point to at least num_blocks * 4 floats of
+   * rotation matrices. Must point to at least capacity * 4 floats of
    * allocated memory.
-   * @param num_blocks The number of SO(2) state blocks in this batch.
+   * @param capacity Number of state blocks the buffer holds. The active count
+   *        starts at 0: call SetNumStateBlocks(n) before solving.
    */
-  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
+  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity);
 
   /**
    * @brief Constructs a batch of SO(2) state blocks with constant state
@@ -63,15 +64,16 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
    *
    * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the SO(2)
-   * rotation matrices. Must point to at least num_blocks * 4 floats of
+   * rotation matrices. Must point to at least capacity * 4 floats of
    * allocated memory.
-   * @param num_blocks The number of SO(2) state blocks in this batch.
+   * @param capacity Number of state blocks the buffer holds. The active count
+   *        starts at 0: call SetNumStateBlocks(n) before solving.
    * @param device_constant_state_ids Pointer to GPU device memory containing
    * the indices of state blocks that should remain constant.
-   * @param num_const_state_blocks The number of constant state blocks.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
-                const int *device_constant_state_ids, size_t num_const_state_blocks);
+  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t capacity,
+                const int *device_constant_state_ids, size_t const_capacity);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)

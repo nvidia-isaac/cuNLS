@@ -53,6 +53,17 @@ so they can be compared directly.
    are directly comparable.
 4. Compare initial vs. final cost and pose MSE for each mode.
 
+Each batch is constructed with its **capacity** (how many blocks /
+correspondences its bound device buffers hold, fixed for the batch's
+lifetime) and starts with 0 active; `SetNumStateBlocks` / `SetNumFactors`
+set the **active count** the next solve uses (host-only: no allocation, no
+device work; a solve without it throws). Size the capacity once for the
+largest problem you expect; the active count may change between solves up to
+it, so a real-time application allocates once and reuses the same buffers
+every frame while the problem size changes. The example keeps the two in
+separate variables (`*_capacity` vs. `num_*`); it solves every slot once, so
+each active count equals its capacity.
+
 ## Build locally (all examples)
 
 ```bash

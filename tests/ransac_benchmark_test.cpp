@@ -158,6 +158,7 @@ struct RigProblem {
     poses.CopyFromHost(init.data(), cameras);
     state =
         std::make_unique<SE3StateBatch>(cublas, reinterpret_cast<float *>(poses.data()), cameras);
+    state->SetNumStateBlocks(state->Capacity(), state->ConstCapacity());
     problem.AddStateBatch(state.get());
     if (method == Method::kLMHuber) {
       loss = std::make_unique<HuberLossFunctionBatch>(static_cast<float>(kTau));
@@ -193,6 +194,7 @@ struct RigProblem {
       deltas.resize(d.size());
       deltas.CopyFromHost(d.data(), d.size());
       between = std::make_unique<SE3BetweenFactorBatch>(deltas.data(), d.size());
+      between->SetNumFactors(between->Capacity());
       problem.AddFactorBatch(between.get(), ptrs);
     }
   }

@@ -57,7 +57,7 @@ constexpr float kMinPointDepth = 1.0f;
  * use a prefix of the full point / observation arrays.
  */
 class DecreasingScaleMinimizerTest : public ::testing::Test {
-public:
+ public:
   using Point3D = Vector<3>;
   using Observation2D = Vector<2>;
 
@@ -67,15 +67,14 @@ public:
     std::uniform_real_distribution<float> translation_dist(-1.0f, 1.0f);
     std::uniform_real_distribution<float> point_dist(-3.0f, 3.0f);
 
-    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist,
-                        ground_truth_poses_);
+    GenerateRandomPoses(num_poses_, rng, rotation_dist, translation_dist, ground_truth_poses_);
     GenerateRandomPointsVisibleFromAllCameras(max_num_points_, rng, point_dist,
                                               ground_truth_points_);
     ValidateAllPointsVisible(max_num_points_);
     GenerateObservations(max_num_points_);
   }
 
-protected:
+ protected:
   // ------------------------------------------------------------------
   // Data generation helpers (same logic as ReprojectionFactorBatchTest)
   // ------------------------------------------------------------------
@@ -89,26 +88,23 @@ protected:
   }
 
   void ValidateAllPointsVisible(size_t num_points) {
-    for (size_t pose_idx = 0; pose_idx < ground_truth_poses_.size();
-         pose_idx++) {
+    for (size_t pose_idx = 0; pose_idx < ground_truth_poses_.size(); pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points; point_idx++) {
-        float depth = ComputePointDepth(ground_truth_poses_[pose_idx],
-                                        ground_truth_points_[point_idx]);
+        float depth =
+            ComputePointDepth(ground_truth_poses_[pose_idx], ground_truth_points_[point_idx]);
         if (depth < kMinPointDepth) {
-          throw std::runtime_error("Point " + std::to_string(point_idx) +
-                                   " has depth " + std::to_string(depth) +
-                                   " < " + std::to_string(kMinPointDepth) +
+          throw std::runtime_error("Point " + std::to_string(point_idx) + " has depth " +
+                                   std::to_string(depth) + " < " + std::to_string(kMinPointDepth) +
                                    " in camera " + std::to_string(pose_idx));
         }
       }
     }
   }
 
-  void
-  GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
-                      std::uniform_real_distribution<float> &rotation_dist,
-                      std::uniform_real_distribution<float> &translation_dist,
-                      std::vector<SE3Transform> &poses) {
+  void GenerateRandomPoses(size_t num_poses, std::mt19937 &rng,
+                           std::uniform_real_distribution<float> &rotation_dist,
+                           std::uniform_real_distribution<float> &translation_dist,
+                           std::vector<SE3Transform> &poses) {
     hvector<Vector<6>> twists(num_poses);
     for (size_t i = 0; i < num_poses; i++) {
       Vector<6> &twist = twists[i];
@@ -131,18 +127,17 @@ protected:
     auto twists_ptr = reinterpret_cast<const float *>(twists_device.data());
     auto poses_ptr = reinterpret_cast<float *>(poses_device.data());
 
-    ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch,
-                  transform_stride, num_poses, poses_ptr);
+    ComputeExpSE3(stream.GetStream(), twists_ptr, twist_stride, transform_pitch, transform_stride,
+                  num_poses, poses_ptr);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
     poses.resize(num_poses);
     poses_device.CopyToHost(poses.data(), num_poses);
   }
 
-  void GenerateRandomPointsVisibleFromAllCameras(
-      size_t num_points, std::mt19937 &rng,
-      std::uniform_real_distribution<float> &point_dist,
-      std::vector<Point3D> &points) {
+  void GenerateRandomPointsVisibleFromAllCameras(size_t num_points, std::mt19937 &rng,
+                                                 std::uniform_real_distribution<float> &point_dist,
+                                                 std::vector<Point3D> &points) {
     points.resize(num_points);
     for (size_t i = 0; i < num_points; i++) {
       points[i][0] = point_dist(rng);
@@ -174,16 +169,15 @@ protected:
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points; point_idx++) {
         size_t obs_idx = pose_idx * num_points + point_idx;
-        observations_[obs_idx] = ProjectPoint(ground_truth_poses_[pose_idx],
-                                              ground_truth_points_[point_idx]);
+        observations_[obs_idx] =
+            ProjectPoint(ground_truth_poses_[pose_idx], ground_truth_points_[point_idx]);
       }
     }
   }
 
   void DisturbPoints(std::vector<Point3D> &points, float noise_magnitude) {
     std::mt19937 rng(fixed_seed_ + 1);
-    std::uniform_real_distribution<float> noise_dist(-noise_magnitude,
-                                                     noise_magnitude);
+    std::uniform_real_distribution<float> noise_dist(-noise_magnitude, noise_magnitude);
     for (auto &point : points) {
       Point3D disturbed;
       bool valid = false;
@@ -224,25 +218,22 @@ protected:
     return subset;
   }
 
-  std::vector<float *>
-  CreateStatePointers(SE3StateBatch &state_batch_poses,
-                      VectorStateBatch<3> &state_batch_points,
-                      size_t num_points) {
+  std::vector<float *> CreateStatePointers(SE3StateBatch &state_batch_poses,
+                                           VectorStateBatch<3> &state_batch_points,
+                                           size_t num_points) {
     std::vector<float *> state_pointers;
     state_pointers.reserve(2 * num_poses_ * num_points);
     for (size_t pose_idx = 0; pose_idx < num_poses_; pose_idx++) {
       for (size_t point_idx = 0; point_idx < num_points; point_idx++) {
-        state_pointers.push_back(
-            state_batch_poses.StateBlockDevicePtr(pose_idx));
-        state_pointers.push_back(
-            state_batch_points.StateBlockDevicePtr(point_idx));
+        state_pointers.push_back(state_batch_poses.StateBlockDevicePtr(pose_idx));
+        state_pointers.push_back(state_batch_points.StateBlockDevicePtr(point_idx));
       }
     }
     return state_pointers;
   }
 
-  float ComputePointMSE(const std::vector<Point3D> &points_a,
-                        const std::vector<Point3D> &points_b, size_t count) {
+  float ComputePointMSE(const std::vector<Point3D> &points_a, const std::vector<Point3D> &points_b,
+                        size_t count) {
     float mse = 0.0f;
     for (size_t i = 0; i < count; i++) {
       float dx = points_a[i][0] - points_b[i][0];
@@ -292,24 +283,21 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
   constexpr size_t kNumOptimizations = 10;
   constexpr size_t kFirstNumPoints = 10000;
   constexpr size_t kLastNumPoints = 1000;
-  constexpr size_t kPointStep =
-      (kFirstNumPoints - kLastNumPoints) / (kNumOptimizations - 1);
+  constexpr size_t kPointStep = (kFirstNumPoints - kLastNumPoints) / (kNumOptimizations - 1);
 
   for (size_t opt_idx = 0; opt_idx < kNumOptimizations; opt_idx++) {
     size_t num_points = kFirstNumPoints - opt_idx * kPointStep;
     size_t num_observations = num_poses_ * num_points;
 
-    SCOPED_TRACE("Optimization " + std::to_string(opt_idx) + " with " +
-                 std::to_string(num_points) + " points");
+    SCOPED_TRACE("Optimization " + std::to_string(opt_idx) + " with " + std::to_string(num_points) +
+                 " points");
 
     // Prepare a disturbed copy of the first num_points ground truth points.
     std::vector<Point3D> disturbed_points(ground_truth_points_.begin(),
-                                          ground_truth_points_.begin() +
-                                              num_points);
+                                          ground_truth_points_.begin() + num_points);
     DisturbPoints(disturbed_points, 0.5f);
 
-    float initial_mse =
-        ComputePointMSE(disturbed_points, ground_truth_points_, num_points);
+    float initial_mse = ComputePointMSE(disturbed_points, ground_truth_points_, num_points);
     ASSERT_GT(initial_mse, 0.01f) << "Points should be significantly disturbed";
 
     // Extract the observation subset for this point count.
@@ -327,17 +315,19 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
     }
     dvector<int> const_pose_ids_device(const_pose_ids);
 
-    const float *poses_ptr =
-        reinterpret_cast<const float *>(poses_device.data());
-    const float *points_ptr =
-        reinterpret_cast<const float *>(points_device.data());
+    const float *poses_ptr = reinterpret_cast<const float *>(poses_device.data());
+    const float *points_ptr = reinterpret_cast<const float *>(points_device.data());
 
     SE3StateBatch state_batch_poses(cublas_handle_, poses_ptr, num_poses_,
                                     const_pose_ids_device.data(), num_poses_);
+    state_batch_poses.SetNumStateBlocks(state_batch_poses.Capacity(),
+                                        state_batch_poses.ConstCapacity());
     VectorStateBatch<3> state_batch_points(points_ptr, num_points);
+    state_batch_points.SetNumStateBlocks(state_batch_points.Capacity(),
+                                         state_batch_points.ConstCapacity());
 
-    ReprojectionFactorBatch factor_batch(observations_device.data(),
-                                         num_observations, kZThreshold);
+    ReprojectionFactorBatch factor_batch(observations_device.data(), num_observations, kZThreshold);
+    factor_batch.SetNumFactors(factor_batch.Capacity());
 
     std::vector<float *> state_pointers =
         CreateStatePointers(state_batch_poses, state_batch_points, num_points);
@@ -354,20 +344,17 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
 
     EXPECT_LT(summary.final_cost, 1e-4f)
         << "Optimization should converge for " << num_points << " points";
-    EXPECT_GT(summary.num_iterations, 0)
-        << "Should take at least one iteration";
+    EXPECT_GT(summary.num_iterations, 0) << "Should take at least one iteration";
 
     // Verify recovered points.
     std::vector<Point3D> optimized_points(num_points);
     points_device.CopyToHost(optimized_points.data(), num_points);
 
-    float final_mse =
-        ComputePointMSE(optimized_points, ground_truth_points_, num_points);
-    EXPECT_LT(final_mse, 1e-4f) << "Points should converge to ground truth for "
-                                << num_points << " points";
-    EXPECT_LT(final_mse, initial_mse * 0.01f)
-        << "Final MSE should be much smaller than initial";
+    float final_mse = ComputePointMSE(optimized_points, ground_truth_points_, num_points);
+    EXPECT_LT(final_mse, 1e-4f) << "Points should converge to ground truth for " << num_points
+                                << " points";
+    EXPECT_LT(final_mse, initial_mse * 0.01f) << "Final MSE should be much smaller than initial";
   }
 }
 
-} // namespace cunls
+}  // namespace cunls

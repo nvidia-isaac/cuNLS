@@ -11,6 +11,7 @@
 #include "cunls/factor/between/similarity3_between_factor_batch.h"
 #include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/dense_matrix_ops.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/sim_lie_math.h"
 #include "cunls/math/so_se_lie_math.h"
 
@@ -392,7 +393,7 @@ __device__ __forceinline__ void sim3_jr_inv(const float *xi, float *J) {
 // kernel launches + cuBLAS GEMM.
 __global__ void __launch_bounds__(128, 2)
     sim3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                        const float *__restrict__ delta_adjoints, int num_items,
+                                        const Matrix<4> *__restrict__ deltas, int num_items,
                                         float *__restrict__ jacobians,
                                         const int *__restrict__ factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -411,9 +412,9 @@ __global__ void __launch_bounds__(128, 2)
   float Jl[49];
   sim3_jr_inv(neg_r, Jl);
 
-  // Load Ad(Delta) 7x7
-  const float *Ad =
-      delta_adjoints + FactorMeasurementIndex(tid, factor_ids, num_factors) * kSim3AdjointStride;
+  // Ad(Delta) 7x7, derived from the measurement in place (nothing cached)
+  float Ad[49];
+  lie_device::AdjointSim3(deltas[FactorMeasurementIndex(tid, factor_ids, num_factors)].data(), Ad);
 
   float *out = jacobians + tid * kSim3JacobianStride;
 
@@ -439,25 +440,14 @@ __global__ void __launch_bounds__(128, 2)
 }
 
 Similarity3BetweenFactorBatch::Similarity3BetweenFactorBatch(
-    cuBLASHandle &cublas_handle, const Similarity3Transform *pose_deltas_ptr, size_t num_factors)
-    : pose_deltas_ptr_(pose_deltas_ptr),
-      num_factors_(num_factors),
+    cuBLASHandle &cublas_handle, const Similarity3Transform *pose_deltas_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      pose_deltas_ptr_(pose_deltas_ptr),
       cublas_handle_(cublas_handle),
-      poses_left_(num_factors),
-      poses_right_(num_factors),
-      poses_left_inverse_(num_factors),
-      delta_adjoints_(kSim3AdjointStride * num_factors),
-      jacobian_temp_(kSim3AdjointStride * num_factors) {
-  CudaStream stream;
-  ComputeDeltaAdjoints(stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
-
-void Similarity3BetweenFactorBatch::ComputeDeltaAdjoints(cudaStream_t stream) {
-  size_t num_factors = NumFactors();
-  ComputeAdjointSim3(stream, reinterpret_cast<const float *>(pose_deltas_ptr_),
-                     kSim3TransformStride, delta_adjoints_.data(), kSim3AdjointStride, num_factors);
-}
+      poses_left_(capacity),
+      poses_right_(capacity),
+      poses_left_inverse_(capacity),
+      jacobian_temp_(kSim3AdjointStride * capacity) {}
 
 constexpr size_t kSim3FusedBlockSize = 128;
 
@@ -484,7 +474,7 @@ bool Similarity3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
   if (jacobians != nullptr) {
     size_t fused_blocks = (num_items + kSim3FusedBlockSize - 1) / kSim3FusedBlockSize;
     sim3_between_fused_jacobians_kernel<<<fused_blocks, kSim3FusedBlockSize, 0, stream>>>(
-        residuals, delta_adjoints_.data(), static_cast<int>(num_items), jacobians, factor_ids,
+        residuals, pose_deltas_ptr_, static_cast<int>(num_items), jacobians, factor_ids,
         num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
