@@ -57,6 +57,8 @@ class RansacContext {
 
   RansacSummary Minimize(cudaStream_t stream, Problem &problem);
   const uint8_t *InlierMask(size_t residual_batch_index) const;
+  /** Factor count of a residual batch as recorded by the last Prepare(); 0 if no mask. */
+  size_t InlierMaskSize(size_t residual_batch_index) const;
 
  private:
   void Prepare(cudaStream_t stream, const Problem &problem);

@@ -128,7 +128,7 @@ def solve_with_ransac_lm(data):
     minimizer = pycunls.RansacLevenbergMarquardtMinimizer(options)
     stream = pycunls.CudaStream()
     summary = minimizer.minimize(stream, p.problem)  # writes the pose back
-    mask = minimizer.inlier_mask(p.problem, 0)       # numpy uint8, 1 = inlier
+    mask = minimizer.inlier_mask(0)                  # numpy uint8, 1 = inlier
     return p.pose(), mask, summary
 
 

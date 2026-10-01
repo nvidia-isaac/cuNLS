@@ -181,7 +181,7 @@ SE3Transform SolveWithRansacLM(const Dataset &data, std::vector<uint8_t> &inlier
   summary = minimizer.Minimize(stream.GetStream(), p.problem);  // writes the pose back
 
   // Inlier mask of residual batch 0: one byte per factor, 1 = inlier.
-  inlier_mask.resize(data.points_world.size());
+  inlier_mask.resize(minimizer.InlierMaskSize(0));
   THROW_ON_CUDA_ERROR(cudaMemcpy(inlier_mask.data(), minimizer.InlierMask(0), inlier_mask.size(),
                                  cudaMemcpyDeviceToHost));
   return p.Pose();

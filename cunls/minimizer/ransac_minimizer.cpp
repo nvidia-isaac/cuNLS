@@ -66,6 +66,10 @@ const uint8_t *RansacGaussNewtonMinimizer::InlierMask(size_t residual_batch_inde
   return context_->InlierMask(residual_batch_index);
 }
 
+size_t RansacGaussNewtonMinimizer::InlierMaskSize(size_t residual_batch_index) const {
+  return context_->InlierMaskSize(residual_batch_index);
+}
+
 RansacLevenbergMarquardtMinimizer::RansacLevenbergMarquardtMinimizer(
     const RansacLevenbergMarquardtMinimizerOptions &o)
     : RansacGaussNewtonMinimizer(

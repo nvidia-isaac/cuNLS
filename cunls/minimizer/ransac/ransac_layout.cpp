@@ -148,7 +148,8 @@ void RansacLayout::BuildResiduals(const Problem &problem, const RansacMinimizerO
     FailConfiguration(
         "RANSAC: no kSampled factors; at least one residual batch must be kSampled and non-empty");
   }
-  if (m_max_ * (dim_ + 1) + 2 > 8192) {
+  // The normal-equation kernel must stage at least one item in a block group.
+  if (NormalEquationsItemWords(m_max_, dim_) > kBlockGroupWords) {
     FailConfiguration("RANSAC: residual dimension " + Str(m_max_) +
                       " is too large for free tangent dimension " + Str(dim_));
   }

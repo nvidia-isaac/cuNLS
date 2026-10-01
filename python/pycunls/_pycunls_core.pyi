@@ -1026,8 +1026,10 @@ class RansacGaussNewtonMinimizer:
     def minimize(self, stream: CudaStream, problem: Problem) -> RansacSummary:
         """Run RANSAC; the estimate is written into the problem's state batches."""
         ...
-    def inlier_mask(self, problem: Problem, residual_batch_index: int) -> numpy.ndarray:
-        """Inlier mask (uint8, 1 = inlier) of a sampled residual batch."""
+    def inlier_mask(self, residual_batch_index: int) -> numpy.ndarray:
+        """Inlier mask (uint8, 1 = inlier) of a sampled residual batch of the
+        problem of the last minimize(). Raises RuntimeError for an out-of-range
+        index, an always_on batch, or before any run."""
         ...
 
 class RansacLevenbergMarquardtMinimizer(RansacGaussNewtonMinimizer):

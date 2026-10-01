@@ -228,7 +228,7 @@ options.base_options.factor_batches = [
     pycunls.RansacFactorBatchOptions(pycunls.RansacRole.sampled, 0.01)]
 minimizer = pycunls.RansacLevenbergMarquardtMinimizer(options)
 summary = minimizer.minimize(stream, problem)
-mask = minimizer.inlier_mask(problem, 0)  # numpy uint8
+mask = minimizer.inlier_mask(0)  # numpy uint8
 ```
 
 On PnP it recovers the pose at up to 90% outliers, where least squares (even with a Huber loss)

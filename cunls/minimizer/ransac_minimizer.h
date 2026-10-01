@@ -89,7 +89,7 @@ struct RansacMinimizerOptions {
   /** @brief Hypotheses generated and scored together in one round. */
   size_t hypotheses_per_round = 256;
 
-  /** @brief Upper bound on the number of rounds. */
+  /** @brief Upper bound on the number of rounds (> 0). */
   size_t max_rounds = 8;
 
   /**
@@ -283,9 +283,17 @@ class RansacGaussNewtonMinimizer {
    * next Minimize() or destruction.
    *
    * @param residual_batch_index Index into Problem::GetResidualBatches().
-   * @return Device pointer, or nullptr for kAlwaysOn batches or before any run.
+   * @return Device pointer, or nullptr for kAlwaysOn batches, an out-of-range
+   *         index, or before any run.
    */
   const uint8_t *InlierMask(size_t residual_batch_index) const;
+
+  /**
+   * @brief Number of bytes of InlierMask(residual_batch_index): the factor
+   * count the batch had in the last Minimize(). 0 whenever InlierMask()
+   * returns nullptr.
+   */
+  size_t InlierMaskSize(size_t residual_batch_index) const;
 
  protected:
   /** @brief Device-side step policy shared by both variants. */

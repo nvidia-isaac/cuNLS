@@ -35,6 +35,9 @@ void ValidateOptions(const RansacMinimizerOptions &o) {
   if (o.hypotheses_per_round == 0) {
     FailConfiguration("RANSAC: hypotheses_per_round must be > 0");
   }
+  if (o.max_rounds == 0) {
+    FailConfiguration("RANSAC: max_rounds must be > 0");
+  }
   if (o.hypothesis_iterations == 0) {
     FailConfiguration(
         "RANSAC: hypothesis_iterations must be > 0 (there is no hypothesis "
@@ -81,6 +84,9 @@ void RansacContext::Prepare(cudaStream_t stream, const Problem &problem) {
   hypotheses_.Allocate(stream, layout_, options_, SlotRows::kMinimalSamples, k);
   refinement_.Allocate(stream, layout_, options_, SlotRows::kAllMasked, 1);
   best_.Allocate(stream, layout_, options_, SlotRows::kNone, 1);
+  // Fallback when no hypothesis is ever selected (e.g. every sample degenerate):
+  // the refinement then starts from the initial guess.
+  best_.LoadInitialGuess(stream, layout_);
   scorer_.Allocate(layout_, options_, k);
   selected_.resize(1);
   cost_history_.resize(std::max<size_t>(options_.final_iterations, 1));
@@ -236,6 +242,14 @@ const uint8_t *RansacContext::InlierMask(size_t residual_batch_index) const {
     return nullptr;
   }
   return refinement_.mask() + residuals[residual_batch_index].u_offset;
+}
+
+size_t RansacContext::InlierMaskSize(size_t residual_batch_index) const {
+  // layout_ was built by the last Prepare(), so this is the batch size the mask
+  // was computed for, whatever the problem looks like now.
+  return InlierMask(residual_batch_index) == nullptr
+             ? 0
+             : static_cast<size_t>(layout_.residuals()[residual_batch_index].num_factors);
 }
 
 }  // namespace ransac_internal

@@ -20,8 +20,8 @@
 //
 // Usage mirrors the regular minimizers: build an ordinary Problem, construct a
 // minimizer from its options, call minimize(stream, problem). The estimate is
-// written back into the problem's state batches; inlier_mask(problem, i)
-// returns the classification of residual batch i as a numpy uint8 array.
+// written back into the problem's state batches; inlier_mask(i) returns the
+// classification of residual batch i as a numpy uint8 array.
 
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
@@ -48,19 +48,18 @@ using cunls::RansacSummary;
 
 using MaskArray = nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>;
 
-/** Copies the device inlier mask of residual batch `index` into a numpy array. */
-MaskArray InlierMask(const RansacGaussNewtonMinimizer &self, const cunls::Problem &problem,
-                     size_t index) {
-  const auto &batches = problem.GetResidualBatches();
-  if (index >= batches.size()) {
-    throw std::out_of_range("inlier_mask: residual batch index out of range");
-  }
+/**
+ * Copies the device inlier mask of residual batch `index` into a numpy array,
+ * sized by the factor count recorded in the last minimize().
+ */
+MaskArray InlierMask(const RansacGaussNewtonMinimizer &self, size_t index) {
   const uint8_t *device = self.InlierMask(index);
   if (device == nullptr) {
     throw std::runtime_error(
-        "inlier_mask: no mask for this batch (kAlwaysOn batch, or minimize() has not run)");
+        "inlier_mask: no mask for residual batch " + std::to_string(index) +
+        " (index out of range, an always_on batch, or minimize() has not run)");
   }
-  const size_t n = batches[index].GetFactorBatch()->NumFactors();
+  const size_t n = self.InlierMaskSize(index);
   auto *host = new uint8_t[n];
   nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<uint8_t *>(p); });
   if (n > 0) {
@@ -177,9 +176,10 @@ void bind_ransac(nb::module_ &m) {
       .def("minimize", &Minimize, nb::arg("stream"), nb::arg("problem"),
            "Run RANSAC; the estimate is written into the problem's state batches. "
            "Returns a RansacSummary.")
-      .def("inlier_mask", &InlierMask, nb::arg("problem"), nb::arg("residual_batch_index"),
-           "Inlier mask (numpy uint8, 1 = inlier) of a sampled residual batch after "
-           "minimize(problem). Raises for always_on batches or before any run.");
+      .def("inlier_mask", &InlierMask, nb::arg("residual_batch_index"),
+           "Inlier mask (numpy uint8, 1 = inlier) of a sampled residual batch, for the "
+           "problem of the last minimize(). Raises RuntimeError for an out-of-range index, "
+           "an always_on batch, or before any run.");
 
   nb::class_<cunls::RansacLevenbergMarquardtMinimizer, RansacGaussNewtonMinimizer>(
       m, "RansacLevenbergMarquardtMinimizer",

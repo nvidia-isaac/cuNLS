@@ -477,7 +477,8 @@ parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
   sample size; a factor batch that requests numeric Jacobians; a
   **factor_batches** vector whose size does not match the problem's residual
   batches; invalid options (e.g. ``hypotheses_per_round == 0``,
-  ``hypothesis_iterations == 0``, ``confidence`` outside :math:`(0, 1)`).
+  ``max_rounds == 0``, ``hypothesis_iterations == 0``, ``confidence``
+  outside :math:`(0, 1)`).
 
   **Note:** The minimizer keeps its device buffers between calls and reuses
   them when the problem size is unchanged.
@@ -490,6 +491,14 @@ parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
     (1 = inlier) for the estimate of the last :cpp:func:`Minimize`, valid until
     the next :cpp:func:`Minimize` or destruction; ``nullptr`` for ``kAlwaysOn``
     batches, an out-of-range index, or before any run.
+
+.. cpp:function:: size_t RansacGaussNewtonMinimizer::InlierMaskSize(size_t residual_batch_index) const
+
+  :param ``residual_batch_index``: [in] Index into
+    :cpp:func:`Problem::GetResidualBatches`.
+  :returns: [out] Number of bytes of :cpp:func:`RansacGaussNewtonMinimizer::InlierMask`:
+    the factor count the batch had in the last :cpp:func:`Minimize`; ``0``
+    whenever ``InlierMask`` returns ``nullptr``.
 
 **Example**
 
@@ -956,11 +965,11 @@ and defaults: **hypotheses_per_round** (``int``, 256), **max_rounds**
   RANSAC; the estimate is written into the problem's state batches. Releases
   the GIL while running (custom Python factors re-acquire it). Invalid
   configurations raise ``ValueError``.
-- ``inlier_mask(problem: Problem, residual_batch_index: int) -> numpy.ndarray``
-  — host copy (``uint8``, one entry per factor, 1 = inlier) of the mask of a
-  ``sampled`` batch after ``minimize``. Raises ``RuntimeError`` for
-  ``always_on`` batches or before any run, ``IndexError`` for an out-of-range
-  index.
+- ``inlier_mask(residual_batch_index: int) -> numpy.ndarray`` — host copy
+  (``uint8``, 1 = inlier) of the mask of a ``sampled`` batch of the problem
+  passed to the last ``minimize``, one entry per factor as that batch had in
+  that run. Raises ``RuntimeError`` for an out-of-range index, an
+  ``always_on`` batch, or before any run.
 
 **pycunls.RansacLevenbergMarquardtMinimizer(options=RansacLevenbergMarquardtMinimizerOptions())**
 — same methods; hypotheses and refinement use LM.
@@ -979,7 +988,7 @@ and defaults: **hypotheses_per_round** (``int``, 256), **max_rounds**
 
    ransac = pycunls.RansacLevenbergMarquardtMinimizer(opts)
    summary = ransac.minimize(stream, problem)   # problem built as usual
-   mask = ransac.inlier_mask(problem, 0)        # numpy uint8, 1 = inlier
+   mask = ransac.inlier_mask(0)        # numpy uint8, 1 = inlier
    print(summary.num_inliers, summary.inlier_ratio)
 
 .. _py-problem-label:

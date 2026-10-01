@@ -351,8 +351,8 @@ C++
 
    // The estimate is now in the problem's state batches (here: pose_state).
    // Inlier mask of residual batch 0: device memory, one byte per factor.
-   std::vector<uint8_t> mask(num_points);
-   cudaMemcpy(mask.data(), minimizer.InlierMask(0), num_points, cudaMemcpyDeviceToHost);
+   std::vector<uint8_t> mask(minimizer.InlierMaskSize(0));
+   cudaMemcpy(mask.data(), minimizer.InlierMask(0), mask.size(), cudaMemcpyDeviceToHost);
 
    printf("%zu rounds, %zu inliers (%.1f%%)\n", summary.num_rounds, summary.num_inliers,
           100.f * summary.inlier_ratio);
@@ -384,7 +384,7 @@ Python
 
    minimizer = pycunls.RansacLevenbergMarquardtMinimizer(options)
    summary = minimizer.minimize(stream, problem)     # writes the estimate back
-   mask = minimizer.inlier_mask(problem, 0)          # numpy uint8, 1 = inlier
+   mask = minimizer.inlier_mask(0)                   # numpy uint8, 1 = inlier
    print(summary)                                     # RansacSummary(rounds=..., inliers=...)
 
 .. note::
@@ -553,8 +553,8 @@ explanatory message when:
 - a residual batch uses numeric Jacobians (``JacobianMode::kNumeric``), which
   RANSAC does not support yet;
 - ``Problem::CheckConsistency()`` fails, or an option is out of range
-  (``hypotheses_per_round`` or ``hypothesis_iterations`` of 0, ``confidence``
-  outside (0, 1)).
+  (``hypotheses_per_round``, ``max_rounds`` or ``hypothesis_iterations`` of 0,
+  ``confidence`` outside (0, 1)).
 
 Every factor and state batch must support the item / replica parameters of
 ``Evaluate`` and ``Plus``. All built-in batches do; for your own types see

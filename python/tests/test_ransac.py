@@ -127,7 +127,7 @@ class TestRansacPnP:
 
         assert isinstance(summary, pycunls.RansacSummary)
         assert _rot_err_deg(p.pose(), gt) < 0.2
-        mask = minimizer.inlier_mask(p.problem, 0)
+        mask = minimizer.inlier_mask(0)
         assert mask.dtype == np.uint8 and mask.shape == (1000,)
         assert int(np.sum((mask == 1) & is_outlier)) == 0
         assert int(np.sum((mask == 1) & ~is_outlier)) >= 0.97 * np.sum(~is_outlier)
@@ -148,9 +148,9 @@ class TestRansacPnP:
         o.score_always_on = False  # the prior sits at the (wrong) initial guess
         minimizer = pycunls.RansacGaussNewtonMinimizer(o)
         minimizer.minimize(stream, p.problem)
-        assert minimizer.inlier_mask(p.problem, 0).shape == (600,)
+        assert minimizer.inlier_mask(0).shape == (600,)
         with pytest.raises(RuntimeError):
-            minimizer.inlier_mask(p.problem, 1)
+            minimizer.inlier_mask(1)
 
     def test_same_seed_is_reproducible(self, stream):
         _, init, pts, obs, _ = _pnp_scene(500, 0.4, seed=4)
@@ -166,9 +166,9 @@ class TestRansacPnP:
         p = _PnPProblem(init, pts, obs)
         minimizer = pycunls.RansacGaussNewtonMinimizer(_ransac_options())
         with pytest.raises(RuntimeError):
-            minimizer.inlier_mask(p.problem, 0)  # before any run
-        with pytest.raises(IndexError):
-            minimizer.inlier_mask(p.problem, 5)  # no such residual batch
+            minimizer.inlier_mask(0)  # before any run
+        with pytest.raises(RuntimeError):
+            minimizer.inlier_mask(5)  # no such residual batch
         bad = _ransac_options()
         bad.factor_batches = []
         bad.hypotheses_per_round = 0
@@ -272,6 +272,6 @@ class TestCustomTypesUnderRansac:
         summary = minimizer.minimize(stream, problem)
         a, b = cp.asnumpy(ab)
         assert abs(a - 1.5) < 0.01 and abs(b + 2.0) < 0.01
-        mask = minimizer.inlier_mask(problem, 0)
+        mask = minimizer.inlier_mask(0)
         assert int(np.sum((mask == 1) & out)) == 0
         assert summary.num_inliers >= 0.95 * np.sum(~out)

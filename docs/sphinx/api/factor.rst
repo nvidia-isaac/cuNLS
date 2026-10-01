@@ -1202,7 +1202,9 @@ Header: :code:`cunls/factor/information/information_factor_batch.h`
 to the wrapped factor and weights item :math:`t` with the matrix of its factor
 :math:`f(t)`, so the wrapper works under the :doc:`RANSAC minimizers
 <../ransac>`. The sqrt-information product uses deterministic CUDA kernels
-(fixed summation order per item); the residual size must be at most 96.
+(fixed summation order per item). Residual sizes up to 96 stage each vector in
+shared memory; larger sizes read their inputs directly with a stream-ordered
+scratch buffer.
 
 **Inheritance:** ``class InformationFactorBatch : public T::sized_layout`` — i.e.
 the same ``SizedFactorBatch<kResidualSize, ...>`` as the wrapped type ``T``.

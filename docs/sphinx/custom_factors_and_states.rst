@@ -437,7 +437,7 @@ Using them with RANSAC:
    ransac = pycunls.RansacGaussNewtonMinimizer(options)
    summary = ransac.minimize(pycunls.CudaStream(), problem)
    a, b = cp.asnumpy(ab)
-   mask = ransac.inlier_mask(problem, 0)
+   mask = ransac.inlier_mask(0)
 
 This exact code is exercised by ``python/tests/test_ransac.py``.
 

@@ -46,6 +46,18 @@ constexpr int kMaxBlocksPerFactor = 8;
 /** @brief Largest supported free tangent dimension (mirrors kMaxRansacTangentDim). */
 constexpr int kMaxDim = 64;
 
+/** @brief Shared-memory words of one block group of the normal-equation kernel. */
+constexpr int kBlockGroupWords = 8192;
+
+/**
+ * @brief Shared-memory words the normal-equation kernel needs to stage one item:
+ * m_max Jacobian rows padded to a multiple of 4 columns plus a residual each,
+ * two index words, and the item's local block columns.
+ */
+__host__ __device__ inline int NormalEquationsItemWords(int m_max, int dim) {
+  return m_max * (((dim + 3) & ~3) + 1) + 2 + kMaxBlocksPerFactor;
+}
+
 // ---------------------------------------------------------------------------
 // Shared descriptors
 // ---------------------------------------------------------------------------

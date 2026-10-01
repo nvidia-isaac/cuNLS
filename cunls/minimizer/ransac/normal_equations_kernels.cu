@@ -42,11 +42,10 @@ namespace ransac_internal {
 namespace {
 
 constexpr int kBlockThreads = 256;
-constexpr int kWarpGroupWords = 1024;   ///< Shared words per warp group.
-constexpr int kBlockGroupWords = 8192;  ///< Shared words per block group.
-constexpr int kMaxTileRows = 256;       ///< Rows per tile: keeps enough blocks per slot.
-constexpr int kMaxSplits = 64;          ///< Blocks per slot (bounds the scratch buffer).
-constexpr int kMaxSharedViews = 16;     ///< Views copied to shared memory.
+constexpr int kWarpGroupWords = 1024;  ///< Shared words per warp group.
+constexpr int kMaxTileRows = 256;      ///< Rows per tile: keeps enough blocks per slot.
+constexpr int kMaxSplits = 64;         ///< Blocks per slot (bounds the scratch buffer).
+constexpr int kMaxSharedViews = 16;    ///< Views copied to shared memory.
 
 __host__ __device__ inline int Padded(int dim) { return (dim + 3) & ~3; }
 __host__ __device__ inline int TileCount(int dim) { return Padded(dim) / 4; }
@@ -59,7 +58,7 @@ __host__ __device__ inline int WorkUnits(int dim) {
 
 /** Items staged per tile: bounded by the shared budget and by kMaxTileRows. */
 __host__ __device__ inline int TileItems(int words, int dim, int m_max) {
-  const int by_words = words / (m_max * (Padded(dim) + 1) + 2 + kMaxBlocksPerFactor);
+  const int by_words = words / NormalEquationsItemWords(m_max, dim);
   const int by_rows = kMaxTileRows / m_max;
   const int items = by_words < by_rows ? by_words : by_rows;
   return items > 0 ? items : 1;
@@ -77,8 +76,7 @@ struct Geometry {
 Geometry MakeGeometry(const SlotItems &items, int dim, SlotGroup requested) {
   Geometry g;
   const bool fits_warp =
-      WorkUnits(dim) <= kWarpSize &&
-      items.m_max * (Padded(dim) + 1) + 2 + kMaxBlocksPerFactor <= kWarpGroupWords;
+      WorkUnits(dim) <= kWarpSize && NormalEquationsItemWords(items.m_max, dim) <= kWarpGroupWords;
   const bool few_rows = items.items_per_slot * items.m_max <= 256;
   g.warp =
       fits_warp && (requested == SlotGroup::kWarp || (requested == SlotGroup::kAuto && few_rows));

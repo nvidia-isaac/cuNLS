@@ -1147,6 +1147,13 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
   {
     PnPSetup s(scene, scene.world_to_cam);
     RansacMinimizerOptions o = PnPOptions();
+    o.max_rounds = 0;
+    RansacGaussNewtonMinimizer r(o);
+    ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "max_rounds");
+  }
+  {
+    PnPSetup s(scene, scene.world_to_cam);
+    RansacMinimizerOptions o = PnPOptions();
     o.hypothesis_iterations = 0;
     RansacGaussNewtonMinimizer r(o);
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "hypothesis_iterations");
@@ -1197,6 +1204,46 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
 TEST(RansacMinimizer, InlierMaskIsNullBeforeAnyRun) {
   RansacGaussNewtonMinimizer r;
   EXPECT_EQ(r.InlierMask(0), nullptr);
+  EXPECT_EQ(r.InlierMaskSize(0), 0u);
+}
+
+TEST(RansacMinimizer, InlierMaskSizeIsTheBatchSizeOfTheLastRun) {
+  const PnPScene scene = ransac_test::MakePnPScene(300, 0.3, kNoise, kMinOutlier, 77);
+  PnPSetup s(scene, scene.world_to_cam);
+  RansacGaussNewtonMinimizer r(PnPOptions());
+  CudaStream stream;
+  r.Minimize(stream.GetStream(), s.problem);
+  EXPECT_NE(r.InlierMask(0), nullptr);
+  EXPECT_EQ(r.InlierMaskSize(0), 300u);
+  EXPECT_EQ(r.InlierMask(1), nullptr);  // no such residual batch
+  EXPECT_EQ(r.InlierMaskSize(1), 0u);
+}
+
+TEST(RansacMinimizer, NoValidHypothesisFallsBackToTheInitialGuess) {
+  // An all-zero Jacobian makes every normal-equation matrix zero, so Cholesky
+  // rejects every hypothesis and the refinement cannot move either: the result
+  // must be the initial guess, not uninitialized memory.
+  const size_t n = 50;
+  std::vector<float> a(2 * n, 0.f), y(n, 1.f);
+  const std::vector<float> x0 = {0.75f, -1.25f};
+  auto d_a = ToDevice(a);
+  auto d_y = ToDevice(y);
+  auto d_x = ToDevice(x0);
+  VectorStateBatch<2> state(d_x.data(), 1);
+  ransac_test::LinearRegressionFactorBatch<2> factor(d_a.data(), d_y.data(), n);
+  Problem problem;
+  problem.AddStateBatch(&state);
+  problem.AddFactorBatch(&factor, std::vector<float *>(n, state.StateBlockDevicePtr(0)));
+
+  RansacMinimizerOptions o;
+  o.default_inlier_threshold = 0.1f;
+  o.linear_solver = RansacLinearSolverType::kCholesky;
+  o.max_rounds = 1;
+  RansacGaussNewtonMinimizer ransac(o);
+  CudaStream stream;
+  const RansacSummary summary = ransac.Minimize(stream.GetStream(), problem);
+  EXPECT_EQ(summary.num_valid_hypotheses, 0u);
+  EXPECT_EQ(ToHost(d_x), x0);
 }
 
 // ============================================================================

@@ -70,9 +70,8 @@ file they were read from. Measured performance is in §15.
   hypotheses may overlap, i.e. hypotheses are independent.
 - Not implemented yet: internal fast paths for built-ins (§4.4), linearized
   always-on factors (§4.3), numeric Jacobians (§4.6, rejected with an error),
-  PROSAC ordering, the hypothesis generator hook (§11.3), a status code for
-  "no model" (§13 Q1), and Python bindings for the RANSAC minimizers (custom
-  Python factors / states already receive the item / replica parameters).
+  PROSAC ordering, the hypothesis generator hook (§11.3), and a status code
+  for "no model" (§13 Q1).
 
 ## 0. Goal
 

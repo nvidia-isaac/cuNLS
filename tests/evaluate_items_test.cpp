@@ -36,6 +36,7 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
@@ -266,6 +267,64 @@ TEST(EvaluateItems, ResidualBatchWithLossMatchesEvaluate) {
   EXPECT_EQ(ToHost(r1), ToHost(r2));
   EXPECT_EQ(ToHost(c1), ToHost(c2));
   EXPECT_EQ(ToHost(j1), ToHost(j2));
+}
+
+// ============================================================================
+// Sqrt-information item kernels
+// ============================================================================
+
+/**
+ * Applies the sqrt-information item kernels to n items of size m (factor ids
+ * with repeats) and compares with a double-precision CPU product. m = 3 takes
+ * the shared-memory path; m = 100 (> 96) the direct path.
+ */
+void CheckInformationItems(int m, int pitch) {
+  const int num_factors = 5;
+  const int n = 13;
+  std::mt19937 rng(m);
+  std::uniform_real_distribution<float> uni(-1.f, 1.f);
+  std::vector<float> S(static_cast<size_t>(num_factors) * m * m), r(n * m), J(n * m * pitch);
+  for (float &v : S) v = uni(rng);
+  for (float &v : r) v = uni(rng);
+  for (float &v : J) v = uni(rng);
+  std::vector<int> ids(n);
+  for (int &id : ids) id = static_cast<int>(rng() % num_factors);
+
+  auto d_S = ToDevice(S);
+  auto d_r = ToDevice(r);
+  auto d_J = ToDevice(J);
+  auto d_ids = ToDevice(ids);
+  CudaStream stream;
+  ApplyInformationToResidualItems(d_S.data(), d_r.data(), m, n, d_ids.data(), num_factors,
+                                  stream.GetStream());
+  ApplyInformationToJacobianItems(d_S.data(), d_J.data(), m, pitch, n, d_ids.data(), num_factors,
+                                  stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto hr = ToHost(d_r);
+  const auto hJ = ToHost(d_J);
+
+  for (int t = 0; t < n; ++t) {
+    const float *St = S.data() + static_cast<size_t>(ids[t]) * m * m;
+    for (int i = 0; i < m; ++i) {
+      double res = 0.0;
+      for (int k = 0; k < m; ++k) res += double(St[i * m + k]) * r[t * m + k];
+      ASSERT_NEAR(hr[t * m + i], res, 1e-4 * m) << "m " << m << " item " << t;
+      for (int c = 0; c < pitch; ++c) {
+        double jac = 0.0;
+        for (int k = 0; k < m; ++k) {
+          jac += double(St[i * m + k]) * J[(static_cast<size_t>(t) * m + k) * pitch + c];
+        }
+        ASSERT_NEAR(hJ[(static_cast<size_t>(t) * m + i) * pitch + c], jac, 1e-4 * m)
+            << "m " << m << " item " << t << " col " << c;
+      }
+    }
+  }
+}
+
+TEST(InformationItems, SharedMemoryPathMatchesCpu) { CheckInformationItems(3, 4); }
+
+TEST(InformationItems, LargeResidualSizeUsesDirectPathAndMatchesCpu) {
+  CheckInformationItems(100, 3);
 }
 
 }  // namespace
