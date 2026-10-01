@@ -65,17 +65,18 @@ def positive_plus_kernel(
 @wp.kernel
 def log_prior_kernel(
     observations: wp.array(dtype=wp.float32),
+    factor_ids: wp.array(dtype=wp.int32),
     states: wp.array(dtype=wp.float32),
     residuals: wp.array(dtype=wp.float32),
     jacobians: wp.array(dtype=wp.float32),
     n: int,
     write_jac: int,
 ):
-    """residual = log(x) - log(obs), Jacobian = 1."""
+    """residual = log(x) - log(obs), Jacobian = 1 (one thread per item)."""
     i = wp.tid()
     if i >= n:
         return
-    residuals[i] = wp.log(states[i]) - wp.log(observations[i])
+    residuals[i] = wp.log(states[i]) - wp.log(observations[factor_ids[i]])
     if write_jac != 0:
         jacobians[i] = 1.0
 
@@ -83,6 +84,7 @@ def log_prior_kernel(
 @wp.kernel
 def log_ratio_kernel(
     measurements: wp.array(dtype=wp.float32),
+    factor_ids: wp.array(dtype=wp.int32),
     left_vals: wp.array(dtype=wp.float32),
     right_vals: wp.array(dtype=wp.float32),
     residuals: wp.array(dtype=wp.float32),
@@ -94,7 +96,7 @@ def log_ratio_kernel(
     i = wp.tid()
     if i >= n:
         return
-    residuals[i] = wp.log(right_vals[i]) - wp.log(left_vals[i]) - measurements[i]
+    residuals[i] = wp.log(right_vals[i]) - wp.log(left_vals[i]) - measurements[factor_ids[i]]
     if write_jac != 0:
         jacobians[i * 2] = -1.0
         jacobians[i * 2 + 1] = 1.0
@@ -143,8 +145,10 @@ class PositiveScalarStateBatch(WarpStateBatch):
                          num_blocks=num_blocks, **kwargs)
         self._num = num_blocks
 
-    def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle):
-        n = self._num
+    def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
+        # The arrays hold num_replicas contiguous copies of the batch; this
+        # manifold is per-block, so all copies are one flat launch.
+        n = self._num * num_replicas
         x = self.wrap_array(x_ptr, wp.float32, n)
         delta = self.wrap_array(delta_ptr, wp.float32, n)
         x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)
@@ -164,8 +168,9 @@ class LogPriorFactor(WarpFactorBatch):
         self.observations = observations_wp
         self._num = num_factors
 
-    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle):
-        n = self._num
+    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
+        n = num_factor_ids
+        ids = self.factor_ids(factor_ids_ptr, n)
         vals = _gather_state_values(sp_ptr, n)
         states_wp = wp.array(ptr=int(vals.data.ptr), dtype=wp.float32,
                              shape=(n,), device=self._device, copy=False)
@@ -178,7 +183,7 @@ class LogPriorFactor(WarpFactorBatch):
 
         stream = self.make_warp_stream(stream_handle)
         wp.launch(log_prior_kernel, dim=n,
-                  inputs=[self.observations, states_wp, res, jac,
+                  inputs=[self.observations, ids, states_wp, res, jac,
                           n, write_jac],
                   stream=stream)
         return True
@@ -196,8 +201,9 @@ class LogRatioBetweenFactor(WarpFactorBatch):
         self.measurements = measurements_wp
         self._num = num_factors
 
-    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle):
-        n = self._num
+    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
+        n = num_factor_ids
+        ids = self.factor_ids(factor_ids_ptr, n)
 
         all_vals = _gather_state_values(sp_ptr, n * 2)
         left_vals = all_vals[0::2].copy()
@@ -216,7 +222,7 @@ class LogRatioBetweenFactor(WarpFactorBatch):
 
         stream = self.make_warp_stream(stream_handle)
         wp.launch(log_ratio_kernel, dim=n,
-                  inputs=[self.measurements, left_wp, right_wp, res, jac,
+                  inputs=[self.measurements, ids, left_wp, right_wp, res, jac,
                           n, write_jac],
                   stream=stream)
         return True

@@ -16,9 +16,9 @@
  */
 
 /**
- * @file indexed_evaluation_test.cpp
- * @brief StateBatch::PlusReplicated and FactorBatch::EvaluateIndexed must give
- * bitwise the same results as the plain Plus / Evaluate calls they replace.
+ * @file evaluate_items_test.cpp
+ * @brief Plus with replicas and Evaluate with items (num_items, factor_ids)
+ * must give bitwise the same results as the corresponding plain calls.
  */
 
 #include <gtest/gtest.h>
@@ -49,24 +49,14 @@
 #include "cunls/state/so2_state_batch.h"
 #include "cunls/state/so3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/evaluate_items_check.h"
 #include "tests/ransac_test_support.h"
 
 namespace cunls {
 namespace {
 
-template <typename T>
-std::vector<T> ToHost(const dvector<T> &d) {
-  std::vector<T> h(d.size());
-  if (!h.empty()) d.CopyToHost(h.data(), h.size());
-  return h;
-}
-
-template <typename T>
-dvector<T> ToDevice(const std::vector<T> &h) {
-  dvector<T> d(h.size());
-  if (!h.empty()) d.CopyFromHost(h.data(), h.size());
-  return d;
-}
+using evaluate_items_test::ToDevice;
+using evaluate_items_test::ToHost;
 
 std::vector<float> RandomVector(size_t n, float scale, uint32_t seed) {
   std::mt19937 rng(seed);
@@ -77,7 +67,7 @@ std::vector<float> RandomVector(size_t n, float scale, uint32_t seed) {
 }
 
 // ============================================================================
-// PlusReplicated
+// Plus with num_replicas
 // ============================================================================
 
 using StateFactory = std::function<std::unique_ptr<StateBatch>(float *, size_t)>;
@@ -95,12 +85,13 @@ cuBLASHandle &Cublas() {
   return handle;
 }
 
-/** A state batch that does not override PlusReplicated (exercises the default). */
-class PlainVectorStateBatch : public SizedStateBatch<3, 3> {
+/** A user-style custom state batch implementing the replica contract. */
+class CustomVectorStateBatch : public SizedStateBatch<3, 3> {
  public:
   using SizedStateBatch<3, 3>::SizedStateBatch;
-  void Plus(const float *x, const float *delta, float *out, cudaStream_t stream) override {
-    CalculateVectorPlus(x, delta, out, num_blocks_, 3, stream);
+  void Plus(const float *x, const float *delta, float *out, cudaStream_t stream,
+            size_t num_replicas = 1) override {
+    CalculateVectorPlus(x, delta, out, num_blocks_ * num_replicas, 3, stream);
   }
 };
 
@@ -124,14 +115,14 @@ std::vector<StateCase> StateCases() {
        [](float *p, size_t n) -> std::unique_ptr<StateBatch> {
          return std::make_unique<VectorStateBatch<5>>(p, n);
        }},
-      {"CustomDefault", 3, 3, false,
+      {"Custom", 3, 3, false,
        [](float *p, size_t n) -> std::unique_ptr<StateBatch> {
-         return std::make_unique<PlainVectorStateBatch>(p, n);
+         return std::make_unique<CustomVectorStateBatch>(p, n);
        }},
   };
 }
 
-TEST(PlusReplicated, MatchesPlusPerReplicaBitwiseForEveryState) {
+TEST(PlusReplicas, MatchesPlusPerReplicaBitwiseForEveryState) {
   const size_t blocks = 7;
   const size_t replicas = 5;
   CudaStream stream;
@@ -162,7 +153,7 @@ TEST(PlusReplicated, MatchesPlusPerReplicaBitwiseForEveryState) {
       batch->Plus(x.data() + r * s, delta.data() + r * t, looped.data() + r * s,
                   stream.GetStream());
     }
-    batch->PlusReplicated(x.data(), delta.data(), batched.data(), replicas, stream.GetStream());
+    batch->Plus(x.data(), delta.data(), batched.data(), stream.GetStream(), replicas);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     const auto a = ToHost(looped);
     const auto b = ToHost(batched);
@@ -172,68 +163,8 @@ TEST(PlusReplicated, MatchesPlusPerReplicaBitwiseForEveryState) {
 }
 
 // ============================================================================
-// EvaluateIndexed
+// Evaluate with item parameters
 // ============================================================================
-
-/**
- * Checks EvaluateIndexed against Evaluate for `copies` state sets:
- * pointers_for_copy(k) returns the N * nb state pointers of copy k.
- */
-void CheckIndexed(const FactorBatch &factor, int copies,
-                  const std::function<std::vector<float *>(int)> &pointers_for_copy) {
-  CudaStream stream;
-  const int n_f = static_cast<int>(factor.NumFactors());
-  const int m = static_cast<int>(factor.ResidualsSize());
-  const auto sizes = factor.StateBlockSizes();
-  const int nb = static_cast<int>(sizes.size());
-  const int n = static_cast<int>(std::accumulate(sizes.begin(), sizes.end(), size_t{0}));
-  std::vector<float *> table;
-  for (int k = 0; k < copies; ++k) {
-    const auto p = pointers_for_copy(k);
-    table.insert(table.end(), p.begin(), p.end());
-  }
-  auto d_table = ToDevice(table);
-  const size_t items = static_cast<size_t>(copies) * n_f;
-
-  // Reference: one Evaluate per copy.
-  dvector<float> ref_r(items * m), ref_j(items * m * n);
-  for (int k = 0; k < copies; ++k) {
-    ASSERT_TRUE(factor.Evaluate(ref_r.data() + k * n_f * m, ref_j.data() + k * n_f * m * n,
-                                d_table.data() + k * n_f * nb, stream.GetStream()));
-  }
-  // Replicated: factor_ids == nullptr.
-  dvector<float> r(items * m), j(items * m * n);
-  ASSERT_TRUE(factor.EvaluateIndexed(r.data(), j.data(), d_table.data(), nullptr, items,
-                                     stream.GetStream()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const auto hr = ToHost(ref_r), hj = ToHost(ref_j);
-  EXPECT_EQ(hr, ToHost(r));
-  EXPECT_EQ(hj, ToHost(j));
-
-  // Arbitrary items with repeats: (factor f, copy k) rows must equal the reference rows.
-  std::mt19937 rng(7);
-  const int num_items = 3 * n_f + 5;
-  std::vector<int> ids(num_items), copy(num_items);
-  std::vector<float *> item_table;
-  for (int t = 0; t < num_items; ++t) {
-    ids[t] = static_cast<int>(rng() % n_f);
-    copy[t] = static_cast<int>(rng() % copies);
-    for (int b = 0; b < nb; ++b) item_table.push_back(table[(copy[t] * n_f + ids[t]) * nb + b]);
-  }
-  auto d_ids = ToDevice(ids);
-  auto d_items = ToDevice(item_table);
-  dvector<float> ir(static_cast<size_t>(num_items) * m), ij(static_cast<size_t>(num_items) * m * n);
-  ASSERT_TRUE(factor.EvaluateIndexed(ir.data(), ij.data(), d_items.data(), d_ids.data(), num_items,
-                                     stream.GetStream()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const auto hir = ToHost(ir), hij = ToHost(ij);
-  for (int t = 0; t < num_items; ++t) {
-    const size_t row = static_cast<size_t>(copy[t]) * n_f + ids[t];
-    ASSERT_EQ(0, std::memcmp(&hir[t * m], &hr[row * m], m * sizeof(float))) << "item " << t;
-    ASSERT_EQ(0, std::memcmp(&hij[t * m * n], &hj[row * m * n], m * n * sizeof(float)))
-        << "item " << t;
-  }
-}
 
 /** K random SE3 poses in device memory. */
 struct Poses {
@@ -249,32 +180,36 @@ struct Poses {
   float *ptr(int i) { return reinterpret_cast<float *>(d.data() + i); }
 };
 
-TEST(EvaluateIndexed, PnPMatchesEvaluate) {
+TEST(EvaluateItems, PnPMatchesEvaluate) {
   const ransac_test::PnPScene scene = ransac_test::MakePnPScene(60, 0.2, 1e-3, 2e-2, 11);
   auto obs = ToDevice(scene.observations);
   auto pts = ToDevice(scene.points_world);
   PnPFactorBatch pnp(obs.data(), pts.data(), scene.observations.size());
   Poses poses(4, 12, 0.05, 0.1);
-  CheckIndexed(pnp, 4, [&](int k) { return std::vector<float *>(60, poses.ptr(k)); });
+  evaluate_items_test::CheckEvaluateItems(pnp, 4, [&](int k) {
+    return std::vector<float *>(60, poses.ptr(k));
+  });
 }
 
-TEST(EvaluateIndexed, PnPWithCameraFromRigMatchesEvaluate) {
+TEST(EvaluateItems, PnPWithCameraFromRigMatchesEvaluate) {
   const ransac_test::PnPScene scene = ransac_test::MakePnPScene(40, 0.0, 1e-3, 2e-2, 13);
   auto obs = ToDevice(scene.observations);
   auto pts = ToDevice(scene.points_world);
   Poses rigs(40, 14, 0.02, 0.05);
   PnPFactorBatch pnp(obs.data(), rigs.d.data(), pts.data(), 40);
   Poses poses(3, 15, 0.05, 0.1);
-  CheckIndexed(pnp, 3, [&](int k) { return std::vector<float *>(40, poses.ptr(k)); });
+  evaluate_items_test::CheckEvaluateItems(pnp, 3, [&](int k) {
+    return std::vector<float *>(40, poses.ptr(k));
+  });
 }
 
-TEST(EvaluateIndexed, ReprojectionMatchesEvaluate) {
+TEST(EvaluateItems, ReprojectionMatchesEvaluate) {
   const ransac_test::PnPScene scene = ransac_test::MakePnPScene(50, 0.2, 1e-3, 2e-2, 16);
   auto obs = ToDevice(scene.observations);
   auto pts = ToDevice(scene.points_world);
   ReprojectionFactorBatch reproj(obs.data(), 50);
   Poses poses(3, 17, 0.05, 0.1);
-  CheckIndexed(reproj, 3, [&](int k) {
+  evaluate_items_test::CheckEvaluateItems(reproj, 3, [&](int k) {
     std::vector<float *> p;
     for (int i = 0; i < 50; ++i) {
       p.push_back(poses.ptr(k));
@@ -284,18 +219,20 @@ TEST(EvaluateIndexed, ReprojectionMatchesEvaluate) {
   });
 }
 
-TEST(EvaluateIndexed, SE3PriorMatchesEvaluate) {
+TEST(EvaluateItems, SE3PriorMatchesEvaluate) {
   Poses targets(20, 18);
   SE3PriorFactorBatch prior(targets.d.data(), 20);
   Poses poses(5, 19);
-  CheckIndexed(prior, 5, [&](int k) { return std::vector<float *>(20, poses.ptr(k)); });
+  evaluate_items_test::CheckEvaluateItems(prior, 5, [&](int k) {
+    return std::vector<float *>(20, poses.ptr(k));
+  });
 }
 
-TEST(EvaluateIndexed, SE3BetweenMatchesEvaluate) {
+TEST(EvaluateItems, SE3BetweenMatchesEvaluate) {
   Poses deltas(25, 20);
   SE3BetweenFactorBatch between(deltas.d.data(), 25);
   Poses poses(6, 21);
-  CheckIndexed(between, 3, [&](int k) {
+  evaluate_items_test::CheckEvaluateItems(between, 3, [&](int k) {
     std::vector<float *> p;
     for (int i = 0; i < 25; ++i) {
       p.push_back(poses.ptr(2 * k));
@@ -305,7 +242,7 @@ TEST(EvaluateIndexed, SE3BetweenMatchesEvaluate) {
   });
 }
 
-TEST(EvaluateIndexed, ResidualBatchWithLossMatchesEvaluate) {
+TEST(EvaluateItems, ResidualBatchWithLossMatchesEvaluate) {
   const int n_f = 80, copies = 4;
   const ransac_test::PnPScene scene = ransac_test::MakePnPScene(n_f, 0.4, 1e-3, 2e-2, 22);
   auto obs = ToDevice(scene.observations);
@@ -326,30 +263,12 @@ TEST(EvaluateIndexed, ResidualBatchWithLossMatchesEvaluate) {
                             d_table.data() + k * n_f, c1.data() + k * n_f,
                             j1.data() + k * n_f * 12));
   }
-  ASSERT_TRUE(rb.EvaluateIndexed(stream.GetStream(), ws.data(), r2.data(), d_table.data(), nullptr,
-                                 items, c2.data(), j2.data()));
+  ASSERT_TRUE(rb.Evaluate(stream.GetStream(), ws.data(), r2.data(), d_table.data(), c2.data(),
+                          j2.data(), nullptr, items));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   EXPECT_EQ(ToHost(r1), ToHost(r2));
   EXPECT_EQ(ToHost(c1), ToHost(c2));
   EXPECT_EQ(ToHost(j1), ToHost(j2));
-}
-
-TEST(EvaluateIndexed, DefaultIsUnsupportedAndWritesNothing) {
-  std::vector<float> a(4, 1.f), y(2, 0.f), x(2, 0.f);
-  auto da = ToDevice(a), dy = ToDevice(y), dx = ToDevice(x);
-  ransac_test::LinearRegressionFactorBatch<2> factor(da.data(), dy.data(), 2);
-  ResidualBatch rb(&factor, nullptr);
-  std::vector<float *> table(4, dx.data());
-  auto d_table = ToDevice(table);
-  auto out = ToDevice(std::vector<float>(4, 42.f));
-  dvector<float> ws(ResidualBatchWorkspaceNumFloats(4));
-  CudaStream stream;
-  EXPECT_FALSE(factor.EvaluateIndexed(out.data(), nullptr, d_table.data(), nullptr, 4,
-                                      stream.GetStream()));
-  EXPECT_FALSE(rb.EvaluateIndexed(stream.GetStream(), ws.data(), out.data(), d_table.data(),
-                                  nullptr, 4, nullptr, nullptr));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  EXPECT_EQ(ToHost(out), std::vector<float>(4, 42.f));
 }
 
 }  // namespace

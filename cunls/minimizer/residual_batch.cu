@@ -197,14 +197,14 @@ ResidualBatch::ResidualBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_
 
 bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *residuals,
                              float const *const *state_pointers, float *cost,
-                             float *jacobians) const {
-  int num_residuals = static_cast<int>(factor_batch_->NumFactors());
+                             float *jacobians, const int *factor_ids, size_t num_factor_ids) const {
+  const size_t items = num_factor_ids == 0 ? factor_batch_->NumFactors() : num_factor_ids;
 
   // Return before the preconditions below: an empty batch has nothing to
   // evaluate, its buffers are legitimately null (a zero-size DeviceVector has
   // no allocation), and the factor kernels would be launched with a zero-size
   // grid.
-  if (num_residuals == 0) {
+  if (items == 0 || factor_batch_->NumFactors() == 0) {
     return true;
   }
 
@@ -212,28 +212,16 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *resid
   assert(state_pointers != nullptr);
   assert(workspace != nullptr);
 
-  factor_batch_->Evaluate(residuals, jacobians, state_pointers, stream);
-
-  return ApplyLoss(stream, workspace, residuals, cost, jacobians);
+  if (!factor_batch_->Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, items)) {
+    return false;
+  }
+  return ApplyLossToItems(stream, workspace, residuals, cost, jacobians, items);
 }
 
 bool ResidualBatch::ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
                               float *jacobians) const {
   return ApplyLossToItems(stream, workspace, residuals, cost, jacobians,
                           factor_batch_->NumFactors());
-}
-
-bool ResidualBatch::EvaluateIndexed(cudaStream_t stream, float *workspace, float *residuals,
-                                    float const *const *state_pointers, const int *factor_ids,
-                                    size_t num_items, float *cost, float *jacobians) const {
-  if (num_items == 0) {
-    return true;
-  }
-  if (!factor_batch_->EvaluateIndexed(residuals, jacobians, state_pointers, factor_ids, num_items,
-                                      stream)) {
-    return false;
-  }
-  return ApplyLossToItems(stream, workspace, residuals, cost, jacobians, num_items);
 }
 
 bool ResidualBatch::ApplyLossToItems(cudaStream_t stream, float *workspace, float *residuals,

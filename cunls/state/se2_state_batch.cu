@@ -112,9 +112,9 @@ void SE2StateBatch::ApplyUpdate(const float *x, const float *delta,
   LaunchFusedSe2Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
 }
 
-void SE2StateBatch::Plus(const float *x, const float *delta,
-                         float *x_plus_delta, cudaStream_t stream) {
-  LaunchFusedSe2Plus(stream, x, delta, x_plus_delta, NumStateBlocks(), false);
+void SE2StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                         cudaStream_t stream, size_t num_replicas) {
+  LaunchFusedSe2Plus(stream, x, delta, x_plus_delta, NumStateBlocks() * num_replicas, false);
 }
 
 } // namespace cunls

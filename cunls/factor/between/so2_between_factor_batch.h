@@ -24,8 +24,10 @@ class SO2BetweenFactorBatch : public SizedFactorBatch<1, 1, 1> {
  public:
   SO2BetweenFactorBatch(const SO2Rotation *pose_deltas_ptr, size_t num_factors);
 
+  /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   size_t NumFactors() const final { return num_factors_; }
 

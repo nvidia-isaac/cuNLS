@@ -150,28 +150,18 @@ struct RansacMinimizerOptions {
    * 2 * scoring_subset_size kSampled factors, every hypothesis is first scored
    * on the same random subset of scoring_subset_size factors (drawn anew each
    * round), and only the best @ref scoring_finalists are scored on all
-   * factors. Needs FactorBatch::EvaluateIndexed on every kSampled batch;
-   * otherwise every hypothesis is scored on all factors. 0 disables.
+   * factors. 0 disables.
    */
   size_t scoring_subset_size = 16384;
 
-  /** @brief Hypotheses scored on all factors in two-stage scoring (>= lo_top_m). */
-  size_t scoring_finalists = 16;
+  /**
+   * @brief Hypotheses scored on all factors in two-stage scoring (at most 64).
+   * Guards against a wrong pick from the noisier subset scores.
+   */
+  size_t scoring_finalists = 4;
 
   /** @brief Gauss-Newton / LM iterations that turn a sample into a hypothesis. */
   size_t hypothesis_iterations = 5;
-
-  /**
-   * @brief Number of best hypotheses of a round that are re-solved on their
-   * inliers when the round improved the best score (LO-RANSAC). 0 disables.
-   */
-  size_t lo_top_m = 8;
-
-  /** @brief Re-classify / re-solve cycles of local optimization. */
-  size_t lo_iterations = 3;
-
-  /** @brief Inner iterations per local optimization cycle. */
-  size_t lo_solver_iterations = 5;
 
   /** @brief Iterations of the final refinement on the best inlier set. */
   size_t final_iterations = 20;

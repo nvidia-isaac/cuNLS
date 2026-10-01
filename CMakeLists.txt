@@ -229,7 +229,11 @@ if(BUILD_TESTING)
     tests/ransac_test_support.cu
     tests/ransac_minimizer_test.cpp
     tests/ransac_benchmark_test.cpp
-    tests/indexed_evaluation_test.cpp
+    tests/evaluate_items_test.cpp
+    tests/evaluate_items_between_test.cpp
+    tests/evaluate_items_motion_test.cpp
+    tests/evaluate_items_prior_test.cpp
+    tests/evaluate_items_registration_test.cpp
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)

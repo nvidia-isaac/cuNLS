@@ -138,8 +138,8 @@ Similarity2StateBatch::Similarity2StateBatch(
 
 void Similarity2StateBatch::ApplyUpdate(const float *x, const float *delta,
                                         float *result, bool invert_delta,
-                                        cudaStream_t stream) {
-  const int num_transforms = static_cast<int>(NumStateBlocks());
+                                        cudaStream_t stream, size_t num_blocks) {
+  const int num_transforms = static_cast<int>(num_blocks);
   const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
   sim2_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(
       x, delta, result, num_transforms, invert_delta);
@@ -147,9 +147,9 @@ void Similarity2StateBatch::ApplyUpdate(const float *x, const float *delta,
   static_cast<void>(cublas_handle_);
 }
 
-void Similarity2StateBatch::Plus(const float *x, const float *delta,
-                                 float *x_plus_delta, cudaStream_t stream) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream);
+void Similarity2StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                                 cudaStream_t stream, size_t num_replicas) {
+  ApplyUpdate(x, delta, x_plus_delta, false, stream, NumStateBlocks() * num_replicas);
 }
 
 } // namespace cunls

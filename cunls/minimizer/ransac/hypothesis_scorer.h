@@ -38,9 +38,8 @@ namespace ransac_internal {
  * @brief Computes each hypothesis's score and inlier count.
  *
  * Exhaustive scoring evaluates all kSampled factors for every hypothesis, in
- * chunks that fit the scoring memory budget: one FactorBatch::EvaluateIndexed
- * call per batch and chunk, or one Evaluate per hypothesis for batches that do
- * not support it.
+ * chunks that fit the scoring memory budget, with one FactorBatch::Evaluate
+ * call per batch and chunk.
  *
  * Two-stage scoring (large problems, see RansacMinimizerOptions::
  * scoring_subset_size) first scores every hypothesis on a random factor
@@ -75,7 +74,7 @@ class HypothesisScorer {
   BatchView MakeView(const ResidualLayout &r, const Batch &buf, bool subset) const;
 
   void ScoreAll(cudaStream_t stream, const RansacLayout &layout, SlotSet &hypotheses);
-  bool ScoreSubset(cudaStream_t stream, const RansacLayout &layout, SlotSet &hypotheses,
+  void ScoreSubset(cudaStream_t stream, const RansacLayout &layout, SlotSet &hypotheses,
                    uint64_t round);
   void ScoreFinalists(cudaStream_t stream, const RansacLayout &layout, SlotSet &hypotheses);
   void DrawSubsets(cudaStream_t stream, const RansacLayout &layout, uint64_t round);
@@ -84,9 +83,9 @@ class HypothesisScorer {
   void EvaluateChunk(cudaStream_t stream, const RansacLayout &layout, const SlotSet &hypotheses,
                      int first, int count, const int *slot_index);
   /** Evaluates the subset factors for hypotheses [first, first + count). */
-  bool EvaluateSubsetChunk(cudaStream_t stream, const RansacLayout &layout,
+  void EvaluateSubsetChunk(cudaStream_t stream, const RansacLayout &layout,
                            const SlotSet &hypotheses, int first, int count);
-  ScoreInputs Inputs(SlotSet &hypotheses, bool subset) const;
+  ScoreInputs Inputs(const SlotSet &hypotheses, bool subset) const;
 
   int num_hypotheses_ = 0;
   int chunk_ = 1;         ///< Hypotheses per exhaustive chunk.

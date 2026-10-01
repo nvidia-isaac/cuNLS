@@ -17,7 +17,7 @@
 
 /**
  * @file slot_kernels.cu
- * @brief Elementwise kernels of the RANSAC minimizers: wave sampling,
+ * @brief Elementwise kernels of the RANSAC minimizers: minimal samples,
  * state-pointer tables, replica copies, step scatter and accept / reset.
  * One thread per output element, no atomics.
  */
@@ -34,22 +34,16 @@ namespace {
 
 constexpr int kThreads = 256;
 
-__global__ void WaveAssignmentKernel(int n, int sample_size, int first_slot, int hyp_in_wave,
-                                     int num_slots, uint64_t key, int *owner, int *samples) {
-  const int p = blockIdx.x * blockDim.x + threadIdx.x;
-  if (p >= n) {
+__global__ void DrawSamplesKernel(int n, int sample_size, int num_slots, uint64_t seed,
+                                  uint64_t round, int *samples) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_slots * sample_size) {
     return;
   }
-  const int u = static_cast<int>(PermuteIndex(static_cast<uint32_t>(p), static_cast<uint32_t>(n),
-                                              key));
-  const int local = p / sample_size;
-  const int slot = first_slot + local;
-  if (local < hyp_in_wave && slot < num_slots) {
-    owner[u] = slot;
-    samples[static_cast<size_t>(slot) * sample_size + p % sample_size] = u;
-  } else {
-    owner[u] = -1;
-  }
+  const int slot = idx / sample_size;
+  const uint64_t key = PermutationKey(seed, round, static_cast<uint64_t>(slot));
+  samples[idx] = static_cast<int>(
+      PermuteIndex(static_cast<uint32_t>(idx % sample_size), static_cast<uint32_t>(n), key));
 }
 
 /** Replica of `block` for `slot` (current or candidate), or user storage if slot < 0. */
@@ -61,14 +55,23 @@ __device__ float *ReplicaPointer(const StateView &state, int block, int slot, bo
   return replicas + (static_cast<size_t>(slot) * state.num_blocks + block) * state.ambient;
 }
 
-__global__ void WaveTableKernel(const StateView *states, const int2 *blocks, int num_factors,
-                                int nb, const int *owner, bool candidate, float **table) {
+__global__ void SampleTablesKernel(const StateView *states, const int2 *blocks, int nb,
+                                   int num_factors, int u_offset, const int *samples,
+                                   int sample_size, int num_items, bool candidate, float **table,
+                                   int *factor_ids) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_factors * nb) {
+  if (idx >= num_items * nb) {
     return;
   }
-  const int2 sb = blocks[idx];
-  table[idx] = ReplicaPointer(states[sb.x], sb.y, owner[idx / nb], candidate);
+  const int item = idx / nb;
+  const int b = idx % nb;
+  const int f = samples[item] - u_offset;
+  const int factor = (f >= 0 && f < num_factors) ? f : 0;  // other batches' entries: unused rows
+  const int2 sb = blocks[static_cast<size_t>(factor) * nb + b];
+  table[idx] = ReplicaPointer(states[sb.x], sb.y, item / sample_size, candidate);
+  if (b == 0) {
+    factor_ids[item] = factor;
+  }
 }
 
 __global__ void SlotTablesKernel(const StateView *states, const int2 *blocks, int num_factors,
@@ -108,7 +111,8 @@ __global__ void SubsetTablesKernel(const StateView *states, const int2 *blocks, 
   const int b = static_cast<int>(idx % nb);
   const int f = ids[t % count];
   const int2 sb = blocks[static_cast<size_t>(f) * nb + b];
-  tables[idx] = ReplicaPointer(states[sb.x], sb.y, slot_offset + static_cast<int>(t / count), false);
+  const int slot = slot_offset + static_cast<int>(t / count);
+  tables[idx] = ReplicaPointer(states[sb.x], sb.y, slot, false);
   if (b == 0) {
     item_ids[t] = f;
   }
@@ -117,7 +121,8 @@ __global__ void SubsetTablesKernel(const StateView *states, const int2 *blocks, 
 __global__ void PermutationPrefixKernel(int n, int count, uint64_t key, int *ids) {
   const int j = blockIdx.x * blockDim.x + threadIdx.x;
   if (j < count) {
-    ids[j] = static_cast<int>(PermuteIndex(static_cast<uint32_t>(j), static_cast<uint32_t>(n), key));
+    ids[j] =
+        static_cast<int>(PermuteIndex(static_cast<uint32_t>(j), static_cast<uint32_t>(n), key));
   }
 }
 
@@ -157,17 +162,13 @@ __global__ void CopyAcceptedKernel(int num_slots, size_t slot_floats, const int 
 }
 
 __global__ void CopyReplicasKernel(int num_slots, size_t slot_floats, const float *src,
-                                   size_t src_stride, const int *src_index, const int *src_slot,
-                                   const int *only_if, float *dst) {
+                                   const int *src_slot, const int *only_if, float *dst) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if ((only_if != nullptr && *only_if == 0) || idx >= slot_floats * num_slots) {
     return;
   }
-  const size_t p = idx / slot_floats;
-  const size_t s = src_slot != nullptr   ? static_cast<size_t>(*src_slot)
-                   : src_index != nullptr ? static_cast<size_t>(src_index[p])
-                                          : p;
-  dst[idx] = src[s * src_stride + idx % slot_floats];
+  const size_t s = src_slot != nullptr ? static_cast<size_t>(*src_slot) : 0;
+  dst[idx] = src[s * slot_floats + idx % slot_floats];
 }
 
 /** Gauss-Newton rule: accept a cost decrease; stop otherwise or when converged. */
@@ -259,25 +260,27 @@ void LaunchCountActive(cudaStream_t stream, int num_slots, const int *active, in
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void LaunchWaveAssignment(cudaStream_t stream, int n, int sample_size, int first_slot,
-                          int hyp_in_wave, int num_slots, uint64_t key, int *owner, int *samples) {
-  if (n <= 0) {
+void LaunchDrawSamples(cudaStream_t stream, int n, int sample_size, int num_slots, uint64_t seed,
+                       uint64_t round, int *samples) {
+  const int count = num_slots * sample_size;
+  if (count <= 0) {
     return;
   }
-  WaveAssignmentKernel<<<GridFor(n), kThreads, 0, stream>>>(n, sample_size, first_slot,
-                                                            hyp_in_wave, num_slots, key, owner,
-                                                            samples);
+  DrawSamplesKernel<<<GridFor(count), kThreads, 0, stream>>>(n, sample_size, num_slots, seed,
+                                                             round, samples);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void LaunchWaveTable(cudaStream_t stream, const StateView *states, const int2 *blocks,
-                     int num_factors, int nb, const int *owner, bool candidate, float **table) {
-  const size_t count = static_cast<size_t>(num_factors) * nb;
-  if (count == 0) {
+void LaunchSampleTables(cudaStream_t stream, const StateView *states, const int2 *blocks, int nb,
+                        int num_factors, int u_offset, const int *samples, int sample_size,
+                        int num_slots, bool candidate, float **table, int *factor_ids) {
+  const int items = num_slots * sample_size;
+  if (items <= 0) {
     return;
   }
-  WaveTableKernel<<<GridFor(count), kThreads, 0, stream>>>(states, blocks, num_factors, nb, owner,
-                                                           candidate, table);
+  SampleTablesKernel<<<GridFor(static_cast<size_t>(items) * nb), kThreads, 0, stream>>>(
+      states, blocks, nb, num_factors, u_offset, samples, sample_size, items, candidate, table,
+      factor_ids);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -367,14 +370,13 @@ void LaunchCopyAccepted(cudaStream_t stream, int num_slots, size_t slot_floats, 
 }
 
 void LaunchCopyReplicas(cudaStream_t stream, int num_slots, size_t slot_floats, const float *src,
-                        size_t src_stride, const int *src_index, const int *src_slot,
-                        const int *only_if, float *dst) {
+                        const int *src_slot, const int *only_if, float *dst) {
   const size_t count = slot_floats * num_slots;
   if (count == 0) {
     return;
   }
   CopyReplicasKernel<<<GridFor(count), kThreads, 0, stream>>>(
-      num_slots, slot_floats, src, src_stride, src_index, src_slot, only_if, dst);
+      num_slots, slot_floats, src, src_slot, only_if, dst);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

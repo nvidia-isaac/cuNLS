@@ -112,9 +112,9 @@ SE3StateBatch::SE3StateBatch(cuBLASHandle &cublas_handle,
       cublas_handle_(cublas_handle), delta_transforms_(num_blocks),
       twists_(num_blocks * 6) {}
 
-void SE3StateBatch::Plus(const float *x, const float *delta,
-                         float *x_plus_delta, cudaStream_t stream) {
-  const int num_transforms = static_cast<int>(NumStateBlocks());
+void SE3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                         cudaStream_t stream, size_t num_replicas) {
+  const int num_transforms = static_cast<int>(NumStateBlocks() * num_replicas);
   const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
   se3_plus_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, x_plus_delta,
                                                          num_transforms);

@@ -87,16 +87,11 @@ public:
    * @param x_plus_delta  Device pointer to output state values.
    * @param stream        CUDA stream for asynchronous execution.
    */
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override {
-    CalculateVectorPlus(x, delta, x_plus_delta, this->num_blocks_, Dim, stream);
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override {
+    CalculateVectorPlus(x, delta, x_plus_delta, this->num_blocks_ * num_replicas, Dim, stream);
   }
 
-  /** @brief Single-launch Plus over contiguous copies (see StateBatch::PlusReplicated). */
-  void PlusReplicated(const float *x, const float *delta, float *x_plus_delta,
-                      size_t num_replicas, cudaStream_t stream) override {
-    this->PlusReplicatedAsOneBatch(x, delta, x_plus_delta, num_replicas, stream);
-  }
 
 private:
   /** @brief Default constructor (private, not for external use). */

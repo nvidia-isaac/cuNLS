@@ -109,14 +109,15 @@ residual-only factor:
    // Same residual as the analytic version: r_i = (x_{i+1} - x_i) - m_i.
    // No Jacobian code path at all -- `jacobians` is simply never touched.
    __global__ void ScalarDifferenceResidualOnlyKernel(
-       const float *measurements, float const *const *state_pointers,
-       float *residuals, size_t num_factors) {
+       const float *measurements, const int *factor_ids, size_t num_factors,
+       float const *const *state_pointers, float *residuals, size_t num_items) {
      const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-     if (idx >= num_factors) return;
+     if (idx >= num_items) return;
+     const size_t factor = factor_ids ? factor_ids[idx] : idx % num_factors;
      const float *left = state_pointers[idx * 2];
      const float *right = state_pointers[idx * 2 + 1];
      if (residuals != nullptr) {
-       residuals[idx] = (right[0] - left[0]) - measurements[idx];
+       residuals[idx] = (right[0] - left[0]) - measurements[factor];
      }
    }
 
@@ -127,11 +128,13 @@ residual-only factor:
          : measurements_(measurements), num_factors_(num_factors) {}
 
      bool Evaluate(float *residuals, float * /*jacobians*/,
-                   float const *const *state_pointers, cudaStream_t stream) const final {
+                   float const *const *state_pointers, cudaStream_t stream,
+                   const int *factor_ids = nullptr, size_t num_factor_ids = 0) const final {
+       const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
        constexpr int kBlockSize = 256;
-       const int grid_size = static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
+       const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
        ScalarDifferenceResidualOnlyKernel<<<grid_size, kBlockSize, 0, stream>>>(
-           measurements_, state_pointers, residuals, num_factors_);
+           measurements_, factor_ids, num_factors_, state_pointers, residuals, num_items);
        THROW_ON_CUDA_ERROR(cudaGetLastError());
        return true;
      }

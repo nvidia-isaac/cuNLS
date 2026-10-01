@@ -105,10 +105,16 @@ class ResidualBatch {
    * `sum(StateBlockSizes())` columns (one row block of height `ResidualsSize()`
    * per factor). Written by the factor batch then scaled when a non-trivial
    * loss is set.
+   * @param factor_ids Factor of each item, forwarded to FactorBatch::Evaluate
+   * (nullptr: item t uses factor t % NumFactors()).
+   * @param num_factor_ids Item count n, forwarded to FactorBatch::Evaluate (0
+   * means NumFactors()). Every "per factor" size above becomes "per item":
+   * workspace for n entries, residuals / cost / Jacobians for n items.
    * @return True on success.
    */
   bool Evaluate(cudaStream_t stream, float *workspace, float *residuals,
-                float const *const *state_pointers, float *cost, float *jacobians) const;
+                float const *const *state_pointers, float *cost, float *jacobians,
+                const int *factor_ids = nullptr, size_t num_factor_ids = 0) const;
 
   /**
    * @brief Applies this batch's loss function to an already-computed raw
@@ -135,25 +141,6 @@ class ResidualBatch {
    */
   bool ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
                  float *jacobians) const;
-
-  /**
-   * @brief Evaluates items through FactorBatch::EvaluateIndexed and applies
-   * the loss, like Evaluate() does for the whole batch.
-   *
-   * @param workspace Device scratch of ResidualBatchWorkspaceNumFloats(num_items) floats.
-   * @param residuals Output, num_items * ResidualsSize() floats.
-   * @param state_pointers Device array, num_items * StateBlockSizes().size() pointers.
-   * @param factor_ids Device array of num_items factor indices, or nullptr
-   *        (item t uses factor t % NumFactors()).
-   * @param num_items Number of items.
-   * @param cost Optional per-item cost output.
-   * @param jacobians Optional Jacobian output.
-   * @return False if the factor batch does not support indexed evaluation;
-   *         nothing is written then.
-   */
-  bool EvaluateIndexed(cudaStream_t stream, float *workspace, float *residuals,
-                       float const *const *state_pointers, const int *factor_ids,
-                       size_t num_items, float *cost, float *jacobians) const;
 
  private:
   /** @brief ApplyLoss over `num_items` residual blocks. */

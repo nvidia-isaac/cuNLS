@@ -203,15 +203,9 @@ ReprojectionFactorBatch::ReprojectionFactorBatch(
       num_observations_(num_observations), z_threshold_(z_threshold) {}
 
 bool ReprojectionFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                       float const *const *state_pointers,
-                                       cudaStream_t stream) const {
-  return EvaluateIndexed(residuals, jacobians, state_pointers, nullptr, num_observations_, stream);
-}
-
-bool ReprojectionFactorBatch::EvaluateIndexed(float *residuals, float *jacobians,
-                                              float const *const *state_pointers,
-                                              const int *factor_ids, size_t num_items,
-                                              cudaStream_t stream) const {
+                                       float const *const *state_pointers, cudaStream_t stream,
+                                       const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
   if (num_items == 0 || num_observations_ == 0) {
     return true;
   }

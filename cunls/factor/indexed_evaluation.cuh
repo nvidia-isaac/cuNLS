@@ -19,7 +19,7 @@
 
 /**
  * @file indexed_evaluation.cuh
- * @brief Device helper for FactorBatch::EvaluateIndexed implementations.
+ * @brief Device helper for the item parameters of FactorBatch::Evaluate.
  */
 
 #include <cuda_runtime.h>
@@ -27,8 +27,8 @@
 namespace cunls {
 
 /**
- * @brief Measurement read by item `item`: factor_ids[item], or item modulo the
- * batch size when factor_ids is null (Evaluate() is the case item < num_factors).
+ * @brief Factor (measurement) index of item `item`: factor_ids[item], or item
+ * modulo the batch size when factor_ids is null (see FactorBatch::Evaluate).
  */
 __device__ __forceinline__ int FactorMeasurementIndex(int item, const int *factor_ids,
                                                       int num_factors) {

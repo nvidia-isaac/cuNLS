@@ -94,6 +94,7 @@
 #include <cassert>
 
 #include "cunls/common/helper.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/point_to_point_factor_batch.h"
 
 namespace cunls {
@@ -120,21 +121,26 @@ constexpr size_t kBlockSize = 256;
  * floats), or nullptr to skip.
  * @param jacobians      Output array for Jacobians (num_correspondences * 18
  * floats, row-major 3x6 per correspondence), or nullptr to skip.
- * @param num_correspondences Number of point correspondences (one thread per
- * correspondence).
+ * @param num_items Number of evaluated items (one thread per item).
+ * @param factor_ids Optional per-item correspondence index (nullptr: item
+ * modulo num_factors).
+ * @param num_factors Number of correspondences in the batch.
  *
- * @note Launch configuration: <<<ceil(num_correspondences / kBlockSize),
+ * @note Launch configuration: <<<ceil(num_items / kBlockSize),
  * kBlockSize>>>
  */
 __global__ void point_to_point_cost_kernel(const float *p_observations,
                                            const float *q_observations,
                                            float const *const *state_pointers,
                                            float *residuals, float *jacobians,
-                                           int num_correspondences) {
+                                           int num_items,
+                                           const int *factor_ids,
+                                           int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_correspondences) {
+  if (tid >= num_items) {
     return;
   }
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   constexpr int kDim = 3;
   constexpr int kTangentDim = 6;
@@ -144,8 +150,8 @@ __global__ void point_to_point_cost_kernel(const float *p_observations,
   assert(param_ptr != nullptr);
 
   // Read observation points
-  const float *p = p_observations + tid * kDim;
-  const float *q = q_observations + tid * kDim;
+  const float *p = p_observations + m * kDim;
+  const float *q = q_observations + m * kDim;
 
   // Extract rotation matrix R and translation t from the SE3 transform
   // SE3Transform is row-major 4x4: [R(3x3) | t(3x1); 0 | 1]
@@ -209,15 +215,20 @@ __global__ void point_to_point_cost_kernel(const float *p_observations,
 
 bool PointToPointFactorBatch::Evaluate(float *residuals, float *jacobians,
                                        float const *const *state_pointers,
-                                       cudaStream_t stream) const {
+                                       cudaStream_t stream, const int *factor_ids,
+                                       size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
   auto p_data_ptr = reinterpret_cast<const float *>(p_observations_ptr_);
   auto q_data_ptr = reinterpret_cast<const float *>(q_observations_ptr_);
-  size_t num_factors = NumFactors();
 
-  size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
+  size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
   point_to_point_cost_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
       p_data_ptr, q_data_ptr, state_pointers, residuals, jacobians,
-      num_factors);
+      static_cast<int>(num_items), factor_ids,
+      static_cast<int>(NumFactors()));
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;

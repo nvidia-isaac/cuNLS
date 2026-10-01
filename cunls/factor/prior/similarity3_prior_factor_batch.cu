@@ -18,6 +18,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/similarity3_prior_factor_batch.h"
 #include "cunls/math/sim_lie_math.h"
 
@@ -38,12 +39,14 @@ constexpr size_t kSim3JacobianStride = 49;
  */
 __global__ void collect_and_multiply_sim3_prior_kernel(float const *const *state_pointers,
                                                        const Matrix<4> *obs_inverse,
-                                                       size_t num_factors, Matrix<4> *errors) {
+                                                       size_t num_items, Matrix<4> *errors,
+                                                       const int *factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_items) return;
 
   const float *__restrict__ C = state_pointers[tid];
-  const float *__restrict__ I = obs_inverse[tid].data();
+  const float *__restrict__ I =
+      obs_inverse[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
   float *__restrict__ out = errors[tid].data();
 
   const float c0 = C[0], c1 = C[1], c2 = C[2], c3 = C[3];
@@ -90,23 +93,29 @@ Similarity3PriorFactorBatch::Similarity3PriorFactorBatch(
 
 bool Similarity3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                            float const *const *state_pointers,
-                                           cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
-  size_t num_blocks = (num_factors + kSim3PriorBlockSize - 1) / kSim3PriorBlockSize;
+                                           cudaStream_t stream, const int *factor_ids,
+                                           size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  transforms_error_.resize(num_items);  // keeps capacity: allocates at most once per size
+  size_t num_blocks = (num_items + kSim3PriorBlockSize - 1) / kSim3PriorBlockSize;
 
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_sim3_prior_kernel<<<num_blocks, kSim3PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_factors, transforms_error_.data());
+      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(),
+      factor_ids, static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 3: residual = Log(T_error)
   ComputeLogSim3(stream, reinterpret_cast<const float *>(transforms_error_.data()),
-                 kSim3TransformStride, kSim3TangentStride, num_factors, residuals);
+                 kSim3TransformStride, kSim3TangentStride, num_items, residuals);
 
   // Step 4: Jacobian = J_r^{-1}(residual) if requested
   if (jacobians != nullptr) {
     ComputeJacobianRightInverseSim3(stream, residuals, kSim3TangentStride, kSim3JacobianStride,
-                                    num_factors, jacobians);
+                                    num_items, jacobians);
   }
 
   return true;

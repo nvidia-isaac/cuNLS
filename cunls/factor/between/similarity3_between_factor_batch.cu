@@ -9,6 +9,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/similarity3_between_factor_batch.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/dense_matrix_ops.h"
 #include "cunls/math/sim_lie_math.h"
 #include "cunls/math/so_se_lie_math.h"
@@ -31,14 +32,17 @@ constexpr size_t kSim3JacobianStride = 98;
  */
 __global__ void collect_and_compute_sim3_between_error_kernel(float const *const *state_pointers,
                                                               const Matrix<4> *deltas,
-                                                              size_t num_factors,
-                                                              Matrix<4> *errors) {
+                                                              size_t num_items,
+                                                              Matrix<4> *errors,
+                                                              const int *factor_ids,
+                                                              int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   const float *__restrict__ L = state_pointers[2 * tid];
   const float *__restrict__ R = state_pointers[2 * tid + 1];
-  const float *__restrict__ D = deltas[tid].data();
+  const float *__restrict__ D = deltas[m].data();
   float *__restrict__ out = errors[tid].data();
 
   // Load L: 4x4, bottom-right = 1/s
@@ -389,10 +393,11 @@ __device__ __forceinline__ void sim3_jr_inv(const float *xi, float *J) {
 // kernel launches + cuBLAS GEMM.
 __global__ void __launch_bounds__(128, 2)
     sim3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                        const float *__restrict__ delta_adjoints, int num_factors,
-                                        float *__restrict__ jacobians) {
+                                        const float *__restrict__ delta_adjoints, int num_items,
+                                        float *__restrict__ jacobians,
+                                        const int *__restrict__ factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_items) return;
 
   const float *r = residuals + tid * kSim3TangentStride;
 
@@ -408,7 +413,8 @@ __global__ void __launch_bounds__(128, 2)
   sim3_jr_inv(neg_r, Jl);
 
   // Load Ad(Delta) 7x7
-  const float *Ad = delta_adjoints + tid * kSim3AdjointStride;
+  const float *Ad =
+      delta_adjoints + FactorMeasurementIndex(tid, factor_ids, num_factors) * kSim3AdjointStride;
 
   float *out = jacobians + tid * kSim3JacobianStride;
 
@@ -458,21 +464,29 @@ constexpr size_t kSim3FusedBlockSize = 128;
 
 bool Similarity3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                              float const *const *state_pointers,
-                                             cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
-  size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
+                                             cudaStream_t stream, const int *factor_ids,
+                                             size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  const int num_factors = static_cast<int>(NumFactors());
+  poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
+  size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
   collect_and_compute_sim3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_factors, poses_left_inverse_.data());
+      state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
+      num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   ComputeLogSim3(stream, reinterpret_cast<const float *>(poses_left_inverse_.data()),
-                 kSim3TransformStride, kSim3TangentStride, num_factors, residuals);
+                 kSim3TransformStride, kSim3TangentStride, num_items, residuals);
 
   if (jacobians != nullptr) {
-    size_t fused_blocks = (num_factors + kSim3FusedBlockSize - 1) / kSim3FusedBlockSize;
+    size_t fused_blocks = (num_items + kSim3FusedBlockSize - 1) / kSim3FusedBlockSize;
     sim3_between_fused_jacobians_kernel<<<fused_blocks, kSim3FusedBlockSize, 0, stream>>>(
-        residuals, delta_adjoints_.data(), num_factors, jacobians);
+        residuals, delta_adjoints_.data(), static_cast<int>(num_items), jacobians, factor_ids,
+        num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 

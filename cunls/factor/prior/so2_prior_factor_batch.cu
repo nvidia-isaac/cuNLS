@@ -18,6 +18,7 @@
 #include <cassert>
 
 #include "cunls/common/helper.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/so2_prior_factor_batch.h"
 
 namespace cunls {
@@ -39,12 +40,15 @@ constexpr size_t kSO2BlockSize = 256;
  * rotation)
  * @param residuals Output residuals (1 float per factor), or nullptr to skip
  * @param jacobians Output Jacobians (1 float per factor), or nullptr to skip
- * @param num_factors Number of factors to process
+ * @param num_items Number of items to process
+ * @param factor_ids Optional per-item observation indices, or nullptr
+ * @param num_factors Number of observations
  */
 __global__ void so2_prior_cost_kernel(const float *observations, float const *const *state_pointers,
-                                      float *residuals, float *jacobians, int num_factors) {
+                                      float *residuals, float *jacobians, int num_items,
+                                      const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) {
+  if (tid >= num_items) {
     return;
   }
 
@@ -55,7 +59,7 @@ __global__ void so2_prior_cost_kernel(const float *observations, float const *co
   float s_curr = R[2];
 
   // Read target rotation matrix
-  const float *R_target = observations + tid * 4;
+  const float *R_target = observations + FactorMeasurementIndex(tid, factor_ids, num_factors) * 4;
   float c_tgt = R_target[0];
   float s_tgt = R_target[2];
 
@@ -76,13 +80,19 @@ __global__ void so2_prior_cost_kernel(const float *observations, float const *co
 }
 
 bool SO2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                   float const *const *state_pointers, cudaStream_t stream) const {
+                                   float const *const *state_pointers, cudaStream_t stream,
+                                   const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
   auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
   int num_factors = static_cast<int>(NumFactors());
 
-  size_t num_blocks = (num_factors + kSO2BlockSize - 1) / kSO2BlockSize;
+  size_t num_blocks = (num_items + kSO2BlockSize - 1) / kSO2BlockSize;
   so2_prior_cost_kernel<<<num_blocks, kSO2BlockSize, 0, stream>>>(
-      data_ptr, state_pointers, residuals, jacobians, num_factors);
+      data_ptr, state_pointers, residuals, jacobians, static_cast<int>(num_items), factor_ids,
+      num_factors);
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;

@@ -19,17 +19,18 @@
 
 /**
  * @file slot_set.h
- * @brief A set of independent small problems ("slots") iterated together with
+ * @brief A set of independent small problems ("slots") solved together with
  * Gauss-Newton or Levenberg-Marquardt.
  */
 
 #include <cuda_runtime.h>
 
+#include <cstdint>
+#include <vector>
+
 #include "cunls/common/types.h"
 #include "cunls/minimizer/ransac/ransac_kernels.h"
 #include "cunls/minimizer/ransac/ransac_layout.h"
-#include "cunls/minimizer/ransac/slot_evaluator.h"
-#include "cunls/minimizer/ransac/slot_replicas.h"
 
 namespace cunls {
 namespace ransac_internal {
@@ -41,29 +42,60 @@ struct SolverSettings {
   SolverKind solver = kSolveLDLT;
 };
 
+/** @brief Which factors of the kSampled batches a slot is solved on. */
+enum class SlotRows {
+  kNone,            ///< States only (no evaluation), e.g. the best-so-far estimate.
+  kMinimalSamples,  ///< The slot's minimal sample (hypothesis generation).
+  kAllMasked,       ///< Every sampled factor, skipping the slot's outliers (refinement).
+};
+
 /**
- * @brief Slots with their state replicas, evaluation buffers and per-slot
- * solver state.
+ * @brief Slots, each with its own copy of the free states, solved in lockstep.
  *
- * Used three ways: hypotheses (minimal samples, SampledRows::kWaves), local
- * optimization candidates and the final refinement (every sampled factor with
- * a per-slot inlier mask, SampledRows::kMaskedPerSlot).
+ * A slot's state lives in per-slot replicas of every state batch that has a
+ * free block (fully constant batches are read from user storage). Every
+ * residual batch is evaluated for all slots with one FactorBatch::Evaluate
+ * call: the items are (factor, slot) pairs, addressed through state-pointer
+ * tables and, for minimal samples, factor ids. kAlwaysOn batches always
+ * contribute all of their factors.
+ *
+ * Iterate() runs one GN / LM step per active slot; every reduction is
+ * deterministic.
  */
 class SlotSet {
  public:
+  /** @brief Sizes every buffer for `num_slots` slots, keeping capacity. */
   void Allocate(cudaStream_t stream, const RansacLayout &layout,
-                const RansacMinimizerOptions &options, SampledRows sampled_rows, int num_slots,
-                int num_waves = 1);
+                const RansacMinimizerOptions &options, SlotRows rows, int num_slots);
 
-  int num_slots() const { return replicas_.num_slots(); }
-  SlotReplicas &replicas() { return replicas_; }
-  const SlotReplicas &replicas() const { return replicas_; }
-  SlotEvaluator &evaluator() { return evaluator_; }
+  // --- States -------------------------------------------------------------
 
-  /** @brief Minimal samples of a kWaves set: num_slots x sample_size, and slots per wave. */
-  void SetSamples(const int *samples, int hyp_per_wave);
+  /** @brief Every slot's state = the problem's current state values. */
+  void LoadInitialGuess(cudaStream_t stream, const RansacLayout &layout);
 
-  /** @brief Starts a new solve: every slot active, lambda reset, counters and validity reset. */
+  /** @brief Every slot's state = src's slot 0. */
+  void CopyFrom(cudaStream_t stream, const RansacLayout &layout, const SlotSet &src);
+
+  /**
+   * @brief Slot 0's state = src's slot *src_slot, if *only_if != 0. Both are
+   * device pointers, so the decision needs no host synchronization.
+   */
+  void CopySlotIf(cudaStream_t stream, const RansacLayout &layout, const SlotSet &src,
+                  const int *src_slot, const int *only_if);
+
+  /** @brief Copies `slot`'s state into the problem's state batches. */
+  void WriteBack(cudaStream_t stream, const RansacLayout &layout, int slot) const;
+
+  // --- Solving (not for kNone) ----------------------------------------------
+
+  /**
+   * @brief kMinimalSamples: draws round `round`'s minimal samples, slot p's
+   * from the keyed permutation PermutationKey(seed, round, p).
+   */
+  void DrawSamples(cudaStream_t stream, const RansacLayout &layout, uint64_t seed,
+                   uint64_t round);
+
+  /** @brief Starts a solve: every slot active, lambda reset, counters and validity reset. */
   void ResetSolver(cudaStream_t stream, float initial_lambda);
 
   /**
@@ -74,44 +106,93 @@ class SlotSet {
   void Iterate(cudaStream_t stream, const RansacLayout &layout, const SolverSettings &settings);
 
   /**
-   * @brief Classifies every sampled factor at the current states and scores
-   * the slots; the per-slot inlier mask of a kMaskedPerSlot set is updated.
-   */
-  void Classify(cudaStream_t stream, const RansacLayout &layout);
-
-  /**
    * @brief True while some slot is still iterating. Synchronizes the stream
-   * (one scalar readback), so callers use it only when an iteration is costly.
+   * (one scalar readback), so call it only when an iteration is costly.
    */
   bool AnyActive(cudaStream_t stream);
+
+  /**
+   * @brief kAllMasked: classifies every sampled factor at the current states,
+   * scores the slots and updates their inlier masks.
+   */
+  void Classify(cudaStream_t stream, const RansacLayout &layout);
 
   /** @brief Cost of each slot's current state over its (masked) items. */
   void EvaluateCost(cudaStream_t stream, const RansacLayout &layout);
 
-  const float *score() const { return score_.data(); }
+  /** @brief Costs of the kAlwaysOn batches at the current states (for scoring). */
+  void EvaluateAlwaysOnCost(cudaStream_t stream, const RansacLayout &layout);
+
+  // --- Accessors ------------------------------------------------------------
+
+  int num_slots() const { return num_slots_; }
+  /** @brief Device array of per-state-batch views, for building pointer tables. */
+  const StateView *state_views() const { return state_views_.data(); }
+  /** @brief Scoring rules and kAlwaysOn cost views (sampled views only for kAllMasked). */
+  const ScoreInputs &score_inputs() const { return score_inputs_; }
   float *score() { return score_.data(); }
-  const int *inliers() const { return inliers_.data(); }
+  const float *score() const { return score_.data(); }
   int *inliers() { return inliers_.data(); }
+  const int *inliers() const { return inliers_.data(); }
   const int *valid() const { return valid_.data(); }
   const uint8_t *mask() const { return mask_.data(); }
   const float *cost() const { return cost_cur_.data(); }
   const int *iterations() const { return iterations_.data(); }
 
  private:
-  SlotItems Items() const { return evaluator_.Items(samples_, hyp_per_wave_, mask_.data()); }
+  /** Per-slot copies of one state batch (empty if it has no free block). */
+  struct Replicas {
+    dvector<float> cur, cand, delta;
+  };
+  /** Evaluation buffers of one residual batch, item-major. */
+  struct Buffers {
+    dvector<float> res, jac, cost;
+    dvector<float *> table_cur, table_cand;  ///< Item-major state pointers.
+    dvector<int> factor_ids;                 ///< Minimal samples only.
+    size_t items = 0;
+  };
+  enum class Target { kCurrent, kCandidate };
+  enum class Batches { kAll, kSampled, kAlwaysOn };
 
-  SlotReplicas replicas_;
-  SlotEvaluator evaluator_;
+  bool SampleRows(const ResidualLayout &r) const {
+    return r.sampled && rows_ == SlotRows::kMinimalSamples;
+  }
+  void AllocateReplicas(const RansacLayout &layout);
+  void AllocateBuffers(cudaStream_t stream, const RansacLayout &layout);
+  void AllocateSolver(const RansacLayout &layout);
+  void PublishViews(const RansacLayout &layout, const RansacMinimizerOptions &options);
+  BatchView MakeView(const ResidualLayout &r, size_t b, int kind) const;
+  SlotItems Items() const;
+
+  /** Evaluates the selected batches for every slot, one Evaluate call per batch. */
+  void Evaluate(cudaStream_t stream, const RansacLayout &layout, Target target, Batches which,
+                bool with_loss, bool jacobians);
+  /** candidate = current (+) delta, one Plus call per state batch for all slots. */
+  void ApplyStep(cudaStream_t stream, const RansacLayout &layout);
+  /** current = candidate for the slots whose step was accepted. */
+  void AcceptCandidates(cudaStream_t stream, const RansacLayout &layout);
+
+  SlotRows rows_ = SlotRows::kNone;
+  int num_slots_ = 0;
   int dim_ = 0;
-  const int *samples_ = nullptr;
-  int hyp_per_wave_ = 1;
-  bool track_validity_ = false;
+  int sample_size_ = 0;
+  int total_sampled_ = 0;
+  int m_max_ = 1;
 
-  dvector<uint8_t> mask_;
+  std::vector<Replicas> replicas_;
+  dvector<StateView> state_views_;
+
+  std::vector<Buffers> buffers_;
+  dvector<float> workspace_;  ///< ResidualBatch loss workspace.
+  dvector<int> samples_;      ///< num_slots x sample_size (kMinimalSamples).
+  dvector<uint8_t> mask_;     ///< num_slots x total_sampled (kAllMasked).
+  dvector<BatchView> views_, score_sampled_, score_always_on_;
+  int num_views_ = 0;
+  int per_slot_items_ = 0;
+  ScoreInputs score_inputs_;
+
   dvector<float> hessian_, gradient_, delta_;
-  dvector<float> normal_scratch_;  ///< Split partials of the normal equations.
-  dvector<float> cost_scratch_;    ///< Split partials of the slot costs.
-  dvector<float> score_scratch_;   ///< Split partials of the scores.
+  dvector<float> normal_scratch_, cost_scratch_, score_scratch_;  ///< Split-reduction partials.
   dvector<float> cost_cur_, cost_cand_, predicted_, step_sq_, lambda_, score_;
   dvector<int> solve_ok_, active_, accept_, valid_, iterations_, num_accepted_, inliers_;
   dvector<int> active_count_;

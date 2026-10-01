@@ -1,6 +1,7 @@
 # RANSAC Minimizers: `RansacGaussNewtonMinimizer` and `RansacLevenbergMarquardtMinimizer`
 
-Status: phases 1–2 implemented (generic path), plus LO-RANSAC from phase 3.
+Status: phases 1–2 implemented (generic path). LO-RANSAC from phase 3 was
+implemented, measured, and removed (see below).
 Written against the code at `de4e9cb`. Claims about current behavior cite the
 file they were read from. Measured performance is in §15.
 
@@ -8,10 +9,10 @@ file they were read from. Measured performance is in §15.
 
 - Public API in `cunls/minimizer/ransac_minimizer.{h,cpp}`; internals in
   `cunls/minimizer/ransac/`: `RansacLayout` (validated problem metadata),
-  `SlotReplicas` (per-slot state copies), `SlotEvaluator` (buffers, pointer
-  tables, Evaluate calls), `SlotSet` (one GN/LM iteration for all slots),
-  `HypothesisSampler` (waves), `HypothesisScorer` (chunked scoring),
-  `RansacContext` (rounds, LO, refinement), and kernels grouped by topic
+  `SlotSet` (slots with per-slot state replicas, evaluation buffers, minimal
+  samples and solver state; one GN/LM iteration for all slots),
+  `HypothesisScorer` (chunked / two-stage scoring), `RansacContext` (rounds,
+  LO, refinement), and kernels grouped by topic
   (`normal_equations_kernels.cu`, `dense_solve_kernels.cu`,
   `scoring_kernels.cu`, `slot_kernels.cu`). Tests in
   `tests/ransac_minimizer_test.cpp`, benchmarks in
@@ -37,30 +38,41 @@ file they were read from. Measured performance is in §15.
 - **New: the refinement never makes things worse.** If the final refinement
   scores worse than the best hypothesis, the best hypothesis is returned
   (`RansacSummary::refinement_reverted`).
-- LO runs only in rounds that improved the best score.
+- **No local optimization (LO-RANSAC removed).** Measured on the benchmarks
+  (PnP 100–1M points, 0–90% uniform outliers, coherent outliers, small and
+  large initial errors): disabling LO and scoring 1 finalist instead of 16
+  left every success rate (100%) and inlier mask unchanged, while RANSAC-GN at
+  1M points went 64 -> 14 ms. The final refinement on the winner's inliers
+  already does what LO did. Option `lo_*` fields are gone;
+  `scoring_finalists` defaults to 4. LO may still help with high noise or
+  near-degenerate data; no current test shows it.
 - No CUDA graphs (removed; see §4.2).
 - **Large-problem paths:** two-stage scoring (`scoring_subset_size`,
   `scoring_finalists`: every hypothesis scored on a random 16k-factor subset,
-  the best 16 on all factors; needs `EvaluateIndexed(factor_ids)`, exhaustive
-  otherwise) and convergence-based early exit of local optimization and
+  the best 4 on all factors) and convergence-based early exit of the
   refinement (one readback per iteration, enabled once an iteration touches
   >= 2^17 factor evaluations).
-- **Optional batched methods (added after the first measurements, §15):**
-  `FactorBatch::EvaluateIndexed` and `StateBatch::PlusReplicated`, as in the
-  first revision of this design. Both have correct defaults (return false /
-  loop over `Plus`), so existing and custom types keep working unchanged.
-  Implemented by `PnPFactorBatch`, `ReprojectionFactorBatch`,
-  `SE3PriorFactorBatch`, `SE3BetweenFactorBatch` (the other built-in factors
-  still use the default) and by every built-in state batch through
-  `SizedStateBatch::PlusReplicatedAsOneBatch`, which presents the copies as one
-  larger batch to the unchanged `Plus`. `ResidualBatch::EvaluateIndexed`
-  applies the loss over the items. The RANSAC code makes one call per batch
-  when these are available and falls back to one call per hypothesis
-  otherwise; results are bitwise identical either way.
+- **Item / replica parameters of `Evaluate` and `Plus` (replace the
+  optional `EvaluateIndexed` / `PlusReplicated` of the first implementation,
+  §15):** `FactorBatch::Evaluate(res, jac, ptrs, stream, factor_ids = nullptr,
+  num_factor_ids = 0)` evaluates n items, item t being factor `factor_ids[t]`
+  (or `t % NumFactors()`) against its own pointer row, and
+  `StateBatch::Plus(x, delta, out, stream, num_replicas = 1)` processes
+  contiguous copies of the batch. The defaults give the old behavior. Every
+  built-in factor and state implements them (bitwise equal to plain
+  evaluation, tested per factor in `tests/evaluate_items_*_test.cpp`);
+  `ResidualBatch::Evaluate` forwards them and applies the loss per item. RANSAC
+  requires them and makes one call per batch for all slots, with no fallback.
+- **Minimal samples are per slot, not waves (§4.1 superseded):** slot p's
+  sample is the first s elements of the keyed permutation
+  `PermutationKey(seed, round, p)`, and one `Evaluate` per sampled batch
+  evaluates every slot's sample through factor ids. Samples of different
+  hypotheses may overlap, i.e. hypotheses are independent.
 - Not implemented yet: internal fast paths for built-ins (§4.4), linearized
   always-on factors (§4.3), numeric Jacobians (§4.6, rejected with an error),
   PROSAC ordering, the hypothesis generator hook (§11.3), a status code for
-  "no model" (§13 Q1), and Python bindings.
+  "no model" (§13 Q1), and Python bindings for the RANSAC minimizers (custom
+  Python factors / states already receive the item / replica parameters).
 
 ## 0. Goal
 
@@ -237,6 +249,10 @@ RANSAC needs three evaluation patterns. Each maps onto the existing contracts
 as follows.
 
 ### 4.1 Sampled factors in hypothesis solves: disjoint-sample waves
+
+> Superseded: with the item parameters of `Evaluate`, each slot draws its own
+> sample and one call evaluates all slots' samples (see the status notes at
+> the top). Kept for the design history.
 
 A hypothesis solve needs its `s` sampled factors evaluated at *its* states.
 One `Evaluate` call evaluates all `N_b` factors of a batch, each against
@@ -544,8 +560,6 @@ struct RansacMinimizerOptions {
 
   // Inner solves
   size_t hypothesis_iterations = 5;
-  size_t lo_top_m = 8;                     // 0 disables local optimization
-  size_t lo_iterations = 3;
   size_t final_iterations = 20;
   float state_tolerance = 1e-6f;
   float cost_tolerance = 1e-6f;
@@ -757,6 +771,15 @@ With two-stage scoring and early exit (large problems): 1M points RANSAC-GN
 247 -> 67 ms (scoring 84 -> 7 ms, local optimization 120 -> 47 ms,
 refinement 35 -> 2.6 ms), RANSAC-LM 117 ms; 100k points 25 -> 12.6 ms.
 LM+Cauchy: 31–40 ms at 1M.
+
+After folding the batched methods into `Evaluate` / `Plus` (item and replica
+parameters, per-slot samples, no fallbacks; same device, idle,
+`PnPSizeSweep`): RANSAC-GN 3.0 / 2.1 / 4.4 / 12.5 / 64.9 ms and RANSAC-LM
+3.2 / 2.3 / 4.5 / 16.4 / 104.6 ms at 100 / 1k / 10k / 100k / 1M points.
+Without local optimization and with 4 finalists: RANSAC-GN 1.8 / 1.4 / 2.4 /
+7.3 / 14.9 ms and RANSAC-LM 1.9 / 1.4 / 2.5 / 7.5 / 47.3 ms (LM+Cauchy: 0.6 /
+0.7 / 0.9 / 3.7 / 31.6 ms). Rig, 1000 points per camera: 1.6 / 3.1 / 11.1 /
+18.4 ms for 1 / 2 / 5 / 10 cameras.
 
 One round of RANSAC-GN at 1k points: 4,096 hypotheses in 3.3 ms (was 68 ms).
 Rig with an always-on between factor, 2 cameras: 4.8 ms (was 116 ms);

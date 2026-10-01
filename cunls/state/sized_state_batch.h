@@ -195,27 +195,6 @@ public:
 
 protected:
   /**
-   * @brief One-launch PlusReplicated() for derived classes whose Plus()
-   * processes NumStateBlocks() blocks read at call time and sizes any scratch
-   * from that count: temporarily presents the copies as one larger batch.
-   *
-   * Derived classes opt in explicitly by overriding PlusReplicated() with a
-   * call to this helper; the StateBatch default stays in place otherwise.
-   */
-  void PlusReplicatedAsOneBatch(const float *x, const float *delta, float *x_plus_delta,
-                                size_t num_replicas, cudaStream_t stream) {
-    const size_t blocks = num_blocks_;
-    num_blocks_ = blocks * num_replicas;
-    try {
-      Plus(x, delta, x_plus_delta, stream);
-    } catch (...) {
-      num_blocks_ = blocks;
-      throw;
-    }
-    num_blocks_ = blocks;
-  }
-
-  /**
    * @brief Device pointer to the contiguous array of state blocks.
    *
    * Points to GPU device memory containing num_blocks_ state blocks stored

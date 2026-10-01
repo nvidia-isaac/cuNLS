@@ -105,49 +105,31 @@ TEST(RansacKernels, PermutationDependsOnKey) {
   const uint32_t n = 1000;
   int same = 0;
   for (uint32_t i = 0; i < n; ++i) {
-    same += PermuteIndex(i, n, PermutationKey(1, 0, 0)) == PermuteIndex(i, n, PermutationKey(1, 1, 0));
+    same += PermuteIndex(i, n, PermutationKey(1, 0, 0)) ==
+            PermuteIndex(i, n, PermutationKey(1, 1, 0));
   }
   EXPECT_LT(same, 20);  // ~1 expected for independent permutations
 }
 
-TEST(RansacKernels, WavesAssignDisjointMinimalSamples) {
+TEST(RansacKernels, DrawSamplesGivesDistinctKeyedIndicesPerSlot) {
   CudaStream stream;
   const int n = 103;
   const int s = 3;
   const int k = 70;
-  const int per_wave = n / s;                     // 34
-  const int waves = (k + per_wave - 1) / per_wave;  // 3
-  dvector<int> owner(static_cast<size_t>(waves) * n);
   dvector<int> samples(static_cast<size_t>(k) * s);
-  for (int w = 0; w < waves; ++w) {
-    LaunchWaveAssignment(stream.GetStream(), n, s, w * per_wave, std::min(per_wave, k - w * per_wave),
-                         k, PermutationKey(7, 0, w), owner.data() + w * n, samples.data());
-  }
+  LaunchDrawSamples(stream.GetStream(), n, s, k, 7, 2, samples.data());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const auto o = ToHost(owner);
   const auto smp = ToHost(samples);
   for (int slot = 0; slot < k; ++slot) {
-    const int w = slot / per_wave;
     std::set<int> distinct;
     for (int t = 0; t < s; ++t) {
       const int u = smp[slot * s + t];
       ASSERT_GE(u, 0);
       ASSERT_LT(u, n);
+      EXPECT_EQ(static_cast<uint32_t>(u), PermuteIndex(t, n, PermutationKey(7, 2, slot)));
       distinct.insert(u);
-      EXPECT_EQ(o[w * n + u], slot);
     }
     EXPECT_EQ(distinct.size(), static_cast<size_t>(s));
-  }
-  for (int w = 0; w < waves; ++w) {
-    int owned = 0;
-    for (int u = 0; u < n; ++u) {
-      const int slot = o[w * n + u];
-      if (slot >= 0) {
-        ++owned;
-        EXPECT_EQ(slot / per_wave, w);
-      }
-    }
-    EXPECT_EQ(owned, std::min(per_wave, k - w * per_wave) * s);
   }
 }
 
@@ -159,13 +141,15 @@ struct HostView {
 };
 
 void ReferenceNormalEquations(const std::vector<HostView> &views, const std::vector<int> &samples,
-                              int sample_size, int hyp_per_wave, const std::vector<uint8_t> &mask,
+                              int sample_size, const std::vector<uint8_t> &mask,
                               int mask_stride, int slot, int dim, std::vector<double> &h,
                               std::vector<double> &g, double &cost) {
   h.assign(dim * dim, 0.0);
   g.assign(dim, 0.0);
   cost = 0.0;
-  auto add = [&](const HostView &hv, int buf, int f) {
+  // Adds factor f, stored in row `row` of the slot's part of the view's buffers.
+  auto add = [&](const HostView &hv, int f, int row_index) {
+    const size_t buf = static_cast<size_t>(slot);
     const BatchView &v = hv.view;
     std::vector<double> jl(v.m * dim, 0.0);
     for (int row = 0; row < v.m; ++row) {
@@ -177,12 +161,12 @@ void ReferenceNormalEquations(const std::vector<HostView> &views, const std::vec
         const int lc = hv.local_col[f * v.nb + blk];
         if (lc >= 0) {
           jl[row * dim + lc + col - v.block_col_off[blk]] +=
-              hv.jac[buf * v.stride_jac + (static_cast<size_t>(f) * v.m + row) * v.n + col];
+              hv.jac[buf * v.stride_jac + (static_cast<size_t>(row_index) * v.m + row) * v.n + col];
         }
       }
     }
     for (int row = 0; row < v.m; ++row) {
-      const double r = hv.res[buf * v.stride_res + static_cast<size_t>(f) * v.m + row];
+      const double r = hv.res[buf * v.stride_res + static_cast<size_t>(row_index) * v.m + row];
       for (int a = 0; a < dim; ++a) {
         g[a] -= jl[row * dim + a] * r;
         for (int b = 0; b < dim; ++b) {
@@ -190,19 +174,19 @@ void ReferenceNormalEquations(const std::vector<HostView> &views, const std::vec
         }
       }
     }
-    cost += hv.cost[buf * v.stride_cost + f];
+    cost += hv.cost[buf * v.stride_cost + row_index];
   };
   for (int t = 0; t < sample_size; ++t) {
     const int u = samples[slot * sample_size + t];
     for (const HostView &hv : views) {
-      if (hv.view.kind == kViewWave && u >= hv.view.u_offset &&
+      if (hv.view.kind == kViewSamples && u >= hv.view.u_offset &&
           u < hv.view.u_offset + hv.view.num_factors) {
-        add(hv, slot / hyp_per_wave, u - hv.view.u_offset);
+        add(hv, u - hv.view.u_offset, t);
       }
     }
   }
   for (const HostView &hv : views) {
-    if (hv.view.kind == kViewWave) {
+    if (hv.view.kind == kViewSamples) {
       continue;
     }
     for (int f = 0; f < hv.view.num_factors; ++f) {
@@ -210,14 +194,14 @@ void ReferenceNormalEquations(const std::vector<HostView> &views, const std::vec
           mask[slot * mask_stride + hv.view.u_offset + f] == 0) {
         continue;
       }
-      add(hv, slot, f);
+      add(hv, f, f);
     }
   }
 }
 
 struct NormalEquationCase {
   int dim;
-  int wave_factors;
+  int sampled_factors;  ///< Factors of the minimal-sample view.
   int masked_factors;
   int plain_factors;
   SlotGroup group;
@@ -229,14 +213,13 @@ TEST_P(RansacNormalEquationsTest, MatchesCpuReferenceAndIsDeterministic) {
   const NormalEquationCase c = GetParam();
   const int dim = c.dim;
   const int slots = 5;
-  const int hyp_per_wave = 2;
-  const int waves = (slots + hyp_per_wave - 1) / hyp_per_wave;
-  const int sample_size = std::min(3, c.wave_factors);
+  const int sample_size = std::min(3, c.sampled_factors);
   std::mt19937 rng(1234 + dim);
   std::uniform_real_distribution<float> uni(-1.f, 1.f);
 
-  // Block layouts: wave view has two blocks, masked view one, plain view one.
-  auto make_view = [&](int kind, int m, std::vector<int> sizes, int nf, int u_offset, int copies) {
+  // Block layouts: sample view has two blocks, masked view one, plain view one.
+  // Every view holds `rows` rows per slot.
+  auto make_view = [&](int kind, int m, std::vector<int> sizes, int nf, int u_offset, int rows) {
     HostView hv;
     BatchView &v = hv.view;
     v.kind = kind;
@@ -258,12 +241,12 @@ TEST_P(RansacNormalEquationsTest, MatchesCpuReferenceAndIsDeterministic) {
         hv.local_col[f * v.nb + k] = choice > span ? -1 : choice;  // some constant blocks
       }
     }
-    v.stride_res = static_cast<size_t>(nf) * m;
-    v.stride_jac = static_cast<size_t>(nf) * m * v.n;
-    v.stride_cost = nf;
-    hv.res.resize(copies * v.stride_res);
-    hv.jac.resize(copies * v.stride_jac);
-    hv.cost.resize(copies * v.stride_cost);
+    v.stride_res = static_cast<size_t>(rows) * m;
+    v.stride_jac = static_cast<size_t>(rows) * m * v.n;
+    v.stride_cost = rows;
+    hv.res.resize(slots * v.stride_res);
+    hv.jac.resize(slots * v.stride_jac);
+    hv.cost.resize(slots * v.stride_cost);
     for (float &x : hv.res) x = uni(rng);
     for (float &x : hv.jac) x = uni(rng);
     for (float &x : hv.cost) x = std::fabs(uni(rng));
@@ -272,15 +255,15 @@ TEST_P(RansacNormalEquationsTest, MatchesCpuReferenceAndIsDeterministic) {
   std::vector<HostView> views;
   const int b0 = std::max(1, std::min(dim, 2));
   const int b1 = std::max(1, std::min(dim, 3));
-  views.push_back(make_view(kViewWave, 2, {b0, b1}, c.wave_factors, 0, waves));
-  views.push_back(
-      make_view(kViewPerSlotMasked, 3, {std::min(dim, 2)}, c.masked_factors, c.wave_factors, slots));
-  views.push_back(make_view(kViewPerSlot, 1, {dim}, c.plain_factors, -1, slots));
+  views.push_back(make_view(kViewSamples, 2, {b0, b1}, c.sampled_factors, 0, sample_size));
+  views.push_back(make_view(kViewPerSlotMasked, 3, {std::min(dim, 2)}, c.masked_factors,
+                            c.sampled_factors, c.masked_factors));
+  views.push_back(make_view(kViewPerSlot, 1, {dim}, c.plain_factors, -1, c.plain_factors));
 
-  const int total_sampled = c.wave_factors + c.masked_factors;
+  const int total_sampled = c.sampled_factors + c.masked_factors;
   std::vector<int> samples(slots * sample_size);
   for (int p = 0; p < slots; ++p) {
-    std::vector<int> pool(c.wave_factors);
+    std::vector<int> pool(c.sampled_factors);
     std::iota(pool.begin(), pool.end(), 0);
     std::shuffle(pool.begin(), pool.end(), rng);
     for (int t = 0; t < sample_size; ++t) {
@@ -317,7 +300,6 @@ TEST_P(RansacNormalEquationsTest, MatchesCpuReferenceAndIsDeterministic) {
   items.num_views = static_cast<int>(dev_views.size());
   items.samples = d_samples.data();
   items.sample_size = sample_size;
-  items.hyp_per_wave = hyp_per_wave;
   items.mask = d_mask.data();
   items.mask_stride = total_sampled;
   items.items_per_slot = sample_size + c.masked_factors + c.plain_factors;
@@ -339,8 +321,8 @@ TEST_P(RansacNormalEquationsTest, MatchesCpuReferenceAndIsDeterministic) {
   for (int p = 0; p < slots; ++p) {
     std::vector<double> rh, rg;
     double rc;
-    ReferenceNormalEquations(views, samples, sample_size, hyp_per_wave, mask, total_sampled, p,
-                             dim, rh, rg, rc);
+    ReferenceNormalEquations(views, samples, sample_size, mask, total_sampled, p, dim, rh, rg,
+                             rc);
     double scale = 1.0;
     for (double x : rh) scale = std::max(scale, std::fabs(x));
     for (int i = 0; i < dim * dim; ++i) {
@@ -886,8 +868,10 @@ TEST(RansacMinimizer, TwoCameraRigWithBetweenFactor) {
 
   Problem problem;
   problem.AddStateBatch(&state);
-  problem.AddFactorBatch(&fa, std::vector<float *>(sa.observations.size(), state.StateBlockDevicePtr(0)));
-  problem.AddFactorBatch(&fb, std::vector<float *>(sb.observations.size(), state.StateBlockDevicePtr(1)));
+  problem.AddFactorBatch(
+      &fa, std::vector<float *>(sa.observations.size(), state.StateBlockDevicePtr(0)));
+  problem.AddFactorBatch(
+      &fb, std::vector<float *>(sb.observations.size(), state.StateBlockDevicePtr(1)));
   problem.AddFactorBatch(&between, {state.StateBlockDevicePtr(0), state.StateBlockDevicePtr(1)});
 
   RansacMinimizerOptions o = PnPOptions(2, true);
@@ -952,7 +936,8 @@ TEST(RansacMinimizer, ReprojectionWithConstantLandmarkBatch) {
   // Constant landmarks are untouched.
   std::vector<Vector<3>> after(scene.points_world.size());
   points.CopyToHost(after.data(), after.size());
-  EXPECT_EQ(0, std::memcmp(after.data(), scene.points_world.data(), after.size() * sizeof(Vector<3>)));
+  EXPECT_EQ(0, std::memcmp(after.data(), scene.points_world.data(),
+                           after.size() * sizeof(Vector<3>)));
 }
 
 TEST(RansacMinimizer, CustomFocalFactorConvergesWithRegularMinimizer) {
@@ -1065,7 +1050,9 @@ struct LinearProblem {
   double MaxError() const {
     const auto est = ToHost(x);
     double e = 0;
-    for (int k = 0; k < Dim; ++k) e = std::max(e, static_cast<double>(std::fabs(est[k] - scene.x_true[k])));
+    for (int k = 0; k < Dim; ++k) {
+      e = std::max(e, static_cast<double>(std::fabs(est[k] - scene.x_true[k])));
+    }
     return e;
   }
 };
@@ -1200,7 +1187,8 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
     PnPFactorBatch f(obs.data(), pts.data(), scene.observations.size());
     Problem p;
     p.AddStateBatch(&st);
-    p.AddFactorBatch(&f, std::vector<float *>(scene.observations.size(), st.StateBlockDevicePtr(0)));
+    p.AddFactorBatch(&f,
+                     std::vector<float *>(scene.observations.size(), st.StateBlockDevicePtr(0)));
     RansacGaussNewtonMinimizer r(PnPOptions());
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), p); }, "D = 0");
   }
@@ -1281,7 +1269,7 @@ TEST(RansacMinimizer, CoherentOutliersFromACompetingPose) {
 
 TEST(RansacMinimizer, LargeProblemTwoStageScoringAndEarlyExit) {
   // 150k factors: two-stage scoring (> 2 x 16384 sampled factors) and the
-  // per-iteration convergence checks of LO / refinement are active.
+  // per-iteration convergence checks of the refinement are active.
   const PnPScene scene = ransac_test::MakePnPScene(150000, 0.5, kNoise, kMinOutlier, 88);
   const SE3Transform init = Perturb(scene.world_to_cam, 16, 0.1, 0.3);
   RansacMinimizerOptions exhaustive = PnPOptions();
@@ -1305,19 +1293,17 @@ TEST(RansacMinimizer, LargeProblemTwoStageScoringAndEarlyExit) {
   ExpectIdentical(two_stage, RunPnP(scene, init, PnPOptions()));
 }
 
-TEST(RansacMinimizer, TwoStageScoringFallsBackWithoutEvaluateIndexed) {
-  // The syncing wrapper has no EvaluateIndexed: scoring must fall back to the
-  // exhaustive path and still give the indexed path's result.
+TEST(RansacMinimizer, TwoStageScoringWithWrappedCustomFactorIsIdentical) {
+  // The two-stage subset evaluates items with explicit factor ids; a custom
+  // wrapper that forwards them must reproduce the built-in factor exactly.
   const PnPScene scene = ransac_test::MakePnPScene(40000, 0.4, kNoise, kMinOutlier, 89);
   const SE3Transform init = Perturb(scene.world_to_cam, 17, 0.1, 0.3);
-  RansacMinimizerOptions exhaustive = PnPOptions();
-  exhaustive.scoring_subset_size = 0;
-  exhaustive.hypotheses_per_round = 64;
-  const RunResult indexed = RunPnP(scene, init, exhaustive);
-  RansacMinimizerOptions two_stage = exhaustive;
+  RansacMinimizerOptions two_stage = PnPOptions();
+  two_stage.hypotheses_per_round = 64;
   two_stage.scoring_subset_size = 4096;
-  const RunResult fallback = RunPnP(scene, init, two_stage, false, /*syncing_factor=*/true);
-  ExpectIdentical(indexed, fallback);
+  const RunResult direct = RunPnP(scene, init, two_stage);
+  const RunResult wrapped = RunPnP(scene, init, two_stage, false, /*syncing_factor=*/true);
+  ExpectIdentical(direct, wrapped);
 }
 
 TEST(RansacMinimizer, SameSeedIsBitwiseReproducible) {
@@ -1347,8 +1333,8 @@ TEST(RansacMinimizer, ScoringChunkSizeDoesNotChangeResults) {
   ExpectIdentical(RunPnP(scene, init, PnPOptions()), RunPnP(scene, init, tiny));
 }
 
-TEST(RansacMinimizer, ManyWavesWhenFewFactors) {
-  // 30 factors / s = 3 -> 10 hypotheses per wave; 64 hypotheses need 7 waves.
+TEST(RansacMinimizer, MoreHypothesesThanFactors) {
+  // 64 minimal samples of 3 out of 30 factors: samples overlap across slots.
   const PnPScene scene = ransac_test::MakePnPScene(30, 0.2, kNoise, kMinOutlier, 85);
   const SE3Transform init = Perturb(scene.world_to_cam, 13, 0.05, 0.15);
   RansacMinimizerOptions o = PnPOptions();
@@ -1369,15 +1355,6 @@ TEST(RansacMinimizer, InlierCountScoringAndCholesky) {
   RansacMinimizerOptions o = PnPOptions();
   o.scoring = RansacScoring::kInlierCount;
   o.linear_solver = RansacLinearSolverType::kCholesky;
-  const RunResult r = RunPnP(scene, init, o);
-  EXPECT_LT(RotationErrorDeg(r.pose, scene.world_to_cam), 0.2);
-}
-
-TEST(RansacMinimizer, NoLocalOptimizationStillCorrect) {
-  const PnPScene scene = ransac_test::MakePnPScene(500, 0.4, kNoise, kMinOutlier, 87);
-  const SE3Transform init = Perturb(scene.world_to_cam, 15, 0.1, 0.3);
-  RansacMinimizerOptions o = PnPOptions();
-  o.lo_top_m = 0;
   const RunResult r = RunPnP(scene, init, o);
   EXPECT_LT(RotationErrorDeg(r.pose, scene.world_to_cam), 0.2);
 }

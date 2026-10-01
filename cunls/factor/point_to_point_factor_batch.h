@@ -84,11 +84,15 @@ public:
    * @param state_pointers Device pointer to state block pointers. Each entry
    *                   points to an SE(3) transform (16 floats) on the device.
    * @param stream CUDA stream for asynchronous execution.
+   * @param factor_ids Optional per-item factor index (see
+   *                   FactorBatch::Evaluate's item contract).
+   * @param num_factor_ids Number of items (the length of factor_ids when it
+   *        is given); 0 means NumFactors().
    * @return true on success.
    */
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
-                cudaStream_t stream) const final;
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   /**
    * @brief Returns the number of point-to-point factors in this batch.

@@ -18,6 +18,7 @@
 #include <cassert>
 
 #include "cunls/common/helper.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 
 namespace cunls {
@@ -44,20 +45,23 @@ constexpr size_t kBlockSize = 256;
  *                     floats, row-major identity per vector), or nullptr to
  * skip.
  * @param dim          Dimension of each vector.
- * @param num_vectors  Number of vectors (one thread per vector).
+ * @param num_vectors  Number of items (one thread per item).
+ * @param factor_ids   Optional per-item observation indices, or nullptr.
+ * @param num_factors  Number of observations.
  *
  * @note Launch configuration: <<<ceil(num_vectors / kBlockSize), kBlockSize>>>
  */
 __global__ void prior_vector_factor_kernel(const float *observations,
                                            float const *const *state_pointers, float *residuals,
-                                           float *jacobians, int dim, int num_vectors) {
+                                           float *jacobians, int dim, int num_vectors,
+                                           const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_vectors) {
     return;
   }
 
   if (residuals != nullptr) {
-    auto obs_ptr = observations + tid * dim;
+    auto obs_ptr = observations + FactorMeasurementIndex(tid, factor_ids, num_factors) * dim;
     auto param_ptr = state_pointers[tid];
     assert(param_ptr != nullptr);
 
@@ -77,10 +81,15 @@ __global__ void prior_vector_factor_kernel(const float *observations,
 
 void LaunchPriorVectorFactorKernel(const float *observations, float const *const *state_pointers,
                                    float *residuals, float *jacobians, int dim, int num_vectors,
-                                   cudaStream_t stream) {
+                                   cudaStream_t stream, const int *factor_ids,
+                                   int num_factors) {
+  if (num_factors == 0) {
+    num_factors = num_vectors;
+  }
   size_t num_blocks = (num_vectors + kBlockSize - 1) / kBlockSize;
   prior_vector_factor_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      observations, state_pointers, residuals, jacobians, dim, num_vectors);
+      observations, state_pointers, residuals, jacobians, dim, num_vectors, factor_ids,
+      num_factors);
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }

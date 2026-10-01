@@ -52,7 +52,7 @@ void HypothesisScorer::Allocate(const RansacLayout &layout, const RansacMinimize
   const size_t n = static_cast<size_t>(layout.total_sampled());
   const size_t subset = options.scoring_subset_size;
   finalists_count_ = static_cast<int>(std::min<size_t>(
-      {std::max(options.scoring_finalists, options.lo_top_m), size_t{64},
+      {options.scoring_finalists, size_t{64},
        static_cast<size_t>(num_hypotheses)}));
   finalists_count_ = std::max(finalists_count_, 1);
   two_stage_ = subset > 0 && n > 2 * subset && finalists_count_ < num_hypotheses;
@@ -142,8 +142,8 @@ void HypothesisScorer::AllocateViews(const RansacLayout &layout) {
   subset_views_.CopyFromHost(subset.data(), subset.size());
 }
 
-ScoreInputs HypothesisScorer::Inputs(SlotSet &hypotheses, bool subset) const {
-  ScoreInputs in = hypotheses.evaluator().score_inputs();  // always-on views and rules
+ScoreInputs HypothesisScorer::Inputs(const SlotSet &hypotheses, bool subset) const {
+  ScoreInputs in = hypotheses.score_inputs();  // always-on views and rules
   in.sampled = subset ? subset_views_.data() : views_.data();
   in.num_sampled = static_cast<int>(subset ? subset_views_.size() : views_.size());
   in.total_sampled = subset ? subset_total_ : in.total_sampled;
@@ -152,12 +152,13 @@ ScoreInputs HypothesisScorer::Inputs(SlotSet &hypotheses, bool subset) const {
 
 void HypothesisScorer::Score(cudaStream_t stream, const RansacLayout &layout, SlotSet &hypotheses,
                              uint64_t round) {
-  hypotheses.evaluator().EvaluateAlwaysOnCost(stream, layout);
-  if (two_stage_ && ScoreSubset(stream, layout, hypotheses, round)) {
+  hypotheses.EvaluateAlwaysOnCost(stream, layout);
+  if (two_stage_) {
+    ScoreSubset(stream, layout, hypotheses, round);
     ScoreFinalists(stream, layout, hypotheses);
-    return;
+  } else {
+    ScoreAll(stream, layout, hypotheses);
   }
-  ScoreAll(stream, layout, hypotheses);
 }
 
 void HypothesisScorer::ScoreAll(cudaStream_t stream, const RansacLayout &layout,
@@ -186,23 +187,19 @@ void HypothesisScorer::DrawSubsets(cudaStream_t stream, const RansacLayout &layo
   }
 }
 
-bool HypothesisScorer::ScoreSubset(cudaStream_t stream, const RansacLayout &layout,
+void HypothesisScorer::ScoreSubset(cudaStream_t stream, const RansacLayout &layout,
                                    SlotSet &hypotheses, uint64_t round) {
   DrawSubsets(stream, layout, round);
   const ScoreInputs inputs = Inputs(hypotheses, true);
   for (int first = 0; first < num_hypotheses_; first += subset_chunk_) {
     const int count = std::min(subset_chunk_, num_hypotheses_ - first);
-    if (!EvaluateSubsetChunk(stream, layout, hypotheses, first, count)) {
-      two_stage_ = false;  // a sampled batch lacks EvaluateIndexed: score exhaustively
-      return false;
-    }
+    EvaluateSubsetChunk(stream, layout, hypotheses, first, count);
     LaunchScore(stream, inputs, count, first, hypotheses.valid(), subset_score_.data(),
                 subset_inliers_.data(), nullptr, scratch_.data());
   }
   LaunchInitStats(stream, selection_stats_.data());
   LaunchSelect(stream, subset_score_.data(), subset_inliers_.data(), nullptr, num_hypotheses_,
                finalists_count_, finalists_.data(), selection_stats_.data());
-  return true;
 }
 
 void HypothesisScorer::ScoreFinalists(cudaStream_t stream, const RansacLayout &layout,
@@ -228,26 +225,19 @@ void HypothesisScorer::EvaluateChunk(cudaStream_t stream, const RansacLayout &la
     Batch &buf = batches_[b];
     const size_t nf = static_cast<size_t>(r.num_factors);
     if (slot_index != nullptr) {
-      LaunchIndexedSlotTables(stream, hypotheses.replicas().views(), r.blocks.data(),
-                              r.num_factors, r.nb, slot_index, count, buf.table.data());
+      LaunchIndexedSlotTables(stream, hypotheses.state_views(), r.blocks.data(), r.num_factors,
+                              r.nb, slot_index, count, buf.table.data());
     } else {
-      LaunchSlotTables(stream, hypotheses.replicas().views(), r.blocks.data(), r.num_factors,
-                       r.nb, count, first, false, buf.table.data());
+      LaunchSlotTables(stream, hypotheses.state_views(), r.blocks.data(), r.num_factors, r.nb,
+                       count, first, false, buf.table.data());
     }
-    float *jac = jacobians_ ? buf.jac.data() : nullptr;
-    // Hypothesis q's rows are items q * N .. q * N + N - 1.
-    if (r.factor->EvaluateIndexed(buf.res.data(), jac, buf.table.data(), nullptr, count * nf,
-                                  stream)) {
-      continue;
-    }
-    for (int q = 0; q < count; ++q) {
-      r.factor->Evaluate(buf.res.data() + q * nf * r.m, jac ? jac + q * nf * r.m * r.n : nullptr,
-                         buf.table.data() + q * nf * r.nb, stream);
-    }
+    // Hypothesis q's rows are items q * N .. q * N + N - 1 (factor t % N).
+    r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr, buf.table.data(),
+                       stream, nullptr, count * nf);
   }
 }
 
-bool HypothesisScorer::EvaluateSubsetChunk(cudaStream_t stream, const RansacLayout &layout,
+void HypothesisScorer::EvaluateSubsetChunk(cudaStream_t stream, const RansacLayout &layout,
                                            const SlotSet &hypotheses, int first, int count) {
   for (size_t b = 0; b < batches_.size(); ++b) {
     const ResidualLayout &r = layout.residuals()[b];
@@ -255,16 +245,13 @@ bool HypothesisScorer::EvaluateSubsetChunk(cudaStream_t stream, const RansacLayo
     if (buf.subset_size == 0) {
       continue;
     }
-    LaunchSubsetTables(stream, hypotheses.replicas().views(), r.blocks.data(), r.nb,
+    LaunchSubsetTables(stream, hypotheses.state_views(), r.blocks.data(), r.nb,
                        buf.subset.data(), buf.subset_size, count, first, buf.table.data(),
                        buf.item_ids.data());
     const size_t items = static_cast<size_t>(count) * buf.subset_size;
-    if (!r.factor->EvaluateIndexed(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr,
-                                   buf.table.data(), buf.item_ids.data(), items, stream)) {
-      return false;
-    }
+    r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr, buf.table.data(),
+                       stream, buf.item_ids.data(), items);
   }
-  return true;
 }
 
 }  // namespace ransac_internal

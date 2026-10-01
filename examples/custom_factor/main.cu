@@ -44,24 +44,29 @@ namespace {
 // This kernel implements a tiny 1D "between" constraint:
 //   residual_i = (x_{i+1} - x_i) - measurement_i
 //
-// Each factor consumes two scalar state blocks:
-//   state_pointers[2*i + 0] -> x_i
-//   state_pointers[2*i + 1] -> x_{i+1}
+// One thread evaluates one *item*: a factor evaluated against its own set of
+// state blocks (see FactorBatch::Evaluate). Regular minimizers pass
+// factor_ids == nullptr and num_items == num_factors, so item idx is factor
+// idx; the RANSAC minimizers evaluate many items per factor. For item idx:
+//   measurement:  measurements[factor_ids ? factor_ids[idx] : idx % num_factors]
+//   states:       state_pointers[2*idx + 0] -> x_i, state_pointers[2*idx + 1] -> x_{i+1}
+//   outputs:      residuals[idx], jacobians[2*idx .. 2*idx + 1]
 //
-// Jacobian layout is row-major per factor. Since residual dimension is 1 and
-// state sizes are [1, 1], each factor contributes two Jacobian values:
+// Jacobian layout is row-major per item. Since residual dimension is 1 and
+// state sizes are [1, 1], each item contributes two Jacobian values:
 //   [dr/dx_i, dr/dx_{i+1}] = [-1, +1]
-__global__ void ScalarDifferenceKernel(const float *measurements,
-                                       float const *const *state_pointers, float *residuals,
-                                       float *jacobians, size_t num_factors) {
+__global__ void ScalarDifferenceKernel(const float *measurements, const int *factor_ids,
+                                       size_t num_factors, float const *const *state_pointers,
+                                       float *residuals, float *jacobians, size_t num_items) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (idx >= num_factors) {
+  if (idx >= num_items) {
     return;
   }
 
+  const size_t factor = factor_ids != nullptr ? factor_ids[idx] : idx % num_factors;
   const float *left = state_pointers[idx * 2];
   const float *right = state_pointers[idx * 2 + 1];
-  const float residual = (right[0] - left[0]) - measurements[idx];
+  const float residual = (right[0] - left[0]) - measurements[factor];
 
   if (residuals != nullptr) {
     residuals[idx] = residual;
@@ -89,11 +94,14 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
       : measurements_(measurements), num_factors_(num_factors) {}
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final {
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const final {
+    const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
     constexpr int kBlockSize = 256;
-    const int grid_size = static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
+    const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceKernel<<<grid_size, kBlockSize, 0, stream>>>(
-        measurements_, state_pointers, residuals, jacobians, num_factors_);
+        measurements_, factor_ids, num_factors_, state_pointers, residuals, jacobians,
+        num_items);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return true;
   }
@@ -119,17 +127,19 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
 // This kernel is a copy of ScalarDifferenceKernel with the Jacobian branch
 // deleted entirely -- there is nothing else to write.
 __global__ void ScalarDifferenceResidualOnlyKernel(const float *measurements,
+                                                   const int *factor_ids, size_t num_factors,
                                                    float const *const *state_pointers,
-                                                   float *residuals, size_t num_factors) {
+                                                   float *residuals, size_t num_items) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (idx >= num_factors) {
+  if (idx >= num_items) {
     return;
   }
 
+  const size_t factor = factor_ids != nullptr ? factor_ids[idx] : idx % num_factors;
   const float *left = state_pointers[idx * 2];
   const float *right = state_pointers[idx * 2 + 1];
   if (residuals != nullptr) {
-    residuals[idx] = (right[0] - left[0]) - measurements[idx];
+    residuals[idx] = (right[0] - left[0]) - measurements[factor];
   }
 }
 
@@ -145,11 +155,13 @@ class ScalarDifferenceResidualOnlyFactorBatch : public cunls::SizedFactorBatch<1
       : measurements_(measurements), num_factors_(num_factors) {}
 
   bool Evaluate(float *residuals, float * /*jacobians*/, float const *const *state_pointers,
-                cudaStream_t stream) const final {
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const final {
+    const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
     constexpr int kBlockSize = 256;
-    const int grid_size = static_cast<int>((num_factors_ + kBlockSize - 1) / kBlockSize);
+    const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceResidualOnlyKernel<<<grid_size, kBlockSize, 0, stream>>>(
-        measurements_, state_pointers, residuals, num_factors_);
+        measurements_, factor_ids, num_factors_, state_pointers, residuals, num_items);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return true;
   }

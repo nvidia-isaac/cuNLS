@@ -67,10 +67,14 @@ class Similarity2PriorFactorBatch : public SizedFactorBatch<4, 4> {
    *                  Can be nullptr to skip Jacobian computation.
    * @param state_pointers Device pointer to state block pointers.
    * @param stream CUDA stream for asynchronous execution.
+   * @param factor_ids Optional per-item factor indices (device pointer).
+   * @param num_factor_ids Number of items (the length of factor_ids when it
+   *        is given); 0 means NumFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const final;
 
   /**
    * @brief Returns the number of factors in the batch.

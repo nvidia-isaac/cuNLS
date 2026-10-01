@@ -101,9 +101,11 @@ LinearScene MakeLinearScene(int dim, size_t num_points, double outlier_ratio, do
 // Custom factor batches (implemented like a user would, only Evaluate()).
 // ----------------------------------------------------------------------------
 
+/** Evaluates `num_items` items (see FactorBatch::Evaluate) of the linear regression factor. */
 void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_factors,
                             float *residuals, float *jacobians,
-                            float const *const *state_pointers, cudaStream_t stream);
+                            float const *const *state_pointers, const int *factor_ids,
+                            size_t num_items, cudaStream_t stream);
 
 /** r_i = a_i^T x - y_i with a VectorStateBatch<Dim> state. */
 template <int Dim>
@@ -112,8 +114,10 @@ class LinearRegressionFactorBatch : public SizedFactorBatch<1, Dim> {
   LinearRegressionFactorBatch(const float *a, const float *y, size_t num_factors)
       : a_(a), y_(y), num_factors_(num_factors) {}
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const override {
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override {
     LaunchLinearRegression(Dim, a_, y_, num_factors_, residuals, jacobians, state_pointers,
+                           factor_ids, num_factor_ids == 0 ? num_factors_ : num_factor_ids,
                            stream);
     return true;
   }
@@ -135,7 +139,8 @@ class FocalPnPFactorBatch : public SizedFactorBatch<2, 6, 1> {
                       size_t num_factors)
       : obs_(obs_pixels), points_(points_world), num_factors_(num_factors) {}
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const override;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
   size_t NumFactors() const override { return num_factors_; }
 
  private:
@@ -153,7 +158,8 @@ class SyncingFactorBatch : public FactorBatch {
  public:
   explicit SyncingFactorBatch(FactorBatch *inner) : inner_(inner) {}
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const override;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
   size_t ResidualsSize() const override { return inner_->ResidualsSize(); }
   std::vector<size_t> StateBlockSizes() const override { return inner_->StateBlockSizes(); }
   size_t NumFactors() const override { return inner_->NumFactors(); }

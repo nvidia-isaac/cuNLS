@@ -62,18 +62,20 @@ wp.init()
 @wp.kernel
 def scalar_diff_kernel(
     measurements: wp.array(dtype=wp.float32),
+    factor_ids: wp.array(dtype=wp.int32),
     left_vals: wp.array(dtype=wp.float32),
     right_vals: wp.array(dtype=wp.float32),
     residuals: wp.array(dtype=wp.float32),
     jacobians: wp.array(dtype=wp.float32),
-    num_factors: int,
+    num_items: int,
     write_jacobians: int,
 ):
-    i = wp.tid()
-    if i >= num_factors:
+    i = wp.tid()  # item: one factor evaluated against one set of states
+    if i >= num_items:
         return
 
-    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[i]
+    m = factor_ids[i]  # the item's factor (measurement) index
+    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[m]
 
     if write_jacobians != 0:
         jacobians[i * 2] = -1.0
@@ -127,8 +129,12 @@ class ScalarDiffFactor(WarpFactorBatch):
         self.measurements = measurements_wp
         self._num_factors = num_factors
 
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle):
-        n = self._num_factors
+    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+                 factor_ids_ptr, num_factor_ids):
+        # One thread per item; item i reads its factor's measurement via
+        # factor_ids[i] and its own two states (see WarpFactorBatch.evaluate).
+        n = num_factor_ids
+        ids = self.factor_ids(factor_ids_ptr, n)
 
         all_vals = _gather_state_values(state_pointers_ptr, n * 2)
         left_vals = all_vals[0::2].copy()
@@ -149,7 +155,7 @@ class ScalarDiffFactor(WarpFactorBatch):
         wp.launch(
             scalar_diff_kernel,
             dim=n,
-            inputs=[self.measurements, left_wp, right_wp, res, jac,
+            inputs=[self.measurements, ids, left_wp, right_wp, res, jac,
                     n, write_jac],
             stream=stream,
         )
@@ -162,15 +168,16 @@ class ScalarDiffFactor(WarpFactorBatch):
 @wp.kernel
 def scalar_diff_residual_only_kernel(
     measurements: wp.array(dtype=wp.float32),
+    factor_ids: wp.array(dtype=wp.int32),
     left_vals: wp.array(dtype=wp.float32),
     right_vals: wp.array(dtype=wp.float32),
     residuals: wp.array(dtype=wp.float32),
-    num_factors: int,
+    num_items: int,
 ):
     i = wp.tid()
-    if i >= num_factors:
+    if i >= num_items:
         return
-    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[i]
+    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[factor_ids[i]]
 
 
 class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
@@ -192,8 +199,12 @@ class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
         self.measurements = measurements_wp
         self._num_factors = num_factors
 
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle):
-        n = self._num_factors
+    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+                 factor_ids_ptr, num_factor_ids):
+        # One thread per item; item i reads its factor's measurement via
+        # factor_ids[i] and its own two states (see WarpFactorBatch.evaluate).
+        n = num_factor_ids
+        ids = self.factor_ids(factor_ids_ptr, n)
 
         all_vals = _gather_state_values(state_pointers_ptr, n * 2)
         left_vals = all_vals[0::2].copy()
@@ -210,7 +221,7 @@ class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
         wp.launch(
             scalar_diff_residual_only_kernel,
             dim=n,
-            inputs=[self.measurements, left_wp, right_wp, res, n],
+            inputs=[self.measurements, ids, left_wp, right_wp, res, n],
             stream=stream,
         )
         return True

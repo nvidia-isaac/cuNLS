@@ -90,14 +90,9 @@ public:
    * @param x_plus_delta Output transformation matrices (device pointer)
    * @param stream CUDA stream for asynchronous execution
    */
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override;
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override;
 
-  /** @brief Single-launch Plus over contiguous copies (see StateBatch::PlusReplicated). */
-  void PlusReplicated(const float *x, const float *delta, float *x_plus_delta,
-                      size_t num_replicas, cudaStream_t stream) override {
-    this->PlusReplicatedAsOneBatch(x, delta, x_plus_delta, num_replicas, stream);
-  }
 
 private:
   cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
@@ -116,6 +111,6 @@ private:
    * @param stream CUDA stream for asynchronous execution
    */
   void ApplyUpdate(const float *x, const float *delta, float *result,
-                   bool invert_delta, cudaStream_t stream);
+                   bool invert_delta, cudaStream_t stream, size_t num_blocks);
 };
 } // namespace cunls

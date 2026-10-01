@@ -11,15 +11,12 @@ add_library(cunls_minimizer OBJECT
   problem.cpp
   ransac_minimizer.cpp
   ransac/dense_solve_kernels.cu
-  ransac/hypothesis_sampler.cpp
   ransac/hypothesis_scorer.cpp
   ransac/normal_equations_kernels.cu
   ransac/ransac_context.cpp
   ransac/ransac_layout.cpp
   ransac/scoring_kernels.cu
-  ransac/slot_evaluator.cpp
   ransac/slot_kernels.cu
-  ransac/slot_replicas.cpp
   ransac/slot_set.cpp
   residual_batch.cu
   sparse_matrix.cu

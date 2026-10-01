@@ -387,7 +387,11 @@ Warp factor code walkthrough
 
 **Step 1 — Define the Warp kernel.**
 The kernel computes the scalar difference residual and constant Jacobian
-``[-1, +1]`` for each factor. State values are first gathered into
+``[-1, +1]`` for each *item*: one factor evaluated against one set of state
+blocks. Item ``i`` reads the measurement of its factor ``factor_ids[i]``
+(see :ref:`WarpFactorBatch <py-warp-factor-batch>` for the full contract;
+the regular minimizers pass ``factor_ids[i] == i``, the RANSAC minimizers
+evaluate many items per factor). State values are first gathered into
 contiguous buffers (since Warp kernels operate on contiguous
 ``wp.array`` objects and cannot perform the double-pointer indirection
 that raw CUDA kernels do).
@@ -400,17 +404,18 @@ that raw CUDA kernels do).
    @wp.kernel
    def scalar_diff_kernel(
        measurements: wp.array(dtype=wp.float32),
+       factor_ids:   wp.array(dtype=wp.int32),
        left_vals:    wp.array(dtype=wp.float32),
        right_vals:   wp.array(dtype=wp.float32),
        residuals:    wp.array(dtype=wp.float32),
        jacobians:    wp.array(dtype=wp.float32),
-       num_factors:  int,
+       num_items:    int,
        write_jacobians: int,
    ):
        i = wp.tid()
-       if i >= num_factors:
+       if i >= num_items:
            return
-       residuals[i] = (right_vals[i] - left_vals[i]) - measurements[i]
+       residuals[i] = (right_vals[i] - left_vals[i]) - measurements[factor_ids[i]]
        if write_jacobians != 0:
            jacobians[i * 2]     = -1.0
            jacobians[i * 2 + 1] =  1.0
@@ -432,9 +437,10 @@ kernel.
            self.measurements = measurements_wp
            self._num_factors = num_factors
 
-       def evaluate(self, residuals_ptr, jacobians_ptr,
-                    state_pointers_ptr, stream_handle):
-           n = self._num_factors
+       def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr,
+                    stream_handle, factor_ids_ptr, num_factor_ids):
+           n = num_factor_ids  # number of items
+           ids = self.factor_ids(factor_ids_ptr, n)
 
            all_vals   = _gather_state_values(state_pointers_ptr, n * 2)
            left_vals  = all_vals[0::2].copy()
@@ -448,7 +454,7 @@ kernel.
 
            stream = self.make_warp_stream(stream_handle)
            wp.launch(scalar_diff_kernel, dim=n,
-                     inputs=[self.measurements, left_wp, right_wp,
+                     inputs=[self.measurements, ids, left_wp, right_wp,
                              res, jac, n, 1],
                      stream=stream)
            return True
@@ -557,7 +563,9 @@ The kernel computes the multiplicative retraction for each state block.
 
 **Step 2 — Subclass** :ref:`WarpStateBatch <py-warp-state-batch>`.
 The ``plus`` method wraps the raw device pointers as ``wp.array`` objects
-and launches the kernel.
+and launches the kernel. The buffers hold ``num_replicas`` contiguous copies
+of the batch (1 for the regular minimizers), so it processes
+``num_replicas * num_blocks`` independent blocks.
 
 .. code-block:: python
 
@@ -569,8 +577,9 @@ and launches the kernel.
                             num_blocks=num_blocks, **kwargs)
            self._num = num_blocks
 
-       def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle):
-           n = self._num
+       def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle,
+                num_replicas):
+           n = self._num * num_replicas
            x     = self.wrap_array(x_ptr, wp.float32, n)
            delta  = self.wrap_array(delta_ptr, wp.float32, n)
            x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)

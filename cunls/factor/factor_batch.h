@@ -38,55 +38,100 @@ namespace cunls {
 class FactorBatch {
  public:
   /**
-   * @brief Evaluates residuals and optionally Jacobians for all factors
-   *        in the batch.
+   * @brief Evaluates residuals and, optionally, Jacobians for a list of items.
    *
-   * @param residuals Output device pointer for residuals. Must have space for
-   *                  NumFactors() * ResidualsSize() floats.
-   * @param jacobians Output device pointer for Jacobians, or nullptr to skip
-   *                  Jacobian computation.
-   * @param state_pointers Device pointer to an array of state block pointers.
-   *                       Each factor consumes StateBlockSizes().size()
-   *                       consecutive entries.
-   * @param stream CUDA stream for asynchronous execution.
-   * @return true if evaluation succeeded, false otherwise.
+   * <b>Terms</b>
+   *
+   * - N = NumFactors(): number of factors (measurements) in the batch.
+   * - B = StateBlockSizes().size(): state blocks read by one factor.
+   * - m = ResidualsSize(): residual dimension of one factor.
+   * - J = sum of StateBlockSizes(): Jacobian columns of one factor.
+   * - **Item**: one factor evaluated at one set of B state blocks. The call
+   *   evaluates n items, t = 0 .. n-1. Item t reads factor f(t)'s measurement
+   *   and its own B state pointers, and writes its own output rows.
+   *
+   * With the default arguments, item t is simply factor t (n = N, f(t) = t).
+   * This is what the regular minimizers use. The last two arguments let one
+   * call evaluate the same factors at many state sets: the RANSAC minimizers
+   * evaluate every hypothesis this way.
+   *
+   * <b>Parameters</b>
+   *
+   * @param residuals [out] Device array of n * m floats. Item t writes
+   *        `residuals[t * m + r]` for r in [0, m).
+   * @param jacobians [out] Device array of n * m * J floats, or nullptr when
+   *        only residuals are needed. Item t writes a row-major m x J block
+   *        starting at `jacobians[t * m * J]`: element (r, c) is
+   *        `jacobians[(t * m + r) * J + c]`. Columns follow the state blocks
+   *        in order (block 0 first), each block contributing its tangent size.
+   * @param state_pointers [in] Device array of n * B device pointers. Item t
+   *        reads state block b from `state_pointers[t * B + b]`. Different
+   *        items may point to the same state (e.g. every factor of a PnP batch
+   *        points to the one camera pose).
+   * @param stream CUDA stream on which all work is enqueued. The call may
+   *        return before the work completes.
+   * @param factor_ids [in] Which factor each item evaluates:
+   *        - nullptr (default): f(t) = t % N. With n = k * N this evaluates the
+   *          whole batch k times in a row: copy c is items [c * N, (c + 1) * N).
+   *        - otherwise a device array of n indices in [0, N) with
+   *          f(t) = factor_ids[t]. Any order, repeats allowed.
+   * @param num_factor_ids Number of items n. 0 (default) means n = N. When
+   *        factor_ids is given, it is the length of that array.
+   * @return true on success, false on failure.
+   *
+   * <b>Examples</b> (a batch of N = 3 factors, B = 1 state block, m = 2).
+   * `ptrs[t]` is the state pointer of item t (Pk: state set P's block for
+   * factor k), and `res rows` is the range of `residuals` that item t writes.
+   *
+   * @verbatim
+   *   1. Plain evaluation: Evaluate(res, jac, ptrs, stream)        n = 3
+   *        item t          0     1     2
+   *        factor f(t)     0     1     2
+   *        ptrs[t]         x0    x1    x2
+   *        res rows        [0,2) [2,4) [4,6)
+   *
+   *   2. Whole batch at two state sets P and Q:
+   *      Evaluate(res, jac, ptrs, stream, nullptr, 6)              n = 6
+   *        item t          0     1     2     3     4     5
+   *        factor f(t)     0     1     2     0     1     2      (t % 3)
+   *        ptrs[t]         P0    P1    P2    Q0    Q1    Q2
+   *        res rows        [0,2) [2,4) [4,6) [6,8) [8,10) [10,12)
+   *
+   *   3. Chosen factors: ids = {2, 0, 2, 1} (device array)
+   *      Evaluate(res, jac, ptrs, stream, ids, 4)                  n = 4
+   *        item t          0     1     2     3
+   *        factor f(t)     2     0     2     1
+   *        ptrs[t]         P     P     Q     Q
+   *        res rows        [0,2) [2,4) [4,6) [6,8)
+   * @endverbatim
+   *
+   * <b>Implementing it</b>: launch one thread per item, and index
+   * measurements by f(t) but everything else (state pointers, outputs) by t:
+   *
+   * @code
+   * __global__ void MyKernel(const Measurement *meas, const int *factor_ids, int N, int n,
+   *                          float const *const *state_pointers, float *res, float *jac) {
+   *   const int t = blockIdx.x * blockDim.x + threadIdx.x;
+   *   if (t >= n) return;
+   *   const int f = factor_ids != nullptr ? factor_ids[t] : t % N;  // measurement index
+   *   const float *x = state_pointers[t * B + 0];                   // this item's state
+   *   res[t * m + 0] = Residual(meas[f], x);                        // this item's row
+   *   if (jac != nullptr) { ... jac[(t * m + r) * J + c] ... }
+   * }
+   * // In Evaluate: n = num_factor_ids == 0 ? N : num_factor_ids; launch n threads.
+   * @endcode
+   *
+   * <b>Requirements</b>
+   *
+   * - Item t must produce exactly what a plain evaluation produces for factor
+   *   f(t) at item t's states. The built-in batches are bitwise equal.
+   * - Size any internal per-factor scratch for n items, not N.
+   * - Do not assume n == N or f(t) == t: the RANSAC minimizers rely on both
+   *   parameters, and the regular minimizers pass the defaults.
    */
   virtual bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                        cudaStream_t stream) const = 0;
-
-  /**
-   * @brief Evaluates arbitrary (factor, state set) items in one call.
-   *
-   * Item t evaluates the measurement of factor `factor_ids[t]` against the
-   * state blocks `state_pointers[t * StateBlockSizes().size() + b]`. Outputs
-   * are laid out exactly as by Evaluate(), per item: residuals +
-   * t * ResidualsSize(), jacobians + t * ResidualsSize() * (sum of block
-   * sizes). With `factor_ids == nullptr`, item t uses factor t % NumFactors(),
-   * i.e. the batch evaluated against num_items / NumFactors() state sets.
-   *
-   * Optional. The default returns false ("not supported") and callers fall
-   * back to one Evaluate() per state set. Built-in factor batches implement
-   * it; the RANSAC minimizers use it to evaluate every hypothesis in one launch.
-   *
-   * @param residuals Output, num_items * ResidualsSize() floats.
-   * @param jacobians Output or nullptr.
-   * @param state_pointers Device array of num_items * StateBlockSizes().size() pointers.
-   * @param factor_ids Device array of num_items factor indices, or nullptr.
-   * @param num_items Number of items.
-   * @param stream CUDA stream for asynchronous execution.
-   * @return true if evaluated, false if not supported (nothing was written).
-   */
-  virtual bool EvaluateIndexed(float *residuals, float *jacobians,
-                               float const *const *state_pointers, const int *factor_ids,
-                               size_t num_items, cudaStream_t stream) const {
-    (void)residuals;
-    (void)jacobians;
-    (void)state_pointers;
-    (void)factor_ids;
-    (void)num_items;
-    (void)stream;
-    return false;
-  }
+                        cudaStream_t stream, const int *factor_ids = nullptr,
+                        size_t num_factor_ids = 0) const = 0;
 
   /** @brief Virtual destructor for safe polymorphic deletion. */
   virtual ~FactorBatch() = default;

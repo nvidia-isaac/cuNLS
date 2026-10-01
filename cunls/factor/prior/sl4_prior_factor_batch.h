@@ -27,8 +27,13 @@ class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
  public:
   SL4PriorFactorBatch(const SL4Transform *observations_ptr, size_t num_factors);
 
+  /**
+   * @brief Evaluates SL(4) prior residuals and optionally Jacobians; follows
+   *        the item contract of FactorBatch::Evaluate (factor_ids, num_factor_ids).
+   */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const final;
 
   size_t NumFactors() const final { return num_factors_; }
 

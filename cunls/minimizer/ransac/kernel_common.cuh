@@ -93,20 +93,25 @@ __device__ T BlockSum(T value, T *scratch) {
   return total;
 }
 
+/** @brief Where one item of a slot lives. */
+struct ItemRef {
+  int view;    ///< Index into SlotItems::views.
+  int factor;  ///< Factor of the batch (selects its local columns).
+  int row;     ///< Row in the slot's part of the view's buffers.
+};
+
 /**
- * @brief Locates item `e` of a slot: the view it comes from and the factor
- * index within that view. Returns false when the item contributes nothing
- * (masked out, or a sample outside every wave view).
+ * @brief Locates item `e` of a slot. Returns false when the item contributes
+ * nothing (masked out, or a sample entry outside every sample view).
  */
-__device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, int &view_out,
-                                   int &factor_out) {
+__device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, ItemRef &ref) {
   if (e < items.sample_size) {
     const int u = items.samples[static_cast<size_t>(slot) * items.sample_size + e];
     for (int v = 0; v < items.num_views; ++v) {
       const BatchView &view = items.views[v];
-      if (view.kind == kViewWave && u >= view.u_offset && u < view.u_offset + view.num_factors) {
-        view_out = v;
-        factor_out = u - view.u_offset;
+      if (view.kind == kViewSamples && u >= view.u_offset &&
+          u < view.u_offset + view.num_factors) {
+        ref = {v, u - view.u_offset, e};
         return true;
       }
     }
@@ -115,7 +120,7 @@ __device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, int 
   int rest = e - items.sample_size;
   for (int v = 0; v < items.num_views; ++v) {
     const BatchView &view = items.views[v];
-    if (view.kind == kViewWave) {
+    if (view.kind == kViewSamples) {
       continue;
     }
     if (rest < view.num_factors) {
@@ -123,19 +128,12 @@ __device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, int 
           items.mask[static_cast<size_t>(slot) * items.mask_stride + view.u_offset + rest] == 0) {
         return false;
       }
-      view_out = v;
-      factor_out = rest;
+      ref = {v, rest, rest};
       return true;
     }
     rest -= view.num_factors;
   }
   return false;
-}
-
-/** @brief Buffer copy (slot, or wave for wave views) holding a slot's rows of a view. */
-__device__ __forceinline__ size_t BufferIndex(const SlotItems &items, const BatchView &view,
-                                              int slot) {
-  return static_cast<size_t>(view.kind == kViewWave ? slot / items.hyp_per_wave : slot);
 }
 
 /** @brief Block of the factor column `col` (blocks are contiguous and ordered). */

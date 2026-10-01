@@ -90,17 +90,17 @@ public:
   const int *ConstStateIds() const override { return const_ids_; }
   size_t NumConstStateBlocks() const override { return num_const_; }
 
-  // Manifold retraction — forwards to Python ``plus()`` on the subclass.
-  // The GIL must be re-acquired because the C++ minimizer releases it
-  // before entering its iteration loop.
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override {
+  // Manifold retraction — forwards to Python ``plus(x, delta, out, stream,
+  // num_replicas)`` on the subclass (see StateBatch::Plus for the replica
+  // layout). The GIL must be re-acquired because the C++ minimizer releases
+  // it before entering its iteration loop.
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override {
     nb::gil_scoped_acquire gil;
     nb::object self_obj = nb::find(this);
-    self_obj.attr("plus")(reinterpret_cast<uintptr_t>(x),
-                          reinterpret_cast<uintptr_t>(delta),
+    self_obj.attr("plus")(reinterpret_cast<uintptr_t>(x), reinterpret_cast<uintptr_t>(delta),
                           reinterpret_cast<uintptr_t>(x_plus_delta),
-                          reinterpret_cast<uintptr_t>(stream));
+                          reinterpret_cast<uintptr_t>(stream), num_replicas);
   }
 };
 
@@ -275,12 +275,12 @@ void bind_state(nb::module_ &m) {
           nb::keep_alive<1, 6>())
       .def(
           "plus",
-          [](PyStateBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t) {
+          [](PyStateBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t, size_t) {
             throw std::runtime_error(
                 "CustomStateBatch.plus() must be overridden in a subclass.");
           },
           nb::arg("x_ptr"), nb::arg("delta_ptr"), nb::arg("x_plus_delta_ptr"),
-          nb::arg("stream_handle"))
+          nb::arg("stream_handle"), nb::arg("num_replicas"))
       .def(
           "state_block_device_ptr",
           [](PyStateBatch &self, size_t idx) -> uintptr_t {

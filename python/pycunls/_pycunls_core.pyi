@@ -422,8 +422,9 @@ class CustomStateBatch(StateBatch):
         delta_ptr: int,
         x_plus_delta_ptr: int,
         stream_handle: int,
+        num_replicas: int,
     ) -> None:
-        """Apply manifold retraction. Override in subclasses."""
+        """Apply manifold retraction to num_replicas contiguous copies. Override in subclasses."""
         ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -457,8 +458,10 @@ class CustomFactorBatch(FactorBatch):
         jacobians_ptr: int,
         state_pointers_ptr: int,
         stream_handle: int,
+        factor_ids_ptr: int,
+        num_factor_ids: int,
     ) -> bool:
-        """Compute residuals and Jacobians. Override in subclasses."""
+        """Compute residuals and Jacobians of num_factor_ids items. Override in subclasses."""
         ...
     @property
     def num_factors(self) -> int: ...

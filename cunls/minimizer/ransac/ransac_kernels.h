@@ -53,11 +53,12 @@ constexpr int kMaxDim = 64;
 /**
  * @brief How a slot reads one residual batch.
  *
- * kViewWave: rows live in a per-wave buffer; a slot owns the factors listed in
- * its minimal sample. kViewPerSlot: every factor, in a per-slot buffer.
- * kViewPerSlotMasked: as kViewPerSlot, skipping factors whose mask byte is 0.
+ * kViewSamples: the slot's rows are its minimal sample, row t = sample entry t
+ * (rows of sample entries from other batches are unused). kViewPerSlot: row f
+ * = factor f. kViewPerSlotMasked: as kViewPerSlot, skipping factors whose mask
+ * byte is 0. Rows of slot p start at p * stride.
  */
-enum ViewKind : int { kViewWave = 0, kViewPerSlot = 1, kViewPerSlotMasked = 2 };
+enum ViewKind : int { kViewSamples = 0, kViewPerSlot = 1, kViewPerSlotMasked = 2 };
 
 /** @brief One residual batch as seen by the slots of a slot set. */
 struct BatchView {
@@ -73,9 +74,9 @@ struct BatchView {
   const float *res = nullptr;      ///< Residual buffer base.
   const float *jac = nullptr;      ///< Jacobian buffer base (may be null for cost-only use).
   const float *cost = nullptr;     ///< Per-factor cost buffer base (may be null).
-  size_t stride_res = 0;   ///< Floats between consecutive slots (or waves).
-  size_t stride_jac = 0;   ///< Floats between consecutive slots (or waves).
-  size_t stride_cost = 0;  ///< Floats between consecutive slots (or waves).
+  size_t stride_res = 0;   ///< Floats between consecutive slots.
+  size_t stride_jac = 0;   ///< Floats between consecutive slots.
+  size_t stride_cost = 0;  ///< Floats between consecutive slots.
   float tau_sq = 0.f;      ///< Squared inlier threshold (sampled batches).
 };
 
@@ -84,8 +85,7 @@ struct SlotItems {
   const BatchView *views = nullptr;  ///< Device array.
   int num_views = 0;
   const int *samples = nullptr;  ///< num_slots * sample_size concatenated sampled indices.
-  int sample_size = 0;           ///< Items taken from wave views (0 = none).
-  int hyp_per_wave = 1;          ///< Slots served by one wave.
+  int sample_size = 0;           ///< Items taken from sample views (0 = none).
   const uint8_t *mask = nullptr;  ///< Per-slot inlier mask over the concatenated sampled index.
   int mask_stride = 0;            ///< Bytes between consecutive slots' masks.
   int items_per_slot = 0;         ///< sample_size + sum of per-slot view sizes.
@@ -136,9 +136,9 @@ __host__ __device__ inline uint64_t Mix64(uint64_t x) {
   return x ^ (x >> 31);
 }
 
-/** @brief Key for (seed, round, wave). */
-__host__ __device__ inline uint64_t PermutationKey(uint64_t seed, uint64_t round, uint64_t wave) {
-  return Mix64(Mix64(Mix64(seed) ^ round) ^ (wave * 0xD6E8FEB86659FD93ull));
+/** @brief Key for (seed, round, stream id), e.g. the slot whose sample is drawn. */
+__host__ __device__ inline uint64_t PermutationKey(uint64_t seed, uint64_t round, uint64_t id) {
+  return Mix64(Mix64(Mix64(seed) ^ round) ^ (id * 0xD6E8FEB86659FD93ull));
 }
 
 /**
@@ -172,29 +172,27 @@ __host__ __device__ inline uint32_t PermuteIndex(uint32_t index, uint32_t n, uin
 }
 
 /**
- * @brief Assigns the sampled factors of one wave to slots.
- *
- * Permutation position p belongs to slot `first_slot + p / sample_size` when
- * that slot exists (< num_slots) and p < hyp_in_wave * sample_size. Writes
- * owner[u] (slot or -1) for every u in [0, n) and
- * samples[slot * sample_size + p % sample_size] = u for owned positions.
+ * @brief Minimal samples: slot p gets `sample_size` distinct indices into the
+ * concatenated sampled factors, samples[p * sample_size + t] =
+ * PermuteIndex(t, n, PermutationKey(seed, round, p)).
  */
-void LaunchWaveAssignment(cudaStream_t stream, int n, int sample_size, int first_slot,
-                          int hyp_in_wave, int num_slots, uint64_t key, int *owner, int *samples);
+void LaunchDrawSamples(cudaStream_t stream, int n, int sample_size, int num_slots, uint64_t seed,
+                       uint64_t round, int *samples);
 
 // ---------------------------------------------------------------------------
 // State-pointer tables and replicas (slot_kernels.cu)
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Pointer table of one wave: factor i reads the replicas of slot
- * owner[i] (current or candidate), or user storage when unowned or when the
- * state batch is not replicated.
- *
- * @param blocks num_factors * nb (state batch, block) pairs.
+ * @brief Tables and factor ids for evaluating the minimal samples of one
+ * sampled batch: item p * sample_size + t is slot p's sample entry t. If that
+ * entry belongs to this batch (u_offset <= u < u_offset + num_factors) the item
+ * evaluates factor u - u_offset against replica p (current or candidate);
+ * otherwise it evaluates factor 0 and its row is ignored.
  */
-void LaunchWaveTable(cudaStream_t stream, const StateView *states, const int2 *blocks,
-                     int num_factors, int nb, const int *owner, bool candidate, float **table);
+void LaunchSampleTables(cudaStream_t stream, const StateView *states, const int2 *blocks, int nb,
+                        int num_factors, int u_offset, const int *samples, int sample_size,
+                        int num_slots, bool candidate, float **table, int *factor_ids);
 
 /**
  * @brief num_slots pointer tables: local slot p evaluates every factor against
@@ -244,15 +242,12 @@ void LaunchCopyAccepted(cudaStream_t stream, int num_slots, size_t slot_floats, 
                         const float *cand, float *cur);
 
 /**
- * @brief dst[p] = src[index(p)] for p in [0, num_slots).
- *
- * index(p) is *src_slot if given, else src_index[p] if given, else p.
- * A zero src_stride broadcasts a single source block. When only_if is given
- * and *only_if == 0, nothing is copied.
+ * @brief Broadcasts one source replica: dst slot p = src slot s for every p in
+ * [0, num_slots), where s = *src_slot (device) or 0 when src_slot is null.
+ * When only_if is given and *only_if == 0, nothing is copied.
  */
 void LaunchCopyReplicas(cudaStream_t stream, int num_slots, size_t slot_floats, const float *src,
-                        size_t src_stride, const int *src_index, const int *src_slot,
-                        const int *only_if, float *dst);
+                        const int *src_slot, const int *only_if, float *dst);
 
 // ---------------------------------------------------------------------------
 // Per-slot Gauss-Newton / LM step (normal_equations_kernels.cu,

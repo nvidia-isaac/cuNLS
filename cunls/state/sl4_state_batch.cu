@@ -66,11 +66,10 @@ SL4StateBatch::SL4StateBatch(cuBLASHandle &cublas_handle,
       cublas_handle_(cublas_handle), delta_transforms_(num_blocks),
       twists_(num_blocks * 15) {}
 
-void SL4StateBatch::Plus(const float *x, const float *delta,
-                         float *x_plus_delta, cudaStream_t stream) {
-  const int n = static_cast<int>(NumStateBlocks());
-  // Scratch follows the call-time count (PlusReplicated presents several copies
-  // as one batch); resize keeps capacity, so this allocates at most once.
+void SL4StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                         cudaStream_t stream, size_t num_replicas) {
+  const int n = static_cast<int>(NumStateBlocks() * num_replicas);
+  // Scratch is sized for all replicas; resize keeps capacity, so it grows once.
   twists_.resize(static_cast<size_t>(n) * 15);
   delta_transforms_.resize(static_cast<size_t>(n));
 

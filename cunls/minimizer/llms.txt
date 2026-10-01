@@ -23,9 +23,10 @@ optimization.
 - `ransac_minimizer.h`: `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
   `RansacMinimizerOptions`, `RansacSummary` (RANSAC over an ordinary `Problem`
   whose total free tangent dimension is <= `kMaxRansacTangentDim` = 64)
-- `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout`, `SlotReplicas`,
-  `SlotEvaluator`, `SlotSet`, `HypothesisSampler`, `HypothesisScorer`,
-  `RansacContext`, and kernels (`ransac_kernels.h` declares all launchers)
+- `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout` (problem
+  description), `SlotSet` (slots with state replicas, solved in lockstep),
+  `HypothesisScorer`, `RansacContext` (rounds, refinement), and kernels
+  (`ransac_kernels.h` declares all launchers)
 
 ## Solver flow
 

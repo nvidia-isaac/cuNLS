@@ -32,14 +32,9 @@ public:
                 size_t num_blocks, const int *device_constant_state_ids,
                 size_t num_const_state_blocks);
 
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override;
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override;
 
-  /** @brief Single-launch Plus over contiguous copies (see StateBatch::PlusReplicated). */
-  void PlusReplicated(const float *x, const float *delta, float *x_plus_delta,
-                      size_t num_replicas, cudaStream_t stream) override {
-    this->PlusReplicatedAsOneBatch(x, delta, x_plus_delta, num_replicas, stream);
-  }
 
 private:
   cuBLASHandle &cublas_handle_;

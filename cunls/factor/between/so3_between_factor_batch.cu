@@ -7,6 +7,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/so3_between_factor_batch.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -26,14 +27,17 @@ constexpr size_t kTwistStride = 3;
  */
 __global__ void collect_and_compute_so3_between_error_kernel(float const *const *state_pointers,
                                                              const Matrix<3> *deltas,
-                                                             size_t num_factors,
-                                                             Matrix<3> *errors) {
+                                                             size_t num_items,
+                                                             Matrix<3> *errors,
+                                                             const int *factor_ids,
+                                                             int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   const float *__restrict__ L = state_pointers[2 * tid];
   const float *__restrict__ R = state_pointers[2 * tid + 1];
-  const float *__restrict__ D = deltas[tid].data();
+  const float *__restrict__ D = deltas[m].data();
   float *__restrict__ out = errors[tid].data();
 
   const float l0 = L[0], l1 = L[1], l2 = L[2];
@@ -138,14 +142,15 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *r
 __global__ void __launch_bounds__(256, 4)
     so3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
                                        const Matrix<3> *__restrict__ delta_adjoints,
-                                       int num_factors, float *__restrict__ jacobians) {
+                                       int num_items, float *__restrict__ jacobians,
+                                       const int *__restrict__ factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_items) return;
 
   const float *r = residuals + tid * kTwistStride;
   float phi[3] = {r[0], r[1], r[2]};
 
-  const float *D = delta_adjoints[tid].data();
+  const float *D = delta_adjoints[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
   float *J = jacobians + tid * 18;
 
   // Left block: -J_l_inv(phi)  (right-perturbation retraction; no D factor)
@@ -196,24 +201,31 @@ void SO3BetweenFactorBatch::ComputeDeltaAdjoints(cudaStream_t stream) {
 }
 
 bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                     float const *const *state_pointers,
-                                     cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
-  size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
+                                     float const *const *state_pointers, cudaStream_t stream,
+                                     const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  const int num_factors = static_cast<int>(NumFactors());
+  poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
+  size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
   // Fused: collect L/R + compute R_error = Delta^T * (L^T * R) in one kernel
   collect_and_compute_so3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_factors, poses_left_inverse_.data());
+      state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
+      num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // residual = Log(R_error)
   constexpr size_t rotation_pitch = 3;
   ComputeLogSO3(stream, reinterpret_cast<const float *>(poses_left_inverse_.data()), rotation_pitch,
-                kRotationStride, kTwistStride, num_factors, residuals);
+                kRotationStride, kTwistStride, num_items, residuals);
 
   if (jacobians != nullptr) {
     so3_between_fused_jacobians_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-        residuals, delta_adjoints_.data(), num_factors, jacobians);
+        residuals, delta_adjoints_.data(), static_cast<int>(num_items), jacobians, factor_ids,
+        num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 

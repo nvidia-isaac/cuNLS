@@ -6,6 +6,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/similarity2_between_factor_batch.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/sim_lie_math.h"
 
 namespace cunls {
@@ -24,14 +25,16 @@ constexpr size_t kSim2TangentStride = 4;
  */
 __global__ void compute_sim2_between_error_kernel(float const *const *state_pointers,
                                                   const Matrix<3> *left_inverse,
-                                                  const Matrix<3> *deltas, size_t num_factors,
-                                                  Matrix<3> *errors) {
+                                                  const Matrix<3> *deltas, size_t num_items,
+                                                  Matrix<3> *errors, const int *factor_ids,
+                                                  int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   const float *__restrict__ R = state_pointers[2 * tid + 1];
   const float *__restrict__ I = left_inverse[tid].data();
-  const float *__restrict__ D = deltas[tid].data();
+  const float *__restrict__ D = deltas[m].data();
   float *__restrict__ out = errors[tid].data();
 
   const float i0 = I[0], i1 = I[1], i2 = I[2];
@@ -73,9 +76,9 @@ __global__ void compute_sim2_between_error_kernel(float const *const *state_poin
  * @brief Gather left Sim(2) poses from state pointers.
  */
 __global__ void collect_sim2_left_poses_kernel(float const *const *state_pointers,
-                                               size_t num_factors, Matrix<3> *pose_left) {
+                                               size_t num_items, Matrix<3> *pose_left) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
   pose_left[tid] = *reinterpret_cast<const Matrix<3> *>(state_pointers[2 * tid]);
 }
 
@@ -96,16 +99,17 @@ __global__ void collect_sim2_left_poses_kernel(float const *const *state_pointer
 __global__ void __launch_bounds__(256, 4)
     sim2_between_jacobian_kernel(const float *__restrict__ residuals,
                                  const float *__restrict__ deltas, size_t delta_stride,
-                                 float *__restrict__ jacobians, size_t num_factors) {
+                                 float *__restrict__ jacobians, size_t num_items,
+                                 const int *__restrict__ factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) {
+  if (tid >= (int)num_items) {
     return;
   }
 
   const float *r = residuals + tid * 4;
   float u1 = r[0], u2 = r[1], w = r[2], lam = r[3];
 
-  const float *D = deltas + tid * delta_stride;
+  const float *D = deltas + FactorMeasurementIndex(tid, factor_ids, num_factors) * delta_stride;
   float dc = D[0], ds = D[3], dtx = D[2], dty = D[5];
   float scale = 1.0f / D[8];
 
@@ -154,35 +158,42 @@ Similarity2BetweenFactorBatch::Similarity2BetweenFactorBatch(
 
 bool Similarity2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                              float const *const *state_pointers,
-                                             cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
-  size_t num_blocks = (num_factors + kBlockSize - 1) / kBlockSize;
+                                             cudaStream_t stream, const int *factor_ids,
+                                             size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  const int num_factors = static_cast<int>(NumFactors());
+  poses_left_.resize(num_items);  // keeps capacity: allocates at most once per size
+  poses_left_inverse_.resize(num_items);
+  size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
   // Collect left poses for inverse computation
-  collect_sim2_left_poses_kernel<<<num_blocks, kBlockSize, 0, stream>>>(state_pointers, num_factors,
+  collect_sim2_left_poses_kernel<<<num_blocks, kBlockSize, 0, stream>>>(state_pointers, num_items,
                                                                         poses_left_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Compute T_left^{-1} using the library's Sim2 inverse
   ComputeInverseSim2(stream, reinterpret_cast<const float *>(poses_left_.data()),
-                     kSim2TransformStride, kSim2TransformStride, num_factors,
+                     kSim2TransformStride, kSim2TransformStride, num_items,
                      reinterpret_cast<float *>(poses_left_inverse_.data()));
 
   // Fused: (L^{-1} * R) * D in one kernel (replaces 2x cuBLAS GEMM)
   compute_sim2_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, poses_left_inverse_.data(), pose_deltas_ptr_, num_factors,
-      poses_left_.data());
+      state_pointers, poses_left_inverse_.data(), pose_deltas_ptr_, num_items,
+      poses_left_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 5: residual = Log(error)
   ComputeLogSim2(stream, reinterpret_cast<const float *>(poses_left_.data()), kSim2TransformStride,
-                 kSim2TangentStride, num_factors, residuals);
+                 kSim2TangentStride, num_items, residuals);
 
   // Step 6: Jacobian = [-J_l^{-1}(r)*Ad(Delta) | J_r^{-1}(r)]
   if (jacobians != nullptr) {
     sim2_between_jacobian_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
         residuals, reinterpret_cast<const float *>(pose_deltas_ptr_), kSim2TransformStride,
-        jacobians, num_factors);
+        jacobians, num_items, factor_ids, num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 

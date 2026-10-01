@@ -646,23 +646,28 @@ Custom factor code walkthrough
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Step 1 — Implement the CUDA kernel.**
-The kernel is launched with one thread per factor. It reads two state block
-pointers, computes the scalar residual, and writes the constant Jacobian
-entries.
+The kernel is launched with one thread per *item*: one factor evaluated
+against its own set of state blocks. Item ``idx`` reads the measurement of its
+factor (``factor_ids[idx]``, or ``idx % num_factors`` when ``factor_ids`` is
+null), its two state block pointers ``state_pointers[2 * idx ..]``, and writes
+row ``idx`` of the outputs. The regular minimizers pass ``factor_ids ==
+nullptr`` and one item per factor; the RANSAC minimizers evaluate many items
+per factor (see `FactorBatch::Evaluate` in :doc:`api/factor`).
 
 .. code-block:: cuda
 
    __global__ void ScalarDifferenceKernel(
-       const float* measurements,
+       const float* measurements, const int* factor_ids, size_t num_factors,
        float const* const* state_pointers,
        float* residuals, float* jacobians,
-       size_t num_factors) {
+       size_t num_items) {
      const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-     if (idx >= num_factors) return;
+     if (idx >= num_items) return;
 
+     const size_t factor = factor_ids ? factor_ids[idx] : idx % num_factors;
      const float* left  = state_pointers[idx * 2];
      const float* right = state_pointers[idx * 2 + 1];
-     const float residual = (right[0] - left[0]) - measurements[idx];
+     const float residual = (right[0] - left[0]) - measurements[factor];
 
      if (residuals) residuals[idx] = residual;
      if (jacobians) {
@@ -688,12 +693,14 @@ launching the kernel above.
 
      bool Evaluate(float* residuals, float* jacobians,
                    float const* const* state_pointers,
-                   cudaStream_t stream) const final {
+                   cudaStream_t stream, const int* factor_ids = nullptr,
+                   size_t num_factor_ids = 0) const final {
+       const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
        constexpr int kBlockSize = 256;
-       const int grid = (num_factors_ + kBlockSize - 1) / kBlockSize;
+       const int grid = (num_items + kBlockSize - 1) / kBlockSize;
        ScalarDifferenceKernel<<<grid, kBlockSize, 0, stream>>>(
-           measurements_, state_pointers, residuals, jacobians,
-           num_factors_);
+           measurements_, factor_ids, num_factors_, state_pointers,
+           residuals, jacobians, num_items);
        return true;
      }
 

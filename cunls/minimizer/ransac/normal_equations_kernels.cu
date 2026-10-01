@@ -109,7 +109,7 @@ struct Stage {
   float *jac;        ///< rows x padded dim, local columns (zero padded).
   float *res;        ///< rows.
   int *item_view;    ///< items; -1 = empty.
-  int *item_factor;  ///< items.
+  int *item_row;     ///< items: row in the slot's part of the view's buffers.
   int *item_local;   ///< items x kMaxBlocksPerFactor local columns (-1 = constant).
   int ld;            ///< Padded dim.
 };
@@ -120,8 +120,8 @@ __device__ inline Stage MapStage(float *base, int items, int m_max, int dim) {
   s.jac = base;
   s.res = s.jac + items * m_max * s.ld;
   s.item_view = reinterpret_cast<int *>(s.res + items * m_max);
-  s.item_factor = s.item_view + items;
-  s.item_local = s.item_factor + items;
+  s.item_row = s.item_view + items;
+  s.item_local = s.item_row + items;
   return s;
 }
 
@@ -134,22 +134,21 @@ __device__ void ResolveTile(const SlotItems &items, int slot, int first, int las
                             const Stage &st, int t, float &cost_acc) {
   for (int k = t; k < count; k += kGroup) {
     const int e = first + k;
-    int v = -1;
-    int f = 0;
-    if (e >= last || !ResolveItem(items, slot, e, v, f)) {
-      v = -1;
+    ItemRef ref{-1, 0, 0};
+    if (e >= last || !ResolveItem(items, slot, e, ref)) {
+      ref.view = -1;
     } else {
-      const BatchView &view = items.views[v];
-      const int *local = view.local_col + static_cast<size_t>(f) * view.nb;
+      const BatchView &view = items.views[ref.view];
+      const int *local = view.local_col + static_cast<size_t>(ref.factor) * view.nb;
       for (int blk = 0; blk < view.nb; ++blk) {
         st.item_local[k * kMaxBlocksPerFactor + blk] = local[blk];
       }
       if (view.cost != nullptr) {
-        cost_acc += view.cost[BufferIndex(items, view, slot) * view.stride_cost + f];
+        cost_acc += view.cost[static_cast<size_t>(slot) * view.stride_cost + ref.row];
       }
     }
-    st.item_view[k] = v;
-    st.item_factor[k] = f;
+    st.item_view[k] = ref.view;
+    st.item_row[k] = ref.row;
   }
 }
 
@@ -172,10 +171,10 @@ __device__ void GatherTile(const SlotItems &items, int slot, int count, const St
     const bool live = view != nullptr && row < view->m;
     float value = 0.f;
     if (live) {
-      const int f = st.item_factor[k];
-      const size_t buf = BufferIndex(items, *view, slot);
-      const float *jrow =
-          view->jac + buf * view->stride_jac + (static_cast<size_t>(f) * view->m + row) * view->n;
+      const size_t item_row = st.item_row[k];
+      const size_t slot_index = static_cast<size_t>(slot);
+      const float *jrow = view->jac + slot_index * view->stride_jac +
+                          (item_row * view->m + row) * view->n;
       const int *local = st.item_local + k * kMaxBlocksPerFactor;
       for (int blk = 0; blk < view->nb; ++blk) {
         const int offset = a - local[blk];
@@ -184,7 +183,7 @@ __device__ void GatherTile(const SlotItems &items, int slot, int count, const St
         }
       }
       if (a == 0) {
-        st.res[r] = view->res[buf * view->stride_res + static_cast<size_t>(f) * view->m + row];
+        st.res[r] = view->res[slot_index * view->stride_res + item_row * view->m + row];
       }
     } else if (a == 0) {
       st.res[r] = 0.f;
@@ -393,11 +392,10 @@ __global__ void SlotCostKernel(SlotItems items, int num_slots, int splits, float
   const int end = min(items.items_per_slot, (split + 1) * per_split);
   float sum = 0.f;
   for (int e = split * per_split + t; e < end; e += kGroup) {
-    int v = 0;
-    int f = 0;
-    if (ResolveItem(items, slot, e, v, f)) {
-      const BatchView &view = items.views[v];
-      sum += view.cost[BufferIndex(items, view, slot) * view.stride_cost + f];
+    ItemRef ref;
+    if (ResolveItem(items, slot, e, ref)) {
+      sum += items.views[ref.view].cost[static_cast<size_t>(slot) *
+                                            items.views[ref.view].stride_cost + ref.row];
     }
   }
   const float total = GroupSum<kGroup>(sum, scratch);

@@ -12,9 +12,13 @@
 
 namespace cunls {
 
+/**
+ * @brief Evaluates num_items vector between items; item t reads delta
+ * factor_ids[t] (or t % num_factors when factor_ids is null).
+ */
 void LaunchVectorBetweenFactorKernel(const float *deltas, float const *const *state_pointers,
-                                     float *residuals, float *jacobians, int dim, int num_factors,
-                                     cudaStream_t stream);
+                                     float *residuals, float *jacobians, int dim, int num_items,
+                                     const int *factor_ids, int num_factors, cudaStream_t stream);
 
 /**
  * @brief Euclidean between factor: residual = left - right - delta.
@@ -30,11 +34,17 @@ class VectorBetweenFactorBatch : public SizedFactorBatch<Dim, Dim, Dim> {
   VectorBetweenFactorBatch(const VectorType *deltas_ptr, size_t num_factors)
       : deltas_ptr_(deltas_ptr), num_factors_(num_factors) {}
 
+  /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final {
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override {
+    const size_t num_items = num_factor_ids == 0 ? this->NumFactors() : num_factor_ids;
+    if (num_items == 0 || num_factors_ == 0) {
+      return true;
+    }
     LaunchVectorBetweenFactorKernel(reinterpret_cast<const float *>(deltas_ptr_), state_pointers,
-                                    residuals, jacobians, Dim, static_cast<int>(num_factors_),
-                                    stream);
+                                    residuals, jacobians, Dim, static_cast<int>(num_items),
+                                    factor_ids, static_cast<int>(num_factors_), stream);
     return true;
   }
 

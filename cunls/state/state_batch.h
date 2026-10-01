@@ -56,48 +56,51 @@ public:
   virtual size_t NumStateBlocks() const = 0;
 
   /**
-   * @brief Applies a tangent-space update to the state blocks.
+   * @brief Applies a tangent-space update to every state block:
+   * x_plus_delta = x (+) delta, where (+) is the manifold Plus (vector
+   * addition for Euclidean spaces, right-multiplication by the exponential map
+   * for Lie groups).
    *
-   * Computes x_plus_delta = x (+) delta, where (+) is the manifold Plus
-   * operation (e.g., vector addition for Euclidean spaces, or
-   * right-multiplication by the exponential map for Lie groups).
+   * <b>Terms</b>
    *
-   * @param x           Device pointer to the current state values
-   *                    (NumStateBlocks * AmbientSize floats).
-   * @param delta       Device pointer to the tangent-space updates
-   *                    (NumStateBlocks * TangentSize floats).
-   * @param x_plus_delta Device pointer to the output state values
-   *                    (NumStateBlocks * AmbientSize floats).
-   * @param stream      CUDA stream for asynchronous execution.
+   * - N = NumStateBlocks(): blocks in the batch.
+   * - A = AmbientSize(): floats stored per block (e.g. 16 for an SE(3) matrix).
+   * - T = TangentSize(): floats per update vector (e.g. 6 for SE(3)).
+   * - R = num_replicas: the arrays hold R contiguous copies ("replicas") of
+   *   the batch. Replica r is blocks [r * N, (r + 1) * N). The RANSAC
+   *   minimizers keep one replica per hypothesis and update all of them in one
+   *   call. The regular minimizers pass R = 1.
+   *
+   * Every one of the R * N blocks is updated independently: block i of the
+   * output depends only on block i of x and block i of delta.
+   *
+   * <b>Parameters</b>
+   *
+   * @param x [in] Device array of R * N * A floats. Block i is
+   *        `x[i * A .. (i + 1) * A)`.
+   * @param delta [in] Device array of R * N * T floats. Block i's update is
+   *        `delta[i * T .. (i + 1) * T)`.
+   * @param x_plus_delta [out] Device array of R * N * A floats, same layout
+   *        as x. Must not overlap x or delta.
+   * @param stream CUDA stream on which all work is enqueued. The call may
+   *        return before the work completes.
+   * @param num_replicas R >= 1 (default 1).
+   *
+   * <b>Example</b> (N = 2 blocks, R = 3 replicas: 6 blocks in every array,
+   * block i of x at `x + i * A`, of delta at `delta + i * T`)
+   *
+   * @verbatim
+   *     global block i     0     1  |  2     3  |  4     5
+   *     replica r          0     0  |  1     1  |  2     2
+   *     block within r     0     1  |  0     1  |  0     1
+   * @endverbatim
+   *
+   * <b>Implementing it</b>: treat the arrays as one batch of R * N blocks,
+   * e.g. launch one thread per block with `i < R * N`. Size any internal
+   * scratch for R * N blocks, not N.
    */
-  virtual void Plus(const float *x, const float *delta, float *x_plus_delta,
-                    cudaStream_t stream) = 0;
-
-  /**
-   * @brief Applies Plus() to `num_replicas` contiguous copies of this batch.
-   *
-   * Copy r of each argument starts at r * NumStateBlocks() blocks:
-   * x + r * NumStateBlocks() * AmbientSize() (same for x_plus_delta) and
-   * delta + r * NumStateBlocks() * TangentSize().
-   *
-   * Optional. The default calls Plus() once per copy, which is always correct;
-   * built-in state batches override it with a single launch. Used by the
-   * RANSAC minimizers, which keep one copy of each state batch per hypothesis.
-   *
-   * @param x            Device pointer to num_replicas copies of the states.
-   * @param delta        Device pointer to num_replicas copies of the updates.
-   * @param x_plus_delta Device pointer to num_replicas output copies.
-   * @param num_replicas Number of copies.
-   * @param stream       CUDA stream for asynchronous execution.
-   */
-  virtual void PlusReplicated(const float *x, const float *delta, float *x_plus_delta,
-                              size_t num_replicas, cudaStream_t stream) {
-    const size_t states = NumStateBlocks() * AmbientSize();
-    const size_t tangents = NumStateBlocks() * TangentSize();
-    for (size_t r = 0; r < num_replicas; ++r) {
-      Plus(x + r * states, delta + r * tangents, x_plus_delta + r * states, stream);
-    }
-  }
+  virtual void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+                    size_t num_replicas = 1) = 0;
 
   /**
    * @brief Returns a mutable device pointer to a specific state block.

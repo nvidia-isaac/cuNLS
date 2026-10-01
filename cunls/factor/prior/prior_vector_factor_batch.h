@@ -33,12 +33,16 @@ namespace cunls {
  * @param residuals Output residuals (can be nullptr)
  * @param jacobians Output jacobians (can be nullptr)
  * @param dim Dimension of each vector
- * @param num_vectors Number of vectors to process
+ * @param num_vectors Number of items (vectors) to process
  * @param stream CUDA stream for kernel execution
+ * @param factor_ids Optional per-item observation indices (device pointer);
+ *                   nullptr means item t reads observation t % num_factors
+ * @param num_factors Number of observations; 0 means num_vectors
  */
 void LaunchPriorVectorFactorKernel(const float *observations, float const *const *state_pointers,
                                    float *residuals, float *jacobians, int dim, int num_vectors,
-                                   cudaStream_t stream);
+                                   cudaStream_t stream, const int *factor_ids = nullptr,
+                                   int num_factors = 0);
 
 /**
  * @brief Batch factor for prior vector constraints.
@@ -82,15 +86,23 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
    * @param state_pointers Device pointer to state block pointers. Each entry
    *                   points to a Dim-dimensional vector on the device.
    * @param stream CUDA stream for asynchronous execution.
+   * @param factor_ids Optional per-item factor indices (device pointer).
+   * @param num_factor_ids Number of items (the length of factor_ids when it
+   *        is given); 0 means NumFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final {
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const final {
+    const size_t num_items = num_factor_ids == 0 ? this->NumFactors() : num_factor_ids;
+    if (num_items == 0 || this->NumFactors() == 0) {
+      return true;
+    }
     auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
-    size_t num_factors = this->NumFactors();
 
-    LaunchPriorVectorFactorKernel(data_ptr, state_pointers, residuals, jacobians, Dim, num_factors,
-                                  stream);
+    LaunchPriorVectorFactorKernel(data_ptr, state_pointers, residuals, jacobians, Dim,
+                                  static_cast<int>(num_items), stream, factor_ids,
+                                  static_cast<int>(this->NumFactors()));
     return true;
   }
 

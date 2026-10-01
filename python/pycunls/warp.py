@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Tuple, Union
 
+import numpy as np
+
 try:
     import warp as wp
 except ImportError as exc:
@@ -71,6 +73,7 @@ class WarpFactorBatch(CustomFactorBatch):
     ) -> None:
         super().__init__(residual_size, state_block_sizes, num_factors)
         self._device = device
+        self._default_ids: dict[int, wp.array] = {}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -98,6 +101,22 @@ class WarpFactorBatch(CustomFactorBatch):
         return wp.array(ptr=ptr, dtype=dtype, shape=shape,
                         device=self._device, copy=False)
 
+    def factor_ids(self, factor_ids_ptr: int, num_items: int) -> wp.array:
+        """Factor (measurement) index of every item, as an ``int32`` array.
+
+        Wraps ``factor_ids_ptr`` when it is non-null; otherwise returns
+        ``t % num_factors`` for ``t < num_items`` (built once per item count
+        and cached). Kernels can then always read ``ids[t]``.
+        """
+        if factor_ids_ptr != 0:
+            return self.wrap_array(factor_ids_ptr, wp.int32, num_items)
+        ids = self._default_ids.get(num_items)
+        if ids is None:
+            values = np.arange(num_items, dtype=np.int32) % self.num_factors
+            ids = wp.array(values, dtype=wp.int32, device=self._device)
+            self._default_ids[num_items] = ids
+        return ids
+
     def make_warp_stream(self, stream_handle: int) -> wp.Stream:
         """Create a ``warp.Stream`` that wraps an existing ``cudaStream_t``.
 
@@ -118,8 +137,24 @@ class WarpFactorBatch(CustomFactorBatch):
         jacobians_ptr: int,
         state_pointers_ptr: int,
         stream_handle: int,
+        factor_ids_ptr: int,
+        num_factor_ids: int,
     ) -> bool:
-        """Evaluate residuals and Jacobians for every factor in the batch.
+        """Evaluate residuals and Jacobians of ``num_factor_ids`` items.
+
+        An *item* is one factor of this batch evaluated against one set of
+        state blocks (the same contract as C++ ``FactorBatch::Evaluate``).
+        The regular minimizers call this with ``num_factor_ids == num_factors``
+        and ``factor_ids_ptr == 0``, i.e. item *t* is factor *t*. The RANSAC
+        minimizers also evaluate the same factors against many state sets in
+        one call. Launch one thread per item; for item *t*:
+
+        * its factor (measurement) index is ``factor_ids[t]`` if
+          ``factor_ids_ptr != 0``, otherwise ``t % num_factors``;
+        * its *K* state blocks are ``state_pointers[t * K + k]``;
+        * it writes ``residual_size`` residuals at ``t * residual_size`` and,
+          if requested, its row-major ``residual_size x sum(state_block_sizes)``
+          Jacobian block at ``t * residual_size * sum(state_block_sizes)``.
 
         Override this method in your subclass.  Use :meth:`wrap_array` to
         convert the raw device pointers into ``warp.array`` objects and
@@ -129,17 +164,24 @@ class WarpFactorBatch(CustomFactorBatch):
         Parameters
         ----------
         residuals_ptr : int
-            Device pointer to the output residuals buffer
-            (``num_factors * residual_size`` floats).
+            Device pointer to the output residuals
+            (``num_factor_ids * residual_size`` floats).
         jacobians_ptr : int
-            Device pointer to the output Jacobians buffer.  May be ``0``
-            (null) when the optimizer only needs residuals.
+            Device pointer to the output Jacobians
+            (``num_factor_ids * residual_size * sum(state_block_sizes)`` floats).
+            ``0`` (null) when only residuals are needed.
         state_pointers_ptr : int
-            Device pointer to an array of ``float*`` state block pointers.
-            For each factor *i* with *K* state blocks the layout is:
-            ``state_pointers[i * K + k]`` points to state block *k*.
+            Device pointer to ``num_factor_ids * K`` ``float*`` state block
+            pointers, item-major.
         stream_handle : int
             ``cudaStream_t`` handle for asynchronous kernel launches.
+        factor_ids_ptr : int
+            Device pointer to ``num_factor_ids`` ``int32`` factor indices in
+            ``[0, num_factors)``, or ``0`` for item *t* -> factor
+            ``t % num_factors``.
+        num_factor_ids : int
+            Number of items to evaluate, always > 0 (unlike C++, where 0
+            means ``num_factors``, the actual count is passed here).
 
         Returns
         -------
@@ -244,8 +286,16 @@ class WarpStateBatch(CustomStateBatch):
         delta_ptr: int,
         x_plus_delta_ptr: int,
         stream_handle: int,
+        num_replicas: int,
     ) -> None:
         """Apply the manifold retraction: ``x_plus_delta = x (+) delta``.
+
+        The arrays hold ``num_replicas`` contiguous copies of the batch
+        (the same contract as C++ ``StateBatch::Plus``): with
+        ``N = num_blocks``, replica *r* is blocks ``[r * N, (r + 1) * N)``.
+        The regular minimizers pass ``num_replicas == 1``; the RANSAC
+        minimizers update one replica per hypothesis in a single call.
+        Process all ``num_replicas * N`` blocks, each independently.
 
         Override this method in your subclass.  Use :meth:`wrap_array` to
         convert the raw device pointers into ``warp.array`` objects and
@@ -256,15 +306,18 @@ class WarpStateBatch(CustomStateBatch):
         ----------
         x_ptr : int
             Device pointer to the current state values
-            (``num_blocks * ambient_size`` floats).
+            (``num_replicas * num_blocks * ambient_size`` floats).
         delta_ptr : int
             Device pointer to the tangent-space update
-            (``num_blocks * tangent_size`` floats).
+            (``num_replicas * num_blocks * tangent_size`` floats).
         x_plus_delta_ptr : int
             Device pointer to the output buffer for the retracted state
-            (``num_blocks * ambient_size`` floats).
+            (``num_replicas * num_blocks * ambient_size`` floats); does not
+            overlap the inputs.
         stream_handle : int
             ``cudaStream_t`` handle for asynchronous kernel launches.
+        num_replicas : int
+            Number of contiguous copies (>= 1).
         """
         raise NotImplementedError(
             "WarpStateBatch.plus() must be overridden in a subclass."

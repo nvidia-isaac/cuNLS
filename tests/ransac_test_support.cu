@@ -116,14 +116,23 @@ SE3Transform Inverse(const SE3Transform &a) {
 }
 
 double RotationErrorDeg(const SE3Transform &a, const SE3Transform &b) {
-  double trace = 0;
+  // Angle of M = Ra^T Rb as atan2(|axis part|, cos part): accurate for small
+  // angles and exactly 0 for a == b even when float rotations are not exactly
+  // orthonormal (acos((tr M - 1) / 2) turns that rounding into ~0.02 deg).
+  double m[3][3];
   for (int i = 0; i < 3; ++i) {
-    for (int k = 0; k < 3; ++k) {
-      trace += static_cast<double>(a[i * 4 + k]) * b[i * 4 + k];
+    for (int j = 0; j < 3; ++j) {
+      m[i][j] = 0;
+      for (int k = 0; k < 3; ++k) {
+        m[i][j] += static_cast<double>(a[k * 4 + i]) * b[k * 4 + j];
+      }
     }
   }
-  const double c = std::max(-1.0, std::min(1.0, (trace - 1.0) / 2.0));
-  return std::acos(c) * 180.0 / M_PI;
+  const double c = 0.5 * (m[0][0] + m[1][1] + m[2][2] - 1.0);
+  const double sx = 0.5 * (m[2][1] - m[1][2]);
+  const double sy = 0.5 * (m[0][2] - m[2][0]);
+  const double sz = 0.5 * (m[1][0] - m[0][1]);
+  return std::atan2(std::sqrt(sx * sx + sy * sy + sz * sz), c) * 180.0 / M_PI;
 }
 
 double TranslationError(const SE3Transform &a, const SE3Transform &b) {
@@ -307,16 +316,22 @@ LinearScene MakeLinearScene(int dim, size_t num_points, double outlier_ratio, do
 
 namespace {
 
-__global__ void LinearRegressionKernel(int dim, const float *a, const float *y, int n,
-                                       float *residuals, float *jacobians,
-                                       float const *const *state_pointers) {
+/** Measurement of item i: factor_ids[i], or i % num_factors (FactorBatch::Evaluate). */
+__device__ int MeasurementOf(int i, const int *factor_ids, int num_factors) {
+  return factor_ids != nullptr ? factor_ids[i] : i % num_factors;
+}
+
+__global__ void LinearRegressionKernel(int dim, const float *a, const float *y, int num_factors,
+                                       const int *factor_ids, int num_items, float *residuals,
+                                       float *jacobians, float const *const *state_pointers) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) {
+  if (i >= num_items) {
     return;
   }
+  const int m = MeasurementOf(i, factor_ids, num_factors);
   const float *x = state_pointers[i];
-  const float *ai = a + static_cast<size_t>(i) * dim;
-  float r = -y[i];
+  const float *ai = a + static_cast<size_t>(m) * dim;
+  float r = -y[m];
   for (int k = 0; k < dim; ++k) {
     r = fmaf(ai[k], x[k], r);
   }
@@ -330,16 +345,17 @@ __global__ void LinearRegressionKernel(int dim, const float *a, const float *y, 
   }
 }
 
-__global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, int n,
-                               float *residuals, float *jacobians,
-                               float const *const *state_pointers) {
+__global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, int num_factors,
+                               const int *factor_ids, int num_items, float *residuals,
+                               float *jacobians, float const *const *state_pointers) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) {
+  if (i >= num_items) {
     return;
   }
+  const int m = MeasurementOf(i, factor_ids, num_factors);
   const float *pose = state_pointers[2 * i];
   const float f = state_pointers[2 * i + 1][0];
-  const Vector<3> &P = points[i];
+  const Vector<3> &P = points[m];
   const float xc = pose[3] + pose[0] * P[0] + pose[1] * P[1] + pose[2] * P[2];
   const float yc = pose[7] + pose[4] * P[0] + pose[5] * P[1] + pose[6] * P[2];
   const float zc = pose[11] + pose[8] * P[0] + pose[9] * P[1] + pose[10] * P[2];
@@ -357,8 +373,8 @@ __global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, in
   const float iz = 1.f / zc;
   const float u = xc * iz;
   const float v = yc * iz;
-  r[0] = f * u - obs[i][0];
-  r[1] = f * v - obs[i][1];
+  r[0] = f * u - obs[m][0];
+  r[1] = f * v - obs[m][1];
   if (jacobians == nullptr) {
     return;
   }
@@ -386,33 +402,38 @@ __global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, in
 
 void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_factors,
                             float *residuals, float *jacobians,
-                            float const *const *state_pointers, cudaStream_t stream) {
-  if (num_factors == 0) {
+                            float const *const *state_pointers, const int *factor_ids,
+                            size_t num_items, cudaStream_t stream) {
+  if (num_factors == 0 || num_items == 0) {
     return;
   }
-  const int blocks = static_cast<int>((num_factors + kThreads - 1) / kThreads);
-  LinearRegressionKernel<<<blocks, kThreads, 0, stream>>>(dim, a, y, static_cast<int>(num_factors),
-                                                          residuals, jacobians, state_pointers);
+  const int blocks = static_cast<int>((num_items + kThreads - 1) / kThreads);
+  LinearRegressionKernel<<<blocks, kThreads, 0, stream>>>(
+      dim, a, y, static_cast<int>(num_factors), factor_ids, static_cast<int>(num_items),
+      residuals, jacobians, state_pointers);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 bool FocalPnPFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                   float const *const *state_pointers,
-                                   cudaStream_t stream) const {
-  if (num_factors_ == 0) {
+                                   float const *const *state_pointers, cudaStream_t stream,
+                                   const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
+  if (num_factors_ == 0 || num_items == 0) {
     return true;
   }
-  const int blocks = static_cast<int>((num_factors_ + kThreads - 1) / kThreads);
+  const int blocks = static_cast<int>((num_items + kThreads - 1) / kThreads);
   FocalPnPKernel<<<blocks, kThreads, 0, stream>>>(obs_, points_, static_cast<int>(num_factors_),
+                                                  factor_ids, static_cast<int>(num_items),
                                                   residuals, jacobians, state_pointers);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
 bool SyncingFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                  float const *const *state_pointers,
-                                  cudaStream_t stream) const {
-  const bool ok = inner_->Evaluate(residuals, jacobians, state_pointers, stream);
+                                  float const *const *state_pointers, cudaStream_t stream,
+                                  const int *factor_ids, size_t num_factor_ids) const {
+  const bool ok =
+      inner_->Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_factor_ids);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   return ok;
 }

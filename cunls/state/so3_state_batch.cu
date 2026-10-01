@@ -121,9 +121,9 @@ void SO3StateBatch::ApplyUpdate(const float *x, const float *delta,
   LaunchFusedSo3Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
 }
 
-void SO3StateBatch::Plus(const float *x, const float *delta,
-                         float *x_plus_delta, cudaStream_t stream) {
-  LaunchFusedSo3Plus(stream, x, delta, x_plus_delta, NumStateBlocks(), false);
+void SO3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                         cudaStream_t stream, size_t num_replicas) {
+  LaunchFusedSo3Plus(stream, x, delta, x_plus_delta, NumStateBlocks() * num_replicas, false);
 }
 
 } // namespace cunls

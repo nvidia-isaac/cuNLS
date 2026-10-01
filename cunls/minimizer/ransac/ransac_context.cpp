@@ -42,9 +42,6 @@ void ValidateOptions(const RansacMinimizerOptions &o) {
   if (!(o.confidence > 0.f && o.confidence < 1.f)) {
     FailConfiguration("RANSAC: confidence must be in (0, 1)");
   }
-  if (o.lo_top_m > 64) {
-    FailConfiguration("RANSAC: lo_top_m must be <= 64");
-  }
 }
 
 template <typename T>
@@ -82,17 +79,11 @@ void RansacContext::Prepare(cudaStream_t stream, const Problem &problem) {
   has_run_ = false;
   layout_.Build(problem, options_);
   const int k = static_cast<int>(options_.hypotheses_per_round);
-  const int m = static_cast<int>(std::min<size_t>(options_.lo_top_m, options_.hypotheses_per_round));
-  sampler_.Configure(layout_, k);
-  hypotheses_.Allocate(stream, layout_, options_, SampledRows::kWaves, k, sampler_.num_waves());
-  if (m > 0) {
-    candidates_.Allocate(stream, layout_, options_, SampledRows::kMaskedPerSlot, m);
-  }
-  refinement_.Allocate(stream, layout_, options_, SampledRows::kMaskedPerSlot, 1);
-  best_.Allocate(layout_, 1);
+  hypotheses_.Allocate(stream, layout_, options_, SlotRows::kMinimalSamples, k);
+  refinement_.Allocate(stream, layout_, options_, SlotRows::kAllMasked, 1);
+  best_.Allocate(stream, layout_, options_, SlotRows::kNone, 1);
   scorer_.Allocate(layout_, options_, k);
-  top_indices_.resize(std::max(m, 1));
-  candidate_top_.resize(1);
+  selected_.resize(1);
   cost_history_.resize(std::max<size_t>(options_.final_iterations, 1));
 }
 
@@ -136,9 +127,6 @@ void RansacContext::RunRounds(cudaStream_t stream, RansacSummary &summary) {
     ReadStats(stream);
     drawn += options_.hypotheses_per_round;
     summary.num_rounds = round + 1;
-    if (host_stats_->improved && candidates_.num_slots() > 0 && options_.lo_iterations > 0) {
-      LocalOptimization(stream);
-    }
     if (EnoughHypotheses(drawn)) {
       break;
     }
@@ -147,9 +135,9 @@ void RansacContext::RunRounds(cudaStream_t stream, RansacSummary &summary) {
 }
 
 void RansacContext::GenerateHypotheses(cudaStream_t stream, uint64_t round) {
-  hypotheses_.replicas().LoadInitialGuess(stream, layout_);
+  hypotheses_.LoadInitialGuess(stream, layout_);
   hypotheses_.ResetSolver(stream, settings_.initial_lambda);
-  sampler_.Sample(stream, layout_, options_.seed, round, hypotheses_);
+  hypotheses_.DrawSamples(stream, layout_, options_.seed, round);
   for (size_t it = 0; it < options_.hypothesis_iterations; ++it) {
     hypotheses_.Iterate(stream, layout_, settings_);
   }
@@ -158,52 +146,16 @@ void RansacContext::GenerateHypotheses(cudaStream_t stream, uint64_t round) {
 void RansacContext::SelectHypotheses(cudaStream_t stream, uint64_t round) {
   scorer_.Score(stream, layout_, hypotheses_, round);
   LaunchSelect(stream, hypotheses_.score(), hypotheses_.inliers(), hypotheses_.valid(),
-               hypotheses_.num_slots(), static_cast<int>(top_indices_.size()),
-               top_indices_.data(), stats_.data());
-  best_.CopySlotIf(stream, layout_, hypotheses_.replicas(), &stats_.data()->best_slot,
+               hypotheses_.num_slots(), 1, selected_.data(), stats_.data());
+  best_.CopySlotIf(stream, layout_, hypotheses_, &stats_.data()->best_slot,
                    &stats_.data()->improved);
 }
 
-void RansacContext::LocalOptimization(cudaStream_t stream) {
-  candidates_.replicas().Gather(stream, layout_, hypotheses_.replicas(), top_indices_.data());
-  const bool check = WorthCheckingConvergence(candidates_.num_slots());
-  std::vector<int> previous_inliers;
-  for (size_t cycle = 0; cycle < options_.lo_iterations; ++cycle) {
-    candidates_.Classify(stream, layout_);  // re-derive each candidate's inlier set
-    if (check && InlierCountsUnchanged(stream, previous_inliers)) {
-      break;  // same inlier sets as last cycle: re-solving changes nothing
-    }
-    candidates_.ResetSolver(stream, settings_.initial_lambda);
-    for (size_t it = 0; it < options_.lo_solver_iterations; ++it) {
-      candidates_.Iterate(stream, layout_, settings_);
-      if (check && !candidates_.AnyActive(stream)) {
-        break;
-      }
-    }
-  }
-  candidates_.Classify(stream, layout_);
-  LaunchSelect(stream, candidates_.score(), candidates_.inliers(), nullptr,
-               candidates_.num_slots(), 1, candidate_top_.data(), stats_.data());
-  best_.CopySlotIf(stream, layout_, candidates_.replicas(), &stats_.data()->best_slot,
-                   &stats_.data()->improved);
-}
-
-bool RansacContext::WorthCheckingConvergence(int num_slots) const {
+bool RansacContext::WorthCheckingConvergence() const {
   // A convergence check costs one stream synchronization (~10 us); it pays off
   // once an iteration touches this many factor evaluations.
   constexpr size_t kMinItemsForChecks = size_t{1} << 17;
-  return static_cast<size_t>(layout_.total_sampled()) * num_slots >= kMinItemsForChecks;
-}
-
-bool RansacContext::InlierCountsUnchanged(cudaStream_t stream, std::vector<int> &previous) {
-  std::vector<int> current(candidates_.num_slots());
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(current.data(), candidates_.inliers(),
-                                      current.size() * sizeof(int), cudaMemcpyDeviceToHost,
-                                      stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  const bool same = current == previous;
-  previous = std::move(current);
-  return same;
+  return static_cast<size_t>(layout_.total_sampled()) >= kMinItemsForChecks;
 }
 
 bool RansacContext::EnoughHypotheses(size_t drawn) const {
@@ -223,10 +175,10 @@ bool RansacContext::EnoughHypotheses(size_t drawn) const {
 }
 
 void RansacContext::Refine(cudaStream_t stream, RansacSummary &summary) {
-  refinement_.replicas().Broadcast(stream, layout_, best_);
+  refinement_.CopyFrom(stream, layout_, best_);
   refinement_.Classify(stream, layout_);
   refinement_.ResetSolver(stream, settings_.initial_lambda);
-  const bool check = WorthCheckingConvergence(1);
+  const bool check = WorthCheckingConvergence();
   for (size_t it = 0; it < options_.final_iterations; ++it) {
     refinement_.Iterate(stream, layout_, settings_);
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(cost_history_.data() + it, refinement_.cost(),
@@ -238,7 +190,7 @@ void RansacContext::Refine(cudaStream_t stream, RansacSummary &summary) {
   refinement_.Classify(stream, layout_);
   refinement_.EvaluateCost(stream, layout_);
   RevertRefinementIfWorse(stream, summary);
-  refinement_.replicas().WriteBack(stream, layout_, 0);
+  refinement_.WriteBack(stream, layout_, 0);
   ReadRefinement(stream, summary);
 }
 
@@ -251,7 +203,7 @@ void RansacContext::RevertRefinementIfWorse(cudaStream_t stream, RansacSummary &
   }
   LogMessage("RANSAC: refinement worsened the score ({} > {}); keeping the best hypothesis",
              refined, best);
-  refinement_.replicas().Broadcast(stream, layout_, best_);
+  refinement_.CopyFrom(stream, layout_, best_);
   refinement_.Classify(stream, layout_);
   refinement_.EvaluateCost(stream, layout_);
   summary.refinement_reverted = true;

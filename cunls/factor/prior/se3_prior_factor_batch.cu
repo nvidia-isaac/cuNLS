@@ -93,14 +93,9 @@ SE3PriorFactorBatch::SE3PriorFactorBatch(const SE3Transform *observations_ptr, s
 }
 
 bool SE3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                   float const *const *state_pointers, cudaStream_t stream) const {
-  return EvaluateIndexed(residuals, jacobians, state_pointers, nullptr, NumFactors(), stream);
-}
-
-bool SE3PriorFactorBatch::EvaluateIndexed(float *residuals, float *jacobians,
-                                          float const *const *state_pointers,
-                                          const int *factor_ids, size_t num_items,
-                                          cudaStream_t stream) const {
+                                   float const *const *state_pointers, cudaStream_t stream,
+                                   const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
   if (num_items == 0 || NumFactors() == 0) {
     return true;
   }

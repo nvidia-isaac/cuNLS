@@ -68,12 +68,9 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
-  /** @copydoc FactorBatch::EvaluateIndexed */
-  bool EvaluateIndexed(float *residuals, float *jacobians, float const *const *state_pointers,
-                       const int *factor_ids, size_t num_items,
-                       cudaStream_t stream) const override;
 
   /**
    * @brief Returns the number of factors in the batch.

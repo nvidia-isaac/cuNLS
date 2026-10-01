@@ -29,8 +29,10 @@ class Similarity3BetweenFactorBatch : public SizedFactorBatch<7, 7, 7> {
   Similarity3BetweenFactorBatch(cuBLASHandle &cublas_handle,
                                 const Similarity3Transform *pose_deltas_ptr, size_t num_factors);
 
+  /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   size_t NumFactors() const final { return num_factors_; }
 
