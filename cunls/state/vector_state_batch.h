@@ -33,9 +33,8 @@ namespace cunls {
  * @param dim Dimension of each vector.
  * @param stream CUDA stream for async execution.
  */
-void CalculateVectorPlus(const float *x, const float *delta,
-                         float *x_plus_delta, size_t num_params, int dim,
-                         cudaStream_t stream);
+void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta, size_t num_params,
+                         int dim, cudaStream_t stream);
 
 /**
  * @brief Batch of Euclidean vector state blocks with compile-time dimension.
@@ -46,8 +45,9 @@ void CalculateVectorPlus(const float *x, const float *delta,
  *
  * @tparam Dim The dimension of each vector state block.
  */
-template <int Dim> class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
-public:
+template <int Dim>
+class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
+ public:
   using Base = SizedStateBatch<Dim, Dim>;
 
   /**
@@ -58,8 +58,7 @@ public:
    * allocated memory.
    * @param num_blocks The number of vector state blocks in this batch.
    */
-  VectorStateBatch(const float *device_ptr, size_t num_blocks)
-      : Base(device_ptr, num_blocks) {}
+  VectorStateBatch(const float *device_ptr, size_t num_blocks) : Base(device_ptr, num_blocks) {}
 
   /**
    * @brief Constructs a batch of vector state blocks with constant state
@@ -73,11 +72,9 @@ public:
    * the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
-  VectorStateBatch(const float *device_ptr, size_t num_blocks,
-                   const int *device_constant_state_ids,
+  VectorStateBatch(const float *device_ptr, size_t num_blocks, const int *device_constant_state_ids,
                    size_t num_const_state_blocks)
-      : Base(device_ptr, num_blocks, device_constant_state_ids,
-             num_const_state_blocks) {}
+      : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks) {}
 
   /**
    * @brief Computes x_plus_delta = x + delta element-wise for all blocks.
@@ -87,14 +84,14 @@ public:
    * @param x_plus_delta  Device pointer to output state values.
    * @param stream        CUDA stream for asynchronous execution.
    */
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override {
-    CalculateVectorPlus(x, delta, x_plus_delta, this->num_blocks_, Dim, stream);
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override {
+    CalculateVectorPlus(x, delta, x_plus_delta, this->num_blocks_ * num_replicas, Dim, stream);
   }
 
-private:
+ private:
   /** @brief Default constructor (private, not for external use). */
   VectorStateBatch() = default;
 };
 
-} // namespace cunls
+}  // namespace cunls

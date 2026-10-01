@@ -104,13 +104,14 @@ void bind_factor(nb::module_ &m) {
            nb::arg("state_block_sizes"), nb::arg("num_factors"))
       .def(
           "evaluate",
-          [](PyFactorBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t) -> bool {
+          [](PyFactorBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+             size_t) -> bool {
             throw std::runtime_error(
                 "CustomFactorBatch.evaluate() must be "
                 "overridden in a subclass.");
           },
           nb::arg("residuals_ptr"), nb::arg("jacobians_ptr"), nb::arg("state_pointers_ptr"),
-          nb::arg("stream_handle"))
+          nb::arg("stream_handle"), nb::arg("factor_ids_ptr"), nb::arg("num_factor_ids"))
       .def_prop_ro("num_factors", &PyFactorBatch::NumFactors)
       .def_prop_ro("residuals_size", &PyFactorBatch::ResidualsSize)
       .def("state_block_sizes", &PyFactorBatch::StateBlockSizes);

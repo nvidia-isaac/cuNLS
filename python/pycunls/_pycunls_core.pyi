@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import enum
+
+import numpy
 from typing import Any, Sequence, overload
 
 # ---------------------------------------------------------------------------
@@ -422,8 +424,9 @@ class CustomStateBatch(StateBatch):
         delta_ptr: int,
         x_plus_delta_ptr: int,
         stream_handle: int,
+        num_replicas: int,
     ) -> None:
-        """Apply manifold retraction. Override in subclasses."""
+        """Apply manifold retraction to num_replicas contiguous copies. Override in subclasses."""
         ...
     def state_block_device_ptr(self, index: int) -> int: ...
     @property
@@ -457,8 +460,10 @@ class CustomFactorBatch(FactorBatch):
         jacobians_ptr: int,
         state_pointers_ptr: int,
         stream_handle: int,
+        factor_ids_ptr: int,
+        num_factor_ids: int,
     ) -> bool:
-        """Compute residuals and Jacobians. Override in subclasses."""
+        """Compute residuals and Jacobians of num_factor_ids items. Override in subclasses."""
         ...
     @property
     def num_factors(self) -> int: ...
@@ -920,3 +925,114 @@ class LevenbergMarquardtMinimizer(GaussNewtonMinimizer):
     def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
         """Run the Levenberg-Marquardt optimizer. Returns a MinimizerSummary."""
         ...
+
+# ---------------------------------------------------------------------------
+# RANSAC minimizers
+# ---------------------------------------------------------------------------
+
+class RansacRole(enum.IntEnum):
+    """Role of a residual batch in RANSAC."""
+
+    sampled = ...
+    """Data factors that may be outliers: sampled and classified."""
+    always_on = ...
+    """Trusted factors (priors): in every solve, never classified."""
+
+class RansacScoring(enum.IntEnum):
+    """Hypothesis scoring rule."""
+
+    msac = ...
+    """Sum over sampled factors of min(|r|^2, tau^2)."""
+    inlier_count = ...
+    """Number of inliers (ties broken by MSAC)."""
+
+class RansacLinearSolverType(enum.IntEnum):
+    """Dense per-hypothesis solver."""
+
+    cholesky = ...
+    ldlt = ...
+
+class RansacFactorBatchOptions:
+    """RANSAC configuration of one residual batch."""
+
+    def __init__(self, role: RansacRole = ..., inlier_threshold: float = 1.0) -> None: ...
+    role: RansacRole
+    inlier_threshold: float
+    """Inlier iff |r| <= inlier_threshold (raw residual norm)."""
+
+class RansacMinimizerOptions:
+    """Options shared by both RANSAC minimizers."""
+
+    def __init__(self) -> None: ...
+    hypotheses_per_round: int
+    max_rounds: int
+    sample_size: int
+    """Factors per minimal sample; 0 = ceil(D / m_min)."""
+    confidence: float
+    early_stop_inlier_ratio: float
+    seed: int
+    factor_batches: list[RansacFactorBatchOptions]
+    """One entry per residual batch, in the order the batches were added.
+    Assign a whole list (appending to the returned copy has no effect).
+    Empty = every batch sampled with default_inlier_threshold."""
+    default_inlier_threshold: float
+    scoring: RansacScoring
+    score_always_on: bool
+    require_informative_inliers: bool
+    scoring_memory_budget_bytes: int
+    scoring_subset_size: int
+    scoring_finalists: int
+    hypothesis_iterations: int
+    final_iterations: int
+    state_tolerance: float
+    cost_tolerance: float
+    linear_solver: RansacLinearSolverType
+
+class RansacLevenbergMarquardtMinimizerOptions:
+    """Options of RansacLevenbergMarquardtMinimizer."""
+
+    def __init__(self) -> None: ...
+    base_options: RansacMinimizerOptions
+    initial_lambda: float
+    lambda_upscale: float
+    lambda_downscale: float
+    lambda_max: float
+    lambda_min: float
+    step_accept_threshold: float
+    lambda_downscale_threshold: float
+
+class RansacSummary(MinimizerSummary):
+    """Result of a RANSAC minimization."""
+
+    @property
+    def num_rounds(self) -> int: ...
+    @property
+    def num_hypotheses(self) -> int: ...
+    @property
+    def num_valid_hypotheses(self) -> int: ...
+    @property
+    def num_inliers(self) -> int: ...
+    @property
+    def inlier_ratio(self) -> float: ...
+    @property
+    def best_score(self) -> float: ...
+    @property
+    def refinement_reverted(self) -> bool: ...
+
+class RansacGaussNewtonMinimizer:
+    """RANSAC with Gauss-Newton hypotheses and refinement (free tangent dim <= 64)."""
+
+    def __init__(self, options: RansacMinimizerOptions = ...) -> None: ...
+    def minimize(self, stream: CudaStream, problem: Problem) -> RansacSummary:
+        """Run RANSAC; the estimate is written into the problem's state batches."""
+        ...
+    def inlier_mask(self, residual_batch_index: int) -> numpy.ndarray:
+        """Inlier mask (uint8, 1 = inlier) of a sampled residual batch of the
+        problem of the last minimize(). Raises RuntimeError for an out-of-range
+        index, an always_on batch, or before any run."""
+        ...
+
+class RansacLevenbergMarquardtMinimizer(RansacGaussNewtonMinimizer):
+    """RANSAC with Levenberg-Marquardt hypotheses and refinement."""
+
+    def __init__(self, options: RansacLevenbergMarquardtMinimizerOptions = ...) -> None: ...

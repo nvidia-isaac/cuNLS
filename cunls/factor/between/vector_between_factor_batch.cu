@@ -5,22 +5,23 @@
 
 #include "cunls/common/helper.h"
 #include "cunls/factor/between/vector_between_factor_batch.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 
 namespace cunls {
 
 constexpr int kVectorBetweenBlock = 256;
 
 __global__ void vector_between_kernel(const float *deltas, float const *const *state_pointers,
-                                      float *residuals, float *jacobians, int dim,
-                                      int num_factors) {
+                                      float *residuals, float *jacobians, int dim, int num_items,
+                                      const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) {
+  if (tid >= num_items) {
     return;
   }
 
   const float *left = state_pointers[2 * tid];
   const float *right = state_pointers[2 * tid + 1];
-  const float *d = deltas + tid * dim;
+  const float *d = deltas + FactorMeasurementIndex(tid, factor_ids, num_factors) * dim;
   float *res = residuals + tid * dim;
   for (int i = 0; i < dim; ++i) {
     res[i] = left[i] - right[i] - d[i];
@@ -43,11 +44,11 @@ __global__ void vector_between_kernel(const float *deltas, float const *const *s
 }
 
 void LaunchVectorBetweenFactorKernel(const float *deltas, float const *const *state_pointers,
-                                     float *residuals, float *jacobians, int dim, int num_factors,
-                                     cudaStream_t stream) {
-  int nb = (num_factors + kVectorBetweenBlock - 1) / kVectorBetweenBlock;
-  vector_between_kernel<<<nb, kVectorBetweenBlock, 0, stream>>>(deltas, state_pointers, residuals,
-                                                                jacobians, dim, num_factors);
+                                     float *residuals, float *jacobians, int dim, int num_items,
+                                     const int *factor_ids, int num_factors, cudaStream_t stream) {
+  int nb = (num_items + kVectorBetweenBlock - 1) / kVectorBetweenBlock;
+  vector_between_kernel<<<nb, kVectorBetweenBlock, 0, stream>>>(
+      deltas, state_pointers, residuals, jacobians, dim, num_items, factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

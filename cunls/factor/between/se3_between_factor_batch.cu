@@ -19,6 +19,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -35,14 +36,16 @@ constexpr size_t block_size = 256;
  */
 __global__ void collect_and_compute_se3_between_error_kernel(float const *const *state_pointers,
                                                              const SE3Transform *deltas,
-                                                             size_t num_factors,
-                                                             SE3Transform *errors) {
+                                                             size_t num_items, SE3Transform *errors,
+                                                             const int *factor_ids,
+                                                             int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   const float *__restrict__ L = state_pointers[2 * tid];
   const float *__restrict__ R = state_pointers[2 * tid + 1];
-  const float *__restrict__ D = deltas[tid].data();
+  const float *__restrict__ D = deltas[m].data();
   float *__restrict__ out = errors[tid].data();
 
   // Load L rotation (3x3) and translation (3x1)
@@ -291,8 +294,9 @@ constexpr int kSmemPerFactor = 24;
 
 __global__ void __launch_bounds__(kJacBlockSize, 5)
     se3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                       const Matrix<6> *__restrict__ delta_adjoints,
-                                       int num_factors, float *__restrict__ jacobians) {
+                                       const Matrix<6> *__restrict__ delta_adjoints, int num_items,
+                                       float *__restrict__ jacobians,
+                                       const int *__restrict__ factor_ids, int num_factors) {
   __shared__ float smem[kFactorsPerBlock * kSmemPerFactor];
 
   const int local_factor = threadIdx.x / kThreadsPerFactor;
@@ -304,7 +308,7 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
   float *s_J = s_base + 6;   // [9]  -- J_so3 (3x3 row-major)
   float *s_Q = s_base + 15;  // [9]  -- Q (3x3 row-major)
 
-  const bool active = global_factor < num_factors;
+  const bool active = global_factor < num_items;
 
   // --- Phase 1: cooperative load of twist ---
   if (active && row < 6) s_twist[row] = residuals[global_factor * 6 + row];
@@ -372,7 +376,8 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
   if (active) {
     float *out = jacobians + global_factor * (6 * jac_pitch) + row * jac_pitch;
 
-    const float *ad_src = delta_adjoints[global_factor].data();
+    const float *ad_src =
+        delta_adjoints[FactorMeasurementIndex(global_factor, factor_ids, num_factors)].data();
 
 #pragma unroll
     for (int j = 0; j < 6; j++) {
@@ -466,29 +471,35 @@ SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr
  * @return true on success.
  */
 bool SE3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                     float const *const *state_pointers,
-                                     cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
-  size_t num_blocks = (num_factors + block_size - 1) / block_size;
+                                     float const *const *state_pointers, cudaStream_t stream,
+                                     const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  const int num_factors = static_cast<int>(NumFactors());
+  poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
+  const size_t num_blocks = (num_items + block_size - 1) / block_size;
 
   // Fused: collect L/R + compute Delta * L^{-1} * R in one kernel
   collect_and_compute_se3_between_error_kernel<<<num_blocks, block_size, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_factors, poses_left_inverse_.data());
+      state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
+      num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pitch = 4;
   constexpr size_t stride = 16;
   constexpr size_t twist_stride = 6;
   ComputeLogSE3(stream, reinterpret_cast<const float *>(poses_left_inverse_.data()), pitch, stride,
-                twist_stride, num_factors, residuals);
+                twist_stride, num_items, residuals);
 
   if (jacobians != nullptr) {
-    size_t jac_blocks = (num_factors + kFactorsPerBlock - 1) / kFactorsPerBlock;
+    const size_t jac_blocks = (num_items + kFactorsPerBlock - 1) / kFactorsPerBlock;
     se3_between_fused_jacobians_kernel<<<jac_blocks, kJacBlockSize, 0, stream>>>(
-        residuals, delta_adjoints_.data(), num_factors, jacobians);
+        residuals, delta_adjoints_.data(), static_cast<int>(num_items), jacobians, factor_ids,
+        num_factors);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-
   return true;
 }
 

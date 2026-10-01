@@ -40,7 +40,7 @@ namespace cunls {
  *   - 3: Second state block (3D point)
  */
 class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
-public:
+ public:
   /**
    * @brief Constructs with identity camera-from-rig transforms.
    *
@@ -48,8 +48,8 @@ public:
    * @param num_observations  Number of observations in the batch.
    * @param z_threshold  Minimum depth for valid projection.
    */
-  ReprojectionFactorBatch(const Vector<2> *observations,
-                          size_t num_observations, float z_threshold = 1e-3f);
+  ReprojectionFactorBatch(const Vector<2> *observations, size_t num_observations,
+                          float z_threshold = 1e-3f);
 
   /**
    * @brief Constructs with custom camera-from-rig transforms.
@@ -63,17 +63,15 @@ public:
    * @param num_observations  Number of observations in the batch.
    * @param z_threshold  Minimum depth for valid projection.
    */
-  ReprojectionFactorBatch(const Vector<2> *observations,
-                          const SE3Transform *poses_camera_from_rig,
+  ReprojectionFactorBatch(const Vector<2> *observations, const SE3Transform *poses_camera_from_rig,
                           size_t num_observations, float z_threshold = 1e-3f);
-
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
-                cudaStream_t stream) const final;
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   size_t NumFactors() const final { return num_observations_; }
 
-private:
+ private:
   ReprojectionFactorBatch() = delete;
 
   const Vector<2> *observations_;
@@ -82,4 +80,4 @@ private:
   float z_threshold_ = 1e-3f;
 };
 
-} // namespace cunls
+}  // namespace cunls

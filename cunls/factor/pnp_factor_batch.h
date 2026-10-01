@@ -49,9 +49,9 @@ class PnPFactorBatch : public SizedFactorBatch<2, 6> {
    */
   PnPFactorBatch(const Vector<2> *observations, const SE3Transform *poses_camera_from_rig,
                  const Vector<3> *points_world, size_t num_observations, float z_threshold = 1e-3f);
-
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   size_t NumFactors() const final { return num_observations_; }
 

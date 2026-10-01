@@ -63,6 +63,50 @@ void ApplyInformationToJacobians(void *cublas_handle, const float *sqrt_informat
                                  size_t num_factors);
 
 /**
+ * @brief Applies per-item sqrt-information matrices to residual vectors.
+ *
+ * Computes residuals[t] = sqrt_information[f(t)] * residuals[t] in-place for
+ * each of num_items items, where f(t) is the item's factor
+ * (FactorBatch::Evaluate's item contract): factor_ids[t], or t modulo
+ * num_factors when factor_ids is null. Each item uses a fixed summation order,
+ * so its result does not depend on num_items or factor_ids.
+ *
+ * @param sqrt_information Row-major sqrt-information matrices, one per factor
+ * (device).
+ * @param residuals Residual vectors, modified in-place (device).
+ * @param residual_size Dimension of each residual / information matrix.
+ * @param num_items Number of residual vectors.
+ * @param factor_ids Optional device array of per-item factor indices.
+ * @param num_factors Number of sqrt-information matrices; 0 means num_items.
+ * @param stream CUDA stream for asynchronous execution.
+ */
+void ApplyInformationToResidualItems(const float *sqrt_information, float *residuals,
+                                     size_t residual_size, size_t num_items, const int *factor_ids,
+                                     size_t num_factors, cudaStream_t stream);
+
+/**
+ * @brief Applies per-item sqrt-information matrices to Jacobian matrices.
+ *
+ * Computes jacobians[t] = sqrt_information[f(t)] * jacobians[t] in-place, with
+ * f(t) as in ApplyInformationToResidualItems.
+ *
+ * @param sqrt_information Row-major sqrt-information matrices, one per factor
+ * (device).
+ * @param jacobians Row-major Jacobians, modified in-place (device).
+ * @param residual_size Row dimension of the Jacobian / information matrix.
+ * @param jacobian_pitch Column dimension (total state-block width) of each
+ * Jacobian.
+ * @param num_items Number of Jacobians.
+ * @param factor_ids Optional device array of per-item factor indices.
+ * @param num_factors Number of sqrt-information matrices; 0 means num_items.
+ * @param stream CUDA stream for asynchronous execution.
+ */
+void ApplyInformationToJacobianItems(const float *sqrt_information, float *jacobians,
+                                     size_t residual_size, size_t jacobian_pitch, size_t num_items,
+                                     const int *factor_ids, size_t num_factors,
+                                     cudaStream_t stream);
+
+/**
  * @brief Wrapper factor that applies square-root information matrices.
  *
  * This class wraps a SizedFactorBatch and applies square-root information
@@ -138,18 +182,32 @@ class InformationFactorBatch : public T::sized_layout {
    * @param state_pointers Array of state block pointers (device pointer to
    * device pointers)
    * @param stream CUDA stream for asynchronous execution
+   * @param factor_ids Optional per-item factor indices (device), forwarded to
+   * the wrapped batch unchanged.
+   * @param num_factor_ids Number of items (the length of factor_ids when it
+   *        is given); 0 means NumFactors().
    * @return true if evaluation succeeded, false otherwise
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final {
-    factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream);
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override {
+    const size_t num_items = num_factor_ids == 0 ? this->NumFactors() : num_factor_ids;
+    if (num_items == 0 || NumFactors() == 0) {
+      return true;
+    }
+    if (!factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream, factor_ids,
+                                num_items)) {
+      return false;
+    }
 
-    auto handle = cublas_handle_.GetHandle(stream);
     auto info_ptr = reinterpret_cast<const float *>(sqrt_information_matrices_ptr_);
     const size_t rsize = T::residual_size_;
     const size_t num_factors = factor_batch_.NumFactors();
 
-    ApplyInformationToResiduals(handle, info_ptr, residuals, rsize, num_factors);
+    if (residuals != nullptr) {
+      ApplyInformationToResidualItems(info_ptr, residuals, rsize, num_items, factor_ids,
+                                      num_factors, stream);
+    }
 
     if (jacobians == nullptr) {
       return true;
@@ -159,7 +217,8 @@ class InformationFactorBatch : public T::sized_layout {
     const size_t jacobian_pitch =
         std::accumulate(state_block_sizes.begin(), state_block_sizes.end(), 0);
 
-    ApplyInformationToJacobians(handle, info_ptr, jacobians, rsize, jacobian_pitch, num_factors);
+    ApplyInformationToJacobianItems(info_ptr, jacobians, rsize, jacobian_pitch, num_items,
+                                    factor_ids, num_factors, stream);
 
     return true;
   }
@@ -174,7 +233,10 @@ class InformationFactorBatch : public T::sized_layout {
   /// Number of per-factor square-root information matrices (equals batch size).
   size_t num_matrices_;
 
-  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
+  /// cuBLAS handle passed at construction. Kept for API compatibility; Evaluate
+  /// applies the matrices with per-item kernels (ApplyInformationTo*Items) so
+  /// that item results are independent of the item count.
+  cuBLASHandle &cublas_handle_;
 };
 
 }  // namespace cunls

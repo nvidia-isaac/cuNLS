@@ -42,6 +42,8 @@ docker run --gpus all --rm -it \
     cp /tmp/examples_build/pose_graph_optimization_example /output/
     cp /tmp/examples_build/custom_factor_example /output/
     cp /tmp/examples_build/motion_prior_example /output/
+    cp /tmp/examples_build/pnp_example /output/
+    cp /tmp/examples_build/ransac_pnp_example /output/
 
     cat > /output/run_all_examples.sh <<'EOF'
 #!/bin/bash
@@ -54,6 +56,8 @@ export LD_LIBRARY_PATH=\"\$SCRIPT_DIR/lib:\${LD_LIBRARY_PATH:-}\"
 \"\$SCRIPT_DIR/pose_graph_optimization_example\"
 \"\$SCRIPT_DIR/custom_factor_example\"
 \"\$SCRIPT_DIR/motion_prior_example\"
+\"\$SCRIPT_DIR/pnp_example\"
+\"\$SCRIPT_DIR/ransac_pnp_example\"
 EOF
     chmod +x /output/run_all_examples.sh
   "

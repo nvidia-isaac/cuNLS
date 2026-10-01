@@ -30,12 +30,15 @@ PyFactorBatch::PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, s
     : residual_size_(res_size), state_block_sizes_(std::move(block_sizes)), num_factors_(num) {}
 
 bool PyFactorBatch::Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                             cudaStream_t stream) const {
+                             cudaStream_t stream, const int *factor_ids,
+                             size_t num_factor_ids) const {
   nb::gil_scoped_acquire gil;
   nb::object self_obj = nb::find(this);
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
   nb::object result = self_obj.attr("evaluate")(
       reinterpret_cast<uintptr_t>(residuals), reinterpret_cast<uintptr_t>(jacobians),
-      reinterpret_cast<uintptr_t>(state_pointers), reinterpret_cast<uintptr_t>(stream));
+      reinterpret_cast<uintptr_t>(state_pointers), reinterpret_cast<uintptr_t>(stream),
+      reinterpret_cast<uintptr_t>(factor_ids), num_items);
   return nb::cast<bool>(result);
 }
 
@@ -59,20 +62,25 @@ std::vector<size_t> PyInformationFactorBatch::StateBlockSizes() const {
 }
 
 bool PyInformationFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                        float const *const *state_pointers,
-                                        cudaStream_t stream) const {
-  inner_->Evaluate(residuals, jacobians, state_pointers, stream);
-
-  auto handle = cublas_handle_.GetHandle(stream);
-  const size_t rsize = inner_->ResidualsSize();
+                                        float const *const *state_pointers, cudaStream_t stream,
+                                        const int *factor_ids, size_t num_factor_ids) const {
   const size_t nf = inner_->NumFactors();
+  const size_t num_items = num_factor_ids == 0 ? nf : num_factor_ids;
+  if (num_items == 0 || nf == 0) return true;
+  if (!inner_->Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_items)) {
+    return false;
+  }
 
-  cunls::ApplyInformationToResiduals(handle, sqrt_info_ptr_, residuals, rsize, nf);
+  // Item t is weighted by the matrix of its factor (factor_ids[t] or t % nf).
+  const size_t rsize = inner_->ResidualsSize();
+  cunls::ApplyInformationToResidualItems(sqrt_info_ptr_, residuals, rsize, num_items, factor_ids,
+                                         nf, stream);
   if (jacobians == nullptr) return true;
 
   auto sbs = inner_->StateBlockSizes();
   const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
-  cunls::ApplyInformationToJacobians(handle, sqrt_info_ptr_, jacobians, rsize, jpitch, nf);
+  cunls::ApplyInformationToJacobianItems(sqrt_info_ptr_, jacobians, rsize, jpitch, num_items,
+                                         factor_ids, nf, stream);
   return true;
 }
 
@@ -96,17 +104,22 @@ std::vector<size_t> PyWeightedFactorBatch::StateBlockSizes() const {
 }
 
 bool PyWeightedFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                     float const *const *state_pointers,
-                                     cudaStream_t stream) const {
-  inner_->Evaluate(residuals, jacobians, state_pointers, stream);
-
-  const size_t rsize = inner_->ResidualsSize();
+                                     float const *const *state_pointers, cudaStream_t stream,
+                                     const int *factor_ids, size_t num_factor_ids) const {
   const size_t nf = inner_->NumFactors();
+  const size_t num_items = num_factor_ids == 0 ? nf : num_factor_ids;
+  if (num_items == 0 || nf == 0) return true;
+  if (!inner_->Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_items)) {
+    return false;
+  }
 
+  // Item t is weighted by the weight of its factor (factor_ids[t] or t % nf).
+  const size_t rsize = inner_->ResidualsSize();
   if (per_factor_weights_ != nullptr) {
-    cunls::ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals, rsize, nf, stream);
+    cunls::ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals, rsize, num_items, stream,
+                                           factor_ids, nf);
   } else {
-    cunls::ApplyUniformWeightToResiduals(uniform_weight_, residuals, nf * rsize, stream);
+    cunls::ApplyUniformWeightToResiduals(uniform_weight_, residuals, num_items * rsize, stream);
   }
 
   if (jacobians == nullptr) return true;
@@ -115,10 +128,11 @@ bool PyWeightedFactorBatch::Evaluate(float *residuals, float *jacobians,
   const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
 
   if (per_factor_weights_ != nullptr) {
-    cunls::ApplyPerFactorWeightToJacobians(per_factor_weights_, jacobians, rsize, jpitch, nf,
-                                           stream);
+    cunls::ApplyPerFactorWeightToJacobians(per_factor_weights_, jacobians, rsize, jpitch, num_items,
+                                           stream, factor_ids, nf);
   } else {
-    cunls::ApplyUniformWeightToJacobians(uniform_weight_, jacobians, nf * rsize * jpitch, stream);
+    cunls::ApplyUniformWeightToJacobians(uniform_weight_, jacobians, num_items * rsize * jpitch,
+                                         stream);
   }
   return true;
 }

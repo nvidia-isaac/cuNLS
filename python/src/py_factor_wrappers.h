@@ -28,22 +28,24 @@
 // When the C++ optimizer calls Evaluate(), this class:
 //   1. Re-acquires the GIL (released by the minimizer wrapper).
 //   2. Looks up the Python object that wraps *this* via nb::find().
-//   3. Forwards the four raw pointers as plain ints to Python's evaluate().
+//   3. Forwards the raw pointers as plain ints, plus the resolved item count,
+//      to Python's evaluate(residuals, jacobians, state_pointers, stream,
+//      factor_ids, num_items) (see FactorBatch::Evaluate for the item contract).
 //
 // All GPU pointer arguments are passed as uintptr_t so that the Python side
 // can wrap them with CuPy or Warp arrays without any C++ <-> Python type
 // conversion overhead.
 class PyFactorBatch : public cunls::FactorBatch {
-public:
+ public:
   size_t residual_size_;
   std::vector<size_t> state_block_sizes_;
   size_t num_factors_;
 
   PyFactorBatch(size_t res_size, std::vector<size_t> block_sizes, size_t num);
 
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
-                cudaStream_t stream) const override;
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   size_t ResidualsSize() const override;
   std::vector<size_t> StateBlockSizes() const override;
@@ -55,20 +57,19 @@ public:
 // on the FactorBatch* interface so Python users never need to name
 // specializations.
 class PyInformationFactorBatch : public cunls::FactorBatch {
-public:
-  PyInformationFactorBatch(cunls::cuBLASHandle &cublas_handle,
-                           cunls::FactorBatch *inner,
+ public:
+  PyInformationFactorBatch(cunls::cuBLASHandle &cublas_handle, cunls::FactorBatch *inner,
                            const float *sqrt_information_matrices_ptr);
 
   size_t ResidualsSize() const override;
   size_t NumFactors() const override;
   std::vector<size_t> StateBlockSizes() const override;
 
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
-                cudaStream_t stream) const override;
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
-private:
+ private:
   cunls::cuBLASHandle &cublas_handle_;
   cunls::FactorBatch *inner_;
   const float *sqrt_info_ptr_;
@@ -77,21 +78,20 @@ private:
 // Polymorphic wrapper that applies scalar weights to any FactorBatch.
 // Supports uniform (single float) and per-factor (device array) weights.
 class PyWeightedFactorBatch : public cunls::FactorBatch {
-public:
+ public:
   PyWeightedFactorBatch(cunls::FactorBatch *inner, float weight);
 
-  PyWeightedFactorBatch(cunls::FactorBatch *inner,
-                        const float *per_factor_weights);
+  PyWeightedFactorBatch(cunls::FactorBatch *inner, const float *per_factor_weights);
 
   size_t ResidualsSize() const override;
   size_t NumFactors() const override;
   std::vector<size_t> StateBlockSizes() const override;
 
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
-                cudaStream_t stream) const override;
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
-private:
+ private:
   cunls::FactorBatch *inner_;
   float uniform_weight_;
   const float *per_factor_weights_;
@@ -102,13 +102,12 @@ private:
 // LossFunctionBatch* interface so Python users never need to name
 // specializations.
 class PyScaledLossFunctionBatch : public cunls::LossFunctionBatch {
-public:
+ public:
   PyScaledLossFunctionBatch(cunls::LossFunctionBatch *inner, float a);
 
-  bool Evaluate(float *s, float3 *out, int num_losses,
-                cudaStream_t stream) const override;
+  bool Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
 
-private:
+ private:
   cunls::LossFunctionBatch *inner_;
   float a_;
 };

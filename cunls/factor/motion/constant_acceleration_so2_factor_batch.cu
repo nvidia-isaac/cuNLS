@@ -18,6 +18,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/motion/constant_acceleration_so2_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
@@ -25,10 +26,10 @@ namespace cunls {
 
 constexpr size_t kBlockSizeSO2CA = 256;
 
-__global__ void ca_so2_relative_pose_kernel(float const *const *state_pointers, size_t num_factors,
+__global__ void ca_so2_relative_pose_kernel(float const *const *state_pointers, size_t num_items,
                                             Matrix<2> *pose_rel) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
 
   const float *__restrict__ L = state_pointers[6 * tid + 0];
   const float *__restrict__ R = state_pointers[6 * tid + 1];
@@ -48,17 +49,17 @@ __global__ void ca_so2_relative_pose_kernel(float const *const *state_pointers, 
  * is abelian: J_l^{-1} = J_r^{-1} = 1, so both are hardcoded scalars.
  */
 __global__ void ca_so2_assemble_kernel(float const *const *state_pointers, const float *twist,
-                                       const float *dt, size_t num_factors, float *residuals,
-                                       float *jacobians) {
+                                       const float *dt, size_t num_items, const int *factor_ids,
+                                       int num_factors, float *residuals, float *jacobians) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
 
   const float vel_k = *state_pointers[6 * tid + 2];
   const float vel_k1 = *state_pointers[6 * tid + 3];
   const float accel_k = *state_pointers[6 * tid + 4];
   const float accel_k1 = *state_pointers[6 * tid + 5];
   const float tw = twist[tid];
-  const float dt_i = dt[tid];
+  const float dt_i = dt[FactorMeasurementIndex(tid, factor_ids, num_factors)];
   const float half_dt2 = 0.5f * dt_i * dt_i;
 
   float *__restrict__ res = residuals + tid * 3;
@@ -98,20 +99,28 @@ ConstantAccelerationSO2FactorBatch::ConstantAccelerationSO2FactorBatch(const flo
 
 bool ConstantAccelerationSO2FactorBatch::Evaluate(float *residuals, float *jacobians,
                                                   float const *const *state_pointers,
-                                                  cudaStream_t stream) const {
-  const size_t num_blocks = (num_factors_ + kBlockSizeSO2CA - 1) / kBlockSizeSO2CA;
+                                                  cudaStream_t stream, const int *factor_ids,
+                                                  size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  pose_rel_.resize(num_items);
+  twist_.resize(num_items);
+  const size_t num_blocks = (num_items + kBlockSizeSO2CA - 1) / kBlockSizeSO2CA;
 
-  ca_so2_relative_pose_kernel<<<num_blocks, kBlockSizeSO2CA, 0, stream>>>(
-      state_pointers, num_factors_, pose_rel_.data());
+  ca_so2_relative_pose_kernel<<<num_blocks, kBlockSizeSO2CA, 0, stream>>>(state_pointers, num_items,
+                                                                          pose_rel_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t rot_stride = 4;
   constexpr size_t angle_stride = 1;
   ComputeLogSO2(stream, reinterpret_cast<const float *>(pose_rel_.data()), rot_stride, angle_stride,
-                num_factors_, twist_.data());
+                num_items, twist_.data());
 
   ca_so2_assemble_kernel<<<num_blocks, kBlockSizeSO2CA, 0, stream>>>(
-      state_pointers, twist_.data(), dt_ptr_, num_factors_, residuals, jacobians);
+      state_pointers, twist_.data(), dt_ptr_, num_items, factor_ids, static_cast<int>(NumFactors()),
+      residuals, jacobians);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   return true;

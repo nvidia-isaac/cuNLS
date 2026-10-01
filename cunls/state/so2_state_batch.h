@@ -43,7 +43,7 @@ namespace cunls {
  * for efficient batch processing of multiple rotations.
  */
 class SO2StateBatch : public SizedStateBatch<4, 1> {
-public:
+ public:
   using Base = SizedStateBatch<4, 1>;
 
   /**
@@ -55,8 +55,7 @@ public:
    * allocated memory.
    * @param num_blocks The number of SO(2) state blocks in this batch.
    */
-  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                size_t num_blocks);
+  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
 
   /**
    * @brief Constructs a batch of SO(2) state blocks with constant state
@@ -71,9 +70,8 @@ public:
    * the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
-  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                size_t num_blocks, const int *device_constant_state_ids,
-                size_t num_const_state_blocks);
+  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
+                const int *device_constant_state_ids, size_t num_const_state_blocks);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)
@@ -87,11 +85,11 @@ public:
    * @param x_plus_delta Output rotation matrices (device pointer)
    * @param stream CUDA stream for asynchronous execution
    */
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override;
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override;
 
-private:
-  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
+ private:
+  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
 
   mutable dvector<Matrix<2>> delta_rotations_;
   mutable dvector<float> angles_;
@@ -118,7 +116,7 @@ private:
    * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
    * @param stream CUDA stream for asynchronous execution
    */
-  void ApplyUpdate(const float *x, const float *delta, float *result,
-                   bool invert_delta, cudaStream_t stream);
+  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
+                   cudaStream_t stream);
 };
-} // namespace cunls
+}  // namespace cunls

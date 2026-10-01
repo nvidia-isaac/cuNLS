@@ -12,6 +12,14 @@ operation. See `Gauss–Newton algorithm
 <https://en.wikipedia.org/wiki/Levenberg%E2%80%93Marquardt_algorithm>`_ for
 background.
 
+For robust estimation with outliers (wrong matches, gross errors), the module
+also provides the RANSAC minimizers :code:`RansacGaussNewtonMinimizer`
+and :code:`RansacLevenbergMarquardtMinimizer`, which solve the same
+:cpp:class:`Problem` while classifying every data factor as inlier or outlier.
+See :doc:`../ransac` for the theory and a walkthrough; the reference is in
+:ref:`ransac-structures-label`, :ref:`ransac-classes-label` and
+:ref:`py-ransac-label`.
+
 **C++** — ``cunls/minimizer``
   |  **Python** — ``pycunls``
 
@@ -236,6 +244,129 @@ constructing a :code:`LevenbergMarquardtMinimizer`.
 - **lambda_downscale_threshold** [in]: Step quality above which :math:`\lambda`
   is decreased. Default: 0.75.
 
+.. _ransac-structures-label:
+
+--------------------------------------------------------------------------------
+RANSAC structures
+--------------------------------------------------------------------------------
+
+Header: :code:`cunls/minimizer/ransac_minimizer.h` (included by
+:code:`cunls/cunls.h`). See :doc:`../ransac` for how each option is used.
+
+**kMaxRansacTangentDim** — ``constexpr int kMaxRansacTangentDim = 64``. The
+sum of ``TangentSize()`` over every **non-constant** state block of the problem
+(the free tangent dimension :math:`D`) must not exceed it. Constant blocks do
+not count, whatever their number.
+
+:code:`RansacRole` (enum) — role of a residual batch:
+
+- ``kSampled`` (0): data factors that may be outliers. Minimal samples are
+  drawn from them and each factor is classified as inlier / outlier.
+- ``kAlwaysOn`` (1): trusted factors (priors, motion priors, extrinsic
+  constraints). Included in every hypothesis solve and in the final
+  refinement; never classified.
+
+:code:`RansacScoring` (enum) — hypothesis scoring rule (lower is better):
+
+- ``kMSAC`` (0): truncated quadratic
+  :math:`\sum_i \min(\|r_i\|^2, \tau_i^2)` over the sampled factors.
+- ``kInlierCount`` (1): number of inliers; ties broken by the lower MSAC score.
+
+:code:`RansacLinearSolverType` (enum) — dense per-hypothesis solver:
+
+- ``kCholesky`` (0): in-kernel Cholesky; a non-positive pivot marks the
+  hypothesis invalid.
+- ``kLDLT`` (1): in-kernel :math:`LDL^T` with symmetric diagonal pivoting;
+  rank-deficient directions get a zero step instead of failing (suits the
+  near-singular systems of minimal samples).
+
+:code:`RansacFactorBatchOptions` — configuration of one residual batch:
+
+- **role** [in]: :code:`RansacRole`. Default: ``kSampled``.
+- **inlier_threshold** [in]: :math:`\tau` on the raw (loss-free) residual
+  norm, in the batch's residual units; a factor is an inlier iff
+  :math:`\|r\|^2 \le \tau^2`. Ignored for ``kAlwaysOn`` batches. Default: 1.0.
+
+:code:`RansacMinimizerOptions` — options shared by both RANSAC minimizers:
+
+- **hypotheses_per_round** [in]: Hypotheses :math:`K` generated and scored
+  together (in parallel) in one round. Default: 256.
+- **max_rounds** [in]: Upper bound on the number of rounds. Default: 8.
+- **sample_size** [in]: Sampled factors per minimal sample; ``0`` selects
+  :math:`\lceil D / m_{\min} \rceil` (:math:`m_{\min}` = smallest residual
+  dimension among sampled batches). Default: 0.
+- **confidence** [in]: Target probability of drawing at least one all-inlier
+  sample; drives adaptive stopping between rounds. Default: 0.999.
+- **early_stop_inlier_ratio** [in]: Stop once the best inlier ratio reaches
+  this value; 1 disables. Default: 1.0.
+- **seed** [in]: Seed of the counter-based sampler; the same seed gives a
+  bitwise identical result. Default: 0.
+- **factor_batches** [in]: One :code:`RansacFactorBatchOptions` per residual
+  batch, indexed like :cpp:func:`Problem::GetResidualBatches` (the order the
+  batches were added). Empty means every batch is ``kSampled`` with
+  **default_inlier_threshold**. Default: empty.
+- **default_inlier_threshold** [in]: Threshold used when **factor_batches** is
+  empty. Default: 1.0.
+- **scoring** [in]: :code:`RansacScoring`. Default: ``kMSAC``.
+- **score_always_on** [in]: Add 2 × (cost of the ``kAlwaysOn`` factors) to
+  each hypothesis score. Default: true.
+- **require_informative_inliers** [in]: Count a factor as an inlier only if its
+  Jacobian has a non-zero entry on a free state block. Guards against factors
+  that report a zero residual for configurations they cannot evaluate (e.g.
+  :code:`PnPFactorBatch` for points behind the camera). Costs one Jacobian
+  evaluation per scored factor. Default: true.
+- **scoring_memory_budget_bytes** [in]: Device memory budget for scoring
+  buffers; bounds how many hypotheses are scored per chunk. Default: 64 MiB.
+- **scoring_subset_size** [in]: Two-stage scoring for large problems: with
+  more than 2 × this many sampled factors, every hypothesis is first scored on
+  a random subset of this size (drawn anew each round), and only the best
+  **scoring_finalists** are scored on all factors. 0 disables. Default: 16384.
+- **scoring_finalists** [in]: Hypotheses scored on all factors in two-stage
+  scoring (at most 64). Default: 4.
+- **hypothesis_iterations** [in]: GN / LM iterations that turn a minimal
+  sample into a hypothesis. Default: 5.
+- **final_iterations** [in]: Iterations of the final refinement on the best
+  inlier set. Default: 20.
+- **state_tolerance** [in]: Per-hypothesis convergence on the squared step
+  norm. Default: 1e-10.
+- **cost_tolerance** [in]: Per-hypothesis convergence on the relative cost
+  decrease. Default: 1e-7.
+- **linear_solver** [in]: :code:`RansacLinearSolverType`. Default: ``kLDLT``.
+
+:code:`RansacLevenbergMarquardtMinimizerOptions` — options of
+:code:`RansacLevenbergMarquardtMinimizer`; every hypothesis carries its own
+damping :math:`\lambda`:
+
+- **base_options** [in]: :code:`RansacMinimizerOptions`.
+- **initial_lambda** [in]: Damping each hypothesis starts from. Default: 1e-3.
+- **lambda_upscale** [in]: Damping multiplier on a rejected step. Default: 2.0.
+- **lambda_downscale** [in]: Damping multiplier on a very successful step.
+  Default: 0.5.
+- **lambda_max** [in]: Upper bound; a hypothesis that exceeds it stops.
+  Default: 1e6.
+- **lambda_min** [in]: Lower bound. Default: 1e-6.
+- **step_accept_threshold** [in]: Accept a step if actual / predicted cost
+  reduction is at least this. Default: 0.25.
+- **lambda_downscale_threshold** [in]: Decrease damping if actual / predicted
+  reduction exceeds this. Default: 0.75.
+
+:code:`RansacSummary` — result of a RANSAC run; extends
+:code:`MinimizerSummary` (whose **num_iterations** and **iteration_costs**
+describe the final refinement, **initial_cost** is over all factors at the
+initial guess and **final_cost** is the refined cost over the inliers and the
+``kAlwaysOn`` factors):
+
+- **num_rounds** [out]: Rounds executed.
+- **num_hypotheses** [out]: Hypotheses generated across all rounds.
+- **num_valid_hypotheses** [out]: Hypotheses whose first linear solve
+  succeeded.
+- **num_inliers** [out]: Inliers of the final estimate over all ``kSampled``
+  factors.
+- **inlier_ratio** [out]: **num_inliers** / number of ``kSampled`` factors.
+- **best_score** [out]: Score (lower is better) of the final estimate.
+- **refinement_reverted** [out]: True if the final refinement worsened the
+  score and the best hypothesis (before refinement) was returned instead.
+
 ================================================================================
 Class APIs
 ================================================================================
@@ -296,6 +427,89 @@ from the solution.
 :cpp:func:`LevenbergMarquardtMinimizer` also provides :cpp:func:`Minimize` with
 the same signature as :cpp:func:`GaussNewtonMinimizer::Minimize`; it runs the LM
 iteration instead of pure Gauss-Newton.
+
+.. _ransac-classes-label:
+
+--------------------------------------------------------------------------------
+:code:`RansacGaussNewtonMinimizer` / :code:`RansacLevenbergMarquardtMinimizer`
+--------------------------------------------------------------------------------
+
+**Purpose:** RANSAC over an ordinary :cpp:class:`Problem`. Minimal samples of
+``kSampled`` factors are turned into hypotheses by a few GN (or LM) iterations
+from the current state values; every hypothesis is scored against all
+``kSampled`` factors; the best one is refined on its inliers and written back
+into the problem's state batches. :cpp:func:`RansacGaussNewtonMinimizer::InlierMask` then exposes the
+classification. See :doc:`../ransac`.
+
+The problem is built exactly as for :code:`GaussNewtonMinimizer`. The only
+restriction is the free tangent dimension (``kMaxRansacTangentDim``); any
+number of state batches of any supported types, and any number of factor
+batches and factors, are allowed. Every factor and state batch must honor the
+item parameters of :cpp:func:`FactorBatch::Evaluate` and the ``num_replicas``
+parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
+:doc:`../custom_factors_and_states` shows how to write custom ones.
+
+.. cpp:function:: explicit RansacGaussNewtonMinimizer(const RansacMinimizerOptions& options = RansacMinimizerOptions())
+
+  :param ``options``: [in] RANSAC options; copied into the minimizer.
+  :returns: [out] Constructor has no return value.
+
+.. cpp:function:: explicit RansacLevenbergMarquardtMinimizer(const RansacLevenbergMarquardtMinimizerOptions& options = RansacLevenbergMarquardtMinimizerOptions())
+
+  :param ``options``: [in] Shared RANSAC options (``base_options``) plus the
+    per-hypothesis damping policy. Hypotheses and refinement use LM; otherwise
+    identical to :code:`RansacGaussNewtonMinimizer` (it derives from it).
+  :returns: [out] Constructor has no return value.
+
+.. cpp:function:: RansacSummary RansacGaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem& problem)
+
+  Runs RANSAC and writes the refined estimate into the problem's state batches.
+
+  :param ``stream``: [in] CUDA stream for all work. The call synchronizes it a
+    few times (once per round and at the end) to read statistics.
+  :param ``problem``: [in,out] The problem; its current state values are the
+    initial guess for every hypothesis and receive the result.
+  :returns: [out] :code:`RansacSummary`.
+
+  Throws ``std::invalid_argument`` (with a message saying what to change) for
+  an unsupported configuration: free tangent dimension :math:`D > 64` or
+  :math:`D = 0`; no ``kSampled`` factors; fewer sampled factors than the
+  sample size; a factor batch that requests numeric Jacobians; a
+  **factor_batches** vector whose size does not match the problem's residual
+  batches; invalid options (e.g. ``hypotheses_per_round == 0``,
+  ``max_rounds == 0``, ``hypothesis_iterations == 0``, ``confidence``
+  outside :math:`(0, 1)`).
+
+  **Note:** The minimizer keeps its device buffers between calls and reuses
+  them when the problem size is unchanged.
+
+.. cpp:function:: const uint8_t* RansacGaussNewtonMinimizer::InlierMask(size_t residual_batch_index) const
+
+  :param ``residual_batch_index``: [in] Index into
+    :cpp:func:`Problem::GetResidualBatches`.
+  :returns: [out] Device pointer to one byte per factor of that batch
+    (1 = inlier) for the estimate of the last :cpp:func:`Minimize`, valid until
+    the next :cpp:func:`Minimize` or destruction; ``nullptr`` for ``kAlwaysOn``
+    batches, an out-of-range index, or before any run.
+
+.. cpp:function:: size_t RansacGaussNewtonMinimizer::InlierMaskSize(size_t residual_batch_index) const
+
+  :param ``residual_batch_index``: [in] Index into
+    :cpp:func:`Problem::GetResidualBatches`.
+  :returns: [out] Number of bytes of :cpp:func:`RansacGaussNewtonMinimizer::InlierMask`:
+    the factor count the batch had in the last :cpp:func:`Minimize`; ``0``
+    whenever ``InlierMask`` returns ``nullptr``.
+
+**Example**
+
+.. code-block:: cpp
+
+   cunls::RansacLevenbergMarquardtMinimizerOptions options;
+   // One entry per residual batch, in the order they were added.
+   options.base_options.factor_batches = {{cunls::RansacRole::kSampled, 0.01f}};
+   cunls::RansacLevenbergMarquardtMinimizer ransac(options);
+   cunls::RansacSummary summary = ransac.Minimize(stream, problem);
+   const uint8_t* inliers = ransac.InlierMask(0);  // device, one byte per factor
 
 .. _problem-add-factor-label:
 
@@ -693,6 +907,89 @@ Gauss-Newton when the initial guess is far from the solution.
   same interface as ``GaussNewtonMinimizer.minimize``.  Runs the LM
   iteration instead of pure Gauss-Newton.  State is updated in-place;
   rejected steps are automatically rolled back.
+
+.. _py-ransac-label:
+
+--------------------------------------------------------------------------------
+RANSAC minimizers (``pycunls``)
+--------------------------------------------------------------------------------
+
+Python bindings of :ref:`ransac-structures-label` and
+:ref:`ransac-classes-label`. Enum values are lowercase.
+
+- ``pycunls.RansacRole`` — ``sampled`` / ``always_on``.
+- ``pycunls.RansacScoring`` — ``msac`` / ``inlier_count``.
+- ``pycunls.RansacLinearSolverType`` — ``cholesky`` / ``ldlt``.
+
+**pycunls.RansacFactorBatchOptions(role=RansacRole.sampled,
+inlier_threshold=1.0)** — attributes **role** (``RansacRole``) and
+**inlier_threshold** (``float``, raw residual norm).
+
+**pycunls.RansacMinimizerOptions()** — writable attributes with the C++ names
+and defaults: **hypotheses_per_round** (``int``, 256), **max_rounds**
+(``int``, 8), **sample_size** (``int``, 0 = automatic), **confidence**
+(``float``, 0.999), **early_stop_inlier_ratio** (``float``, 1.0), **seed**
+(``int``, 0), **factor_batches** (``list[RansacFactorBatchOptions]``, empty),
+**default_inlier_threshold** (``float``, 1.0), **scoring**
+(``RansacScoring``, ``msac``), **score_always_on** (``bool``, ``True``),
+**require_informative_inliers** (``bool``, ``True``),
+**scoring_memory_budget_bytes** (``int``, 64 MiB), **scoring_subset_size**
+(``int``, 16384), **scoring_finalists** (``int``, 4),
+**hypothesis_iterations** (``int``, 5), **final_iterations** (``int``, 20),
+**state_tolerance** (``float``, 1e-10), **cost_tolerance** (``float``, 1e-7),
+**linear_solver** (``RansacLinearSolverType``, ``ldlt``).
+
+.. note::
+
+   **factor_batches** is converted to and from a Python list, so assign a
+   whole list (``opts.factor_batches = [...]``); appending to the list it
+   returns (``opts.factor_batches.append(...)``) has no effect. Nested
+   structs such as ``RansacLevenbergMarquardtMinimizerOptions.base_options``
+   are returned by reference, so ``lm.base_options.max_rounds = 4`` does
+   modify ``lm``.
+
+**pycunls.RansacLevenbergMarquardtMinimizerOptions()** — **base_options**
+(``RansacMinimizerOptions``), **initial_lambda** (1e-3), **lambda_upscale**
+(2.0), **lambda_downscale** (0.5), **lambda_max** (1e6), **lambda_min**
+(1e-6), **step_accept_threshold** (0.25), **lambda_downscale_threshold**
+(0.75).
+
+**pycunls.RansacSummary** — subclass of :ref:`MinimizerSummary
+<py-minimizer-summary-label>` with read-only **num_rounds**,
+**num_hypotheses**, **num_valid_hypotheses**, **num_inliers**,
+**inlier_ratio**, **best_score**, **refinement_reverted**.
+
+**pycunls.RansacGaussNewtonMinimizer(options=RansacMinimizerOptions())**
+
+- ``minimize(stream: CudaStream, problem: Problem) -> RansacSummary`` — runs
+  RANSAC; the estimate is written into the problem's state batches. Releases
+  the GIL while running (custom Python factors re-acquire it). Invalid
+  configurations raise ``ValueError``.
+- ``inlier_mask(residual_batch_index: int) -> numpy.ndarray`` — host copy
+  (``uint8``, 1 = inlier) of the mask of a ``sampled`` batch of the problem
+  passed to the last ``minimize``, one entry per factor as that batch had in
+  that run. Raises ``RuntimeError`` for an out-of-range index, an
+  ``always_on`` batch, or before any run.
+
+**pycunls.RansacLevenbergMarquardtMinimizer(options=RansacLevenbergMarquardtMinimizerOptions())**
+— same methods; hypotheses and refinement use LM.
+
+**Example**
+
+.. code-block:: python
+
+   import pycunls
+
+   opts = pycunls.RansacLevenbergMarquardtMinimizerOptions()
+   opts.base_options.factor_batches = [
+       pycunls.RansacFactorBatchOptions(pycunls.RansacRole.sampled, 0.01)
+   ]
+   opts.base_options.seed = 1
+
+   ransac = pycunls.RansacLevenbergMarquardtMinimizer(opts)
+   summary = ransac.minimize(stream, problem)   # problem built as usual
+   mask = ransac.inlier_mask(0)        # numpy uint8, 1 = inlier
+   print(summary.num_inliers, summary.inlier_ratio)
 
 .. _py-problem-label:
 

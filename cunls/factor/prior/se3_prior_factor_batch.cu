@@ -18,6 +18,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
@@ -34,12 +35,14 @@ constexpr size_t kSE3PriorBlockSize = 256;
  */
 __global__ void collect_and_multiply_se3_prior_kernel(float const *const *state_pointers,
                                                       const SE3Transform *obs_inverse,
-                                                      size_t num_factors, SE3Transform *errors) {
+                                                      size_t num_items, SE3Transform *errors,
+                                                      const int *factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_items) return;
 
   const float *__restrict__ C = state_pointers[tid];
-  const float *__restrict__ I = obs_inverse[tid].data();
+  const float *__restrict__ I =
+      obs_inverse[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
   float *__restrict__ out = errors[tid].data();
 
   const float c00 = C[0], c01 = C[1], c02 = C[2], c03 = C[3];
@@ -90,30 +93,35 @@ SE3PriorFactorBatch::SE3PriorFactorBatch(const SE3Transform *observations_ptr, s
 }
 
 bool SE3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                   float const *const *state_pointers, cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
-  size_t num_blocks = (num_factors + kSE3PriorBlockSize - 1) / kSE3PriorBlockSize;
+                                   float const *const *state_pointers, cudaStream_t stream,
+                                   const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  transforms_error_.resize(num_items);  // keeps capacity: allocates at most once per size
+  const size_t num_blocks = (num_items + kSE3PriorBlockSize - 1) / kSE3PriorBlockSize;
 
   // Fused: collect T_current from state pointers + compute T_inv * T_current
   collect_and_multiply_se3_prior_kernel<<<num_blocks, kSE3PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_factors, transforms_error_.data());
+      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
-  // Step 3: Compute residual = Log(T_error) using SE(3) logarithm map
+  // Residual = Log(T_error) using the SE(3) logarithm map
   constexpr size_t transform_pitch = 4;
   constexpr size_t transform_stride = 16;
   constexpr size_t twist_stride = 6;
   ComputeLogSE3(stream, reinterpret_cast<const float *>(transforms_error_.data()), transform_pitch,
-                transform_stride, twist_stride, num_factors, residuals);
+                transform_stride, twist_stride, num_items, residuals);
 
-  // Step 4: Compute Jacobian = J_r^{-1}(residual) if requested
+  // Jacobian = J_r^{-1}(residual) if requested
   if (jacobians != nullptr) {
     constexpr size_t jacobian_pitch = 6;
     constexpr size_t jacobian_stride = 36;
     ComputeJacobianRightInverseSE3(stream, residuals, twist_stride, jacobian_pitch, jacobian_stride,
-                                   num_factors, jacobians);
+                                   num_items, jacobians);
   }
-
   return true;
 }
 

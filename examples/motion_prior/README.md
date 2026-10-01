@@ -21,8 +21,12 @@ covariance weighting sections) for the API reference.
 
 ## Files
 
-- `main.cpp`: complete synthetic motion-prior pipeline.
-- `../utils/`: shared host-side utilities (SE(3) math, validation).
+- `main.cpp`: the cuNLS workflow, step by step; the trajectory comes from
+  `examples::MakeConstantVelocityScene`.
+- `../utils/`: header-only helpers kept out of `main` so it reads as the cuNLS
+  workflow: `datasets.h` (synthetic scenes), `validation.h` (error metrics),
+  `report.h` (printing and the quality verdict), `cli.h` (command-line flags),
+  `se3_utils.h` / `camera_utils.h` (host SE(3) math and projection).
 - Built by the shared `examples/CMakeLists.txt`.
 - Exported by the shared `examples/build_in_docker.sh`.
 

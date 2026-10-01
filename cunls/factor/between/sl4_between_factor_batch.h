@@ -27,8 +27,10 @@ class SL4BetweenFactorBatch : public SizedFactorBatch<15, 15, 15> {
  public:
   SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr, size_t num_factors);
 
+  /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                cudaStream_t stream) const final;
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   size_t NumFactors() const final { return num_factors_; }
 

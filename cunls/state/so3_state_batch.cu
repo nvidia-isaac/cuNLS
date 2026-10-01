@@ -24,10 +24,8 @@ namespace {
 
 constexpr int kBlockSize = 256;
 
-__global__ void fused_so3_plus_kernel(const float *__restrict__ x,
-                                      const float *__restrict__ delta,
-                                      float *__restrict__ result, int n,
-                                      bool negate_delta) {
+__global__ void fused_so3_plus_kernel(const float *__restrict__ x, const float *__restrict__ delta,
+                                      float *__restrict__ result, int n, bool negate_delta) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= n) {
     return;
@@ -87,43 +85,42 @@ __global__ void fused_so3_plus_kernel(const float *__restrict__ x,
   R[8] = x6 * e02 + x7 * e12 + x8 * e22;
 }
 
-void LaunchFusedSo3Plus(cudaStream_t stream, const float *x, const float *delta,
-                        float *result, size_t num_blocks, bool negate_delta) {
+void LaunchFusedSo3Plus(cudaStream_t stream, const float *x, const float *delta, float *result,
+                        size_t num_blocks, bool negate_delta) {
   int n = static_cast<int>(num_blocks);
   if (n <= 0) {
     return;
   }
   int grid = (n + kBlockSize - 1) / kBlockSize;
-  fused_so3_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n,
-                                                         negate_delta);
+  fused_so3_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n, negate_delta);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-} // namespace
+}  // namespace
 
-SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle,
-                             const float *device_ptr, size_t num_blocks)
-    : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle),
-      delta_rotations_(num_blocks), twists_(num_blocks * 3) {}
-
-SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle,
-                             const float *device_ptr, size_t num_blocks,
-                             const int *device_constant_state_ids,
-                             size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids,
-           num_const_state_blocks),
-      cublas_handle_(cublas_handle), delta_rotations_(num_blocks),
+SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
+                             size_t num_blocks)
+    : Base(device_ptr, num_blocks),
+      cublas_handle_(cublas_handle),
+      delta_rotations_(num_blocks),
       twists_(num_blocks * 3) {}
 
-void SO3StateBatch::ApplyUpdate(const float *x, const float *delta,
-                                float *result, bool invert_delta,
-                                cudaStream_t stream) {
+SO3StateBatch::SO3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
+                             size_t num_blocks, const int *device_constant_state_ids,
+                             size_t num_const_state_blocks)
+    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
+      cublas_handle_(cublas_handle),
+      delta_rotations_(num_blocks),
+      twists_(num_blocks * 3) {}
+
+void SO3StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
+                                bool invert_delta, cudaStream_t stream) {
   LaunchFusedSo3Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
 }
 
-void SO3StateBatch::Plus(const float *x, const float *delta,
-                         float *x_plus_delta, cudaStream_t stream) {
-  LaunchFusedSo3Plus(stream, x, delta, x_plus_delta, NumStateBlocks(), false);
+void SO3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                         cudaStream_t stream, size_t num_replicas) {
+  LaunchFusedSo3Plus(stream, x, delta, x_plus_delta, NumStateBlocks() * num_replicas, false);
 }
 
-} // namespace cunls
+}  // namespace cunls

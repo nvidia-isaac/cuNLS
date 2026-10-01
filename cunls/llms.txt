@@ -17,7 +17,7 @@ This directory contains all core library modules and the public umbrella header
 - `linear_solver/llms.txt`: sparse solver interface, BlockSparsePCG
   iterative solver (default), cuDSS direct solver, and dense fallbacks.
 - `math/llms.txt`: Lie and matrix math kernels/utilities.
-- `minimizer/llms.txt`: `Problem`, residual wrappers, GN/LM solvers.
+- `minimizer/llms.txt`: `Problem`, residual wrappers, GN/LM solvers, RANSAC minimizers.
 - `robustifier/llms.txt`: robust loss batches.
 - `state/llms.txt`: manifold state batch implementations and update orchestration.
 

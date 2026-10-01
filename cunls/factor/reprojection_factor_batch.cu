@@ -54,6 +54,7 @@
  *   d(r)/d(rotation) = -Jc * R * [P_world]_x
  */
 
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/reprojection_factor_batch.h"
 
 namespace cunls {
@@ -68,13 +69,14 @@ constexpr size_t kBlockSize = 256;
  * reprojection_cost_kernel. The SE(3) camera-from-rig multiply is fully
  * unrolled inline, exploiting the [0 0 0 1] last row.
  */
-__global__ void reprojection_fused_kernel(
-    const Vector<2> *observations, float const *const *state_pointers,
-    const SE3Transform *poses_camera_from_rig, float *residuals,
-    float *jacobians, float z_threshold, int num_observations) {
+__global__ void reprojection_fused_kernel(const Vector<2> *observations,
+                                          float const *const *state_pointers,
+                                          const SE3Transform *poses_camera_from_rig,
+                                          float *residuals, float *jacobians, float z_threshold,
+                                          int num_items, const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_observations)
-    return;
+  if (tid >= num_items) return;
+  const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   constexpr int kResidualDim = 2;
   constexpr int kJacobianCols = 9;
@@ -86,7 +88,7 @@ __global__ void reprojection_fused_kernel(
   float pose[12];
 
   if (poses_camera_from_rig != nullptr) {
-    const float *__restrict__ E = poses_camera_from_rig[tid].data();
+    const float *__restrict__ E = poses_camera_from_rig[m].data();
 
     const float e00 = E[0], e01 = E[1], e02 = E[2], e03 = E[3];
     const float e10 = E[4], e11 = E[5], e12 = E[6], e13 = E[7];
@@ -110,8 +112,7 @@ __global__ void reprojection_fused_kernel(
     pose[11] = e20 * r03 + e21 * r13 + e22 * r23 + e23;
   } else {
 #pragma unroll
-    for (int i = 0; i < 12; i++)
-      pose[i] = rig[i];
+    for (int i = 0; i < 12; i++) pose[i] = rig[i];
   }
 
   float point_cam[3];
@@ -129,7 +130,7 @@ __global__ void reprojection_fused_kernel(
       res_ptr[1] = 0.0f;
     } else {
       inv_z = __frcp_rn(point_cam[2]);
-      const auto &obs = observations[tid];
+      const auto &obs = observations[m];
       res_ptr[0] = point_cam[0] * inv_z - obs[0];
       res_ptr[1] = point_cam[1] * inv_z - obs[1];
     }
@@ -141,8 +142,7 @@ __global__ void reprojection_fused_kernel(
 
     if (point_cam[2] < z_threshold) {
 #pragma unroll
-      for (int i = 0; i < kJacobianBlockSize; i++)
-        jac_ptr[i] = 0.0f;
+      for (int i = 0; i < kJacobianBlockSize; i++) jac_ptr[i] = 0.0f;
       return;
     }
 
@@ -187,32 +187,30 @@ __global__ void reprojection_fused_kernel(
 }
 
 ReprojectionFactorBatch::ReprojectionFactorBatch(const Vector<2> *observations,
-                                                 size_t num_observations,
-                                                 float z_threshold)
-    : observations_(observations), num_observations_(num_observations),
-      z_threshold_(z_threshold) {}
+                                                 size_t num_observations, float z_threshold)
+    : observations_(observations), num_observations_(num_observations), z_threshold_(z_threshold) {}
 
-ReprojectionFactorBatch::ReprojectionFactorBatch(
-    const Vector<2> *observations, const SE3Transform *poses_camera_from_rig,
-    size_t num_observations, float z_threshold)
+ReprojectionFactorBatch::ReprojectionFactorBatch(const Vector<2> *observations,
+                                                 const SE3Transform *poses_camera_from_rig,
+                                                 size_t num_observations, float z_threshold)
     : observations_(observations),
       poses_camera_from_rig_(poses_camera_from_rig),
-      num_observations_(num_observations), z_threshold_(z_threshold) {}
+      num_observations_(num_observations),
+      z_threshold_(z_threshold) {}
 
 bool ReprojectionFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                       float const *const *state_pointers,
-                                       cudaStream_t stream) const {
-  if (num_observations_ == 0) {
+                                       float const *const *state_pointers, cudaStream_t stream,
+                                       const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || num_observations_ == 0) {
     return true;
   }
-  size_t num_blocks = (num_observations_ + kBlockSize - 1) / kBlockSize;
-
+  const size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
   reprojection_fused_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      observations_, state_pointers, poses_camera_from_rig_, residuals,
-      jacobians, z_threshold_, num_observations_);
-
+      observations_, state_pointers, poses_camera_from_rig_, residuals, jacobians, z_threshold_,
+      static_cast<int>(num_items), factor_ids, static_cast<int>(num_observations_));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-} // namespace cunls
+}  // namespace cunls

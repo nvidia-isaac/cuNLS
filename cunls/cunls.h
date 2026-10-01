@@ -69,6 +69,7 @@
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/minimizer/ransac_minimizer.h"
 #include "cunls/robustifier/arctan_loss_function_batch.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"

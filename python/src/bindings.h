@@ -33,9 +33,10 @@ uintptr_t extract_device_ptr(nb::handle obj);
 
 // --- Binding registration entry points (one per translation unit) ----------
 
-void bind_types(nb::module_ &m);  // CudaStream, CublasHandle, enums, options
-void bind_state(nb::module_ &m);  // StateBatch hierarchy (vector, Lie groups)
-void bind_factor(nb::module_ &m); // FactorBatch hierarchy + CustomFactorBatch
-void bind_loss(nb::module_ &m);   // LossFunctionBatch hierarchy
-void bind_minimizer(nb::module_ &m); // GaussNewton / LevenbergMarquardt
-void bind_problem(nb::module_ &m);   // Problem (assembles states + factors)
+void bind_types(nb::module_ &m);      // CudaStream, CublasHandle, enums, options
+void bind_state(nb::module_ &m);      // StateBatch hierarchy (vector, Lie groups)
+void bind_factor(nb::module_ &m);     // FactorBatch hierarchy + CustomFactorBatch
+void bind_loss(nb::module_ &m);       // LossFunctionBatch hierarchy
+void bind_minimizer(nb::module_ &m);  // GaussNewton / LevenbergMarquardt
+void bind_ransac(nb::module_ &m);     // RANSAC minimizers, options, summary
+void bind_problem(nb::module_ &m);    // Problem (assembles states + factors)

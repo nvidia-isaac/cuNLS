@@ -25,8 +25,7 @@ namespace {
 constexpr int kBlockSize = 256;
 
 /** Same logic as ComputeVCoeffsSim2 in sim_lie_math.cu (inlined for fusion). */
-__device__ void ComputeVCoeffsSim2Inline(float theta, float lambda, float &X,
-                                         float &thetaY) {
+__device__ void ComputeVCoeffsSim2Inline(float theta, float lambda, float &X, float &thetaY) {
   const float lambda2 = lambda * lambda;
   const float theta2 = theta * theta;
 
@@ -68,17 +67,16 @@ __device__ void ComputeVCoeffsSim2Inline(float theta, float lambda, float &X,
 
   const float alpha_coeff = lambda2 / d2;
   const float s_inv = expf(-lambda);
-  X = alpha_coeff * (1.0f - s_inv) / lambda +
-      (1.0f - alpha_coeff) * (A - lambda * B);
-  const float Y = alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 +
-                  (1.0f - alpha_coeff) * (B - lambda * C);
+  X = alpha_coeff * (1.0f - s_inv) / lambda + (1.0f - alpha_coeff) * (A - lambda * B);
+  const float Y =
+      alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 + (1.0f - alpha_coeff) * (B - lambda * C);
   thetaY = theta * Y;
 }
 
 __global__ void sim2_apply_update_fused_kernel(const float *__restrict__ x,
                                                const float *__restrict__ delta,
-                                               float *__restrict__ result,
-                                               int n, bool negate_delta) {
+                                               float *__restrict__ result, int n,
+                                               bool negate_delta) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= n) {
     return;
@@ -120,36 +118,37 @@ __global__ void sim2_apply_update_fused_kernel(const float *__restrict__ x,
   }
 }
 
-} // namespace
+}  // namespace
 
-Similarity2StateBatch::Similarity2StateBatch(cuBLASHandle &cublas_handle,
-                                             const float *device_ptr,
+Similarity2StateBatch::Similarity2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
                                              size_t num_blocks)
-    : Base(device_ptr, num_blocks), cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks), tangents_(num_blocks * 4) {}
-
-Similarity2StateBatch::Similarity2StateBatch(
-    cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
-    const int *device_constant_state_ids, size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids,
-           num_const_state_blocks),
-      cublas_handle_(cublas_handle), delta_transforms_(num_blocks),
+    : Base(device_ptr, num_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
       tangents_(num_blocks * 4) {}
 
-void Similarity2StateBatch::ApplyUpdate(const float *x, const float *delta,
-                                        float *result, bool invert_delta,
-                                        cudaStream_t stream) {
-  const int num_transforms = static_cast<int>(NumStateBlocks());
+Similarity2StateBatch::Similarity2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
+                                             size_t num_blocks,
+                                             const int *device_constant_state_ids,
+                                             size_t num_const_state_blocks)
+    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
+      cublas_handle_(cublas_handle),
+      delta_transforms_(num_blocks),
+      tangents_(num_blocks * 4) {}
+
+void Similarity2StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
+                                        bool invert_delta, cudaStream_t stream, size_t num_blocks) {
+  const int num_transforms = static_cast<int>(num_blocks);
   const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
-  sim2_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(
-      x, delta, result, num_transforms, invert_delta);
+  sim2_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, num_transforms,
+                                                                  invert_delta);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   static_cast<void>(cublas_handle_);
 }
 
-void Similarity2StateBatch::Plus(const float *x, const float *delta,
-                                 float *x_plus_delta, cudaStream_t stream) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream);
+void Similarity2StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
+                                 cudaStream_t stream, size_t num_replicas) {
+  ApplyUpdate(x, delta, x_plus_delta, false, stream, NumStateBlocks() * num_replicas);
 }
 
-} // namespace cunls
+}  // namespace cunls

@@ -20,6 +20,13 @@ optimization.
 - `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
 - `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
 - `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
+- `ransac_minimizer.h`: `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
+  `RansacMinimizerOptions`, `RansacSummary` (RANSAC over an ordinary `Problem`
+  whose total free tangent dimension is <= `kMaxRansacTangentDim` = 64)
+- `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout` (problem
+  description), `SlotSet` (slots with state replicas, solved in lockstep),
+  `HypothesisScorer`, `RansacContext` (rounds, refinement), and kernels
+  (`ransac_kernels.h` declares all launchers)
 
 ## Solver flow
 
@@ -39,3 +46,25 @@ optimization.
   factor and the solver supports it, otherwise as scalar CSR. This is chosen
   automatically inside `NormalEquations`; no user-facing option, and no storage
   branch outside that class.
+
+## RANSAC minimizers
+
+- Use only `FactorBatch::Evaluate` and `StateBatch::Plus`, through their item
+  (`factor_ids`, `num_factor_ids`) and replica (`num_replicas`) parameters;
+  every factor and state batch must honor them. Guide:
+  `docs/sphinx/ransac.rst`; design: `docs/design/ransac_minimizers.md`.
+- Each hypothesis (slot) owns a replica of every state batch with a free block;
+  fully constant batches are shared.
+- Sampling (`SlotSet::DrawSamples`): slot p's minimal sample is the first s
+  elements of a keyed Feistel permutation (no sort) with the slot-specific key
+  `PermutationKey(seed, round, p)`, so samples of different slots may overlap.
+- Call pattern: `SlotSet::Evaluate` and `HypothesisScorer::EvaluateChunk`
+  evaluate all slots with one `Evaluate` call per residual batch (minimal
+  samples addressed through `factor_ids`); `SlotSet::ApplyStep` makes one
+  `Plus` call per state batch with `num_replicas = num_slots_`.
+- Per-hypothesis normal equations (register-tiled, no atomics), Jacobi-
+  equilibrated Cholesky / pivoted LDLT (warp or block per slot) and scoring are
+  deterministic (fixed reduction order): same seed, same bits.
+- By default an inlier must have a non-zero Jacobian on a free block
+  (`require_informative_inliers`), which stops zero-residual degenerate
+  configurations (e.g. PnP points behind the camera) from scoring as perfect.

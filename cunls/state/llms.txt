@@ -23,6 +23,9 @@ operations for applying tangent-space updates.
 - Backed by user-provided contiguous device memory.
 - Optional constant state IDs mark fixed blocks excluded from optimization.
 - `StateBlockDevicePtr(i)` returns pointers into underlying batch storage.
+- `Plus(x, delta, out, stream, num_replicas = 1)` processes `num_replicas`
+  contiguous copies of the batch (replica r = blocks [r*N, (r+1)*N)); out does
+  not overlap the inputs. RANSAC passes one replica per hypothesis.
 
 ## Related modules
 

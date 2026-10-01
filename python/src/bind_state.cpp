@@ -34,7 +34,6 @@
 // The template helpers below factor out the repetitive nanobind boilerplate.
 
 #include "bindings.h"
-
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/similarity2_state_batch.h"
@@ -55,7 +54,7 @@ namespace {
 // Storage layout mirrors SizedStateBatch: a contiguous GPU buffer of
 // num_blocks * ambient_size floats, with optional const-state indices.
 class PyStateBatch : public cunls::StateBatch {
-public:
+ public:
   const float *ptr_;
   size_t ambient_size_;
   size_t tangent_size_;
@@ -63,10 +62,11 @@ public:
   const int *const_ids_;
   size_t num_const_;
 
-  PyStateBatch(uintptr_t data_ptr, size_t ambient_size, size_t tangent_size,
-               size_t num_blocks, uintptr_t const_ids_ptr, size_t num_const)
+  PyStateBatch(uintptr_t data_ptr, size_t ambient_size, size_t tangent_size, size_t num_blocks,
+               uintptr_t const_ids_ptr, size_t num_const)
       : ptr_(reinterpret_cast<const float *>(data_ptr)),
-        ambient_size_(ambient_size), tangent_size_(tangent_size),
+        ambient_size_(ambient_size),
+        tangent_size_(tangent_size),
         num_blocks_(num_blocks),
         const_ids_(reinterpret_cast<const int *>(const_ids_ptr)),
         num_const_(num_const) {}
@@ -76,31 +76,29 @@ public:
   size_t NumStateBlocks() const override { return num_blocks_; }
 
   float *StateBlockDevicePtr(size_t idx) override {
-    if (idx >= num_blocks_)
-      return nullptr;
+    if (idx >= num_blocks_) return nullptr;
     return const_cast<float *>(ptr_ + idx * ambient_size_);
   }
 
   const float *StateBlockDevicePtr(size_t idx) const override {
-    if (idx >= num_blocks_)
-      return nullptr;
+    if (idx >= num_blocks_) return nullptr;
     return ptr_ + idx * ambient_size_;
   }
 
   const int *ConstStateIds() const override { return const_ids_; }
   size_t NumConstStateBlocks() const override { return num_const_; }
 
-  // Manifold retraction — forwards to Python ``plus()`` on the subclass.
-  // The GIL must be re-acquired because the C++ minimizer releases it
-  // before entering its iteration loop.
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override {
+  // Manifold retraction — forwards to Python ``plus(x, delta, out, stream,
+  // num_replicas)`` on the subclass (see StateBatch::Plus for the replica
+  // layout). The GIL must be re-acquired because the C++ minimizer releases
+  // it before entering its iteration loop.
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override {
     nb::gil_scoped_acquire gil;
     nb::object self_obj = nb::find(this);
-    self_obj.attr("plus")(reinterpret_cast<uintptr_t>(x),
-                          reinterpret_cast<uintptr_t>(delta),
+    self_obj.attr("plus")(reinterpret_cast<uintptr_t>(x), reinterpret_cast<uintptr_t>(delta),
                           reinterpret_cast<uintptr_t>(x_plus_delta),
-                          reinterpret_cast<uintptr_t>(stream));
+                          reinterpret_cast<uintptr_t>(stream), num_replicas);
   }
 };
 
@@ -119,24 +117,20 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle data, size_t num_blocks) {
-            auto ptr =
-                reinterpret_cast<const float *>(extract_device_ptr(data));
+            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
             new (self) Class(ptr, num_blocks);
           },
           nb::arg("data"), nb::arg("num_blocks"), nb::keep_alive<1, 2>())
       .def(
           "__init__",
-          [](Class *self, nb::handle data, size_t num_blocks,
-             nb::handle const_ids, size_t num_const) {
-            auto ptr =
-                reinterpret_cast<const float *>(extract_device_ptr(data));
-            auto cids =
-                reinterpret_cast<const int *>(extract_device_ptr(const_ids));
+          [](Class *self, nb::handle data, size_t num_blocks, nb::handle const_ids,
+             size_t num_const) {
+            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
+            auto cids = reinterpret_cast<const int *>(extract_device_ptr(const_ids));
             new (self) Class(ptr, num_blocks, cids, num_const);
           },
           nb::arg("data"), nb::arg("num_blocks"), nb::arg("const_state_ids"),
-          nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 4>())
+          nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
       .def(
           "state_block_device_ptr",
           [](Class &self, size_t idx) -> uintptr_t {
@@ -155,27 +149,23 @@ template <typename Class>
 void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
   cls.def(
          "__init__",
-         [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data,
-            size_t num_blocks) {
+         [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data, size_t num_blocks) {
            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
            new (self) Class(cublas, ptr, num_blocks);
          },
-         nb::arg("cublas_handle"), nb::arg("data"), nb::arg("num_blocks"),
-         nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
+         nb::arg("cublas_handle"), nb::arg("data"), nb::arg("num_blocks"), nb::keep_alive<1, 2>(),
+         nb::keep_alive<1, 3>())
       .def(
           "__init__",
-          [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data,
-             size_t num_blocks, nb::handle const_ids, size_t num_const) {
-            auto ptr =
-                reinterpret_cast<const float *>(extract_device_ptr(data));
-            auto cids =
-                reinterpret_cast<const int *>(extract_device_ptr(const_ids));
+          [](Class *self, cunls::cuBLASHandle &cublas, nb::handle data, size_t num_blocks,
+             nb::handle const_ids, size_t num_const) {
+            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
+            auto cids = reinterpret_cast<const int *>(extract_device_ptr(const_ids));
             new (self) Class(cublas, ptr, num_blocks, cids, num_const);
           },
           nb::arg("cublas_handle"), nb::arg("data"), nb::arg("num_blocks"),
-          nb::arg("const_state_ids"), nb::arg("num_const_state_blocks"),
-          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
-          nb::keep_alive<1, 5>())
+          nb::arg("const_state_ids"), nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>(), nb::keep_alive<1, 5>())
       .def(
           "state_block_device_ptr",
           [](Class &self, size_t idx) -> uintptr_t {
@@ -187,12 +177,11 @@ void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
       .def_prop_ro("ambient_size", &Class::AmbientSize);
 }
 
-} // namespace
+}  // namespace
 
 void bind_state(nb::module_ &m) {
-  nb::class_<cunls::StateBatch>(
-      m, "StateBatch",
-      "Abstract base class for batched state blocks on a manifold.");
+  nb::class_<cunls::StateBatch>(m, "StateBatch",
+                                "Abstract base class for batched state blocks on a manifold.");
 
   bind_vector_state_batch<1>(m, "VectorStateBatch1");
   bind_vector_state_batch<2>(m, "VectorStateBatch2");
@@ -201,38 +190,32 @@ void bind_state(nb::module_ &m) {
 
   {
     auto cls = nb::class_<cunls::SE3StateBatch, cunls::StateBatch>(
-        m, "SE3StateBatch",
-        "SE(3) state batch. Ambient=16 (4x4 matrix), Tangent=6.");
+        m, "SE3StateBatch", "SE(3) state batch. Ambient=16 (4x4 matrix), Tangent=6.");
     bind_manifold_state_batch(cls);
   }
   {
     auto cls = nb::class_<cunls::SO3StateBatch, cunls::StateBatch>(
-        m, "SO3StateBatch",
-        "SO(3) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
+        m, "SO3StateBatch", "SO(3) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
     bind_manifold_state_batch(cls);
   }
   {
     auto cls = nb::class_<cunls::SO2StateBatch, cunls::StateBatch>(
-        m, "SO2StateBatch",
-        "SO(2) state batch. Ambient=4 (2x2 matrix), Tangent=1.");
+        m, "SO2StateBatch", "SO(2) state batch. Ambient=4 (2x2 matrix), Tangent=1.");
     bind_manifold_state_batch(cls);
   }
   {
     auto cls = nb::class_<cunls::SE2StateBatch, cunls::StateBatch>(
-        m, "SE2StateBatch",
-        "SE(2) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
+        m, "SE2StateBatch", "SE(2) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
     bind_manifold_state_batch(cls);
   }
   {
     auto cls = nb::class_<cunls::Similarity2StateBatch, cunls::StateBatch>(
-        m, "Similarity2StateBatch",
-        "2D similarity state batch. Ambient=9, Tangent=4.");
+        m, "Similarity2StateBatch", "2D similarity state batch. Ambient=9, Tangent=4.");
     bind_manifold_state_batch(cls);
   }
   {
     auto cls = nb::class_<cunls::Similarity3StateBatch, cunls::StateBatch>(
-        m, "Similarity3StateBatch",
-        "3D similarity state batch. Ambient=16, Tangent=7.");
+        m, "Similarity3StateBatch", "3D similarity state batch. Ambient=16, Tangent=7.");
     bind_manifold_state_batch(cls);
   }
   {
@@ -251,36 +234,31 @@ void bind_state(nb::module_ &m) {
       "All pointers are passed as integer handles.")
       .def(
           "__init__",
-          [](PyStateBatch *self, nb::handle data, size_t ambient_size,
-             size_t tangent_size, size_t num_blocks) {
+          [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
+             size_t num_blocks) {
             auto ptr = extract_device_ptr(data);
-            new (self)
-                PyStateBatch(ptr, ambient_size, tangent_size, num_blocks, 0, 0);
+            new (self) PyStateBatch(ptr, ambient_size, tangent_size, num_blocks, 0, 0);
           },
-          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"),
-          nb::arg("num_blocks"), nb::keep_alive<1, 2>())
+          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("num_blocks"),
+          nb::keep_alive<1, 2>())
       .def(
           "__init__",
-          [](PyStateBatch *self, nb::handle data, size_t ambient_size,
-             size_t tangent_size, size_t num_blocks, nb::handle const_ids,
-             size_t num_const) {
+          [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
+             size_t num_blocks, nb::handle const_ids, size_t num_const) {
             auto ptr = extract_device_ptr(data);
             auto cids = extract_device_ptr(const_ids);
-            new (self) PyStateBatch(ptr, ambient_size, tangent_size, num_blocks,
-                                    cids, num_const);
+            new (self) PyStateBatch(ptr, ambient_size, tangent_size, num_blocks, cids, num_const);
           },
-          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"),
-          nb::arg("num_blocks"), nb::arg("const_state_ids"),
-          nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(),
+          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("num_blocks"),
+          nb::arg("const_state_ids"), nb::arg("num_const_state_blocks"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 6>())
       .def(
           "plus",
-          [](PyStateBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t) {
-            throw std::runtime_error(
-                "CustomStateBatch.plus() must be overridden in a subclass.");
+          [](PyStateBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t, size_t) {
+            throw std::runtime_error("CustomStateBatch.plus() must be overridden in a subclass.");
           },
           nb::arg("x_ptr"), nb::arg("delta_ptr"), nb::arg("x_plus_delta_ptr"),
-          nb::arg("stream_handle"))
+          nb::arg("stream_handle"), nb::arg("num_replicas"))
       .def(
           "state_block_device_ptr",
           [](PyStateBatch &self, size_t idx) -> uintptr_t {

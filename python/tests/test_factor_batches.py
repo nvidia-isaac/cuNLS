@@ -265,4 +265,4 @@ class TestCustomFactorBatch:
     def test_evaluate_raises_without_override(self):
         fb = pycunls.CustomFactorBatch(1, [1], 10)
         with pytest.raises(RuntimeError, match="must be overridden"):
-            fb.evaluate(0, 0, 0, 0)
+            fb.evaluate(0, 0, 0, 0, 0, 1)

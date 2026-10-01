@@ -17,6 +17,7 @@
 
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/so3_prior_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
@@ -34,13 +35,15 @@ constexpr size_t kSO3BlockSize = 256;
  * launch overhead and register pressure.
  */
 __global__ void collect_and_multiply_so3_kernel(float const *const *state_pointers,
-                                                const Matrix<3> *targets, size_t num_factors,
-                                                Matrix<3> *errors) {
+                                                const Matrix<3> *targets, size_t num_items,
+                                                Matrix<3> *errors, const int *factor_ids,
+                                                int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= num_factors) return;
+  if (tid >= num_items) return;
 
   const float *__restrict__ C = state_pointers[tid];
-  const float *__restrict__ T = targets[tid].data();
+  const float *__restrict__ T =
+      targets[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
   float *__restrict__ out = errors[tid].data();
 
   // Load both 3x3 matrices into registers
@@ -70,13 +73,19 @@ SO3PriorFactorBatch::SO3PriorFactorBatch(const SO3Rotation *observations_ptr, si
       rotations_error_(num_factors) {}
 
 bool SO3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                   float const *const *state_pointers, cudaStream_t stream) const {
-  size_t num_factors = NumFactors();
+                                   float const *const *state_pointers, cudaStream_t stream,
+                                   const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  rotations_error_.resize(num_items);  // keeps capacity: allocates at most once per size
 
   // Fused collect + R_target^T * R_current in one kernel launch
-  size_t num_blocks = (num_factors + kSO3BlockSize - 1) / kSO3BlockSize;
+  size_t num_blocks = (num_items + kSO3BlockSize - 1) / kSO3BlockSize;
   collect_and_multiply_so3_kernel<<<num_blocks, kSO3BlockSize, 0, stream>>>(
-      state_pointers, observations_ptr_, num_factors, rotations_error_.data());
+      state_pointers, observations_ptr_, num_items, rotations_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Compute residual = Log(R_error)
@@ -84,13 +93,13 @@ bool SO3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
   constexpr size_t rotation_stride = 9;
   constexpr size_t twist_stride = 3;
   ComputeLogSO3(stream, reinterpret_cast<const float *>(rotations_error_.data()), rotation_pitch,
-                rotation_stride, twist_stride, num_factors, residuals);
+                rotation_stride, twist_stride, num_items, residuals);
 
   if (jacobians != nullptr) {
     constexpr size_t jacobian_pitch = 3;
     constexpr size_t jacobian_stride = 9;
     ComputeJacobianRightInverseSO3(stream, residuals, twist_stride, jacobian_pitch, jacobian_stride,
-                                   num_factors, jacobians);
+                                   num_items, jacobians);
   }
 
   return true;

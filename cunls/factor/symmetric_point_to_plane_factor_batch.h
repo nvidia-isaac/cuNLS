@@ -59,7 +59,7 @@ class SymmetricPointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
   using Base = SizedFactorBatch<1, 6>;
   using Vector3 = Vector<3>;
 
-public:
+ public:
   /**
    * @brief Constructs a batch of symmetric point-to-plane factors.
    *
@@ -78,12 +78,12 @@ public:
   SymmetricPointToPlaneFactorBatch(const Vector3 *p_observations_ptr,
                                    const Vector3 *q_observations_ptr,
                                    const Vector3 *np_observations_ptr,
-                                   const Vector3 *nq_observations_ptr,
-                                   size_t num_factors)
+                                   const Vector3 *nq_observations_ptr, size_t num_factors)
       : p_observations_ptr_(p_observations_ptr),
         q_observations_ptr_(q_observations_ptr),
         np_observations_ptr_(np_observations_ptr),
-        nq_observations_ptr_(nq_observations_ptr), num_factors_(num_factors) {}
+        nq_observations_ptr_(nq_observations_ptr),
+        num_factors_(num_factors) {}
 
   /**
    * @brief Evaluates symmetric point-to-plane residuals and optionally
@@ -100,11 +100,15 @@ public:
    * @param state_pointers Device pointer to state block pointers. Each entry
    *                   points to an SE(3) transform (16 floats) on the device.
    * @param stream CUDA stream for asynchronous execution.
+   * @param factor_ids Optional per-item factor index (see
+   *                   FactorBatch::Evaluate's item contract).
+   * @param num_factor_ids Number of items (the length of factor_ids when it
+   *        is given); 0 means NumFactors().
    * @return true on success.
    */
-  bool Evaluate(float *residuals, float *jacobians,
-                float const *const *state_pointers,
-                cudaStream_t stream) const final;
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *factor_ids = nullptr,
+                size_t num_factor_ids = 0) const override;
 
   /**
    * @brief Returns the number of symmetric point-to-plane factors in
@@ -113,7 +117,7 @@ public:
    */
   size_t NumFactors() const final { return num_factors_; }
 
-private:
+ private:
   SymmetricPointToPlaneFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target points (p).
@@ -132,4 +136,4 @@ private:
   size_t num_factors_;
 };
 
-} // namespace cunls
+}  // namespace cunls

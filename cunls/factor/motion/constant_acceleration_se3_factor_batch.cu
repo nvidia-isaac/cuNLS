@@ -18,6 +18,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/motion/constant_acceleration_se3_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
@@ -26,10 +27,10 @@ namespace cunls {
 constexpr size_t kBlockSizeSE3CA = 256;
 
 /** @brief pose_rel = pose_k^{-1} * pose_{k+1} (same as the CV factor). */
-__global__ void ca_se3_relative_pose_kernel(float const *const *state_pointers, size_t num_factors,
+__global__ void ca_se3_relative_pose_kernel(float const *const *state_pointers, size_t num_items,
                                             SE3Transform *pose_rel) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
 
   const float *__restrict__ L = state_pointers[6 * tid + 0];
   const float *__restrict__ R = state_pointers[6 * tid + 1];
@@ -76,10 +77,10 @@ __global__ void ca_se3_relative_pose_kernel(float const *const *state_pointers, 
  */
 __global__ void ca_se3_assemble_kernel(float const *const *state_pointers, const Vector<6> *twist,
                                        const Matrix<6> *jl_inv, const Matrix<6> *jr_inv,
-                                       const float *dt, size_t num_factors, float *residuals,
-                                       float *jacobians) {
+                                       const float *dt, size_t num_items, const int *factor_ids,
+                                       int num_factors, float *residuals, float *jacobians) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_factors) return;
+  if (tid >= (int)num_items) return;
 
   constexpr int kDim = 6;
   constexpr int kCols = 36;
@@ -90,7 +91,7 @@ __global__ void ca_se3_assemble_kernel(float const *const *state_pointers, const
   const float *__restrict__ accel_k1 = state_pointers[6 * tid + 5];
   const float *__restrict__ tw = twist[tid].data();
   const float *__restrict__ jli = jl_inv[tid].data();
-  const float dt_i = dt[tid];
+  const float dt_i = dt[FactorMeasurementIndex(tid, factor_ids, num_factors)];
   const float half_dt2 = 0.5f * dt_i * dt_i;
 
   float *__restrict__ res = residuals + tid * 3 * kDim;
@@ -157,34 +158,43 @@ ConstantAccelerationSE3FactorBatch::ConstantAccelerationSE3FactorBatch(const flo
 
 bool ConstantAccelerationSE3FactorBatch::Evaluate(float *residuals, float *jacobians,
                                                   float const *const *state_pointers,
-                                                  cudaStream_t stream) const {
-  const size_t num_blocks = (num_factors_ + kBlockSizeSE3CA - 1) / kBlockSizeSE3CA;
+                                                  cudaStream_t stream, const int *factor_ids,
+                                                  size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
+  if (num_items == 0 || NumFactors() == 0) {
+    return true;
+  }
+  pose_rel_.resize(num_items);
+  twist_.resize(num_items);
+  jl_inv_.resize(num_items);
+  jr_inv_.resize(num_items);
+  const size_t num_blocks = (num_items + kBlockSizeSE3CA - 1) / kBlockSizeSE3CA;
 
-  ca_se3_relative_pose_kernel<<<num_blocks, kBlockSizeSE3CA, 0, stream>>>(
-      state_pointers, num_factors_, pose_rel_.data());
+  ca_se3_relative_pose_kernel<<<num_blocks, kBlockSizeSE3CA, 0, stream>>>(state_pointers, num_items,
+                                                                          pose_rel_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pose_pitch = 4;
   constexpr size_t pose_stride = 16;
   constexpr size_t twist_stride = 6;
   ComputeLogSE3(stream, reinterpret_cast<const float *>(pose_rel_.data()), pose_pitch, pose_stride,
-                twist_stride, num_factors_, reinterpret_cast<float *>(twist_.data()));
+                twist_stride, num_items, reinterpret_cast<float *>(twist_.data()));
 
   constexpr size_t jac_pitch = 6;
   constexpr size_t jac_stride = 36;
   ComputeJacobianLeftInverseSE3(stream, reinterpret_cast<const float *>(twist_.data()),
-                                twist_stride, jac_pitch, jac_stride, num_factors_,
+                                twist_stride, jac_pitch, jac_stride, num_items,
                                 reinterpret_cast<float *>(jl_inv_.data()));
 
   if (jacobians != nullptr) {
     ComputeJacobianRightInverseSE3(stream, reinterpret_cast<const float *>(twist_.data()),
-                                   twist_stride, jac_pitch, jac_stride, num_factors_,
+                                   twist_stride, jac_pitch, jac_stride, num_items,
                                    reinterpret_cast<float *>(jr_inv_.data()));
   }
 
   ca_se3_assemble_kernel<<<num_blocks, kBlockSizeSE3CA, 0, stream>>>(
-      state_pointers, twist_.data(), jl_inv_.data(), jr_inv_.data(), dt_ptr_, num_factors_,
-      residuals, jacobians);
+      state_pointers, twist_.data(), jl_inv_.data(), jr_inv_.data(), dt_ptr_, num_items, factor_ids,
+      static_cast<int>(NumFactors()), residuals, jacobians);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   return true;

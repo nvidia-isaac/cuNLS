@@ -74,15 +74,49 @@ StateBatch Interface
 
   :returns: [out] Number of state blocks in this batch.
 
-.. cpp:function:: void Plus(const float* x, const float* delta, float* x_plus_delta, cudaStream_t stream)
+.. cpp:function:: void Plus(const float* x, const float* delta, float* x_plus_delta, cudaStream_t stream, size_t num_replicas = 1)
 
-  Computes :math:`x_{\mathrm{out}} = x \oplus \delta` for each block in the batch.
+  Computes :math:`x_{\mathrm{out}} = x \oplus \delta` for every state block
+  in the arrays.
 
-  :param ``x``: [in] Device pointer to the current state values (ambient).
-  :param ``delta``: [in] Device pointer to tangent-space updates.
-  :param ``x_plus_delta``: [out] Device pointer to updated state values (ambient).
-  :param ``stream``: [in] CUDA stream for asynchronous execution.
+  **Terms.** :math:`N` = ``NumStateBlocks()``, :math:`A` = ``AmbientSize()``
+  (floats stored per block, e.g. 16 for an SE(3) matrix), :math:`T` =
+  ``TangentSize()`` (floats per update, e.g. 6 for SE(3)), :math:`R` =
+  ``num_replicas``. The arrays hold :math:`R` contiguous copies
+  ("replicas") of the batch, :math:`R \cdot N` blocks in total; replica
+  :math:`r` is blocks :math:`[rN, (r+1)N)`. The regular minimizers pass
+  :math:`R = 1` (the classic 4-argument call); the
+  :doc:`RANSAC minimizers <../ransac>` keep one replica per hypothesis and
+  update all of them in one call.
+
+  Every block is updated independently: output block :math:`i` depends only
+  on block :math:`i` of ``x`` and block :math:`i` of ``delta``.
+
+  :param ``x``: [in] Device array of :math:`R \cdot N \cdot A` floats; block
+    :math:`i` is ``x[i * A .. (i + 1) * A)``.
+  :param ``delta``: [in] Device array of :math:`R \cdot N \cdot T` floats;
+    block :math:`i`'s update is ``delta[i * T .. (i + 1) * T)``.
+  :param ``x_plus_delta``: [out] Device array of :math:`R \cdot N \cdot A`
+    floats, same layout as ``x``. Must not overlap ``x`` or ``delta``.
+  :param ``stream``: [in] CUDA stream on which all work is enqueued; the call
+    may return before the work completes.
+  :param ``num_replicas``: [in] :math:`R \geq 1` (default 1).
   :returns: [out] No return value.
+
+  **Example** (:math:`N = 2` blocks, :math:`R = 3` replicas: 6 blocks in every
+  array, block :math:`i` of ``x`` at ``x + i * A``, of ``delta`` at
+  ``delta + i * T``):
+
+  .. code-block:: text
+
+     global block i     0     1  |  2     3  |  4     5
+     replica r          0     0  |  1     1  |  2     2
+     block within r     0     1  |  0     1  |  0     1
+
+  **Implementing it.** Treat the arrays as one batch of :math:`R \cdot N`
+  blocks, e.g. one thread per block with :math:`i < R N`, and size any
+  internal scratch for :math:`R \cdot N` blocks, not :math:`N`. See
+  :doc:`../custom_factors_and_states`.
 
 .. cpp:function:: float* StateBlockDevicePtr(size_t state_block_idx)
 
@@ -645,20 +679,29 @@ scalars, quaternions, constrained subspaces).
 
 **Methods to override**
 
-- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle) -> None`` —
+- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas) -> None`` —
   implements the manifold retraction
   :math:`x_{\mathrm{out}} = x \oplus \delta` for **all blocks** in the
-  batch.  All four arguments are raw ``int`` handles:
+  arrays (the same contract as C++ :cpp:func:`StateBatch::Plus`).  The
+  arrays hold ``num_replicas`` contiguous copies of the batch, i.e.
+  ``R × num_blocks`` blocks with ``R = num_replicas``; replica *r* is blocks
+  ``[r * num_blocks, (r + 1) * num_blocks)``.  All five arguments are raw
+  ``int`` values:
 
   - *x_ptr* — device pointer to the current ambient state
-    (``num_blocks × ambient_size`` floats, read-only).
+    (``R × num_blocks × ambient_size`` floats, read-only).
   - *delta_ptr* — device pointer to the tangent-space updates
-    (``num_blocks × tangent_size`` floats, read-only).
+    (``R × num_blocks × tangent_size`` floats, read-only).
   - *x_plus_delta_ptr* — device pointer to the output buffer
-    (``num_blocks × ambient_size`` floats, write).
+    (``R × num_blocks × ambient_size`` floats, write; does not overlap the
+    inputs).
   - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
     **must** be launched on this stream so the minimizer can serialize
     operations correctly.
+  - *num_replicas* — ``R >= 1``. The regular minimizers pass ``1``; the
+    RANSAC minimizers pass one replica per hypothesis, so a state used with
+    RANSAC must process every replica (see
+    :doc:`../custom_factors_and_states`).
 
   The default implementation raises ``NotImplementedError``.
 
@@ -707,9 +750,11 @@ zero-copy pointer wrapping so you never need to manually construct
 
 **Methods to override**
 
-- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle) -> None`` —
+- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas) -> None`` —
   same contract as ``CustomStateBatch.plus``.  Typical implementations wrap
-  the pointers with ``self.wrap_array``, build a ``wp.Stream`` with
-  ``self.make_warp_stream``, and launch a ``@wp.kernel``.
+  the pointers with ``self.wrap_array`` (sized for
+  ``num_replicas × num_blocks`` blocks), build a ``wp.Stream`` with
+  ``self.make_warp_stream``, and launch a ``@wp.kernel`` with one thread per
+  block.
 
 See :ref:`pycunls_tutorial:Custom Warp State` for a complete example.

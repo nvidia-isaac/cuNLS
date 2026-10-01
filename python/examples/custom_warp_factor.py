@@ -13,301 +13,166 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Custom factor defined with NVIDIA Warp, solved via pycunls.
+"""Custom factor written with NVIDIA Warp (Python port of
+``examples/custom_factor/main.cu``).
 
-This is a Python port of ``examples/custom_factor/main.cu``. Like that C++
-example, it solves the same chain problem two ways:
-
-* **Part 1** (``ScalarDiffFactor``): the Warp kernel computes both the
-  residual and its (constant) analytic Jacobian.
-* **Part 2** (``ScalarDiffResidualOnlyFactor``): the Warp kernel computes
-  only the residual and is registered with
-  ``jacobian_mode_override=pycunls.JacobianMode.numeric`` so pycunls
-  differentiates it via finite differences instead. See
-  :doc:`../numeric_jacobians` for how this works.
-
-Both parts solve:
+Solves a chain of scalars x_0..x_{N-1} from difference measurements
 
     residual_i = (x_{i+1} - x_i) - measurement_i
 
-with Levenberg-Marquardt.
+plus a built-in prior on x_0, twice:
 
-Pointer-gathering strategy
---------------------------
-Warp kernels operate on contiguous ``wp.array`` objects and cannot perform
-the double-pointer indirection that raw CUDA kernels do (reading a
-``float*`` from a ``float const* const*`` and then dereferencing it).  The
-``evaluate()`` method therefore uses a CuPy ``RawKernel`` to gather the
-scattered scalar state values into a contiguous ``cp.ndarray`` before
-wrapping it as a ``wp.array`` and launching the Warp kernel.
+* Part 1 (``ScalarDiffFactor``): the Warp kernel computes the residual and
+  its (constant) analytic Jacobian [-1, +1].
+* Part 2 (``ScalarDiffResidualOnlyFactor``): the kernel computes only the
+  residual; the factor is registered with
+  ``jacobian_mode_override=pycunls.JacobianMode.numeric`` and pycunls
+  differentiates it by finite differences.
 
-Problem structure
------------------
-* **States**: N scalar values (VectorStateBatch1).
-* **Factors**: (N-1) ScalarDiffFactor + 1 PriorVectorFactorBatch1 anchor.
+Both factors follow the item contract of ``WarpFactorBatch.evaluate``: item t
+reads the measurement of its factor ``ids[t]`` and its own two states.
 """
 
-import numpy as np
 import cupy as cp
 import warp as wp
 
 import pycunls
 from pycunls.warp import WarpFactorBatch
+from example_utils import datasets, metrics, report
+from example_utils.gpu import gather_state_pairs
 
 wp.init()
 
 
-# ── Warp kernel ─────────────────────────────────────────────────────────────
+# ── Part 1: residual and analytic Jacobian ──────────────────────────────────
 
 @wp.kernel
-def scalar_diff_kernel(
-    measurements: wp.array(dtype=wp.float32),
-    left_vals: wp.array(dtype=wp.float32),
-    right_vals: wp.array(dtype=wp.float32),
-    residuals: wp.array(dtype=wp.float32),
-    jacobians: wp.array(dtype=wp.float32),
-    num_factors: int,
-    write_jacobians: int,
-):
-    i = wp.tid()
-    if i >= num_factors:
-        return
-
-    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[i]
-
+def scalar_diff_kernel(measurements: wp.array(dtype=wp.float32),
+                       ids: wp.array(dtype=wp.int32),
+                       left: wp.array(dtype=wp.float32),
+                       right: wp.array(dtype=wp.float32),
+                       residuals: wp.array(dtype=wp.float32),
+                       jacobians: wp.array(dtype=wp.float32),
+                       write_jacobians: int):
+    t = wp.tid()                                                # item
+    residuals[t] = (right[t] - left[t]) - measurements[ids[t]]  # measurement of its factor
     if write_jacobians != 0:
-        jacobians[i * 2] = -1.0
-        jacobians[i * 2 + 1] = 1.0
+        jacobians[2 * t] = -1.0                                 # d r / d x_i
+        jacobians[2 * t + 1] = 1.0                              # d r / d x_{i+1}
 
-
-# ── CuPy gather kernel ─────────────────────────────────────────────────────
-# Reads float values from scattered device pointers into a contiguous buffer.
-
-_gather_kernel = cp.RawKernel(r"""
-extern "C" __global__
-void gather_floats(const unsigned long long* ptrs,
-                   float* out, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        const float* p = reinterpret_cast<const float*>(ptrs[i]);
-        out[i] = p[0];
-    }
-}
-""", "gather_floats")
-
-
-def _gather_state_values(state_ptrs_ptr: int, count: int) -> cp.ndarray:
-    """Read *count* float values from scattered pointers in device memory."""
-    ptrs = cp.ndarray(
-        shape=(count,), dtype=cp.uint64,
-        memptr=cp.cuda.MemoryPointer(
-            cp.cuda.UnownedMemory(state_ptrs_ptr, count * 8, None), 0))
-    out = cp.empty(count, dtype=cp.float32)
-    threads = 256
-    blocks = (count + threads - 1) // threads
-    _gather_kernel((blocks,), (threads,), (ptrs, out, np.int32(count)))
-    return out
-
-
-# ── WarpFactorBatch subclass ───────────────────────────────────────────────
 
 class ScalarDiffFactor(WarpFactorBatch):
-    """Between factor on scalar states: residual_i = (x_{right} - x_{left}) - m_i.
+    """residual = (x_right - x_left) - m; one residual, two scalar state blocks."""
 
-    Each factor connects two scalar state blocks (block sizes = [1, 1]).
-    The Jacobian is constant: [-1, +1] per row (one row per factor).
-    """
+    def __init__(self, measurements, num_factors):
+        super().__init__(residual_size=1, state_block_sizes=[1, 1], num_factors=num_factors)
+        self.measurements = measurements
 
-    def __init__(self, measurements_wp: wp.array, num_factors: int):
-        super().__init__(
-            residual_size=1,
-            state_block_sizes=[1, 1],
-            num_factors=num_factors,
-        )
-        self.measurements = measurements_wp
-        self._num_factors = num_factors
+    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+                 factor_ids_ptr, num_factor_ids):
+        n = num_factor_ids                                  # number of items
+        ids = self.factor_ids(factor_ids_ptr, n)            # factor of each item
+        # Item t's states are state_pointers[2t] (x_i) and [2t + 1] (x_{i+1}).
+        left, right = gather_state_pairs(state_pointers_ptr, n, stream_handle)
 
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle):
-        n = self._num_factors
-
-        all_vals = _gather_state_values(state_pointers_ptr, n * 2)
-        left_vals = all_vals[0::2].copy()
-        right_vals = all_vals[1::2].copy()
-
-        left_wp = wp.array(ptr=int(left_vals.data.ptr), dtype=wp.float32,
-                           shape=(n,), device=self._device, copy=False)
-        right_wp = wp.array(ptr=int(right_vals.data.ptr), dtype=wp.float32,
-                            shape=(n,), device=self._device, copy=False)
-
-        res = self.wrap_array(residuals_ptr, wp.float32, n)
-        write_jac = 1 if jacobians_ptr != 0 else 0
-        jac = (self.wrap_array(jacobians_ptr, wp.float32, n * 2)
-               if jacobians_ptr != 0
-               else wp.zeros(1, dtype=wp.float32, device=self._device))
-
-        stream = self.make_warp_stream(stream_handle)
-        wp.launch(
-            scalar_diff_kernel,
-            dim=n,
-            inputs=[self.measurements, left_wp, right_wp, res, jac,
-                    n, write_jac],
-            stream=stream,
-        )
+        write_jacobians = 1 if jacobians_ptr != 0 else 0    # 0 = residuals only
+        jacobians = (self.wrap_array(jacobians_ptr, wp.float32, 2 * n) if write_jacobians
+                     else wp.zeros(1, dtype=wp.float32, device=self._device))
+        wp.launch(scalar_diff_kernel, dim=n,
+                  inputs=[self.measurements, ids, wp.from_dlpack(left), wp.from_dlpack(right),
+                          self.wrap_array(residuals_ptr, wp.float32, n), jacobians,
+                          write_jacobians],
+                  stream=self.make_warp_stream(stream_handle))
         return True
 
 
-# ── Part 2: residual-only Warp kernel, numeric Jacobian ────────────────────
-# Same residual as scalar_diff_kernel, but no Jacobian code path at all.
+# ── Part 2: residual only, numeric Jacobian ─────────────────────────────────
 
 @wp.kernel
-def scalar_diff_residual_only_kernel(
-    measurements: wp.array(dtype=wp.float32),
-    left_vals: wp.array(dtype=wp.float32),
-    right_vals: wp.array(dtype=wp.float32),
-    residuals: wp.array(dtype=wp.float32),
-    num_factors: int,
-):
-    i = wp.tid()
-    if i >= num_factors:
-        return
-    residuals[i] = (right_vals[i] - left_vals[i]) - measurements[i]
+def scalar_diff_residual_only_kernel(measurements: wp.array(dtype=wp.float32),
+                                     ids: wp.array(dtype=wp.int32),
+                                     left: wp.array(dtype=wp.float32),
+                                     right: wp.array(dtype=wp.float32),
+                                     residuals: wp.array(dtype=wp.float32)):
+    t = wp.tid()
+    residuals[t] = (right[t] - left[t]) - measurements[ids[t]]
 
 
 class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
-    """Same factor as ScalarDiffFactor, but only implements the residual.
+    """Same residual, no Jacobian code: register it with JacobianMode.numeric."""
 
-    Register this factor group with
-    ``jacobian_mode_override=pycunls.JacobianMode.numeric`` (see main()
-    below) and pycunls differentiates it via finite differences on the
-    manifold tangent space of each referenced state block -- there is
-    nothing else to write.
-    """
+    def __init__(self, measurements, num_factors):
+        super().__init__(residual_size=1, state_block_sizes=[1, 1], num_factors=num_factors)
+        self.measurements = measurements
 
-    def __init__(self, measurements_wp: wp.array, num_factors: int):
-        super().__init__(
-            residual_size=1,
-            state_block_sizes=[1, 1],
-            num_factors=num_factors,
-        )
-        self.measurements = measurements_wp
-        self._num_factors = num_factors
-
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle):
-        n = self._num_factors
-
-        all_vals = _gather_state_values(state_pointers_ptr, n * 2)
-        left_vals = all_vals[0::2].copy()
-        right_vals = all_vals[1::2].copy()
-
-        left_wp = wp.array(ptr=int(left_vals.data.ptr), dtype=wp.float32,
-                           shape=(n,), device=self._device, copy=False)
-        right_wp = wp.array(ptr=int(right_vals.data.ptr), dtype=wp.float32,
-                            shape=(n,), device=self._device, copy=False)
-
-        res = self.wrap_array(residuals_ptr, wp.float32, n)
-
-        stream = self.make_warp_stream(stream_handle)
-        wp.launch(
-            scalar_diff_residual_only_kernel,
-            dim=n,
-            inputs=[self.measurements, left_wp, right_wp, res, n],
-            stream=stream,
-        )
+    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+                 factor_ids_ptr, num_factor_ids):
+        n = num_factor_ids
+        ids = self.factor_ids(factor_ids_ptr, n)
+        left, right = gather_state_pairs(state_pointers_ptr, n, stream_handle)
+        wp.launch(scalar_diff_residual_only_kernel, dim=n,
+                  inputs=[self.measurements, ids, wp.from_dlpack(left), wp.from_dlpack(right),
+                          self.wrap_array(residuals_ptr, wp.float32, n)],
+                  stream=self.make_warp_stream(stream_handle))
         return True
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
-def run_chain_example(title: str, use_numeric_jacobian: bool):
-    num_states = 256
-    num_diff = num_states - 1
+def run_chain_example(title, use_numeric_jacobian):
+    # 1. Synthetic data: monotonic chain, exact differences, noisy initial guess.
+    chain = datasets.scalar_chain(num_states=256)
+    num_states = len(chain.gt)
 
-    rng = np.random.default_rng(121314)
+    # 2. Upload: states and the anchor value with CuPy, measurements with Warp.
+    states_gpu = cp.asarray(chain.initial)
+    prior_gpu = cp.asarray(chain.gt[:1])
+    measurements_wp = wp.array(chain.measurements, dtype=wp.float32, device="cuda:0")
 
-    # Monotonic ground truth.
-    gt = np.zeros(num_states, dtype=np.float32)
-    gt[0] = 0.5
-    for i in range(1, num_states):
-        gt[i] = gt[i - 1] + rng.uniform(0.2, 0.6)
+    # 3. Scalar states; one difference factor per pair (x_i, x_{i+1}); a
+    #    built-in prior anchoring x_0.
+    states = pycunls.VectorStateBatch1(states_gpu, num_states)
+    diff_pointers = []
+    for i in range(num_states - 1):
+        diff_pointers.append(states.state_block_device_ptr(i))
+        diff_pointers.append(states.state_block_device_ptr(i + 1))
+    prior = pycunls.PriorVectorFactorBatch1(prior_gpu, 1)
 
-    measurements_np = np.diff(gt).astype(np.float32)
-
-    # Noisy initial guess.
-    initial = gt + rng.uniform(-0.35, 0.35, num_states).astype(np.float32)
-
-    # Prior on first state to anchor the chain.
-    prior_obs_np = gt[:1].copy()
-
-    # ── Upload to GPU ───────────────────────────────────────────────────────
-    states_gpu = cp.asarray(initial)
-    measurements_wp = wp.array(measurements_np, dtype=wp.float32, device="cuda:0")
-    prior_obs_gpu = cp.asarray(prior_obs_np)
-
-    # ── Build cuNLS problem ─────────────────────────────────────────────────
-    stream = pycunls.CudaStream()
-
-    state_batch = pycunls.VectorStateBatch1(states_gpu, num_states)
-    prior_factor = pycunls.PriorVectorFactorBatch1(prior_obs_gpu, 1)
-
-    diff_ptrs = []
-    for i in range(num_diff):
-        diff_ptrs.append(state_batch.state_block_device_ptr(i))
-        diff_ptrs.append(state_batch.state_block_device_ptr(i + 1))
-
-    prior_ptrs = [state_batch.state_block_device_ptr(0)]
-
+    # 4. Problem. Part 2 overrides the Jacobian mode of the difference factors
+    #    only; the prior keeps its analytic Jacobian.
     problem = pycunls.Problem()
-    problem.add_state_batch(state_batch)
+    problem.add_state_batch(states)
     if use_numeric_jacobian:
-        # Force this factor group to numeric differentiation via the
-        # per-group override; the anchor prior below still uses its own
-        # analytic Jacobian either way (it's a built-in factor), so this
-        # also demonstrates mixing modes within a single Problem.
-        diff_factor = ScalarDiffResidualOnlyFactor(measurements_wp, num_diff)
-        problem.add_factor_batch(
-            diff_factor, diff_ptrs,
-            jacobian_mode_override=pycunls.JacobianMode.numeric)
+        diff = ScalarDiffResidualOnlyFactor(measurements_wp, num_states - 1)
+        problem.add_factor_batch(diff, diff_pointers,
+                                 jacobian_mode_override=pycunls.JacobianMode.numeric)
     else:
-        diff_factor = ScalarDiffFactor(measurements_wp, num_diff)
-        problem.add_factor_batch(diff_factor, diff_ptrs)
-    problem.add_factor_batch(prior_factor, prior_ptrs)
+        diff = ScalarDiffFactor(measurements_wp, num_states - 1)
+        problem.add_factor_batch(diff, diff_pointers)
+    problem.add_factor_batch(prior, [states.state_block_device_ptr(0)])
     assert problem.check_consistency(), "Problem consistency check failed"
 
-    # ── Solve ───────────────────────────────────────────────────────────────
-    opts = pycunls.MinimizerOptions()
-    opts.max_num_iterations = 50
-    opts.state_tolerance = 1e-8
-    opts.cost_tolerance = 1e-8
-
-    lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
-    lm_opts.base_options = opts
-    lm_opts.initial_lambda = 1e-3
-
-    minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-    summary = minimizer.minimize(stream, problem)
-
+    # 5. Solve with Levenberg-Marquardt.
+    options = pycunls.LevenbergMarquardtMinimizerOptions()
+    options.base_options.max_num_iterations = 50
+    options.base_options.state_tolerance = 1e-8
+    options.base_options.cost_tolerance = 1e-8
+    options.initial_lambda = 1e-3
+    stream = pycunls.CudaStream()
+    summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
     cp.cuda.runtime.streamSynchronize(stream.get_stream())
 
-    # ── Report ──────────────────────────────────────────────────────────────
-    optimized = cp.asnumpy(states_gpu)
-    mse_before = float(np.mean((initial - gt) ** 2))
-    mse_after = float(np.mean((optimized - gt) ** 2))
-
-    print(title)
-    print(f"  Initial cost : {summary.initial_cost:.6f}")
-    print(f"  Final cost   : {summary.final_cost:.6f}")
-    print(f"  Iterations   : {summary.num_iterations}")
-    print(f"  State MSE    : {mse_before:.6f} -> {mse_after:.6f}")
+    # 6. Report and check.
+    mse_before = metrics.mse(chain.initial, chain.gt)
+    mse_after = metrics.mse(cp.asnumpy(states_gpu), chain.gt)
+    report.print_summary(title, summary, State_MSE=f"{mse_before:.6f} -> {mse_after:.6f}")
+    report.check(mse_after < 0.01 * mse_before, "state error did not decrease")
 
 
 def main():
-    # Part 1: analytic Jacobian, computed by the Warp kernel itself.
     run_chain_example("Part 1: analytic Jacobian (Warp)", use_numeric_jacobian=False)
     print()
-    # Part 2: residual-only Warp kernel; pycunls supplies the Jacobian via
-    # finite differences.
-    run_chain_example("Part 2: residual-only, numeric Jacobian (Warp)",
-                      use_numeric_jacobian=True)
+    run_chain_example("Part 2: residual-only, numeric Jacobian (Warp)", use_numeric_jacobian=True)
 
 
 if __name__ == "__main__":

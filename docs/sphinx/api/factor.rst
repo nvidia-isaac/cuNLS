@@ -32,13 +32,81 @@ Abstract base (:code:`cunls/factor/factor_batch.h`).
 .. math::
    r = f(x),\qquad J = \frac{\partial f}{\partial x}
 
-.. cpp:function:: bool Evaluate(float* residuals, float* jacobians, float const* const* state_pointers, cudaStream_t stream) const
+.. cpp:function:: bool Evaluate(float* residuals, float* jacobians, float const* const* state_pointers, cudaStream_t stream, const int* factor_ids = nullptr, size_t num_factor_ids = 0) const
 
-  :param ``residuals``: [out] Residual output buffer.
-  :param ``jacobians``: [out] Optional Jacobian output buffer (``nullptr`` to skip).
-  :param ``state_pointers``: [in] Device pointer array mapping factor inputs to state blocks.
-  :param ``stream``: [in] CUDA stream for asynchronous execution.
+  Evaluates residuals and, optionally, Jacobians for a list of **items**.
+
+  **Terms.** :math:`N` = ``NumFactors()`` (factors/measurements in the batch),
+  :math:`B` = ``StateBlockSizes().size()`` (state blocks per factor),
+  :math:`m` = ``ResidualsSize()``, :math:`J` = sum of ``StateBlockSizes()``
+  (Jacobian columns per factor). An *item* is one factor evaluated at one set
+  of :math:`B` state blocks. The call evaluates :math:`n` items
+  :math:`t = 0 \ldots n-1`; item :math:`t` reads the measurement of factor
+  :math:`f(t)` and its own state pointers, and writes its own output rows.
+
+  With the default arguments item :math:`t` is simply factor :math:`t`
+  (:math:`n = N`, :math:`f(t) = t`) — exactly the behavior of the classic
+  4-argument call, used by the regular minimizers. The last two arguments let
+  one call evaluate the same factors at many state sets; the
+  :doc:`RANSAC minimizers <../ransac>` evaluate every hypothesis this way.
+
+  :param ``residuals``: [out] Device array of :math:`n \cdot m` floats. Item
+    :math:`t` writes ``residuals[t * m + r]`` for :math:`r \in [0, m)`.
+  :param ``jacobians``: [out] Device array of :math:`n \cdot m \cdot J` floats,
+    or ``nullptr`` when only residuals are needed. Item :math:`t` writes a
+    row-major :math:`m \times J` block; element :math:`(r, c)` is
+    ``jacobians[(t * m + r) * J + c]``. Columns follow the state blocks in
+    order, each contributing its tangent size.
+  :param ``state_pointers``: [in] Device array of :math:`n \cdot B` device
+    pointers. Item :math:`t` reads state block :math:`b` from
+    ``state_pointers[t * B + b]``. Different items may point to the same state
+    (e.g. every PnP factor points to the one camera pose).
+  :param ``stream``: [in] CUDA stream on which all work is enqueued; the call
+    may return before the work completes.
+  :param ``factor_ids``: [in] Which factor each item evaluates. ``nullptr``
+    (default): :math:`f(t) = t \bmod N` — with :math:`n = kN` this evaluates
+    the whole batch :math:`k` times, copy :math:`c` being items
+    :math:`[cN, (c+1)N)`. Otherwise a device array of :math:`n` indices in
+    :math:`[0, N)` with :math:`f(t) =` ``factor_ids[t]`` (any order, repeats
+    allowed).
+  :param ``num_factor_ids``: [in] Number of items :math:`n`; ``0`` (default)
+    means :math:`n = N`. When ``factor_ids`` is given it is that array's length.
   :returns: [out] ``true`` on success.
+
+  **Examples** (:math:`N = 3`, :math:`B = 1`, :math:`m = 2`; ``ptrs[t]`` is the
+  state pointer of item :math:`t`, ``Pk`` state set P's block for factor k,
+  ``res rows`` the range of ``residuals`` item :math:`t` writes):
+
+  .. code-block:: text
+
+     1. Plain evaluation: Evaluate(res, jac, ptrs, stream)        n = 3
+          item t          0     1     2
+          factor f(t)     0     1     2
+          ptrs[t]         x0    x1    x2
+          res rows        [0,2) [2,4) [4,6)
+
+     2. Whole batch at two state sets P and Q:
+        Evaluate(res, jac, ptrs, stream, nullptr, 6)              n = 6
+          item t          0     1     2     3     4     5
+          factor f(t)     0     1     2     0     1     2      (t % 3)
+          ptrs[t]         P0    P1    P2    Q0    Q1    Q2
+          res rows        [0,2) [2,4) [4,6) [6,8) [8,10) [10,12)
+
+     3. Chosen factors: ids = {2, 0, 2, 1} (device array)
+        Evaluate(res, jac, ptrs, stream, ids, 4)                  n = 4
+          item t          0     1     2     3
+          factor f(t)     2     0     2     1
+          ptrs[t]         P     P     Q     Q
+          res rows        [0,2) [2,4) [4,6) [6,8)
+
+  **Requirements for implementations.** Launch one thread per item; index
+  *measurements* by :math:`f(t)` and *everything else* (state pointers,
+  outputs) by :math:`t`. Item :math:`t` must produce exactly what a plain
+  evaluation produces for factor :math:`f(t)` at item :math:`t`'s states (all
+  built-in batches are bitwise equal). Size any internal per-factor scratch
+  for :math:`n` items, not :math:`N`. Do not assume :math:`n = N` or
+  :math:`f(t) = t`. See :doc:`../custom_factors_and_states` for a complete
+  walkthrough (C++ and Python).
 
 .. cpp:function:: size_t ResidualsSize() const
 
@@ -1130,6 +1198,14 @@ InformationFactorBatch<T>
 
 Header: :code:`cunls/factor/information/information_factor_batch.h`
 
+**Item parameters.** ``Evaluate`` forwards ``factor_ids`` / ``num_factor_ids``
+to the wrapped factor and weights item :math:`t` with the matrix of its factor
+:math:`f(t)`, so the wrapper works under the :doc:`RANSAC minimizers
+<../ransac>`. The sqrt-information product uses deterministic CUDA kernels
+(fixed summation order per item). Residual sizes up to 96 stage each vector in
+shared memory; larger sizes read their inputs directly with a stream-ordered
+scratch buffer.
+
 **Inheritance:** ``class InformationFactorBatch : public T::sized_layout`` — i.e.
 the same ``SizedFactorBatch<kResidualSize, ...>`` as the wrapped type ``T``.
 Residual and state-block sizes come from that base; this class adds
@@ -1180,6 +1256,10 @@ Header: :code:`cunls/factor/weighted_factor_batch.h`
 extended for scalar weighting.
 
 ``T`` must derive from ``SizedFactorBatch``.
+
+**Item parameters.** ``Evaluate`` forwards ``factor_ids`` / ``num_factor_ids``
+to the wrapped factor; with per-factor weights, item :math:`t` is scaled by
+the weight of its factor :math:`f(t)`.
 
 Wraps a factor to apply scalar weight(s) to residuals and Jacobians. Supports
 two modes: a single uniform weight applied to every factor, or per-factor
@@ -1785,27 +1865,41 @@ and Jacobian computation that is not available as a built-in factor.
 
 **Methods to override**
 
-- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle) -> bool``
-  — computes residuals and Jacobians on the GPU for all factors in the
-  batch.  All four arguments are raw ``int`` handles:
+- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+  factor_ids_ptr, num_factor_ids) -> bool``
+  — computes residuals and Jacobians on the GPU for ``n = num_factor_ids``
+  *items* (the same contract as C++ :cpp:func:`FactorBatch::Evaluate`): item
+  *t* is factor ``f(t)`` evaluated at its own state pointers. All six
+  arguments are raw ``int`` values:
 
   - *residuals_ptr* — device pointer to the output residual buffer.
-    Layout: ``num_factors × residual_size`` contiguous floats.
+    Layout: ``n × residual_size`` contiguous floats; item *t* writes row *t*.
   - *jacobians_ptr* — device pointer to the output Jacobian buffer.
-    Layout: ``num_factors × residual_size × sum(state_block_sizes)``
-    contiguous floats (row-major per factor, blocks concatenated in state
+    Layout: ``n × residual_size × sum(state_block_sizes)``
+    contiguous floats (row-major per item, blocks concatenated in state
     order).  May be ``0`` (null) when the minimizer only needs residuals
     (e.g. for cost evaluation); in that case skip Jacobian writes.
   - *state_pointers_ptr* — device pointer to an array of ``float*``
-    pointers.  The array has ``num_factors × len(state_block_sizes)``
-    entries.  Each entry is the device address of the ambient-space storage
-    for one (factor, state-block) pair, in row-major order.  Because Warp
+    pointers.  The array has ``n × len(state_block_sizes)``
+    entries; item *t*'s block *b* is entry ``t * len(state_block_sizes) + b``
+    (the device address of that block's ambient-space storage).  Because Warp
     kernels cannot perform ``float**`` double-pointer indirection, custom
     factors typically gather state values into contiguous CuPy arrays
     before launching a kernel (see the
     :ref:`Custom Warp Factor tutorial <pycunls_tutorial:Custom Warp Factor>`).
   - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
     **must** be launched on this stream.
+  - *factor_ids_ptr* — device pointer to ``n`` ``int32`` factor indices in
+    ``[0, num_factors)`` with ``f(t) = factor_ids[t]``, or ``0`` (null) for
+    ``f(t) = t % num_factors``. Read *measurements* through ``f(t)``;
+    everything else (state pointers, outputs) is indexed by *t*.
+  - *num_factor_ids* — the item count ``n``. Unlike C++, where ``0`` means
+    ``num_factors``, Python always receives the actual count (``> 0``).
+
+  The regular minimizers call ``evaluate`` with ``factor_ids_ptr == 0`` and
+  ``num_factor_ids == num_factors``; the RANSAC minimizers evaluate many items
+  per factor, so a factor used with RANSAC must honor both arguments (see
+  :doc:`../custom_factors_and_states`).
 
   Return ``True`` on success.  The default implementation raises
   ``NotImplementedError``.
@@ -1857,6 +1951,12 @@ zero-copy pointer wrapping so you never need to manually construct
   tuple giving the array dimensions.  The returned ``wp.array`` shares the
   memory; no allocation or copy occurs.
 
+- ``factor_ids(factor_ids_ptr: int, num_items: int) -> wp.array`` — the
+  factor index of every item as an ``int32`` Warp array: wraps
+  ``factor_ids_ptr`` when it is non-null, otherwise returns (and caches)
+  ``arange(num_items) % num_factors``. Kernels can then always read
+  ``ids[t]``.
+
 - ``make_warp_stream(stream_handle: int) -> wp.Stream`` — wraps a raw
   ``cudaStream_t`` (passed as ``int``) as a ``wp.Stream``.  Use the
   returned stream in ``wp.launch(..., stream=stream)`` to ensure the Warp
@@ -1864,15 +1964,18 @@ zero-copy pointer wrapping so you never need to manually construct
 
 **Methods to override**
 
-- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle) -> bool``
+- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+  factor_ids_ptr, num_factor_ids) -> bool``
   — same contract as ``CustomFactorBatch.evaluate``.  Typical
   implementations:
 
   1. Gather scattered state pointers into contiguous CuPy arrays (using a
-     CuPy ``RawKernel`` or ``cp.ndarray`` indexing).
-  2. Wrap the contiguous arrays and output buffers with
+     CuPy ``RawKernel`` or ``cp.ndarray`` indexing), one entry per item.
+  2. Get per-item factor indices with ``self.factor_ids(factor_ids_ptr,
+     num_factor_ids)`` and read measurements through them.
+  3. Wrap the contiguous arrays and output buffers with
      ``self.wrap_array``.
-  3. Build a ``wp.Stream`` with ``self.make_warp_stream``.
-  4. Launch a ``@wp.kernel`` on that stream.
+  4. Build a ``wp.Stream`` with ``self.make_warp_stream``.
+  5. Launch a ``@wp.kernel`` with ``dim=num_factor_ids`` on that stream.
 
 See :ref:`pycunls_tutorial:Custom Warp Factor` for a complete example.

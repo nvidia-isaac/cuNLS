@@ -51,6 +51,7 @@ def _positive_plus_kernel(
 @wp.kernel
 def _log_prior_kernel(
     observations: wp.array(dtype=wp.float32),
+    factor_ids: wp.array(dtype=wp.int32),
     states: wp.array(dtype=wp.float32),
     residuals: wp.array(dtype=wp.float32),
     jacobians: wp.array(dtype=wp.float32),
@@ -61,7 +62,7 @@ def _log_prior_kernel(
     i = wp.tid()
     if i >= num_factors:
         return
-    residuals[i] = wp.log(states[i]) - wp.log(observations[i])
+    residuals[i] = wp.log(states[i]) - wp.log(observations[factor_ids[i]])
     if write_jac != 0:
         jacobians[i] = 1.0
 
@@ -104,8 +105,8 @@ class PositiveScalarStateBatch(WarpStateBatch):
                          num_blocks=num_blocks, **kwargs)
         self._num = num_blocks
 
-    def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle):
-        n = self._num
+    def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
+        n = self._num * num_replicas  # contiguous replicas, per-block manifold
         x = self.wrap_array(x_ptr, wp.float32, n)
         delta = self.wrap_array(delta_ptr, wp.float32, n)
         x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)
@@ -129,8 +130,9 @@ class LogPriorFactor(WarpFactorBatch):
         self.observations = observations_wp
         self._num = num_factors
 
-    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle):
-        n = self._num
+    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
+        n = num_factor_ids
+        ids = self.factor_ids(factor_ids_ptr, n)
         vals = _gather_state_values(sp_ptr, n)
         states_wp = wp.array(ptr=int(vals.data.ptr), dtype=wp.float32,
                              shape=(n,), device=self._device, copy=False)
@@ -143,7 +145,7 @@ class LogPriorFactor(WarpFactorBatch):
 
         stream = self.make_warp_stream(stream_handle)
         wp.launch(_log_prior_kernel, dim=n,
-                  inputs=[self.observations, states_wp, res, jac,
+                  inputs=[self.observations, ids, states_wp, res, jac,
                           n, write_jac],
                   stream=stream)
         return True
@@ -173,7 +175,7 @@ class TestCustomStateBatch:
         data = cp.ones(3, dtype=cp.float32)
         sb = pycunls.CustomStateBatch(data, 1, 1, 3)
         with pytest.raises(RuntimeError, match="must be overridden"):
-            sb.plus(0, 0, 0, 0)
+            sb.plus(0, 0, 0, 0, 1)
 
     def test_with_const_ids(self):
         data = cp.ones(10, dtype=cp.float32)

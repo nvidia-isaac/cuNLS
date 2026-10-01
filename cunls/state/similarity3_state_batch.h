@@ -46,7 +46,7 @@ namespace cunls {
  * for efficient batch processing of multiple transformations.
  */
 class Similarity3StateBatch : public SizedStateBatch<16, 7> {
-public:
+ public:
   using Base = SizedStateBatch<16, 7>;
 
   /**
@@ -58,8 +58,7 @@ public:
    * memory.
    * @param num_blocks The number of Sim(3) state blocks in this batch.
    */
-  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                        size_t num_blocks);
+  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
 
   /**
    * @brief Constructs a batch of Sim(3) state blocks with constant state
@@ -74,9 +73,8 @@ public:
    * the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
-  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                        size_t num_blocks, const int *device_constant_state_ids,
-                        size_t num_const_state_blocks);
+  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
+                        const int *device_constant_state_ids, size_t num_const_state_blocks);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)
@@ -90,11 +88,11 @@ public:
    * @param x_plus_delta Output transformation matrices (device pointer)
    * @param stream CUDA stream for asynchronous execution
    */
-  void Plus(const float *x, const float *delta, float *x_plus_delta,
-            cudaStream_t stream) override;
+  void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+            size_t num_replicas = 1) override;
 
-private:
-  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
+ private:
+  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
 
   mutable dvector<Matrix<4>> delta_transforms_;
   mutable dvector<float> tangents_;
@@ -109,7 +107,7 @@ private:
    * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
    * @param stream CUDA stream for asynchronous execution
    */
-  void ApplyUpdate(const float *x, const float *delta, float *result,
-                   bool invert_delta, cudaStream_t stream);
+  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
+                   cudaStream_t stream, size_t num_blocks);
 };
-} // namespace cunls
+}  // namespace cunls

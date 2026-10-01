@@ -7,8 +7,16 @@ Each example lives in its own subdirectory and provides:
 - source code
 - a `README.md` with a code walkthrough
 
-Shared host-side utilities (SE(3) math, camera projection, validation metrics)
-live in `utils/` and are included by all examples as header-only helpers.
+Each `main` reads top to bottom as the cuNLS workflow: get data, upload it,
+build state and factor batches, assemble the `Problem`, solve, read back, and
+report. Everything else lives in header-only helpers in `utils/`:
+- `datasets.h`: synthetic scenes (PnP with optional outliers, bundle
+  adjustment, pose chain, constant-velocity trajectory, scalar chain);
+- `validation.h`: error metrics (MSE, rotation / translation error,
+  inlier-mask statistics);
+- `report.h`: printing helpers and the final quality verdict;
+- `cli.h`: `--key value` command-line parsing;
+- `se3_utils.h`, `camera_utils.h`: host SE(3) math and camera projection.
 
 Build orchestration is centralized:
 - `examples/CMakeLists.txt`: single CMake entrypoint that defines all example
@@ -38,6 +46,11 @@ Available examples:
   constant-velocity motion-prior factor with the closed-form process-noise
   covariance fused in) to optimize a chain of SE(3) poses and body-velocity
   states, with the first pose and velocity fixed as gauge anchors.
+- `pnp`: Uses `PnPFactorBatch` to recover a camera pose from 3D-2D
+  correspondences, with analytic and numeric Jacobians.
+- `ransac_pnp`: The same PnP problem with 50% gross outliers, solved with
+  `RansacLevenbergMarquardtMinimizer`; compares against plain
+  Levenberg-Marquardt and reports the inlier mask.
 
 ## Build all examples locally
 
