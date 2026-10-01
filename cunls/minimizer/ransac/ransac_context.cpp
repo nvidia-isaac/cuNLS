@@ -36,8 +36,9 @@ void ValidateOptions(const RansacMinimizerOptions &o) {
     FailConfiguration("RANSAC: hypotheses_per_round must be > 0");
   }
   if (o.hypothesis_iterations == 0) {
-    FailConfiguration("RANSAC: hypothesis_iterations must be > 0 (there is no hypothesis "
-                      "generator)");
+    FailConfiguration(
+        "RANSAC: hypothesis_iterations must be > 0 (there is no hypothesis "
+        "generator)");
   }
   if (!(o.confidence > 0.f && o.confidence < 1.f)) {
     FailConfiguration("RANSAC: confidence must be in (0, 1)");
@@ -47,16 +48,14 @@ void ValidateOptions(const RansacMinimizerOptions &o) {
 template <typename T>
 T CopyScalarToHost(cudaStream_t stream, const T *device) {
   T value{};
-  THROW_ON_CUDA_ERROR(
-      cudaMemcpyAsync(&value, device, sizeof(T), cudaMemcpyDeviceToHost, stream));
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&value, device, sizeof(T), cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   return value;
 }
 
 }  // namespace
 
-RansacContext::RansacContext(const RansacMinimizerOptions &options,
-                             const SolverSettings &settings)
+RansacContext::RansacContext(const RansacMinimizerOptions &options, const SolverSettings &settings)
     : options_(options), settings_(settings) {
   THROW_ON_CUDA_ERROR(cudaMallocHost(&host_stats_, sizeof(DeviceStats)));
   stats_.resize(1);
@@ -108,8 +107,7 @@ float RansacContext::InitialCost(cudaStream_t stream) {
   }
   std::vector<float> sums(residuals.size());
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(sums.data(), initial_sums_.data(),
-                                      sums.size() * sizeof(float), cudaMemcpyDeviceToHost,
-                                      stream));
+                                      sums.size() * sizeof(float), cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   double total = 0.0;
   for (float v : sums) {

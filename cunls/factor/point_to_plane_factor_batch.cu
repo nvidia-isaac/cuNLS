@@ -141,8 +141,8 @@ constexpr size_t kBlockSize = 256;
 __global__ void point_to_plane_cost_kernel(const float *p_observations, const float *q_observations,
                                            const float *nq_observations,
                                            float const *const *state_pointers, float *residuals,
-                                           float *jacobians, int num_items,
-                                           const int *factor_ids, int num_factors) {
+                                           float *jacobians, int num_items, const int *factor_ids,
+                                           int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) {
     return;
@@ -225,9 +225,8 @@ __global__ void point_to_plane_cost_kernel(const float *p_observations, const fl
 }
 
 bool PointToPlaneFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                       float const *const *state_pointers,
-                                       cudaStream_t stream, const int *factor_ids,
-                                       size_t num_factor_ids) const {
+                                       float const *const *state_pointers, cudaStream_t stream,
+                                       const int *factor_ids, size_t num_factor_ids) const {
   const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
   if (num_items == 0 || NumFactors() == 0) {
     return true;

@@ -36,8 +36,8 @@ constexpr size_t kSO3BlockSize = 256;
  */
 __global__ void collect_and_multiply_so3_kernel(float const *const *state_pointers,
                                                 const Matrix<3> *targets, size_t num_items,
-                                                Matrix<3> *errors,
-                                                const int *factor_ids, int num_factors) {
+                                                Matrix<3> *errors, const int *factor_ids,
+                                                int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;
 
@@ -84,8 +84,8 @@ bool SO3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
   // Fused collect + R_target^T * R_current in one kernel launch
   size_t num_blocks = (num_items + kSO3BlockSize - 1) / kSO3BlockSize;
   collect_and_multiply_so3_kernel<<<num_blocks, kSO3BlockSize, 0, stream>>>(
-      state_pointers, observations_ptr_, num_items, rotations_error_.data(),
-      factor_ids, static_cast<int>(NumFactors()));
+      state_pointers, observations_ptr_, num_items, rotations_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Compute residual = Log(R_error)

@@ -266,8 +266,8 @@ void LaunchDrawSamples(cudaStream_t stream, int n, int sample_size, int num_slot
   if (count <= 0) {
     return;
   }
-  DrawSamplesKernel<<<GridFor(count), kThreads, 0, stream>>>(n, sample_size, num_slots, seed,
-                                                             round, samples);
+  DrawSamplesKernel<<<GridFor(count), kThreads, 0, stream>>>(n, sample_size, num_slots, seed, round,
+                                                             samples);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -291,9 +291,8 @@ void LaunchSlotTables(cudaStream_t stream, const StateView *states, const int2 *
   if (count == 0) {
     return;
   }
-  SlotTablesKernel<<<GridFor(count), kThreads, 0, stream>>>(states, blocks, num_factors, nb,
-                                                            num_slots, slot_offset, candidate,
-                                                            tables);
+  SlotTablesKernel<<<GridFor(count), kThreads, 0, stream>>>(
+      states, blocks, num_factors, nb, num_slots, slot_offset, candidate, tables);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -334,8 +333,8 @@ void LaunchGatherLocalColumns(cudaStream_t stream, const int *local_col, const i
   if (count * nb <= 0) {
     return;
   }
-  GatherLocalColumnsKernel<<<GridFor(count * nb), kThreads, 0, stream>>>(local_col, ids, count,
-                                                                         nb, out);
+  GatherLocalColumnsKernel<<<GridFor(count * nb), kThreads, 0, stream>>>(local_col, ids, count, nb,
+                                                                         out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -364,8 +363,8 @@ void LaunchCopyAccepted(cudaStream_t stream, int num_slots, size_t slot_floats, 
   if (count == 0) {
     return;
   }
-  CopyAcceptedKernel<<<GridFor(count), kThreads, 0, stream>>>(num_slots, slot_floats, accept,
-                                                              cand, cur);
+  CopyAcceptedKernel<<<GridFor(count), kThreads, 0, stream>>>(num_slots, slot_floats, accept, cand,
+                                                              cur);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -375,8 +374,8 @@ void LaunchCopyReplicas(cudaStream_t stream, int num_slots, size_t slot_floats, 
   if (count == 0) {
     return;
   }
-  CopyReplicasKernel<<<GridFor(count), kThreads, 0, stream>>>(
-      num_slots, slot_floats, src, src_slot, only_if, dst);
+  CopyReplicasKernel<<<GridFor(count), kThreads, 0, stream>>>(num_slots, slot_floats, src, src_slot,
+                                                              only_if, dst);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

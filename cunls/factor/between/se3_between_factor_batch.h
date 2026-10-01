@@ -79,7 +79,6 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-
   /**
    * @brief Returns the number of factors in the batch.
    *

@@ -401,16 +401,15 @@ __global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, in
 }  // namespace
 
 void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_factors,
-                            float *residuals, float *jacobians,
-                            float const *const *state_pointers, const int *factor_ids,
-                            size_t num_items, cudaStream_t stream) {
+                            float *residuals, float *jacobians, float const *const *state_pointers,
+                            const int *factor_ids, size_t num_items, cudaStream_t stream) {
   if (num_factors == 0 || num_items == 0) {
     return;
   }
   const int blocks = static_cast<int>((num_items + kThreads - 1) / kThreads);
-  LinearRegressionKernel<<<blocks, kThreads, 0, stream>>>(
-      dim, a, y, static_cast<int>(num_factors), factor_ids, static_cast<int>(num_items),
-      residuals, jacobians, state_pointers);
+  LinearRegressionKernel<<<blocks, kThreads, 0, stream>>>(dim, a, y, static_cast<int>(num_factors),
+                                                          factor_ids, static_cast<int>(num_items),
+                                                          residuals, jacobians, state_pointers);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

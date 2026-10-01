@@ -44,9 +44,9 @@ namespace {
 constexpr int kBlockThreads = 256;
 constexpr int kWarpGroupWords = 1024;   ///< Shared words per warp group.
 constexpr int kBlockGroupWords = 8192;  ///< Shared words per block group.
-constexpr int kMaxTileRows = 256;      ///< Rows per tile: keeps enough blocks per slot.
-constexpr int kMaxSplits = 64;         ///< Blocks per slot (bounds the scratch buffer).
-constexpr int kMaxSharedViews = 16;    ///< Views copied to shared memory.
+constexpr int kMaxTileRows = 256;       ///< Rows per tile: keeps enough blocks per slot.
+constexpr int kMaxSplits = 64;          ///< Blocks per slot (bounds the scratch buffer).
+constexpr int kMaxSharedViews = 16;     ///< Views copied to shared memory.
 
 __host__ __device__ inline int Padded(int dim) { return (dim + 3) & ~3; }
 __host__ __device__ inline int TileCount(int dim) { return Padded(dim) / 4; }
@@ -76,12 +76,12 @@ struct Geometry {
 
 Geometry MakeGeometry(const SlotItems &items, int dim, SlotGroup requested) {
   Geometry g;
-  const bool fits_warp = WorkUnits(dim) <= kWarpSize &&
-                         items.m_max * (Padded(dim) + 1) + 2 + kMaxBlocksPerFactor <=
-                             kWarpGroupWords;
+  const bool fits_warp =
+      WorkUnits(dim) <= kWarpSize &&
+      items.m_max * (Padded(dim) + 1) + 2 + kMaxBlocksPerFactor <= kWarpGroupWords;
   const bool few_rows = items.items_per_slot * items.m_max <= 256;
-  g.warp = fits_warp && (requested == SlotGroup::kWarp ||
-                         (requested == SlotGroup::kAuto && few_rows));
+  g.warp =
+      fits_warp && (requested == SlotGroup::kWarp || (requested == SlotGroup::kAuto && few_rows));
   g.group_words = g.warp ? kWarpGroupWords : kBlockGroupWords;
   g.tile_items = TileItems(g.group_words, dim, std::max(items.m_max, 1));
   const int tiles = std::max(1, (items.items_per_slot + g.tile_items - 1) / g.tile_items);
@@ -106,12 +106,12 @@ __device__ __forceinline__ float GroupSum(float value, float *scratch) {
 
 /** Shared-memory layout of one group's tile. */
 struct Stage {
-  float *jac;        ///< rows x padded dim, local columns (zero padded).
-  float *res;        ///< rows.
-  int *item_view;    ///< items; -1 = empty.
-  int *item_row;     ///< items: row in the slot's part of the view's buffers.
-  int *item_local;   ///< items x kMaxBlocksPerFactor local columns (-1 = constant).
-  int ld;            ///< Padded dim.
+  float *jac;       ///< rows x padded dim, local columns (zero padded).
+  float *res;       ///< rows.
+  int *item_view;   ///< items; -1 = empty.
+  int *item_row;    ///< items: row in the slot's part of the view's buffers.
+  int *item_local;  ///< items x kMaxBlocksPerFactor local columns (-1 = constant).
+  int ld;           ///< Padded dim.
 };
 
 __device__ inline Stage MapStage(float *base, int items, int m_max, int dim) {
@@ -173,8 +173,8 @@ __device__ void GatherTile(const SlotItems &items, int slot, int count, const St
     if (live) {
       const size_t item_row = st.item_row[k];
       const size_t slot_index = static_cast<size_t>(slot);
-      const float *jrow = view->jac + slot_index * view->stride_jac +
-                          (item_row * view->m + row) * view->n;
+      const float *jrow =
+          view->jac + slot_index * view->stride_jac + (item_row * view->m + row) * view->n;
       const int *local = st.item_local + k * kMaxBlocksPerFactor;
       for (int blk = 0; blk < view->nb; ++blk) {
         const int offset = a - local[blk];
@@ -394,8 +394,8 @@ __global__ void SlotCostKernel(SlotItems items, int num_slots, int splits, float
   for (int e = split * per_split + t; e < end; e += kGroup) {
     ItemRef ref;
     if (ResolveItem(items, slot, e, ref)) {
-      sum += items.views[ref.view].cost[static_cast<size_t>(slot) *
-                                            items.views[ref.view].stride_cost + ref.row];
+      sum += items.views[ref.view]
+                 .cost[static_cast<size_t>(slot) * items.views[ref.view].stride_cost + ref.row];
     }
   }
   const float total = GroupSum<kGroup>(sum, scratch);
@@ -405,8 +405,7 @@ __global__ void SlotCostKernel(SlotItems items, int num_slots, int splits, float
 }
 
 /** cost[slot] = sum of the split partials in split order. */
-__global__ void SumCostSplitsKernel(const float *partials, int splits, int num_slots,
-                                    float *cost) {
+__global__ void SumCostSplitsKernel(const float *partials, int splits, int num_slots, float *cost) {
   const int slot = blockIdx.x * blockDim.x + threadIdx.x;
   if (slot >= num_slots) {
     return;
@@ -437,11 +436,10 @@ void LaunchNormalEquations(cudaStream_t stream, const SlotItems &items, int num_
   }
   const Geometry g = MakeGeometry(items, dim, group);
   const size_t entries = static_cast<size_t>(dim) * dim + dim + 1;
-  Outputs out{hessian, gradient, cost, static_cast<size_t>(dim) * dim,
-              static_cast<size_t>(dim), 1};
+  Outputs out{hessian, gradient, cost, static_cast<size_t>(dim) * dim, static_cast<size_t>(dim), 1};
   if (g.splits > 1) {
-    out = Outputs{scratch, scratch + dim * dim, scratch + dim * dim + dim, entries, entries,
-                  entries};
+    out =
+        Outputs{scratch, scratch + dim * dim, scratch + dim * dim + dim, entries, entries, entries};
   }
   if (g.warp) {
     constexpr int kGroups = kBlockThreads / kWarpSize;
@@ -472,12 +470,12 @@ void LaunchSlotCost(cudaStream_t stream, const SlotItems &items, int num_slots, 
   if (num_slots <= 0) {
     return;
   }
-  const bool warp = group == SlotGroup::kWarp ||
-                    (group == SlotGroup::kAuto && items.items_per_slot <= 256);
+  const bool warp =
+      group == SlotGroup::kWarp || (group == SlotGroup::kAuto && items.items_per_slot <= 256);
   if (warp) {
     constexpr int kGroups = kBlockThreads / kWarpSize;
-    SlotCostKernel<kWarpSize><<<GridFor(num_slots, kGroups), kBlockThreads, 0, stream>>>(
-        items, num_slots, 1, cost);
+    SlotCostKernel<kWarpSize>
+        <<<GridFor(num_slots, kGroups), kBlockThreads, 0, stream>>>(items, num_slots, 1, cost);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return;
   }

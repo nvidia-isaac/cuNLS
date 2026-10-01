@@ -52,13 +52,13 @@ struct StateLayout {
 struct ResidualLayout {
   const ResidualBatch *residual_batch = nullptr;
   FactorBatch *factor = nullptr;
-  bool sampled = false;   ///< RansacRole::kSampled.
-  float tau = 0.f;        ///< Inlier threshold (sampled only).
-  int m = 0;              ///< Residual dimension.
-  int n = 0;              ///< Sum of block tangent sizes.
-  int nb = 0;             ///< Blocks per factor.
+  bool sampled = false;  ///< RansacRole::kSampled.
+  float tau = 0.f;       ///< Inlier threshold (sampled only).
+  int m = 0;             ///< Residual dimension.
+  int n = 0;             ///< Sum of block tangent sizes.
+  int nb = 0;            ///< Blocks per factor.
   int num_factors = 0;
-  int u_offset = -1;      ///< Offset in the concatenated sampled index (sampled only).
+  int u_offset = -1;  ///< Offset in the concatenated sampled index (sampled only).
   std::vector<int> block_off;
   std::vector<int> block_size;
   dvector<int2> blocks;       ///< (state batch, block) per (factor, block slot).
@@ -78,11 +78,11 @@ class RansacLayout {
 
   const std::vector<StateLayout> &states() const { return states_; }
   const std::vector<ResidualLayout> &residuals() const { return residuals_; }
-  int dim() const { return dim_; }                        ///< Free tangent dimension D.
-  int total_sampled() const { return total_sampled_; }    ///< Sampled factors, all batches.
-  int sample_size() const { return sample_size_; }        ///< Factors per minimal sample.
-  int m_max() const { return m_max_; }                    ///< Largest residual dimension.
-  int max_factors() const { return max_factors_; }        ///< Largest batch size.
+  int dim() const { return dim_; }                      ///< Free tangent dimension D.
+  int total_sampled() const { return total_sampled_; }  ///< Sampled factors, all batches.
+  int sample_size() const { return sample_size_; }      ///< Factors per minimal sample.
+  int m_max() const { return m_max_; }                  ///< Largest residual dimension.
+  int max_factors() const { return max_factors_; }      ///< Largest batch size.
 
  private:
   void BuildStates(const Problem &problem);

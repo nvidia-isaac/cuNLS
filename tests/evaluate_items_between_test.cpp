@@ -129,8 +129,8 @@ TEST(EvaluateItemsBetween, VectorBetweenMatchesEvaluate) {
                                          kNumFactors);
   auto states = ToDevice(RandomVector(2 * kCopies * kNumFactors * kDim, 1.f, 131));
   CheckEvaluateItems(between, kCopies, [&](int k) {
-    return PairPointersForCopy(
-        [&](int i) { return states.data() + static_cast<size_t>(i) * kDim; }, k);
+    return PairPointersForCopy([&](int i) { return states.data() + static_cast<size_t>(i) * kDim; },
+                               k);
   });
 }
 
@@ -147,8 +147,8 @@ TEST(EvaluateItemsBetween, SO3BetweenMatchesEvaluate) {
 }
 
 TEST(EvaluateItemsBetween, Similarity2BetweenMatchesEvaluate) {
-  CheckLieBetween<Similarity2BetweenFactorBatch, Similarity2Transform, Similarity2StateBatch>(
-      9, 4, 170);
+  CheckLieBetween<Similarity2BetweenFactorBatch, Similarity2Transform, Similarity2StateBatch>(9, 4,
+                                                                                              170);
 }
 
 TEST(EvaluateItemsBetween, Similarity3BetweenMatchesEvaluate) {

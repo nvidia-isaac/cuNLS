@@ -52,8 +52,8 @@ RansacGaussNewtonMinimizer::RansacGaussNewtonMinimizer(const RansacMinimizerOpti
 RansacGaussNewtonMinimizer::RansacGaussNewtonMinimizer(const RansacMinimizerOptions &options,
                                                        const StepPolicy &p)
     : context_(std::make_unique<ransac_internal::RansacContext>(
-          options, MakeSettings(options, p.levenberg_marquardt, p.initial_lambda,
-                                p.lambda_upscale, p.lambda_downscale, p.lambda_max, p.lambda_min,
+          options, MakeSettings(options, p.levenberg_marquardt, p.initial_lambda, p.lambda_upscale,
+                                p.lambda_downscale, p.lambda_max, p.lambda_min,
                                 p.step_accept_threshold, p.lambda_downscale_threshold))) {}
 
 RansacGaussNewtonMinimizer::~RansacGaussNewtonMinimizer() = default;

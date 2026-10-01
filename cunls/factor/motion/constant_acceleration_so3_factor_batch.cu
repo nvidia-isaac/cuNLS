@@ -141,8 +141,8 @@ bool ConstantAccelerationSO3FactorBatch::Evaluate(float *residuals, float *jacob
   jr_inv_.resize(num_items);
   const size_t num_blocks = (num_items + kBlockSizeSO3CA - 1) / kBlockSizeSO3CA;
 
-  ca_so3_relative_pose_kernel<<<num_blocks, kBlockSizeSO3CA, 0, stream>>>(
-      state_pointers, num_items, pose_rel_.data());
+  ca_so3_relative_pose_kernel<<<num_blocks, kBlockSizeSO3CA, 0, stream>>>(state_pointers, num_items,
+                                                                          pose_rel_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t rot_pitch = 3;

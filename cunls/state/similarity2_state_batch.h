@@ -50,7 +50,7 @@ namespace cunls {
  * for efficient batch processing of multiple transformations.
  */
 class Similarity2StateBatch : public SizedStateBatch<9, 4> {
-public:
+ public:
   using Base = SizedStateBatch<9, 4>;
 
   /**
@@ -62,8 +62,7 @@ public:
    * memory.
    * @param num_blocks The number of Sim(2) state blocks in this batch.
    */
-  Similarity2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                        size_t num_blocks);
+  Similarity2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
 
   /**
    * @brief Constructs a batch of Sim(2) state blocks with constant state
@@ -78,9 +77,8 @@ public:
    * the indices of state blocks that should remain constant.
    * @param num_const_state_blocks The number of constant state blocks.
    */
-  Similarity2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                        size_t num_blocks, const int *device_constant_state_ids,
-                        size_t num_const_state_blocks);
+  Similarity2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
+                        const int *device_constant_state_ids, size_t num_const_state_blocks);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)
@@ -97,9 +95,8 @@ public:
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
 
-
-private:
-  cuBLASHandle &cublas_handle_; ///< cuBLAS handle for matrix operations
+ private:
+  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
 
   mutable dvector<Matrix<3>> delta_transforms_;
   mutable dvector<float> tangents_;
@@ -127,7 +124,7 @@ private:
    * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
    * @param stream CUDA stream for asynchronous execution
    */
-  void ApplyUpdate(const float *x, const float *delta, float *result,
-                   bool invert_delta, cudaStream_t stream, size_t num_blocks);
+  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
+                   cudaStream_t stream, size_t num_blocks);
 };
-} // namespace cunls
+}  // namespace cunls

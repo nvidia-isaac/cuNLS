@@ -100,8 +100,7 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
     constexpr int kBlockSize = 256;
     const int grid_size = static_cast<int>((num_items + kBlockSize - 1) / kBlockSize);
     ScalarDifferenceKernel<<<grid_size, kBlockSize, 0, stream>>>(
-        measurements_, factor_ids, num_factors_, state_pointers, residuals, jacobians,
-        num_items);
+        measurements_, factor_ids, num_factors_, state_pointers, residuals, jacobians, num_items);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     return true;
   }
@@ -126,8 +125,8 @@ class ScalarDifferenceFactorBatch : public cunls::SizedFactorBatch<1, 1, 1> {
 //
 // This kernel is a copy of ScalarDifferenceKernel with the Jacobian branch
 // deleted entirely -- there is nothing else to write.
-__global__ void ScalarDifferenceResidualOnlyKernel(const float *measurements,
-                                                   const int *factor_ids, size_t num_factors,
+__global__ void ScalarDifferenceResidualOnlyKernel(const float *measurements, const int *factor_ids,
+                                                   size_t num_factors,
                                                    float const *const *state_pointers,
                                                    float *residuals, size_t num_items) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;

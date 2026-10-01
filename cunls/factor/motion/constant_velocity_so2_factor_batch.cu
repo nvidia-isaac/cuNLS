@@ -96,8 +96,8 @@ bool ConstantVelocitySO2FactorBatch::Evaluate(float *residuals, float *jacobians
   twist_.resize(num_items);
   const size_t num_blocks = (num_items + kBlockSizeSO2CV - 1) / kBlockSizeSO2CV;
 
-  cv_so2_relative_pose_kernel<<<num_blocks, kBlockSizeSO2CV, 0, stream>>>(
-      state_pointers, num_items, pose_rel_.data());
+  cv_so2_relative_pose_kernel<<<num_blocks, kBlockSizeSO2CV, 0, stream>>>(state_pointers, num_items,
+                                                                          pose_rel_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t rot_stride = 4;

@@ -27,8 +27,7 @@ constexpr size_t kTwistStride = 3;
  */
 __global__ void collect_and_compute_so3_between_error_kernel(float const *const *state_pointers,
                                                              const Matrix<3> *deltas,
-                                                             size_t num_items,
-                                                             Matrix<3> *errors,
+                                                             size_t num_items, Matrix<3> *errors,
                                                              const int *factor_ids,
                                                              int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -141,8 +140,8 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *r
 // 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
 __global__ void __launch_bounds__(256, 4)
     so3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                       const Matrix<3> *__restrict__ delta_adjoints,
-                                       int num_items, float *__restrict__ jacobians,
+                                       const Matrix<3> *__restrict__ delta_adjoints, int num_items,
+                                       float *__restrict__ jacobians,
                                        const int *__restrict__ factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;

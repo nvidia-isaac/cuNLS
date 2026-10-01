@@ -186,9 +186,8 @@ TEST(EvaluateItems, PnPMatchesEvaluate) {
   auto pts = ToDevice(scene.points_world);
   PnPFactorBatch pnp(obs.data(), pts.data(), scene.observations.size());
   Poses poses(4, 12, 0.05, 0.1);
-  evaluate_items_test::CheckEvaluateItems(pnp, 4, [&](int k) {
-    return std::vector<float *>(60, poses.ptr(k));
-  });
+  evaluate_items_test::CheckEvaluateItems(
+      pnp, 4, [&](int k) { return std::vector<float *>(60, poses.ptr(k)); });
 }
 
 TEST(EvaluateItems, PnPWithCameraFromRigMatchesEvaluate) {
@@ -198,9 +197,8 @@ TEST(EvaluateItems, PnPWithCameraFromRigMatchesEvaluate) {
   Poses rigs(40, 14, 0.02, 0.05);
   PnPFactorBatch pnp(obs.data(), rigs.d.data(), pts.data(), 40);
   Poses poses(3, 15, 0.05, 0.1);
-  evaluate_items_test::CheckEvaluateItems(pnp, 3, [&](int k) {
-    return std::vector<float *>(40, poses.ptr(k));
-  });
+  evaluate_items_test::CheckEvaluateItems(
+      pnp, 3, [&](int k) { return std::vector<float *>(40, poses.ptr(k)); });
 }
 
 TEST(EvaluateItems, ReprojectionMatchesEvaluate) {
@@ -223,9 +221,8 @@ TEST(EvaluateItems, SE3PriorMatchesEvaluate) {
   Poses targets(20, 18);
   SE3PriorFactorBatch prior(targets.d.data(), 20);
   Poses poses(5, 19);
-  evaluate_items_test::CheckEvaluateItems(prior, 5, [&](int k) {
-    return std::vector<float *>(20, poses.ptr(k));
-  });
+  evaluate_items_test::CheckEvaluateItems(
+      prior, 5, [&](int k) { return std::vector<float *>(20, poses.ptr(k)); });
 }
 
 TEST(EvaluateItems, SE3BetweenMatchesEvaluate) {

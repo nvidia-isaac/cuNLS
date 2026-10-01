@@ -33,7 +33,7 @@ namespace cunls {
  * tangent-space update to the state blocks according to the manifold structure.
  */
 class StateBatch {
-public:
+ public:
   /** @brief Virtual destructor. */
   virtual ~StateBatch() = default;
 
@@ -135,4 +135,4 @@ public:
   virtual size_t NumConstStateBlocks() const = 0;
 };
 
-} // namespace cunls
+}  // namespace cunls

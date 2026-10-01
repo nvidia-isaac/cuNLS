@@ -55,7 +55,7 @@ class PointToPointFactorBatch : public SizedFactorBatch<3, 6> {
   using Base = SizedFactorBatch<3, 6>;
   using Vector3 = Vector<3>;
 
-public:
+ public:
   /**
    * @brief Constructs a batch of point-to-point factors.
    *
@@ -65,10 +65,11 @@ public:
    * points. Must point to at least num_factors * 3 floats of allocated memory.
    * @param num_factors Number of factors in the batch.
    */
-  PointToPointFactorBatch(const Vector3 *p_observations_ptr,
-                          const Vector3 *q_observations_ptr, size_t num_factors)
+  PointToPointFactorBatch(const Vector3 *p_observations_ptr, const Vector3 *q_observations_ptr,
+                          size_t num_factors)
       : p_observations_ptr_(p_observations_ptr),
-        q_observations_ptr_(q_observations_ptr), num_factors_(num_factors) {}
+        q_observations_ptr_(q_observations_ptr),
+        num_factors_(num_factors) {}
 
   /**
    * @brief Evaluates point-to-point residuals and optionally Jacobians.
@@ -100,7 +101,7 @@ public:
    */
   size_t NumFactors() const final { return num_factors_; }
 
-private:
+ private:
   PointToPointFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing target points (p).
@@ -113,4 +114,4 @@ private:
   size_t num_factors_;
 };
 
-} // namespace cunls
+}  // namespace cunls

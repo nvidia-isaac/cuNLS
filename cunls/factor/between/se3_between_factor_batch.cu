@@ -36,8 +36,7 @@ constexpr size_t block_size = 256;
  */
 __global__ void collect_and_compute_se3_between_error_kernel(float const *const *state_pointers,
                                                              const SE3Transform *deltas,
-                                                             size_t num_items,
-                                                             SE3Transform *errors,
+                                                             size_t num_items, SE3Transform *errors,
                                                              const int *factor_ids,
                                                              int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -295,8 +294,8 @@ constexpr int kSmemPerFactor = 24;
 
 __global__ void __launch_bounds__(kJacBlockSize, 5)
     se3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
-                                       const Matrix<6> *__restrict__ delta_adjoints,
-                                       int num_items, float *__restrict__ jacobians,
+                                       const Matrix<6> *__restrict__ delta_adjoints, int num_items,
+                                       float *__restrict__ jacobians,
                                        const int *__restrict__ factor_ids, int num_factors) {
   __shared__ float smem[kFactorsPerBlock * kSmemPerFactor];
 

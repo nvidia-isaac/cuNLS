@@ -81,9 +81,8 @@ void ApplyInformationToJacobians(void *cublas_handle, const float *sqrt_informat
  * @param stream CUDA stream for asynchronous execution.
  */
 void ApplyInformationToResidualItems(const float *sqrt_information, float *residuals,
-                                     size_t residual_size, size_t num_items,
-                                     const int *factor_ids, size_t num_factors,
-                                     cudaStream_t stream);
+                                     size_t residual_size, size_t num_items, const int *factor_ids,
+                                     size_t num_factors, cudaStream_t stream);
 
 /**
  * @brief Applies per-item sqrt-information matrices to Jacobian matrices.
@@ -103,9 +102,9 @@ void ApplyInformationToResidualItems(const float *sqrt_information, float *resid
  * @param stream CUDA stream for asynchronous execution.
  */
 void ApplyInformationToJacobianItems(const float *sqrt_information, float *jacobians,
-                                     size_t residual_size, size_t jacobian_pitch,
-                                     size_t num_items, const int *factor_ids,
-                                     size_t num_factors, cudaStream_t stream);
+                                     size_t residual_size, size_t jacobian_pitch, size_t num_items,
+                                     const int *factor_ids, size_t num_factors,
+                                     cudaStream_t stream);
 
 /**
  * @brief Wrapper factor that applies square-root information matrices.

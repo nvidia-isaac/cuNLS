@@ -53,7 +53,6 @@ class PnPFactorBatch : public SizedFactorBatch<2, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-
   size_t NumFactors() const final { return num_observations_; }
 
  private:

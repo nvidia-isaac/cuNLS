@@ -91,8 +91,8 @@ bool SE2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_se2_prior_kernel<<<num_blocks, kSE2PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(),
-      factor_ids, static_cast<int>(NumFactors()));
+      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 3: residual = Log(T_error)

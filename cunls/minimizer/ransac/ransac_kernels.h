@@ -74,18 +74,18 @@ struct BatchView {
   const float *res = nullptr;      ///< Residual buffer base.
   const float *jac = nullptr;      ///< Jacobian buffer base (may be null for cost-only use).
   const float *cost = nullptr;     ///< Per-factor cost buffer base (may be null).
-  size_t stride_res = 0;   ///< Floats between consecutive slots.
-  size_t stride_jac = 0;   ///< Floats between consecutive slots.
-  size_t stride_cost = 0;  ///< Floats between consecutive slots.
-  float tau_sq = 0.f;      ///< Squared inlier threshold (sampled batches).
+  size_t stride_res = 0;           ///< Floats between consecutive slots.
+  size_t stride_jac = 0;           ///< Floats between consecutive slots.
+  size_t stride_cost = 0;          ///< Floats between consecutive slots.
+  float tau_sq = 0.f;              ///< Squared inlier threshold (sampled batches).
 };
 
 /** @brief Everything a slot needs to enumerate its items. */
 struct SlotItems {
   const BatchView *views = nullptr;  ///< Device array.
   int num_views = 0;
-  const int *samples = nullptr;  ///< num_slots * sample_size concatenated sampled indices.
-  int sample_size = 0;           ///< Items taken from sample views (0 = none).
+  const int *samples = nullptr;   ///< num_slots * sample_size concatenated sampled indices.
+  int sample_size = 0;            ///< Items taken from sample views (0 = none).
   const uint8_t *mask = nullptr;  ///< Per-slot inlier mask over the concatenated sampled index.
   int mask_stride = 0;            ///< Bytes between consecutive slots' masks.
   int items_per_slot = 0;         ///< sample_size + sum of per-slot view sizes.
@@ -337,7 +337,7 @@ enum ScoringRule : int { kScoreMSAC = 0, kScoreInlierCount = 1 };
 
 /** @brief What the score kernel reads. */
 struct ScoreInputs {
-  const BatchView *sampled = nullptr;    ///< Per-slot raw residual views of kSampled batches.
+  const BatchView *sampled = nullptr;  ///< Per-slot raw residual views of kSampled batches.
   int num_sampled = 0;
   const BatchView *always_on = nullptr;  ///< Per-slot cost views of kAlwaysOn batches.
   int num_always_on = 0;

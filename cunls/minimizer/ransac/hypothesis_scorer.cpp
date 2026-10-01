@@ -52,8 +52,7 @@ void HypothesisScorer::Allocate(const RansacLayout &layout, const RansacMinimize
   const size_t n = static_cast<size_t>(layout.total_sampled());
   const size_t subset = options.scoring_subset_size;
   finalists_count_ = static_cast<int>(std::min<size_t>(
-      {options.scoring_finalists, size_t{64},
-       static_cast<size_t>(num_hypotheses)}));
+      {options.scoring_finalists, size_t{64}, static_cast<size_t>(num_hypotheses)}));
   finalists_count_ = std::max(finalists_count_, 1);
   two_stage_ = subset > 0 && n > 2 * subset && finalists_count_ < num_hypotheses;
 
@@ -101,8 +100,7 @@ void HypothesisScorer::AllocateBatches(const RansacLayout &layout) {
   }
 }
 
-BatchView HypothesisScorer::MakeView(const ResidualLayout &r, const Batch &buf,
-                                     bool subset) const {
+BatchView HypothesisScorer::MakeView(const ResidualLayout &r, const Batch &buf, bool subset) const {
   const int count = subset ? buf.subset_size : r.num_factors;
   BatchView v;
   v.m = r.m;
@@ -245,9 +243,8 @@ void HypothesisScorer::EvaluateSubsetChunk(cudaStream_t stream, const RansacLayo
     if (buf.subset_size == 0) {
       continue;
     }
-    LaunchSubsetTables(stream, hypotheses.state_views(), r.blocks.data(), r.nb,
-                       buf.subset.data(), buf.subset_size, count, first, buf.table.data(),
-                       buf.item_ids.data());
+    LaunchSubsetTables(stream, hypotheses.state_views(), r.blocks.data(), r.nb, buf.subset.data(),
+                       buf.subset_size, count, first, buf.table.data(), buf.item_ids.data());
     const size_t items = static_cast<size_t>(count) * buf.subset_size;
     r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr, buf.table.data(),
                        stream, buf.item_ids.data(), items);

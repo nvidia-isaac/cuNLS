@@ -116,8 +116,8 @@ bool PyWeightedFactorBatch::Evaluate(float *residuals, float *jacobians,
   // Item t is weighted by the weight of its factor (factor_ids[t] or t % nf).
   const size_t rsize = inner_->ResidualsSize();
   if (per_factor_weights_ != nullptr) {
-    cunls::ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals, rsize, num_items,
-                                           stream, factor_ids, nf);
+    cunls::ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals, rsize, num_items, stream,
+                                           factor_ids, nf);
   } else {
     cunls::ApplyUniformWeightToResiduals(uniform_weight_, residuals, num_items * rsize, stream);
   }
@@ -128,8 +128,8 @@ bool PyWeightedFactorBatch::Evaluate(float *residuals, float *jacobians,
   const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
 
   if (per_factor_weights_ != nullptr) {
-    cunls::ApplyPerFactorWeightToJacobians(per_factor_weights_, jacobians, rsize, jpitch,
-                                           num_items, stream, factor_ids, nf);
+    cunls::ApplyPerFactorWeightToJacobians(per_factor_weights_, jacobians, rsize, jpitch, num_items,
+                                           stream, factor_ids, nf);
   } else {
     cunls::ApplyUniformWeightToJacobians(uniform_weight_, jacobians, num_items * rsize * jpitch,
                                          stream);

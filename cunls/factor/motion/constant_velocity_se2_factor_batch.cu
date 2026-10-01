@@ -134,8 +134,8 @@ bool ConstantVelocitySE2FactorBatch::Evaluate(float *residuals, float *jacobians
   jr_inv_.resize(num_items);
   const size_t num_blocks = (num_items + kBlockSizeSE2CV - 1) / kBlockSizeSE2CV;
 
-  cv_se2_relative_pose_kernel<<<num_blocks, kBlockSizeSE2CV, 0, stream>>>(
-      state_pointers, num_items, pose_rel_.data());
+  cv_se2_relative_pose_kernel<<<num_blocks, kBlockSizeSE2CV, 0, stream>>>(state_pointers, num_items,
+                                                                          pose_rel_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pose_stride = 9;

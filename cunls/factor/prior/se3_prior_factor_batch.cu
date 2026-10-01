@@ -18,8 +18,8 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/factor/indexed_evaluation.cuh"
+#include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -104,8 +104,8 @@ bool SE3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect T_current from state pointers + compute T_inv * T_current
   collect_and_multiply_se3_prior_kernel<<<num_blocks, kSE3PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(),
-      factor_ids, static_cast<int>(NumFactors()));
+      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Residual = Log(T_error) using the SE(3) logarithm map

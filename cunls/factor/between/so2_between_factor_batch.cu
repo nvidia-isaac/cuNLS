@@ -26,8 +26,7 @@ constexpr size_t kSO2AngleStride = 1;
  */
 __global__ void collect_and_compute_so2_between_error_kernel(float const *const *state_pointers,
                                                              const Matrix<2> *deltas,
-                                                             size_t num_items,
-                                                             Matrix<2> *errors,
+                                                             size_t num_items, Matrix<2> *errors,
                                                              const int *factor_ids,
                                                              int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;

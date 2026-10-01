@@ -143,13 +143,12 @@ TEST(EvaluateItemsPrior, SO3PriorMatchesEvaluate) {
 }
 
 TEST(EvaluateItemsPrior, Similarity2PriorMatchesEvaluate) {
-  CheckLiePrior<Similarity2PriorFactorBatch, Similarity2Transform, Similarity2StateBatch>(9, 4,
-                                                                                         70);
+  CheckLiePrior<Similarity2PriorFactorBatch, Similarity2Transform, Similarity2StateBatch>(9, 4, 70);
 }
 
 TEST(EvaluateItemsPrior, Similarity3PriorMatchesEvaluate) {
   CheckLiePrior<Similarity3PriorFactorBatch, Similarity3Transform, Similarity3StateBatch>(16, 7,
-                                                                                         80);
+                                                                                          80);
 }
 
 TEST(EvaluateItemsPrior, SL4PriorMatchesEvaluate) {

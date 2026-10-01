@@ -135,9 +135,8 @@ struct RigProblem {
   Problem problem;
 
   RigProblem(int cameras, size_t points_per_camera, double outlier_ratio, double rot_err,
-             double trans_err, uint32_t seed, Method method,
-             double min_outlier = kMinOutlier, double noise = kNoise,
-             const std::array<double, 6> *coherent_twist = nullptr) {
+             double trans_err, uint32_t seed, Method method, double min_outlier = kMinOutlier,
+             double noise = kNoise, const std::array<double, 6> *coherent_twist = nullptr) {
     std::mt19937 rng(seed);
     std::vector<SE3Transform> gt(cameras);
     gt[0] = ExpSE3(RandomTwist(rng, 0.5, 1.0));
@@ -146,9 +145,8 @@ struct RigProblem {
     }
     for (int c = 0; c < cameras; ++c) {
       if (coherent_twist != nullptr) {  // single camera: the scene draws its own pose
-        scenes.push_back(ransac_test::MakeCoherentPnPScene(points_per_camera, outlier_ratio, noise,
-                                                           min_outlier, seed * 131 + c,
-                                                           *coherent_twist));
+        scenes.push_back(ransac_test::MakeCoherentPnPScene(
+            points_per_camera, outlier_ratio, noise, min_outlier, seed * 131 + c, *coherent_twist));
         gt[c] = scenes.back().world_to_cam;
       } else {
         scenes.push_back(ransac_test::MakePnPScene(points_per_camera, outlier_ratio, noise,
@@ -158,8 +156,8 @@ struct RigProblem {
     }
     poses.resize(cameras);
     poses.CopyFromHost(init.data(), cameras);
-    state = std::make_unique<SE3StateBatch>(cublas, reinterpret_cast<float *>(poses.data()),
-                                            cameras);
+    state =
+        std::make_unique<SE3StateBatch>(cublas, reinterpret_cast<float *>(poses.data()), cameras);
     problem.AddStateBatch(state.get());
     if (method == Method::kLMHuber) {
       loss = std::make_unique<HuberLossFunctionBatch>(static_cast<float>(kTau));
@@ -175,8 +173,8 @@ struct RigProblem {
       obs[c].CopyFromHost(s.observations.data(), s.observations.size());
       pts[c].resize(s.points_world.size());
       pts[c].CopyFromHost(s.points_world.data(), s.points_world.size());
-      pnp.push_back(std::make_unique<PnPFactorBatch>(obs[c].data(), pts[c].data(),
-                                                     s.observations.size()));
+      pnp.push_back(
+          std::make_unique<PnPFactorBatch>(obs[c].data(), pts[c].data(), s.observations.size()));
       std::vector<float *> ptrs(s.observations.size(), state->StateBlockDevicePtr(c));
       if (loss) {
         problem.AddFactorBatch(pnp.back().get(), loss.get(), ptrs);
@@ -371,8 +369,9 @@ TEST_F(RansacBenchmark, PnPSizeSweep) {
   std::ofstream csv(OutDir() + "pnp_size_sweep.csv");
   csv << "points,method,median_ms,rounds,hypotheses,rot_err_deg,trans_err\n";
   std::printf("\n### PnP, 30%% outliers, initial error 0.1 rad / 0.3: median wall time (ms)\n\n");
-  std::printf("| points | GN (DenseLDLT) | GN (PCG) | LM+Cauchy | RANSAC-GN | RANSAC-LM | "
-              "RANSAC rounds |\n|---|---|---|---|---|---|---|\n");
+  std::printf(
+      "| points | GN (DenseLDLT) | GN (PCG) | LM+Cauchy | RANSAC-GN | RANSAC-LM | "
+      "RANSAC rounds |\n|---|---|---|---|---|---|---|\n");
   for (size_t n : {100u, 1000u, 10000u, 100000u, 1000000u}) {
     const char *only_points = std::getenv("CUNLS_RANSAC_BENCH_POINTS");
     if (only_points != nullptr && std::stoull(only_points) != n) {
@@ -400,8 +399,8 @@ TEST_F(RansacBenchmark, PnPSizeSweep) {
       RigProblem rp(1, n, 0.3, 0.1, 0.3, 7, cfg.method);
       Runner runner(cfg.method, 1, 256, 8, cfg.solver);
       const int reps = n >= 1000000 ? 3 : 7;
-      const double ms = MedianMs([&] { rp.Reset(); },
-                                 [&] { runner.Run(stream.GetStream(), rp.problem); }, reps);
+      const double ms =
+          MedianMs([&] { rp.Reset(); }, [&] { runner.Run(stream.GetStream(), rp.problem); }, reps);
       const PoseErrors e = Errors(rp);
       rounds = IsRansac(cfg.method) ? runner.last.num_rounds : rounds;
       std::printf(" %.2f%s |", ms, e.success() ? "" : " (fail)");
@@ -439,21 +438,22 @@ TEST_F(RansacBenchmark, MultiCameraRig) {
   std::ofstream csv(OutDir() + "rig.csv");
   csv << "cameras,dim,method,median_ms,rounds,success,rot_err_deg\n";
   std::printf("\n### Rig of R cameras (D = 6R), 1000 points/camera, 30%% outliers (ms)\n\n");
-  std::printf("| R | D | LM (DenseLDLT) | LM+Cauchy | RANSAC-GN | RANSAC-LM | RANSAC rounds |\n"
-              "|---|---|---|---|---|---|---|\n");
+  std::printf(
+      "| R | D | LM (DenseLDLT) | LM+Cauchy | RANSAC-GN | RANSAC-LM | RANSAC rounds |\n"
+      "|---|---|---|---|---|---|---|\n");
   for (int cams : {1, 2, 5, 10}) {
     std::printf("| %d | %d |", cams, 6 * cams);
     size_t rounds = 0;
     for (Method m : {Method::kLM, Method::kLMCauchy, Method::kRansacGN, Method::kRansacLM}) {
       RigProblem rp(cams, 1000, 0.3, 0.05, 0.15, 9, m);
       Runner runner(m, cams, 1024, 8);
-      const double ms = MedianMs([&] { rp.Reset(); },
-                                 [&] { runner.Run(stream.GetStream(), rp.problem); }, 5);
+      const double ms =
+          MedianMs([&] { rp.Reset(); }, [&] { runner.Run(stream.GetStream(), rp.problem); }, 5);
       const PoseErrors e = Errors(rp);
       if (IsRansac(m)) rounds = runner.last.num_rounds;
       std::printf(" %.2f%s |", ms, e.success() ? "" : " (fail)");
-      csv << cams << "," << 6 * cams << "," << Name(m) << "," << ms << ","
-          << runner.last.num_rounds << "," << e.success() << "," << e.max_rot_deg << "\n";
+      csv << cams << "," << 6 * cams << "," << Name(m) << "," << ms << "," << runner.last.num_rounds
+          << "," << e.success() << "," << e.max_rot_deg << "\n";
     }
     std::printf(" %zu |\n", rounds);
   }
@@ -466,9 +466,8 @@ TEST_F(RansacBenchmark, MultiCameraRig) {
 TEST_F(RansacBenchmark, RobustnessAndDetectionVsOutlierRatio) {
   CudaStream stream;
   const int trials = Trials(20);
-  const std::vector<Method> methods = {Method::kGN,        Method::kLM,
-                                       Method::kLMHuber,   Method::kLMCauchy,
-                                       Method::kRansacGN,  Method::kRansacLM};
+  const std::vector<Method> methods = {Method::kGN,       Method::kLM,       Method::kLMHuber,
+                                       Method::kLMCauchy, Method::kRansacGN, Method::kRansacLM};
   std::ofstream csv(OutDir() + "robustness.csv");
   csv << "init,outlier_ratio,method,success_rate,median_rot_deg,median_trans,precision,recall,"
          "outlier_recall,f1,mean_ms\n";
@@ -476,11 +475,12 @@ TEST_F(RansacBenchmark, RobustnessAndDetectionVsOutlierRatio) {
     const char *label;
     double rot, trans;
   };
-  for (const Init init : {Init{"small (0.05 rad, 0.15)", 0.05, 0.15},
-                          Init{"large (0.3 rad, 0.8)", 0.3, 0.8}}) {
-    std::printf("\n### Success rate (rot < 0.5 deg, trans < 0.05), PnP 1000 points, "
-                "%d trials, initial error %s\n\n| outliers |",
-                trials, init.label);
+  for (const Init init :
+       {Init{"small (0.05 rad, 0.15)", 0.05, 0.15}, Init{"large (0.3 rad, 0.8)", 0.3, 0.8}}) {
+    std::printf(
+        "\n### Success rate (rot < 0.5 deg, trans < 0.05), PnP 1000 points, "
+        "%d trials, initial error %s\n\n| outliers |",
+        trials, init.label);
     for (Method m : methods) std::printf(" %s |", Name(m));
     std::printf("\n|---|");
     for (size_t i = 0; i < methods.size(); ++i) std::printf("---|");
@@ -502,9 +502,9 @@ TEST_F(RansacBenchmark, RobustnessAndDetectionVsOutlierRatio) {
           RigProblem rp(1, 1000, ratio, init.rot, init.trans, 1000 + t, m);
           const auto t0 = std::chrono::steady_clock::now();
           runner.Run(stream.GetStream(), rp.problem);
-          total_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                t0)
-                          .count();
+          total_ms +=
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                  .count();
           const PoseErrors e = Errors(rp);
           success += e.success();
           rot.push_back(e.max_rot_deg);
@@ -528,10 +528,11 @@ TEST_F(RansacBenchmark, RobustnessAndDetectionVsOutlierRatio) {
       std::printf("\n");
       detection_rows.push_back(drow);
     }
-    std::printf("\n### Inlier-mask precision / inlier recall / outlier recall, initial error %s "
-                "(LM+Cauchy: |r| <= tau at its final pose)\n\n"
-                "| outliers | LM+Cauchy | RANSAC-GN | RANSAC-LM |\n|---|---|---|---|\n",
-                init.label);
+    std::printf(
+        "\n### Inlier-mask precision / inlier recall / outlier recall, initial error %s "
+        "(LM+Cauchy: |r| <= tau at its final pose)\n\n"
+        "| outliers | LM+Cauchy | RANSAC-GN | RANSAC-LM |\n|---|---|---|---|\n",
+        init.label);
     for (const auto &r : detection_rows) std::printf("%s\n", r.c_str());
   }
 }
@@ -550,13 +551,14 @@ TEST_F(RansacBenchmark, RobustnessCoherentOutliers) {
     const char *label;
     double rot, trans;
   };
-  for (const Init init : {Init{"small (0.05 rad, 0.15)", 0.05, 0.15},
-                          Init{"large (0.3 rad, 0.8)", 0.3, 0.8}}) {
-    std::printf("\n### Coherent outliers (a competing pose), PnP 1000 points, %d trials, initial "
-                "error %s: success rate | precision / inlier recall / outlier recall\n\n"
-                "| outliers | LM+Huber | P / R / OR | LM+Cauchy | P / R / OR | RANSAC-GN | P / R / OR "
-                "| RANSAC-LM | P / R / OR |\n|---|---|---|---|---|---|---|---|---|\n",
-                trials, init.label);
+  for (const Init init :
+       {Init{"small (0.05 rad, 0.15)", 0.05, 0.15}, Init{"large (0.3 rad, 0.8)", 0.3, 0.8}}) {
+    std::printf(
+        "\n### Coherent outliers (a competing pose), PnP 1000 points, %d trials, initial "
+        "error %s: success rate | precision / inlier recall / outlier recall\n\n"
+        "| outliers | LM+Huber | P / R / OR | LM+Cauchy | P / R / OR | RANSAC-GN | P / R / OR "
+        "| RANSAC-LM | P / R / OR |\n|---|---|---|---|---|---|---|---|---|\n",
+        trials, init.label);
     for (double ratio : {0.1, 0.2, 0.3, 0.4, 0.45}) {
       std::printf("| %.0f%% |", ratio * 100);
       for (Method m : methods) {
@@ -573,8 +575,8 @@ TEST_F(RansacBenchmark, RobustnessCoherentOutliers) {
         const double rate = static_cast<double>(success) / trials;
         std::printf(" %.0f%% | %.3f / %.3f / %.3f |", rate * 100, det.precision(), det.recall(),
                     det.outlier_recall());
-        csv << init.label << "," << ratio << "," << Name(m) << "," << rate << ","
-            << det.precision() << "," << det.recall() << "," << det.outlier_recall() << "\n";
+        csv << init.label << "," << ratio << "," << Name(m) << "," << rate << "," << det.precision()
+            << "," << det.recall() << "," << det.outlier_recall() << "\n";
       }
       std::printf("\n");
     }
@@ -588,11 +590,12 @@ TEST_F(RansacBenchmark, DetectionVsNoiseAndOutlierMagnitude) {
   std::ofstream csv(OutDir() + "detection.csv");
   csv << "tau_over_sigma,min_outlier_over_tau,outlier_ratio,precision,recall,outlier_recall,"
          "success_rate\n";
-  std::printf("\n### RANSAC-GN detection, 1000 points, 50%% outliers, %d trials: "
-              "precision / inlier recall / outlier recall (success rate)\n\n"
-              "| tau / sigma | outliers >= 1.2 tau | outliers >= 2 tau | outliers >= 4 tau |\n"
-              "|---|---|---|---|\n",
-              trials);
+  std::printf(
+      "\n### RANSAC-GN detection, 1000 points, 50%% outliers, %d trials: "
+      "precision / inlier recall / outlier recall (success rate)\n\n"
+      "| tau / sigma | outliers >= 1.2 tau | outliers >= 2 tau | outliers >= 4 tau |\n"
+      "|---|---|---|---|\n",
+      trials);
   for (double tau_over_sigma : {2.0, 3.0, 5.0}) {
     std::printf("| %.0f |", tau_over_sigma);
     for (double outlier_over_tau : {1.2, 2.0, 4.0}) {

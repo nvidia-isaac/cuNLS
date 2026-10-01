@@ -121,10 +121,8 @@ void BindOptions(nb::module_ &m) {
       .def_rw("default_inlier_threshold", &RansacMinimizerOptions::default_inlier_threshold)
       .def_rw("scoring", &RansacMinimizerOptions::scoring)
       .def_rw("score_always_on", &RansacMinimizerOptions::score_always_on)
-      .def_rw("require_informative_inliers",
-              &RansacMinimizerOptions::require_informative_inliers)
-      .def_rw("scoring_memory_budget_bytes",
-              &RansacMinimizerOptions::scoring_memory_budget_bytes)
+      .def_rw("require_informative_inliers", &RansacMinimizerOptions::require_informative_inliers)
+      .def_rw("scoring_memory_budget_bytes", &RansacMinimizerOptions::scoring_memory_budget_bytes)
       .def_rw("scoring_subset_size", &RansacMinimizerOptions::scoring_subset_size)
       .def_rw("scoring_finalists", &RansacMinimizerOptions::scoring_finalists)
       .def_rw("hypothesis_iterations", &RansacMinimizerOptions::hypothesis_iterations)

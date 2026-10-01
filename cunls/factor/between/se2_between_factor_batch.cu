@@ -25,8 +25,7 @@ constexpr size_t kSE2TangentStride = 3;
  */
 __global__ void collect_and_compute_se2_between_error_kernel(float const *const *state_pointers,
                                                              const Matrix<3> *deltas,
-                                                             size_t num_items,
-                                                             Matrix<3> *errors,
+                                                             size_t num_items, Matrix<3> *errors,
                                                              const int *factor_ids,
                                                              int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -94,9 +93,8 @@ __global__ void collect_and_compute_se2_between_error_kernel(float const *const 
  * @param num_factors Number of factors in the batch
  */
 __global__ void se2_between_jacobian_kernel(const float *residuals, const float *deltas,
-                                            size_t delta_stride, float *jacobians,
-                                            size_t num_items, const int *factor_ids,
-                                            int num_factors) {
+                                            size_t delta_stride, float *jacobians, size_t num_items,
+                                            const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_items) {
     return;

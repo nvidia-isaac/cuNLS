@@ -39,8 +39,8 @@ std::vector<int> ConstantFlags(const StateBatch &batch, int num_blocks) {
     return flags;
   }
   std::vector<int> ids(count);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(ids.data(), batch.ConstStateIds(), count * sizeof(int),
-                                 cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(ids.data(), batch.ConstStateIds(), count * sizeof(int), cudaMemcpyDeviceToHost));
   for (int id : ids) {
     if (id >= 0 && id < num_blocks) {
       flags[id] = 1;
@@ -80,7 +80,8 @@ void RansacLayout::BuildStates(const Problem &problem) {
     }
   }
   if (dim_ == 0) {
-    FailConfiguration("RANSAC: the problem has no free state blocks (free tangent dimension D = 0)");
+    FailConfiguration(
+        "RANSAC: the problem has no free state blocks (free tangent dimension D = 0)");
   }
   if (dim_ > kMaxRansacTangentDim) {
     FailConfiguration("RANSAC: free tangent dimension D = " + Str(dim_) + " exceeds " +
@@ -112,9 +113,10 @@ int RansacLayout::BuildState(size_t index, StateBatch *batch) {
   s.block_col.resize(s.num_blocks);
   s.block_col.CopyFromHost(s.block_col_host.data(), s.num_blocks);
   if (free_blocks > 0 && free_blocks * 2 < s.num_blocks) {
-    LogMessage("RANSAC: state batch {} is copied per hypothesis but only {} of its {} blocks "
-               "are free; keep constant blocks in their own state batch to save memory",
-               index, free_blocks, s.num_blocks);
+    LogMessage(
+        "RANSAC: state batch {} is copied per hypothesis but only {} of its {} blocks "
+        "are free; keep constant blocks in their own state batch to save memory",
+        index, free_blocks, s.num_blocks);
   }
   return free_blocks;
 }
@@ -159,8 +161,9 @@ void RansacLayout::BuildResidual(const Problem &problem, size_t index,
   r.residual_batch = &problem.GetResidualBatches()[index];
   r.factor = r.residual_batch->GetFactorBatch();
   if (problem.JacobianModeFor(index, JacobianMode::kAnalytic) != JacobianMode::kAnalytic) {
-    FailConfiguration("RANSAC: residual batch " + Str(index) +
-                      " requests numeric Jacobians, which the RANSAC minimizers do not support yet");
+    FailConfiguration(
+        "RANSAC: residual batch " + Str(index) +
+        " requests numeric Jacobians, which the RANSAC minimizers do not support yet");
   }
   r.sampled = role.role == RansacRole::kSampled;
   r.tau = role.inlier_threshold;
@@ -228,9 +231,8 @@ void RansacLayout::ResolveBlocks(ResidualLayout &r, size_t index,
 }
 
 void RansacLayout::ChooseSampleSize(const RansacMinimizerOptions &options, int m_min_sampled) {
-  sample_size_ = options.sample_size > 0
-                     ? static_cast<int>(options.sample_size)
-                     : std::max(1, (dim_ + m_min_sampled - 1) / m_min_sampled);
+  sample_size_ = options.sample_size > 0 ? static_cast<int>(options.sample_size)
+                                         : std::max(1, (dim_ + m_min_sampled - 1) / m_min_sampled);
   if (sample_size_ > total_sampled_) {
     FailConfiguration("RANSAC: sample size " + Str(sample_size_) + " exceeds the " +
                       Str(total_sampled_) + " kSampled factors");

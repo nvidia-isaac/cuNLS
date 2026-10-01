@@ -92,8 +92,7 @@ class SlotSet {
    * @brief kMinimalSamples: draws round `round`'s minimal samples, slot p's
    * from the keyed permutation PermutationKey(seed, round, p).
    */
-  void DrawSamples(cudaStream_t stream, const RansacLayout &layout, uint64_t seed,
-                   uint64_t round);
+  void DrawSamples(cudaStream_t stream, const RansacLayout &layout, uint64_t seed, uint64_t round);
 
   /** @brief Starts a solve: every slot active, lambda reset, counters and validity reset. */
   void ResetSolver(cudaStream_t stream, float initial_lambda);

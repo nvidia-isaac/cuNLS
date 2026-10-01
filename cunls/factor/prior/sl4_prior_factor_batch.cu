@@ -83,8 +83,8 @@ bool SL4PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
   size_t num_blocks = (num_items + kSL4PriorBlockSize - 1) / kSL4PriorBlockSize;
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_sl4_prior_kernel<<<num_blocks, kSL4PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(),
-      factor_ids, static_cast<int>(NumFactors()));
+      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t transform_pitch = 4;

@@ -24,9 +24,9 @@ constexpr size_t kBlockSize = 256;
  */
 __global__ void collect_and_matmul_sl4_between_kernel(float const *const *state_pointers,
                                                       const SL4Transform *left_inverse,
-                                                      const SL4Transform *deltas,
-                                                      size_t num_items, SL4Transform *errors,
-                                                      const int *factor_ids, int num_factors) {
+                                                      const SL4Transform *deltas, size_t num_items,
+                                                      SL4Transform *errors, const int *factor_ids,
+                                                      int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_items) return;
   const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
@@ -89,8 +89,8 @@ __global__ void collect_and_matmul_sl4_between_kernel(float const *const *state_
   out[15] = d12 * t[3] + d13 * t[7] + d14 * t[11] + d15 * t[15];
 }
 
-__global__ void collect_sl4_left_poses_kernel(float const *const *state_pointers,
-                                              size_t num_items, SL4Transform *pose_left) {
+__global__ void collect_sl4_left_poses_kernel(float const *const *state_pointers, size_t num_items,
+                                              SL4Transform *pose_left) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_items) return;
   pose_left[tid] = *reinterpret_cast<const SL4Transform *>(state_pointers[2 * tid]);
@@ -182,8 +182,8 @@ bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                     reinterpret_cast<float *>(poses_left_inverse_.data()));
 
   collect_and_matmul_sl4_between_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, poses_left_inverse_.data(), pose_deltas_ptr_, num_items,
-      poses_left_.data(), factor_ids, num_factors);
+      state_pointers, poses_left_inverse_.data(), pose_deltas_ptr_, num_items, poses_left_.data(),
+      factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t twist_stride = 15;

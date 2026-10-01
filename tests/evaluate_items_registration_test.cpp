@@ -184,8 +184,7 @@ TEST(EvaluateItemsRegistration, SymmetricPointToPlaneMatchesEvaluate) {
   auto q = ToDevice(RandomPoints(kNumFactors, 122));
   auto np = ToDevice(RandomNormals(kNumFactors, 123));
   auto nq = ToDevice(RandomNormals(kNumFactors, 124));
-  SymmetricPointToPlaneFactorBatch factor(p.data(), q.data(), np.data(), nq.data(),
-                                          kNumFactors);
+  SymmetricPointToPlaneFactorBatch factor(p.data(), q.data(), np.data(), nq.data(), kNumFactors);
   Poses poses(kCopies * kNumFactors, 125);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -232,9 +231,8 @@ TEST(EvaluateItemsRegistration, InformationPnPMatchesEvaluate) {
   PnPData data(kNumFactors, 171);
   auto info = ToDevice(RandomSqrtInformation<2>(kNumFactors, 172));
   InformationFactorBatch<PnPFactorBatch> factor(Cublas(), info.data(),
-                                                static_cast<size_t>(kNumFactors),
-                                                data.obs.data(), data.pts.data(),
-                                                static_cast<size_t>(kNumFactors));
+                                                static_cast<size_t>(kNumFactors), data.obs.data(),
+                                                data.pts.data(), static_cast<size_t>(kNumFactors));
   Poses poses(kCopies * kNumFactors, 173, 0.05f, 0.1f);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }

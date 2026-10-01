@@ -170,8 +170,8 @@ bool ConstantAccelerationSE3FactorBatch::Evaluate(float *residuals, float *jacob
   jr_inv_.resize(num_items);
   const size_t num_blocks = (num_items + kBlockSizeSE3CA - 1) / kBlockSizeSE3CA;
 
-  ca_se3_relative_pose_kernel<<<num_blocks, kBlockSizeSE3CA, 0, stream>>>(
-      state_pointers, num_items, pose_rel_.data());
+  ca_se3_relative_pose_kernel<<<num_blocks, kBlockSizeSE3CA, 0, stream>>>(state_pointers, num_items,
+                                                                          pose_rel_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pose_pitch = 4;

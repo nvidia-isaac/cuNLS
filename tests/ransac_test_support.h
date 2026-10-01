@@ -103,9 +103,8 @@ LinearScene MakeLinearScene(int dim, size_t num_points, double outlier_ratio, do
 
 /** Evaluates `num_items` items (see FactorBatch::Evaluate) of the linear regression factor. */
 void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_factors,
-                            float *residuals, float *jacobians,
-                            float const *const *state_pointers, const int *factor_ids,
-                            size_t num_items, cudaStream_t stream);
+                            float *residuals, float *jacobians, float const *const *state_pointers,
+                            const int *factor_ids, size_t num_items, cudaStream_t stream);
 
 /** r_i = a_i^T x - y_i with a VectorStateBatch<Dim> state. */
 template <int Dim>
@@ -117,8 +116,7 @@ class LinearRegressionFactorBatch : public SizedFactorBatch<1, Dim> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override {
     LaunchLinearRegression(Dim, a_, y_, num_factors_, residuals, jacobians, state_pointers,
-                           factor_ids, num_factor_ids == 0 ? num_factors_ : num_factor_ids,
-                           stream);
+                           factor_ids, num_factor_ids == 0 ? num_factors_ : num_factor_ids, stream);
     return true;
   }
   size_t NumFactors() const override { return num_factors_; }

@@ -81,8 +81,7 @@ __global__ void prior_vector_factor_kernel(const float *observations,
 
 void LaunchPriorVectorFactorKernel(const float *observations, float const *const *state_pointers,
                                    float *residuals, float *jacobians, int dim, int num_vectors,
-                                   cudaStream_t stream, const int *factor_ids,
-                                   int num_factors) {
+                                   cudaStream_t stream, const int *factor_ids, int num_factors) {
   if (num_factors == 0) {
     num_factors = num_vectors;
   }

@@ -196,8 +196,8 @@ ResidualBatch::ResidualBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_
     : factor_batch_(factor_batch), loss_function_(loss_function) {}
 
 bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *residuals,
-                             float const *const *state_pointers, float *cost,
-                             float *jacobians, const int *factor_ids, size_t num_factor_ids) const {
+                             float const *const *state_pointers, float *cost, float *jacobians,
+                             const int *factor_ids, size_t num_factor_ids) const {
   const size_t items = num_factor_ids == 0 ? factor_batch_->NumFactors() : num_factor_ids;
 
   // Return before the preconditions below: an empty batch has nothing to

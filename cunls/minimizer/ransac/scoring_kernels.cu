@@ -119,9 +119,9 @@ __global__ void ScorePartialKernel(ScoreInputs in, int slot_offset, const int *s
   for (int v = 0; split == 0 && v < in.num_always_on; ++v) {
     const BatchView &view = in.always_on[v];
     for (int f = threadIdx.x; f < view.num_factors; f += blockDim.x) {
-      always_on +=
-          view.cost[static_cast<size_t>(GlobalSlot(slot_offset, slot_index, local)) *
-                        view.stride_cost + f];
+      always_on += view.cost[static_cast<size_t>(GlobalSlot(slot_offset, slot_index, local)) *
+                                 view.stride_cost +
+                             f];
     }
   }
   const float sums[kScorePartials] = {BlockSum(msac, scratch), BlockSum(bound, scratch),
@@ -148,9 +148,8 @@ __global__ void ScoreFinalizeKernel(ScoreInputs in, int slot_offset, const int *
   }
   const int count = static_cast<int>(sum[2]);
   const int global = GlobalSlot(slot_offset, slot_index, local);
-  float s = in.rule == kScoreInlierCount
-                ? -static_cast<float>(count) + sum[0] / (sum[1] + 1.f)
-                : sum[0] + (in.add_always_on ? 2.f * sum[3] : 0.f);
+  float s = in.rule == kScoreInlierCount ? -static_cast<float>(count) + sum[0] / (sum[1] + 1.f)
+                                         : sum[0] + (in.add_always_on ? 2.f * sum[3] : 0.f);
   if (!isfinite(s) || (valid != nullptr && valid[global] == 0)) {
     s = INFINITY;
   }

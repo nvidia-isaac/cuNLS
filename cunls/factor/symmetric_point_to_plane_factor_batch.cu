@@ -151,10 +151,9 @@ constexpr size_t kBlockSize = 256;
  * @note Launch configuration: <<<ceil(num / kBlockSize), kBlockSize>>>
  */
 __global__ void symmetric_point_to_plane_cost_kernel(
-    const float *p_observations, const float *q_observations,
-    const float *np_observations, const float *nq_observations,
-    float const *const *state_pointers, float *residuals, float *jacobians,
-    int num_items, const int *factor_ids, int num_factors) {
+    const float *p_observations, const float *q_observations, const float *np_observations,
+    const float *nq_observations, float const *const *state_pointers, float *residuals,
+    float *jacobians, int num_items, const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) {
     return;
@@ -263,9 +262,10 @@ __global__ void symmetric_point_to_plane_cost_kernel(
   }
 }
 
-bool SymmetricPointToPlaneFactorBatch::Evaluate(
-    float *residuals, float *jacobians, float const *const *state_pointers,
-    cudaStream_t stream, const int *factor_ids, size_t num_factor_ids) const {
+bool SymmetricPointToPlaneFactorBatch::Evaluate(float *residuals, float *jacobians,
+                                                float const *const *state_pointers,
+                                                cudaStream_t stream, const int *factor_ids,
+                                                size_t num_factor_ids) const {
   const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
   if (num_items == 0 || NumFactors() == 0) {
     return true;
@@ -277,12 +277,11 @@ bool SymmetricPointToPlaneFactorBatch::Evaluate(
 
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
   symmetric_point_to_plane_cost_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      p_data_ptr, q_data_ptr, np_data_ptr, nq_data_ptr, state_pointers,
-      residuals, jacobians, static_cast<int>(num_items), factor_ids,
-      static_cast<int>(NumFactors()));
+      p_data_ptr, q_data_ptr, np_data_ptr, nq_data_ptr, state_pointers, residuals, jacobians,
+      static_cast<int>(num_items), factor_ids, static_cast<int>(NumFactors()));
 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }
 
-} // namespace cunls
+}  // namespace cunls

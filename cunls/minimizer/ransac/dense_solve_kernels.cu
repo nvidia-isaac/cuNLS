@@ -39,9 +39,9 @@ namespace ransac_internal {
 
 namespace {
 
-constexpr int kBlockThreads = 128;  ///< Block groups (dim > 32): fewer threads, cheaper syncs.
+constexpr int kBlockThreads = 128;    ///< Block groups (dim > 32): fewer threads, cheaper syncs.
 constexpr int kMaxWarpsPerBlock = 8;  ///< Warp groups per block (and warps of a block group).
-constexpr int kWarpDimLimit = 32;         ///< Largest dim solved by a warp group.
+constexpr int kWarpDimLimit = 32;     ///< Largest dim solved by a warp group.
 constexpr int kMaxWordsPerBlock = 12288;  ///< 48 KiB of shared memory.
 constexpr float kPivotTolerance = 1e-6f;  ///< On the equilibrated matrix (unit diagonal).
 
@@ -312,8 +312,8 @@ __global__ void SolveKernel(int num_slots, int dim, int solver, const float *hes
   const Workspace w = MapWorkspace(smem + group * WordsPerGroup(dim), dim);
   const bool is_active = active == nullptr || active[slot] != 0;  // uniform per group
 
-  bool ok = is_active && LoadSystem<kGroup>(w, dim, h, g,
-                                            lambda != nullptr ? lambda + slot : nullptr, t);
+  bool ok =
+      is_active && LoadSystem<kGroup>(w, dim, h, g, lambda != nullptr ? lambda + slot : nullptr, t);
   if (ok) {
     const int rank = Factorize<kGroup>(w, dim, solver == kSolveLDLT, t, s_pivot + group);
     ok = rank >= 0;
@@ -333,8 +333,7 @@ __global__ void SolveKernel(int num_slots, int dim, int solver, const float *hes
 
 void LaunchSolve(cudaStream_t stream, int num_slots, int dim, SolverKind solver,
                  const float *hessian, const float *gradient, const float *lambda,
-                 const int *active, float *delta, float *predicted, float *step_sq,
-                 int *solve_ok) {
+                 const int *active, float *delta, float *predicted, float *step_sq, int *solve_ok) {
   if (num_slots <= 0) {
     return;
   }

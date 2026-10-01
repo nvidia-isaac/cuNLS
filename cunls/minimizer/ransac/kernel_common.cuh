@@ -109,8 +109,7 @@ __device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, Item
     const int u = items.samples[static_cast<size_t>(slot) * items.sample_size + e];
     for (int v = 0; v < items.num_views; ++v) {
       const BatchView &view = items.views[v];
-      if (view.kind == kViewSamples && u >= view.u_offset &&
-          u < view.u_offset + view.num_factors) {
+      if (view.kind == kViewSamples && u >= view.u_offset && u < view.u_offset + view.num_factors) {
         ref = {v, u - view.u_offset, e};
         return true;
       }

@@ -52,8 +52,8 @@ constexpr size_t kMaxInformationResidualSize = 48 * 1024 / (kInformationBlockSiz
  * Jacobians: one vector per column, element stride jacobian_pitch.
  */
 __global__ void ApplySqrtInformationKernel(const float *sqrt_information, float *data,
-                                           int residual_size, int vectors_per_item,
-                                           int item_stride, int element_stride, int num_vectors,
+                                           int residual_size, int vectors_per_item, int item_stride,
+                                           int element_stride, int num_vectors,
                                            const int *factor_ids, int num_factors) {
   extern __shared__ float staging[];
   const int v = blockIdx.x * blockDim.x + threadIdx.x;
@@ -108,17 +108,16 @@ void LaunchSqrtInformation(const float *sqrt_information, float *data, size_t re
 }  // namespace
 
 void ApplyInformationToResidualItems(const float *sqrt_information, float *residuals,
-                                     size_t residual_size, size_t num_items,
-                                     const int *factor_ids, size_t num_factors,
-                                     cudaStream_t stream) {
-  LaunchSqrtInformation(sqrt_information, residuals, residual_size, 1, residual_size, 1,
-                        num_items, factor_ids, num_factors, stream);
+                                     size_t residual_size, size_t num_items, const int *factor_ids,
+                                     size_t num_factors, cudaStream_t stream) {
+  LaunchSqrtInformation(sqrt_information, residuals, residual_size, 1, residual_size, 1, num_items,
+                        factor_ids, num_factors, stream);
 }
 
 void ApplyInformationToJacobianItems(const float *sqrt_information, float *jacobians,
-                                     size_t residual_size, size_t jacobian_pitch,
-                                     size_t num_items, const int *factor_ids,
-                                     size_t num_factors, cudaStream_t stream) {
+                                     size_t residual_size, size_t jacobian_pitch, size_t num_items,
+                                     const int *factor_ids, size_t num_factors,
+                                     cudaStream_t stream) {
   LaunchSqrtInformation(sqrt_information, jacobians, residual_size, jacobian_pitch,
                         residual_size * jacobian_pitch, jacobian_pitch, num_items, factor_ids,
                         num_factors, stream);

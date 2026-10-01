@@ -148,7 +148,6 @@ class ResidualBatch {
                         float *jacobians, size_t num_items) const;
 
  public:
-
   /**
    * @brief Gets the factor batch.
    *

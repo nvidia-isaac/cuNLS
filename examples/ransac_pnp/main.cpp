@@ -55,9 +55,9 @@ using cunls::Vector;
 
 namespace {
 
-constexpr float kMinDepth = 1.0f;      // generated points are at least this far in front
-constexpr float kZThreshold = 1e-3f;   // PnPFactorBatch guard against z ~ 0
-constexpr float kPixelNoise = 3e-3f;   // inlier noise (normalized image units, per axis)
+constexpr float kMinDepth = 1.0f;          // generated points are at least this far in front
+constexpr float kZThreshold = 1e-3f;       // PnPFactorBatch guard against z ~ 0
+constexpr float kPixelNoise = 3e-3f;       // inlier noise (normalized image units, per axis)
 constexpr float kInlierThreshold = 0.01f;  // ~3.3 sigma on the 2D residual norm
 
 struct Dataset {
@@ -134,8 +134,8 @@ struct PnPProblem {
         pose_state(cublas, reinterpret_cast<const float *>(pose.data()), 1),
         pnp(observations.data(), points.data(), data.points_world.size(), kZThreshold) {
     problem.AddStateBatch(&pose_state);
-    problem.AddFactorBatch(&pnp, std::vector<float *>(data.points_world.size(),
-                                                      pose_state.StateBlockDevicePtr(0)));
+    problem.AddFactorBatch(
+        &pnp, std::vector<float *>(data.points_world.size(), pose_state.StateBlockDevicePtr(0)));
     if (!problem.CheckConsistency()) {
       throw std::runtime_error("PnP problem consistency check failed");
     }
@@ -228,8 +228,8 @@ int main(int argc, char **argv) {
 
     std::mt19937 rng(2024);
     const Dataset data = GenerateDataset(num_points, outlier_ratio, rng);
-    std::cout << "RANSAC PnP example: " << num_points << " correspondences, "
-              << outlier_ratio * 100 << "% outliers\n";
+    std::cout << "RANSAC PnP example: " << num_points << " correspondences, " << outlier_ratio * 100
+              << "% outliers\n";
     PrintPose("Initial guess      ", data.initial_pose, data.gt_pose);
 
     const SE3Transform lm_pose = SolveWithLM(data);
@@ -250,8 +250,8 @@ int main(int argc, char **argv) {
     std::cout << "  RANSAC: " << summary.num_rounds << " round(s), " << summary.num_hypotheses
               << " hypotheses, " << summary.num_inliers << " inliers ("
               << summary.inlier_ratio * 100 << "%)\n"
-              << "  Inlier mask: " << true_pos << " of " << true_inliers
-              << " true inliers kept, " << false_pos << " outliers accepted\n";
+              << "  Inlier mask: " << true_pos << " of " << true_inliers << " true inliers kept, "
+              << false_pos << " outliers accepted\n";
 
     const bool ok = RotationErrorDeg(ransac_pose, data.gt_pose) < 0.5f &&
                     TranslationError(ransac_pose, data.gt_pose) < 0.05f && false_pos == 0;

@@ -83,7 +83,7 @@ batches (for Euclidean states, this reduces to simple addition).
 Factor Graphs
 ===============================================================================
 
-A common way to set up nonlinear least-squares problems is to create a factor graph: 
+A common way to set up nonlinear least-squares problems is to create a factor graph:
 a graph where nodes represent variables and edges represent constraints between them.
 
 .. raw:: html
@@ -100,10 +100,10 @@ a graph where nodes represent variables and edges represent constraints between 
    Example factor-graph structure used to represent sparse nonlinear least-squares problems.
 
 The constraints between variables are called factors, which are nonlinear functions representing mean error.
-Each factor is also associated with a covariance matrix. 
+Each factor is also associated with a covariance matrix.
 Together the mean and the covariance represent multivariate normal distribution for a given factor.
 
-This way factor graph is a probabilistic graphical model, 
+This way factor graph is a probabilistic graphical model,
 which represents a joint probability distribution of all factors
 
 .. math::
@@ -120,7 +120,7 @@ For Gaussian-like factors:
    p_i(x_i) \propto \exp\left(-\frac{1}{2}\left\|f_i(x_i)\right\|^2_{\Sigma_i}\right)
 
 maximizing the posterior is equivalent to minimizing the sum of squared (and
-optionally robustified) residuals. 
+optionally robustified) residuals.
 
 cuNLS allows setting up variables and factors in batches for higher GPU utilization.
 A `FactorBatch` is a collection of same type factors that are connected to a list of `StateBatch` objects —

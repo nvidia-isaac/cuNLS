@@ -92,9 +92,8 @@ Similarity3PriorFactorBatch::Similarity3PriorFactorBatch(
 }
 
 bool Similarity3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
-                                           float const *const *state_pointers,
-                                           cudaStream_t stream, const int *factor_ids,
-                                           size_t num_factor_ids) const {
+                                           float const *const *state_pointers, cudaStream_t stream,
+                                           const int *factor_ids, size_t num_factor_ids) const {
   const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
   if (num_items == 0 || NumFactors() == 0) {
     return true;
@@ -104,8 +103,8 @@ bool Similarity3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_sim3_prior_kernel<<<num_blocks, kSim3PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(),
-      factor_ids, static_cast<int>(NumFactors()));
+      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 3: residual = Log(T_error)

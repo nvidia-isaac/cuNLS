@@ -23,6 +23,8 @@
  * determinism, scoring chunks and waves.
  */
 
+#include "cunls/minimizer/ransac_minimizer.h"
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -48,7 +50,6 @@
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/ransac/ransac_kernels.h"
-#include "cunls/minimizer/ransac_minimizer.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
@@ -105,8 +106,8 @@ TEST(RansacKernels, PermutationDependsOnKey) {
   const uint32_t n = 1000;
   int same = 0;
   for (uint32_t i = 0; i < n; ++i) {
-    same += PermuteIndex(i, n, PermutationKey(1, 0, 0)) ==
-            PermuteIndex(i, n, PermutationKey(1, 1, 0));
+    same +=
+        PermuteIndex(i, n, PermutationKey(1, 0, 0)) == PermuteIndex(i, n, PermutationKey(1, 1, 0));
   }
   EXPECT_LT(same, 20);  // ~1 expected for independent permutations
 }
@@ -141,9 +142,9 @@ struct HostView {
 };
 
 void ReferenceNormalEquations(const std::vector<HostView> &views, const std::vector<int> &samples,
-                              int sample_size, const std::vector<uint8_t> &mask,
-                              int mask_stride, int slot, int dim, std::vector<double> &h,
-                              std::vector<double> &g, double &cost) {
+                              int sample_size, const std::vector<uint8_t> &mask, int mask_stride,
+                              int slot, int dim, std::vector<double> &h, std::vector<double> &g,
+                              double &cost) {
   h.assign(dim * dim, 0.0);
   g.assign(dim, 0.0);
   cost = 0.0;
@@ -321,8 +322,7 @@ TEST_P(RansacNormalEquationsTest, MatchesCpuReferenceAndIsDeterministic) {
   for (int p = 0; p < slots; ++p) {
     std::vector<double> rh, rg;
     double rc;
-    ReferenceNormalEquations(views, samples, sample_size, mask, total_sampled, p, dim, rh, rg,
-                             rc);
+    ReferenceNormalEquations(views, samples, sample_size, mask, total_sampled, p, dim, rh, rg, rc);
     double scale = 1.0;
     for (double x : rh) scale = std::max(scale, std::fabs(x));
     for (int i = 0; i < dim * dim; ++i) {
@@ -665,7 +665,7 @@ struct PnPSetup {
     std::vector<float *> ptrs(scene.observations.size(), state->StateBlockDevicePtr(0));
     if (cauchy_scale > 0.f) {
       loss = std::make_unique<CauchyLossFunctionBatch>(cauchy_scale * cauchy_scale,
-                                                        1.f / (cauchy_scale * cauchy_scale));
+                                                       1.f / (cauchy_scale * cauchy_scale));
       problem.AddFactorBatch(pnp.get(), loss.get(), ptrs);
     } else {
       problem.AddFactorBatch(pnp.get(), ptrs);
@@ -787,11 +787,11 @@ TEST_P(RansacPnPTest, RejectsOutliersAndMatchesInlierOnlySolution) {
   EXPECT_LE(summary.final_cost, summary.initial_cost);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    OutlierRatios, RansacPnPTest,
-    ::testing::Values(OutlierCase{0.0, false}, OutlierCase{0.1, false}, OutlierCase{0.3, false},
-                      OutlierCase{0.5, false}, OutlierCase{0.7, false}, OutlierCase{0.0, true},
-                      OutlierCase{0.3, true}, OutlierCase{0.7, true}));
+INSTANTIATE_TEST_SUITE_P(OutlierRatios, RansacPnPTest,
+                         ::testing::Values(OutlierCase{0.0, false}, OutlierCase{0.1, false},
+                                           OutlierCase{0.3, false}, OutlierCase{0.5, false},
+                                           OutlierCase{0.7, false}, OutlierCase{0.0, true},
+                                           OutlierCase{0.3, true}, OutlierCase{0.7, true}));
 
 TEST(RansacMinimizer, PlainGaussNewtonFailsWhereRansacSucceeds) {
   // Sanity check of the test setup itself: outliers ruin the non-robust solve.
@@ -936,8 +936,8 @@ TEST(RansacMinimizer, ReprojectionWithConstantLandmarkBatch) {
   // Constant landmarks are untouched.
   std::vector<Vector<3>> after(scene.points_world.size());
   points.CopyToHost(after.data(), after.size());
-  EXPECT_EQ(0, std::memcmp(after.data(), scene.points_world.data(),
-                           after.size() * sizeof(Vector<3>)));
+  EXPECT_EQ(0,
+            std::memcmp(after.data(), scene.points_world.data(), after.size() * sizeof(Vector<3>)));
 }
 
 TEST(RansacMinimizer, CustomFocalFactorConvergesWithRegularMinimizer) {

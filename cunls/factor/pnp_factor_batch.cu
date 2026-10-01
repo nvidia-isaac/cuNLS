@@ -23,8 +23,8 @@
  * (not state variables). Jacobian is 2x6 (pose only).
  */
 
-#include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/indexed_evaluation.cuh"
+#include "cunls/factor/pnp_factor_batch.h"
 
 namespace cunls {
 
@@ -41,7 +41,7 @@ __global__ void pnp_fused_kernel(const Vector<2> *observations, const Vector<3> 
                                  float const *const *state_pointers,
                                  const SE3Transform *poses_camera_from_rig, float *residuals,
                                  float *jacobians, float z_threshold, int num_items,
-    const int *factor_ids, int num_factors) {
+                                 const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;
   const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
