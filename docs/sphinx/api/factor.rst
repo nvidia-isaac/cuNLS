@@ -5,12 +5,744 @@ Factor API
 The factor module provides batched residual and Jacobian models for non-linear
 least squares. Each factor computes a residual vector from one or more
 **states**. States lie on **manifolds**; the factor API uses
-**tangent-space dimensions** for Jacobian layout and solver variables. Links to
-the corresponding state batch types are in the :ref:`factor-inputs` section
-and in each factor’s **Inputs** subsection.
+**tangent-space dimensions** for Jacobian layout and solver variables. This
+page documents the Python factor classes first, then the C++ API, which holds
+the full residual and Jacobian formulas. In the C++ API, links to the
+corresponding state batch types are in the :ref:`factor-inputs` section and in
+each factor’s **Inputs** subsection.
 
-**C++** — ``cunls/factor``
-  |  **Python** — ``pycunls``
+**Python** — ``pycunls``
+  |  **C++** — ``cunls/factor``
+
+================================================================================
+Python API (``pycunls``)
+================================================================================
+
+All Python factor batches inherit from the abstract ``FactorBatch`` base
+class.  Every constructor argument documented as ``DevicePointer`` accepts
+either a ``cupy.ndarray`` (the device pointer is extracted automatically via
+``.data.ptr``) or a raw ``int`` GPU device address.
+
+The residual formulas, Jacobian structure, and state layouts are identical to
+the C++ versions documented in :ref:`factor-cpp-api` below (each Python entry
+links to its C++ counterpart) — this section focuses on the Python
+constructor signatures, methods, and properties.
+
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` (C++: ``SetNumActiveFactors`` /
+   ``SetNumActiveStates``) before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
+
+.. _py-factor-batch-interface:
+
+Common ``FactorBatch`` interface
+--------------------------------------------------------------------------------
+
+Every factor batch — built-in or user-defined — exposes the following
+read-only properties and methods.
+
+**Read-only properties**
+
+- **num_active_factors** (``int``) — number of active factors (0 until
+  ``set_num_active_factors``; at most ``capacity``).
+- **capacity** (``int``) — number of factors the measurement buffers hold
+  (the constructor's ``capacity``); constant.
+- **residuals_size** (``int``) — residual dimension per factor (e.g. 2 for
+  ``ReprojectionFactorBatch``, 6 for ``SE3BetweenFactorBatch``).
+
+**Methods**
+
+- ``set_num_active_factors(num_active_factors)`` — sets the active factor
+  count (at most ``capacity``). Every batch starts with 0 active factors: call it before
+  the first solve, and again whenever the count changes. Host-only; takes
+  effect at the next ``minimize``. Raises ``ValueError`` above the capacity.
+- ``state_sizes() -> list[int]`` — returns a list of tangent-space
+  dimensions for each state consumed by one factor.  For example,
+  ``ReprojectionFactorBatch`` returns ``[6, 3]`` (SE(3) pose then
+  :math:`\mathbb{R}^3` point), and ``PnPFactorBatch`` returns ``[6]`` (pose
+  only; 3-D points are fixed in the constructor).
+
+**C++ reference:** :ref:`cpp-factor-batch`.
+
+.. _py-prior-vector-factor:
+
+``pycunls.PriorVectorFactorBatch1`` / ``PriorVectorFactorBatch2`` / ``PriorVectorFactorBatch3`` / ``PriorVectorFactorBatch6``
+------------------------------------------------------------------------------------------------------------------------------
+
+Prior on a Euclidean vector.  Residual = :math:`x - o` with identity
+Jacobian.  The suffix indicates the dimension.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.PriorVectorFactorBatch3(observations, capacity)
+
+- **observations** (``DevicePointer``) — contiguous GPU buffer of
+  ``capacity × Dim`` floats holding the observed (target) vectors.  The
+  factor batch does **not** copy the data; the caller must keep the
+  allocation alive.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from the corresponding
+``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
+
+**C++ reference:** :ref:`cpp-prior-vector-factor-batch`.
+
+.. _py-so2-prior-factor:
+
+``pycunls.SO2PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on a 2-D rotation.  Residual = :math:`\mathrm{Log}(R_\mathrm{target}^\top R)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SO2PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 4`` floats holding
+  row-major 2×2 target rotation matrices.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from ``SO2StateBatch``
+(see :ref:`py-lie-state-batches`).
+
+**C++ reference:** :ref:`cpp-so2-prior-factor-batch`.
+
+.. _py-so3-prior-factor:
+
+``pycunls.SO3PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on a 3-D rotation.  Residual =
+:math:`\mathrm{Log}(R_\mathrm{target}^\top R)`, Jacobian =
+:math:`J_r^{-1}(r)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SO3PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 9`` floats holding
+  row-major 3×3 target rotation matrices.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from ``SO3StateBatch``.
+
+**C++ reference:** :ref:`cpp-so3-prior-factor-batch`.
+
+.. _py-se3-prior-factor:
+
+``pycunls.SE3PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on a 3-D rigid transform.  Residual =
+:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`, Jacobian = :math:`J_r^{-1}(r)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SE3PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 16`` floats
+  holding row-major 4×4 target homogeneous matrices.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from
+:ref:`SE3StateBatch <py-lie-state-batches>`.
+
+**C++ reference:** :ref:`cpp-se3-prior-factor-batch`.
+
+.. _py-sl4-prior-factor:
+
+``pycunls.SL4PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on an SL(4) transform.  Residual =
+:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SL4PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 16`` floats
+  holding row-major 4×4 SL(4) target transforms.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from ``SL4StateBatch``.
+
+**C++ reference:** :ref:`cpp-sl4-prior-factor-batch`.
+
+.. _py-se3-between-factor:
+
+``pycunls.SE3BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative pose between two SE(3) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SE3BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
+  row-major 4×4 measured relative transforms :math:`\Delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[T_left, T_right]`` — both from
+:ref:`SE3StateBatch <py-lie-state-batches>`.  The state-pointer list must
+therefore contain ``2 × num_active_factors`` entries.
+
+**C++ reference:** :ref:`cpp-se3-between-factor-batch`.
+
+.. _py-se2-between-factor:
+
+``pycunls.SE2BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative transform between two SE(2) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SE2BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
+  row-major 3×3 measured relative transforms :math:`\Delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[T_left, T_right]`` — both from
+``SE2StateBatch``.
+
+**C++ reference:** :ref:`cpp-se2-between-factor-batch`.
+
+.. _py-so2-between-factor:
+
+``pycunls.SO2BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative rotation between two SO(2) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^\top R_l^\top R_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SO2BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 4`` floats holding
+  row-major 2×2 measured relative rotations :math:`\Delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[R_left, R_right]`` — both from
+``SO2StateBatch``.
+
+**C++ reference:** :ref:`cpp-so2-between-factor-batch`.
+
+.. _py-so3-between-factor:
+
+``pycunls.SO3BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative rotation between two SO(3) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^\top R_l^\top R_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SO3BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
+  row-major 3×3 measured relative rotations :math:`\Delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[R_left, R_right]`` — both from
+``SO3StateBatch``.
+
+**C++ reference:** :ref:`cpp-so3-between-factor-batch`.
+
+.. _py-similarity2-between-factor:
+
+``pycunls.Similarity2BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative transform between two Sim(2) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.Similarity2BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
+  row-major 3×3 measured relative transforms :math:`\Delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[T_left, T_right]`` — both from
+``Similarity2StateBatch``.
+
+**C++ reference:** :ref:`cpp-similarity2-between-factor-batch`.
+
+.. _py-similarity3-between-factor:
+
+``pycunls.Similarity3BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative transform between two Sim(3) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.Similarity3BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
+  row-major 4×4 measured relative transforms :math:`\Delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[T_left, T_right]`` — both from
+``Similarity3StateBatch``.
+
+**C++ reference:** :ref:`cpp-similarity3-between-factor-batch`.
+
+.. _py-sl4-between-factor:
+
+``pycunls.SL4BetweenFactorBatch``
+--------------------------------------------------------------------------------
+
+Constrains the relative transform between two SL(4) frames.  Residual =
+:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SL4BetweenFactorBatch(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
+  row-major 4×4 measured relative transforms :math:`\Delta` (unit determinant).
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor — ``[T_left, T_right]`` — both from
+``SL4StateBatch``.
+
+**C++ reference:** :ref:`cpp-sl4-between-factor-batch`.
+
+.. _py-vector-between-factor:
+
+``pycunls.VectorBetweenFactorBatch1`` / ``VectorBetweenFactorBatch2`` / ``VectorBetweenFactorBatch3`` / ``VectorBetweenFactorBatch6``
+--------------------------------------------------------------------------------------------------------------------------------------
+
+Between factor on Euclidean vectors.  Residual =
+:math:`x_l - x_r - \delta`.  Two states per factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.VectorBetweenFactorBatch3(deltas, capacity)
+
+- **deltas** (``DevicePointer``) — ``capacity × Dim`` floats holding
+  the measured difference vectors :math:`\delta`.
+- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** two states per factor from the corresponding
+``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
+
+**C++ reference:** :ref:`cpp-vector-between-factor-batch`.
+
+.. _py-reprojection-factor:
+
+``pycunls.ReprojectionFactorBatch``
+--------------------------------------------------------------------------------
+
+Reprojection error for bundle adjustment.  Observations must be in
+**normalized image coordinates** (intrinsic calibration already applied):
+:math:`r = \pi(T, P) - z`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.ReprojectionFactorBatch(
+       observations, capacity, z_threshold=1e-3)
+
+- **observations** (``DevicePointer``) — ``capacity × 2`` floats
+  holding normalized 2-D observations :math:`(x_n, y_n)`.
+- **capacity** (``int``) — number of reprojection factors the buffers hold; 0 are active until ``set_num_active_factors``.
+- **z_threshold** (``float``, default ``1e-3``) — minimum valid depth
+  :math:`z` in camera frame.  Points with :math:`z < z_\text{threshold}`
+  produce zero residuals and Jacobians to avoid singularities.
+
+**State layout:** two states per factor — ``[SE3 pose, R^3 point]`` — from
+:ref:`SE3StateBatch <py-lie-state-batches>` and
+:ref:`VectorStateBatch3 <py-vector-state-batches>` respectively.
+
+**C++ reference:** :ref:`cpp-reprojection-factor-batch`.
+
+.. _py-pnp-factor:
+
+``pycunls.PnPFactorBatch``
+--------------------------------------------------------------------------------
+
+PnP-style reprojection: **fixed** 3-D points in the constructor, **one** SE(3)
+state per correspondence (typically the same camera pose pointer repeated).
+
+**Constructor (identity camera-from-rig)**
+
+.. code-block:: python
+
+   fb = pycunls.PnPFactorBatch(
+       observations, points_world, capacity, z_threshold=1e-3)
+
+**Constructor (with camera-from-rig extrinsics per factor)**
+
+.. code-block:: python
+
+   fb = pycunls.PnPFactorBatch(
+       observations, poses_camera_from_rig, points_world,
+       capacity, z_threshold=1e-3)
+
+- **observations** — ``capacity × 2`` normalized image coordinates.
+- **points_world** — ``capacity × 3`` fixed world points (not
+  optimized).
+- **poses_camera_from_rig** — ``capacity × 16`` row-major SE(3)
+  matrices (optional overload).
+- **z_threshold** — minimum valid depth in the camera frame (same role as
+  :ref:`ReprojectionFactorBatch <py-reprojection-factor>`).
+
+**State layout:** one ``SE3StateBatch`` state per factor from
+:ref:`SE3StateBatch <py-lie-state-batches>`.
+
+**C++ reference:** :ref:`cpp-pnp-factor-batch`.
+
+.. _py-icp-factors:
+
+``pycunls.PointToPointFactorBatch``
+--------------------------------------------------------------------------------
+
+Point-to-point ICP factor.  Residual = :math:`p - T q`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.PointToPointFactorBatch(p_observations, q_observations, capacity)
+
+- **p_observations** (``DevicePointer``) — ``capacity × 3`` floats
+  holding target points :math:`p`.
+- **q_observations** (``DevicePointer``) — ``capacity × 3`` floats
+  holding source points :math:`q`.
+- **capacity** (``int``) — number of point correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from
+:ref:`SE3StateBatch <py-lie-state-batches>`.
+
+**C++ reference:** :ref:`cpp-point-to-point-factor-batch`.
+
+``pycunls.PointToPlaneFactorBatch``
+--------------------------------------------------------------------------------
+
+Point-to-plane ICP factor.  Residual = :math:`n_q^\top (p - T q)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.PointToPlaneFactorBatch(
+       p_observations, q_observations, nq_observations, capacity)
+
+- **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
+- **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
+- **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
+- **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from
+:ref:`SE3StateBatch <py-lie-state-batches>`.
+
+**C++ reference:** :ref:`cpp-point-to-plane-factor-batch`.
+
+``pycunls.SymmetricPointToPlaneFactorBatch``
+--------------------------------------------------------------------------------
+
+Symmetric point-to-plane ICP factor.  Both frames contribute normals;
+:math:`N = n_p + n_q`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SymmetricPointToPlaneFactorBatch(
+       p_observations, q_observations,
+       np_observations, nq_observations, capacity)
+
+- **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
+- **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
+- **np_observations** (``DevicePointer``) — target normals (``× 3`` floats).
+- **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
+- **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from
+:ref:`SE3StateBatch <py-lie-state-batches>`.
+
+**C++ reference:** :ref:`cpp-symmetric-point-to-plane-factor-batch`.
+
+.. _py-information-factor-batch:
+
+``pycunls.InformationFactorBatch``
+--------------------------------------------------------------------------------
+
+Wraps **any** factor batch and left-multiplies residuals and Jacobians by
+per-factor square-root information matrices
+:math:`\Omega^{1/2}`.  Unlike the C++ template, the Python class accepts any
+``FactorBatch`` — no template specialization is needed.
+
+**C++ contrast:** The C++ template ``InformationFactorBatch<T>`` also inherits
+``T::sized_layout`` (a ``SizedFactorBatch`` with the same compile-time layout as
+``T``). The Python wrapper is a dynamic ``FactorBatch`` only.
+
+**Constructor**
+
+.. code-block:: python
+
+   info_fb = pycunls.InformationFactorBatch(
+       inner_factor, sqrt_information_matrices)
+
+- **inner_factor** (``FactorBatch``) — the factor batch to wrap.  The wrapper
+  delegates ``Evaluate`` to this factor first, then applies the information
+  matrices.  The inner factor must be kept alive for the lifetime of the
+  wrapper.
+- **sqrt_information_matrices** (``DevicePointer``) —
+  ``capacity × residual_size × residual_size`` contiguous floats holding
+  one row-major square-root information matrix per factor.
+
+**Example**
+
+.. code-block:: python
+
+   inner = pycunls.SE3BetweenFactorBatch(deltas, N)
+   info  = pycunls.InformationFactorBatch(inner, sqrt_info_gpu)
+   info.set_num_active_factors(N)  # forwarded to inner
+
+   problem.add_factor_batch(info, state_pointers)
+
+**C++ reference:** :ref:`cpp-information-factor-batch`.
+
+.. _py-weighted-factor-batch:
+
+``pycunls.WeightedFactorBatch``
+--------------------------------------------------------------------------------
+
+Wraps **any** factor batch and scales residuals and Jacobians by a scalar
+weight.  Two construction modes are supported:
+
+1. **Uniform weight** (``float``) — the same scalar is applied to every factor.
+2. **Per-factor weights** (``DevicePointer``) — one weight per factor from a
+   GPU array.
+
+**C++ contrast:** ``WeightedFactorBatch<T>`` inherits ``T::sized_layout``; the
+Python wrapper subclasses ``FactorBatch`` only.
+
+**Constructors**
+
+.. code-block:: python
+
+   # Uniform weight
+   wfb = pycunls.WeightedFactorBatch(inner_factor, weight=2.0)
+
+   # Per-factor weights
+   wfb = pycunls.WeightedFactorBatch(inner_factor, weights=weights_gpu)
+
+- **inner_factor** (``FactorBatch``) — the factor batch to wrap.
+- **weight** (``float``) — uniform scalar weight applied to all factors.
+- **weights** (``DevicePointer``) — ``inner_factor.capacity`` contiguous
+  floats, one weight per factor.
+
+Exactly one of ``weight`` or ``weights`` must be provided.
+
+**Example**
+
+.. code-block:: python
+
+   inner = pycunls.PriorVectorFactorBatch3(obs_gpu, N)
+   wfb   = pycunls.WeightedFactorBatch(inner, weight=5.0)
+   wfb.set_num_active_factors(N)  # forwarded to inner
+
+   problem.add_factor_batch(wfb, state_pointers)
+
+**C++ reference:** :ref:`cpp-weighted-factor-batch`.
+
+.. _py-custom-factor-batch:
+
+``pycunls.CustomFactorBatch``
+--------------------------------------------------------------------------------
+
+Base class for user-defined factors.  Subclass this to implement a residual
+and Jacobian computation that is not available as a built-in factor.
+
+**Constructor**
+
+.. code-block:: python
+
+   class MyFactor(pycunls.CustomFactorBatch):
+       def __init__(self, capacity):
+           super().__init__(
+               residual_size=...,
+               state_sizes=[...],
+               capacity=capacity,
+           )
+
+- **residual_size** (``int``) — dimension of the residual vector per
+  factor.
+- **state_sizes** (``Sequence[int]``) — list of tangent-space
+  dimensions for each state consumed by one factor (e.g. ``[1, 1]``
+  for a factor reading two scalar states).
+- **capacity** (``int``) — number of factor instances the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**Methods to override**
+
+- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+  factor_ids_ptr, num_factor_ids) -> bool``
+  — computes residuals and Jacobians on the GPU for ``n = num_factor_ids``
+  *items* (the same contract as C++ :cpp:func:`FactorBatch::Evaluate`): item
+  *t* is factor ``f(t)`` evaluated at its own state pointers. All six
+  arguments are raw ``int`` values:
+
+  - *residuals_ptr* — device pointer to the output residual buffer.
+    Layout: ``n × residual_size`` contiguous floats; item *t* writes row *t*.
+  - *jacobians_ptr* — device pointer to the output Jacobian buffer.
+    Layout: ``n × residual_size × sum(state_sizes)``
+    contiguous floats (row-major per item, blocks concatenated in state
+    order).  May be ``0`` (null) when the minimizer only needs residuals
+    (e.g. for cost evaluation); in that case skip Jacobian writes.
+  - *state_pointers_ptr* — device pointer to an array of ``float*``
+    pointers.  The array has ``n × len(state_sizes)``
+    entries; item *t*'s state *b* is entry ``t * len(state_sizes) + b``
+    (the device address of that state's ambient-space storage).  Because Warp
+    kernels cannot perform ``float**`` double-pointer indirection, custom
+    factors typically gather state values into contiguous CuPy arrays
+    before launching a kernel (see the
+    :ref:`Custom Warp Factor tutorial <pycunls_tutorial:Custom Warp Factor>`).
+  - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
+    **must** be launched on this stream.
+  - *factor_ids_ptr* — device pointer to ``n`` ``int32`` factor indices in
+    ``[0, num_active_factors)`` with ``f(t) = factor_ids[t]``, or ``0`` (null)
+    for ``f(t) = t % num_active_factors``. Read *measurements* through ``f(t)``;
+    everything else (state pointers, outputs) is indexed by *t*.
+  - *num_factor_ids* — the item count ``n``. Unlike C++, where ``0`` means
+    ``num_active_factors``, Python always receives the actual count (``> 0``).
+
+  The regular minimizers call ``evaluate`` with ``factor_ids_ptr == 0`` and
+  ``num_factor_ids == num_active_factors``; the RANSAC minimizers evaluate many items
+  per factor, so a factor used with RANSAC must honor both arguments (see
+  :doc:`../custom_factors_and_states`).
+
+  Return ``True`` on success.  The default implementation raises
+  ``NotImplementedError``.
+
+**Skipping the Jacobian entirely.** ``evaluate`` only has to write to
+``jacobians_ptr`` when it is non-zero and you intend to supply an analytic
+Jacobian. A custom factor that never writes to it — even when
+``jacobians_ptr`` is non-zero — still satisfies the contract, and can be
+registered with ``jacobian_mode_override=pycunls.JacobianMode.numeric`` in
+:py:meth:`Problem.add_factor_batch` to have cuNLS differentiate it via
+finite differences instead. See :doc:`../numeric_jacobians` for details and
+:ref:`pycunls_tutorial:Warp factor code walkthrough` for a worked
+Python example.
+
+**C++ reference:** :ref:`cpp-factor-batch`.
+
+.. _py-warp-factor-batch:
+
+``pycunls.warp.WarpFactorBatch``
+--------------------------------------------------------------------------------
+
+Convenience base for custom factors implemented with `NVIDIA Warp
+<https://developer.nvidia.com/warp-python>`_ kernels.
+Inherits from ``CustomFactorBatch`` and provides helper methods for
+zero-copy pointer wrapping so you never need to manually construct
+``wp.array`` objects from raw device addresses.  Requires ``warp-lang``.
+
+**Constructor**
+
+.. code-block:: python
+
+   from pycunls.warp import WarpFactorBatch
+
+   class MyWarpFactor(WarpFactorBatch):
+       def __init__(self, capacity):
+           super().__init__(
+               residual_size=...,
+               state_sizes=[...],
+               capacity=capacity,
+               device="cuda:0",
+           )
+
+- **device** (``str``, default ``"cuda:0"``) — Warp device string used when
+  creating ``wp.array`` wrappers via ``wrap_array``.
+
+**Helper methods** (inherited — do not override)
+
+- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of an
+  existing GPU allocation as a Warp array.  *ptr* is the device address,
+  *dtype* a Warp data type (e.g. ``wp.float32``), and *shape* an ``int`` or
+  tuple giving the array dimensions.  The returned ``wp.array`` shares the
+  memory; no allocation or copy occurs.
+
+- ``factor_ids(factor_ids_ptr: int, num_items: int) -> wp.array`` — the
+  factor index of every item as an ``int32`` Warp array: wraps
+  ``factor_ids_ptr`` when it is non-null, otherwise returns (and caches)
+  ``arange(num_items) % num_active_factors``. Kernels can then always read
+  ``ids[t]``.
+
+- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — wraps a raw
+  ``cudaStream_t`` (passed as ``int``) as a ``wp.Stream``.  Use the
+  returned stream in ``wp.launch(..., stream=stream)`` to ensure the Warp
+  kernel executes on the minimizer's CUDA stream.
+
+**Methods to override**
+
+- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+  factor_ids_ptr, num_factor_ids) -> bool``
+  — same contract as ``CustomFactorBatch.evaluate``.  Typical
+  implementations:
+
+  1. Gather scattered state pointers into contiguous CuPy arrays (using a
+     CuPy ``RawKernel`` or ``cp.ndarray`` indexing), one entry per item.
+  2. Get per-item factor indices with ``self.factor_ids(factor_ids_ptr,
+     num_factor_ids)`` and read measurements through them.
+  3. Wrap the contiguous arrays and output buffers with
+     ``self.wrap_array``.
+  4. Build a ``wp.Stream`` with ``self.make_warp_stream``.
+  5. Launch a ``@wp.kernel`` with ``dim=num_factor_ids`` on that stream.
+
+See :ref:`pycunls_tutorial:Custom Warp Factor` for a complete example.
+
+.. _factor-cpp-api:
 
 ================================================================================
 C++ API
@@ -24,17 +756,10 @@ Factor inputs
 Each factor's **Inputs** subsection below and the :doc:`state` API list the
 required state batch types (e.g. :code:`VectorStateBatch<Dim>`, :code:`SO3StateBatch`).
 
+.. _cpp-factor-batch:
+
 FactorBatch
 -----------
-
-.. important::
-
-   **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / states their buffers hold) and
-   start with **zero** active entries: call ``SetNumActiveFactors(n)`` /
-   ``SetNumActiveStates(n)`` (Python: ``set_num_active_factors`` /
-   ``set_num_active_states``) before solving, and again whenever the problem
-   size changes. See :ref:`capacity-and-active-count`.
 
 Abstract base (:code:`cunls/factor/factor_batch.h`).
 
@@ -161,6 +886,8 @@ registering it with ``JacobianMode::kNumeric`` (see
 :doc:`../numeric_jacobians` and :ref:`minimizer-jacobian-mode-label`) instead
 of implementing a Jacobian by hand.
 
+.. _cpp-sized-factor-batch:
+
 SizedFactorBatch<kResidualSize, ...kStateSizes>
 ----------------------------------------------------
 
@@ -172,6 +899,8 @@ Each specialization exposes **sized_layout** — an alias for the same
 such as ``InformationFactorBatch<T>`` and ``WeightedFactorBatch<T>`` inherit
 ``public T::sized_layout`` so they remain full ``SizedFactorBatch`` instances with
 the same layout as the inner batch ``T``.
+
+.. _cpp-prior-vector-factor-batch:
 
 PriorVectorFactorBatch<Dim>
 ----------------------------
@@ -206,6 +935,8 @@ Constructor:
 - ``observations_ptr`` — [in] Device pointer to observed vectors.
 - ``capacity`` — [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
 
+.. _cpp-so2-prior-factor-batch:
+
 SO2PriorFactorBatch
 -------------------
 
@@ -235,6 +966,8 @@ Prior on a 2D rotation (e.g. heading). Penalizes deviation from a target rotatio
   :param ``observations_ptr``: [in] Device pointer to SO(2) observations (2×2 row-major).
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-so3-prior-factor-batch:
 
 SO3PriorFactorBatch
 -------------------
@@ -266,6 +999,8 @@ Prior on a 3D rotation. Penalizes deviation from a target orientation.
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-se2-prior-factor-batch:
+
 SE2PriorFactorBatch
 -------------------
 
@@ -287,6 +1022,8 @@ Prior on 2D rigid transform. State: one state from :code:`SE2StateBatch` (see :d
      - :math:`J_r^{-1}(r)`
      - :math:`3 \times 3`
      - SE(2)
+
+.. _cpp-se3-prior-factor-batch:
 
 SE3PriorFactorBatch
 -------------------
@@ -310,6 +1047,8 @@ Prior on 3D rigid transform. State: one state from :code:`SE3StateBatch` (see :d
      - :math:`6 \times 6`
      - SE(3)
 
+.. _cpp-similarity2-prior-factor-batch:
+
 Similarity2PriorFactorBatch
 ---------------------------
 
@@ -331,6 +1070,8 @@ Prior on 2D similarity transform. State: one state from :code:`Similarity2StateB
      - :math:`J_r^{-1}(r)`
      - :math:`4 \times 4`
      - Sim(2)
+
+.. _cpp-similarity3-prior-factor-batch:
 
 Similarity3PriorFactorBatch
 ----------------------------
@@ -362,6 +1103,8 @@ Prior on 3D similarity transform. State: one state from :code:`Similarity3StateB
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-sl4-prior-factor-batch:
+
 SL4PriorFactorBatch
 -------------------
 
@@ -389,6 +1132,8 @@ Prior on an SL(4) transform. State: one state from :code:`SL4StateBatch` (see :d
   :param ``observations_ptr``: [in] Device pointer to SL(4) target transforms (row-major 4×4).
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-se3-between-factor-batch:
 
 SE3BetweenFactorBatch
 ---------------------
@@ -423,6 +1168,8 @@ Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closu
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-se2-between-factor-batch:
+
 SE2BetweenFactorBatch
 ---------------------
 
@@ -455,6 +1202,8 @@ Constrains the relative transform between two SE(2) frames.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-so2-between-factor-batch:
 
 SO2BetweenFactorBatch
 ---------------------
@@ -489,6 +1238,8 @@ Constrains the relative rotation between two SO(2) frames.
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-so3-between-factor-batch:
+
 SO3BetweenFactorBatch
 ---------------------
 
@@ -521,6 +1272,8 @@ Constrains the relative rotation between two SO(3) frames.
   :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 3×3).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-similarity2-between-factor-batch:
 
 Similarity2BetweenFactorBatch
 -----------------------------
@@ -555,6 +1308,8 @@ Constrains the relative transform between two Sim(2) frames.
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-similarity3-between-factor-batch:
+
 Similarity3BetweenFactorBatch
 -----------------------------
 
@@ -588,6 +1343,8 @@ Constrains the relative transform between two Sim(3) frames.
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-sl4-between-factor-batch:
+
 SL4BetweenFactorBatch
 ---------------------
 
@@ -620,6 +1377,8 @@ Constrains the relative transform between two SL(4) frames.
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 4×4, unit determinant).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-vector-between-factor-batch:
 
 VectorBetweenFactorBatch<Dim>
 -----------------------------
@@ -1031,6 +1790,8 @@ matrix without going through :code:`InformationFactorBatch` — it's a
 Kronecker product with an analytic Cholesky factor, no numerical linear
 algebra.
 
+.. _cpp-reprojection-factor-batch:
+
 ReprojectionFactorBatch
 -----------------------
 
@@ -1068,6 +1829,8 @@ Reprojection error for bundle adjustment. Observations in **normalized** image c
   :param ``capacity``: [in] Number of reprojection factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :param ``z_threshold``: [in] Minimum valid depth.
   :returns: Constructor has no return value.
+
+.. _cpp-pnp-factor-batch:
 
 PnPFactorBatch
 --------------
@@ -1116,6 +1879,8 @@ observations). Optional ``poses_camera_from_rig`` uses the same composition as
   :param ``z_threshold``: [in] Minimum valid camera-frame depth.
   :returns: Constructor has no return value.
 
+.. _cpp-point-to-point-factor-batch:
+
 PointToPointFactorBatch
 -----------------------
 
@@ -1149,6 +1914,8 @@ Point cloud registration (e.g. ICP). Residual = target point minus transformed s
   :param ``q_observations_ptr``: [in] Device pointer to source points.
   :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-point-to-plane-factor-batch:
 
 PointToPlaneFactorBatch
 -----------------------
@@ -1187,6 +1954,8 @@ With :math:`n' = R^\top n_q`, the Jacobian row is :math:`[n'^\top [q]_\times,\; 
   :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
+.. _cpp-symmetric-point-to-plane-factor-batch:
+
 SymmetricPointToPlaneFactorBatch
 --------------------------------
 
@@ -1223,6 +1992,8 @@ Symmetric point-to-plane: both frames contribute normals; :math:`N = n_p + n_q`.
   :param ``nq_observations_ptr``: [in] Device pointer to source normals.
   :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
+
+.. _cpp-information-factor-batch:
 
 InformationFactorBatch<T>
 -------------------------
@@ -1275,6 +2046,8 @@ Wraps a factor to apply a square-root information matrix :math:`\Omega^{1/2}` (e
   :param ``capacity``: [in] Number of square-root information matrices; must equal ``T::Capacity()`` after ``T`` is constructed. The active count is the wrapped batch's (``SetNumActiveFactors`` is forwarded).
   :param ``sized_factor_batch_args``: [in] Constructor arguments forwarded to wrapped factor ``T`` (same order as ``T``'s constructor, or ``(weight, …)`` when ``T`` is ``WeightedFactorBatch<U>``).
   :returns: Constructor has no return value.
+
+.. _cpp-weighted-factor-batch:
 
 WeightedFactorBatch<T>
 -------------------------
@@ -1337,677 +2110,3 @@ pointer to per-factor weights.
   :param ``capacity``: [in] Number of weights; must equal ``T::Capacity()`` for the constructed inner batch.
   :param ``sized_factor_batch_args``: [in] Constructor arguments forwarded to wrapped factor ``T``.
   :returns: Constructor has no return value.
-
-================================================================================
-Python API (``pycunls``)
-================================================================================
-
-All Python factor batches inherit from the abstract ``FactorBatch`` base
-class.  Every constructor argument documented as ``DevicePointer`` accepts
-either a ``cupy.ndarray`` (the device pointer is extracted automatically via
-``.data.ptr``) or a raw ``int`` GPU device address.
-
-The residual formulas, Jacobian structure, and state layouts are identical to
-the C++ versions documented in the sections above — this section focuses on
-the Python constructor signatures, methods, and properties.
-
-.. _py-factor-batch-interface:
-
-Common ``FactorBatch`` interface
---------------------------------------------------------------------------------
-
-Every factor batch — built-in or user-defined — exposes the following
-read-only properties and methods.
-
-**Read-only properties**
-
-- **num_active_factors** (``int``) — number of active factors (0 until
-  ``set_num_active_factors``; at most ``capacity``).
-- **capacity** (``int``) — number of factors the measurement buffers hold
-  (the constructor's ``capacity``); constant.
-- **residuals_size** (``int``) — residual dimension per factor (e.g. 2 for
-  ``ReprojectionFactorBatch``, 6 for ``SE3BetweenFactorBatch``).
-
-**Methods**
-
-- ``set_num_active_factors(num_active_factors)`` — sets the active factor
-  count (at most ``capacity``). Every batch starts with 0 active factors: call it before
-  the first solve, and again whenever the count changes. Host-only; takes
-  effect at the next ``minimize``. Raises ``ValueError`` above the capacity.
-- ``state_sizes() -> list[int]`` — returns a list of tangent-space
-  dimensions for each state consumed by one factor.  For example,
-  ``ReprojectionFactorBatch`` returns ``[6, 3]`` (SE(3) pose then
-  :math:`\mathbb{R}^3` point), and ``PnPFactorBatch`` returns ``[6]`` (pose
-  only; 3-D points are fixed in the constructor).
-
-.. _py-prior-vector-factor:
-
-``pycunls.PriorVectorFactorBatch1`` / ``PriorVectorFactorBatch2`` / ``PriorVectorFactorBatch3`` / ``PriorVectorFactorBatch6``
-------------------------------------------------------------------------------------------------------------------------------
-
-Prior on a Euclidean vector.  Residual = :math:`x - o` with identity
-Jacobian.  The suffix indicates the dimension.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.PriorVectorFactorBatch3(observations, capacity)
-
-- **observations** (``DevicePointer``) — contiguous GPU buffer of
-  ``capacity × Dim`` floats holding the observed (target) vectors.  The
-  factor batch does **not** copy the data; the caller must keep the
-  allocation alive.
-- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from the corresponding
-``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
-
-.. _py-so2-prior-factor:
-
-``pycunls.SO2PriorFactorBatch``
---------------------------------------------------------------------------------
-
-Prior on a 2-D rotation.  Residual = :math:`\mathrm{Log}(R_\mathrm{target}^\top R)`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SO2PriorFactorBatch(observations, capacity)
-
-- **observations** (``DevicePointer``) — ``capacity × 4`` floats holding
-  row-major 2×2 target rotation matrices.
-- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from ``SO2StateBatch``
-(see :ref:`py-lie-state-batches`).
-
-.. _py-so3-prior-factor:
-
-``pycunls.SO3PriorFactorBatch``
---------------------------------------------------------------------------------
-
-Prior on a 3-D rotation.  Residual =
-:math:`\mathrm{Log}(R_\mathrm{target}^\top R)`, Jacobian =
-:math:`J_r^{-1}(r)`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SO3PriorFactorBatch(observations, capacity)
-
-- **observations** (``DevicePointer``) — ``capacity × 9`` floats holding
-  row-major 3×3 target rotation matrices.
-- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from ``SO3StateBatch``.
-
-.. _py-se3-prior-factor:
-
-``pycunls.SE3PriorFactorBatch``
---------------------------------------------------------------------------------
-
-Prior on a 3-D rigid transform.  Residual =
-:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`, Jacobian = :math:`J_r^{-1}(r)`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SE3PriorFactorBatch(observations, capacity)
-
-- **observations** (``DevicePointer``) — ``capacity × 16`` floats
-  holding row-major 4×4 target homogeneous matrices.
-- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from
-:ref:`SE3StateBatch <py-lie-state-batches>`.
-
-.. _py-sl4-prior-factor:
-
-``pycunls.SL4PriorFactorBatch``
---------------------------------------------------------------------------------
-
-Prior on an SL(4) transform.  Residual =
-:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SL4PriorFactorBatch(observations, capacity)
-
-- **observations** (``DevicePointer``) — ``capacity × 16`` floats
-  holding row-major 4×4 SL(4) target transforms.
-- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from ``SL4StateBatch``.
-
-.. _py-se3-between-factor:
-
-``pycunls.SE3BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative pose between two SE(3) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SE3BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
-  row-major 4×4 measured relative transforms :math:`\Delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[T_left, T_right]`` — both from
-:ref:`SE3StateBatch <py-lie-state-batches>`.  The state-pointer list must
-therefore contain ``2 × num_active_factors`` entries.
-
-.. _py-se2-between-factor:
-
-``pycunls.SE2BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative transform between two SE(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SE2BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
-  row-major 3×3 measured relative transforms :math:`\Delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[T_left, T_right]`` — both from
-``SE2StateBatch``.
-
-.. _py-so2-between-factor:
-
-``pycunls.SO2BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative rotation between two SO(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^\top R_l^\top R_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SO2BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 4`` floats holding
-  row-major 2×2 measured relative rotations :math:`\Delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[R_left, R_right]`` — both from
-``SO2StateBatch``.
-
-.. _py-so3-between-factor:
-
-``pycunls.SO3BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative rotation between two SO(3) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^\top R_l^\top R_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SO3BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
-  row-major 3×3 measured relative rotations :math:`\Delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[R_left, R_right]`` — both from
-``SO3StateBatch``.
-
-.. _py-similarity2-between-factor:
-
-``pycunls.Similarity2BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative transform between two Sim(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.Similarity2BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 9`` floats holding
-  row-major 3×3 measured relative transforms :math:`\Delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[T_left, T_right]`` — both from
-``Similarity2StateBatch``.
-
-.. _py-similarity3-between-factor:
-
-``pycunls.Similarity3BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative transform between two Sim(3) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.Similarity3BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
-  row-major 4×4 measured relative transforms :math:`\Delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[T_left, T_right]`` — both from
-``Similarity3StateBatch``.
-
-.. _py-sl4-between-factor:
-
-``pycunls.SL4BetweenFactorBatch``
---------------------------------------------------------------------------------
-
-Constrains the relative transform between two SL(4) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
-factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SL4BetweenFactorBatch(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × 16`` floats holding
-  row-major 4×4 measured relative transforms :math:`\Delta` (unit determinant).
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor — ``[T_left, T_right]`` — both from
-``SL4StateBatch``.
-
-.. _py-vector-between-factor:
-
-``pycunls.VectorBetweenFactorBatch1`` / ``VectorBetweenFactorBatch2`` / ``VectorBetweenFactorBatch3`` / ``VectorBetweenFactorBatch6``
---------------------------------------------------------------------------------------------------------------------------------------
-
-Between factor on Euclidean vectors.  Residual =
-:math:`x_l - x_r - \delta`.  Two states per factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.VectorBetweenFactorBatch3(deltas, capacity)
-
-- **deltas** (``DevicePointer``) — ``capacity × Dim`` floats holding
-  the measured difference vectors :math:`\delta`.
-- **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** two states per factor from the corresponding
-``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
-
-.. _py-reprojection-factor:
-
-``pycunls.ReprojectionFactorBatch``
---------------------------------------------------------------------------------
-
-Reprojection error for bundle adjustment.  Observations must be in
-**normalized image coordinates** (intrinsic calibration already applied):
-:math:`r = \pi(T, P) - z`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.ReprojectionFactorBatch(
-       observations, capacity, z_threshold=1e-3)
-
-- **observations** (``DevicePointer``) — ``capacity × 2`` floats
-  holding normalized 2-D observations :math:`(x_n, y_n)`.
-- **capacity** (``int``) — number of reprojection factors the buffers hold; 0 are active until ``set_num_active_factors``.
-- **z_threshold** (``float``, default ``1e-3``) — minimum valid depth
-  :math:`z` in camera frame.  Points with :math:`z < z_\text{threshold}`
-  produce zero residuals and Jacobians to avoid singularities.
-
-**State layout:** two states per factor — ``[SE3 pose, R^3 point]`` — from
-:ref:`SE3StateBatch <py-lie-state-batches>` and
-:ref:`VectorStateBatch3 <py-vector-state-batches>` respectively.
-
-.. _py-pnp-factor:
-
-``pycunls.PnPFactorBatch``
---------------------------------------------------------------------------------
-
-PnP-style reprojection: **fixed** 3-D points in the constructor, **one** SE(3)
-state per correspondence (typically the same camera pose pointer repeated).
-
-**Constructor (identity camera-from-rig)**
-
-.. code-block:: python
-
-   fb = pycunls.PnPFactorBatch(
-       observations, points_world, capacity, z_threshold=1e-3)
-
-**Constructor (with camera-from-rig extrinsics per factor)**
-
-.. code-block:: python
-
-   fb = pycunls.PnPFactorBatch(
-       observations, poses_camera_from_rig, points_world,
-       capacity, z_threshold=1e-3)
-
-- **observations** — ``capacity × 2`` normalized image coordinates.
-- **points_world** — ``capacity × 3`` fixed world points (not
-  optimized).
-- **poses_camera_from_rig** — ``capacity × 16`` row-major SE(3)
-  matrices (optional overload).
-- **z_threshold** — minimum valid depth in the camera frame (same role as
-  :ref:`ReprojectionFactorBatch <py-reprojection-factor>`).
-
-**State layout:** one ``SE3StateBatch`` state per factor from
-:ref:`SE3StateBatch <py-lie-state-batches>`.
-
-.. _py-icp-factors:
-
-``pycunls.PointToPointFactorBatch``
---------------------------------------------------------------------------------
-
-Point-to-point ICP factor.  Residual = :math:`p - T q`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.PointToPointFactorBatch(p_observations, q_observations, capacity)
-
-- **p_observations** (``DevicePointer``) — ``capacity × 3`` floats
-  holding target points :math:`p`.
-- **q_observations** (``DevicePointer``) — ``capacity × 3`` floats
-  holding source points :math:`q`.
-- **capacity** (``int``) — number of point correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from
-:ref:`SE3StateBatch <py-lie-state-batches>`.
-
-``pycunls.PointToPlaneFactorBatch``
---------------------------------------------------------------------------------
-
-Point-to-plane ICP factor.  Residual = :math:`n_q^\top (p - T q)`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.PointToPlaneFactorBatch(
-       p_observations, q_observations, nq_observations, capacity)
-
-- **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
-- **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
-- **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
-- **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from
-:ref:`SE3StateBatch <py-lie-state-batches>`.
-
-``pycunls.SymmetricPointToPlaneFactorBatch``
---------------------------------------------------------------------------------
-
-Symmetric point-to-plane ICP factor.  Both frames contribute normals;
-:math:`N = n_p + n_q`.
-
-**Constructor**
-
-.. code-block:: python
-
-   fb = pycunls.SymmetricPointToPlaneFactorBatch(
-       p_observations, q_observations,
-       np_observations, nq_observations, capacity)
-
-- **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
-- **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
-- **np_observations** (``DevicePointer``) — target normals (``× 3`` floats).
-- **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
-- **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**State layout:** one state per factor from
-:ref:`SE3StateBatch <py-lie-state-batches>`.
-
-.. _py-information-factor-batch:
-
-``pycunls.InformationFactorBatch``
---------------------------------------------------------------------------------
-
-Wraps **any** factor batch and left-multiplies residuals and Jacobians by
-per-factor square-root information matrices
-:math:`\Omega^{1/2}`.  Unlike the C++ template, the Python class accepts any
-``FactorBatch`` — no template specialization is needed.
-
-**C++ contrast:** The C++ template ``InformationFactorBatch<T>`` also inherits
-``T::sized_layout`` (a ``SizedFactorBatch`` with the same compile-time layout as
-``T``). The Python wrapper is a dynamic ``FactorBatch`` only.
-
-**Constructor**
-
-.. code-block:: python
-
-   info_fb = pycunls.InformationFactorBatch(
-       inner_factor, sqrt_information_matrices)
-
-- **inner_factor** (``FactorBatch``) — the factor batch to wrap.  The wrapper
-  delegates ``Evaluate`` to this factor first, then applies the information
-  matrices.  The inner factor must be kept alive for the lifetime of the
-  wrapper.
-- **sqrt_information_matrices** (``DevicePointer``) —
-  ``capacity × residual_size × residual_size`` contiguous floats holding
-  one row-major square-root information matrix per factor.
-
-**Example**
-
-.. code-block:: python
-
-   inner = pycunls.SE3BetweenFactorBatch(deltas, N)
-   info  = pycunls.InformationFactorBatch(inner, sqrt_info_gpu)
-   info.set_num_active_factors(N)  # forwarded to inner
-
-   problem.add_factor_batch(info, state_pointers)
-
-.. _py-weighted-factor-batch:
-
-``pycunls.WeightedFactorBatch``
---------------------------------------------------------------------------------
-
-Wraps **any** factor batch and scales residuals and Jacobians by a scalar
-weight.  Two construction modes are supported:
-
-1. **Uniform weight** (``float``) — the same scalar is applied to every factor.
-2. **Per-factor weights** (``DevicePointer``) — one weight per factor from a
-   GPU array.
-
-**C++ contrast:** ``WeightedFactorBatch<T>`` inherits ``T::sized_layout``; the
-Python wrapper subclasses ``FactorBatch`` only.
-
-**Constructors**
-
-.. code-block:: python
-
-   # Uniform weight
-   wfb = pycunls.WeightedFactorBatch(inner_factor, weight=2.0)
-
-   # Per-factor weights
-   wfb = pycunls.WeightedFactorBatch(inner_factor, weights=weights_gpu)
-
-- **inner_factor** (``FactorBatch``) — the factor batch to wrap.
-- **weight** (``float``) — uniform scalar weight applied to all factors.
-- **weights** (``DevicePointer``) — ``inner_factor.capacity`` contiguous
-  floats, one weight per factor.
-
-Exactly one of ``weight`` or ``weights`` must be provided.
-
-**Example**
-
-.. code-block:: python
-
-   inner = pycunls.PriorVectorFactorBatch3(obs_gpu, N)
-   wfb   = pycunls.WeightedFactorBatch(inner, weight=5.0)
-   wfb.set_num_active_factors(N)  # forwarded to inner
-
-   problem.add_factor_batch(wfb, state_pointers)
-
-.. _py-custom-factor-batch:
-
-``pycunls.CustomFactorBatch``
---------------------------------------------------------------------------------
-
-Base class for user-defined factors.  Subclass this to implement a residual
-and Jacobian computation that is not available as a built-in factor.
-
-**Constructor**
-
-.. code-block:: python
-
-   class MyFactor(pycunls.CustomFactorBatch):
-       def __init__(self, capacity):
-           super().__init__(
-               residual_size=...,
-               state_sizes=[...],
-               capacity=capacity,
-           )
-
-- **residual_size** (``int``) — dimension of the residual vector per
-  factor.
-- **state_sizes** (``Sequence[int]``) — list of tangent-space
-  dimensions for each state consumed by one factor (e.g. ``[1, 1]``
-  for a factor reading two scalar states).
-- **capacity** (``int``) — number of factor instances the buffers hold; 0 are active until ``set_num_active_factors``.
-
-**Methods to override**
-
-- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-  factor_ids_ptr, num_factor_ids) -> bool``
-  — computes residuals and Jacobians on the GPU for ``n = num_factor_ids``
-  *items* (the same contract as C++ :cpp:func:`FactorBatch::Evaluate`): item
-  *t* is factor ``f(t)`` evaluated at its own state pointers. All six
-  arguments are raw ``int`` values:
-
-  - *residuals_ptr* — device pointer to the output residual buffer.
-    Layout: ``n × residual_size`` contiguous floats; item *t* writes row *t*.
-  - *jacobians_ptr* — device pointer to the output Jacobian buffer.
-    Layout: ``n × residual_size × sum(state_sizes)``
-    contiguous floats (row-major per item, blocks concatenated in state
-    order).  May be ``0`` (null) when the minimizer only needs residuals
-    (e.g. for cost evaluation); in that case skip Jacobian writes.
-  - *state_pointers_ptr* — device pointer to an array of ``float*``
-    pointers.  The array has ``n × len(state_sizes)``
-    entries; item *t*'s state *b* is entry ``t * len(state_sizes) + b``
-    (the device address of that state's ambient-space storage).  Because Warp
-    kernels cannot perform ``float**`` double-pointer indirection, custom
-    factors typically gather state values into contiguous CuPy arrays
-    before launching a kernel (see the
-    :ref:`Custom Warp Factor tutorial <pycunls_tutorial:Custom Warp Factor>`).
-  - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
-    **must** be launched on this stream.
-  - *factor_ids_ptr* — device pointer to ``n`` ``int32`` factor indices in
-    ``[0, num_active_factors)`` with ``f(t) = factor_ids[t]``, or ``0`` (null)
-    for ``f(t) = t % num_active_factors``. Read *measurements* through ``f(t)``;
-    everything else (state pointers, outputs) is indexed by *t*.
-  - *num_factor_ids* — the item count ``n``. Unlike C++, where ``0`` means
-    ``num_active_factors``, Python always receives the actual count (``> 0``).
-
-  The regular minimizers call ``evaluate`` with ``factor_ids_ptr == 0`` and
-  ``num_factor_ids == num_active_factors``; the RANSAC minimizers evaluate many items
-  per factor, so a factor used with RANSAC must honor both arguments (see
-  :doc:`../custom_factors_and_states`).
-
-  Return ``True`` on success.  The default implementation raises
-  ``NotImplementedError``.
-
-**Skipping the Jacobian entirely.** ``evaluate`` only has to write to
-``jacobians_ptr`` when it is non-zero and you intend to supply an analytic
-Jacobian. A custom factor that never writes to it — even when
-``jacobians_ptr`` is non-zero — still satisfies the contract, and can be
-registered with ``jacobian_mode_override=pycunls.JacobianMode.numeric`` in
-:py:meth:`Problem.add_factor_batch` to have cuNLS differentiate it via
-finite differences instead. See :doc:`../numeric_jacobians` for details and
-:ref:`pycunls_tutorial:Custom Factor with a Numeric Jacobian` for a worked
-Python example.
-
-.. _py-warp-factor-batch:
-
-``pycunls.warp.WarpFactorBatch``
---------------------------------------------------------------------------------
-
-Convenience base for custom factors implemented with `NVIDIA Warp
-<https://developer.nvidia.com/warp-python>`_ kernels.
-Inherits from ``CustomFactorBatch`` and provides helper methods for
-zero-copy pointer wrapping so you never need to manually construct
-``wp.array`` objects from raw device addresses.  Requires ``warp-lang``.
-
-**Constructor**
-
-.. code-block:: python
-
-   from pycunls.warp import WarpFactorBatch
-
-   class MyWarpFactor(WarpFactorBatch):
-       def __init__(self, capacity):
-           super().__init__(
-               residual_size=...,
-               state_sizes=[...],
-               capacity=capacity,
-               device="cuda:0",
-           )
-
-- **device** (``str``, default ``"cuda:0"``) — Warp device string used when
-  creating ``wp.array`` wrappers via ``wrap_array``.
-
-**Helper methods** (inherited — do not override)
-
-- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of an
-  existing GPU allocation as a Warp array.  *ptr* is the device address,
-  *dtype* a Warp data type (e.g. ``wp.float32``), and *shape* an ``int`` or
-  tuple giving the array dimensions.  The returned ``wp.array`` shares the
-  memory; no allocation or copy occurs.
-
-- ``factor_ids(factor_ids_ptr: int, num_items: int) -> wp.array`` — the
-  factor index of every item as an ``int32`` Warp array: wraps
-  ``factor_ids_ptr`` when it is non-null, otherwise returns (and caches)
-  ``arange(num_items) % num_active_factors``. Kernels can then always read
-  ``ids[t]``.
-
-- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — wraps a raw
-  ``cudaStream_t`` (passed as ``int``) as a ``wp.Stream``.  Use the
-  returned stream in ``wp.launch(..., stream=stream)`` to ensure the Warp
-  kernel executes on the minimizer's CUDA stream.
-
-**Methods to override**
-
-- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-  factor_ids_ptr, num_factor_ids) -> bool``
-  — same contract as ``CustomFactorBatch.evaluate``.  Typical
-  implementations:
-
-  1. Gather scattered state pointers into contiguous CuPy arrays (using a
-     CuPy ``RawKernel`` or ``cp.ndarray`` indexing), one entry per item.
-  2. Get per-item factor indices with ``self.factor_ids(factor_ids_ptr,
-     num_factor_ids)`` and read measurements through them.
-  3. Wrap the contiguous arrays and output buffers with
-     ``self.wrap_array``.
-  4. Build a ``wp.Stream`` with ``self.make_warp_stream``.
-  5. Launch a ``@wp.kernel`` with ``dim=num_factor_ids`` on that stream.
-
-See :ref:`pycunls_tutorial:Custom Warp Factor` for a complete example.

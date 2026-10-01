@@ -9,26 +9,44 @@ always worth the effort — especially while prototyping a new factor, or for
 a residual that's awkward to differentiate.
 
 cuNLS can compute the Jacobian for you instead, via finite differences. A
-factor that implements **only** a residual (``Evaluate`` never has to write
-to its ``jacobians`` argument) can be optimized exactly like any other
+factor that implements **only** a residual (``evaluate`` / ``Evaluate`` never
+has to write to its ``jacobians`` argument) can be optimized exactly like any other
 factor — you just tell the minimizer to differentiate it numerically.
 
 ===============================================================================
 Enabling numeric Jacobians
 ===============================================================================
 
-The switch is :cpp:enum:`JacobianMode` (``cunls/minimizer/jacobian_mode.h``),
-with two values: ``kAnalytic`` (default) and ``kNumeric``. It can be set two
-ways:
+The switch is ``pycunls.JacobianMode`` (C++ :cpp:enum:`JacobianMode` in
+``cunls/minimizer/jacobian_mode.h``), with two values: ``analytic`` (default)
+and ``numeric`` (C++ ``kAnalytic`` / ``kNumeric``). It can be set two ways:
 
-- **Globally**, via :code:`MinimizerOptions::jacobian_mode` — applies to
-  every factor batch in the problem unless overridden.
-- **Per factor group**, via the optional last argument of
-  :cpp:func:`Problem::AddFactorBatch` — overrides the global default for
+- **Globally**, via ``MinimizerOptions.jacobian_mode`` (C++
+  :code:`MinimizerOptions::jacobian_mode`) — applies to every factor batch in
+  the problem unless overridden.
+- **Per factor group**, via the optional ``jacobian_mode_override`` argument
+  of ``Problem.add_factor_batch`` (C++: the optional last argument of
+  :cpp:func:`Problem::AddFactorBatch`) — overrides the global default for
   just that one factor batch. This lets you mix modes in a single
   ``Problem``: for example, keep cuNLS's shipped, analytically-differentiated
   factors on the fast path while a new factor you're still prototyping uses
   numeric differentiation.
+
+.. code-block:: python
+
+   import pycunls
+
+   # Option A: set the global default for every factor batch in the problem.
+   options = pycunls.MinimizerOptions()
+   options.jacobian_mode = pycunls.JacobianMode.numeric
+
+   # Option B: override just one factor group, leaving everything else
+   # (including shipped factors) on the global default (analytic here).
+   problem = pycunls.Problem()
+   problem.add_factor_batch(my_factor, state_pointers,
+                            jacobian_mode_override=pycunls.JacobianMode.numeric)
+
+The same in C++:
 
 .. code-block:: cpp
 
@@ -45,9 +63,11 @@ ways:
 
 A factor doesn't need any special marker to be eligible for numeric
 differentiation — every :cpp:class:`FactorBatch` must already support
-residual-only evaluation (``jacobians == nullptr``, used for cost-only
-evaluation), and that's the only requirement. See :ref:`factor-inputs` in
-:doc:`api/factor` and the worked example below.
+residual-only evaluation (``jacobians == nullptr``, Python
+``jacobians_ptr == 0``, used for cost-only evaluation), and that's the only
+requirement. A Python custom factor (:doc:`custom_factors_and_states`) whose
+``evaluate`` never writes to ``jacobians_ptr`` qualifies as well. See
+:ref:`factor-inputs` in :doc:`api/factor` and the worked example below.
 
 ===============================================================================
 How it works
@@ -64,11 +84,13 @@ numeric Jacobians are correct on SO2/SO3/SE2/SE3/Sim2/Sim3/SL4 states, not
 just Euclidean ``Vector<Dim>`` states — there's no need to reason about
 exponential maps or local parameterizations yourself.
 
-:cpp:struct:`NumericDiffOptions` controls the scheme:
+``MinimizerOptions.numeric_diff_options`` (``pycunls.NumericDiffOptions``;
+C++ :cpp:struct:`NumericDiffOptions`) controls the scheme:
 
-- **method**: ``kCentral`` (default, two-sided,
-  :math:`(f(x+\epsilon)-f(x-\epsilon))/(2\epsilon)`, more accurate) or
-  ``kForward`` (one-sided, :math:`(f(x+\epsilon)-f(x))/\epsilon`, cheaper).
+- **method**: ``NumericDiffMethod.central`` (C++ ``kCentral``; default,
+  two-sided, :math:`(f(x+\epsilon)-f(x-\epsilon))/(2\epsilon)`, more
+  accurate) or ``NumericDiffMethod.forward`` (C++ ``kForward``; one-sided,
+  :math:`(f(x+\epsilon)-f(x))/\epsilon`, cheaper).
 - **relative_step_size**: the per-tangent-coordinate perturbation
   :math:`\epsilon`. Default: ``1e-4``.
 
@@ -79,7 +101,7 @@ Accuracy and performance
 cuNLS is float32 throughout, so numeric Jacobians are finite-difference
 *approximations*, not exact derivatives — expect agreement with an analytic
 Jacobian to roughly 1e-2–1e-3 relative accuracy with the default central
-difference, not machine precision. Loosen `MinimizerOptions::cost_tolerance`
+difference, not machine precision. Loosen ``MinimizerOptions.cost_tolerance``
 slightly for problems solved entirely with numeric Jacobians if you see
 convergence stall just short of an analytic run's final cost.
 
@@ -100,8 +122,14 @@ residuals where a closed-form derivative genuinely isn't worth deriving.
 Worked example
 ===============================================================================
 
-``examples/custom_factor/`` solves the same toy problem two ways: once with
-a hand-derived analytic Jacobian, once with only a residual. The
+In Python, ``python/tests/test_minimizer.py`` (``TestJacobianMode``) solves a
+prior problem with numeric Jacobians, both via the global default and via
+``jacobian_mode_override``. A residual-only Python custom factor is written
+as in :doc:`custom_factors_and_states`, simply never writing to
+``jacobians_ptr``.
+
+In C++, ``examples/custom_factor/`` solves the same toy problem two ways:
+once with a hand-derived analytic Jacobian, once with only a residual. The
 residual-only factor:
 
 .. code-block:: cpp

@@ -5,10 +5,11 @@ State API
 The state module provides batched storage and **manifold** updates for
 optimization variables. State batches implement the **Plus** (retraction)
 operation so the solver can update states in tangent space while keeping them on
-the manifold.
+the manifold. This page introduces manifolds, then documents the Python state
+batch classes, then the C++ API.
 
-**C++** — ``cunls/state``
-  |  **Python** — ``pycunls``
+**Python** — ``pycunls``
+  |  **C++** — ``cunls/state``
 
 ================================================================================
 Manifolds
@@ -59,423 +60,6 @@ buffer. So the state batch is the object that knows how to apply :math:`\oplus`
 for its manifold.
 
 ================================================================================
-StateBatch Interface
-================================================================================
-
-.. important::
-
-   **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / states their buffers hold) and
-   start with **zero** active entries: call ``SetNumActiveFactors(n)`` /
-   ``SetNumActiveStates(n)`` (Python: ``set_num_active_factors`` /
-   ``set_num_active_states``) before solving, and again whenever the problem
-   size changes. See :ref:`capacity-and-active-count`.
-
-.. cpp:function:: size_t TangentSize() const
-
-  :returns: [out] Tangent-space dimension per state.
-
-.. cpp:function:: size_t AmbientSize() const
-
-  :returns: [out] Ambient/storage dimension per state.
-
-.. cpp:function:: size_t NumActiveStates() const
-
-  :returns: [out] Number of active states (the first
-    ``NumActiveStates()`` states of the buffer). 0 after construction, until
-    ``SetNumActiveStates``.
-
-.. cpp:function:: size_t StateBatch::Capacity() const
-
-  :returns: [out] Number of states the buffer holds: the ``capacity``
-    passed to the constructor. Constant for the batch's lifetime.
-    ``StateDevicePtr(i)`` is valid for any ``i < Capacity()``.
-
-.. cpp:function:: size_t ConstCapacity() const
-
-  :returns: [out] Number of entries the constant-id buffer holds (0 without
-    one).
-
-.. cpp:function:: void SetNumActiveStates(size_t num_active_states, size_t num_const_states = 0)
-
-  Sets the active state count and the active constant-id count (the first
-  ``num_const_states`` entries of the constant-id buffer, each below
-  ``num_active_states``). Every batch starts with 0 active states: call this before
-  the first solve, and again whenever the sizes change. Host-only (no
-  allocation, no device work); takes effect at the next ``Plus`` /
-  ``Minimize``.
-
-  :param ``num_active_states``: [in] Active state count, at most ``Capacity()``.
-  :param ``num_const_states``: [in] Active constant count, at most ``ConstCapacity()``.
-  :throws std::invalid_argument: if a count exceeds its capacity.
-
-.. cpp:function:: void Plus(const float* x, const float* delta, float* x_plus_delta, cudaStream_t stream, size_t num_replicas = 1)
-
-  Computes :math:`x_{\mathrm{out}} = x \oplus \delta` for every state
-  in the arrays.
-
-  **Terms.** :math:`N` = ``NumActiveStates()``, :math:`A` = ``AmbientSize()``
-  (floats stored per state, e.g. 16 for an SE(3) matrix), :math:`T` =
-  ``TangentSize()`` (floats per update, e.g. 6 for SE(3)), :math:`R` =
-  ``num_replicas``. The arrays hold :math:`R` contiguous copies
-  ("replicas") of the batch, :math:`R \cdot N` states in total; replica
-  :math:`r` is states :math:`[rN, (r+1)N)`. The regular minimizers pass
-  :math:`R = 1` (the classic 4-argument call); the
-  :doc:`RANSAC minimizers <../ransac>` keep one replica per hypothesis and
-  update all of them in one call.
-
-  Every state is updated independently: output state :math:`i` depends only
-  on state :math:`i` of ``x`` and state :math:`i` of ``delta``.
-
-  :param ``x``: [in] Device array of :math:`R \cdot N \cdot A` floats; state
-    :math:`i` is ``x[i * A .. (i + 1) * A)``.
-  :param ``delta``: [in] Device array of :math:`R \cdot N \cdot T` floats;
-    state :math:`i`'s update is ``delta[i * T .. (i + 1) * T)``.
-  :param ``x_plus_delta``: [out] Device array of :math:`R \cdot N \cdot A`
-    floats, same layout as ``x``. Must not overlap ``x`` or ``delta``.
-  :param ``stream``: [in] CUDA stream on which all work is enqueued; the call
-    may return before the work completes.
-  :param ``num_replicas``: [in] :math:`R \geq 1` (default 1).
-  :returns: [out] No return value.
-
-  **Example** (:math:`N = 2` states, :math:`R = 3` replicas: 6 states in every
-  array, state :math:`i` of ``x`` at ``x + i * A``, of ``delta`` at
-  ``delta + i * T``):
-
-  .. code-block:: text
-
-     global state i     0     1  |  2     3  |  4     5
-     replica r          0     0  |  1     1  |  2     2
-     state within r     0     1  |  0     1  |  0     1
-
-  **Implementing it.** Treat the arrays as one batch of :math:`R \cdot N`
-  states, e.g. one thread per state with :math:`i < R N`, and size any
-  internal scratch for :math:`R \cdot N` states, not :math:`N`. See
-  :doc:`../custom_factors_and_states`.
-
-.. cpp:function:: float* StateDevicePtr(size_t state_idx)
-
-  :param ``state_idx``: [in] Zero-based index of state.
-  :returns: [out] Mutable device pointer for the selected state, or ``nullptr`` when out-of-range.
-
-.. cpp:function:: const float* StateDevicePtr(size_t state_idx) const
-
-  :param ``state_idx``: [in] Zero-based index of state.
-  :returns: [out] Const device pointer for the selected state, or ``nullptr`` when out-of-range.
-
-.. cpp:function:: const int* ConstStateIds() const
-
-  :returns: [out] Device pointer to constant-state indices, or ``nullptr`` when none are set.
-
-.. cpp:function:: size_t NumConstStates() const
-
-  :returns: [out] Number of active constant (non-optimized) states.
-
-================================================================================
-State batch types (tables)
-================================================================================
-
-Each state batch type corresponds to a manifold. The table columns are: **Plus**
-formula, **Ambient** dimension, **Tangent** dimension, **Ambient space**
-description, **Tangent space** description, and **Memory layout** of one state
-in device memory.
-
---------------------------------------------------------------------------------
-SizedStateBatch<AmbientDim, TangentDim>
---------------------------------------------------------------------------------
-
-Generic base with compile-time ambient and tangent dimensions. Storage layout:
-contiguous states, each of **AmbientDim** floats. Derived classes implement
-:cpp:func:`Plus` for their manifold.
-
---------------------------------------------------------------------------------
-VectorStateBatch<Dim>
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/vector_state_batch.h`
-
-Euclidean vector state (e.g. landmarks, biases). Tangent and ambient spaces coincide.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x + \delta`
-     - :math:`\mathrm{Dim}`
-     - :math:`\mathrm{Dim}`
-     - :math:`\mathbb{R}^{\mathrm{Dim}}`
-     - :math:`\mathbb{R}^{\mathrm{Dim}}`
-     - :math:`\mathrm{Dim}` floats per state, contiguous
-
-**Constructors:** Same as :code:`SizedStateBatch` with both dimensions equal to
-:code:`Dim`. See :ref:`state-constructors` below.
-
---------------------------------------------------------------------------------
-SO2StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/so2_state_batch.h`
-
-2D rotations (heading angle). Tangent = 1 (angle in radians).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\delta)`
-     - 4
-     - 1
-     - 2×2 rotation matrix
-     - angle (radians)
-     - row-major 2×2: :math:`[\cos\theta,\, -\sin\theta,\, \sin\theta,\, \cos\theta]`
-
---------------------------------------------------------------------------------
-SO3StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/so3_state_batch.h`
-
-3D rotations. Tangent = 3 (axis-angle / rotation vector).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\mathrm{skew}(\delta))`
-     - 9
-     - 3
-     - 3×3 rotation matrix
-     - 3D rotation vector
-     - row-major 3×3 (9 floats)
-
---------------------------------------------------------------------------------
-SE2StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/se2_state_batch.h`
-
-2D rigid transform (rotation + translation). Tangent = 3 (:math:`v_x,\, v_y`, angle).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\delta)`
-     - 9
-     - 3
-     - 3×3 homogeneous matrix
-     - :math:`[v_x,\, v_y,\, \theta]`
-     - row-major 3×3: :math:`[\cos\theta,\, -\sin\theta,\, t_x,\, \sin\theta,\, \cos\theta,\, t_y,\, 0,\, 0,\, 1]`
-
---------------------------------------------------------------------------------
-SE3StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/se3_state_batch.h`
-
-3D rigid transform (rotation + translation). Tangent = 6 (twist: rotation vector + translation).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\mathrm{skew}(\delta))`
-     - 16
-     - 6
-     - 4×4 homogeneous matrix
-     - 6D twist :math:`[\omega; \rho]`
-     - row-major 4×4: :math:`[R\,|\,t;\; 0\; 0\; 0\; 1]` (16 floats)
-
---------------------------------------------------------------------------------
-Similarity2StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/similarity2_state_batch.h`
-
-2D similarity (rotation + translation + scale). Tangent = 4 (:math:`u_x,\, u_y,\, \theta,\, \lambda=\log s`).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\delta)`
-     - 9
-     - 4
-     - 3×3 sim. matrix
-     - :math:`[u_x,\, u_y,\, \theta,\, \lambda]`
-     - row-major 3×3: :math:`[\cos\theta,\, -\sin\theta,\, t_x,\, \sin\theta,\, \cos\theta,\, t_y,\, 0,\, 0,\, 1/s]`
-
---------------------------------------------------------------------------------
-Similarity3StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/similarity3_state_batch.h`
-
-3D similarity (rotation + translation + scale). Tangent = 7 (:math:`\omega,\, u,\, \lambda=\log s`).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\delta)`
-     - 16
-     - 7
-     - 4×4 sim. matrix
-     - :math:`[\omega; u; \lambda]`
-     - row-major 4×4: :math:`[R\,|\,t;\; 0\; 0\; 0\; 1/s]` (16 floats)
-
---------------------------------------------------------------------------------
-SL4StateBatch
---------------------------------------------------------------------------------
-
-Header: :code:`cunls/state/sl4_state_batch.h`
-
-Projective special linear group SL(4). The tangent space is the 15-dimensional
-Lie algebra :math:`\mathfrak{sl}(4)`
-(:math:`\mathfrak{so}(4) \oplus \mathrm{sym\_off}(4) \oplus \mathrm{diag}_0(4)`).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 10 10 20 20 22
-
-   * - Plus
-     - Ambient
-     - Tangent
-     - Ambient space
-     - Tangent space
-     - Memory layout
-   * - :math:`x \cdot \mathrm{Exp}(\delta)`
-     - 16
-     - 15
-     - 4×4 matrix with unit determinant
-     - 15D :math:`\mathfrak{sl}(4)` Lie algebra
-     - row-major 4×4 (16 floats)
-
-.. _state-constructors:
-
-================================================================================
-Constructors
-================================================================================
-
---------------------------------------------------------------------------------
-SizedStateBatch<AmbientDim, TangentDim> (constructors)
---------------------------------------------------------------------------------
-
-.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t capacity)
-
-  :param ``device_ptr``: [in] Device pointer to contiguous state storage (capacity × AmbientDim floats).
-  :param ``capacity``: [in] Number of states the buffer holds. 0 are active until ``SetNumActiveStates``.
-  :returns: [out] Constructor has no return value.
-
-.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t capacity, const int* device_constant_state_ids, size_t const_capacity)
-
-  :param ``device_ptr``: [in] Device pointer to contiguous state storage.
-  :param ``capacity``: [in] Number of states the buffer holds. 0 are active until ``SetNumActiveStates``.
-  :param ``device_constant_state_ids``: [in] Device pointer to indices of constant states.
-  :param ``const_capacity``: [in] Number of entries the constant-id buffer holds. 0 are active until ``SetNumActiveStates``.
-  :returns: [out] Constructor has no return value.
-
---------------------------------------------------------------------------------
-VectorStateBatch<Dim> (constructors)
---------------------------------------------------------------------------------
-
-Uses the same constructor signatures as :code:`SizedStateBatch` with ambient and
-tangent dimension :code:`Dim`.
-
---------------------------------------------------------------------------------
-StateBatch constructors
---------------------------------------------------------------------------------
-
-Each StateBatch-derived class has constructors equivalent to:
-
-.. cpp:function:: ClassName(const float* device_ptr, size_t capacity)
-.. cpp:function:: ClassName(const float* device_ptr, size_t capacity, const int* device_constant_state_ids, size_t const_capacity)
-
-  :param ``device_ptr``: [in] Device pointer to contiguous state storage.
-  :param ``capacity``: [in] Number of states the buffer holds. 0 are active until ``SetNumActiveStates``.
-  :param ``device_constant_state_ids``: [in] Device pointer to constant-state indices.
-  :param ``const_capacity``: [in] Number of entries the constant-id buffer holds. 0 are active until ``SetNumActiveStates``.
-  :returns: [out] Constructor has no return value.
-
-================================================================================
-StateBatchOps
-================================================================================
-
-Orchestrates :cpp:func:`Plus` across multiple state batches: gathers tangent
-updates from a single reduced vector, scatters to per-batch deltas, and calls
-each batch’s :cpp:func:`Plus`.
-
-.. cpp:function:: StateBatchOps()
-
-  :returns: [out] Constructor has no return value.
-
-.. cpp:function:: StateBatchOps(cudaStream_t stream, const std::vector<StateBatch*>& state_batches)
-
-  :param ``stream``: [in] CUDA stream used to initialize mappings.
-  :param ``state_batches``: [in] Ordered list of state batches.
-  :returns: [out] Constructor has no return value.
-
-.. cpp:function:: void Preprocess(cudaStream_t stream, const std::vector<StateBatch*>& state_batches)
-
-  :param ``stream``: [in] CUDA stream for mapping/buffer initialization.
-  :param ``state_batches``: [in] State batches used to build reduced/full mappings.
-  :returns: [out] No return value.
-
-.. cpp:function:: void Plus(cudaStream_t stream, const std::vector<const float*>& x_ptrs, const DeviceVector<float>& delta, std::vector<float*>& x_plus_delta_ptrs)
-
-  :param ``stream``: [in] CUDA stream for scatter/update operations.
-  :param ``x_ptrs``: [in] Current per-batch state pointers.
-  :param ``delta``: [in] Reduced tangent update vector.
-  :param ``x_plus_delta_ptrs``: [out] Per-batch pointers for updated states.
-  :returns: [out] No return value.
-
-.. cpp:function:: size_t NumReducedStates() const
-
-  :returns: [out] Number of scalar optimization variables after removing constant states.
-
-================================================================================
 Python API (``pycunls``)
 ================================================================================
 
@@ -483,6 +67,19 @@ All Python state batches inherit from the abstract ``StateBatch`` base class.
 Every constructor argument documented as ``DevicePointer`` accepts either a
 ``cupy.ndarray`` (the device pointer is extracted automatically via
 ``.data.ptr``) or a raw ``int`` GPU device address.
+
+The Plus formula, ambient and tangent dimensions, and memory layout of each
+built-in manifold are tabulated in :ref:`state-batch-types` (C++ API
+section); the Python classes use the same layouts.
+
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` (C++: ``SetNumActiveFactors`` /
+   ``SetNumActiveStates``) before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
 
 .. _py-state-batch-interface:
 
@@ -810,3 +407,419 @@ zero-copy pointer wrapping so you never need to manually construct
   state.
 
 See :ref:`pycunls_tutorial:Custom Warp State` for a complete example.
+
+.. _state-cpp-api:
+
+================================================================================
+C++ API
+================================================================================
+
+--------------------------------------------------------------------------------
+StateBatch Interface
+--------------------------------------------------------------------------------
+
+.. cpp:function:: size_t TangentSize() const
+
+  :returns: [out] Tangent-space dimension per state.
+
+.. cpp:function:: size_t AmbientSize() const
+
+  :returns: [out] Ambient/storage dimension per state.
+
+.. cpp:function:: size_t NumActiveStates() const
+
+  :returns: [out] Number of active states (the first
+    ``NumActiveStates()`` states of the buffer). 0 after construction, until
+    ``SetNumActiveStates``.
+
+.. cpp:function:: size_t StateBatch::Capacity() const
+
+  :returns: [out] Number of states the buffer holds: the ``capacity``
+    passed to the constructor. Constant for the batch's lifetime.
+    ``StateDevicePtr(i)`` is valid for any ``i < Capacity()``.
+
+.. cpp:function:: size_t ConstCapacity() const
+
+  :returns: [out] Number of entries the constant-id buffer holds (0 without
+    one).
+
+.. cpp:function:: void SetNumActiveStates(size_t num_active_states, size_t num_const_states = 0)
+
+  Sets the active state count and the active constant-id count (the first
+  ``num_const_states`` entries of the constant-id buffer, each below
+  ``num_active_states``). Every batch starts with 0 active states: call this before
+  the first solve, and again whenever the sizes change. Host-only (no
+  allocation, no device work); takes effect at the next ``Plus`` /
+  ``Minimize``.
+
+  :param ``num_active_states``: [in] Active state count, at most ``Capacity()``.
+  :param ``num_const_states``: [in] Active constant count, at most ``ConstCapacity()``.
+  :throws std::invalid_argument: if a count exceeds its capacity.
+
+.. cpp:function:: void Plus(const float* x, const float* delta, float* x_plus_delta, cudaStream_t stream, size_t num_replicas = 1)
+
+  Computes :math:`x_{\mathrm{out}} = x \oplus \delta` for every state
+  in the arrays.
+
+  **Terms.** :math:`N` = ``NumActiveStates()``, :math:`A` = ``AmbientSize()``
+  (floats stored per state, e.g. 16 for an SE(3) matrix), :math:`T` =
+  ``TangentSize()`` (floats per update, e.g. 6 for SE(3)), :math:`R` =
+  ``num_replicas``. The arrays hold :math:`R` contiguous copies
+  ("replicas") of the batch, :math:`R \cdot N` states in total; replica
+  :math:`r` is states :math:`[rN, (r+1)N)`. The regular minimizers pass
+  :math:`R = 1` (the classic 4-argument call); the
+  :doc:`RANSAC minimizers <../ransac>` keep one replica per hypothesis and
+  update all of them in one call.
+
+  Every state is updated independently: output state :math:`i` depends only
+  on state :math:`i` of ``x`` and state :math:`i` of ``delta``.
+
+  :param ``x``: [in] Device array of :math:`R \cdot N \cdot A` floats; state
+    :math:`i` is ``x[i * A .. (i + 1) * A)``.
+  :param ``delta``: [in] Device array of :math:`R \cdot N \cdot T` floats;
+    state :math:`i`'s update is ``delta[i * T .. (i + 1) * T)``.
+  :param ``x_plus_delta``: [out] Device array of :math:`R \cdot N \cdot A`
+    floats, same layout as ``x``. Must not overlap ``x`` or ``delta``.
+  :param ``stream``: [in] CUDA stream on which all work is enqueued; the call
+    may return before the work completes.
+  :param ``num_replicas``: [in] :math:`R \geq 1` (default 1).
+  :returns: [out] No return value.
+
+  **Example** (:math:`N = 2` states, :math:`R = 3` replicas: 6 states in every
+  array, state :math:`i` of ``x`` at ``x + i * A``, of ``delta`` at
+  ``delta + i * T``):
+
+  .. code-block:: text
+
+     global state i     0     1  |  2     3  |  4     5
+     replica r          0     0  |  1     1  |  2     2
+     state within r     0     1  |  0     1  |  0     1
+
+  **Implementing it.** Treat the arrays as one batch of :math:`R \cdot N`
+  states, e.g. one thread per state with :math:`i < R N`, and size any
+  internal scratch for :math:`R \cdot N` states, not :math:`N`. See
+  :doc:`../custom_factors_and_states`.
+
+.. cpp:function:: float* StateDevicePtr(size_t state_idx)
+
+  :param ``state_idx``: [in] Zero-based index of state.
+  :returns: [out] Mutable device pointer for the selected state, or ``nullptr`` when out-of-range.
+
+.. cpp:function:: const float* StateDevicePtr(size_t state_idx) const
+
+  :param ``state_idx``: [in] Zero-based index of state.
+  :returns: [out] Const device pointer for the selected state, or ``nullptr`` when out-of-range.
+
+.. cpp:function:: const int* ConstStateIds() const
+
+  :returns: [out] Device pointer to constant-state indices, or ``nullptr`` when none are set.
+
+.. cpp:function:: size_t NumConstStates() const
+
+  :returns: [out] Number of active constant (non-optimized) states.
+
+.. _state-batch-types:
+
+--------------------------------------------------------------------------------
+State batch types (tables)
+--------------------------------------------------------------------------------
+
+Each state batch type corresponds to a manifold. The table columns are: **Plus**
+formula, **Ambient** dimension, **Tangent** dimension, **Ambient space**
+description, **Tangent space** description, and **Memory layout** of one state
+in device memory.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SizedStateBatch<AmbientDim, TangentDim>
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Generic base with compile-time ambient and tangent dimensions. Storage layout:
+contiguous states, each of **AmbientDim** floats. Derived classes implement
+:cpp:func:`Plus` for their manifold.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+VectorStateBatch<Dim>
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/vector_state_batch.h`
+
+Euclidean vector state (e.g. landmarks, biases). Tangent and ambient spaces coincide.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x + \delta`
+     - :math:`\mathrm{Dim}`
+     - :math:`\mathrm{Dim}`
+     - :math:`\mathbb{R}^{\mathrm{Dim}}`
+     - :math:`\mathbb{R}^{\mathrm{Dim}}`
+     - :math:`\mathrm{Dim}` floats per state, contiguous
+
+**Constructors:** Same as :code:`SizedStateBatch` with both dimensions equal to
+:code:`Dim`. See :ref:`state-constructors` below.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SO2StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/so2_state_batch.h`
+
+2D rotations (heading angle). Tangent = 1 (angle in radians).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\delta)`
+     - 4
+     - 1
+     - 2×2 rotation matrix
+     - angle (radians)
+     - row-major 2×2: :math:`[\cos\theta,\, -\sin\theta,\, \sin\theta,\, \cos\theta]`
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SO3StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/so3_state_batch.h`
+
+3D rotations. Tangent = 3 (axis-angle / rotation vector).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\mathrm{skew}(\delta))`
+     - 9
+     - 3
+     - 3×3 rotation matrix
+     - 3D rotation vector
+     - row-major 3×3 (9 floats)
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SE2StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/se2_state_batch.h`
+
+2D rigid transform (rotation + translation). Tangent = 3 (:math:`v_x,\, v_y`, angle).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\delta)`
+     - 9
+     - 3
+     - 3×3 homogeneous matrix
+     - :math:`[v_x,\, v_y,\, \theta]`
+     - row-major 3×3: :math:`[\cos\theta,\, -\sin\theta,\, t_x,\, \sin\theta,\, \cos\theta,\, t_y,\, 0,\, 0,\, 1]`
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SE3StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/se3_state_batch.h`
+
+3D rigid transform (rotation + translation). Tangent = 6 (twist: rotation vector + translation).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\mathrm{skew}(\delta))`
+     - 16
+     - 6
+     - 4×4 homogeneous matrix
+     - 6D twist :math:`[\omega; \rho]`
+     - row-major 4×4: :math:`[R\,|\,t;\; 0\; 0\; 0\; 1]` (16 floats)
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Similarity2StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/similarity2_state_batch.h`
+
+2D similarity (rotation + translation + scale). Tangent = 4 (:math:`u_x,\, u_y,\, \theta,\, \lambda=\log s`).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\delta)`
+     - 9
+     - 4
+     - 3×3 sim. matrix
+     - :math:`[u_x,\, u_y,\, \theta,\, \lambda]`
+     - row-major 3×3: :math:`[\cos\theta,\, -\sin\theta,\, t_x,\, \sin\theta,\, \cos\theta,\, t_y,\, 0,\, 0,\, 1/s]`
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Similarity3StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/similarity3_state_batch.h`
+
+3D similarity (rotation + translation + scale). Tangent = 7 (:math:`\omega,\, u,\, \lambda=\log s`).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\delta)`
+     - 16
+     - 7
+     - 4×4 sim. matrix
+     - :math:`[\omega; u; \lambda]`
+     - row-major 4×4: :math:`[R\,|\,t;\; 0\; 0\; 0\; 1/s]` (16 floats)
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SL4StateBatch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Header: :code:`cunls/state/sl4_state_batch.h`
+
+Projective special linear group SL(4). The tangent space is the 15-dimensional
+Lie algebra :math:`\mathfrak{sl}(4)`
+(:math:`\mathfrak{so}(4) \oplus \mathrm{sym\_off}(4) \oplus \mathrm{diag}_0(4)`).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 10 10 20 20 22
+
+   * - Plus
+     - Ambient
+     - Tangent
+     - Ambient space
+     - Tangent space
+     - Memory layout
+   * - :math:`x \cdot \mathrm{Exp}(\delta)`
+     - 16
+     - 15
+     - 4×4 matrix with unit determinant
+     - 15D :math:`\mathfrak{sl}(4)` Lie algebra
+     - row-major 4×4 (16 floats)
+
+.. _state-constructors:
+
+--------------------------------------------------------------------------------
+Constructors
+--------------------------------------------------------------------------------
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SizedStateBatch<AmbientDim, TangentDim> (constructors)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t capacity)
+
+  :param ``device_ptr``: [in] Device pointer to contiguous state storage (capacity × AmbientDim floats).
+  :param ``capacity``: [in] Number of states the buffer holds. 0 are active until ``SetNumActiveStates``.
+  :returns: [out] Constructor has no return value.
+
+.. cpp:function:: SizedStateBatch(const float* device_ptr, size_t capacity, const int* device_constant_state_ids, size_t const_capacity)
+
+  :param ``device_ptr``: [in] Device pointer to contiguous state storage.
+  :param ``capacity``: [in] Number of states the buffer holds. 0 are active until ``SetNumActiveStates``.
+  :param ``device_constant_state_ids``: [in] Device pointer to indices of constant states.
+  :param ``const_capacity``: [in] Number of entries the constant-id buffer holds. 0 are active until ``SetNumActiveStates``.
+  :returns: [out] Constructor has no return value.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+VectorStateBatch<Dim> (constructors)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Uses the same constructor signatures as :code:`SizedStateBatch` with ambient and
+tangent dimension :code:`Dim`.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+StateBatch constructors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each StateBatch-derived class has constructors equivalent to:
+
+.. cpp:function:: ClassName(const float* device_ptr, size_t capacity)
+.. cpp:function:: ClassName(const float* device_ptr, size_t capacity, const int* device_constant_state_ids, size_t const_capacity)
+
+  :param ``device_ptr``: [in] Device pointer to contiguous state storage.
+  :param ``capacity``: [in] Number of states the buffer holds. 0 are active until ``SetNumActiveStates``.
+  :param ``device_constant_state_ids``: [in] Device pointer to constant-state indices.
+  :param ``const_capacity``: [in] Number of entries the constant-id buffer holds. 0 are active until ``SetNumActiveStates``.
+  :returns: [out] Constructor has no return value.
+
+--------------------------------------------------------------------------------
+StateBatchOps
+--------------------------------------------------------------------------------
+
+Orchestrates :cpp:func:`Plus` across multiple state batches: gathers tangent
+updates from a single reduced vector, scatters to per-batch deltas, and calls
+each batch’s :cpp:func:`Plus`.
+
+.. cpp:function:: StateBatchOps()
+
+  :returns: [out] Constructor has no return value.
+
+.. cpp:function:: StateBatchOps(cudaStream_t stream, const std::vector<StateBatch*>& state_batches)
+
+  :param ``stream``: [in] CUDA stream used to initialize mappings.
+  :param ``state_batches``: [in] Ordered list of state batches.
+  :returns: [out] Constructor has no return value.
+
+.. cpp:function:: void Preprocess(cudaStream_t stream, const std::vector<StateBatch*>& state_batches)
+
+  :param ``stream``: [in] CUDA stream for mapping/buffer initialization.
+  :param ``state_batches``: [in] State batches used to build reduced/full mappings.
+  :returns: [out] No return value.
+
+.. cpp:function:: void Plus(cudaStream_t stream, const std::vector<const float*>& x_ptrs, const DeviceVector<float>& delta, std::vector<float*>& x_plus_delta_ptrs)
+
+  :param ``stream``: [in] CUDA stream for scatter/update operations.
+  :param ``x_ptrs``: [in] Current per-batch state pointers.
+  :param ``delta``: [in] Reduced tangent update vector.
+  :param ``x_plus_delta_ptrs``: [out] Per-batch pointers for updated states.
+  :returns: [out] No return value.
+
+.. cpp:function:: size_t NumReducedStates() const
+
+  :returns: [out] Number of scalar optimization variables after removing constant states.

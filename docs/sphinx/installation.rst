@@ -1,6 +1,15 @@
 ###############################################################################
-Installation
+C++ Installation
 ###############################################################################
+
+This page covers building and installing the cuNLS **C++/CUDA library**
+(``libcunls``) for use from C++ applications.
+
+.. note::
+
+   **Using cuNLS from Python?** Install the ``pycunls`` package instead; see
+   :doc:`pycunls_installation`. It does not require a separate C++
+   installation.
 
 ===============================================================================
 Prerequisites

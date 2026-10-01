@@ -1,5 +1,5 @@
 ###############################################################################
-Python Tutorial
+Tutorial
 ###############################################################################
 
 .. important::
@@ -49,6 +49,11 @@ contract (needed by RANSAC), see :doc:`custom_factors_and_states`.
 
 Full source code for all examples lives in the ``python/examples/``
 directory.
+
+.. note::
+
+   **Using cuNLS from C++.** The C++ versions of these examples (and a custom
+   factor written as a CUDA kernel) are in :doc:`tutorial`.
 
 ===============================================================================
 Sparse Bundle Adjustment

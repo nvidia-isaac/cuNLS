@@ -5,6 +5,10 @@ Math API
 `cunls/math` contains low-level Lie-group and dense-matrix operations used by
 state/factor implementations.
 
+This page documents the C++ API only: ``pycunls`` does not expose these
+functions. They are used internally by the built-in state and factor batches
+that Python wraps.
+
 Headers:
 
 - `cunls/math/lie_math.h`

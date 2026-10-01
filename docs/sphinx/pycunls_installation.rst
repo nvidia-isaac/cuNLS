@@ -1,6 +1,16 @@
 ###############################################################################
-pycunls Installation
+Installation
 ###############################################################################
+
+cuNLS is installed for Python as the ``pycunls`` package. The wheel
+statically links the cuNLS core library, so no separate C++ installation is
+needed.
+
+.. note::
+
+   **Using cuNLS from C++.** To build and install the C++ library
+   (``libcunls.so`` / ``libcunls.a``, headers and CMake config) instead, see
+   :doc:`installation`.
 
 ===============================================================================
 Prerequisites
@@ -89,3 +99,15 @@ Verify the installation
    python -c "import pycunls; print(pycunls.__version__)"
 
 You should see the installed version string (e.g. ``0.1.0``).
+
+===============================================================================
+Optional: cuDSS sparse solver
+===============================================================================
+
+cuDSS is an **optional runtime dependency**: the ``pycunls`` wheel neither
+bundles nor requires it, and every other sparse linear solver works without
+it. To use ``SparseLinearSolverType.cuDSS``, make ``libcudss.so`` reachable
+through ``LD_LIBRARY_PATH`` *before* starting ``python``; requesting it
+otherwise raises ``RuntimeError``. See :ref:`installation:Notes` for details.
+
+Next: :doc:`pycunls_quick_start`.

@@ -1,6 +1,9 @@
 ###############################################################################
-Quick Start
+C++ Quick Start
 ###############################################################################
+
+This page is the quick start for the cuNLS **C++ API**. For the Python
+version (``pycunls``), see :doc:`pycunls_quick_start`.
 
 .. important::
 
@@ -10,9 +13,9 @@ Quick Start
    ``SetNumActiveStates(n)`` before solving, and again whenever the problem size
    changes. See :ref:`capacity-and-active-count`.
 
-This section shows a minimal end-to-end setup:
+This section shows a minimal end-to-end C++ setup:
 
-1. Install cuNLS
+1. Install the cuNLS C++ library
 2. Write a tiny app
 3. Compile and run it against the installed library
 
@@ -20,7 +23,7 @@ This section shows a minimal end-to-end setup:
 Step 1: Install cuNLS
 ===============================================================================
 
-Use :doc:`installation` and make sure you have an install prefix (example:
+Use :doc:`installation` (C++ Installation) and make sure you have an install prefix (example:
 `/tmp/cunls_install`).
 
 ===============================================================================

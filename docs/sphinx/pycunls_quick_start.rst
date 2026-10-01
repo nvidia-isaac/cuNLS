@@ -1,5 +1,5 @@
 ###############################################################################
-Python Quick Start
+Quick Start
 ###############################################################################
 
 .. important::
@@ -10,7 +10,14 @@ Python Quick Start
    ``set_num_active_states(n)`` before solving, and again whenever the problem
    size changes. See :ref:`capacity-and-active-count`.
 
-This section shows a minimal end-to-end Python setup:
+This section shows a minimal end-to-end Python setup with ``pycunls``.
+
+.. note::
+
+   **Using cuNLS from C++.** The same example written against the C++ API,
+   with a CMake project to build it, is in :doc:`quick_start`.
+
+Steps:
 
 1. Install pycunls
 2. Write a tiny script
@@ -114,3 +121,5 @@ Step 3: Run
 
 You should see the final cost decrease toward zero and the solution converge
 to :math:`x = 2`.
+
+Next: :doc:`pycunls_tutorial` for complete examples.

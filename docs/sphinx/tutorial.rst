@@ -1,6 +1,9 @@
 ###############################################################################
-Tutorial
+C++ Tutorial
 ###############################################################################
+
+This tutorial covers the cuNLS **C++ API**. For the Python version
+(``pycunls``), see :doc:`pycunls_tutorial`.
 
 .. important::
 
@@ -14,7 +17,7 @@ Tutorial
 Overview
 ===============================================================================
 
-This tutorial walks through three complete cuNLS examples, each demonstrating a
+This tutorial walks through three complete C++ cuNLS examples, each demonstrating a
 different optimization pattern. Every example follows the same high-level flow
 described in the :doc:`introduction`:
 

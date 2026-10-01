@@ -15,16 +15,21 @@ Introduction
 Purpose
 ===============================================================================
 
-cuNLS is a CUDA/C++ library for solving nonlinear least-squares problems on the
-GPU. It is designed around batched factor evaluation, sparse Jacobian assembly,
+cuNLS is a library for solving nonlinear least-squares problems on the GPU.
+It is designed around batched factor evaluation, sparse Jacobian assembly,
 and sparse linear solvers tailored for large scale minimization problems.
 
-cuNLS also provides **pycunls**, a Python package that exposes the full C++
-API through CuPy-based GPU arrays (see :doc:`pycunls_installation`). For
-advanced extensibility, pycunls integrates with `NVIDIA Warp
-<https://developer.nvidia.com/warp-python>`_ to let users
-author custom factor and state kernels in Python (see
-:doc:`pycunls_tutorial`).
+cuNLS is used primarily from Python through **pycunls**, a package that
+exposes the full library through CuPy-based GPU arrays (see
+:doc:`pycunls_installation` and :doc:`pycunls_quick_start`). For advanced
+extensibility, pycunls integrates with `NVIDIA Warp
+<https://developer.nvidia.com/warp-python>`_ to let users author custom
+factor and state kernels in Python (see :doc:`pycunls_tutorial`).
+
+The same functionality is available as a native **C++/CUDA API**
+(``libcunls``), for applications written in C++ or for custom factors
+implemented directly as CUDA kernels (see :doc:`installation`,
+:doc:`quick_start` and :doc:`tutorial`).
 
 ===============================================================================
 Nonlinear least-squares problems
@@ -49,10 +54,11 @@ Using a square-root information matrix :math:`R_i` such that
    \left\|f_i(x)\right\|^2_{\Sigma_i} = \left\|R_i f_i(x)\right\|^2
 
 This is exactly why cuNLS has a dedicated ``InformationFactorBatch``: it applies
-this whitening step directly to residuals and Jacobians.  In C++, the template
+this whitening step directly to residuals and Jacobians.  ``WeightedFactorBatch``
+does the same for scalar weighting.  In C++, the template
 ``InformationFactorBatch<T>`` inherits ``T::sized_layout`` (the same
-``SizedFactorBatch`` as the inner batch).  ``WeightedFactorBatch<T>`` does the
-same for scalar weighting.
+``SizedFactorBatch`` as the inner batch), and so does
+``WeightedFactorBatch<T>``.
 
 To solve the nonlinear problem, cuNLS linearizes around the current estimate
 :math:`x_0`:
@@ -132,16 +138,17 @@ Core concepts
 ===============================================================================
 
 - **State batches** store optimization variables on manifolds (for example,
-  `SE3StateBatch` for rigid transforms, `VectorStateBatch<Dim>` for Euclidean
-  vectors).
+  ``SE3StateBatch`` for rigid transforms, ``VectorStateBatch3`` for Euclidean
+  3D vectors; in C++, ``VectorStateBatch<Dim>``).
 - **Factor batches** compute residuals and Jacobians in parallel for many
   observations.
-- **Problems** connect factors to states via device pointers.
-- **Minimizers** (`GaussNewtonMinimizer`, `LevenbergMarquardtMinimizer`) solve
-  for state updates.
+- **Problems** connect factors to states via device pointers
+  (``state_device_ptr(i)``; C++ ``StateDevicePtr(i)``).
+- **Minimizers** (``GaussNewtonMinimizer``, ``LevenbergMarquardtMinimizer``)
+  solve for state updates (``minimize``; C++ ``Minimize``).
 - **Loss functions** robustify residuals to reduce outlier influence.
-- **RANSAC minimizers** (`RansacGaussNewtonMinimizer`,
-  `RansacLevenbergMarquardtMinimizer`) solve the same problems when many
+- **RANSAC minimizers** (``RansacGaussNewtonMinimizer``,
+  ``RansacLevenbergMarquardtMinimizer``) solve the same problems when many
   measurements are gross outliers, and return the inlier set
   (:doc:`ransac`).
 
@@ -155,10 +162,10 @@ Capacity and active count
 
    Every factor batch and state batch has **two sizes**. The constructor takes
    the **capacity**; the **active count** starts at **0** and must be set with
-   ``SetNumActiveFactors`` / ``SetNumActiveStates`` (Python:
-   ``set_num_active_factors`` / ``set_num_active_states``) before solving. A
-   solve with nothing active throws ``std::invalid_argument`` (Python
-   ``ValueError``).
+   ``set_num_active_factors`` / ``set_num_active_states`` (C++:
+   ``SetNumActiveFactors`` / ``SetNumActiveStates``) before solving. A
+   solve with nothing active raises ``ValueError`` (C++:
+   ``std::invalid_argument``).
 
 .. list-table::
    :header-rows: 1
@@ -166,14 +173,18 @@ Capacity and active count
 
    * -
      - **Capacity**
-     - **Active count** (``NumActiveFactors()`` / ``NumActiveStates()``)
+     - **Active count** (``num_active_factors`` / ``num_active_states``;
+       C++ ``NumActiveFactors()`` / ``NumActiveStates()``)
    * - What it is
-     - How many factors (states) the batch's device buffers hold.
+     - How many factors (states) the batch's device buffers hold
+       (``capacity``; C++ ``Capacity()``).
      - How many of the *first* factors (states) the next solve uses.
    * - Set by
      - The constructor. Fixed for the batch's lifetime.
-     - ``SetNumActiveFactors(n)`` /
-       ``SetNumActiveStates(n, num_const_states)``, any ``n <= Capacity()``.
+     - ``set_num_active_factors(n)`` /
+       ``set_num_active_states(n, num_const_states=0)``, any
+       ``n <= capacity`` (C++: ``SetNumActiveFactors(n)`` /
+       ``SetNumActiveStates(n, num_const_states)``, ``n <= Capacity()``).
        Starts at 0.
    * - Cost of changing
      - Not changeable.
@@ -191,6 +202,25 @@ the active counts. Nothing is reallocated or reconstructed, and the solve only
 pays for the active part. A one-shot solve simply sets the active count equal
 to the capacity.
 
+.. code-block:: python
+
+   import cupy as cp
+   import pycunls
+
+   # Once: buffers and batches sized for the largest problem (the capacity).
+   max_points = 100000
+   obs_gpu = cp.zeros((max_points, 2), dtype=cp.float32)
+   pts_gpu = cp.zeros((max_points, 3), dtype=cp.float32)
+   pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, max_points)   # capacity
+   # ... state batch, problem, minimizer ...
+
+   # Every frame: write the first num_points entries, then set the active count.
+   pnp.set_num_active_factors(num_points)       # num_points <= max_points
+   pose_state.set_num_active_states(1)
+   minimizer.minimize(stream, problem)
+
+The same in C++:
+
 .. code-block:: cpp
 
    // Once: buffers and batches sized for the largest problem (the capacity).
@@ -205,31 +235,28 @@ to the capacity.
    pose_state.SetNumActiveStates(1);
    minimizer.Minimize(stream, problem);
 
-.. code-block:: python
-
-   pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, max_points)   # capacity
-   pnp.set_num_active_factors(num_points)                        # active count
-
 **Rules.**
 
 - Every buffer bound to a batch must hold its **capacity**: measurements,
   state values, constant ids, connectivity tables.
 - Only the **active** part is read and written by a solve: factors
-  ``[0, NumActiveFactors())``, states ``[0, NumActiveStates())``, the first
-  ``num_const_states`` constant ids. Results are written back to the active
+  ``[0, num_active_factors)``, states ``[0, num_active_states)``, the first
+  ``num_const_states`` constant ids (C++: ``NumActiveFactors()``,
+  ``NumActiveStates()``, ``NumConstStates()``). Results are written back to the active
   states only.
 - Factors may only reference **active** states. State addresses
-  (``StateDevicePtr(i)``) are valid for every ``i < Capacity()``, so the
+  (``state_device_ptr(i)``; C++ ``StateDevicePtr(i)``) are valid for every
+  ``i < capacity``, so the
   connectivity of the next solve can be built before the counts are set.
 - Connectivity must cover the active factors: a host pointer list needs at
-  least ``NumActiveFactors() * B`` entries (``Problem::SetStatePointers``
-  replaces it); device tables are read for their first
-  ``NumActiveFactors() * B`` entries.
+  least ``num_active_factors * B`` entries (``Problem.set_state_pointers``;
+  C++ ``Problem::SetStatePointers`` replaces it); device tables are read for
+  their first ``num_active_factors * B`` entries.
 - Never change sizes or buffer contents while a solve that uses them runs.
-- Every minimizer checks the sizes at the start of ``Minimize``
-  (``Problem::CheckSizes``, host-only): nothing active, a count above its
-  capacity, or connectivity shorter than the active factors throws with an
-  explanatory message.
+- Every minimizer checks the sizes at the start of ``minimize`` (C++
+  ``Minimize``, via ``Problem::CheckSizes``, host-only): nothing active, a
+  count above its capacity, or connectivity shorter than the active factors
+  raises an error with an explanatory message.
 
 How connectivity is rewritten between solves (host lists, device pointer
 tables, device index tables) is described in
@@ -240,17 +267,21 @@ tables, device index tables) is described in
 High-level solve flow
 ===============================================================================
 
-1. Allocate state and measurement data on the GPU, sized for the largest
-   problem (the capacity).
-2. Wrap state memory in one or more `StateBatch` objects (constructed with
+1. Allocate state and measurement data on the GPU (CuPy arrays in Python,
+   device buffers in C++), sized for the largest problem (the capacity).
+2. Wrap state memory in one or more ``StateBatch`` objects (constructed with
    their capacity).
-3. Build one or more `FactorBatch` objects from observations (constructed
+3. Build one or more ``FactorBatch`` objects from observations (constructed
    with their capacity).
-4. Set the active counts: ``SetNumActiveStates`` / ``SetNumActiveFactors``
-   (see :ref:`capacity-and-active-count`).
-5. Add state batches and factor batches to a `Problem`.
-6. Run a minimizer and inspect `MinimizerSummary`. To solve the next problem,
-   rewrite the buffers, set the new active counts, and solve again.
+4. Set the active counts: ``set_num_active_states`` /
+   ``set_num_active_factors`` (C++: ``SetNumActiveStates`` /
+   ``SetNumActiveFactors``; see :ref:`capacity-and-active-count`).
+5. Add state batches and factor batches to a ``Problem``
+   (``add_state_batch`` / ``add_factor_batch``; C++ ``AddStateBatch`` /
+   ``AddFactorBatch``).
+6. Run a minimizer (``minimize``; C++ ``Minimize``) and inspect the returned
+   ``MinimizerSummary``. To solve the next problem, rewrite the buffers, set
+   the new active counts, and solve again.
 
 ===============================================================================
 Supported optimization patterns
@@ -259,7 +290,11 @@ Supported optimization patterns
 - Pose graph optimization with between factors.
 - Bundle-adjustment style reprojection optimization.
 - ICP-like alignment (point-to-point / point-to-plane factors).
-- Custom user-defined factors through `FactorBatch` / `SizedFactorBatch`.
+- Custom user-defined factors: in Python through ``CustomFactorBatch`` /
+  ``CustomStateBatch`` (CuPy kernels) or ``WarpFactorBatch`` /
+  ``WarpStateBatch`` (NVIDIA Warp); in C++ through ``FactorBatch`` /
+  ``SizedFactorBatch`` (see :doc:`custom_factors_and_states`).
 
-See :doc:`tutorial` for complete C++ working pipelines, :doc:`pycunls_tutorial`
-for Python examples, and :doc:`api/index` for class-level API details.
+See :doc:`pycunls_tutorial` for complete Python examples, :doc:`tutorial` for
+complete C++ working pipelines, and :doc:`api/index` for class-level API
+details.

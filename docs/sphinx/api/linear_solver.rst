@@ -8,6 +8,12 @@ solvers) behind a common interface. Every backend accepts scalar CSR; all
 but cuDSS also accept block BSR directly, which is what
 :cpp:func:`SupportsBlockStorage` reports.
 
+This page documents the C++ API only: ``pycunls`` does not expose the linear
+solver classes. From Python, the backend is selected through the
+``sparse_linear_solver_type`` field of
+:ref:`pycunls.MinimizerOptions <py-minimizer-options-label>` (see
+:ref:`pycunls.SparseLinearSolverType <py-enums-label>`).
+
 SparseLinearSolverType
 ----------------------
 

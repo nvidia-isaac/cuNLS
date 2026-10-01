@@ -3,6 +3,7 @@ Python Tests
 ###############################################################################
 
 pycunls tests are written with `pytest` and live in ``python/tests/``.
+For the tests of the C++ library, see :doc:`testing` (C++ Tests).
 
 ===============================================================================
 Prerequisites
