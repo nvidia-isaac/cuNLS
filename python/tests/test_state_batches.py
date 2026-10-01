@@ -85,8 +85,12 @@ class TestSE3StateBatch:
         data = cp.zeros(3 * 16, dtype=cp.float32)
         const_ids = cp.array([0], dtype=cp.int32)
         sb = pycunls.SE3StateBatch(data, 3, const_ids, 1)
+        assert sb.num_const_states == 0
         sb.set_num_active_states(sb.capacity, sb.const_capacity)
         assert sb.num_active_states == 3
+        assert sb.num_const_states == 1
+        sb.set_num_active_states(2)
+        assert sb.num_const_states == 0
 
     def test_pointer_stride(self):
         num = 4

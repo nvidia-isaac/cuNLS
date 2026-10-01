@@ -199,6 +199,9 @@ void bind_state(nb::module_ &m) {
                    "States the state buffer holds (the constructor's capacity).")
       .def_prop_ro("const_capacity", &cunls::StateBatch::ConstCapacity,
                    "Entries the constant-id buffer holds (the constructor's const_capacity).")
+      .def_prop_ro("num_const_states", &cunls::StateBatch::NumConstStates,
+                   "Active constant-id count: the first num_const_states entries of the "
+                   "constant-id buffer are held constant (0 until set_num_active_states).")
       .def("set_num_active_states", &cunls::StateBatch::SetNumActiveStates,
            nb::arg("num_active_states"), nb::arg("num_const_states") = 0,
            "Sets the active state count (the first num_active_states states of the buffer) and "

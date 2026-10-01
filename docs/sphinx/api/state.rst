@@ -519,6 +519,9 @@ and properties.
   constructor's ``capacity``); constant.
 - **const_capacity** (``int``) — number of entries the constant-id buffer
   holds (the constructor's ``const_capacity``, 0 without one).
+- **num_const_states** (``int``) — active constant-id count: the first
+  ``num_const_states`` entries of the constant-id buffer are held constant
+  (0 until ``set_num_active_states``).
 - **tangent_size** (``int``) — tangent-space dimension per state.
   This is the number of unknowns the solver allocates per state (e.g. 6 for
   SE(3), 3 for SO(3)).

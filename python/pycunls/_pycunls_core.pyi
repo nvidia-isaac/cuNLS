@@ -146,6 +146,11 @@ class StateBatch:
     def const_capacity(self) -> int:
         """Entries the constant-id buffer holds (the constructor's const_capacity)."""
         ...
+    @property
+    def num_const_states(self) -> int:
+        """Active constant-id count: the first ``num_const_states`` entries of the
+        constant-id buffer are held constant (0 until set_num_active_states)."""
+        ...
     def set_num_active_states(self, num_active_states: int, num_const_states: int = 0) -> None:
         """Set the active state count (the first ``num_active_states`` states of
         the buffer) and the active constant-id count (``num_const_states``).
