@@ -58,14 +58,7 @@ class WeightedFactorBatchTest : public ::testing::Test {
       state_values_[i].fill(x);
     }
 
-    minimizer_options_.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
-
-    cuDSSLinearSolverOptions cudss_solver_options = {
-        .mode = static_cast<cuDSSLinearSolverMode>(TestParam::solver_id),
-        .nthreads = 1,
-        .threading_lib_path = "",
-    };
-    minimizer_options_.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
+    test_utils::ConfigureTestSolver(TestParam::solver_id, minimizer_options_);
   }
 
   void CheckConvergence(const StatesType &states) {
@@ -100,8 +93,14 @@ struct TestParam {
   static constexpr int solver_id = SolverId;
 };
 
-typedef ::testing::Types<TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>,
-                         TestParam<1, 1>, TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>>
+constexpr int kPCG = test_utils::kBlockSparsePCGSolverId;
+
+typedef ::testing::Types<
+#ifdef CUNLS_ENABLE_CUDSS
+    TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>, TestParam<1, 1>,
+    TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>,
+#endif
+    TestParam<1, kPCG>, TestParam<2, kPCG>, TestParam<3, kPCG>, TestParam<4, kPCG>>
     WeightedTestParams;
 TYPED_TEST_CASE(WeightedFactorBatchTest, WeightedTestParams);
 

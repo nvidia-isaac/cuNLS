@@ -74,6 +74,28 @@ namespace {
 // ============================================================================
 
 /**
+ * @brief Backend that consumes CSR only and never solves.
+ *
+ * Declining block storage is what puts assembly on the scalar CSR path.  cuDSS
+ * is the only real backend that declines it and is absent when cunls is built
+ * with CUNLS_ENABLE_CUDSS=OFF, so the assembly comparisons use this instead.
+ */
+class CSROnlySolver : public SparseLinearSolver {
+ public:
+  using SparseLinearSolver::Initialize;
+  using SparseLinearSolver::Solve;
+
+  bool Initialize(cudaStream_t, const Problem &, const CSRSparseMatrix &, const dvector<float> &,
+                  dvector<float> &) override {
+    return true;
+  }
+  bool Solve(cudaStream_t, const CSRSparseMatrix &, const dvector<float> &,
+             dvector<float> &) override {
+    return false;
+  }
+};
+
+/**
  * @brief Exposes one BuildSystem call and its outputs.
  *
  * BuildSystem is protected on GaussNewtonMinimizer, and hessian_/lhs_work_
@@ -93,13 +115,13 @@ class SystemBuilder : public GaussNewtonMinimizer {
    * @brief Builds with scalar CSR storage.
    *
    * There is no switch for this: storage is chosen from the problem's tangent
-   * dimensions and the solver's capability.  Selecting a CSR-only backend is
-   * how a caller actually ends up on the scalar path, so that is what the
+   * dimensions and the solver's capability.  A CSR-only backend is how a
+   * caller actually ends up on the scalar path, so that is what the
    * comparisons here exercise.  Only assembly is compared, never the solve, so
    * the backend choice does not otherwise affect the result.
    */
-  static SystemBuilder Scalar() {
-    return SystemBuilder(MakeOptions(SparseLinearSolverType::cuDSS));
+  static SystemBuilder Scalar(const MinimizerOptions &options = MinimizerOptions()) {
+    return SystemBuilder(options, std::make_unique<CSROnlySolver>());
   }
 
   /** @brief Runs Initialize + one BuildSystem and syncs. */
@@ -139,6 +161,11 @@ class SystemBuilder : public GaussNewtonMinimizer {
   bool UsesBlockStorage() const { return normal_equations_.UsesBlockStorage(); }
 
  private:
+  SystemBuilder(const MinimizerOptions &options, SparseLinearSolverPtr solver)
+      : GaussNewtonMinimizer(options) {
+    solver_ = std::move(solver);
+  }
+
   static MinimizerOptions MakeOptions(SparseLinearSolverType solver) {
     MinimizerOptions options;
     options.sparse_linear_solver_type = solver;
@@ -1163,16 +1190,14 @@ TEST(HessianStorageTest, BlockSizeIsTheTangentDimensionGcd) {
 }
 
 TEST(HessianStorageTest, FallsBackToScalarWhenSolverNeedsCSR) {
-  // cuDSS consumes CSR, so the Hessian is assembled natively in CSR for it.
-  // Assembling in BSR and expanding would be strictly worse: the block layout's
-  // saving is the index array, which an expansion puts straight back, plus a
-  // per-iteration value permutation on top.
+  // A CSR-only backend (such as cuDSS) gets the Hessian assembled natively in
+  // CSR. Assembling in BSR and expanding would be strictly worse: the block
+  // layout's saving is the index array, which an expansion puts straight back,
+  // plus a per-iteration value permutation on top.
   auto data = MakePoseGraph(64, /*fix_first_pose=*/true);
-  MinimizerOptions options;
-  options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
 
   CudaStream stream;
-  SystemBuilder builder(options);
+  SystemBuilder builder = SystemBuilder::Scalar();
   builder.Build(stream.GetStream(), data->problem);
   EXPECT_FALSE(builder.UsesBlockStorage());
 }
@@ -1203,6 +1228,9 @@ TEST(HessianStorageTest, OnlyCuDSSDeclinesBlockStorage) {
 
   CudaStream stream;
   for (const auto &[type, name] : kBackends) {
+    if (type == SparseLinearSolverType::cuDSS && !test_utils::kCuDSSEnabled) {
+      continue;
+    }
     MinimizerOptions options;
     options.sparse_linear_solver_type = type;
     SystemBuilder builder(options);
@@ -1404,12 +1432,9 @@ TEST(BlockHessianAssemblerTest, MatchesReferenceWithColumnScaling) {
 
   // Column scaling reads the Hessian diagonal and rescales the LHS in place, and
   // both of those are implemented once per layout.  The reference therefore has
-  // to be the scalar path -- selecting a CSR-only backend is how a caller gets
-  // there -- or the comparison is block storage against itself.
-  MinimizerOptions scalar_options = block_options;
-  scalar_options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
-
-  SystemBuilder reference(scalar_options);
+  // to be the scalar path -- a CSR-only backend is how a caller gets there --
+  // or the comparison is block storage against itself.
+  SystemBuilder reference = SystemBuilder::Scalar(block_options);
   reference.Build(stream.GetStream(), data->problem);
   ASSERT_FALSE(reference.UsesBlockStorage());
   std::vector<float> expected = Snapshot(reference, stream.GetStream()).values;

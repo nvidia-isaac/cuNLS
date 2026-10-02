@@ -76,14 +76,7 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
       state_values_[i].fill(x);
     }
 
-    minimizer_options_.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
-
-    cuDSSLinearSolverOptions cudss_solver_options = {
-        .mode = static_cast<cuDSSLinearSolverMode>(TestParam::solver_id),
-        .nthreads = 1,
-        .threading_lib_path = "",
-    };
-    minimizer_options_.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
+    test_utils::ConfigureTestSolver(TestParam::solver_id, minimizer_options_);
   }
 
   /**
@@ -135,7 +128,8 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
 /**
  * @brief Helper struct for parameterized test dimensions.
  *
- * @tparam Value Vector dimension (1, 2, 3, or 4).
+ * @tparam VectorSize Vector dimension (1, 2, 3, or 4).
+ * @tparam SolverId Solver id, see test_utils::ConfigureTestSolver.
  */
 template <int VectorSize, int SolverId>
 struct TestParam {
@@ -143,9 +137,15 @@ struct TestParam {
   static constexpr int solver_id = SolverId;
 };
 
-/** @brief Test types: 1D, 2D, 3D, and 4D vectors. */
-typedef ::testing::Types<TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>,
-                         TestParam<1, 1>, TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>>
+constexpr int kPCG = test_utils::kBlockSparsePCGSolverId;
+
+/** @brief Test types: 1D, 2D, 3D, and 4D vectors for each available solver. */
+typedef ::testing::Types<
+#ifdef CUNLS_ENABLE_CUDSS
+    TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>, TestParam<1, 1>,
+    TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>,
+#endif
+    TestParam<1, kPCG>, TestParam<2, kPCG>, TestParam<3, kPCG>, TestParam<4, kPCG>>
     TestParams;
 TYPED_TEST_CASE(GaussNewtonMinimizerTest, TestParams);
 
@@ -343,13 +343,7 @@ TEST(MinimizeBufferReuse, GaussNewtonTwiceIdenticalSummaries) {
   ASSERT_TRUE(problem.CheckConsistency());
 
   MinimizerOptions opts;
-  opts.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
-  cuDSSLinearSolverOptions cudss_solver_options = {
-      .mode = cuDSSLinearSolverMode::SlowInitFastSolve,
-      .nthreads = 1,
-      .threading_lib_path = "",
-  };
-  opts.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
+  test_utils::ConfigureTestSolver(test_utils::kDefaultTestSolverId, opts);
   opts.disable_safety_checks = false;
 
   CudaStream stream;
@@ -391,13 +385,7 @@ TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
   const auto initial_states = test_utils::MakeConstantVectors<1>(n, 1.0f);
 
   MinimizerOptions opts;
-  opts.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
-  cuDSSLinearSolverOptions cudss_solver_options = {
-      .mode = cuDSSLinearSolverMode::SlowInitFastSolve,
-      .nthreads = 1,
-      .threading_lib_path = "",
-  };
-  opts.sparse_linear_solver_config = {.cudss_solver_options = cudss_solver_options};
+  test_utils::ConfigureTestSolver(test_utils::kDefaultTestSolverId, opts);
   opts.disable_safety_checks = false;
 
   CudaStream stream;

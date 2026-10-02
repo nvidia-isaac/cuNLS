@@ -44,6 +44,7 @@ namespace cunls {
 
 namespace {
 
+#ifdef CUNLS_ENABLE_CUDSS
 /**
  * @brief Generates a random sparse symmetric matrix in CSR format.
  *
@@ -57,8 +58,7 @@ namespace {
  * @param csr_col_idx Output vector of column indices.
  * @param csr_row_offsets Output vector of row offsets (size = rows + 1).
  */
-void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows,
-                                      std::vector<float> &csr_values,
+void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows, std::vector<float> &csr_values,
                                       std::vector<int> &csr_col_idx,
                                       std::vector<int> &csr_row_offsets) {
   std::uniform_real_distribution<float> val_dist(-1, 1);
@@ -66,7 +66,7 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows,
 
   // Use a map-of-maps to store symmetric COO entries before converting to CSR
   std::unordered_map<int, std::unordered_map<int, float>> coo;
-  float sparsity = 1e-3; // Probability of non-zero off-diagonal elements
+  float sparsity = 1e-3;  // Probability of non-zero off-diagonal elements
 
   // Generate symmetric matrix entries
   for (int i = 0; i < rows; ++i) {
@@ -76,11 +76,11 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows,
     // Generate off-diagonal elements and ensure symmetry
     for (int j = i + 1; j < rows; ++j) {
       if (prob_dist(rng) > sparsity) {
-        continue; // Skip this entry (sparse matrix)
+        continue;  // Skip this entry (sparse matrix)
       }
       float val = val_dist(rng);
-      coo[i][j] = val; // Upper triangular
-      coo[j][i] = val; // Lower triangular (ensure symmetry)
+      coo[i][j] = val;  // Upper triangular
+      coo[j][i] = val;  // Lower triangular (ensure symmetry)
     }
   }
 
@@ -104,6 +104,7 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows,
     csr_row_offsets.push_back(static_cast<int>(csr_col_idx.size()));
   }
 }
+#endif  // CUNLS_ENABLE_CUDSS
 
 /**
  * @brief Multiplies a symmetric CSR matrix by a vector: y = A * x.
@@ -120,8 +121,7 @@ void GenerateRandomSymmetricCSRMatrix(std::mt19937 &rng, int rows,
 void MultiplySymmetricCSRMatrixByVector(const std::vector<int> &row_ptr,
                                         const std::vector<int> &col_ind,
                                         const std::vector<float> &values,
-                                        const std::vector<float> &x,
-                                        std::vector<float> &y) {
+                                        const std::vector<float> &x, std::vector<float> &y) {
   size_t size = row_ptr.size() - 1;
   y.assign(size, 0.0);
 
@@ -136,8 +136,9 @@ void MultiplySymmetricCSRMatrixByVector(const std::vector<int> &row_ptr,
   }
 }
 
-} // namespace
+}  // namespace
 
+#ifdef CUNLS_ENABLE_CUDSS
 /**
  * @brief Tests the sparse linear solver with a random symmetric matrix.
  *
@@ -160,13 +161,11 @@ TEST(SparseLinearSolverTest, Solve) {
   std::vector<int> csr_col_idx;
   std::vector<int> csr_row_offsets;
 
-  GenerateRandomSymmetricCSRMatrix(gen, matrix_size, csr_values, csr_col_idx,
-                                   csr_row_offsets);
+  GenerateRandomSymmetricCSRMatrix(gen, matrix_size, csr_values, csr_col_idx, csr_row_offsets);
 
   // Step 2: Convert host matrix to device-compatible format
   CSRSparseMatrix input_matrix;
-  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values,
-                                    input_matrix);
+  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, input_matrix);
 
   // Step 3: Generate random right-hand side vector b
   std::vector<float> rhs_cpu;
@@ -187,8 +186,7 @@ TEST(SparseLinearSolverTest, Solve) {
     cuDSSLinearSolver solver(cudss_solver_options);
     {
       profiler::ScopedRange range("Warm up");
-      solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs,
-                        result);
+      solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs, result);
       solver.Solve(stream.GetStream(), input_matrix, rhs, result);
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
@@ -206,8 +204,8 @@ TEST(SparseLinearSolverTest, Solve) {
 
   // Step 7: Verify solution by computing A * x and comparing with b
   std::vector<float> predicted_rhs;
-  MultiplySymmetricCSRMatrixByVector(csr_row_offsets, csr_col_idx, csr_values,
-                                     cpu_result, predicted_rhs);
+  MultiplySymmetricCSRMatrixByVector(csr_row_offsets, csr_col_idx, csr_values, cpu_result,
+                                     predicted_rhs);
 
   // Step 8: Check that A * x equals b within tolerance
   ASSERT_EQ(predicted_rhs.size(), rhs_cpu.size());
@@ -218,6 +216,7 @@ TEST(SparseLinearSolverTest, Solve) {
 
   ASSERT_NEAR(squared_error / matrix_size, 0, 1e-1);
 }
+#endif  // CUNLS_ENABLE_CUDSS
 
 namespace {
 
@@ -226,13 +225,10 @@ namespace {
 // Hessian from an SE3 pose graph and is the natural fit for the block-Jacobi
 // preconditioner.
 void GenerateBlockSPDMatrix(std::mt19937 &gen, int num_blocks, int block_size,
-                            float off_diag_strength,
-                            std::vector<float> &csr_values,
-                            std::vector<int> &csr_col_idx,
-                            std::vector<int> &csr_row_offsets) {
+                            float off_diag_strength, std::vector<float> &csr_values,
+                            std::vector<int> &csr_col_idx, std::vector<int> &csr_row_offsets) {
   int n = num_blocks * block_size;
-  std::uniform_real_distribution<float> off_dist(-off_diag_strength,
-                                                 off_diag_strength);
+  std::uniform_real_distribution<float> off_dist(-off_diag_strength, off_diag_strength);
   std::uniform_real_distribution<float> prob_dist(0.f, 1.f);
   // Dense per-row map for ordered CSR assembly.
   std::vector<std::map<int, float>> rows(n);
@@ -283,7 +279,7 @@ void GenerateBlockSPDMatrix(std::mt19937 &gen, int num_blocks, int block_size,
   }
 }
 
-} // namespace
+}  // namespace
 
 TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
   std::mt19937 gen(7);
@@ -294,12 +290,11 @@ TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
   std::vector<float> csr_values;
   std::vector<int> csr_col_idx;
   std::vector<int> csr_row_offsets;
-  GenerateBlockSPDMatrix(gen, num_blocks, block_size, 1.0f, csr_values,
-                         csr_col_idx, csr_row_offsets);
+  GenerateBlockSPDMatrix(gen, num_blocks, block_size, 1.0f, csr_values, csr_col_idx,
+                         csr_row_offsets);
 
   CSRSparseMatrix mat;
-  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values,
-                                    mat);
+  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, mat);
 
   std::vector<float> rhs_cpu;
   test_utils::GenerateRandomVector(matrix_size, rhs_cpu);
@@ -312,8 +307,7 @@ TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
   opts.relative_tolerance = 1e-5f;
   opts.max_iterations = 500;
   BlockSparsePCGSolver solver(opts);
-  ASSERT_TRUE(
-      solver.Initialize(stream.GetStream(), Problem(), mat, rhs, result));
+  ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), mat, rhs, result));
   ASSERT_TRUE(solver.Solve(stream.GetStream(), mat, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
 
@@ -321,8 +315,7 @@ TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
   result.CopyToHost(x.data(), matrix_size);
 
   std::vector<float> Ax;
-  MultiplySymmetricCSRMatrixByVector(csr_row_offsets, csr_col_idx, csr_values,
-                                     x, Ax);
+  MultiplySymmetricCSRMatrixByVector(csr_row_offsets, csr_col_idx, csr_values, x, Ax);
   float sq_err = 0.f;
   float b_sq = 0.f;
   for (int i = 0; i < matrix_size; ++i) {
@@ -336,4 +329,4 @@ TEST(SparseLinearSolverTest, BlockSparsePCGSolve) {
   EXPECT_LE(solver.LastIterations(), opts.max_iterations);
 }
 
-} // namespace cunls
+}  // namespace cunls
