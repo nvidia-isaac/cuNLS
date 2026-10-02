@@ -19,9 +19,9 @@
 
 /**
  * @file ransac_layout.h
- * @brief What the RANSAC minimizers need to know about a Problem: which state
- * blocks are free and where their columns go, how every factor slot maps to
- * (state batch, block), and which residual batches are sampled.
+ * @brief What the RANSAC minimizers need to know about a Problem: which
+ * states are free and where their columns go, how every factor slot maps to
+ * (state batch, state), and which residual batches are sampled.
  */
 
 #include <cuda_runtime.h>
@@ -41,10 +41,10 @@ struct StateLayout {
   int num_blocks = 0;
   int ambient = 0;
   int tangent = 0;
-  bool replicated = false;          ///< Has a free block, so every slot gets a copy.
+  bool replicated = false;          ///< Has a free state, so every slot gets a copy.
   size_t slot_floats = 0;           ///< num_blocks * ambient: one replica.
   size_t slot_tangent = 0;          ///< num_blocks * tangent: one replica's step.
-  std::vector<int> block_col_host;  ///< Local column of each block, -1 if constant.
+  std::vector<int> block_col_host;  ///< Local column of each state, -1 if constant.
   dvector<int> block_col;           ///< Device copy of block_col_host.
 };
 
@@ -55,14 +55,14 @@ struct ResidualLayout {
   bool sampled = false;  ///< RansacRole::kSampled.
   float tau = 0.f;       ///< Inlier threshold (sampled only).
   int m = 0;             ///< Residual dimension.
-  int n = 0;             ///< Sum of block tangent sizes.
-  int nb = 0;            ///< Blocks per factor.
+  int n = 0;             ///< Sum of state tangent sizes.
+  int nb = 0;            ///< States per factor.
   int num_factors = 0;
   int u_offset = -1;  ///< Offset in the concatenated sampled index (sampled only).
   std::vector<int> block_off;
   std::vector<int> block_size;
-  dvector<int2> blocks;       ///< (state batch, block) per (factor, block slot).
-  dvector<int> local_col;     ///< Local column per (factor, block slot), -1 if constant.
+  dvector<int2> blocks;       ///< (state batch, state) per (factor, state slot).
+  dvector<int> local_col;     ///< Local column per (factor, state slot), -1 if constant.
   dvector<float *> x0_table;  ///< The problem's own pointer list (initial guess).
 };
 
@@ -86,7 +86,7 @@ class RansacLayout {
 
  private:
   void BuildStates(const Problem &problem);
-  /** Fills states_[index]; returns its number of free blocks. */
+  /** Fills states_[index]; returns its number of free states. */
   int BuildState(size_t index, StateBatch *batch);
   void BuildResiduals(const Problem &problem, const RansacMinimizerOptions &options);
   void BuildResidual(const Problem &problem, size_t index, const RansacFactorBatchOptions &role);

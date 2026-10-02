@@ -39,7 +39,7 @@ namespace cunls {
  * i.e. a second-order (constant-acceleration) Taylor prediction of the
  * relative pose, with velocity and acceleration transported back into the
  * local frame at `k` through the inverse left Jacobian, exactly as
- * ConstantVelocitySE3FactorBatch does for its single velocity block. The
+ * ConstantVelocitySE3FactorBatch does for its single velocity state. The
  * pose-block Jacobians of `r_vel` and `r_accel` are treated as zero (a
  * documented simplification; the residuals themselves are exact).
  *
@@ -49,26 +49,24 @@ class ConstantAccelerationSE3FactorBatch : public SizedFactorBatch<18, 6, 6, 6, 
  public:
   /**
    * @param dt_ptr Device pointer to per-factor time deltas, not owned.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
-  ConstantAccelerationSE3FactorBatch(const float *dt_ptr, size_t num_factors);
+  ConstantAccelerationSE3FactorBatch(const float *dt_ptr, size_t capacity);
 
   /**
    * @brief Evaluates residuals and (optionally) Jacobians. Follows
    * FactorBatch::Evaluate's item contract: item t reads the time delta of
-   * factor `factor_ids[t]` (or `t % NumFactors()`) and the states of item t.
+   * factor `factor_ids[t]` (or `t % NumActiveFactors()`) and the states of item t.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   ConstantAccelerationSE3FactorBatch() = delete;
 
   const float *dt_ptr_;
-  size_t num_factors_;
 
   mutable DeviceVector<SE3Transform> pose_rel_;
   mutable DeviceVector<Vector<6>> twist_;

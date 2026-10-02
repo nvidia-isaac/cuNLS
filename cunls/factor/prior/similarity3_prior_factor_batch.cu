@@ -20,6 +20,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/similarity3_prior_factor_batch.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/sim_lie_math.h"
 
 namespace cunls {
@@ -38,21 +39,29 @@ constexpr size_t kSim3JacobianStride = 49;
  * Cannot exploit last-row structure since Sim(3) bottom-right = 1/s.
  */
 __global__ void collect_and_multiply_sim3_prior_kernel(float const *const *state_pointers,
-                                                       const Matrix<4> *obs_inverse,
+                                                       const Matrix<4> *observations,
                                                        size_t num_items, Matrix<4> *errors,
                                                        const int *factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;
 
   const float *__restrict__ C = state_pointers[tid];
-  const float *__restrict__ I =
-      obs_inverse[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
-  float *__restrict__ out = errors[tid].data();
-
-  const float c0 = C[0], c1 = C[1], c2 = C[2], c3 = C[3];
-  const float c4 = C[4], c5 = C[5], c6 = C[6], c7 = C[7];
-  const float c8 = C[8], c9 = C[9], c10 = C[10], c11 = C[11];
-  const float c12 = C[12], c13 = C[13], c14 = C[14], c15 = C[15];
+  const float *__restrict__ T =
+      observations[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
+  // Load the measurement and the state together, then derive T^{-1} from
+  // registers (LoadsBarrier keeps the compiler from splitting the loads).
+  float tv[16], cv[16];
+  lie_device::Load16(T, tv);
+  lie_device::Load16(C, cv);
+  lie_device::LoadsBarrier(tv);
+  lie_device::LoadsBarrier(cv);
+  const float c0 = cv[0], c1 = cv[1], c2 = cv[2], c3 = cv[3];
+  const float c4 = cv[4], c5 = cv[5], c6 = cv[6], c7 = cv[7];
+  const float c8 = cv[8], c9 = cv[9], c10 = cv[10], c11 = cv[11];
+  const float c12 = cv[12], c13 = cv[13], c14 = cv[14], c15 = cv[15];
+  float I[16];  // T_target^{-1}, derived from the measurement in place
+  lie_device::InverseSim3(tv, I);
+  float out[16];
 
   const float i0 = I[0], i1 = I[1], i2 = I[2], i3 = I[3];
   const float i4 = I[4], i5 = I[5], i6 = I[6], i7 = I[7];
@@ -75,27 +84,20 @@ __global__ void collect_and_multiply_sim3_prior_kernel(float const *const *state
   out[13] = i12 * c1 + i13 * c5 + i14 * c9 + i15 * c13;
   out[14] = i12 * c2 + i13 * c6 + i14 * c10 + i15 * c14;
   out[15] = i12 * c3 + i13 * c7 + i14 * c11 + i15 * c15;
+  lie_device::Store16(errors[tid].data(), out);
 }
 
 Similarity3PriorFactorBatch::Similarity3PriorFactorBatch(
-    const Similarity3Transform *observations_ptr, size_t num_factors)
-    : observations_ptr_(observations_ptr),
-      num_factors_(num_factors),
-      observations_inverse_(num_factors),
-      transforms_error_(num_factors) {
-  // Pre-compute T_target^{-1} for all observations
-  CudaStream stream;
-  ComputeInverseSim3(stream.GetStream(), reinterpret_cast<const float *>(observations_ptr_),
-                     kSim3TransformStride, kSim3TransformStride, num_factors_,
-                     reinterpret_cast<float *>(observations_inverse_.data()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
+    const Similarity3Transform *observations_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      observations_ptr_(observations_ptr),
+      transforms_error_(capacity) {}
 
 bool Similarity3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                            float const *const *state_pointers, cudaStream_t stream,
                                            const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   transforms_error_.resize(num_items);  // keeps capacity: allocates at most once per size
@@ -103,8 +105,8 @@ bool Similarity3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_sim3_prior_kernel<<<num_blocks, kSim3PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
-      static_cast<int>(NumFactors()));
+      state_pointers, observations_ptr_, num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumActiveFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 3: residual = Log(T_error)

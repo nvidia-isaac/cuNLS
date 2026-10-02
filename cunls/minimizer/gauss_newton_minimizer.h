@@ -253,6 +253,9 @@ class GaussNewtonMinimizer {
    * @param problem The optimization problem to solve. State values are
    *                modified in-place during optimization.
    * @return Summary containing iteration count and cost statistics.
+   * @throws std::invalid_argument if the problem's active sizes are not set
+   *         properly (see Problem::CheckSizes: e.g. no factor batch has active
+   *         factors, or a count exceeds its capacity).
    */
   MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
@@ -327,8 +330,8 @@ class GaussNewtonMinimizer {
   /**
    * @brief Updates states with the computed step.
    *
-   * Computes updated_state = curr_state + step using state block
-   * operations that respect state block manifolds.
+   * Computes updated_state = curr_state + step using state
+   * operations that respect state manifolds.
    *
    * @param stream CUDA stream for GPU operations.
    * @param curr_state Current minimizer state.

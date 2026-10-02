@@ -29,7 +29,7 @@ namespace cunls {
  * @brief Launches the prior vector factor kernel.
  *
  * @param observations Pointer to observation data (flattened array of vectors)
- * @param state_pointers Array of state block pointers
+ * @param state_pointers Array of state pointers
  * @param residuals Output residuals (can be nullptr)
  * @param jacobians Output jacobians (can be nullptr)
  * @param dim Dimension of each vector
@@ -66,12 +66,13 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
    * @brief Constructs a batch of prior vector factors.
    *
    * @param observations_ptr Pointer to GPU device memory containing
-   * observations. Must point to at least num_factors * Dim floats of allocated
+   * observations. Must point to at least capacity * Dim floats of allocated
    * memory.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
-  PriorVectorFactorBatch(const VectorType *observations_ptr, size_t num_factors)
-      : observations_ptr_(observations_ptr), num_factors_(num_factors) {}
+  PriorVectorFactorBatch(const VectorType *observations_ptr, size_t capacity)
+      : SizedFactorBatch<Dim, Dim>(capacity), observations_ptr_(observations_ptr) {}
 
   /**
    * @brief Evaluates prior vector residuals and optionally Jacobians.
@@ -83,43 +84,34 @@ class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
    *                  factor). Can be nullptr to skip residual computation.
    * @param jacobians Output device pointer for Jacobians (Dim x Dim floats per
    *                  factor). Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state block pointers. Each entry
+   * @param state_pointers Device pointer to state pointers. Each entry
    *                   points to a Dim-dimensional vector on the device.
    * @param stream CUDA stream for asynchronous execution.
    * @param factor_ids Optional per-item factor indices (device pointer).
    * @param num_factor_ids Number of items (the length of factor_ids when it
-   *        is given); 0 means NumFactors().
+   *        is given); 0 means NumActiveFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final {
-    const size_t num_items = num_factor_ids == 0 ? this->NumFactors() : num_factor_ids;
-    if (num_items == 0 || this->NumFactors() == 0) {
+    const size_t num_items = num_factor_ids == 0 ? this->NumActiveFactors() : num_factor_ids;
+    if (num_items == 0 || this->NumActiveFactors() == 0) {
       return true;
     }
     auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
 
     LaunchPriorVectorFactorKernel(data_ptr, state_pointers, residuals, jacobians, Dim,
                                   static_cast<int>(num_items), stream, factor_ids,
-                                  static_cast<int>(this->NumFactors()));
+                                  static_cast<int>(this->NumActiveFactors()));
     return true;
   }
-
-  /**
-   * @brief Returns the number of prior vector factors in this batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
 
  private:
   PriorVectorFactorBatch() = default;
 
   /// Pointer to user-managed device memory containing observations.
   const VectorType *observations_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
 };
 
 }  // namespace cunls

@@ -198,13 +198,13 @@ ResidualBatch::ResidualBatch(FactorBatch *factor_batch, LossFunctionBatch *loss_
 bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *residuals,
                              float const *const *state_pointers, float *cost, float *jacobians,
                              const int *factor_ids, size_t num_factor_ids) const {
-  const size_t items = num_factor_ids == 0 ? factor_batch_->NumFactors() : num_factor_ids;
+  const size_t items = num_factor_ids == 0 ? factor_batch_->NumActiveFactors() : num_factor_ids;
 
   // Return before the preconditions below: an empty batch has nothing to
   // evaluate, its buffers are legitimately null (a zero-size DeviceVector has
   // no allocation), and the factor kernels would be launched with a zero-size
   // grid.
-  if (items == 0 || factor_batch_->NumFactors() == 0) {
+  if (items == 0 || factor_batch_->NumActiveFactors() == 0) {
     return true;
   }
 
@@ -221,7 +221,7 @@ bool ResidualBatch::Evaluate(cudaStream_t stream, float *workspace, float *resid
 bool ResidualBatch::ApplyLoss(cudaStream_t stream, float *workspace, float *residuals, float *cost,
                               float *jacobians) const {
   return ApplyLossToItems(stream, workspace, residuals, cost, jacobians,
-                          factor_batch_->NumFactors());
+                          factor_batch_->NumActiveFactors());
 }
 
 bool ResidualBatch::ApplyLossToItems(cudaStream_t stream, float *workspace, float *residuals,
@@ -260,7 +260,7 @@ bool ResidualBatch::ApplyLossToItems(cudaStream_t stream, float *workspace, floa
 
   if (jacobians != nullptr) {
     int num_cols = 0;
-    for (const auto &d : factor_batch_->StateBlockSizes()) num_cols += d;
+    for (const auto &d : factor_batch_->StateSizes()) num_cols += d;
 
     int warps_per_block = kBlockSize / kWarpSize;
     int jac_blocks = (num_residuals + warps_per_block - 1) / warps_per_block;

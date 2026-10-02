@@ -117,8 +117,7 @@ BetweenFactorBatch(const SO3Rotation *, size_t)->BetweenFactorBatch<manifold::SO
 BetweenFactorBatch(const SE2Transform *, size_t)->BetweenFactorBatch<manifold::SE2>;
 BetweenFactorBatch(const SO2Rotation *, size_t)->BetweenFactorBatch<manifold::SO2>;
 BetweenFactorBatch(const Similarity2Transform *, size_t)->BetweenFactorBatch<manifold::Similarity2>;
-BetweenFactorBatch(cuBLASHandle &, const Similarity3Transform *, size_t)
-    ->BetweenFactorBatch<manifold::Similarity3>;
+BetweenFactorBatch(const Similarity3Transform *, size_t)->BetweenFactorBatch<manifold::Similarity3>;
 BetweenFactorBatch(const SL4Transform *, size_t)->BetweenFactorBatch<manifold::SL4>;
 // No deduction guide for manifold::Vector<Dim>: cunls::Vector<Dim>'s `int
 // Dim` doesn't deduction-match cuda::std::array's `size_t` extent

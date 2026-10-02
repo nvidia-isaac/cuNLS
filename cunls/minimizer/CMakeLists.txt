@@ -9,6 +9,7 @@ add_library(cunls_minimizer OBJECT
   normal_equations.cu
   numeric_diff_jacobian.cu
   problem.cpp
+  problem_kernels.cu
   ransac_minimizer.cpp
   ransac/dense_solve_kernels.cu
   ransac/hypothesis_scorer.cpp

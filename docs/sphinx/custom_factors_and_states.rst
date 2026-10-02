@@ -1,11 +1,20 @@
 ###############################################################################
-Custom Factors and States (C++ and Python)
+Custom Factors and States (Python and C++)
 ###############################################################################
+
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` (C++: ``SetNumActiveFactors`` /
+   ``SetNumActiveStates``) before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
 
 cuNLS ships many factor and state types, but most applications need at least
 one of their own. This page explains, step by step, how to write a custom
 **factor batch** (residuals and Jacobians) and a custom **state batch** (a
-manifold and its ``Plus``) in C++ and in Python, so that they work with
+manifold and its ``Plus``) in Python and in C++, so that they work with
 **every** minimizer: Gauss-Newton, Levenberg-Marquardt, and the RANSAC
 minimizers (:doc:`ransac`).
 
@@ -17,14 +26,17 @@ minimizers (:doc:`ransac`).
 The two contracts in one minute
 ===============================================================================
 
-A custom type implements one GPU method. Both methods have two extra
+A custom type implements one GPU method (Python ``evaluate`` / ``plus``, C++
+``Evaluate`` / ``Plus``; the contracts below use the C++ names, and the
+Python methods receive the same arguments as raw device pointers, see
+:ref:`custom_factors_and_states:Python`). Both methods have two extra
 parameters that the regular minimizers leave at their defaults and the RANSAC
 minimizers use to evaluate hundreds of hypotheses in one call.
 
 **FactorBatch::Evaluate** evaluates *items*. An item is one factor of the
-batch evaluated at one set of state blocks:
+batch evaluated at one set of states:
 
-- the call evaluates :math:`n` items (``num_factor_ids``, or ``NumFactors()``
+- the call evaluates :math:`n` items (``num_factor_ids``, or ``NumActiveFactors()``
   when 0);
 - item :math:`t` reads **the measurement of factor** :math:`f(t)` =
   ``factor_ids[t]``, or :math:`t \bmod N` when ``factor_ids`` is null;
@@ -33,7 +45,7 @@ batch evaluated at one set of state blocks:
 
 **StateBatch::Plus** updates *replicas*. The arrays hold ``num_replicas``
 contiguous copies of the batch, so it must process ``num_replicas *
-NumStateBlocks()`` blocks.
+NumActiveStates()`` states.
 
 That is all. The rule that makes a kernel correct:
 
@@ -42,7 +54,7 @@ That is all. The rule that makes a kernel correct:
    In ``Evaluate``, index **measurements** (observations, constants, per-factor
    data) by :math:`f(t)`, and index **everything else** (state pointers,
    residuals, Jacobians) by the item :math:`t`. In ``Plus``, loop over
-   ``num_replicas * NumStateBlocks()`` blocks.
+   ``num_replicas * NumActiveStates()`` states.
 
 With the default arguments (``factor_ids = nullptr``, ``num_factor_ids = 0``,
 ``num_replicas = 1``) both reduce to the familiar behavior: item :math:`t` is
@@ -61,14 +73,15 @@ Notation for one factor batch:
    * - Symbol
      - Meaning
    * - :math:`N`
-     - ``NumFactors()``: number of factors (measurements) in the batch.
+     - ``NumActiveFactors()``: number of active factors (measurements) in the batch,
+       at most ``Capacity()``; 0 until ``SetNumActiveFactors`` is called.
    * - :math:`B`
-     - ``StateBlockSizes().size()``: state blocks one factor reads.
+     - ``StateSizes().size()``: states one factor reads.
    * - :math:`m`
      - ``ResidualsSize()``: residual dimension of one factor.
    * - :math:`J`
-     - sum of ``StateBlockSizes()``: Jacobian columns of one factor (tangent
-       dimensions, block 0 first).
+     - sum of ``StateSizes()``: Jacobian columns of one factor (tangent
+       dimensions, state 0 first).
    * - :math:`n`
      - number of items in this call: ``num_factor_ids``, or :math:`N` if 0.
    * - :math:`f(t)`
@@ -93,10 +106,10 @@ and its arguments are:
   :math:`n \cdot m \cdot J` floats, or null when only residuals are needed
   (always check). Item :math:`t` writes a row-major :math:`m \times J` block:
   element :math:`(r, c)` is ``jacobians[(t * m + r) * J + c]``. Columns are the
-  tangent coordinates of block 0, then block 1, and so on.
+  tangent coordinates of state 0, then state 1, and so on.
 
 ``state_pointers`` [in]
-  :math:`n \cdot B` device pointers. Item :math:`t` reads block :math:`b` at
+  :math:`n \cdot B` device pointers. Item :math:`t` reads state :math:`b` at
   ``state_pointers[t * B + b]``. Different items may point to the same memory
   (every PnP factor reads the one camera pose).
 
@@ -111,7 +124,7 @@ and its arguments are:
   :math:`n`, the number of items; 0 (the default) means :math:`N`.
 
 How the minimizers call it, for a batch of :math:`N = 3` factors with one
-state block each:
+state each:
 
 .. code-block:: text
 
@@ -152,18 +165,18 @@ States: the replica contract in detail
    void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
              size_t num_replicas = 1);
 
-computes :math:`x \oplus \delta` for every block. With :math:`N` =
-``NumStateBlocks()``, :math:`A` = ``AmbientSize()`` (floats stored per block),
+computes :math:`x \oplus \delta` for every state. With :math:`N` =
+``NumActiveStates()``, :math:`A` = ``AmbientSize()`` (floats stored per state),
 :math:`T` = ``TangentSize()`` (floats per update) and :math:`R` =
-``num_replicas``, the arrays hold :math:`R \cdot N` blocks:
+``num_replicas``, the arrays hold :math:`R \cdot N` states:
 
 .. code-block:: text
 
-   N = 2 blocks, R = 3 replicas:
-     global block i     0     1  |  2     3  |  4     5
+   N = 2 states, R = 3 replicas:
+     global state i     0     1  |  2     3  |  4     5
      replica r          0     0  |  1     1  |  2     2
-     block within r     0     1  |  0     1  |  0     1
-   block i of x / x_plus_delta at  i * A,   of delta at  i * T
+     state within r     0     1  |  0     1  |  0     1
+   state i of x / x_plus_delta at  i * A,   of delta at  i * T
 
 ``x``, ``delta`` [in]
   :math:`R N A` and :math:`R N T` floats.
@@ -175,146 +188,20 @@ computes :math:`x \oplus \delta` for every block. With :math:`N` =
   :math:`R \ge 1`, default 1. The RANSAC minimizers keep one replica per
   hypothesis and update all of them in one call.
 
-Each block is updated independently, so the simplest correct
-implementation treats the arrays as one batch of :math:`R \cdot N` blocks.
+Each state is updated independently, so the simplest correct
+implementation treats the arrays as one batch of :math:`R \cdot N` states.
 
 ===============================================================================
-C++
+Python
 ===============================================================================
 
 The running example is a robust **line fit**: estimate :math:`(a, b)` of
 :math:`y = a x + b` from points :math:`(x_i, y_i)`, many of which are
 outliers. Each factor has residual :math:`r_i = a x_i + b - y_i`
 (:math:`m = 1`) and reads one 2D state (:math:`B = 1`, :math:`J = 2`), with
-Jacobian :math:`[x_i,\ 1]`.
-
--------------------------------------------------------------------------------
-Step 1: the kernel
--------------------------------------------------------------------------------
-
-One thread per item. Measurements by ``f``, everything else by ``t``:
-
-.. code-block:: cuda
-
-   __global__ void LineFitKernel(const float *xs, const float *ys, const int *factor_ids,
-                                 int num_factors, int num_items,
-                                 float const *const *state_pointers,
-                                 float *residuals, float *jacobians) {
-     const int t = blockIdx.x * blockDim.x + threadIdx.x;   // item
-     if (t >= num_items) return;
-     const int f = factor_ids != nullptr ? factor_ids[t] : t % num_factors;  // measurement
-
-     const float *ab = state_pointers[t];                   // item t's state (B = 1)
-     residuals[t] = ab[0] * xs[f] + ab[1] - ys[f];          // item t's row (m = 1)
-     if (jacobians != nullptr) {                            // row-major 1 x 2 block
-       jacobians[2 * t + 0] = xs[f];                        // d r / d a
-       jacobians[2 * t + 1] = 1.f;                          // d r / d b
-     }
-   }
-
--------------------------------------------------------------------------------
-Step 2: the factor batch class
--------------------------------------------------------------------------------
-
-Derive from ``SizedFactorBatch<m, block sizes...>``, which fixes
-``ResidualsSize()`` and ``StateBlockSizes()`` at compile time. Implement
-``Evaluate`` and ``NumFactors``:
-
-.. code-block:: cpp
-
-   #include "cunls/cunls.h"
-
-   class LineFitFactorBatch : public cunls::SizedFactorBatch<1, 2> {
-    public:
-     // xs, ys: device arrays of num_factors floats; must outlive the batch.
-     LineFitFactorBatch(const float *xs, const float *ys, size_t num_factors)
-         : xs_(xs), ys_(ys), num_factors_(num_factors) {}
-
-     bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
-                   cudaStream_t stream, const int *factor_ids = nullptr,
-                   size_t num_factor_ids = 0) const override {
-       const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
-       if (num_items == 0) return true;
-       const int block = 256;
-       const int grid = static_cast<int>((num_items + block - 1) / block);
-       LineFitKernel<<<grid, block, 0, stream>>>(xs_, ys_, factor_ids,
-                                                 static_cast<int>(num_factors_),
-                                                 static_cast<int>(num_items), state_pointers,
-                                                 residuals, jacobians);
-       return cudaGetLastError() == cudaSuccess;
-     }
-
-     size_t NumFactors() const override { return num_factors_; }
-
-    private:
-     const float *xs_;
-     const float *ys_;
-     size_t num_factors_;
-   };
-
--------------------------------------------------------------------------------
-Step 3 (optional): a custom state batch
--------------------------------------------------------------------------------
-
-The line parameters are an ordinary vector, so ``VectorStateBatch<2>`` is all
-the example needs. A custom state is needed when the variable lives on a
-manifold cuNLS does not ship. As an illustration, here is a **positive
-scalar** parametrized multiplicatively, :math:`x \oplus \delta = x\,e^{\delta}`
-(ambient 1, tangent 1). Derive from ``SizedStateBatch<A, T>``, which provides
-storage, block pointers and constant blocks, and implement ``Plus``:
-
-.. code-block:: cuda
-
-   __global__ void PositivePlusKernel(const float *x, const float *delta, float *out,
-                                      size_t num_blocks) {
-     const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-     if (i < num_blocks) out[i] = x[i] * expf(delta[i]);   // block i: ambient 1, tangent 1
-   }
-
-   class PositiveScalarStateBatch : public cunls::SizedStateBatch<1, 1> {
-    public:
-     using cunls::SizedStateBatch<1, 1>::SizedStateBatch;  // (device_ptr, num_blocks[, ...])
-
-     void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
-               size_t num_replicas = 1) override {
-       const size_t n = NumStateBlocks() * num_replicas;   // every block of every replica
-       if (n == 0) return;
-       PositivePlusKernel<<<static_cast<int>((n + 255) / 256), 256, 0, stream>>>(
-           x, delta, x_plus_delta, n);
-     }
-   };
-
--------------------------------------------------------------------------------
-Step 4: use it with any minimizer
--------------------------------------------------------------------------------
-
-.. code-block:: cpp
-
-   // Device data: xs, ys (num_points floats each) and the line state (2 floats).
-   cunls::dvector<float> d_xs(xs), d_ys(ys), d_ab(std::vector<float>{0.f, 0.f});
-   cunls::VectorStateBatch<2> line(d_ab.data(), 1);
-   LineFitFactorBatch fit(d_xs.data(), d_ys.data(), num_points);
-
-   cunls::Problem problem;
-   problem.AddStateBatch(&line);
-   problem.AddFactorBatch(&fit, std::vector<float *>(num_points, line.StateBlockDevicePtr(0)));
-
-   // Plain least squares:
-   //   cunls::LevenbergMarquardtMinimizer().Minimize(stream, problem);
-
-   // Robust, with outliers:
-   cunls::RansacMinimizerOptions options;
-   options.default_inlier_threshold = 0.05f;  // ~3 sigma of the y noise
-   cunls::RansacGaussNewtonMinimizer ransac(options);
-   cunls::RansacSummary summary = ransac.Minimize(stream, problem);
-   // d_ab now holds (a, b); ransac.InlierMask(0) the classification.
-
-The free dimension is :math:`D = 2` and :math:`m = 1`, so each hypothesis is
-fitted to :math:`s = 2` points: exactly the textbook RANSAC line fit.
-
-===============================================================================
-Python
-===============================================================================
+Jacobian :math:`[x_i,\ 1]`. The free dimension is :math:`D = 2` and
+:math:`m = 1`, so each RANSAC hypothesis is fitted to :math:`s = 2` points:
+exactly the textbook RANSAC line fit.
 
 Python custom types subclass ``pycunls.CustomFactorBatch`` /
 ``pycunls.CustomStateBatch`` and override ``evaluate`` / ``plus``. cuNLS calls
@@ -322,9 +209,9 @@ them with raw device pointers (``int``) and the CUDA stream handle, from the
 minimizer's thread with the GIL held. Launch GPU kernels on that stream with
 CuPy, NVIDIA Warp (``pycunls.warp``), or any other library.
 
-The Python signatures mirror C++, with one difference: ``num_factor_ids`` is
-always the **actual** item count :math:`n > 0` (the binding resolves the
-C++ default 0 to ``NumFactors()``).
+The Python signatures mirror the C++ contract above, with one difference:
+``num_factor_ids`` is always the **actual** item count :math:`n > 0` (the binding resolves the
+C++ default 0 to ``NumActiveFactors()``).
 
 .. code-block:: python
 
@@ -339,7 +226,7 @@ C++ default 0 to ``NumFactors()``).
 With CuPy raw kernels
 -------------------------------------------------------------------------------
 
-The same line fit, with the kernel written in CUDA C++ and launched through
+The line fit, with the kernel written in CUDA C++ and launched through
 ``cupy.RawKernel``. The state pointers arrive as an array of 64-bit
 addresses. ``cupy_stream`` makes CuPy launch on cuNLS's stream, so the kernel
 is ordered with the rest of the minimizer's work:
@@ -382,7 +269,7 @@ is ordered with the rest of the minimizer's work:
 
    class LineFitFactorBatch(pycunls.CustomFactorBatch):
        def __init__(self, xs, ys):
-           # residual size 1, one state block of tangent size 2, len(xs) factors
+           # residual size 1, one state of tangent size 2, capacity len(xs)
            super().__init__(1, [2], len(xs))
            self.xs, self.ys = xs, ys          # cupy arrays; keep them alive
 
@@ -392,7 +279,7 @@ is ordered with the rest of the minimizer's work:
            with cupy_stream(stream_handle):
                _line_kernel(((n + 127) // 128,), (128,),
                             (self.xs, self.ys, cp.uint64(factor_ids_ptr),
-                             cp.int32(self.num_factors), cp.uint64(sp_ptr),
+                             cp.int32(self.num_active_factors), cp.uint64(sp_ptr),
                              cp.uint64(res_ptr), cp.uint64(jac_ptr), cp.int32(n)))
            return True
 
@@ -412,10 +299,10 @@ hand (a manifold would change only the kernel body):
 
    class LineState(pycunls.CustomStateBatch):
        def __init__(self, data):
-           super().__init__(data, 2, 2, 1)    # ambient 2, tangent 2, 1 block
+           super().__init__(data, 2, 2, 1)    # ambient 2, tangent 2, capacity 1
 
        def plus(self, x_ptr, delta_ptr, out_ptr, stream_handle, num_replicas):
-           n = 2 * self.num_state_blocks * num_replicas   # every float of every replica
+           n = 2 * self.num_active_states * num_replicas   # every float of every replica
            with cupy_stream(stream_handle):
                _plus_kernel(((n + 127) // 128,), (128,),
                             (cp.uint64(x_ptr), cp.uint64(delta_ptr), cp.uint64(out_ptr),
@@ -428,9 +315,11 @@ Using them with RANSAC:
    ab = cp.zeros(2, dtype=cp.float32)
    state = LineState(ab)
    factor = LineFitFactorBatch(cp.asarray(xs), cp.asarray(ys))
+   state.set_num_active_states(1)          # active sizes start at 0
+   factor.set_num_active_factors(len(xs))
    problem = pycunls.Problem()
    problem.add_state_batch(state)
-   problem.add_factor_batch(factor, [state.state_block_device_ptr(0)] * len(xs))
+   problem.add_factor_batch(factor, [state.state_device_ptr(0)] * len(xs))
 
    options = pycunls.RansacMinimizerOptions()
    options.default_inlier_threshold = 0.05
@@ -469,7 +358,7 @@ read ``ids[t]``, whether or not the caller passed factor ids:
 
    class WarpLineFit(WarpFactorBatch):
        def __init__(self, xs, ys):
-           super().__init__(residual_size=1, state_block_sizes=[2], num_factors=xs.shape[0])
+           super().__init__(residual_size=1, state_sizes=[2], capacity=xs.shape[0])
            self.xs, self.ys = xs, ys
 
        def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr,
@@ -489,18 +378,151 @@ versions: ``python/examples/custom_warp_factor.py`` and
 ``python/examples/custom_warp_state.py``, and the :doc:`pycunls_tutorial`.
 
 ===============================================================================
+C++
+===============================================================================
+
+The same line fit as in :ref:`custom_factors_and_states:Python`, written
+as a CUDA kernel and a C++ factor batch class.
+
+-------------------------------------------------------------------------------
+Step 1: the kernel
+-------------------------------------------------------------------------------
+
+One thread per item. Measurements by ``f``, everything else by ``t``:
+
+.. code-block:: cuda
+
+   __global__ void LineFitKernel(const float *xs, const float *ys, const int *factor_ids,
+                                 int num_factors, int num_items,
+                                 float const *const *state_pointers,
+                                 float *residuals, float *jacobians) {
+     const int t = blockIdx.x * blockDim.x + threadIdx.x;   // item
+     if (t >= num_items) return;
+     const int f = factor_ids != nullptr ? factor_ids[t] : t % num_factors;  // measurement
+
+     const float *ab = state_pointers[t];                   // item t's state (B = 1)
+     residuals[t] = ab[0] * xs[f] + ab[1] - ys[f];          // item t's row (m = 1)
+     if (jacobians != nullptr) {                            // row-major 1 x 2 block
+       jacobians[2 * t + 0] = xs[f];                        // d r / d a
+       jacobians[2 * t + 1] = 1.f;                          // d r / d b
+     }
+   }
+
+-------------------------------------------------------------------------------
+Step 2: the factor batch class
+-------------------------------------------------------------------------------
+
+Derive from ``SizedFactorBatch<m, state sizes...>``, which fixes
+``ResidualsSize()`` and ``StateSizes()`` at compile time, and pass it the
+capacity: the number of measurements your buffers hold. The base keeps the
+active count ``NumActiveFactors()``, which starts at 0 and is set with
+``SetNumActiveFactors(n)`` (any ``n`` up to the capacity), so the same batch serves
+problems of any size without reallocation. Implement ``Evaluate``:
+
+.. code-block:: cpp
+
+   #include "cunls/cunls.h"
+
+   class LineFitFactorBatch : public cunls::SizedFactorBatch<1, 2> {
+    public:
+     // xs, ys: device arrays of capacity floats; must outlive the batch.
+     LineFitFactorBatch(const float *xs, const float *ys, size_t capacity)
+         : SizedFactorBatch(capacity), xs_(xs), ys_(ys) {}
+
+     bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                   cudaStream_t stream, const int *factor_ids = nullptr,
+                   size_t num_factor_ids = 0) const override {
+       const size_t num_factors = NumActiveFactors();  // the active count
+       const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+       if (num_items == 0 || num_factors == 0) return true;
+       const int block = 256;
+       const int grid = static_cast<int>((num_items + block - 1) / block);
+       LineFitKernel<<<grid, block, 0, stream>>>(xs_, ys_, factor_ids,
+                                                 static_cast<int>(num_factors),
+                                                 static_cast<int>(num_items), state_pointers,
+                                                 residuals, jacobians);
+       return cudaGetLastError() == cudaSuccess;
+     }
+
+    private:
+     const float *xs_;
+     const float *ys_;
+   };
+
+-------------------------------------------------------------------------------
+Step 3 (optional): a custom state batch
+-------------------------------------------------------------------------------
+
+The line parameters are an ordinary vector, so ``VectorStateBatch<2>`` is all
+the example needs. A custom state is needed when the variable lives on a
+manifold cuNLS does not ship. As an illustration, here is a **positive
+scalar** parametrized multiplicatively, :math:`x \oplus \delta = x\,e^{\delta}`
+(ambient 1, tangent 1). Derive from ``SizedStateBatch<A, T>``, which provides
+storage, state pointers, constant states and the active sizes (capacity in
+the constructor, ``SetNumActiveStates`` for the active counts), and implement
+``Plus`` over the active states:
+
+.. code-block:: cuda
+
+   __global__ void PositivePlusKernel(const float *x, const float *delta, float *out,
+                                      size_t num_states) {
+     const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+     if (i < num_states) out[i] = x[i] * expf(delta[i]);   // state i: ambient 1, tangent 1
+   }
+
+   class PositiveScalarStateBatch : public cunls::SizedStateBatch<1, 1> {
+    public:
+     using cunls::SizedStateBatch<1, 1>::SizedStateBatch;  // (device_ptr, capacity[, ...])
+
+     void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
+               size_t num_replicas = 1) override {
+       const size_t n = NumActiveStates() * num_replicas;   // every state of every replica
+       if (n == 0) return;
+       PositivePlusKernel<<<static_cast<int>((n + 255) / 256), 256, 0, stream>>>(
+           x, delta, x_plus_delta, n);
+     }
+   };
+
+-------------------------------------------------------------------------------
+Step 4: use it with any minimizer
+-------------------------------------------------------------------------------
+
+.. code-block:: cpp
+
+   // Device data: xs, ys (num_points floats each) and the line state (2 floats).
+   cunls::dvector<float> d_xs(xs), d_ys(ys), d_ab(std::vector<float>{0.f, 0.f});
+   cunls::VectorStateBatch<2> line(d_ab.data(), 1);
+   LineFitFactorBatch fit(d_xs.data(), d_ys.data(), num_points);
+   line.SetNumActiveStates(1);  // batches start with 0 active entries
+   fit.SetNumActiveFactors(num_points);
+
+   cunls::Problem problem;
+   problem.AddStateBatch(&line);
+   problem.AddFactorBatch(&fit, std::vector<float *>(num_points, line.StateDevicePtr(0)));
+
+   // Plain least squares:
+   //   cunls::LevenbergMarquardtMinimizer().Minimize(stream, problem);
+
+   // Robust, with outliers:
+   cunls::RansacMinimizerOptions options;
+   options.default_inlier_threshold = 0.05f;  // ~3 sigma of the y noise
+   cunls::RansacGaussNewtonMinimizer ransac(options);
+   cunls::RansacSummary summary = ransac.Minimize(stream, problem);
+   // d_ab now holds (a, b); ransac.InlierMask(0) the classification.
+
+===============================================================================
 Checklist and common mistakes
 ===============================================================================
 
 Before using a custom type with RANSAC, check:
 
-- [ ] The kernel launches ``num_items`` threads, not ``NumFactors()``.
+- [ ] The kernel launches ``num_items`` threads, not ``NumActiveFactors()``.
 - [ ] Measurements are read at ``f = factor_ids ? factor_ids[t] : t % N``.
 - [ ] State pointers are read at ``t * B + b`` and outputs written at row
   ``t``, never at ``f``.
 - [ ] Scratch buffers are sized for ``num_items`` (resize on demand).
 - [ ] ``jacobians == nullptr`` (``jac_ptr == 0``) skips the Jacobian.
-- [ ] ``Plus`` processes ``num_replicas * NumStateBlocks()`` blocks.
+- [ ] ``Plus`` processes ``num_replicas * NumActiveStates()`` states.
 
 Common mistakes and their symptoms:
 
@@ -513,15 +535,15 @@ Common mistakes and their symptoms:
   Reading the state of the wrong item: every hypothesis is evaluated at
   hypothesis 0's state. RANSAC finds no consensus.
 
-Launching ``NumFactors()`` threads
+Launching ``NumActiveFactors()`` threads
   Items beyond :math:`N` are never evaluated; most hypotheses keep stale
   residuals.
 
-``Plus`` over ``NumStateBlocks()`` only
+``Plus`` over ``NumActiveStates()`` only
   Only the first hypothesis moves; all others stay at the initial guess.
 
 **A quick self-test.** Evaluate your batch once normally, then with
-``num_factor_ids = k * NumFactors()`` and ``factor_ids = nullptr`` on a
+``num_factor_ids = k * NumActiveFactors()`` and ``factor_ids = nullptr`` on a
 pointer table repeated :math:`k` times: the :math:`k` copies of the output
 must equal the plain output. Then evaluate random ``factor_ids`` with a
 matching pointer table and compare row by row. cuNLS runs exactly this check

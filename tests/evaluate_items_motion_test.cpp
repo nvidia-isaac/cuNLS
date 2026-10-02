@@ -132,8 +132,8 @@ void RandomPose(Group g, std::mt19937 &rng, float *out) {
 }
 
 /**
- * Builds kCopies distinct state sets for a motion factor with two pose blocks
- * followed by (num_blocks - 2) tangent-vector blocks (velocity[, acceleration])
+ * Builds kCopies distinct state sets for a motion factor with two pose states
+ * followed by (num_blocks - 2) tangent-vector states (velocity[, acceleration])
  * and checks Evaluate's item contract on it.
  */
 template <typename Factor>
@@ -141,7 +141,7 @@ void CheckMotionFactor(Group g, int num_blocks, uint32_t seed) {
   std::mt19937 rng(seed);
   const size_t pose = PoseAmbient(g);
   const size_t tangent = Tangent(g);
-  // Storage (ambient) size of each block; StateBlockSizes() reports tangent sizes.
+  // Storage (ambient) size of each state; StateSizes() reports tangent sizes.
   std::vector<size_t> block_sizes(num_blocks, tangent);
   block_sizes[0] = block_sizes[1] = pose;
   size_t per_factor = 0;
@@ -163,7 +163,8 @@ void CheckMotionFactor(Group g, int num_blocks, uint32_t seed) {
   auto d_states = ToDevice(states);
 
   Factor factor(d_dt.data(), kNumFactors);
-  ASSERT_EQ(factor.StateBlockSizes(), std::vector<size_t>(num_blocks, tangent));
+  factor.SetNumActiveFactors(kNumFactors);
+  ASSERT_EQ(factor.StateSizes(), std::vector<size_t>(num_blocks, tangent));
   CheckEvaluateItems(factor, kCopies, [&](int k) {
     std::vector<float *> pointers;
     for (size_t f = 0; f < kNumFactors; ++f) {

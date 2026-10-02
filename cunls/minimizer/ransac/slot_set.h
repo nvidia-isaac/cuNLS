@@ -53,7 +53,7 @@ enum class SlotRows {
  * @brief Slots, each with its own copy of the free states, solved in lockstep.
  *
  * A slot's state lives in per-slot replicas of every state batch that has a
- * free block (fully constant batches are read from user storage). Every
+ * free state (fully constant batches are read from user storage). Every
  * residual batch is evaluated for all slots with one FactorBatch::Evaluate
  * call: the items are (factor, slot) pairs, addressed through state-pointer
  * tables and, for minimal samples, factor ids. kAlwaysOn batches always
@@ -139,7 +139,7 @@ class SlotSet {
   const int *iterations() const { return iterations_.data(); }
 
  private:
-  /** Per-slot copies of one state batch (empty if it has no free block). */
+  /** Per-slot copies of one state batch (empty if it has no free state). */
   struct Replicas {
     dvector<float> cur, cand, delta;
   };

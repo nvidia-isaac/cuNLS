@@ -42,10 +42,11 @@ TEST(VectorManifoldTest, StateDimensions) {
   dvector<Vector<kDim>> vecs_dev(vecs);
 
   VectorStateBatch<kDim> states(reinterpret_cast<const float *>(vecs_dev.data()), kN);
+  states.SetNumActiveStates(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), static_cast<size_t>(kDim));
   EXPECT_EQ(states.AmbientSize(), static_cast<size_t>(kDim));
-  EXPECT_EQ(states.NumStateBlocks(), kN);
+  EXPECT_EQ(states.NumActiveStates(), kN);
 }
 
 // ============================================================================
@@ -69,12 +70,14 @@ TEST(VectorManifoldTest, PriorLMConvergence) {
   dvector<Vector<kDim>> targets_dev(targets), initials_dev(initials);
 
   VectorStateBatch<kDim> state_batch(reinterpret_cast<const float *>(initials_dev.data()), kN);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   PriorVectorFactorBatch<kDim> factor_batch(targets_dev.data(), kN);
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_batch.StateBlockDevicePtr(i));
+    ptrs.push_back(state_batch.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -101,7 +104,7 @@ TEST(VectorManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Vector<kDim>> optimized(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateDevicePtr(0),
                                  kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {
@@ -135,14 +138,17 @@ TEST(VectorManifoldTest, BetweenLMConvergence) {
   dvector<Vector<kDim>> deltas_dev(deltas);
 
   VectorStateBatch<kDim> state_left(reinterpret_cast<const float *>(left_dev.data()), kN);
+  state_left.SetNumActiveStates(state_left.Capacity(), state_left.ConstCapacity());
   VectorStateBatch<kDim> state_right(reinterpret_cast<const float *>(right_dev.data()), kN);
+  state_right.SetNumActiveStates(state_right.Capacity(), state_right.ConstCapacity());
   VectorBetweenFactorBatch<kDim> factor_batch(deltas_dev.data(), kN);
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_left.StateBlockDevicePtr(i));
-    ptrs.push_back(state_right.StateBlockDevicePtr(i));
+    ptrs.push_back(state_left.StateDevicePtr(i));
+    ptrs.push_back(state_right.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -170,9 +176,9 @@ TEST(VectorManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<Vector<kDim>> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateDevicePtr(0),
                                  kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateDevicePtr(0),
                                  kN * sizeof(Vector<kDim>), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {

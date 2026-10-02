@@ -18,14 +18,13 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/types.h"
 #include "cunls/state/sized_state_batch.h"
 
 namespace cunls {
 
 /**
- * @brief Batch processing for SO(2) Lie group state blocks.
+ * @brief Batch processing for SO(2) Lie group states.
  *
  * This class implements the Plus operation for the SO(2) Lie group,
  * which represents rotations in the 2D plane.
@@ -39,7 +38,7 @@ namespace cunls {
  *   Exp(theta) = [[cos(theta), -sin(theta)],
  *                 [sin(theta),  cos(theta)]]
  *
- * The class uses GPU-accelerated operations via CUDA kernels and cuBLAS
+ * The class uses GPU-accelerated operations via fused CUDA kernels
  * for efficient batch processing of multiple rotations.
  */
 class SO2StateBatch : public SizedStateBatch<4, 1> {
@@ -47,31 +46,31 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
   using Base = SizedStateBatch<4, 1>;
 
   /**
-   * @brief Constructs a batch of SO(2) state blocks.
+   * @brief Constructs a batch of SO(2) states.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the SO(2)
-   * rotation matrices. Must point to at least num_blocks * 4 floats of
+   * rotation matrices. Must point to at least capacity * 4 floats of
    * allocated memory.
-   * @param num_blocks The number of SO(2) state blocks in this batch.
+   * @param capacity Number of states the buffer holds. The active count
+   *        starts at 0: call SetNumActiveStates(n) before solving.
    */
-  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
+  SO2StateBatch(const float *device_ptr, size_t capacity);
 
   /**
-   * @brief Constructs a batch of SO(2) state blocks with constant state
+   * @brief Constructs a batch of SO(2) states with constant state
    * constraints.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the SO(2)
-   * rotation matrices. Must point to at least num_blocks * 4 floats of
+   * rotation matrices. Must point to at least capacity * 4 floats of
    * allocated memory.
-   * @param num_blocks The number of SO(2) state blocks in this batch.
+   * @param capacity Number of states the buffer holds. The active count
+   *        starts at 0: call SetNumActiveStates(n) before solving.
    * @param device_constant_state_ids Pointer to GPU device memory containing
-   * the indices of state blocks that should remain constant.
-   * @param num_const_state_blocks The number of constant state blocks.
+   * the indices of states that should remain constant.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
-                const int *device_constant_state_ids, size_t num_const_state_blocks);
+  SO2StateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                size_t const_capacity);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)
@@ -89,8 +88,6 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
             size_t num_replicas = 1) override;
 
  private:
-  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
-
   mutable dvector<Matrix<2>> delta_rotations_;
   mutable dvector<float> angles_;
 
@@ -100,14 +97,9 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
    *
    * Computes the right-multiplication update for SO(2) rotations.
    * First computes the update matrix Exp(delta) or Exp(-delta),
-   * then performs batched matrix multiplication using cuBLAS.
+   * then performs batched matrix multiplication in a CUDA kernel.
    *
    * This is a helper function used by Plus (invert_delta=false).
-   *
-   * Note: cuBLAS uses column-major storage, but our matrices are row-major.
-   * For right-multiplication (x * update), we use CUBLAS_OP_N for both
-   * operands. cuBLAS interprets the matrices as column-major, so this computes
-   * the equivalent of the desired row-major result.
    *
    * @param x Input rotation matrices (device pointer, row-major)
    * @param delta Tangent space updates (scalar angles in radians, device

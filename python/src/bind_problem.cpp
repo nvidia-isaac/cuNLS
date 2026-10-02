@@ -29,12 +29,19 @@
 //   state_pointers are received as std::vector<uintptr_t> and reinterpret-
 //   cast to float* because nanobind cannot automatically convert a Python
 //   list[int] to std::vector<float*>.
+//
+//   Device connectivity tables (docs/design/reusable_buffers.md) are taken as
+//   DevicePointer objects (a CuPy array or an int): a uint64 table of state
+//   pointers (keyword-only `state_pointer_table`, so a CuPy array is never
+//   mistaken for a host list), or an int32 table of state indices together
+//   with the state batch of each factor slot.
 
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
 
 #include "bindings.h"
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/problem.h"
@@ -91,6 +98,61 @@ void bind_problem(nb::module_ &m) {
           "connectivity. jacobian_mode_override, when set, forces this "
           "factor batch to always use the given JacobianMode regardless of "
           "the minimizer's MinimizerOptions.jacobian_mode default.")
+      // Device table of state pointers.
+      .def(
+          "add_factor_batch",
+          [](cunls::Problem &self, cunls::FactorBatch *factor_batch, nb::handle table,
+             cunls::LossFunctionBatch *loss,
+             std::optional<cunls::JacobianMode> jacobian_mode_override) {
+            self.AddFactorBatch(factor_batch, loss,
+                                reinterpret_cast<float *const *>(extract_device_ptr(table)),
+                                jacobian_mode_override);
+          },
+          nb::arg("factor_batch"), nb::kw_only(), nb::arg("state_pointer_table"),
+          nb::arg("loss_function").none() = nullptr,
+          nb::arg("jacobian_mode_override") = std::nullopt, nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(),
+          "Add a factor batch whose connectivity is a device table of state pointers "
+          "(uint64, capacity * B entries; entry f * B + b points at the state that factor f "
+          "reads in slot b). Bound once; rewrite its contents between solves.")
+      // Device table of state indices.
+      .def(
+          "add_factor_batch",
+          [](cunls::Problem &self, cunls::FactorBatch *factor_batch,
+             const std::vector<cunls::StateBatch *> &slot_state_batches, nb::handle indices,
+             cunls::LossFunctionBatch *loss,
+             std::optional<cunls::JacobianMode> jacobian_mode_override) {
+            self.AddFactorBatch(factor_batch, loss, slot_state_batches,
+                                reinterpret_cast<const int *>(extract_device_ptr(indices)),
+                                jacobian_mode_override);
+          },
+          nb::arg("factor_batch"), nb::arg("slot_state_batches"), nb::arg("state_indices"),
+          nb::arg("loss_function").none() = nullptr,
+          nb::arg("jacobian_mode_override") = std::nullopt, nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>(),
+          "Add a factor batch whose connectivity is a device table of state indices "
+          "(int32, capacity * B entries): factor f reads state state_indices[f * B + b] of "
+          "slot_state_batches[b]. Bound once; rewrite its contents between solves.")
+      .def(
+          "set_state_pointers",
+          [](cunls::Problem &self, size_t residual_batch_index,
+             const std::vector<uintptr_t> &state_ptrs) {
+            std::vector<float *> ptrs(state_ptrs.size());
+            for (size_t i = 0; i < state_ptrs.size(); ++i)
+              ptrs[i] = reinterpret_cast<float *>(state_ptrs[i]);
+            self.SetStatePointers(residual_batch_index, ptrs);
+          },
+          nb::arg("residual_batch_index"), nb::arg("state_pointers"),
+          "Replace the host-list connectivity of a residual batch "
+          "(num_active_factors * B pointers).")
+      .def(
+          "validate",
+          [](const cunls::Problem &self, cunls::CudaStream &stream) {
+            return self.Validate(stream.GetStream());
+          },
+          nb::arg("stream"),
+          "GPU check of every active connection (for connectivity rewritten on the device). "
+          "Synchronizes the stream; logs the first failure.")
       .def("check_consistency", &cunls::Problem::CheckConsistency,
            "Validate that all state batches and factor batches are consistent.");
 }

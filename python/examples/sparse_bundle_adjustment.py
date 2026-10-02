@@ -39,17 +39,36 @@ def main():
     const_ids_gpu = cp.array([0], dtype=cp.int32)  # pose 0 is constant
 
     # 3. State batches: SE(3) poses (one constant) and 3D points.
-    cublas = pycunls.CublasHandle()
-    pose_states = pycunls.SE3StateBatch(cublas, poses_gpu, num_poses, const_ids_gpu, 1)
-    point_states = pycunls.VectorStateBatch3(points_gpu, num_points)
+    #    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
+    #    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    #    size it once for the largest problem you expect. Right after construction nothing is
+    #    active: set_num_active_states / set_num_active_factors set the active count, how many of
+    #    the first slots the next solve uses (a solve without it throws). The setter is host-only
+    #    (no allocation, no device work) and may change the count between solves up to the capacity,
+    #    which is what lets a real-time application allocate once and reuse the same buffers every
+    #    frame while the problem size changes. This example solves every slot once, so each active
+    #    count equals its capacity.
+    poses_capacity = num_poses  # every slot solved: active = capacity
+    points_capacity = num_points
+    const_poses_capacity = 1  # entries of const_ids_gpu
+    pose_states = pycunls.SE3StateBatch(poses_gpu, poses_capacity, const_ids_gpu,
+                                        const_poses_capacity)
+    point_states = pycunls.VectorStateBatch3(points_gpu, points_capacity)
+    num_const_poses = 1  # active constant ids: the gauge anchor
+    pose_states.set_num_active_states(num_poses, num_const_poses)  # active counts
+    point_states.set_num_active_states(num_points)
 
     # 4. One reprojection factor per (pose, point); each reads [pose, point].
-    reprojection = pycunls.ReprojectionFactorBatch(observations_gpu, num_poses * num_points, 1e-3)
+    #    Capacity (fixed, sizes the buffers) vs. active count (set per solve): see step 3.
+    num_observations = num_poses * num_points
+    observations_capacity = num_observations  # every slot solved
+    reprojection = pycunls.ReprojectionFactorBatch(observations_gpu, observations_capacity, 1e-3)
+    reprojection.set_num_active_factors(num_observations)  # active count
     state_pointers = []
     for pi in range(num_poses):
         for qi in range(num_points):
-            state_pointers.append(pose_states.state_block_device_ptr(pi))
-            state_pointers.append(point_states.state_block_device_ptr(qi))
+            state_pointers.append(pose_states.state_device_ptr(pi))
+            state_pointers.append(point_states.state_device_ptr(qi))
 
     # 5. Problem.
     problem = pycunls.Problem()

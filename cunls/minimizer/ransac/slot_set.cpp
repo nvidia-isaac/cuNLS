@@ -53,7 +53,7 @@ void SlotSet::AllocateReplicas(const RansacLayout &layout) {
   for (size_t j = 0; j < states.size(); ++j) {
     const StateLayout &s = states[j];
     StateView &v = views[j];
-    v.base = s.batch->StateBlockDevicePtr(0);
+    v.base = s.batch->StateDevicePtr(0);
     v.num_blocks = s.num_blocks;
     v.ambient = s.ambient;
     if (s.replicated) {
@@ -200,8 +200,8 @@ void SlotSet::LoadInitialGuess(cudaStream_t stream, const RansacLayout &layout) 
   for (size_t j = 0; j < replicas_.size(); ++j) {
     const StateLayout &s = layout.states()[j];
     if (s.replicated) {
-      LaunchCopyReplicas(stream, num_slots_, s.slot_floats, s.batch->StateBlockDevicePtr(0),
-                         nullptr, nullptr, replicas_[j].cur.data());
+      LaunchCopyReplicas(stream, num_slots_, s.slot_floats, s.batch->StateDevicePtr(0), nullptr,
+                         nullptr, replicas_[j].cur.data());
     }
   }
 }
@@ -232,7 +232,7 @@ void SlotSet::WriteBack(cudaStream_t stream, const RansacLayout &layout, int slo
     const StateLayout &s = layout.states()[j];
     if (s.replicated) {
       THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
-          s.batch->StateBlockDevicePtr(0), replicas_[j].cur.data() + slot * s.slot_floats,
+          s.batch->StateDevicePtr(0), replicas_[j].cur.data() + slot * s.slot_floats,
           s.slot_floats * sizeof(float), cudaMemcpyDeviceToDevice, stream));
     }
   }

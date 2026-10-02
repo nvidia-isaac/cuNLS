@@ -13,7 +13,7 @@
 namespace cunls {
 
 /**
- * @brief Batch factor for SO(3) between constraints (no cuBLAS handle).
+ * @brief Batch factor for SO(3) between constraints.
  *
  * residual = Log( R_left^{-1} * R_right * Delta^{-1} )  (3-vector).
  *
@@ -25,22 +25,17 @@ class SO3BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
   using Base = SizedFactorBatch<3, 3, 3>;
 
  public:
-  SO3BetweenFactorBatch(const SO3Rotation *pose_deltas_ptr, size_t num_factors);
+  SO3BetweenFactorBatch(const SO3Rotation *pose_deltas_ptr, size_t capacity);
 
   /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SO3BetweenFactorBatch() = default;
-  void ComputeDeltaAdjoints(cudaStream_t stream);
 
   const Matrix<3> *pose_deltas_ptr_;
-  size_t num_factors_;
-  DeviceVector<Matrix<3>> delta_adjoints_;
   mutable DeviceVector<Matrix<3>> poses_left_;
   mutable DeviceVector<Matrix<3>> poses_right_;
   mutable DeviceVector<Matrix<3>> poses_left_inverse_;

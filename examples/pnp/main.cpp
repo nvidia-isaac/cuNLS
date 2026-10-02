@@ -26,7 +26,6 @@
 #include <string>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -52,19 +51,33 @@ namespace {
 bool SolvePnP(const examples::PnPScene &scene, cunls::JacobianMode jacobian_mode) {
   const size_t num_points = scene.points_world.size();
 
-  // Upload the data; the pose is the only state (one SE(3) block).
+  // Upload the data; the pose is the only state (a single SE(3) transform).
   dvector<Vector<3>> points(scene.points_world);
   dvector<Vector<2>> observations(scene.observations);
   dvector<SE3Transform> pose(std::vector<SE3Transform>{scene.initial_pose});
-  cunls::cuBLASHandle cublas;
-  cunls::SE3StateBatch pose_state(cublas, reinterpret_cast<const float *>(pose.data()), 1);
+
+  // Capacity vs. active count. A batch is constructed with its capacity: how many states (or
+  // factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime; size it
+  // once for the largest problem you expect. Right after construction nothing is active:
+  // SetNumActiveStates / SetNumActiveFactors set the active count, how many of the first slots the
+  // next solve uses (a solve without it throws). The setter is host-only (no allocation, no device
+  // work) and may change the count between solves up to the capacity, which is what lets a
+  // real-time application allocate once and reuse the same buffers every frame while the problem
+  // size changes. This example solves every slot once, so each active count equals its capacity.
+  const size_t pose_capacity = 1;
+  cunls::SE3StateBatch pose_state(reinterpret_cast<const float *>(pose.data()), pose_capacity);
+  const size_t num_poses = 1;  // every slot solved: active = capacity
+  pose_state.SetNumActiveStates(num_poses);
 
   // One PnP factor per correspondence; every factor reads the same pose.
-  cunls::PnPFactorBatch pnp(observations.data(), points.data(), num_points,
+  // Capacity (fixed, sizes the buffers) vs. active count (set per solve): see above.
+  const size_t points_capacity = num_points;  // every slot solved
+  cunls::PnPFactorBatch pnp(observations.data(), points.data(), points_capacity,
                             /*z_threshold=*/1e-3f);
+  pnp.SetNumActiveFactors(num_points);  // active count
   cunls::Problem problem;
   problem.AddStateBatch(&pose_state);
-  problem.AddFactorBatch(&pnp, std::vector<float *>(num_points, pose_state.StateBlockDevicePtr(0)),
+  problem.AddFactorBatch(&pnp, std::vector<float *>(num_points, pose_state.StateDevicePtr(0)),
                          jacobian_mode);
   if (!problem.CheckConsistency()) throw std::runtime_error("PnP problem is inconsistent");
 

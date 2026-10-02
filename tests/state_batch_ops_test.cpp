@@ -44,13 +44,13 @@ namespace cunls {
  * across multiple state batches of different dimensions.
  */
 class StateBatchOpsTest : public StateBatchOps, public ::testing::Test {
-protected:
+ protected:
   /**
    * @brief Verifies that state values are correct after a Plus update.
    *
    * Constant states should remain 0; non-constant should be updated to 1.
    *
-   * @tparam Dim Dimension of each vector state block.
+   * @tparam Dim Dimension of each vector state.
    * @param state_batch The state batch to verify.
    */
   template <int Dim>
@@ -80,18 +80,18 @@ TEST_F(StateBatchOpsTest, Map) {
   CudaStream stream;
 
   auto const_ids = test_utils::MakeSequentialIds(this->num_const_states);
-  test_utils::VectorStateData<2> points_2d(
-      test_utils::MakeZeroVectors<2>(this->num_vectors_), const_ids);
-  test_utils::VectorStateData<3> points_3d(
-      test_utils::MakeZeroVectors<3>(this->num_vectors_), const_ids);
-  test_utils::VectorStateData<4> points_4d(
-      test_utils::MakeZeroVectors<4>(this->num_vectors_), const_ids);
-  test_utils::VectorStateData<5> points_5d(
-      test_utils::MakeZeroVectors<5>(this->num_vectors_), const_ids);
+  test_utils::VectorStateData<2> points_2d(test_utils::MakeZeroVectors<2>(this->num_vectors_),
+                                           const_ids);
+  test_utils::VectorStateData<3> points_3d(test_utils::MakeZeroVectors<3>(this->num_vectors_),
+                                           const_ids);
+  test_utils::VectorStateData<4> points_4d(test_utils::MakeZeroVectors<4>(this->num_vectors_),
+                                           const_ids);
+  test_utils::VectorStateData<5> points_5d(test_utils::MakeZeroVectors<5>(this->num_vectors_),
+                                           const_ids);
 
   // Create the set on state batches
-  std::vector<StateBatch *> state_batches = {points_2d.ptr(), points_3d.ptr(),
-                                             points_4d.ptr(), points_5d.ptr()};
+  std::vector<StateBatch *> state_batches = {points_2d.ptr(), points_3d.ptr(), points_4d.ptr(),
+                                             points_5d.ptr()};
 
   // Build the mapping
   {
@@ -106,16 +106,15 @@ TEST_F(StateBatchOpsTest, Map) {
   size_t N = 0;
   for (auto pb : state_batches) {
     size_t tangent_size = pb->TangentSize();
-    size_t num_state_blocks = pb->NumStateBlocks();
-    size_t num_const_blocks = pb->NumConstStateBlocks();
+    size_t num_active_states = pb->NumActiveStates();
+    size_t num_const_blocks = pb->NumConstStates();
 
-    num_reduced_states += tangent_size * (num_state_blocks - num_const_blocks);
+    num_reduced_states += tangent_size * (num_active_states - num_const_blocks);
 
-    for (int i = num_const_blocks * tangent_size;
-         i < num_state_blocks * tangent_size; i++) {
+    for (int i = num_const_blocks * tangent_size; i < num_active_states * tangent_size; i++) {
       gt_map.push_back(N + i);
     }
-    N += num_state_blocks * tangent_size;
+    N += num_active_states * tangent_size;
   }
 
   // Check the number of reduced states is correct
@@ -137,24 +136,24 @@ TEST_F(StateBatchOpsTest, Plus) {
   CudaStream stream;
 
   auto const_ids = test_utils::MakeSequentialIds(this->num_const_states);
-  test_utils::VectorStateData<2> points_2d(
-      test_utils::MakeZeroVectors<2>(this->num_vectors_), const_ids);
-  test_utils::VectorStateData<3> points_3d(
-      test_utils::MakeZeroVectors<3>(this->num_vectors_), const_ids);
-  test_utils::VectorStateData<4> points_4d(
-      test_utils::MakeZeroVectors<4>(this->num_vectors_), const_ids);
-  test_utils::VectorStateData<5> points_5d(
-      test_utils::MakeZeroVectors<5>(this->num_vectors_), const_ids);
+  test_utils::VectorStateData<2> points_2d(test_utils::MakeZeroVectors<2>(this->num_vectors_),
+                                           const_ids);
+  test_utils::VectorStateData<3> points_3d(test_utils::MakeZeroVectors<3>(this->num_vectors_),
+                                           const_ids);
+  test_utils::VectorStateData<4> points_4d(test_utils::MakeZeroVectors<4>(this->num_vectors_),
+                                           const_ids);
+  test_utils::VectorStateData<5> points_5d(test_utils::MakeZeroVectors<5>(this->num_vectors_),
+                                           const_ids);
 
   // Create the set on state batches
-  std::vector<StateBatch *> state_batches = {points_2d.ptr(), points_3d.ptr(),
-                                             points_4d.ptr(), points_5d.ptr()};
+  std::vector<StateBatch *> state_batches = {points_2d.ptr(), points_3d.ptr(), points_4d.ptr(),
+                                             points_5d.ptr()};
 
   // Collect the pointers for state batches
   std::vector<const float *> input_pointers;
   std::vector<float *> output_pointers;
   for (auto pbatch : state_batches) {
-    auto ptr = pbatch->StateBlockDevicePtr(0);
+    auto ptr = pbatch->StateDevicePtr(0);
     input_pointers.push_back(ptr);
     output_pointers.push_back(ptr);
   }
@@ -179,4 +178,4 @@ TEST_F(StateBatchOpsTest, Plus) {
   this->TestStateValues(points_4d.get());
   this->TestStateValues(points_5d.get());
 }
-} // namespace cunls
+}  // namespace cunls

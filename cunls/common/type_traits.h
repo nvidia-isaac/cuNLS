@@ -30,8 +30,8 @@ namespace cunls {
  * Used to detect if a type T derives from SizedFactorBatch.
  */
 struct DerivedFromAnySizedFactorBatchHelper {
-  template <int Dim, int... StateBlockSizes>
-  static std::true_type test(const SizedFactorBatch<Dim, StateBlockSizes...> *);
+  template <int Dim, int... StateSizes>
+  static std::true_type test(const SizedFactorBatch<Dim, StateSizes...> *);
 
   /// Fallback overload for types that don't derive from SizedFactorBatch
   static std::false_type test(...);

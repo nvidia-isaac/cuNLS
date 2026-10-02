@@ -1276,7 +1276,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
   // When @p problem carries state batches, the block-Jacobi layout is
   // ALWAYS derived afresh from them — each non-empty batch contributes
   // a segment with `size = TangentSize()` and
-  // `count = NumStateBlocks() - NumConstStateBlocks()`.  Consecutive
+  // `count = NumActiveStates() - NumConstStates()`.  Consecutive
   // segments of equal size are merged so the dispatch loop has one
   // entry per distinct-size group (typical: 1 entry for PGO, 2 for
   // SBA).  Re-deriving on every Initialize is what makes the same
@@ -1294,7 +1294,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
       continue;
     }
     int t = static_cast<int>(sb->TangentSize());
-    int count = static_cast<int>(sb->NumStateBlocks() - sb->NumConstStateBlocks());
+    int count = static_cast<int>(sb->NumActiveStates() - sb->NumConstStates());
     if (count == 0) {
       continue;
     }

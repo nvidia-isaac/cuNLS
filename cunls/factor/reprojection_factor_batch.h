@@ -36,8 +36,8 @@ namespace cunls {
  *
  * Inherits from SizedFactorBatch<2, 6, 3>:
  *   - 2: Residual dimension (2D reprojection error)
- *   - 6: First state block (SE3 pose tangent)
- *   - 3: Second state block (3D point)
+ *   - 6: First state (SE3 pose tangent)
+ *   - 3: Second state (3D point)
  */
 class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
  public:
@@ -45,10 +45,11 @@ class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
    * @brief Constructs with identity camera-from-rig transforms.
    *
    * @param observations  Device pointer to normalized 2D observations.
-   * @param num_observations  Number of observations in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    * @param z_threshold  Minimum depth for valid projection.
    */
-  ReprojectionFactorBatch(const Vector<2> *observations, size_t num_observations,
+  ReprojectionFactorBatch(const Vector<2> *observations, size_t capacity,
                           float z_threshold = 1e-3f);
 
   /**
@@ -60,23 +61,21 @@ class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
    * @param observations  Device pointer to normalized 2D observations.
    * @param poses_camera_from_rig  Per-observation camera-from-rig SE3
    * transforms.
-   * @param num_observations  Number of observations in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    * @param z_threshold  Minimum depth for valid projection.
    */
   ReprojectionFactorBatch(const Vector<2> *observations, const SE3Transform *poses_camera_from_rig,
-                          size_t num_observations, float z_threshold = 1e-3f);
+                          size_t capacity, float z_threshold = 1e-3f);
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
-
-  size_t NumFactors() const final { return num_observations_; }
 
  private:
   ReprojectionFactorBatch() = delete;
 
   const Vector<2> *observations_;
   const SE3Transform *poses_camera_from_rig_ = nullptr;
-  size_t num_observations_;
   float z_threshold_ = 1e-3f;
 };
 

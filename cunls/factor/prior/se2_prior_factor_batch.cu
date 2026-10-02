@@ -20,6 +20,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/se2_prior_factor_batch.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -38,19 +39,21 @@ constexpr size_t kSE2JacobianStride = 9;
  * 1]. Only 3x3 active part computed (6 FMAs for rotation, 3 for translation).
  */
 __global__ void collect_and_multiply_se2_prior_kernel(float const *const *state_pointers,
-                                                      const Matrix<3> *obs_inverse,
+                                                      const Matrix<3> *observations,
                                                       size_t num_items, Matrix<3> *errors,
                                                       const int *factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;
 
   const float *__restrict__ C = state_pointers[tid];
-  const float *__restrict__ I =
-      obs_inverse[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
-  float *__restrict__ out = errors[tid].data();
-
+  const float *__restrict__ T =
+      observations[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
+  // Issue the state loads before deriving T^{-1}, so both global reads are in flight.
   const float c00 = C[0], c01 = C[1], c02 = C[2];
   const float c10 = C[3], c11 = C[4], c12 = C[5];
+  float I[9];  // T_target^{-1}, derived from the measurement in place
+  lie_device::InverseSE2(T, I);
+  float *__restrict__ out = errors[tid].data();
 
   const float i00 = I[0], i01 = I[1], i02 = I[2];
   const float i10 = I[3], i11 = I[4], i12 = I[5];
@@ -66,24 +69,16 @@ __global__ void collect_and_multiply_se2_prior_kernel(float const *const *state_
   out[8] = 1.0f;
 }
 
-SE2PriorFactorBatch::SE2PriorFactorBatch(const SE2Transform *observations_ptr, size_t num_factors)
-    : observations_ptr_(observations_ptr),
-      num_factors_(num_factors),
-      observations_inverse_(num_factors),
-      transforms_error_(num_factors) {
-  // Pre-compute T_target^{-1} for all observations
-  CudaStream stream;
-  ComputeInverseSE2(stream.GetStream(), reinterpret_cast<const float *>(observations_ptr_),
-                    kSE2TransformStride, kSE2TransformStride, num_factors_,
-                    reinterpret_cast<float *>(observations_inverse_.data()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
+SE2PriorFactorBatch::SE2PriorFactorBatch(const SE2Transform *observations_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      observations_ptr_(observations_ptr),
+      transforms_error_(capacity) {}
 
 bool SE2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,
                                    const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   transforms_error_.resize(num_items);  // keeps capacity: allocates at most once per size
@@ -91,8 +86,8 @@ bool SE2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect T_current + compute T_inv * T_current
   collect_and_multiply_se2_prior_kernel<<<num_blocks, kSE2PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
-      static_cast<int>(NumFactors()));
+      state_pointers, observations_ptr_, num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumActiveFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 3: residual = Log(T_error)

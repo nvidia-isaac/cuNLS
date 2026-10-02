@@ -31,7 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
@@ -238,7 +237,6 @@ class SyntheticSbaTest : public ::testing::TestWithParam<SyntheticSbaParams> {
     }
   }
 
-  cuBLASHandle cublas_handle_;
   profiler::Domain profiler_domain_ = profiler::Domain("SyntheticSbaTest");
 };
 
@@ -289,19 +287,22 @@ TEST_P(SyntheticSbaTest, Optimize) {
   auto poses_ptr = reinterpret_cast<const float *>(poses_d.data());
   auto points_ptr = reinterpret_cast<const float *>(points_d.data());
 
-  SE3StateBatch pose_batch(cublas_handle_, poses_ptr, static_cast<size_t>(params.n_poses),
-                           const_pose_ids_d.data(), const_pose_ids.size());
+  SE3StateBatch pose_batch(poses_ptr, static_cast<size_t>(params.n_poses), const_pose_ids_d.data(),
+                           const_pose_ids.size());
+  pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
   VectorStateBatch<3> point_batch(points_ptr, init_points.size(), const_point_ids_d.data(),
                                   const_point_ids.size());
+  point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
 
-  InformationFactorBatch<ReprojectionFactorBatch> info_factor(
-      cublas_handle_, info_d.data(), n_obs, obs_d.data(), cam_from_rig_d.data(), n_obs, 1e-3f);
+  InformationFactorBatch<ReprojectionFactorBatch> info_factor(info_d.data(), n_obs, obs_d.data(),
+                                                              cam_from_rig_d.data(), n_obs, 1e-3f);
+  info_factor.SetNumActiveFactors(info_factor.Capacity());
 
   std::vector<float *> state_pointers;
   state_pointers.reserve(n_obs * 2);
   for (size_t i = 0; i < n_obs; ++i) {
-    state_pointers.push_back(pose_batch.StateBlockDevicePtr(static_cast<size_t>(pose_ids[i])));
-    state_pointers.push_back(point_batch.StateBlockDevicePtr(static_cast<size_t>(point_ids[i])));
+    state_pointers.push_back(pose_batch.StateDevicePtr(static_cast<size_t>(pose_ids[i])));
+    state_pointers.push_back(point_batch.StateDevicePtr(static_cast<size_t>(point_ids[i])));
   }
 
   HuberLossFunctionBatch huber(1.0f);

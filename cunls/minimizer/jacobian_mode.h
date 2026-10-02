@@ -24,7 +24,7 @@ namespace cunls {
  *
  * `kAnalytic` (default) uses the FactorBatch's own hand-derived Evaluate()
  * Jacobian output. `kNumeric` instead derives the Jacobian via finite
- * differences on the manifold tangent space of each referenced state block,
+ * differences on the manifold tangent space of each referenced state,
  * requiring only that the factor batch support residual-only evaluation
  * (`jacobians == nullptr`), which every FactorBatch implementation must
  * already do.

@@ -36,7 +36,7 @@ constexpr size_t kSO2BlockSize = 256;
  *
  * @param observations Target rotation matrices (4 floats each, row-major: [c,
  * -s, s, c])
- * @param state_pointers Array of state block pointers (each points to a 2x2
+ * @param state_pointers Array of state pointers (each points to a 2x2
  * rotation)
  * @param residuals Output residuals (1 float per factor), or nullptr to skip
  * @param jacobians Output Jacobians (1 float per factor), or nullptr to skip
@@ -82,12 +82,12 @@ __global__ void so2_prior_cost_kernel(const float *observations, float const *co
 bool SO2PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,
                                    const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
-  int num_factors = static_cast<int>(NumFactors());
+  int num_factors = static_cast<int>(NumActiveFactors());
 
   size_t num_blocks = (num_items + kSO2BlockSize - 1) / kSO2BlockSize;
   so2_prior_cost_kernel<<<num_blocks, kSO2BlockSize, 0, stream>>>(

@@ -39,7 +39,7 @@ class Problem;
  * `b = -J^T r`.
  *
  * This class instead contracts each factor locally.  A factor batch already
- * writes its Jacobian as `NumFactors()` dense row-major `m x n` blocks, so a
+ * writes its Jacobian as `NumActiveFactors()` dense row-major `m x n` blocks, so a
  * single kernel can read `J_f`, form `H_f = J_f^T J_f` and `b_f = -J_f^T r_f`
  * in shared memory, and scatter both into the global CSR.  That drops the
  * atomic count by exactly a factor of `m` and removes the triplet-to-CSR
@@ -65,7 +65,7 @@ class BlockHessianAssembler {
    *
    * Must be called whenever the problem structure changes.  The maps cost
    * `num_factors * (nb + nb^2)` integers per factor batch, where `nb` is the
-   * number of state blocks a factor touches.
+   * number of states a factor touches.
    *
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
@@ -113,9 +113,9 @@ class BlockHessianAssembler {
   /** @brief Per-residual-batch constants uploaded once for the kernel. */
   struct BatchPlan {
     HessianBatchLayout layout;  ///< Geometry and flat-buffer offsets.
-    /// n entries: block index owning each local column.
+    /// n entries: state slot owning each local column.
     dvector<int> block_of_col;
-    /// n entries: offset of each local column inside its block.
+    /// n entries: offset of each local column inside its state slot.
     dvector<int> offset_in_block;
     /// n entries: index of the enclosing tile column, for block storage.
     dvector<int> tile_of_col;

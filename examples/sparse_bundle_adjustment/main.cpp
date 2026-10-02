@@ -23,7 +23,6 @@
 #include <iostream>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -58,20 +57,37 @@ int main() {
     dvector<int> constant_pose_ids(std::vector<int>{0});  // camera 0 is the gauge anchor
 
     // 3. State batches wrap the device memory: SE(3) poses (one constant) and 3D points.
-    cunls::cuBLASHandle cublas;
-    cunls::SE3StateBatch pose_states(cublas, reinterpret_cast<const float *>(poses.data()),
-                                     num_poses, constant_pose_ids.data(), 1);
+    //    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
+    //    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    //    size it once for the largest problem you expect. Right after construction nothing is
+    //    active: SetNumActiveStates / SetNumActiveFactors set the active count, how many of the
+    //    first slots the next solve uses (a solve without it throws). The setter is host-only (no
+    //    allocation, no device work) and may change the count between solves up to the capacity,
+    //    which is what lets a real-time application allocate once and reuse the same buffers every
+    //    frame while the problem size changes. This example solves every slot once, so each active
+    //    count equals its capacity.
+    const size_t poses_capacity = num_poses;  // every slot solved: active = capacity
+    const size_t points_capacity = num_points;
+    const size_t const_poses_capacity = 1;  // entries of constant_pose_ids
+    cunls::SE3StateBatch pose_states(reinterpret_cast<const float *>(poses.data()), poses_capacity,
+                                     constant_pose_ids.data(), const_poses_capacity);
     cunls::VectorStateBatch<3> point_states(reinterpret_cast<const float *>(points.data()),
-                                            num_points);
+                                            points_capacity);
+    const size_t num_const_poses = 1;  // active constant ids: the gauge anchor
+    pose_states.SetNumActiveStates(num_poses, num_const_poses);  // active counts
+    point_states.SetNumActiveStates(num_points);
 
     // 4. One reprojection factor per observation, reading [pose, point].
-    cunls::ReprojectionFactorBatch reprojection(observations.data(), num_observations,
+    //    Capacity (fixed, sizes the buffers) vs. active count (set per solve): see step 3.
+    const size_t observations_capacity = num_observations;  // every slot solved
+    cunls::ReprojectionFactorBatch reprojection(observations.data(), observations_capacity,
                                                 /*z_threshold=*/1e-3f);
+    reprojection.SetNumActiveFactors(num_observations);  // active count
     std::vector<float *> state_pointers;
     for (size_t c = 0; c < num_poses; ++c) {
       for (size_t j = 0; j < num_points; ++j) {
-        state_pointers.push_back(pose_states.StateBlockDevicePtr(c));
-        state_pointers.push_back(point_states.StateBlockDevicePtr(j));
+        state_pointers.push_back(pose_states.StateDevicePtr(c));
+        state_pointers.push_back(point_states.StateDevicePtr(j));
       }
     }
 

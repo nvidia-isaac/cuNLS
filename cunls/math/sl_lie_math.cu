@@ -28,6 +28,7 @@
 #include <cmath>
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/sl_lie_math.h"
 
 namespace cunls {
@@ -40,13 +41,15 @@ constexpr float kInvSqrt6 = 0.4082482904638630164f;
 constexpr float kInvSqrt12 = 0.2886751345948128823f;
 constexpr size_t kBlockSize = 256;
 
+using lie_device::Inv4;
+
 // ============================================================================
 // 4×4 Matrix Utilities
 // ============================================================================
 
 // C = A * B  (row-major 4×4).
-__device__ void Mat4Mul(const float *__restrict__ A,
-                        const float *__restrict__ B, float *__restrict__ C) {
+__device__ void Mat4Mul(const float *__restrict__ A, const float *__restrict__ B,
+                        float *__restrict__ C) {
 #pragma unroll
   for (int i = 0; i < 4; ++i) {
 #pragma unroll
@@ -77,7 +80,7 @@ __device__ float Mat4MeanAbs(const float *A) {
   for (int i = 0; i < 16; ++i) {
     s += fabsf(A[i]);
   }
-  return s * 0.0625f; // 1/16
+  return s * 0.0625f;  // 1/16
 }
 
 // Whether flat index i is on the 4×4 diagonal (row == col).
@@ -119,73 +122,17 @@ __device__ float Mat4FrobeniusDiffFromIdentity(const float *A) {
 // (c-minors) combined with a cofactor expansion along row 0.
 __device__ float Det4(const float *M) {
   // 2×2 sub-determinants from rows 2 and 3.
-  float c0 = M[8] * M[13] - M[9] * M[12];   // cols (0,1)
-  float c1 = M[8] * M[14] - M[10] * M[12];  // cols (0,2)
-  float c2 = M[8] * M[15] - M[11] * M[12];  // cols (0,3)
-  float c3 = M[9] * M[14] - M[10] * M[13];  // cols (1,2)
-  float c4 = M[9] * M[15] - M[11] * M[13];  // cols (1,3)
-  float c5 = M[10] * M[15] - M[11] * M[14]; // cols (2,3)
+  float c0 = M[8] * M[13] - M[9] * M[12];    // cols (0,1)
+  float c1 = M[8] * M[14] - M[10] * M[12];   // cols (0,2)
+  float c2 = M[8] * M[15] - M[11] * M[12];   // cols (0,3)
+  float c3 = M[9] * M[14] - M[10] * M[13];   // cols (1,2)
+  float c4 = M[9] * M[15] - M[11] * M[13];   // cols (1,3)
+  float c5 = M[10] * M[15] - M[11] * M[14];  // cols (2,3)
 
   // Cofactor expansion along row 0.  Each 3×3 cofactor factors into
   // a dot product of one row-1 element with the c-minors.
-  return M[0] * (M[5] * c5 - M[6] * c4 + M[7] * c3) -
-         M[1] * (M[4] * c5 - M[6] * c2 + M[7] * c1) +
-         M[2] * (M[4] * c4 - M[5] * c2 + M[7] * c0) -
-         M[3] * (M[4] * c3 - M[5] * c1 + M[6] * c0);
-}
-
-// M^{-1} via adjugate / determinant.  Returns false if M is singular.
-//
-// Each entry of adj(M) is a signed 3×3 cofactor.  By expressing every
-// cofactor through the 12 precomputed 2×2 sub-determinants (s_k from
-// rows 0,1 and c_k from rows 2,3), each adjugate entry becomes a 3-term
-// dot product — no redundant 2×2 products across the 16 entries.
-__device__ bool Inv4(const float *M, float *R) {
-  // 2×2 sub-determinants from rows {0,1}: s_k = M[0,a]*M[1,b] − M[0,b]*M[1,a].
-  float s0 = M[0] * M[5] - M[1] * M[4];
-  float s1 = M[0] * M[6] - M[2] * M[4];
-  float s2 = M[0] * M[7] - M[3] * M[4];
-  float s3 = M[1] * M[6] - M[2] * M[5];
-  float s4 = M[1] * M[7] - M[3] * M[5];
-  float s5 = M[2] * M[7] - M[3] * M[6];
-
-  // 2×2 sub-determinants from rows {2,3}: c_k = M[2,a]*M[3,b] − M[2,b]*M[3,a].
-  float c0 = M[8] * M[13] - M[9] * M[12];
-  float c1 = M[8] * M[14] - M[10] * M[12];
-  float c2 = M[8] * M[15] - M[11] * M[12];
-  float c3 = M[9] * M[14] - M[10] * M[13];
-  float c4 = M[9] * M[15] - M[11] * M[13];
-  float c5 = M[10] * M[15] - M[11] * M[14];
-
-  float det = s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0;
-  if (fabsf(det) < 1e-7f) {
-    return false;
-  }
-  float d = 1.0f / det;
-
-  // adj(M) = transpose of the cofactor matrix.  Row i of adj uses:
-  //   - c-minors with row-1 elements for rows 0,1 of the result
-  //   - s-minors with row-{2,3} elements for rows 2,3 of the result
-  R[0] = d * (M[5] * c5 - M[6] * c4 + M[7] * c3);
-  R[1] = d * (-M[1] * c5 + M[2] * c4 - M[3] * c3);
-  R[2] = d * (M[13] * s5 - M[14] * s4 + M[15] * s3);
-  R[3] = d * (-M[9] * s5 + M[10] * s4 - M[11] * s3);
-
-  R[4] = d * (-M[4] * c5 + M[6] * c2 - M[7] * c1);
-  R[5] = d * (M[0] * c5 - M[2] * c2 + M[3] * c1);
-  R[6] = d * (-M[12] * s5 + M[14] * s2 - M[15] * s1);
-  R[7] = d * (M[8] * s5 - M[10] * s2 + M[11] * s1);
-
-  R[8] = d * (M[4] * c4 - M[5] * c2 + M[7] * c0);
-  R[9] = d * (-M[0] * c4 + M[1] * c2 - M[3] * c0);
-  R[10] = d * (M[12] * s4 - M[13] * s2 + M[15] * s0);
-  R[11] = d * (-M[8] * s4 + M[9] * s2 - M[11] * s0);
-
-  R[12] = d * (-M[4] * c3 + M[5] * c1 - M[6] * c0);
-  R[13] = d * (M[0] * c3 - M[1] * c1 + M[2] * c0);
-  R[14] = d * (-M[12] * s3 + M[13] * s1 - M[14] * s0);
-  R[15] = d * (M[8] * s3 - M[9] * s1 + M[10] * s0);
-  return true;
+  return M[0] * (M[5] * c5 - M[6] * c4 + M[7] * c3) - M[1] * (M[4] * c5 - M[6] * c2 + M[7] * c1) +
+         M[2] * (M[4] * c4 - M[5] * c2 + M[7] * c0) - M[3] * (M[4] * c3 - M[5] * c1 + M[6] * c0);
 }
 
 // ============================================================================
@@ -344,11 +291,10 @@ __device__ void Mat4SqrtNewton(const float *A, float *S) {
   for (int it = 0; it < 32; ++it) {
     if (!Inv4(X, T1)) {
 #pragma unroll
-      for (int i = 0; i < 16; ++i)
-        S[i] = IsDiag4(i) ? 1.f : 0.f;
+      for (int i = 0; i < 16; ++i) S[i] = IsDiag4(i) ? 1.f : 0.f;
       return;
     }
-    Mat4Mul(A, T1, T2); // T2 = A * X^{-1}
+    Mat4Mul(A, T1, T2);  // T2 = A * X^{-1}
     float diff_sq = 0.f;
 #pragma unroll
     for (int i = 0; i < 16; ++i) {
@@ -384,8 +330,7 @@ __device__ void Mat4Log(const float *T, float *L) {
   // B ← B − I  (reuse B as the deviation from identity)
 #pragma unroll
   for (int i = 0; i < 16; ++i) {
-    if (IsDiag4(i))
-      B[i] -= 1.f;
+    if (IsDiag4(i)) B[i] -= 1.f;
   }
 
   // Horner evaluation of P(B) = sum_{k=0}^{N-1} c_k B^k
@@ -404,8 +349,7 @@ __device__ void Mat4Log(const float *T, float *L) {
   float W[16];
   for (int k = kLogOrder - 2; k >= 0; --k) {
     Mat4Mul(B, P, W);
-    c = (k % 2 == 0) ? 1.f / static_cast<float>(k + 1)
-                     : -1.f / static_cast<float>(k + 1);
+    c = (k % 2 == 0) ? 1.f / static_cast<float>(k + 1) : -1.f / static_cast<float>(k + 1);
 #pragma unroll
     for (int i = 0; i < 16; ++i) {
       P[i] = W[i] + (IsDiag4(i) ? c : 0.f);
@@ -438,70 +382,13 @@ __device__ void ProjectToSL4(float *M) {
   }
 }
 
-// Nonzero entries of column `col` of the 16×15 orthonormal VEC_TO_ALG matrix.
-// Writes up to four (row, value) pairs; returns the number of nonzeros (2–4).
-//
-// The matrix encodes the 15 orthonormal basis elements of sl(4):
-//   cols 0–5:   (E_{ij} − E_{ji})/√2   (skew-symmetric rotations)
-//   cols 6–11:  (E_{ij} + E_{ji})/√2   (symmetric off-diagonal shears)
-//   cols 12–14: traceless diagonal vectors H₁, H₂, H₃
-__device__ int VecToAlgColumnSupport(int col, int *rows, float *vals) {
-  constexpr int kPairs[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
-  if (col < 6) {
-    int p = col;
-    int r1 = kPairs[p][0] * 4 + kPairs[p][1];
-    int r2 = kPairs[p][1] * 4 + kPairs[p][0];
-    rows[0] = r1;
-    vals[0] = kInvSqrt2;
-    rows[1] = r2;
-    vals[1] = -kInvSqrt2;
-    return 2;
-  }
-  if (col < 12) {
-    int p = col - 6;
-    int r1 = kPairs[p][0] * 4 + kPairs[p][1];
-    int r2 = kPairs[p][1] * 4 + kPairs[p][0];
-    rows[0] = r1;
-    vals[0] = kInvSqrt2;
-    rows[1] = r2;
-    vals[1] = kInvSqrt2;
-    return 2;
-  }
-  if (col == 12) {
-    rows[0] = 0;
-    vals[0] = kInvSqrt2;
-    rows[1] = 5;
-    vals[1] = -kInvSqrt2;
-    return 2;
-  }
-  if (col == 13) {
-    rows[0] = 0;
-    vals[0] = kInvSqrt6;
-    rows[1] = 5;
-    vals[1] = kInvSqrt6;
-    rows[2] = 10;
-    vals[2] = -2.f * kInvSqrt6;
-    return 3;
-  }
-  rows[0] = 0;
-  vals[0] = kInvSqrt12;
-  rows[1] = 5;
-  vals[1] = kInvSqrt12;
-  rows[2] = 10;
-  vals[2] = kInvSqrt12;
-  rows[3] = 15;
-  vals[3] = -3.f * kInvSqrt12;
-  return 4;
-}
-
 // ============================================================================
 // CUDA Kernels
 // ============================================================================
 
 // xi → T = ProjectToSL4(exp(Hat(xi))).
-__global__ void ExpSL4Kernel(const float *twist, size_t twist_stride,
-                             size_t transform_pitch, size_t transform_stride,
-                             size_t size, float *transform) {
+__global__ void ExpSL4Kernel(const float *twist, size_t twist_stride, size_t transform_pitch,
+                             size_t transform_stride, size_t size, float *transform) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= static_cast<int>(size)) {
     return;
@@ -526,8 +413,8 @@ __global__ void ExpSL4Kernel(const float *twist, size_t twist_stride,
 
 // T → xi = Vee(log(T)).
 __global__ void LogSL4Kernel(const float *transform, size_t transform_pitch,
-                             size_t transform_stride, size_t twist_stride,
-                             size_t size, float *twist) {
+                             size_t transform_stride, size_t twist_stride, size_t size,
+                             float *twist) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= static_cast<int>(size)) {
     return;
@@ -551,8 +438,7 @@ __global__ void LogSL4Kernel(const float *transform, size_t transform_pitch,
 // T → T^{-1}.
 __global__ void InverseSL4Kernel(const float *transform, size_t transform_pitch,
                                  size_t transform_stride, size_t inverse_pitch,
-                                 size_t inverse_stride, size_t size,
-                                 float *inverse_transform) {
+                                 size_t inverse_stride, size_t size, float *inverse_transform) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= static_cast<int>(size)) {
     return;
@@ -599,26 +485,22 @@ constexpr int kAdjBlockSize = kAdjWarpsPerBlock * 32;
 
 __global__ void AdjointSL4Kernel(const float *transform, size_t transform_pitch,
                                  size_t transform_stride, size_t adjoint_pitch,
-                                 size_t adjoint_stride, size_t size,
-                                 float *adjoint) {
-  __shared__ int s_basis_nnz[15];
-  __shared__ int s_basis_rows[15][4];
-  __shared__ float s_basis_vals[15][4];
+                                 size_t adjoint_stride, size_t size, float *adjoint) {
+  __shared__ lie_device::SL4Basis s_basis;
   __shared__ float s_T[kAdjWarpsPerBlock][16];
   __shared__ float s_Tinv[kAdjWarpsPerBlock][16];
   __shared__ int s_ok[kAdjWarpsPerBlock];
 
   if (threadIdx.x < 15) {
-    s_basis_nnz[threadIdx.x] = VecToAlgColumnSupport(
-        threadIdx.x, s_basis_rows[threadIdx.x], s_basis_vals[threadIdx.x]);
+    s_basis.nnz[threadIdx.x] = lie_device::SL4BasisColumnSupport(
+        threadIdx.x, s_basis.rows[threadIdx.x], s_basis.vals[threadIdx.x]);
   }
   __syncthreads();
 
   const int lane = threadIdx.x & 31;
   const int local_warp = threadIdx.x >> 5;
   const int warp_id = local_warp + blockIdx.x * kAdjWarpsPerBlock;
-  if (warp_id >= static_cast<int>(size))
-    return;
+  if (warp_id >= static_cast<int>(size)) return;
 
   const float *M = transform + warp_id * transform_stride;
   float *Ad = adjoint + warp_id * adjoint_stride;
@@ -642,54 +524,17 @@ __global__ void AdjointSL4Kernel(const float *transform, size_t transform_pitch,
     return;
   }
 
-  const float *__restrict__ wT = s_T[local_warp];
-  const float *__restrict__ wTi = s_Tinv[local_warp];
-
   for (int idx = lane; idx < 225; idx += 32) {
-    int i = idx / 15;
-    int j = idx - i * 15;
-
-    int ni = s_basis_nnz[i];
-    int nj = s_basis_nnz[j];
-    const int *ri = s_basis_rows[i];
-    const float *vi = s_basis_vals[i];
-    const int *rj = s_basis_rows[j];
-    const float *vj = s_basis_vals[j];
-
-    float s = 0.f;
-#pragma unroll 4
-    for (int ia = 0; ia < ni; ++ia) {
-      int a = ri[ia];
-      float va = vi[ia];
-      float t_row0 = va * wT[(a >> 2) * 4];
-      float t_row1 = va * wT[(a >> 2) * 4 + 1];
-      float t_row2 = va * wT[(a >> 2) * 4 + 2];
-      float t_row3 = va * wT[(a >> 2) * 4 + 3];
-      int mi = a & 3;
-#pragma unroll 4
-      for (int jb = 0; jb < nj; ++jb) {
-        int t = rj[jb];
-        int bj = t >> 2;
-        float tinv = wTi[(t & 3) * 4 + mi];
-        float tij;
-        if (bj == 0)
-          tij = t_row0;
-        else if (bj == 1)
-          tij = t_row1;
-        else if (bj == 2)
-          tij = t_row2;
-        else
-          tij = t_row3;
-        s += tij * tinv * vj[jb];
-      }
-    }
-    Ad[i * adjoint_pitch + j] = s;
+    const int i = idx / 15;
+    const int j = idx - i * 15;
+    Ad[i * adjoint_pitch + j] =
+        lie_device::SL4AdjointEntry(s_basis, i, j, s_T[local_warp], s_Tinv[local_warp]);
   }
 }
 
 // Element-wise negation of 15×15 matrices.
-__global__ void Negate15x15Kernel(const float *in_mat, size_t pitch,
-                                  size_t stride, size_t size, float *out_mat) {
+__global__ void Negate15x15Kernel(const float *in_mat, size_t pitch, size_t stride, size_t size,
+                                  float *out_mat) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= static_cast<int>(size)) {
     return;
@@ -706,8 +551,7 @@ __global__ void Negate15x15Kernel(const float *in_mat, size_t pitch,
 }
 
 // Fill 15×15 identity matrices.
-__global__ void Identity15x15Kernel(size_t size, float *matrices, size_t pitch,
-                                    size_t stride) {
+__global__ void Identity15x15Kernel(size_t size, float *matrices, size_t pitch, size_t stride) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= static_cast<int>(size)) {
     return;
@@ -722,70 +566,61 @@ __global__ void Identity15x15Kernel(size_t size, float *matrices, size_t pitch,
   }
 }
 
-} // namespace
+}  // namespace
 
 // ============================================================================
 // Host API
 // ============================================================================
 
-void ComputeExpSL4(cudaStream_t stream, const float *twist,
-                   const size_t twist_stride, const size_t transform_pitch,
-                   const size_t transform_stride, size_t size,
+void ComputeExpSL4(cudaStream_t stream, const float *twist, const size_t twist_stride,
+                   const size_t transform_pitch, const size_t transform_stride, size_t size,
                    float *transform) {
   size_t nb = (size + kBlockSize - 1) / kBlockSize;
-  ExpSL4Kernel<<<nb, kBlockSize, 0, stream>>>(
-      twist, twist_stride, transform_pitch, transform_stride, size, transform);
+  ExpSL4Kernel<<<nb, kBlockSize, 0, stream>>>(twist, twist_stride, transform_pitch,
+                                              transform_stride, size, transform);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeLogSL4(cudaStream_t stream, const float *transform,
-                   const size_t transform_pitch, const size_t transform_stride,
-                   const size_t twist_stride, size_t size, float *twist) {
+void ComputeLogSL4(cudaStream_t stream, const float *transform, const size_t transform_pitch,
+                   const size_t transform_stride, const size_t twist_stride, size_t size,
+                   float *twist) {
   size_t nb = (size + kBlockSize - 1) / kBlockSize;
-  LogSL4Kernel<<<nb, kBlockSize, 0, stream>>>(
-      transform, transform_pitch, transform_stride, twist_stride, size, twist);
+  LogSL4Kernel<<<nb, kBlockSize, 0, stream>>>(transform, transform_pitch, transform_stride,
+                                              twist_stride, size, twist);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeInverseSL4(cudaStream_t stream, const float *transform,
-                       const size_t transform_pitch,
-                       const size_t transform_stride,
-                       const size_t inverse_pitch, const size_t inverse_stride,
-                       size_t size, float *inverse_transform) {
+void ComputeInverseSL4(cudaStream_t stream, const float *transform, const size_t transform_pitch,
+                       const size_t transform_stride, const size_t inverse_pitch,
+                       const size_t inverse_stride, size_t size, float *inverse_transform) {
   size_t nb = (size + kBlockSize - 1) / kBlockSize;
-  InverseSL4Kernel<<<nb, kBlockSize, 0, stream>>>(
-      transform, transform_pitch, transform_stride, inverse_pitch,
-      inverse_stride, size, inverse_transform);
+  InverseSL4Kernel<<<nb, kBlockSize, 0, stream>>>(transform, transform_pitch, transform_stride,
+                                                  inverse_pitch, inverse_stride, size,
+                                                  inverse_transform);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeAdjointSL4(cudaStream_t stream, const float *transform,
-                       const size_t transform_pitch,
-                       const size_t transform_stride,
-                       const size_t adjoint_pitch, const size_t adjoint_stride,
-                       size_t size, float *adjoint) {
+void ComputeAdjointSL4(cudaStream_t stream, const float *transform, const size_t transform_pitch,
+                       const size_t transform_stride, const size_t adjoint_pitch,
+                       const size_t adjoint_stride, size_t size, float *adjoint) {
   size_t nb = (size + kAdjWarpsPerBlock - 1) / kAdjWarpsPerBlock;
-  AdjointSL4Kernel<<<nb, kAdjBlockSize, 0, stream>>>(
-      transform, transform_pitch, transform_stride, adjoint_pitch,
-      adjoint_stride, size, adjoint);
+  AdjointSL4Kernel<<<nb, kAdjBlockSize, 0, stream>>>(transform, transform_pitch, transform_stride,
+                                                     adjoint_pitch, adjoint_stride, size, adjoint);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ComputeNegateMatrix15x15(cudaStream_t stream, const float *matrix,
-                              const size_t pitch, const size_t stride,
-                              size_t size, float *out) {
+void ComputeNegateMatrix15x15(cudaStream_t stream, const float *matrix, const size_t pitch,
+                              const size_t stride, size_t size, float *out) {
   size_t nb = (size + kBlockSize - 1) / kBlockSize;
-  Negate15x15Kernel<<<nb, kBlockSize, 0, stream>>>(matrix, pitch, stride, size,
-                                                   out);
+  Negate15x15Kernel<<<nb, kBlockSize, 0, stream>>>(matrix, pitch, stride, size, out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void FillIdentity15x15(cudaStream_t stream, size_t size, float *matrices,
-                       const size_t pitch, const size_t stride) {
+void FillIdentity15x15(cudaStream_t stream, size_t size, float *matrices, const size_t pitch,
+                       const size_t stride) {
   size_t nb = (size + kBlockSize - 1) / kBlockSize;
-  Identity15x15Kernel<<<nb, kBlockSize, 0, stream>>>(size, matrices, pitch,
-                                                     stride);
+  Identity15x15Kernel<<<nb, kBlockSize, 0, stream>>>(size, matrices, pitch, stride);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-} // namespace cunls
+}  // namespace cunls

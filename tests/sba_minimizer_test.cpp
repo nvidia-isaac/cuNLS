@@ -42,7 +42,6 @@
 #include <stdexcept>
 #include <string>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
@@ -181,9 +180,9 @@ static bool ReadOneSbaProblem(std::istream &in, SbaProblemHost &out) {
  *
  * Does not own the binary file; tests open it and call ReadOneSbaProblem.
  * BuildProblemFromHost() allocates device buffers, builds SE3StateBatch and
- * VectorStateBatch for poses/points (with fixed blocks from N_fixed_*),
+ * VectorStateBatch for poses/points (with fixed states from N_fixed_*),
  * InformationFactorBatch wrapping ReprojectionFactorBatch, and wires factor
- * to state blocks via state_pointers_ (pose then point per observation).
+ * to states via state_pointers_ (pose then point per observation).
  * Huber loss is applied to the information-weighted residuals.
  */
 class SbaMinimizerTestFixture : public ::testing::Test {
@@ -193,7 +192,7 @@ class SbaMinimizerTestFixture : public ::testing::Test {
    * state in fixture.
    *
    * Copies poses, points, observations, sqrt information, and camera_from_rig
-   * to device; builds pose and point state batches with fixed blocks for the
+   * to device; builds pose and point state batches with fixed states for the
    * first N_fixed_poses and N_fixed_points; builds InformationFactorBatch over
    * ReprojectionFactorBatch and assigns each factor to (pose_id, point_id).
    * Adds state batches and one factor batch (with Huber loss) to @p problem.
@@ -243,7 +242,7 @@ class SbaMinimizerTestFixture : public ::testing::Test {
     sqrt_information_device_ = dvector<Matrix<2>>(sqrt_info);
     camera_from_rig_per_obs_device_ = dvector<SE3Transform>(camera_from_rig_per_obs);
 
-    // Fixed blocks: first N_fixed_poses poses and N_fixed_points points are
+    // Fixed states: first N_fixed_poses poses and N_fixed_points points are
     // constant.
     std::vector<int> const_pose_ids;
     for (int i = 0; i < n_fixed_poses && i < static_cast<int>(n_poses); i++) {
@@ -259,17 +258,21 @@ class SbaMinimizerTestFixture : public ::testing::Test {
     const float *poses_ptr = reinterpret_cast<const float *>(poses_device_.data());
     const float *points_ptr = reinterpret_cast<const float *>(points_device_.data());
 
-    pose_batch_ = std::make_unique<SE3StateBatch>(
-        cublas_handle_, poses_ptr, n_poses, const_pose_ids_device_.data(), const_pose_ids.size());
+    pose_batch_ = std::make_unique<SE3StateBatch>(poses_ptr, n_poses, const_pose_ids_device_.data(),
+                                                  const_pose_ids.size());
+    pose_batch_->SetNumActiveStates(pose_batch_->Capacity(), pose_batch_->ConstCapacity());
     point_batch_ = std::make_unique<VectorStateBatch<3>>(
         points_ptr, n_points, const_point_ids_device_.data(), const_point_ids.size());
+    point_batch_->SetNumActiveStates(point_batch_->Capacity(), point_batch_->ConstCapacity());
 
     reproj_batch_ = std::make_unique<ReprojectionFactorBatch>(
         observations_device_.data(), camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
+    reproj_batch_->SetNumActiveFactors(reproj_batch_->Capacity());
 
     info_factor_batch_ = std::make_unique<InformationFactorBatch<ReprojectionFactorBatch>>(
-        cublas_handle_, sqrt_information_device_.data(), n_obs, observations_device_.data(),
+        sqrt_information_device_.data(), n_obs, observations_device_.data(),
         camera_from_rig_per_obs_device_.data(), n_obs, kZThreshold);
+    info_factor_batch_->SetNumActiveFactors(info_factor_batch_->Capacity());
 
     // Factor i connects pose host.pose_ids[i] and point host.point_ids[i].
     state_pointers_.clear();
@@ -281,8 +284,8 @@ class SbaMinimizerTestFixture : public ::testing::Test {
           static_cast<size_t>(point_id) >= n_points) {
         throw std::runtime_error("SbaProblem: invalid pose_id or point_id");
       }
-      state_pointers_.push_back(pose_batch_->StateBlockDevicePtr(static_cast<size_t>(pose_id)));
-      state_pointers_.push_back(point_batch_->StateBlockDevicePtr(static_cast<size_t>(point_id)));
+      state_pointers_.push_back(pose_batch_->StateDevicePtr(static_cast<size_t>(pose_id)));
+      state_pointers_.push_back(point_batch_->StateDevicePtr(static_cast<size_t>(point_id)));
     }
 
     problem->AddStateBatch(pose_batch_.get());
@@ -292,7 +295,6 @@ class SbaMinimizerTestFixture : public ::testing::Test {
     problem->AddFactorBatch(info_factor_batch_.get(), huber_loss_batch_.get(), state_pointers_);
   }
 
-  cuBLASHandle cublas_handle_;
   dvector<SE3Transform> poses_device_;
   dvector<Vector<3>> points_device_;
   dvector<Vector<2>> observations_device_;

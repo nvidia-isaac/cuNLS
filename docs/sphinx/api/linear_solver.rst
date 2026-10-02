@@ -8,6 +8,12 @@ solvers) behind a common interface. Every backend accepts scalar CSR; all
 but cuDSS also accept block BSR directly, which is what
 :cpp:func:`SupportsBlockStorage` reports.
 
+This page documents the C++ API only: ``pycunls`` does not expose the linear
+solver classes. From Python, the backend is selected through the
+``sparse_linear_solver_type`` field of
+:ref:`pycunls.MinimizerOptions <py-minimizer-options-label>` (see
+:ref:`pycunls.SparseLinearSolverType <py-enums-label>`).
+
 SparseLinearSolverType
 ----------------------
 
@@ -116,8 +122,8 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   with ``size_i``-square diagonal tiles.  When empty (default),
   ``Initialize`` derives the layout automatically from the
   ``Problem``'s state batches (segment per non-empty batch with
-  ``size = TangentSize()``, ``count = NumStateBlocks() -
-  NumConstStateBlocks()``).
+  ``size = TangentSize()``, ``count = NumActiveStates() -
+  NumConstStates()``).
 - ``max_iterations`` - [in] PCG iteration cap.  Default: ``200``.
 - ``relative_tolerance`` - [in] Stop when
   ``||r_k|| <= relative_tolerance * ||b||``.  Default: ``1e-3``.

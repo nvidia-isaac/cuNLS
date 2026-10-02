@@ -35,7 +35,7 @@ namespace cunls {
  * triplets). Caller must provide a device buffer of at least this many bytes,
  * interpreted as `float*` to the first element for the API.
  *
- * @param num_residuals Number of factors (same as `FactorBatch::NumFactors()`
+ * @param num_residuals Number of factors (same as `FactorBatch::NumActiveFactors()`
  * for this batch).
  */
 inline size_t ResidualBatchWorkspaceSizeBytes(size_t num_residuals) {
@@ -83,32 +83,32 @@ class ResidualBatch {
    * (factor, loss, scaling).
    * @param workspace Device pointer to scratch memory on the **same stream's
    * device**. Must not alias `residuals`, `jacobians`, or `cost` ranges used by
-   * this call. Minimum size: `ResidualBatchWorkspaceSizeBytes(NumFactors())`
-   * bytes (or `ResidualBatchWorkspaceNumFloats(NumFactors())` floats in a
-   * `float` arena); layout: the first `NumFactors()` floats hold per-factor
+   * this call. Minimum size: `ResidualBatchWorkspaceSizeBytes(NumActiveFactors())`
+   * bytes (or `ResidualBatchWorkspaceNumFloats(NumActiveFactors())` floats in a
+   * `float` arena); layout: the first `NumActiveFactors()` floats hold per-factor
    * squared L2 norms, then aligned `float3` rho values written by the loss
    * batch.
-   * @param residuals Device array of length `NumFactors() * ResidualsSize()`,
+   * @param residuals Device array of length `NumActiveFactors() * ResidualsSize()`,
    * row-major packed residual vectors (one block of length `ResidualsSize()`
    * per factor). Written by the factor batch, then scaled in place when a
    * non-trivial loss is set. Must not be `nullptr`.
    * @param state_pointers Device array of `float*` with length matching
    * `FactorBatch::Evaluate` requirements (one pointer per factor instance into
-   * state blocks). Ownership of pointed-to memory is unchanged. Must not be
+   * states). Ownership of pointed-to memory is unchanged. Must not be
    * `nullptr`.
-   * @param cost Optional. If non-null, device array of length `NumFactors()`
+   * @param cost Optional. If non-null, device array of length `NumActiveFactors()`
    * filled with `0.5 * rho(||r_i||^2).x` per factor after the loss is applied
    * (trivial loss: `0.5*s`).
    * @param jacobians Optional. If non-null, Jacobian values for this batch in
    * the same layout as `FactorBatch::Evaluate`: row-major with dimensions
-   *                  `(NumFactors() * ResidualsSize())` rows and
-   * `sum(StateBlockSizes())` columns (one row block of height `ResidualsSize()`
+   *                  `(NumActiveFactors() * ResidualsSize())` rows and
+   * `sum(StateSizes())` columns (one row block of height `ResidualsSize()`
    * per factor). Written by the factor batch then scaled when a non-trivial
    * loss is set.
    * @param factor_ids Factor of each item, forwarded to FactorBatch::Evaluate
-   * (nullptr: item t uses factor t % NumFactors()).
+   * (nullptr: item t uses factor t % NumActiveFactors()).
    * @param num_factor_ids Item count n, forwarded to FactorBatch::Evaluate (0
-   * means NumFactors()). Every "per factor" size above becomes "per item":
+   * means NumActiveFactors()). Every "per factor" size above becomes "per item":
    * workspace for n entries, residuals / cost / Jacobians for n items.
    * @return True on success.
    */
@@ -131,9 +131,9 @@ class ResidualBatch {
    * @param stream CUDA stream used for all kernels launched by this call.
    * @param workspace Device scratch; same sizing contract as `Evaluate`'s
    * `workspace` parameter.
-   * @param residuals Device array of raw residuals (`NumFactors() *
+   * @param residuals Device array of raw residuals (`NumActiveFactors() *
    * ResidualsSize()` floats), scaled in place.
-   * @param cost Optional device array of length `NumFactors()`, filled if
+   * @param cost Optional device array of length `NumActiveFactors()`, filled if
    * non-null.
    * @param jacobians Optional raw Jacobian blocks (same layout as
    * `FactorBatch::Evaluate`), scaled in place if non-null.

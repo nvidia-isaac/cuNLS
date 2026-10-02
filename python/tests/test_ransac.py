@@ -64,19 +64,21 @@ def _pnp_scene(n, outlier_ratio, seed):
 
 class _PnPProblem:
     def __init__(self, init, pts, obs, with_prior=False):
-        self.cublas = pycunls.CublasHandle()
         self.pose_gpu = cp.asarray(init.reshape(-1))
         self.pts_gpu = cp.asarray(pts.reshape(-1))
         self.obs_gpu = cp.asarray(obs.reshape(-1))
-        self.state = pycunls.SE3StateBatch(self.cublas, self.pose_gpu, 1)
+        self.state = pycunls.SE3StateBatch(self.pose_gpu, 1)
+        self.state.set_num_active_states(self.state.capacity, self.state.const_capacity)
         self.pnp = pycunls.PnPFactorBatch(self.obs_gpu, self.pts_gpu, len(pts))
+        self.pnp.set_num_active_factors(self.pnp.capacity)
         self.problem = pycunls.Problem()
         self.problem.add_state_batch(self.state)
-        ptr = self.state.state_block_device_ptr(0)
+        ptr = self.state.state_device_ptr(0)
         self.problem.add_factor_batch(self.pnp, [ptr] * len(pts))
         if with_prior:
             self.prior_gpu = cp.asarray(init.reshape(-1))
             self.prior = pycunls.SE3PriorFactorBatch(self.prior_gpu, 1)
+            self.prior.set_num_active_factors(self.prior.capacity)
             self.problem.add_factor_batch(self.prior, [ptr])
 
     def pose(self):
@@ -182,7 +184,7 @@ class TestRansacPnP:
 # hand) and a custom factor. The kernels follow the item / replica contract:
 #   * evaluate: item t reads measurement f(t) = factor_ids[t] (or t % N),
 #     its own state pointer state_pointers[t], and writes row t;
-#   * plus: process num_replicas * num_blocks blocks.
+#   * plus: process num_replicas * num_active_states states.
 
 class _StreamHandle:
     """Exposes a raw cudaStream_t handle through the CUDA stream protocol."""
@@ -228,7 +230,7 @@ class LineState(pycunls.CustomStateBatch):
         super().__init__(data, 2, 2, 1)
 
     def plus(self, x_ptr, delta_ptr, out_ptr, stream_handle, num_replicas):
-        n = 2 * self.num_state_blocks * num_replicas  # every replica, every float
+        n = 2 * self.num_active_states * num_replicas  # every replica, every float
         with cupy_stream(stream_handle):
             _plus_kernel(((n + 127) // 128,), (128,),
                          (cp.uint64(x_ptr), cp.uint64(delta_ptr), cp.uint64(out_ptr),
@@ -244,7 +246,7 @@ class LineFactor(pycunls.CustomFactorBatch):
         n = num_factor_ids  # always the actual item count in Python
         with cupy_stream(stream_handle):
             _line_kernel(((n + 127) // 128,), (128,),
-                         (self.xs, self.ys, cp.uint64(factor_ids_ptr), cp.int32(self.num_factors),
+                         (self.xs, self.ys, cp.uint64(factor_ids_ptr), cp.int32(self.num_active_factors),
                           cp.uint64(sp_ptr), cp.uint64(res_ptr), cp.uint64(jac_ptr),
                           cp.int32(n)))
         return True
@@ -261,10 +263,12 @@ class TestCustomTypesUnderRansac:
 
         ab = cp.zeros(2, dtype=cp.float32)
         state = LineState(ab)
+        state.set_num_active_states(state.capacity, state.const_capacity)
         factor = LineFactor(cp.asarray(xs), cp.asarray(ys))
+        factor.set_num_active_factors(factor.capacity)
         problem = pycunls.Problem()
         problem.add_state_batch(state)
-        problem.add_factor_batch(factor, [state.state_block_device_ptr(0)] * n)
+        problem.add_factor_batch(factor, [state.state_device_ptr(0)] * n)
 
         o = pycunls.RansacMinimizerOptions()
         o.default_inlier_threshold = 0.05

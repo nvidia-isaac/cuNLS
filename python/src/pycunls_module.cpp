@@ -29,7 +29,7 @@ NB_MODULE(_pycunls_core, m) {
       "Python bindings for cuNLS: CUDA-accelerated nonlinear least "
       "squares solver";
 
-  bind_types(m);      // CudaStream, CublasHandle, enums, MinimizerOptions, etc.
+  bind_types(m);      // CudaStream, enums, MinimizerOptions, etc.
   bind_state(m);      // StateBatch subclasses (VectorStateBatch, SE3StateBatch, ...)
   bind_factor(m);     // FactorBatch subclasses + CustomFactorBatch trampoline
   bind_loss(m);       // Robust loss functions (Huber, Cauchy, Tukey, ...)

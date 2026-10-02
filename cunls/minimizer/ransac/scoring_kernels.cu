@@ -36,7 +36,7 @@ namespace {
 constexpr int kBlockThreads = 256;
 constexpr int kMaxTop = 64;
 
-/** True if the factor's Jacobian has a non-zero entry on a free (non-constant) block. */
+/** True if the factor's Jacobian has a non-zero entry on a free (non-constant) state. */
 __device__ bool IsInformative(const BatchView &view, int local_slot, int f) {
   const float *jac = view.jac + static_cast<size_t>(local_slot) * view.stride_jac +
                      static_cast<size_t>(f) * view.m * view.n;

@@ -100,13 +100,12 @@ def _gather_state_values(state_ptrs_ptr: int, count: int) -> cp.ndarray:
 class PositiveScalarStateBatch(WarpStateBatch):
     """Positive-scalar manifold: Plus(x, delta) = x * exp(delta)."""
 
-    def __init__(self, data, num_blocks, **kwargs):
+    def __init__(self, data, capacity, **kwargs):
         super().__init__(data, ambient_size=1, tangent_size=1,
-                         num_blocks=num_blocks, **kwargs)
-        self._num = num_blocks
+                         capacity=capacity, **kwargs)
 
     def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
-        n = self._num * num_replicas  # contiguous replicas, per-block manifold
+        n = self.num_active_states * num_replicas  # contiguous replicas, per-state manifold
         x = self.wrap_array(x_ptr, wp.float32, n)
         delta = self.wrap_array(delta_ptr, wp.float32, n)
         x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)
@@ -124,11 +123,10 @@ class LogPriorFactor(WarpFactorBatch):
     d/d(delta)[log(x * exp(delta))] at delta=0 equals 1.
     """
 
-    def __init__(self, observations_wp: wp.array, num_factors: int):
-        super().__init__(residual_size=1, state_block_sizes=[1],
-                         num_factors=num_factors)
+    def __init__(self, observations_wp: wp.array, capacity: int):
+        super().__init__(residual_size=1, state_sizes=[1],
+                         capacity=capacity)
         self.observations = observations_wp
-        self._num = num_factors
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
@@ -159,15 +157,19 @@ class TestCustomStateBatch:
     def test_basic_properties(self):
         data = cp.ones(10, dtype=cp.float32)
         sb = PositiveScalarStateBatch(data, 10)
-        assert sb.num_state_blocks == 10
+        assert sb.capacity == 10
+        assert sb.num_active_states == 0  # zero until set
+        sb.set_num_active_states(10)
+        assert sb.num_active_states == 10
         assert sb.ambient_size == 1
         assert sb.tangent_size == 1
 
-    def test_state_block_device_ptr(self):
+    def test_state_device_ptr(self):
         data = cp.ones(5, dtype=cp.float32)
         sb = PositiveScalarStateBatch(data, 5)
-        p0 = sb.state_block_device_ptr(0)
-        p1 = sb.state_block_device_ptr(1)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
+        p0 = sb.state_device_ptr(0)
+        p1 = sb.state_device_ptr(1)
         assert p0 != 0
         assert p1 - p0 == 4  # 1 float * 4 bytes
 
@@ -182,8 +184,10 @@ class TestCustomStateBatch:
         const_ids = cp.array([0], dtype=cp.int32)
         sb = PositiveScalarStateBatch(data, 10,
                                       const_state_ids=const_ids,
-                                      num_const_state_blocks=1)
-        assert sb.num_state_blocks == 10
+                                      const_capacity=1)
+        assert (sb.capacity, sb.const_capacity) == (10, 1)
+        sb.set_num_active_states(10, 1)
+        assert sb.num_active_states == 10
 
 
 class TestPositiveScalarEndToEnd:
@@ -201,9 +205,11 @@ class TestPositiveScalarEndToEnd:
         obs_wp = wp.array(targets, dtype=wp.float32, device="cuda:0")
 
         sb = PositiveScalarStateBatch(states_gpu, n)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = LogPriorFactor(obs_wp, n)
+        fb.set_num_active_factors(fb.capacity)
 
-        ptrs = [sb.state_block_device_ptr(i) for i in range(n)]
+        ptrs = [sb.state_device_ptr(i) for i in range(n)]
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)

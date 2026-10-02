@@ -50,7 +50,6 @@
 #include <string>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/profiler.h"
@@ -190,7 +189,7 @@ class PgoMinimizerTestFixture : public ::testing::Test {
    * Uploads poses, deltas, and sqrt-information matrices to device memory,
    * constructs an SE3StateBatch with fixed-pose anchoring, wraps
    * SE3BetweenFactorBatch inside InformationFactorBatch, and wires factor
-   * to state blocks via state_pointers_ (target-pose then source-pose per
+   * to states via state_pointers_ (target-pose then source-pose per
    * edge, matching SE3BetweenFactorBatch convention).
    *
    * @param host    Host-side problem data read from the binary file.
@@ -211,24 +210,25 @@ class PgoMinimizerTestFixture : public ::testing::Test {
 
     const float *poses_ptr = reinterpret_cast<const float *>(poses_device_.data());
 
-    // SE3StateBatch: one 4×4 block per pose; fixed poses are anchored
-    pose_batch_ =
-        std::make_unique<SE3StateBatch>(cublas_handle_, poses_ptr, n_poses,
-                                        fixed_pose_ids_device_.data(), host.fixed_pose_ids.size());
+    // SE3StateBatch: one 4×4 matrix per pose; fixed poses are anchored
+    pose_batch_ = std::make_unique<SE3StateBatch>(poses_ptr, n_poses, fixed_pose_ids_device_.data(),
+                                                  host.fixed_pose_ids.size());
+    pose_batch_->SetNumActiveStates(pose_batch_->Capacity(), pose_batch_->ConstCapacity());
 
     // Upload sqrt-information matrices and create the factor batch
     sqrt_info_device_ = dvector<Matrix<6>>(host.sqrt_info_matrices);
     info_factor_batch_ = std::make_unique<InformationFactorBatch<SE3BetweenFactorBatch>>(
-        cublas_handle_, sqrt_info_device_.data(), n_deltas, pose_deltas_device_.data(), n_deltas);
+        sqrt_info_device_.data(), n_deltas, pose_deltas_device_.data(), n_deltas);
+    info_factor_batch_->SetNumActiveFactors(info_factor_batch_->Capacity());
 
-    // Wire each edge to its two pose state blocks
+    // Wire each edge to its two pose states
     state_pointers_.clear();
     state_pointers_.reserve(n_deltas * 2);
     for (size_t i = 0; i < n_deltas; i++) {
       state_pointers_.push_back(
-          pose_batch_->StateBlockDevicePtr(static_cast<size_t>(host.pose2_ids[i])));
+          pose_batch_->StateDevicePtr(static_cast<size_t>(host.pose2_ids[i])));
       state_pointers_.push_back(
-          pose_batch_->StateBlockDevicePtr(static_cast<size_t>(host.pose1_ids[i])));
+          pose_batch_->StateDevicePtr(static_cast<size_t>(host.pose1_ids[i])));
     }
 
     problem->AddStateBatch(pose_batch_.get());
@@ -236,7 +236,6 @@ class PgoMinimizerTestFixture : public ::testing::Test {
   }
 
   // -- Device-side storage (lifetime must outlive the Problem) ---------------
-  cuBLASHandle cublas_handle_;
   dvector<SE3Transform> poses_device_;
   dvector<SE3Transform> pose_deltas_device_;
   dvector<Matrix<6>> sqrt_info_device_;

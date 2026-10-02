@@ -62,10 +62,12 @@ def scalar_diff_kernel(measurements: wp.array(dtype=wp.float32),
 
 
 class ScalarDiffFactor(WarpFactorBatch):
-    """residual = (x_right - x_left) - m; one residual, two scalar state blocks."""
+    """residual = (x_right - x_left) - m; one residual, two scalar states."""
 
-    def __init__(self, measurements, num_factors):
-        super().__init__(residual_size=1, state_block_sizes=[1, 1], num_factors=num_factors)
+    def __init__(self, measurements, capacity):
+        # capacity: measurements the buffer holds (fixed). self.num_active_factors is the
+        # active count: 0 until set_num_active_factors().
+        super().__init__(residual_size=1, state_sizes=[1, 1], capacity=capacity)
         self.measurements = measurements
 
     def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
@@ -101,8 +103,8 @@ def scalar_diff_residual_only_kernel(measurements: wp.array(dtype=wp.float32),
 class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
     """Same residual, no Jacobian code: register it with JacobianMode.numeric."""
 
-    def __init__(self, measurements, num_factors):
-        super().__init__(residual_size=1, state_block_sizes=[1, 1], num_factors=num_factors)
+    def __init__(self, measurements, capacity):
+        super().__init__(residual_size=1, state_sizes=[1, 1], capacity=capacity)
         self.measurements = measurements
 
     def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
@@ -131,25 +133,43 @@ def run_chain_example(title, use_numeric_jacobian):
 
     # 3. Scalar states; one difference factor per pair (x_i, x_{i+1}); a
     #    built-in prior anchoring x_0.
-    states = pycunls.VectorStateBatch1(states_gpu, num_states)
+    #    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
+    #    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    #    size it once for the largest problem you expect. Right after construction nothing is
+    #    active: set_num_active_states / set_num_active_factors set the active count, how many of
+    #    the first slots the next solve uses (a solve without it throws). The setter is host-only
+    #    (no allocation, no device work) and may change the count between solves up to the capacity,
+    #    which is what lets a real-time application allocate once and reuse the same buffers every
+    #    frame while the problem size changes. This example solves every slot once, so each active
+    #    count equals its capacity.
+    states_capacity = num_states  # every slot solved: active = capacity
+    states = pycunls.VectorStateBatch1(states_gpu, states_capacity)
+    states.set_num_active_states(num_states)  # active count
     diff_pointers = []
     for i in range(num_states - 1):
-        diff_pointers.append(states.state_block_device_ptr(i))
-        diff_pointers.append(states.state_block_device_ptr(i + 1))
-    prior = pycunls.PriorVectorFactorBatch1(prior_gpu, 1)
+        diff_pointers.append(states.state_device_ptr(i))
+        diff_pointers.append(states.state_device_ptr(i + 1))
+    num_diff_factors = num_states - 1
+    diff_capacity = num_diff_factors  # used by the difference factor in step 4
+    prior_capacity = 1
+    prior = pycunls.PriorVectorFactorBatch1(prior_gpu, prior_capacity)
+    num_prior_factors = 1
+    prior.set_num_active_factors(num_prior_factors)
 
     # 4. Problem. Part 2 overrides the Jacobian mode of the difference factors
     #    only; the prior keeps its analytic Jacobian.
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     if use_numeric_jacobian:
-        diff = ScalarDiffResidualOnlyFactor(measurements_wp, num_states - 1)
+        diff = ScalarDiffResidualOnlyFactor(measurements_wp, diff_capacity)
+        diff.set_num_active_factors(num_diff_factors)  # active count
         problem.add_factor_batch(diff, diff_pointers,
                                  jacobian_mode_override=pycunls.JacobianMode.numeric)
     else:
-        diff = ScalarDiffFactor(measurements_wp, num_states - 1)
+        diff = ScalarDiffFactor(measurements_wp, diff_capacity)
+        diff.set_num_active_factors(num_diff_factors)  # active count
         problem.add_factor_batch(diff, diff_pointers)
-    problem.add_factor_batch(prior, [states.state_block_device_ptr(0)])
+    problem.add_factor_batch(prior, [states.state_device_ptr(0)])
     assert problem.check_consistency(), "Problem consistency check failed"
 
     # 5. Solve with Levenberg-Marquardt.

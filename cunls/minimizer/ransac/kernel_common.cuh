@@ -135,7 +135,7 @@ __device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, Item
   return false;
 }
 
-/** @brief Block of the factor column `col` (blocks are contiguous and ordered). */
+/** @brief State slot of the factor column `col` (slot columns are contiguous and ordered). */
 __device__ __forceinline__ int BlockOfColumn(const BatchView &view, int col) {
   int blk = 0;
   while (blk + 1 < view.nb && col >= view.block_col_off[blk + 1]) {

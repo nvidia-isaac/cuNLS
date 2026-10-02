@@ -30,16 +30,17 @@ namespace cunls {
  * This class maintains a copy of state values from a Problem, allowing
  * the optimizer to work with minimizer states without modifying the original
  * problem until convergence. It also manages state pointers that map
- * residual batches to their corresponding state blocks.
+ * residual batches to their corresponding states.
  *
  * The class stores:
  * - states_: One device vector per state batch containing all state values
  *            flattened into a single vector.
  * - state_pointers_: One device vector per residual batch containing pointers
- *                   to state blocks, remapped to point into the copied state
+ *                   to states, remapped to point into the copied state
  * storage.
- * - problem_state_ptrs_device_: Device copy of host problem pointer lists,
- *   used by the pointer-remap kernel.
+ *
+ * The remap reads the problem's device connectivity tables
+ * (Problem::DeviceStatePointers) directly: nothing is uploaded per solve.
  */
 class MinimizerState {
  public:
@@ -91,7 +92,7 @@ class MinimizerState {
    * @brief Gets the state pointer vectors.
    *
    * Returns pointers remapped to point into the copied state storage.
-   * Used by residual batches to access state blocks during evaluation.
+   * Used by residual batches to access states during evaluation.
    *
    * @return Reference to vector of state pointer vectors (one per residual
    * batch).
@@ -128,12 +129,6 @@ class MinimizerState {
   void CreateStatePointers(const Problem &problem);
 
   /**
-   * @brief Copies problem state pointer lists from host to
-   * problem_state_ptrs_device_.
-   */
-  void CopyProblemStatePointersFromHost(const Problem &problem);
-
-  /**
    * @brief State value storage.
    *
    * One device vector per state batch, containing all state values
@@ -144,14 +139,11 @@ class MinimizerState {
   /**
    * @brief State pointer storage.
    *
-   * One device vector per residual batch, containing pointers to state
-   * blocks. These pointers are remapped to point into states_ storage
+   * One device vector per residual batch, containing pointers to
+   * states. These pointers are remapped to point into states_ storage
    * rather than the original problem's state storage.
    */
   std::vector<dvector<float *>> state_pointers_;
-
-  /// Device copy of problem.GetStatePointers(), used by the remap kernel.
-  std::vector<dvector<float *>> problem_state_ptrs_device_;
 };
 
 /**

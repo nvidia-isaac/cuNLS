@@ -33,10 +33,10 @@ namespace cunls {
  *
  * The factor has:
  * - 6 residuals (6D twist vector)
- * - 2 state blocks, each with 6 state components (SE(3) transform stored as 4x4
+ * - 2 states, each with 6 state components (SE(3) transform stored as 4x4
  * matrix)
  *
- * The Jacobians are computed with respect to both state blocks using the
+ * The Jacobians are computed with respect to both states using the
  * left and right Jacobians of SE(3): J_left = -J_l^{-1}(r) * Ad(Delta),
  * J_right = J_r^{-1}(r). These follow from SE3StateBatch::Plus applying a
  * right-multiplicative local update (T' = T * Exp(eps)).
@@ -53,24 +53,25 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
    * @brief Constructs a batch of SE(3) between factors.
    *
    * @param pose_deltas_ptr Pointer to GPU device memory containing pose deltas.
-   *                        Must point to at least num_factors * 16 floats of
+   *                        Must point to at least capacity * 16 floats of
    * allocated memory. Each delta represents the constraint Delta = T_right^{-1}
    * * T_left for some true transforms T_left and T_right.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
-  SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t num_factors);
+  SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity);
 
   /**
    * @brief Evaluates the factor and optionally computes Jacobians.
    *
    * Computes residuals = Log(T_left^{-1} * T_right) for each factor in the
    * batch. If jacobians is not nullptr, also computes the Jacobians with
-   * respect to both state blocks.
+   * respect to both states.
    *
    * @param residuals Output residuals (6 floats per factor, device pointer)
    * @param jacobians Output Jacobians (12x6 floats per factor, device pointer).
    *                  Can be nullptr if Jacobians are not needed.
-   * @param state_pointers Array of state block pointers (device pointer to
+   * @param state_pointers Array of state pointers (device pointer to
    * device pointers)
    * @param stream CUDA stream for asynchronous execution
    * @return true if evaluation succeeded, false otherwise
@@ -79,35 +80,12 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  /**
-   * @brief Returns the number of factors in the batch.
-   *
-   * @return Number of factors
-   */
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   /// Private default constructor to prevent default construction
   SE3BetweenFactorBatch() = default;
 
-  /**
-   * @brief Computes the SE(3) adjoints of the pose deltas.
-   *
-   * The adjoint matrices are used in Jacobian computation. This is called
-   * during construction to precompute values needed for efficient evaluation.
-   *
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ComputeDeltaAdjoints(cudaStream_t stream);
-
   /// Pointer to user-managed device memory containing pose deltas.
   const SE3Transform *pose_deltas_ptr_;
-
-  /// Number of factors in the batch.
-  size_t num_factors_;
-
-  /// SE3 adjoints of the pose deltas (precomputed once at construction)
-  DeviceVector<Matrix<6>> delta_adjoints_;
 
   /// Scratch buffer reused for error = Delta * T_left^{-1} * T_right
   mutable DeviceVector<SE3Transform> poses_left_inverse_;

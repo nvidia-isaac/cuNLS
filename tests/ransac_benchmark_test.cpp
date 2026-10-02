@@ -43,7 +43,6 @@
 #include <string>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -123,7 +122,6 @@ bool IsRansac(Method m) { return m == Method::kRansacGN || m == Method::kRansacL
 struct RigProblem {
   std::vector<PnPScene> scenes;
   std::vector<SE3Transform> init;
-  cuBLASHandle cublas;
   dvector<SE3Transform> poses;
   std::unique_ptr<SE3StateBatch> state;
   std::vector<dvector<Vector<2>>> obs;
@@ -156,8 +154,8 @@ struct RigProblem {
     }
     poses.resize(cameras);
     poses.CopyFromHost(init.data(), cameras);
-    state =
-        std::make_unique<SE3StateBatch>(cublas, reinterpret_cast<float *>(poses.data()), cameras);
+    state = std::make_unique<SE3StateBatch>(reinterpret_cast<float *>(poses.data()), cameras);
+    state->SetNumActiveStates(state->Capacity(), state->ConstCapacity());
     problem.AddStateBatch(state.get());
     if (method == Method::kLMHuber) {
       loss = std::make_unique<HuberLossFunctionBatch>(static_cast<float>(kTau));
@@ -175,7 +173,7 @@ struct RigProblem {
       pts[c].CopyFromHost(s.points_world.data(), s.points_world.size());
       pnp.push_back(
           std::make_unique<PnPFactorBatch>(obs[c].data(), pts[c].data(), s.observations.size()));
-      std::vector<float *> ptrs(s.observations.size(), state->StateBlockDevicePtr(c));
+      std::vector<float *> ptrs(s.observations.size(), state->StateDevicePtr(c));
       if (loss) {
         problem.AddFactorBatch(pnp.back().get(), loss.get(), ptrs);
       } else {
@@ -187,12 +185,13 @@ struct RigProblem {
       std::vector<float *> ptrs;
       for (int c = 0; c + 1 < cameras; ++c) {
         d.push_back(Compose(ransac_test::Inverse(gt[c + 1]), gt[c]));
-        ptrs.push_back(state->StateBlockDevicePtr(c));
-        ptrs.push_back(state->StateBlockDevicePtr(c + 1));
+        ptrs.push_back(state->StateDevicePtr(c));
+        ptrs.push_back(state->StateDevicePtr(c + 1));
       }
       deltas.resize(d.size());
       deltas.CopyFromHost(d.data(), d.size());
       between = std::make_unique<SE3BetweenFactorBatch>(deltas.data(), d.size());
+      between->SetNumActiveFactors(between->Capacity());
       problem.AddFactorBatch(between.get(), ptrs);
     }
   }

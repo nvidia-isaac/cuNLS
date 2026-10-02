@@ -127,7 +127,7 @@ __global__ void AssembleBlockHessianKernel(
   for (int p = lane; p < tangent_dim; p += kWarpSize) {
     int col = cols_src[s_block_of_col[p]];
     if (col < 0) {
-      // Constant state block: this row and column of H_f are dropped, which
+      // Constant state: this row and column of H_f are dropped, which
       // is the block-level equivalent of the col_id == -1 triplet filter.
       s_global_col[p] = -1;
       s_row_start[p] = -1;
@@ -255,9 +255,9 @@ void BlockHessianAssembler::BuildPlans(const Problem &problem) {
     BatchPlan &plan = plans_[i];
     plan.layout = layout[i];
 
-    auto block_sizes = problem.GetResidualBatches()[i].GetFactorBatch()->StateBlockSizes();
+    auto block_sizes = problem.GetResidualBatches()[i].GetFactorBatch()->StateSizes();
 
-    // Local column -> (block, offset within block).
+    // Local column -> (state slot, offset within it).
     std::vector<int> block_of_col(plan.layout.tangent_dim);
     std::vector<int> offset_in_block(plan.layout.tangent_dim);
     int cursor = 0;

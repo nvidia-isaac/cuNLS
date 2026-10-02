@@ -28,7 +28,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/information/information_factor_batch.h"
@@ -47,11 +46,6 @@ using evaluate_items_test::ToDevice;
 
 constexpr int kNumFactors = 24;
 constexpr int kCopies = 4;
-
-cuBLASHandle &Cublas() {
-  static cuBLASHandle handle;
-  return handle;
-}
 
 /** Random SE(3) transform: rotation from a normalized random quaternion. */
 SE3Transform RandomPose(std::mt19937 &rng, float rot, float trans) {
@@ -166,6 +160,7 @@ struct PointToPointData {
 TEST(EvaluateItemsRegistration, PointToPointMatchesEvaluate) {
   PointToPointData data(101);
   PointToPointFactorBatch factor(data.p.data(), data.q.data(), kNumFactors);
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 102);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -175,6 +170,7 @@ TEST(EvaluateItemsRegistration, PointToPlaneMatchesEvaluate) {
   auto q = ToDevice(RandomPoints(kNumFactors, 112));
   auto nq = ToDevice(RandomNormals(kNumFactors, 113));
   PointToPlaneFactorBatch factor(p.data(), q.data(), nq.data(), kNumFactors);
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 114);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -185,6 +181,7 @@ TEST(EvaluateItemsRegistration, SymmetricPointToPlaneMatchesEvaluate) {
   auto np = ToDevice(RandomNormals(kNumFactors, 123));
   auto nq = ToDevice(RandomNormals(kNumFactors, 124));
   SymmetricPointToPlaneFactorBatch factor(p.data(), q.data(), np.data(), nq.data(), kNumFactors);
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 125);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -193,6 +190,7 @@ TEST(EvaluateItemsRegistration, WeightedUniformPointToPointMatchesEvaluate) {
   PointToPointData data(131);
   WeightedFactorBatch<PointToPointFactorBatch> factor(1.7f, data.p.data(), data.q.data(),
                                                       static_cast<size_t>(kNumFactors));
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 132);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -203,6 +201,7 @@ TEST(EvaluateItemsRegistration, WeightedPerFactorPointToPointMatchesEvaluate) {
   WeightedFactorBatch<PointToPointFactorBatch> factor(
       weights.data(), static_cast<size_t>(kNumFactors), data.p.data(), data.q.data(),
       static_cast<size_t>(kNumFactors));
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 143);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -213,6 +212,7 @@ TEST(EvaluateItemsRegistration, WeightedPerFactorPnPMatchesEvaluate) {
   WeightedFactorBatch<PnPFactorBatch> factor(weights.data(), static_cast<size_t>(kNumFactors),
                                              data.obs.data(), data.pts.data(),
                                              static_cast<size_t>(kNumFactors));
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 153, 0.05f, 0.1f);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -221,8 +221,9 @@ TEST(EvaluateItemsRegistration, InformationPointToPointMatchesEvaluate) {
   PointToPointData data(161);
   auto info = ToDevice(RandomSqrtInformation<3>(kNumFactors, 162));
   InformationFactorBatch<PointToPointFactorBatch> factor(
-      Cublas(), info.data(), static_cast<size_t>(kNumFactors), data.p.data(), data.q.data(),
+      info.data(), static_cast<size_t>(kNumFactors), data.p.data(), data.q.data(),
       static_cast<size_t>(kNumFactors));
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 163);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -230,9 +231,10 @@ TEST(EvaluateItemsRegistration, InformationPointToPointMatchesEvaluate) {
 TEST(EvaluateItemsRegistration, InformationPnPMatchesEvaluate) {
   PnPData data(kNumFactors, 171);
   auto info = ToDevice(RandomSqrtInformation<2>(kNumFactors, 172));
-  InformationFactorBatch<PnPFactorBatch> factor(Cublas(), info.data(),
-                                                static_cast<size_t>(kNumFactors), data.obs.data(),
-                                                data.pts.data(), static_cast<size_t>(kNumFactors));
+  InformationFactorBatch<PnPFactorBatch> factor(info.data(), static_cast<size_t>(kNumFactors),
+                                                data.obs.data(), data.pts.data(),
+                                                static_cast<size_t>(kNumFactors));
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 173, 0.05f, 0.1f);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }
@@ -244,9 +246,10 @@ TEST(EvaluateItemsRegistration, InformationWeightedPointToPlaneMatchesEvaluate) 
   auto weights = ToDevice(RandomWeights(kNumFactors, 184));
   auto info = ToDevice(RandomSqrtInformation<1>(kNumFactors, 185));
   InformationFactorBatch<WeightedFactorBatch<PointToPlaneFactorBatch>> factor(
-      Cublas(), info.data(), static_cast<size_t>(kNumFactors), weights.data(),
+      info.data(), static_cast<size_t>(kNumFactors), weights.data(),
       static_cast<size_t>(kNumFactors), p.data(), q.data(), nq.data(),
       static_cast<size_t>(kNumFactors));
+  factor.SetNumActiveFactors(factor.Capacity());
   Poses poses(kCopies * kNumFactors, 186);
   CheckEvaluateItems(factor, kCopies, [&](int k) { return poses.ForCopy(k, kNumFactors); });
 }

@@ -18,14 +18,13 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/types.h"
 #include "cunls/state/sized_state_batch.h"
 
 namespace cunls {
 
 /**
- * @brief Batch processing for Sim(3) Lie group state blocks.
+ * @brief Batch processing for Sim(3) Lie group states.
  *
  * This class implements the Plus operation for the Sim(3) Lie group,
  * which represents similarity transformations (rotation + translation + scale)
@@ -42,7 +41,7 @@ namespace cunls {
  * w is the rotation axis-angle, u is the translation component, and
  * lambda = log(s) is the log-scale.
  *
- * The class uses GPU-accelerated operations via CUDA kernels and cuBLAS
+ * The class uses GPU-accelerated operations via fused CUDA kernels
  * for efficient batch processing of multiple transformations.
  */
 class Similarity3StateBatch : public SizedStateBatch<16, 7> {
@@ -50,31 +49,31 @@ class Similarity3StateBatch : public SizedStateBatch<16, 7> {
   using Base = SizedStateBatch<16, 7>;
 
   /**
-   * @brief Constructs a batch of Sim(3) state blocks.
+   * @brief Constructs a batch of Sim(3) states.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the Sim(3)
-   * transforms. Must point to at least num_blocks * 16 floats of allocated
+   * transforms. Must point to at least capacity * 16 floats of allocated
    * memory.
-   * @param num_blocks The number of Sim(3) state blocks in this batch.
+   * @param capacity Number of states the buffer holds. The active count
+   *        starts at 0: call SetNumActiveStates(n) before solving.
    */
-  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks);
+  Similarity3StateBatch(const float *device_ptr, size_t capacity);
 
   /**
-   * @brief Constructs a batch of Sim(3) state blocks with constant state
+   * @brief Constructs a batch of Sim(3) states with constant state
    * constraints.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param device_ptr Pointer to GPU device memory containing the Sim(3)
-   * transforms. Must point to at least num_blocks * 16 floats of allocated
+   * transforms. Must point to at least capacity * 16 floats of allocated
    * memory.
-   * @param num_blocks The number of Sim(3) state blocks in this batch.
+   * @param capacity Number of states the buffer holds. The active count
+   *        starts at 0: call SetNumActiveStates(n) before solving.
    * @param device_constant_state_ids Pointer to GPU device memory containing
-   * the indices of state blocks that should remain constant.
-   * @param num_const_state_blocks The number of constant state blocks.
+   * the indices of states that should remain constant.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr, size_t num_blocks,
-                        const int *device_constant_state_ids, size_t num_const_state_blocks);
+  Similarity3StateBatch(const float *device_ptr, size_t capacity,
+                        const int *device_constant_state_ids, size_t const_capacity);
 
   /**
    * @brief Performs the Plus operation: x_plus_delta = x * Exp(delta)
@@ -92,8 +91,6 @@ class Similarity3StateBatch : public SizedStateBatch<16, 7> {
             size_t num_replicas = 1) override;
 
  private:
-  cuBLASHandle &cublas_handle_;  ///< cuBLAS handle for matrix operations
-
   mutable dvector<Matrix<4>> delta_transforms_;
   mutable dvector<float> tangents_;
 

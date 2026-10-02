@@ -20,6 +20,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -34,20 +35,26 @@ constexpr size_t kSE3PriorBlockSize = 256;
  * so only 3x4 active part is computed (36 FMAs instead of 64).
  */
 __global__ void collect_and_multiply_se3_prior_kernel(float const *const *state_pointers,
-                                                      const SE3Transform *obs_inverse,
+                                                      const SE3Transform *observations,
                                                       size_t num_items, SE3Transform *errors,
                                                       const int *factor_ids, int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;
 
   const float *__restrict__ C = state_pointers[tid];
-  const float *__restrict__ I =
-      obs_inverse[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
-  float *__restrict__ out = errors[tid].data();
-
-  const float c00 = C[0], c01 = C[1], c02 = C[2], c03 = C[3];
-  const float c10 = C[4], c11 = C[5], c12 = C[6], c13 = C[7];
-  const float c20 = C[8], c21 = C[9], c22 = C[10], c23 = C[11];
+  const float *__restrict__ T =
+      observations[FactorMeasurementIndex(tid, factor_ids, num_factors)].data();
+  // Load the measurement and the state with vector loads, then derive T^{-1}
+  // from registers.
+  float tv[16], cv[16];
+  lie_device::Load16(T, tv);
+  lie_device::Load16(C, cv);
+  const float c00 = cv[0], c01 = cv[1], c02 = cv[2], c03 = cv[3];
+  const float c10 = cv[4], c11 = cv[5], c12 = cv[6], c13 = cv[7];
+  const float c20 = cv[8], c21 = cv[9], c22 = cv[10], c23 = cv[11];
+  float I[16];  // T_target^{-1}, derived from the measurement in place
+  lie_device::InverseSE3(tv, 4, I);
+  float out[16];
 
   const float i00 = I[0], i01 = I[1], i02 = I[2], i03 = I[3];
   const float i10 = I[4], i11 = I[5], i12 = I[6], i13 = I[7];
@@ -75,28 +82,19 @@ __global__ void collect_and_multiply_se3_prior_kernel(float const *const *state_
   out[13] = 0.0f;
   out[14] = 0.0f;
   out[15] = 1.0f;
+  lie_device::Store16(errors[tid].data(), out);
 }
 
-SE3PriorFactorBatch::SE3PriorFactorBatch(const SE3Transform *observations_ptr, size_t num_factors)
-    : observations_ptr_(observations_ptr),
-      num_factors_(num_factors),
-      observations_inverse_(num_factors),
-      transforms_error_(num_factors) {
-  // Pre-compute T_target^{-1} for all targets
-  CudaStream stream;
-  constexpr size_t pitch = 4;
-  constexpr size_t stride = 16;
-  ComputeInverseSE3(stream.GetStream(), reinterpret_cast<const float *>(observations_ptr_), pitch,
-                    stride, pitch, stride, num_factors_,
-                    reinterpret_cast<float *>(observations_inverse_.data()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-}
+SE3PriorFactorBatch::SE3PriorFactorBatch(const SE3Transform *observations_ptr, size_t capacity)
+    : SizedFactorBatch(capacity),
+      observations_ptr_(observations_ptr),
+      transforms_error_(capacity) {}
 
 bool SE3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,
                                    const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   transforms_error_.resize(num_items);  // keeps capacity: allocates at most once per size
@@ -104,8 +102,8 @@ bool SE3PriorFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect T_current from state pointers + compute T_inv * T_current
   collect_and_multiply_se3_prior_kernel<<<num_blocks, kSE3PriorBlockSize, 0, stream>>>(
-      state_pointers, observations_inverse_.data(), num_items, transforms_error_.data(), factor_ids,
-      static_cast<int>(NumFactors()));
+      state_pointers, observations_ptr_, num_items, transforms_error_.data(), factor_ids,
+      static_cast<int>(NumActiveFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Residual = Log(T_error) using the SE(3) logarithm map

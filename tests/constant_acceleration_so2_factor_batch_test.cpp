@@ -62,6 +62,7 @@ SingleFactorResult EvaluateOne(float theta_k, float theta_k1, float vel_k, float
   dvector<const float *> ptrs_dev(ptrs);
 
   ConstantAccelerationSO2FactorBatch fb(dt_dev.data(), 1);
+  fb.SetNumActiveFactors(fb.Capacity());
   dvector<float> res_dev(3);
   dvector<float> jac_dev(want_jacobian ? 3 * 6 : 0);
 

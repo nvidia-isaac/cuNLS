@@ -6,7 +6,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -26,28 +25,20 @@ class Similarity3BetweenFactorBatch : public SizedFactorBatch<7, 7, 7> {
   using Base = SizedFactorBatch<7, 7, 7>;
 
  public:
-  Similarity3BetweenFactorBatch(cuBLASHandle &cublas_handle,
-                                const Similarity3Transform *pose_deltas_ptr, size_t num_factors);
+  Similarity3BetweenFactorBatch(const Similarity3Transform *pose_deltas_ptr, size_t capacity);
 
   /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   Similarity3BetweenFactorBatch() = default;
 
-  void ComputeDeltaAdjoints(cudaStream_t stream);
-
   const Matrix<4> *pose_deltas_ptr_;
-  size_t num_factors_;
-  cuBLASHandle &cublas_handle_;
   mutable DeviceVector<Matrix<4>> poses_left_;
   mutable DeviceVector<Matrix<4>> poses_right_;
   mutable DeviceVector<Matrix<4>> poses_left_inverse_;
-  DeviceVector<float> delta_adjoints_;
   mutable DeviceVector<float> jacobian_temp_;
 };
 

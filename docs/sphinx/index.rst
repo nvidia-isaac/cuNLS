@@ -2,8 +2,10 @@
 cuNLS Documentation
 ###############################################################################
 
-cuNLS provides GPU-accelerated nonlinear least-squares optimization for batched
-geometric estimation problems.
+cuNLS provides GPU-accelerated nonlinear least-squares optimization for
+batched geometric estimation problems. It is used primarily from **Python**
+through the ``pycunls`` package (CuPy arrays, custom kernels with NVIDIA
+Warp), and also offers a native **C++/CUDA** API.
 
 .. raw:: html
 
@@ -14,34 +16,67 @@ geometric estimation problems.
      </div>
    </div>
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` (C++: ``SetNumActiveFactors`` /
+   ``SetNumActiveStates``) before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
+
 ===============================================================================
-User Guide
+Getting Started
 ===============================================================================
 
 .. toctree::
    :maxdepth: 2
 
    introduction
-   installation
-   tutorial
-   quick_start
-   ransac
-   custom_factors_and_states
-   numeric_jacobians
-   testing
-   licensing
+   pycunls_installation
+   pycunls_quick_start
+   pycunls_tutorial
 
 ===============================================================================
-Python Guide (pycunls)
+Guides
 ===============================================================================
 
 .. toctree::
    :maxdepth: 2
 
-   pycunls_installation
-   pycunls_quick_start
-   pycunls_tutorial
+   ransac
+   custom_factors_and_states
+   numeric_jacobians
+
+===============================================================================
+C++ API
+===============================================================================
+
+.. toctree::
+   :maxdepth: 2
+
+   installation
+   quick_start
+   tutorial
+
+===============================================================================
+Testing
+===============================================================================
+
+.. toctree::
+   :maxdepth: 2
+
    pycunls_testing
+   testing
+
+===============================================================================
+Licensing
+===============================================================================
+
+.. toctree::
+   :maxdepth: 1
+
+   licensing
 
 ===============================================================================
 API Reference

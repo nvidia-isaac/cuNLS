@@ -31,29 +31,26 @@ class VectorBetweenFactorBatch : public SizedFactorBatch<Dim, Dim, Dim> {
   using VectorType = Vector<Dim>;
 
  public:
-  VectorBetweenFactorBatch(const VectorType *deltas_ptr, size_t num_factors)
-      : deltas_ptr_(deltas_ptr), num_factors_(num_factors) {}
+  VectorBetweenFactorBatch(const VectorType *deltas_ptr, size_t capacity)
+      : SizedFactorBatch<Dim, Dim, Dim>(capacity), deltas_ptr_(deltas_ptr) {}
 
   /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override {
-    const size_t num_items = num_factor_ids == 0 ? this->NumFactors() : num_factor_ids;
-    if (num_items == 0 || num_factors_ == 0) {
+    const size_t num_items = num_factor_ids == 0 ? this->NumActiveFactors() : num_factor_ids;
+    if (num_items == 0 || this->NumActiveFactors() == 0) {
       return true;
     }
     LaunchVectorBetweenFactorKernel(reinterpret_cast<const float *>(deltas_ptr_), state_pointers,
                                     residuals, jacobians, Dim, static_cast<int>(num_items),
-                                    factor_ids, static_cast<int>(num_factors_), stream);
+                                    factor_ids, static_cast<int>(this->NumActiveFactors()), stream);
     return true;
   }
-
-  size_t NumFactors() const final { return num_factors_; }
 
  private:
   VectorBetweenFactorBatch() = default;
   const VectorType *deltas_ptr_;
-  size_t num_factors_;
 };
 
 }  // namespace cunls

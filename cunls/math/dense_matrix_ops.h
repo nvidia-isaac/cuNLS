@@ -19,7 +19,7 @@
 
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
+#include <cstddef>
 
 namespace cunls {
 
@@ -27,15 +27,13 @@ namespace cunls {
  * @brief Computes the square root of a batch of symmetric positive definite
  * matrices.
  *
- * @param cublas_handle Reference to an externally-owned cuBLAS handle.
  * @param stream CUDA stream for asynchronous operations.
  * @param spd_matrix Input/output matrix buffer on device memory.
  * @param matrix_size Size (rows = cols) of each matrix.
  * @param pitch Leading dimension (row stride) of each matrix.
  * @param num_matrices Number of matrices in the batch.
  */
-void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
-                       float *spd_matrix, size_t matrix_size, size_t pitch,
+void ComputeSqrtMatrix(cudaStream_t stream, float *spd_matrix, size_t matrix_size, size_t pitch,
                        size_t num_matrices);
 
 /**
@@ -53,9 +51,7 @@ void ComputeSqrtMatrix(cuBLASHandle &cublas_handle, cudaStream_t stream,
  * @param dst_stride  Stride between consecutive destination blocks.
  * @param num_blocks  Number of blocks in the batch.
  */
-void ScatterToRightBlock(cudaStream_t stream, const float *src,
-                         size_t block_dim, size_t src_stride, float *dst,
-                         size_t dst_pitch, size_t dst_stride,
-                         size_t num_blocks);
+void ScatterToRightBlock(cudaStream_t stream, const float *src, size_t block_dim, size_t src_stride,
+                         float *dst, size_t dst_pitch, size_t dst_stride, size_t num_blocks);
 
-} // namespace cunls
+}  // namespace cunls

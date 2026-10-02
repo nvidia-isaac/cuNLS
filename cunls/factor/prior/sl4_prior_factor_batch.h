@@ -25,7 +25,7 @@ class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
   using Base = SizedFactorBatch<15, 15>;
 
  public:
-  SL4PriorFactorBatch(const SL4Transform *observations_ptr, size_t num_factors);
+  SL4PriorFactorBatch(const SL4Transform *observations_ptr, size_t capacity);
 
   /**
    * @brief Evaluates SL(4) prior residuals and optionally Jacobians; follows
@@ -35,14 +35,10 @@ class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SL4PriorFactorBatch() = default;
 
   const SL4Transform *observations_ptr_;
-  size_t num_factors_;
-  DeviceVector<SL4Transform> observations_inverse_;
   mutable DeviceVector<SL4Transform> transforms_error_;
 };
 

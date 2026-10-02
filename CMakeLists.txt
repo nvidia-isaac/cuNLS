@@ -244,6 +244,9 @@ if(BUILD_TESTING)
     tests/evaluate_items_motion_test.cpp
     tests/evaluate_items_prior_test.cpp
     tests/evaluate_items_registration_test.cpp
+    tests/capacity_test.cpp
+    tests/dynamic_problem_test.cpp
+    tests/size_check_test.cpp
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)

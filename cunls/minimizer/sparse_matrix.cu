@@ -60,7 +60,7 @@ void ExtractMatrixMetadata(cudaStream_t stream, const CSRSparseMatrix &matrix, i
   num_rows = matrix.row_offsets.empty() ? 0 : static_cast<int>(matrix.row_offsets.size() - 1);
   num_nonzeros = static_cast<int>(matrix.values.size());
 
-  // A fully-constrained problem (every state block constant) yields an empty
+  // A fully-constrained problem (every state constant) yields an empty
   // system; max_element over an empty range would dereference end().
   if (num_nonzeros == 0) {
     num_cols = 0;

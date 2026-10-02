@@ -36,7 +36,7 @@ namespace cunls {
  *
  * The factor has:
  * - 4 residuals (4D tangent vector [u_x, u_y, theta, lambda])
- * - 1 state block with tangent dimension 4 (transform stored as 3x3 matrix)
+ * - 1 state with tangent dimension 4 (transform stored as 3x3 matrix)
  *
  * @note The observations_ptr must point to GPU device memory containing target
  *       transformation matrices and remain valid for the lifetime of this
@@ -54,10 +54,11 @@ class Similarity2PriorFactorBatch : public SizedFactorBatch<4, 4> {
    * Pre-computes T_target^{-1} for all targets during construction.
    *
    * @param observations_ptr Pointer to GPU device memory containing target
-   * transforms. Must point to at least num_factors * 9 floats.
-   * @param num_factors Number of factors in the batch.
+   * transforms. Must point to at least capacity * 9 floats.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
-  Similarity2PriorFactorBatch(const Similarity2Transform *observations_ptr, size_t num_factors);
+  Similarity2PriorFactorBatch(const Similarity2Transform *observations_ptr, size_t capacity);
 
   /**
    * @brief Evaluates Sim(2) prior residuals and optionally Jacobians.
@@ -65,22 +66,16 @@ class Similarity2PriorFactorBatch : public SizedFactorBatch<4, 4> {
    * @param residuals Output residuals (4 floats per factor, device pointer).
    * @param jacobians Output Jacobians (4x4 floats per factor, device pointer).
    *                  Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state block pointers.
+   * @param state_pointers Device pointer to state pointers.
    * @param stream CUDA stream for asynchronous execution.
    * @param factor_ids Optional per-item factor indices (device pointer).
    * @param num_factor_ids Number of items (the length of factor_ids when it
-   *        is given); 0 means NumFactors().
+   *        is given); 0 means NumActiveFactors().
    * @return true on success.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final;
-
-  /**
-   * @brief Returns the number of factors in the batch.
-   * @return Number of factors.
-   */
-  size_t NumFactors() const final { return num_factors_; }
 
  private:
   Similarity2PriorFactorBatch() = default;
@@ -88,14 +83,8 @@ class Similarity2PriorFactorBatch : public SizedFactorBatch<4, 4> {
   /// Pointer to user-managed device memory containing target transforms.
   const Matrix<3> *observations_ptr_;
 
-  /// Number of factors in the batch.
-  size_t num_factors_;
-
-  /// Pre-computed inverse of target transforms T_target^{-1}.
-  DeviceVector<Matrix<3>> observations_inverse_;
-
   /// Preallocated memory for transform error T_target^{-1} * T_current.
-  mutable DeviceVector<Matrix<3>> transforms_error_;
+  mutable DeviceVector<float> transforms_error_;  ///< T^{-1} * C, 9 floats per item.
 };
 
 }  // namespace cunls

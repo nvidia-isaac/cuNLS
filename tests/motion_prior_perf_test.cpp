@@ -28,13 +28,11 @@
  * inspected under `nsys profile` (build with -DENABLE_PROFILING=ON).
  */
 
-#include <cublas_v2.h>
 #include <gtest/gtest.h>
 
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -138,7 +136,6 @@ class MotionPriorPerfTest : public ::testing::TestWithParam<MotionPriorPerfParam
   }
 
   CudaStream stream_;
-  cuBLASHandle cublas_handle_;
   profiler::Domain profiler_domain_ = profiler::Domain("MotionPriorPerfTest");
 };
 
@@ -168,19 +165,22 @@ TEST_P(MotionPriorPerfTest, UnweightedConverges) {
     std::vector<int> const_ids = {0};
     dvector<int> const_ids_device(const_ids);
 
-    SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()),
-                              p.n_poses, const_ids_device.data(), 1);
+    SE3StateBatch pose_states(reinterpret_cast<const float *>(poses_device.data()), p.n_poses,
+                              const_ids_device.data(), 1);
+    pose_states.SetNumActiveStates(pose_states.Capacity(), pose_states.ConstCapacity());
     VectorStateBatch<6> vel_states(reinterpret_cast<const float *>(vels_device.data()), p.n_poses,
                                    const_ids_device.data(), 1);
+    vel_states.SetNumActiveStates(vel_states.Capacity(), vel_states.ConstCapacity());
     ConstantVelocitySE3FactorBatch motion_prior(dt_device.data(), num_factors);
+    motion_prior.SetNumActiveFactors(motion_prior.Capacity());
 
     std::vector<float *> state_pointers;
     state_pointers.reserve(4 * num_factors);
     for (int i = 0; i < num_factors; ++i) {
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
-      state_pointers.push_back(vel_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(vel_states.StateBlockDevicePtr(i + 1));
+      state_pointers.push_back(pose_states.StateDevicePtr(i));
+      state_pointers.push_back(pose_states.StateDevicePtr(i + 1));
+      state_pointers.push_back(vel_states.StateDevicePtr(i));
+      state_pointers.push_back(vel_states.StateDevicePtr(i + 1));
     }
 
     Problem problem;
@@ -246,24 +246,27 @@ TEST_P(MotionPriorPerfTest, InformationWeightedConverges) {
     std::vector<int> const_ids = {0};
     dvector<int> const_ids_device(const_ids);
 
-    SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(poses_device.data()),
-                              p.n_poses, const_ids_device.data(), 1);
+    SE3StateBatch pose_states(reinterpret_cast<const float *>(poses_device.data()), p.n_poses,
+                              const_ids_device.data(), 1);
+    pose_states.SetNumActiveStates(pose_states.Capacity(), pose_states.ConstCapacity());
     VectorStateBatch<6> vel_states(reinterpret_cast<const float *>(vels_device.data()), p.n_poses,
                                    const_ids_device.data(), 1);
+    vel_states.SetNumActiveStates(vel_states.Capacity(), vel_states.ConstCapacity());
 
     ConstantVelocityInformationSE3FactorBatch motion_prior = [&] {
       auto build_info_range = profiler_domain_.CreateDomainRange("BuildInformationFactor");
-      return ConstantVelocityInformationSE3FactorBatch(
-          cublas_handle_, stream_.GetStream(), dt_device.data(), qc_device.data(), num_factors);
+      return ConstantVelocityInformationSE3FactorBatch(stream_.GetStream(), dt_device.data(),
+                                                       qc_device.data(), num_factors);
     }();
+    motion_prior.SetNumActiveFactors(num_factors);
 
     std::vector<float *> state_pointers;
     state_pointers.reserve(4 * num_factors);
     for (int i = 0; i < num_factors; ++i) {
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
-      state_pointers.push_back(vel_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(vel_states.StateBlockDevicePtr(i + 1));
+      state_pointers.push_back(pose_states.StateDevicePtr(i));
+      state_pointers.push_back(pose_states.StateDevicePtr(i + 1));
+      state_pointers.push_back(vel_states.StateDevicePtr(i));
+      state_pointers.push_back(vel_states.StateDevicePtr(i + 1));
     }
 
     Problem problem;

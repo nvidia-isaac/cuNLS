@@ -13,7 +13,7 @@
 namespace cunls {
 
 /**
- * @brief Batch factor for SE(2) between constraints (no cuBLAS handle).
+ * @brief Batch factor for SE(2) between constraints.
  *
  * residual = Log(Delta * T_left^{-1} * T_right) (3-vector).
  *
@@ -25,20 +25,17 @@ class SE2BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
   using Base = SizedFactorBatch<3, 3, 3>;
 
  public:
-  SE2BetweenFactorBatch(const SE2Transform *pose_deltas_ptr, size_t num_factors);
+  SE2BetweenFactorBatch(const SE2Transform *pose_deltas_ptr, size_t capacity);
 
   /** @brief Evaluates residuals and Jacobians; follows FactorBatch::Evaluate's item contract. */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override;
 
-  size_t NumFactors() const final { return num_factors_; }
-
  private:
   SE2BetweenFactorBatch() = default;
 
   const Matrix<3> *pose_deltas_ptr_;
-  size_t num_factors_;
   mutable DeviceVector<Matrix<3>> poses_left_;
   mutable DeviceVector<Matrix<3>> poses_right_;
   mutable DeviceVector<Matrix<3>> poses_left_inverse_;

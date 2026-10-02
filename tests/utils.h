@@ -198,7 +198,7 @@ std::vector<Vector<Dim>> MakeConstantVectors(size_t count, float value) {
 /**
  * @brief Generates a vector of sequential integer IDs [0, 1, ..., count-1].
  *
- * Useful for marking the first N parameter blocks as constant.
+ * Useful for marking the first N states as constant.
  *
  * @param count Number of IDs to generate.
  * @return Vector of integer IDs.
@@ -236,7 +236,7 @@ struct VectorStateData {
    * IDs.
    *
    * @param host_vectors Host-side state vectors to copy to device.
-   * @param const_state_ids IDs of state blocks to mark as constant (default:
+   * @param const_state_ids IDs of states to mark as constant (default:
    * none).
    */
   VectorStateData(const std::vector<Vector<Dim>> &host_vectors,
@@ -248,6 +248,7 @@ struct VectorStateData {
     const int *const_ids_ptr = const_ids.empty() ? nullptr : const_ids.data();
     batch = std::make_unique<VectorStateBatch<Dim>>(data_ptr, num_vectors, const_ids_ptr,
                                                     const_ids.size());
+    batch->SetNumActiveStates(num_vectors, const_ids.size());
   }
 
   /** @brief Returns a reference to the managed VectorStateBatch. */
@@ -283,6 +284,7 @@ struct PriorFactorData {
     observations_device = DeviceVector<Vector<Dim>>(observations);
     factor_batch = std::make_unique<PriorVectorFactorBatch<Dim>>(observations_device.data(),
                                                                  observations.size());
+    factor_batch->SetNumActiveFactors(observations.size());
   }
 
   /** @brief Returns a reference to the managed factor batch. */
@@ -294,29 +296,29 @@ struct PriorFactorData {
 // ============================================================================
 
 /**
- * @brief Collects per-block device pointers from a state batch into a host
+ * @brief Collects per-state device pointers from a state batch into a host
  * vector.
  *
  * @tparam StateBatchType State batch type (e.g. VectorStateBatch<Dim>).
  * @param state_batch State batch to extract pointers from.
- * @return Host vector of device pointers to each state block.
+ * @return Host vector of device pointers to each state.
  */
 template <typename StateBatchType>
 std::vector<float *> CollectStatePointers(StateBatchType &state_batch) {
   std::vector<float *> ptrs;
-  ptrs.reserve(state_batch.NumStateBlocks());
-  for (size_t i = 0; i < state_batch.NumStateBlocks(); i++) {
-    ptrs.push_back(state_batch.StateBlockDevicePtr(i));
+  ptrs.reserve(state_batch.NumActiveStates());
+  for (size_t i = 0; i < state_batch.NumActiveStates(); i++) {
+    ptrs.push_back(state_batch.StateDevicePtr(i));
   }
   return ptrs;
 }
 
 /**
- * @brief Collects per-block device pointers into a DeviceVector.
+ * @brief Collects per-state device pointers into a DeviceVector.
  *
  * @tparam StateBatchType State batch type (e.g. VectorStateBatch<Dim>).
  * @param state_batch State batch to extract pointers from.
- * @return DeviceVector of device pointers to each state block.
+ * @return DeviceVector of device pointers to each state.
  */
 template <typename StateBatchType>
 DeviceVector<float *> CollectStatePointersDevice(StateBatchType &state_batch) {
@@ -330,14 +332,14 @@ DeviceVector<float *> CollectStatePointersDevice(StateBatchType &state_batch) {
 /**
  * @brief Copies a VectorStateBatch's data from device to a host std::vector.
  *
- * @tparam Dim Dimension of each vector state block.
+ * @tparam Dim Dimension of each vector state.
  * @param state_batch The state batch to copy from device.
  * @return Host vector of state values.
  */
 template <int Dim>
 std::vector<Vector<Dim>> CopyStateToHost(const VectorStateBatch<Dim> &state_batch) {
-  auto ptr = state_batch.StateBlockDevicePtr(0);
-  size_t num_blocks = state_batch.NumStateBlocks();
+  auto ptr = state_batch.StateDevicePtr(0);
+  size_t num_blocks = state_batch.NumActiveStates();
   auto vec_ptr = reinterpret_cast<const Vector<Dim> *>(ptr);
   std::vector<Vector<Dim>> out(num_blocks);
   THROW_ON_CUDA_ERROR(

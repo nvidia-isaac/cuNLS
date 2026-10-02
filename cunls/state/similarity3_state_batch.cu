@@ -123,21 +123,15 @@ __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
 
 }  // namespace
 
-Similarity3StateBatch::Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      tangents_(num_blocks * 7) {}
+Similarity3StateBatch::Similarity3StateBatch(const float *device_ptr, size_t capacity)
+    : Base(device_ptr, capacity), delta_transforms_(capacity), tangents_(capacity * 7) {}
 
-Similarity3StateBatch::Similarity3StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                                             size_t num_blocks,
+Similarity3StateBatch::Similarity3StateBatch(const float *device_ptr, size_t capacity,
                                              const int *device_constant_state_ids,
-                                             size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      tangents_(num_blocks * 7) {}
+                                             size_t const_capacity)
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
+      delta_transforms_(capacity),
+      tangents_(capacity * 7) {}
 
 void Similarity3StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
                                         bool invert_delta, cudaStream_t stream, size_t num_blocks) {
@@ -146,12 +140,15 @@ void Similarity3StateBatch::ApplyUpdate(const float *x, const float *delta, floa
   sim3_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, num_transforms,
                                                                   invert_delta);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-  static_cast<void>(cublas_handle_);
 }
 
 void Similarity3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                                  cudaStream_t stream, size_t num_replicas) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream, NumStateBlocks() * num_replicas);
+  const size_t num_transforms = NumActiveStates() * num_replicas;
+  if (num_transforms == 0) {
+    return;
+  }
+  ApplyUpdate(x, delta, x_plus_delta, false, stream, num_transforms);
 }
 
 }  // namespace cunls

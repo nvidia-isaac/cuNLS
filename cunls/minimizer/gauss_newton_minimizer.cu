@@ -60,7 +60,7 @@ void InitializeResiduals(const Problem &problem, dvector<float> &residuals) {
   const auto &residual_batches = problem.GetResidualBatches();
   for (const auto &rb : residual_batches) {
     const auto &factor_batch = rb.GetFactorBatch();
-    residuals_size += factor_batch->NumFactors() * factor_batch->ResidualsSize();
+    residuals_size += factor_batch->NumActiveFactors() * factor_batch->ResidualsSize();
   }
   if (residuals.size() != residuals_size) {
     residuals.resize(residuals_size);
@@ -98,7 +98,7 @@ void GaussNewtonMinimizer::ComputeCostAsync(cudaStream_t stream, const Problem &
   size_t max_workspace_floats = 0;
   for (const auto &rb : residual_batches) {
     const auto &factor_batch = rb.GetFactorBatch();
-    size_t n = factor_batch->NumFactors();
+    size_t n = factor_batch->NumActiveFactors();
     total_num_cost_elements += n;
     max_residual_dim = std::max(n * factor_batch->ResidualsSize(), max_residual_dim);
     max_workspace_floats = std::max(max_workspace_floats, ResidualBatchWorkspaceNumFloats(n));
@@ -117,7 +117,7 @@ void GaussNewtonMinimizer::ComputeCostAsync(cudaStream_t stream, const Problem &
     auto ptrs = state_pointers[i].data();
     rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, cost_ptr, nullptr);
     const auto &factor_batch = rb.GetFactorBatch();
-    cost_ptr += factor_batch->NumFactors();
+    cost_ptr += factor_batch->NumActiveFactors();
   }
 
   if (total_num_cost_elements > 0) {
@@ -172,7 +172,7 @@ void GaussNewtonMinimizer::ComputeResidualAndJacobian(cudaStream_t stream, const
   const auto &residual_batches = problem.GetResidualBatches();
   size_t max_n = 0;
   for (const auto &rb : residual_batches) {
-    max_n = std::max(max_n, rb.GetFactorBatch()->NumFactors());
+    max_n = std::max(max_n, rb.GetFactorBatch()->NumActiveFactors());
   }
   size_t ws_floats = ResidualBatchWorkspaceNumFloats(max_n);
   if (buffer.size() < ws_floats * sizeof(float)) {
@@ -204,10 +204,10 @@ void GaussNewtonMinimizer::ComputeResidualAndJacobian(cudaStream_t stream, const
       }
     }
 
-    size_t num_residuals = factor_batch->NumFactors() * factor_batch->ResidualsSize();
+    size_t num_residuals = factor_batch->NumActiveFactors() * factor_batch->ResidualsSize();
     residuals_ptr += num_residuals;
 
-    auto block_sizes = factor_batch->StateBlockSizes();
+    auto block_sizes = factor_batch->StateSizes();
 
     size_t params = std::accumulate(block_sizes.begin(), block_sizes.end(), 0);
     jacobian_ptr += num_residuals * params;
@@ -267,8 +267,8 @@ void GaussNewtonMinimizer::BuildSystem(cudaStream_t stream, const Problem &probl
  * @brief Updates states with the computed step.
  *
  * Applies the state update step to the current state, producing the
- * updated state. Uses state block operations that respect state
- * block manifolds (e.g., for rotations, quaternions, etc.).
+ * updated state. Uses state operations that respect state
+ * manifolds (e.g., for rotations, quaternions, etc.).
  *
  * @param stream CUDA stream for GPU operations.
  * @param curr_state Current minimizer state.
@@ -303,6 +303,18 @@ void GaussNewtonMinimizer::UpdateStates(cudaStream_t stream, const MinimizerStat
  */
 void GaussNewtonMinimizer::Initialize(cudaStream_t stream, Problem &problem) {
   auto range = profiler_domain_.CreateDomainRange("Initialize");
+  // Cheap host-only guard (no device work): sizes within capacities,
+  // connectivity covering the active factors, at least one active factor.
+  problem.CheckSizes();
+  // Connectivity, sizes and contents may have been rewritten since the last
+  // solve: expand index tables, and re-plan numeric-diff batches whose
+  // connectivity changed.
+  problem.PrepareStatePointers(stream);
+  for (size_t i = 0; i < problem.GetResidualBatches().size(); ++i) {
+    if (problem.JacobianModeFor(i, options_.jacobian_mode) == JacobianMode::kNumeric) {
+      numeric_diff_builder_.Refresh(problem, i);
+    }
+  }
   InitializeResiduals(problem, residuals_);
   state_ops_.Preprocess(stream, problem.GetStateBatches());
 

@@ -32,8 +32,8 @@ class Problem;
 struct HessianBatchLayout {
   int num_factors = 0;         ///< Factors in the batch.
   int residual_dim = 0;        ///< m: residual dimension of one factor.
-  int tangent_dim = 0;         ///< n: sum of the factor's state block sizes.
-  int num_blocks = 0;          ///< nb: state blocks a factor touches.
+  int tangent_dim = 0;         ///< n: sum of the factor's state sizes.
+  int num_blocks = 0;          ///< nb: states a factor touches.
   size_t jacobian_offset = 0;  ///< Offset into the flat Jacobian value buffer.
   size_t residual_offset = 0;  ///< Offset into the flat residual vector.
   size_t col_offset = 0;       ///< Offset into FactorCols(), stride nb.
@@ -43,7 +43,7 @@ struct HessianBatchLayout {
 /**
  * @brief Derives the J^T J sparsity pattern from factor-graph connectivity.
  *
- * Every factor connecting state blocks A,B contributes dense sub-blocks
+ * Every factor connecting states A,B contributes dense sub-blocks
  * (A,A), (A,B), (B,A), (B,B) to the Hessian.  The set of distinct block pairs
  * is the block-level sparsity pattern; expanding it gives the scalar CSR.
  *
@@ -80,7 +80,7 @@ class HessianStructureBuilder {
    * @brief Builds the same pattern in uniform block storage.
    *
    * Block-pair discovery is already block-level, so this is the *cheaper* of
-   * the two expansions: each state-block pair emits
+   * the two expansions: each state pair emits
    * `(row_tangent / b) x (col_tangent / b)` tiles instead of
    * `row_tangent * col_tangent` scalar column indices.
    *
@@ -99,13 +99,13 @@ class HessianStructureBuilder {
   /** @brief Per-residual-batch geometry, indexed as the problem's batches. */
   const std::vector<HessianBatchLayout> &Layout() const { return layout_; }
 
-  /** @brief Global column of each (factor, block); -1 when constant. */
+  /** @brief Global column of each (factor, state slot); -1 when constant. */
   const dvector<int> &FactorCols() const { return factor_cols_; }
 
   /**
    * @brief Row-relative offset of each (factor, block_a, block_b) run.
    *
-   * -1 when either block is a constant state.  Empty unless Build() was called
+   * -1 when either state is constant.  Empty unless Build() was called
    * with `want_scatter_maps`.
    */
   const dvector<int> &WriteOffsets() const { return write_offsets_; }
@@ -128,9 +128,9 @@ class HessianStructureBuilder {
   void BuildLayout(const Problem &problem);
 
   /**
-   * @brief Resolves every (factor, block) slot to a global column.
+   * @brief Resolves every (factor, state slot) to a global column.
    *
-   * @param[out] tangent_at_col Tangent size of the block owning each column.
+   * @param[out] tangent_at_col Tangent size of the state owning each column.
    */
   void ResolveFactorColumns(cudaStream_t stream, const Problem &problem, int num_cols,
                             dvector<int> &tangent_at_col);

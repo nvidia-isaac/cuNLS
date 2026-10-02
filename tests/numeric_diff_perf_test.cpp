@@ -51,7 +51,6 @@
  *    pose being estimated), via PnPFactorBatch.
  */
 
-#include <cublas_v2.h>
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 
@@ -63,7 +62,6 @@
 #include <string>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -302,8 +300,6 @@ class NumericDiffPerfTest : public ::testing::TestWithParam<PerfParams> {
     options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
     return options;
   }
-
-  cuBLASHandle cublas_handle_;
 };
 
 TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
@@ -344,16 +340,17 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       std::vector<int> const_ids = {0};
       dvector<int> const_ids_device(const_ids);
 
-      SE3StateBatch pose_states(cublas_handle_,
-                                reinterpret_cast<const float *>(poses_device.data()), num_poses,
+      SE3StateBatch pose_states(reinterpret_cast<const float *>(poses_device.data()), num_poses,
                                 const_ids_device.data(), 1);
+      pose_states.SetNumActiveStates(pose_states.Capacity(), pose_states.ConstCapacity());
       SE3BetweenFactorBatch between_factor(deltas_device.data(), num_factors);
+      between_factor.SetNumActiveFactors(between_factor.Capacity());
 
       std::vector<float *> state_pointers;
       state_pointers.reserve(2 * num_factors);
       for (size_t i = 0; i < num_factors; ++i) {
-        state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
-        state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
+        state_pointers.push_back(pose_states.StateDevicePtr(i));
+        state_pointers.push_back(pose_states.StateDevicePtr(i + 1));
       }
 
       Problem problem;
@@ -395,11 +392,12 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       std::vector<int> const_pose_ids = {0};
       dvector<int> const_pose_ids_device(const_pose_ids);
 
-      SE3StateBatch pose_states(cublas_handle_,
-                                reinterpret_cast<const float *>(poses_device.data()), n_poses,
+      SE3StateBatch pose_states(reinterpret_cast<const float *>(poses_device.data()), n_poses,
                                 const_pose_ids_device.data(), 1);
+      pose_states.SetNumActiveStates(pose_states.Capacity(), pose_states.ConstCapacity());
       VectorStateBatch<3> point_states(reinterpret_cast<const float *>(points_device.data()),
                                        n_points);
+      point_states.SetNumActiveStates(point_states.Capacity(), point_states.ConstCapacity());
 
       std::vector<int> chosen_poses;
       chosen_poses.reserve(obs_per_landmark);
@@ -424,13 +422,14 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
           pc[2] = T[11] + T[8] * pt[0] + T[9] * pt[1] + T[10] * pt[2];
           Vector<2> obs{pc[0] / pc[2], pc[1] / pc[2]};
           observations.push_back(obs);
-          state_pointers.push_back(pose_states.StateBlockDevicePtr(pose_idx));
-          state_pointers.push_back(point_states.StateBlockDevicePtr(pt_idx));
+          state_pointers.push_back(pose_states.StateDevicePtr(pose_idx));
+          state_pointers.push_back(point_states.StateDevicePtr(pt_idx));
         }
       }
 
       dvector<Vector<2>> observations_device(observations);
       ReprojectionFactorBatch reproj(observations_device.data(), observations.size(), 1e-3f);
+      reproj.SetNumActiveFactors(reproj.Capacity());
 
       Problem problem;
       problem.AddStateBatch(&pose_states);
@@ -466,11 +465,12 @@ TEST_P(NumericDiffPerfTest, BuildSystemTiming) {
       dvector<Vector<2>> observations_device(observations);
       dvector<SE3Transform> pose_device(gt_pose_vec);
 
-      SE3StateBatch pose_states(cublas_handle_, reinterpret_cast<const float *>(pose_device.data()),
-                                1);
+      SE3StateBatch pose_states(reinterpret_cast<const float *>(pose_device.data()), 1);
+      pose_states.SetNumActiveStates(pose_states.Capacity(), pose_states.ConstCapacity());
       PnPFactorBatch pnp(observations_device.data(), points_device.data(), n, 1e-3f);
+      pnp.SetNumActiveFactors(pnp.Capacity());
 
-      std::vector<float *> state_pointers(n, pose_states.StateBlockDevicePtr(0));
+      std::vector<float *> state_pointers(n, pose_states.StateDevicePtr(0));
 
       Problem problem;
       problem.AddStateBatch(&pose_states);

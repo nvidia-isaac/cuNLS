@@ -47,11 +47,22 @@ so they can be compared directly.
    (`T_cam_from_world`), `--num-points` random 3D world points visible from
    it, their noisy normalized 2D observations, and a perturbed initial pose.
 2. Build a single `SE3StateBatch` (one pose) and a `PnPFactorBatch` with one
-   factor per correspondence, all referencing the same pose state block.
+   factor per correspondence, all referencing the same pose state.
 3. Solve with `LevenbergMarquardtMinimizer`, once per requested Jacobian
    mode, each on a fresh device copy of the perturbed pose so the two runs
    are directly comparable.
 4. Compare initial vs. final cost and pose MSE for each mode.
+
+Each batch is constructed with its **capacity** (how many states /
+correspondences its bound device buffers hold, fixed for the batch's
+lifetime) and starts with 0 active; `SetNumActiveStates` / `SetNumActiveFactors`
+set the **active count** the next solve uses (host-only: no allocation, no
+device work; a solve without it throws). Size the capacity once for the
+largest problem you expect; the active count may change between solves up to
+it, so a real-time application allocates once and reuses the same buffers
+every frame while the problem size changes. The example keeps the two in
+separate variables (`*_capacity` vs. `num_*`); it solves every slot once, so
+each active count equals its capacity.
 
 ## Build locally (all examples)
 

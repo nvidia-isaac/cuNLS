@@ -41,7 +41,6 @@
 #include <set>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -206,10 +205,10 @@ struct VectorChainProblem {
 /**
  * @brief Chain of `num_blocks` vector states with between + prior factors.
  *
- * @param num_blocks Number of state blocks.
- * @param constant_indices State blocks held constant (may be empty).
+ * @param num_blocks Number of states.
+ * @param constant_indices States held constant (may be empty).
  * @param repeat_block When true, every between factor references the same
- *        state block on both sides, exercising the accumulate-twice path.
+ *        state on both sides, exercising the accumulate-twice path.
  * @param stride Gap between the two blocks a between factor joins; larger
  *        values keep the block and factor counts but change the connectivity.
  */
@@ -251,17 +250,23 @@ std::unique_ptr<VectorChainProblem> MakeVectorChain(int num_blocks,
 
   if (constant_indices.empty()) {
     data->state_batch = std::make_unique<VectorStateBatch<kDim>>(data->states.data(), num_blocks);
+    data->state_batch->SetNumActiveStates(data->state_batch->Capacity(),
+                                          data->state_batch->ConstCapacity());
   } else {
     data->const_ids.resize(constant_indices.size());
     data->const_ids.CopyFromHost(constant_indices.data(), constant_indices.size());
     data->state_batch = std::make_unique<VectorStateBatch<kDim>>(
         data->states.data(), num_blocks, data->const_ids.data(), constant_indices.size());
+    data->state_batch->SetNumActiveStates(data->state_batch->Capacity(),
+                                          data->state_batch->ConstCapacity());
   }
 
   data->between_batch =
       std::make_unique<VectorBetweenFactorBatch<kDim>>(data->deltas.data(), num_between);
+  data->between_batch->SetNumActiveFactors(data->between_batch->Capacity());
   data->prior_batch =
       std::make_unique<PriorVectorFactorBatch<kDim>>(data->priors.data(), num_blocks);
+  data->prior_batch->SetNumActiveFactors(data->prior_batch->Capacity());
 
   for (int i = 0; i < num_between; i++) {
     float *left = data->states.data() + static_cast<size_t>(i) * kDim;
@@ -330,9 +335,13 @@ std::unique_ptr<MixedDimProblem> MakeMixedDim(int count) {
   data->priors_b.CopyFromHost(pb.data(), pb.size());
 
   data->batch_a = std::make_unique<VectorStateBatch<3>>(data->states_a.data(), count);
+  data->batch_a->SetNumActiveStates(data->batch_a->Capacity(), data->batch_a->ConstCapacity());
   data->batch_b = std::make_unique<VectorStateBatch<6>>(data->states_b.data(), count);
+  data->batch_b->SetNumActiveStates(data->batch_b->Capacity(), data->batch_b->ConstCapacity());
   data->prior_a = std::make_unique<PriorVectorFactorBatch<3>>(data->priors_a.data(), count);
+  data->prior_a->SetNumActiveFactors(data->prior_a->Capacity());
   data->prior_b = std::make_unique<PriorVectorFactorBatch<6>>(data->priors_b.data(), count);
+  data->prior_b->SetNumActiveFactors(data->prior_b->Capacity());
 
   for (int i = 0; i < count; i++) {
     data->pointers_a.push_back(data->states_a.data() + static_cast<size_t>(i) * 3);
@@ -348,7 +357,6 @@ std::unique_ptr<MixedDimProblem> MakeMixedDim(int count) {
 
 /** @brief Owns the device data behind an SE3 pose-graph Problem. */
 struct PoseGraphProblem {
-  cuBLASHandle cublas_handle;
   dvector<SE3Transform> poses;
   dvector<SE3Transform> deltas;
   dvector<int> const_ids;
@@ -392,14 +400,18 @@ std::unique_ptr<PoseGraphProblem> MakePoseGraph(int num_poses, bool fix_first_po
     data->const_ids.resize(1);
     data->const_ids.CopyFromHost(ids.data(), 1);
     data->pose_batch = std::make_unique<SE3StateBatch>(
-        data->cublas_handle, reinterpret_cast<const float *>(data->poses.data()), num_poses,
-        data->const_ids.data(), 1);
+        reinterpret_cast<const float *>(data->poses.data()), num_poses, data->const_ids.data(), 1);
+    data->pose_batch->SetNumActiveStates(data->pose_batch->Capacity(),
+                                         data->pose_batch->ConstCapacity());
   } else {
     data->pose_batch = std::make_unique<SE3StateBatch>(
-        data->cublas_handle, reinterpret_cast<const float *>(data->poses.data()), num_poses);
+        reinterpret_cast<const float *>(data->poses.data()), num_poses);
+    data->pose_batch->SetNumActiveStates(data->pose_batch->Capacity(),
+                                         data->pose_batch->ConstCapacity());
   }
 
   data->between_batch = std::make_unique<SE3BetweenFactorBatch>(data->deltas.data(), num_poses - 1);
+  data->between_batch->SetNumActiveFactors(data->between_batch->Capacity());
 
   auto *base = reinterpret_cast<float *>(data->poses.data());
   for (int i = 0; i + 1 < num_poses; i++) {
@@ -414,7 +426,6 @@ std::unique_ptr<PoseGraphProblem> MakePoseGraph(int num_poses, bool fix_first_po
 
 /** @brief Owns the device data behind a small bundle-adjustment Problem. */
 struct BundleProblem {
-  cuBLASHandle cublas_handle;
   dvector<SE3Transform> poses;
   dvector<float> points;
   dvector<Vector<2>> observations;
@@ -480,10 +491,15 @@ std::unique_ptr<BundleProblem> MakeBundle(int num_poses, int num_points, bool ro
   data->observations.CopyFromHost(host_obs.data(), host_obs.size());
 
   data->pose_batch = std::make_unique<SE3StateBatch>(
-      data->cublas_handle, reinterpret_cast<const float *>(data->poses.data()), num_poses);
+      reinterpret_cast<const float *>(data->poses.data()), num_poses);
+  data->pose_batch->SetNumActiveStates(data->pose_batch->Capacity(),
+                                       data->pose_batch->ConstCapacity());
   data->point_batch = std::make_unique<VectorStateBatch<3>>(data->points.data(), num_points);
+  data->point_batch->SetNumActiveStates(data->point_batch->Capacity(),
+                                        data->point_batch->ConstCapacity());
   data->reprojection_batch =
       std::make_unique<ReprojectionFactorBatch>(data->observations.data(), host_obs.size());
+  data->reprojection_batch->SetNumActiveFactors(data->reprojection_batch->Capacity());
 
   data->problem.AddStateBatch(data->pose_batch.get());
   data->problem.AddStateBatch(data->point_batch.get());
@@ -533,12 +549,12 @@ ReferenceStructure BuildReferenceStructure(const Problem &problem) {
   int last_col = 0;
   for (const auto *state_batch : problem.GetStateBatches()) {
     BatchDesc d;
-    d.base = state_batch->StateBlockDevicePtr(0);
+    d.base = state_batch->StateDevicePtr(0);
     d.ambient = static_cast<int>(state_batch->AmbientSize());
     d.tangent = static_cast<int>(state_batch->TangentSize());
-    d.num_blocks = static_cast<int>(state_batch->NumStateBlocks());
+    d.num_blocks = static_cast<int>(state_batch->NumActiveStates());
 
-    std::vector<int> const_ids(state_batch->NumConstStateBlocks());
+    std::vector<int> const_ids(state_batch->NumConstStates());
     if (!const_ids.empty()) {
       THROW_ON_CUDA_ERROR(cudaMemcpy(const_ids.data(), state_batch->ConstStateIds(),
                                      const_ids.size() * sizeof(int), cudaMemcpyDeviceToHost));
@@ -594,9 +610,9 @@ ReferenceStructure BuildReferenceStructure(const Problem &problem) {
   out.factor_columns.resize(residual_batches.size());
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto *factor_batch = residual_batches[i].GetFactorBatch();
-    auto block_sizes = factor_batch->StateBlockSizes();
+    auto block_sizes = factor_batch->StateSizes();
     const size_t nb = block_sizes.size();
-    for (size_t f = 0; f < factor_batch->NumFactors(); f++) {
+    for (size_t f = 0; f < factor_batch->NumActiveFactors(); f++) {
       std::vector<int> cols;
       for (size_t b = 0; b < nb; b++) {
         int col = resolve(state_pointers[i][f * nb + b], static_cast<int>(block_sizes[b]));
@@ -656,7 +672,7 @@ ReferenceStructure BuildReferenceStructure(const Problem &problem) {
  *
  * Contracts the very same per-factor Jacobian blocks the GPU kernel reads, but
  * with plain nested loops into a dense-per-row map, so it shares no addressing
- * or accumulation logic with the code it checks.  Constant state blocks are
+ * or accumulation logic with the code it checks.  Constant states are
  * dropped exactly as the kernel drops them.
  *
  * @param problem The optimization problem.
@@ -686,17 +702,17 @@ void ComputeReferenceSystem(const Problem &problem, const std::vector<float> &ja
   const auto &residual_batches = problem.GetResidualBatches();
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto *factor_batch = residual_batches[i].GetFactorBatch();
-    const auto block_sizes = factor_batch->StateBlockSizes();
+    const auto block_sizes = factor_batch->StateSizes();
     const size_t num_blocks = block_sizes.size();
     const size_t residual_dim = factor_batch->ResidualsSize();
     const size_t tangent_dim = std::accumulate(block_sizes.begin(), block_sizes.end(), size_t(0));
 
     const std::vector<int> &columns = structure.factor_columns[i];
-    for (size_t f = 0; f < factor_batch->NumFactors(); f++) {
+    for (size_t f = 0; f < factor_batch->NumActiveFactors(); f++) {
       const float *J = jacobians.data() + jacobian_cursor + f * residual_dim * tangent_dim;
       const float *r = residuals.data() + residual_cursor + f * residual_dim;
 
-      // Local tangent index -> global column, or -1 for a constant block.
+      // Local tangent index -> global column, or -1 for a constant state.
       std::vector<int> global(tangent_dim, -1);
       size_t cursor = 0;
       for (size_t b = 0; b < num_blocks; b++) {
@@ -728,8 +744,8 @@ void ComputeReferenceSystem(const Problem &problem, const std::vector<float> &ja
         }
       }
     }
-    jacobian_cursor += factor_batch->NumFactors() * residual_dim * tangent_dim;
-    residual_cursor += factor_batch->NumFactors() * residual_dim;
+    jacobian_cursor += factor_batch->NumActiveFactors() * residual_dim * tangent_dim;
+    residual_cursor += factor_batch->NumActiveFactors() * residual_dim;
   }
 }
 
@@ -814,7 +830,7 @@ TEST(HessianStructureTest, MatchesReferenceOnBundleAdjustment) {
   ExpectStructureMatchesReference(data->problem);
 }
 
-TEST(HessianStructureTest, MatchesReferenceWithRepeatedStateBlock) {
+TEST(HessianStructureTest, MatchesReferenceWithRepeatedState) {
   auto data = MakeVectorChain(32, {}, /*repeat_block=*/true);
   ExpectStructureMatchesReference(data->problem);
 }
@@ -876,7 +892,7 @@ TEST(HessianStorageTest, BlockMatchesScalarWithConstantStates) {
   ExpectStorageLayoutsAgree(data->problem);
 }
 
-TEST(HessianStorageTest, BlockMatchesScalarWithRepeatedStateBlock) {
+TEST(HessianStorageTest, BlockMatchesScalarWithRepeatedState) {
   auto data = MakeVectorChain(32, {}, /*repeat_block=*/true);
   ExpectStorageLayoutsAgree(data->problem);
 }
@@ -1307,8 +1323,8 @@ TEST(BlockHessianAssemblerTest, MatchesReferenceWithConstantStates) {
   ExpectMatchesReference(data->problem);
 }
 
-TEST(BlockHessianAssemblerTest, AccumulatesRepeatedStateBlock) {
-  // Both slots of every between factor point at the same state block, so all
+TEST(BlockHessianAssemblerTest, AccumulatesRepeatedState) {
+  // Both slots of every between factor point at the same state, so all
   // four H_f sub-blocks land on the same CSR entries and must accumulate.
   //
   // Checked against the analytic answer directly.  The pre-rewrite path built a
@@ -1416,6 +1432,7 @@ TEST(BlockHessianAssemblerTest, EmptyFactorBatchIsSkipped) {
   auto data = MakeVectorChain(16, {});
   dvector<Vector<VectorChainProblem::kDim>> empty_priors;
   PriorVectorFactorBatch<VectorChainProblem::kDim> empty_batch(empty_priors.data(), 0);
+  empty_batch.SetNumActiveFactors(empty_batch.Capacity());
   std::vector<float *> no_pointers;
   data->problem.AddFactorBatch(&empty_batch, no_pointers);
 

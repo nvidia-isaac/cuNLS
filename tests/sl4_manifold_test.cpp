@@ -87,12 +87,12 @@ TEST(SL4ManifoldTest, StateDimensions) {
   hvector<SL4Transform> transforms(kN, MakeSL4Identity());
   dvector<SL4Transform> transforms_dev(transforms);
 
-  cuBLASHandle cublas;
-  SL4StateBatch states(cublas, reinterpret_cast<const float *>(transforms_dev.data()), kN);
+  SL4StateBatch states(reinterpret_cast<const float *>(transforms_dev.data()), kN);
+  states.SetNumActiveStates(states.Capacity(), states.ConstCapacity());
 
   EXPECT_EQ(states.TangentSize(), 15u);
   EXPECT_EQ(states.AmbientSize(), 16u);
-  EXPECT_EQ(states.NumStateBlocks(), kN);
+  EXPECT_EQ(states.NumActiveStates(), kN);
 }
 
 // ============================================================================
@@ -106,13 +106,15 @@ TEST(SL4ManifoldTest, PriorLMConvergence) {
   dvector<SL4Transform> targets = GenerateRandomSL4(kN, 44, 0.08f);
   dvector<SL4Transform> initials = PerturbSL4(targets, kN, 45, 0.04f, cublas);
 
-  SL4StateBatch state_batch(cublas, reinterpret_cast<const float *>(initials.data()), kN);
+  SL4StateBatch state_batch(reinterpret_cast<const float *>(initials.data()), kN);
+  state_batch.SetNumActiveStates(state_batch.Capacity(), state_batch.ConstCapacity());
   SL4PriorFactorBatch factor_batch(targets.data(), kN);
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_batch.StateBlockDevicePtr(i));
+    ptrs.push_back(state_batch.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -138,7 +140,7 @@ TEST(SL4ManifoldTest, PriorLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SL4Transform> optimized(kN), target_host(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(optimized.data(), state_batch.StateDevicePtr(0),
                                  kN * sizeof(SL4Transform), cudaMemcpyDeviceToHost));
   targets.CopyToHost(target_host.data(), kN);
 
@@ -163,16 +165,18 @@ TEST(SL4ManifoldTest, BetweenLMConvergence) {
   hvector<SL4Transform> deltas(kN, MakeSL4Identity());
   dvector<SL4Transform> deltas_dev(deltas);
 
-  cuBLASHandle cublas;
-  SL4StateBatch state_left(cublas, reinterpret_cast<const float *>(poses_left.data()), kN);
-  SL4StateBatch state_right(cublas, reinterpret_cast<const float *>(poses_right.data()), kN);
+  SL4StateBatch state_left(reinterpret_cast<const float *>(poses_left.data()), kN);
+  state_left.SetNumActiveStates(state_left.Capacity(), state_left.ConstCapacity());
+  SL4StateBatch state_right(reinterpret_cast<const float *>(poses_right.data()), kN);
+  state_right.SetNumActiveStates(state_right.Capacity(), state_right.ConstCapacity());
   SL4BetweenFactorBatch factor_batch(deltas_dev.data(), kN);
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
   std::vector<float *> ptrs;
   ptrs.reserve(2 * kN);
   for (size_t i = 0; i < kN; ++i) {
-    ptrs.push_back(state_left.StateBlockDevicePtr(i));
-    ptrs.push_back(state_right.StateBlockDevicePtr(i));
+    ptrs.push_back(state_left.StateDevicePtr(i));
+    ptrs.push_back(state_right.StateDevicePtr(i));
   }
 
   Problem problem;
@@ -199,9 +203,9 @@ TEST(SL4ManifoldTest, BetweenLMConvergence) {
   EXPECT_GT(summary.num_iterations, 0u);
 
   hvector<SL4Transform> opt_left(kN), opt_right(kN);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_left.data(), state_left.StateDevicePtr(0),
                                  kN * sizeof(SL4Transform), cudaMemcpyDeviceToHost));
-  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateBlockDevicePtr(0),
+  THROW_ON_CUDA_ERROR(cudaMemcpy(opt_right.data(), state_right.StateDevicePtr(0),
                                  kN * sizeof(SL4Transform), cudaMemcpyDeviceToHost));
 
   for (size_t i = 0; i < kN; ++i) {

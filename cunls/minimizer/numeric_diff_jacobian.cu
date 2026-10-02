@@ -35,7 +35,7 @@ constexpr int kBlockSize = 256;
 // One thread per (factor, tangent-dof, residual-row) element. Reads the two
 // (or one, for forward diff) perturbed residual evaluations for that dof and
 // writes the finite-difference column directly into the dense per-factor
-// Jacobian layout (`ResidualsSize() x sum(StateBlockSizes())`, row-major,
+// Jacobian layout (`ResidualsSize() x sum(StateSizes())`, row-major,
 // per factor) that analytic Jacobians also use.
 __global__ void NumericDiffColumnKernel(
     const float *__restrict__ perturbed_residuals, const float *__restrict__ baseline_residuals,
@@ -130,36 +130,48 @@ void NumericDiffJacobianBuilder::EnsureStreamPool(size_t num_streams) {
 
 void NumericDiffJacobianBuilder::PrepareResidualBatch(const Problem &problem,
                                                       size_t residual_batch_index) {
-  const auto &residual_batches = problem.GetResidualBatches();
-  if (residual_batch_index >= residual_batches.size()) {
+  if (residual_batch_index >= problem.GetResidualBatches().size()) {
     throw std::runtime_error(
         "NumericDiffJacobianBuilder::PrepareResidualBatch: index out of range");
   }
-  const auto &rb = residual_batches[residual_batch_index];
+  BuildPlan(problem, residual_batch_index, problem.HostStatePointers(residual_batch_index));
+}
+
+void NumericDiffJacobianBuilder::Refresh(const Problem &problem, size_t residual_batch_index) {
+  const std::vector<float *> &host_ptrs = problem.HostStatePointers(residual_batch_index);
+  const auto it = plans_.find(residual_batch_index);
+  if (it != plans_.end() && it->second.source == host_ptrs) {
+    return;  // same connectivity: the plan and its device cache stay valid
+  }
+  BuildPlan(problem, residual_batch_index, host_ptrs);
+}
+
+void NumericDiffJacobianBuilder::BuildPlan(const Problem &problem, size_t residual_batch_index,
+                                           std::vector<float *> host_ptrs) {
+  const auto &rb = problem.GetResidualBatches()[residual_batch_index];
   const FactorBatch *factor_batch = rb.GetFactorBatch();
   const auto &state_batches = problem.GetStateBatches();
-  const auto &host_ptrs = problem.GetStatePointers()[residual_batch_index];
 
-  const size_t F = factor_batch->NumFactors();
-  auto block_sizes = factor_batch->StateBlockSizes();
+  const size_t F = factor_batch->NumActiveFactors();
+  auto block_sizes = factor_batch->StateSizes();
   const size_t P = block_sizes.size();
 
-  // Address -> (state batch index, block index) lookup, built from the
+  // Address -> (state batch index, state index) lookup, built from the
   // problem's own state batches. This mirrors the pointer-identity walk
   // Problem::CheckGraphConnectivity already performs.
   std::unordered_map<const float *, std::pair<size_t, size_t>> addr_to_block;
   for (size_t bi = 0; bi < state_batches.size(); ++bi) {
     StateBatch *sb = state_batches[bi];
-    const size_t n = sb->NumStateBlocks();
+    const size_t n = sb->NumActiveStates();
     for (size_t k = 0; k < n; ++k) {
-      addr_to_block[sb->StateBlockDevicePtr(k)] = {bi, k};
+      addr_to_block[sb->StateDevicePtr(k)] = {bi, k};
     }
   }
 
   BatchPlan plan;
   plan.num_factors = F;
   plan.num_positions = P;
-  plan.state_block_sizes = block_sizes;
+  plan.state_sizes = block_sizes;
   plan.col_offsets.resize(P);
   size_t running = 0;
   for (size_t b = 0; b < P; ++b) {
@@ -192,6 +204,7 @@ void NumericDiffJacobianBuilder::PrepareResidualBatch(const Problem &problem,
     }
   }
 
+  plan.source = std::move(host_ptrs);
   plans_[residual_batch_index] = std::move(plan);
   // Structure changed (or is being defined for the first time): any cached
   // slot layout / uploaded device scratch for this residual batch no longer
@@ -218,25 +231,25 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   if (F == 0 || P == 0) return;
 
   const size_t residual_size = factor_batch->ResidualsSize();
-  const size_t total_cols = plan.col_offsets.back() + plan.state_block_sizes.back();
+  const size_t total_cols = plan.col_offsets.back() + plan.state_sizes.back();
 
   const auto &state_batches = problem.GetStateBatches();
   const auto &states = minimizer_state.GetStates();
 
   const bool central = (options.method == NumericDiffOptions::Method::kCentral);
 
-  std::vector<size_t> tangent_size(P), ambient_size(P), num_state_blocks(P);
+  std::vector<size_t> tangent_size(P), ambient_size(P), num_active_states(P);
   size_t W = 0;
   for (size_t b = 0; b < P; ++b) {
     StateBatch *owner = state_batches[plan.owner_batch_index[b]];
     tangent_size[b] = owner->TangentSize();
     ambient_size[b] = owner->AmbientSize();
-    num_state_blocks[b] = owner->NumStateBlocks();
+    num_active_states[b] = owner->NumActiveStates();
     W += tangent_size[b];
   }
   if (W == 0) {
     // No optimizable tangent dof referenced by this factor batch (all
-    // referenced blocks are zero-dimensional or constant); nothing to
+    // referenced states are zero-dimensional or constant); nothing to
     // differentiate. Leave jacobian_out untouched (callers should not read
     // it for constant-only groups anyway, mirroring analytic behavior).
     return;
@@ -261,7 +274,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
                        cache.step_size != options.relative_step_size || cache.F != F ||
                        cache.P != P || cache.residual_size != residual_size ||
                        cache.total_cols != total_cols ||
-                       cache.last_owner_data_ptr != owner_data_ptr;
+                       cache.last_owner_data_ptr != owner_data_ptr ||
+                       cache.last_num_active_states != num_active_states;
 
   if (!needs_rebuild) {
     // x_plus_delta_scratch's own address can only change if it needed to
@@ -308,9 +322,9 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
           cache.slot_owner[s] = plan.owner_batch_index[b];
           cache.slot_sign[s] = sign;
           cache.delta_offset[s] = delta_total;
-          delta_total += num_state_blocks[b] * tangent_size[b];
+          delta_total += num_active_states[b] * tangent_size[b];
           cache.xpd_offset[s] = xpd_total;
-          xpd_total += num_state_blocks[b] * ambient_size[b];
+          xpd_total += num_active_states[b] * ambient_size[b];
           return s;
         };
 
@@ -383,7 +397,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
 
     // ---- Build replicated state-pointer table (S * F * P) on the host and
     // ---- upload once (pinned staging). Baseline (unperturbed) positions
-    // ---- reuse the current minimizer-state block pointers; the perturbed
+    // ---- reuse the current minimizer-state pointers; the perturbed
     // ---- position for a slot's own (b) reads from that slot's Plus()
     // ---- output. This table is purely address-based (no state values), so
     // ---- it stays valid -- and is never rebuilt -- for as long as those
@@ -450,6 +464,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     cache.central = central;
     cache.step_size = options.relative_step_size;
     cache.last_owner_data_ptr = owner_data_ptr;
+    cache.last_num_active_states = num_active_states;
     cache.last_xpd_base = cache.x_plus_delta_scratch.data();
   } else {
     // ---- Fast path: structure, options, and all relevant addresses are

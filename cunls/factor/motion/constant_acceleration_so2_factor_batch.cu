@@ -94,15 +94,15 @@ __global__ void ca_so2_assemble_kernel(float const *const *state_pointers, const
 }
 
 ConstantAccelerationSO2FactorBatch::ConstantAccelerationSO2FactorBatch(const float *dt_ptr,
-                                                                       size_t num_factors)
-    : dt_ptr_(dt_ptr), num_factors_(num_factors), pose_rel_(num_factors), twist_(num_factors) {}
+                                                                       size_t capacity)
+    : SizedFactorBatch(capacity), dt_ptr_(dt_ptr), pose_rel_(capacity), twist_(capacity) {}
 
 bool ConstantAccelerationSO2FactorBatch::Evaluate(float *residuals, float *jacobians,
                                                   float const *const *state_pointers,
                                                   cudaStream_t stream, const int *factor_ids,
                                                   size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? NumFactors() : num_factor_ids;
-  if (num_items == 0 || NumFactors() == 0) {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
     return true;
   }
   pose_rel_.resize(num_items);
@@ -119,8 +119,8 @@ bool ConstantAccelerationSO2FactorBatch::Evaluate(float *residuals, float *jacob
                 num_items, twist_.data());
 
   ca_so2_assemble_kernel<<<num_blocks, kBlockSizeSO2CA, 0, stream>>>(
-      state_pointers, twist_.data(), dt_ptr_, num_items, factor_ids, static_cast<int>(NumFactors()),
-      residuals, jacobians);
+      state_pointers, twist_.data(), dt_ptr_, num_items, factor_ids,
+      static_cast<int>(NumActiveFactors()), residuals, jacobians);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   return true;

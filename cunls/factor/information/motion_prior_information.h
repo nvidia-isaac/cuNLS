@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -138,22 +137,31 @@ struct MotionPriorSqrtInformationStorage {
 
   DeviceVector<InformationMatrix> sqrt_information;
 
-  MotionPriorSqrtInformationStorage(cudaStream_t stream, const float *dt_ptr,
-                                    const float *qc_diag_ptr, size_t num_factors)
-      : sqrt_information(num_factors) {
-    if constexpr (kMultiplier == 2) {
-      ComputeConstantVelocitySqrtInformation<Dim>(
-          stream, dt_ptr, qc_diag_ptr, num_factors,
-          reinterpret_cast<float *>(sqrt_information.data()));
-    } else {
-      ComputeConstantAccelerationSqrtInformation<Dim>(
-          stream, dt_ptr, qc_diag_ptr, num_factors,
-          reinterpret_cast<float *>(sqrt_information.data()));
-    }
+  const float *dt_ptr;       ///< Per-factor time deltas (user memory).
+  const float *qc_diag_ptr;  ///< Process-noise diagonal (user memory).
+
+  MotionPriorSqrtInformationStorage(cudaStream_t stream, const float *dt, const float *qc_diag,
+                                    size_t num_factors)
+      : sqrt_information(num_factors), dt_ptr(dt), qc_diag_ptr(qc_diag) {
+    Compute(stream, num_factors);
     // Evaluate() may be called with a different stream than the one used
     // here to compute sqrt_information, so the buffer must be fully
     // populated (not just enqueued) before this constructor returns.
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  }
+
+  /** Recomputes the first `num` matrices from the current dt / Qc buffers (async). */
+  void Compute(cudaStream_t stream, size_t num) {
+    if (num == 0) {
+      return;
+    }
+    if constexpr (kMultiplier == 2) {
+      ComputeConstantVelocitySqrtInformation<Dim>(
+          stream, dt_ptr, qc_diag_ptr, num, reinterpret_cast<float *>(sqrt_information.data()));
+    } else {
+      ComputeConstantAccelerationSqrtInformation<Dim>(
+          stream, dt_ptr, qc_diag_ptr, num, reinterpret_cast<float *>(sqrt_information.data()));
+    }
   }
 };
 
@@ -190,7 +198,6 @@ class MotionPriorInformationFactorBatch : private detail::MotionPriorSqrtInforma
    * @brief Constructs the motion-prior factor batch with fused covariance
    * weighting.
    *
-   * @param cublas_handle Reference to an externally-owned cuBLAS handle.
    * @param stream CUDA stream used to compute the sqrt-information matrices
    * up front (the factor's own Evaluate() still takes its stream as a
    * per-call argument, as usual).
@@ -199,16 +206,39 @@ class MotionPriorInformationFactorBatch : private detail::MotionPriorSqrtInforma
    * T's own constructor).
    * @param qc_diag_ptr Device pointer to the continuous-time process-noise
    * PSD diagonal (Dim floats), constant across the batch.
-   * @param num_factors Number of factors in the batch.
+   * @param capacity Number of factors the measurement buffers hold. The active
+   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */
-  MotionPriorInformationFactorBatch(cuBLASHandle &cublas_handle, cudaStream_t stream,
-                                    const float *dt_ptr, const float *qc_diag_ptr,
-                                    size_t num_factors)
-      : Storage(stream, dt_ptr, qc_diag_ptr, num_factors),
-        Base(cublas_handle,
-             reinterpret_cast<const typename Base::InformationMatrix *>(
+  MotionPriorInformationFactorBatch(cudaStream_t stream, const float *dt_ptr,
+                                    const float *qc_diag_ptr, size_t capacity)
+      : Storage(stream, dt_ptr, qc_diag_ptr, capacity),
+        Base(reinterpret_cast<const typename Base::InformationMatrix *>(
                  this->Storage::sqrt_information.data()),
-             num_factors, dt_ptr, num_factors) {}
+             capacity, dt_ptr, capacity) {}
+
+  /**
+   * @brief Recomputes the sqrt-information matrices after the user rewrote the
+   * time deltas (or Qc) in place, for buffers reused across solves.
+   *
+   * The matrices are derived from `dt` once, at construction, and cached; this
+   * refreshes the first `num` of them from the current contents of the dt and
+   * Qc buffers. Typically called each frame together with SetNumActiveFactors(num).
+   * Asynchronous on `stream`: issue it on the stream later passed to
+   * Minimize / Evaluate (or synchronize), and not while a minimization that
+   * uses this batch is running.
+   *
+   * @param stream CUDA stream for the recomputation.
+   * @param num Number of matrices to recompute, at most Capacity().
+   * @throws std::invalid_argument if num > Capacity().
+   */
+  void Update(cudaStream_t stream, size_t num) {
+    if (num > this->Capacity()) {
+      throw std::invalid_argument("MotionPriorInformationFactorBatch::Update: num (" +
+                                  std::to_string(num) + ") exceeds the capacity of " +
+                                  std::to_string(this->Capacity()));
+    }
+    this->Storage::Compute(stream, num);
+  }
 };
 
 // Named aliases: prefer these over spelling out MotionPriorInformationFactorBatch<T, Dim>.

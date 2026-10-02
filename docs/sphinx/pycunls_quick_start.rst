@@ -1,8 +1,23 @@
 ###############################################################################
-Python Quick Start
+Quick Start
 ###############################################################################
 
-This section shows a minimal end-to-end Python setup:
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
+
+This section shows a minimal end-to-end Python setup with ``pycunls``.
+
+.. note::
+
+   **Using cuNLS from C++.** The same example written against the C++ API,
+   with a CMake project to build it, is in :doc:`quick_start`.
+
+Steps:
 
 1. Install pycunls
 2. Write a tiny script
@@ -41,29 +56,35 @@ every pycunls API call — it controls asynchronous GPU execution.
 
 **Create the state batch.**
 A `VectorStateBatch1` wraps the device memory as a batch of 1-dimensional
-Euclidean state blocks (see :doc:`api/state`).
+Euclidean states (see :doc:`api/state`). The second argument is the
+capacity (states the buffer holds). A batch starts with 0 active states:
+``set_num_active_states`` sets how many the solver uses, before the first
+solve.
 
 .. code-block:: python
 
    state_batch = pycunls.VectorStateBatch1(state_gpu, 1)
+   state_batch.set_num_active_states(1)
 
 **Create the factor batch.**
 A `PriorVectorFactorBatch1` computes the residual :math:`r = x - o` and
-Jacobian :math:`J = I` for each factor (see :doc:`api/factor`).
+Jacobian :math:`J = I` for each factor (see :doc:`api/factor`). It is
+also constructed with its capacity and starts with 0 active factors.
 
 .. code-block:: python
 
    prior = pycunls.PriorVectorFactorBatch1(obs_gpu, 1)
+   prior.set_num_active_factors(1)
 
 **Wire state pointers and assemble the problem.**
-The state-pointer list tells the solver which state block each factor
+The state-pointer list tells the solver which state each factor
 reads. For a prior factor with one state input, there is exactly one
 pointer per factor. `Problem` collects all state and factor batches into a
 single factor graph (see :doc:`api/minimizer`).
 
 .. code-block:: python
 
-   state_ptrs = [state_batch.state_block_device_ptr(0)]
+   state_ptrs = [state_batch.state_device_ptr(0)]
 
    problem = pycunls.Problem()
    problem.add_state_batch(state_batch)
@@ -100,3 +121,5 @@ Step 3: Run
 
 You should see the final cost decrease toward zero and the solution converge
 to :math:`x = 2`.
+
+Next: :doc:`pycunls_tutorial` for complete examples.

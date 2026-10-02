@@ -26,7 +26,6 @@
 #include <iostream>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -61,26 +60,43 @@ int main() {
     dvector<int> constant_ids(std::vector<int>{0});  // T_0 and v_0 are gauge anchors
 
     // 3. State batches: SE(3) poses and 6D body velocities.
-    cunls::cuBLASHandle cublas;
+    //    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
+    //    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
+    //    size it once for the largest problem you expect. Right after construction nothing is
+    //    active: SetNumActiveStates / SetNumActiveFactors set the active count, how many of the
+    //    first slots the next solve uses (a solve without it throws). The setter is host-only (no
+    //    allocation, no device work) and may change the count between solves up to the capacity,
+    //    which is what lets a real-time application allocate once and reuse the same buffers every
+    //    frame while the problem size changes. This example solves every slot once, so each active
+    //    count equals its capacity.
     cunls::CudaStream stream;
-    cunls::SE3StateBatch pose_states(cublas, reinterpret_cast<const float *>(poses.data()),
-                                     num_poses, constant_ids.data(), 1);
+    const size_t poses_capacity = num_poses;  // every slot solved: active = capacity
+    const size_t const_capacity = 1;          // entries of constant_ids
+    cunls::SE3StateBatch pose_states(reinterpret_cast<const float *>(poses.data()), poses_capacity,
+                                     constant_ids.data(), const_capacity);
     cunls::VectorStateBatch<6> velocity_states(reinterpret_cast<const float *>(velocities.data()),
-                                               num_poses, constant_ids.data(), 1);
+                                               poses_capacity, constant_ids.data(), const_capacity);
+    const size_t num_const = 1;                            // active constant ids: T_0 / v_0
+    pose_states.SetNumActiveStates(num_poses, num_const);  // active counts
+    velocity_states.SetNumActiveStates(num_poses, num_const);
 
     // 4. The motion prior. Qc is the continuous-time process-noise PSD per
     //    tangent DOF (rotation x/y/z, translation x/y/z): smaller values trust
     //    constant velocity more. Factor i reads [T_i, T_{i+1}, v_i, v_{i+1}].
+    //    Capacity (fixed, sizes the buffers) vs. active count (set per solve):
+    //    see step 3.
     const std::vector<float> qc = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     dvector<float> qc_device(qc);
+    const size_t factors_capacity = num_factors;  // dts holds this many; every slot solved
     cunls::ConstantVelocityInformationSE3FactorBatch motion_prior(
-        cublas, stream.GetStream(), dts.data(), qc_device.data(), num_factors);
+        stream.GetStream(), dts.data(), qc_device.data(), factors_capacity);
+    motion_prior.SetNumActiveFactors(num_factors);  // active count
     std::vector<float *> state_pointers;
     for (size_t i = 0; i < num_factors; ++i) {
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(pose_states.StateBlockDevicePtr(i + 1));
-      state_pointers.push_back(velocity_states.StateBlockDevicePtr(i));
-      state_pointers.push_back(velocity_states.StateBlockDevicePtr(i + 1));
+      state_pointers.push_back(pose_states.StateDevicePtr(i));
+      state_pointers.push_back(pose_states.StateDevicePtr(i + 1));
+      state_pointers.push_back(velocity_states.StateDevicePtr(i));
+      state_pointers.push_back(velocity_states.StateDevicePtr(i + 1));
     }
 
     // 5. The problem.

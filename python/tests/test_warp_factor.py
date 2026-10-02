@@ -64,7 +64,7 @@ def _prior_kernel(
                     jacobians[i * dim * dim + d * dim + d2] = 0.0
 
 
-# Copies each item's dim-float state block (one pointer per item) into a
+# Copies each item's dim-float state (one pointer per item) into a
 # contiguous array: Warp kernels cannot dereference raw pointers themselves.
 _gather_blocks_kernel = cp.RawKernel(r"""
 extern "C" __global__
@@ -81,14 +81,14 @@ void gather_blocks(const unsigned long long* ptrs, float* out, int items, int di
 class WarpPriorFactor(WarpFactorBatch):
     """Dim-D vector-prior factor implemented entirely in Warp.
 
-    ``evaluate`` gathers each item's state block through the ``state_pointers``
+    ``evaluate`` gathers each item's state through the ``state_pointers``
     device array (a CuPy kernel), then launches ``_prior_kernel`` on the
     provided CUDA stream with one thread per item.
     """
 
-    def __init__(self, observations_wp, dim, num_factors):
-        super().__init__(residual_size=dim, state_block_sizes=[dim],
-                         num_factors=num_factors)
+    def __init__(self, observations_wp, dim, capacity):
+        super().__init__(residual_size=dim, state_sizes=[dim],
+                         capacity=capacity)
         self.observations = observations_wp
         self._dim = dim
 
@@ -126,6 +126,24 @@ class TestWarpFactorBatch:
         arr = fb.wrap_array(data.ptr, wp.float32, 5)
         assert arr.shape == (5,)
 
+    def test_default_factor_ids_cache_is_bounded(self):
+        """Default ids are t % num_active_factors; only two active counts stay cached."""
+        fb = WarpFactorBatch(1, [1], 10)
+        for count in [3, 5, 7, 5, 9]:
+            fb.set_num_active_factors(count)
+            ids = fb.factor_ids(0, 2 * count).numpy()
+            np.testing.assert_array_equal(ids, np.arange(2 * count) % count)
+            assert {key[1] for key in fb._default_ids} <= {count, *fb._default_ids_counts}
+            assert len(fb._default_ids_counts) <= 2
+        assert sorted(fb._default_ids_counts) == [5, 9]
+
+    def test_default_factor_ids_need_active_factors(self):
+        """Items without active factors are an error; zero items are fine."""
+        fb = WarpFactorBatch(1, [1], 10)  # 0 active factors
+        assert fb.factor_ids(0, 0).shape == (0,)
+        with pytest.raises(ValueError, match="set_num_active_factors"):
+            fb.factor_ids(0, 4)
+
     def test_end_to_end_convergence(self, stream):
         """Solve a 3D vector-prior problem using a Warp-based factor."""
         target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
@@ -135,11 +153,13 @@ class TestWarpFactorBatch:
         obs_wp = wp.array(target, dtype=wp.float32, device="cuda:0")
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = WarpPriorFactor(obs_wp, 3, 1)
+        fb.set_num_active_factors(fb.capacity)
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)
-        problem.add_factor_batch(fb, [sb.state_block_device_ptr(0)])
+        problem.add_factor_batch(fb, [sb.state_device_ptr(0)])
         assert problem.check_consistency()
 
         opts = pycunls.MinimizerOptions()

@@ -45,6 +45,7 @@ TEST(FactorBatchTest, Simple) {
   DeviceVector<Vector<2>> vectors(host_vectors);
   const float *data_ptr = reinterpret_cast<const float *>(vectors.data());
   VectorStateBatch<2> vector_states(data_ptr, num_vectors);
+  vector_states.SetNumActiveStates(vector_states.Capacity(), vector_states.ConstCapacity());
 
   std::vector<Vector<2>> observations_host;
   for (size_t i = 0; i < num_vectors - 1; i++) {
@@ -54,9 +55,10 @@ TEST(FactorBatchTest, Simple) {
   DeviceVector<Vector<2>> observations_device(observations_host);
 
   PriorVectorFactorBatch<2> factor_batch(observations_device.data(), observations_host.size());
+  factor_batch.SetNumActiveFactors(factor_batch.Capacity());
 
-  ASSERT_EQ(factor_batch.NumFactors(), num_vectors - 1);
-  ASSERT_EQ(vector_states.NumStateBlocks(), num_vectors);
+  ASSERT_EQ(factor_batch.NumActiveFactors(), num_vectors - 1);
+  ASSERT_EQ(vector_states.NumActiveStates(), num_vectors);
 }
 
 }  // namespace cunls

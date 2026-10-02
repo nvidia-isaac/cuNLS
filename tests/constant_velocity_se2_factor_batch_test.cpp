@@ -82,6 +82,7 @@ SingleFactorResult EvaluateOne(const Matrix<3> &pose_k, const Matrix<3> &pose_k1
   dvector<const float *> ptrs_dev(ptrs);
 
   ConstantVelocitySE2FactorBatch fb(dt_dev.data(), 1);
+  fb.SetNumActiveFactors(fb.Capacity());
   dvector<float> res_dev(6);
   dvector<float> jac_dev(want_jacobian ? 6 * 12 : 0);
 

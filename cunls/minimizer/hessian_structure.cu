@@ -44,7 +44,7 @@ constexpr uint64_t kInvalidPairKey = ~uint64_t(0);
 int GridFor(size_t count) { return static_cast<int>((count + kBlockSize - 1) / kBlockSize); }
 
 /**
- * One thread per (factor, block).  Resolves the factor's state pointer to a
+ * One thread per (factor, state slot).  Resolves the factor's state pointer to a
  * global column offset by testing it against one state batch's storage range,
  * exactly like `col_ids_kernel` does for the triplet path.  Threads whose
  * pointer belongs to a different batch leave the entry untouched, so the caller
@@ -54,7 +54,7 @@ __global__ void ResolveFactorColumnsKernel(int num_entries, int num_blocks_per_f
                                            float const *const *__restrict__ state_pointers,
                                            const int *__restrict__ block_sizes,
                                            const float *__restrict__ batch_base, int ambient_dim,
-                                           int tangent_dim, int num_state_blocks,
+                                           int tangent_dim, int num_active_states,
                                            const int *__restrict__ block_col_map,
                                            int *__restrict__ out_cols) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -62,7 +62,7 @@ __global__ void ResolveFactorColumnsKernel(int num_entries, int num_blocks_per_f
     return;
   }
 
-  // A factor's block slot only maps onto this batch if the tangent dims agree;
+  // A factor's state slot only maps onto this batch if the tangent dims agree;
   // mirrors the guard in FillColIdsInJacobianBlock.
   int block = idx % num_blocks_per_factor;
   if (block_sizes[block] != tangent_dim) {
@@ -71,7 +71,7 @@ __global__ void ResolveFactorColumnsKernel(int num_entries, int num_blocks_per_f
 
   const float *ptr = state_pointers[idx];
   ptrdiff_t diff = ptr - batch_base;
-  if (diff < 0 || diff >= static_cast<ptrdiff_t>(num_state_blocks) * ambient_dim) {
+  if (diff < 0 || diff >= static_cast<ptrdiff_t>(num_active_states) * ambient_dim) {
     return;
   }
 
@@ -83,7 +83,7 @@ __global__ void ResolveFactorColumnsKernel(int num_entries, int num_blocks_per_f
 }
 
 /**
- * One thread per (state block, tangent component).  Records the owning block's
+ * One thread per (state, tangent component).  Records the owning state's
  * tangent size at every column it spans, so a block pair can look up its tile
  * dimensions from the two column indices alone.
  */
@@ -306,10 +306,10 @@ void HessianStructureBuilder::BuildLayout(const Problem &problem) {
 
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto *factor_batch = residual_batches[i].GetFactorBatch();
-    auto block_sizes = factor_batch->StateBlockSizes();
+    auto block_sizes = factor_batch->StateSizes();
 
     HessianBatchLayout &layout = layout_[i];
-    layout.num_factors = static_cast<int>(factor_batch->NumFactors());
+    layout.num_factors = static_cast<int>(factor_batch->NumActiveFactors());
     layout.residual_dim = static_cast<int>(factor_batch->ResidualsSize());
     layout.num_blocks = static_cast<int>(block_sizes.size());
     layout.tangent_dim =
@@ -334,7 +334,6 @@ void HessianStructureBuilder::BuildLayout(const Problem &problem) {
 void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Problem &problem,
                                                    int num_cols, dvector<int> &tangent_at_col) {
   const auto &residual_batches = problem.GetResidualBatches();
-  const auto &host_state_pointers = problem.GetStatePointers();
 
   if (factor_cols_.empty()) {
     return;
@@ -348,32 +347,24 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
         cudaMemsetAsync(tangent_at_col.data(), 0, tangent_at_col.size() * sizeof(int), stream));
   }
 
-  // Staging buffers live only for this call.  State pointers are uploaded once
-  // and reused across the state-batch loop below.
-  dvector<float *> state_pointers(factor_cols_.size());
+  // The state pointers are read from the problem's device tables
+  // (Problem::DeviceStatePointers); only the small block-size arrays are staged.
   std::vector<dvector<int>> block_sizes_device(residual_batches.size());
   for (size_t i = 0; i < residual_batches.size(); i++) {
-    auto block_sizes = residual_batches[i].GetFactorBatch()->StateBlockSizes();
+    auto block_sizes = residual_batches[i].GetFactorBatch()->StateSizes();
     std::vector<int> sizes_host(block_sizes.begin(), block_sizes.end());
     block_sizes_device[i].resize(sizes_host.size());
     block_sizes_device[i].CopyFromHost(sizes_host.data(), sizes_host.size());
-
-    const size_t count = static_cast<size_t>(layout_[i].num_factors) * layout_[i].num_blocks;
-    if (count > 0) {
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(state_pointers.data() + layout_[i].col_offset,
-                                          host_state_pointers[i].data(), count * sizeof(float *),
-                                          cudaMemcpyHostToDevice, stream));
-    }
   }
 
-  // A (factor, block) slot is owned by exactly one state batch, so each batch
+  // A (factor, state slot) is owned by exactly one state batch, so each batch
   // overwrites only its own entries of the -1-initialized output.
   dvector<int> block_col_map;
   int last_col = 0;
   for (auto *state_batch : problem.GetStateBatches()) {
-    ComputeStateBlockColumnOffsets(stream, last_col, state_batch, block_col_map);
+    ComputeStateColumnOffsets(stream, last_col, state_batch, block_col_map);
 
-    const size_t tangent_entries = state_batch->NumStateBlocks() * state_batch->TangentSize();
+    const size_t tangent_entries = state_batch->NumActiveStates() * state_batch->TangentSize();
     if (tangent_entries > 0) {
       FillTangentAtColKernel<<<GridFor(tangent_entries), kBlockSize, 0, stream>>>(
           static_cast<int>(tangent_entries), static_cast<int>(state_batch->TangentSize()),
@@ -387,22 +378,21 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
         continue;
       }
       ResolveFactorColumnsKernel<<<GridFor(count), kBlockSize, 0, stream>>>(
-          static_cast<int>(count), layout_[i].num_blocks,
-          state_pointers.data() + layout_[i].col_offset, block_sizes_device[i].data(),
-          state_batch->StateBlockDevicePtr(0), static_cast<int>(state_batch->AmbientSize()),
+          static_cast<int>(count), layout_[i].num_blocks, problem.DeviceStatePointers(i),
+          block_sizes_device[i].data(), state_batch->StateDevicePtr(0),
+          static_cast<int>(state_batch->AmbientSize()),
           static_cast<int>(state_batch->TangentSize()),
-          static_cast<int>(state_batch->NumStateBlocks()), block_col_map.data(),
+          static_cast<int>(state_batch->NumActiveStates()), block_col_map.data(),
           factor_cols_.data() + layout_[i].col_offset);
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
 
-    last_col +=
-        static_cast<int>((state_batch->NumStateBlocks() - state_batch->NumConstStateBlocks()) *
-                         state_batch->TangentSize());
+    last_col += static_cast<int>((state_batch->NumActiveStates() - state_batch->NumConstStates()) *
+                                 state_batch->TangentSize());
   }
 
-  // state_pointers goes out of scope here; the kernels above are ordered behind
-  // its upload on `stream`, so wait before the allocation is released.
+  // block_col_map and block_sizes_device go out of scope here; the kernels
+  // above read them on `stream`, so wait before the allocations are released.
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 

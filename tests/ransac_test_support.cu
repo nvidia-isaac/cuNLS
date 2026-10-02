@@ -416,12 +416,13 @@ void LaunchLinearRegression(int dim, const float *a, const float *y, size_t num_
 bool FocalPnPFactorBatch::Evaluate(float *residuals, float *jacobians,
                                    float const *const *state_pointers, cudaStream_t stream,
                                    const int *factor_ids, size_t num_factor_ids) const {
-  const size_t num_items = num_factor_ids == 0 ? num_factors_ : num_factor_ids;
-  if (num_factors_ == 0 || num_items == 0) {
+  const size_t num_factors = NumActiveFactors();
+  const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+  if (num_factors == 0 || num_items == 0) {
     return true;
   }
   const int blocks = static_cast<int>((num_items + kThreads - 1) / kThreads);
-  FocalPnPKernel<<<blocks, kThreads, 0, stream>>>(obs_, points_, static_cast<int>(num_factors_),
+  FocalPnPKernel<<<blocks, kThreads, 0, stream>>>(obs_, points_, static_cast<int>(num_factors),
                                                   factor_ids, static_cast<int>(num_items),
                                                   residuals, jacobians, state_pointers);
   THROW_ON_CUDA_ERROR(cudaGetLastError());

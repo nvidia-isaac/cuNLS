@@ -18,6 +18,8 @@
 #pragma once
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace cunls {
@@ -27,13 +29,13 @@ namespace cunls {
  *
  * A FactorBatch represents a collection of identical factors that
  * can be evaluated in parallel on the GPU. Each factor in the batch
- * computes residuals and optionally Jacobians from a set of state blocks.
+ * computes residuals and optionally Jacobians from a set of states.
  *
  * Subclasses must implement the pure virtual methods to define the residual
- * size, state block sizes, number of factors, and the evaluation logic.
+ * size, state sizes, number of factors, and the evaluation logic.
  *
  * @see SizedFactorBatch for a convenience base that fixes residual and
- *      state block sizes at compile time.
+ *      state sizes at compile time.
  */
 class FactorBatch {
  public:
@@ -42,11 +44,11 @@ class FactorBatch {
    *
    * <b>Terms</b>
    *
-   * - N = NumFactors(): number of factors (measurements) in the batch.
-   * - B = StateBlockSizes().size(): state blocks read by one factor.
+   * - N = NumActiveFactors(): number of factors (measurements) in the batch.
+   * - B = StateSizes().size(): states read by one factor.
    * - m = ResidualsSize(): residual dimension of one factor.
-   * - J = sum of StateBlockSizes(): Jacobian columns of one factor.
-   * - **Item**: one factor evaluated at one set of B state blocks. The call
+   * - J = sum of StateSizes(): Jacobian columns of one factor.
+   * - **Item**: one factor evaluated at one set of B states. The call
    *   evaluates n items, t = 0 .. n-1. Item t reads factor f(t)'s measurement
    *   and its own B state pointers, and writes its own output rows.
    *
@@ -62,10 +64,10 @@ class FactorBatch {
    * @param jacobians [out] Device array of n * m * J floats, or nullptr when
    *        only residuals are needed. Item t writes a row-major m x J block
    *        starting at `jacobians[t * m * J]`: element (r, c) is
-   *        `jacobians[(t * m + r) * J + c]`. Columns follow the state blocks
-   *        in order (block 0 first), each block contributing its tangent size.
+   *        `jacobians[(t * m + r) * J + c]`. Columns follow the states
+   *        in order (state 0 first), each state contributing its tangent size.
    * @param state_pointers [in] Device array of n * B device pointers. Item t
-   *        reads state block b from `state_pointers[t * B + b]`. Different
+   *        reads state b from `state_pointers[t * B + b]`. Different
    *        items may point to the same state (e.g. every factor of a PnP batch
    *        points to the one camera pose).
    * @param stream CUDA stream on which all work is enqueued. The call may
@@ -79,8 +81,8 @@ class FactorBatch {
    *        factor_ids is given, it is the length of that array.
    * @return true on success, false on failure.
    *
-   * <b>Examples</b> (a batch of N = 3 factors, B = 1 state block, m = 2).
-   * `ptrs[t]` is the state pointer of item t (Pk: state set P's block for
+   * <b>Examples</b> (a batch of N = 3 factors, B = 1 state, m = 2).
+   * `ptrs[t]` is the state pointer of item t (Pk: state set P's state for
    * factor k), and `res rows` is the range of `residuals` that item t writes.
    *
    * @verbatim
@@ -143,16 +145,71 @@ class FactorBatch {
   virtual size_t ResidualsSize() const = 0;
 
   /**
-   * @brief Returns the sizes of all state blocks consumed by each factor.
-   * @return Vector where element i is the dimension of state block i.
+   * @brief Returns the sizes of all states consumed by each factor.
+   * @return Vector where element i is the dimension of state i.
    */
-  virtual std::vector<size_t> StateBlockSizes() const = 0;
+  virtual std::vector<size_t> StateSizes() const = 0;
 
   /**
-   * @brief Returns the number of factors in this batch.
-   * @return Number of factors to be evaluated in parallel.
+   * @brief Number of active factors n: the first n measurements of the batch's
+   * buffers are evaluated (see Evaluate's item contract for n == 0 calls).
+   *
+   * Built-in batches store it in the base (FactorBatch(capacity) / SetNumActiveFactors).
+   * Custom batches may override it instead; they then cannot be resized with
+   * SetNumActiveFactors.
    */
-  virtual size_t NumFactors() const = 0;
+  virtual size_t NumActiveFactors() const { return num_active_factors_; }
+
+  /**
+   * @brief Number of factors the batch's buffers hold: the capacity passed to
+   * the constructor. Constant for the lifetime of the batch; SetNumActiveFactors
+   * accepts any value up to it. Custom batches pass it to the base constructor
+   * (FactorBatch(capacity) / SizedFactorBatch(capacity)). A batch constructed
+   * without one (that overrides NumActiveFactors() instead) has a fixed size:
+   * its capacity is NumActiveFactors(), like StateBatch::Capacity().
+   */
+  virtual size_t Capacity() const { return capacity_ != 0 ? capacity_ : NumActiveFactors(); }
+
+  /**
+   * @brief Sets the number of active factors, for buffers that are allocated
+   * once and rewritten in place between solves.
+   *
+   * A host-only assignment: no allocation, no device work. Takes effect at the
+   * next Evaluate / Minimize, which then read the first `num_active_factors`
+   * measurements. Must not be called while a minimization that uses this batch
+   * is running.
+   *
+   * @param num_active_factors Active count, at most Capacity().
+   * @throws std::invalid_argument if num_active_factors > Capacity().
+   * @throws std::logic_error if the batch overrides NumActiveFactors() and so cannot
+   *         be resized.
+   */
+  virtual void SetNumActiveFactors(size_t num_active_factors) {
+    if (num_active_factors > Capacity()) {
+      throw std::invalid_argument("SetNumActiveFactors(" + std::to_string(num_active_factors) +
+                                  ") exceeds the capacity of " + std::to_string(Capacity()));
+    }
+    num_active_factors_ = num_active_factors;
+    if (NumActiveFactors() != num_active_factors) {
+      throw std::logic_error(
+          "SetNumActiveFactors: this factor batch overrides NumActiveFactors() and cannot be "
+          "resized");
+    }
+  }
+
+ protected:
+  /** @brief Batch without a capacity: subclasses that override NumActiveFactors(). */
+  FactorBatch() = default;
+
+  /**
+   * @brief Batch whose buffers hold `capacity` factors. The active count starts
+   * at 0: call SetNumActiveFactors(n) before evaluating or solving.
+   */
+  explicit FactorBatch(size_t capacity) : capacity_(capacity), num_active_factors_(0) {}
+
+ private:
+  size_t capacity_ = 0;            ///< Factors the buffers hold.
+  size_t num_active_factors_ = 0;  ///< Active factors.
 };
 
 }  // namespace cunls

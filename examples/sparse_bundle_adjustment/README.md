@@ -48,7 +48,18 @@ observations in normalized camera coordinates:
   `[pose_0, point_0, pose_0, point_1, ..., pose_M, point_N]`.
 
 This layout matches `ReprojectionFactorBatch` requirements: each factor consumes
-two state blocks `(pose, point)`.
+two states `(pose, point)`.
+
+Each batch is constructed with its **capacity** (how many states /
+observations its bound device buffers hold, fixed for the batch's lifetime)
+and starts with 0 active; `SetNumActiveStates` / `SetNumActiveFactors` set the
+**active count** the next solve uses (host-only: no allocation, no device
+work; a solve without it throws). Size the capacity once for the largest
+problem you expect; the active count may change between solves up to it, so
+a real-time application allocates once and reuses the same buffers every
+frame while the problem size changes. The example keeps the two in separate
+variables (`*_capacity` vs. `num_*`); it solves every slot once, so each
+active count equals its capacity.
 
 `LevenbergMarquardtMinimizer::Minimize` runs `Initialize`, which allocates
 minimizer working buffers and prepares state/factor batches for the solve.

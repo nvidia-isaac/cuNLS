@@ -3,18 +3,18 @@ Robust Estimation with RANSAC
 ###############################################################################
 
 cuNLS ships two RANSAC minimizers, ``RansacGaussNewtonMinimizer`` and
-``RansacLevenbergMarquardtMinimizer`` (C++ header
-:code:`cunls/minimizer/ransac_minimizer.h`; Python ``pycunls``). They solve the
+``RansacLevenbergMarquardtMinimizer`` (Python ``pycunls``; C++ header
+:code:`cunls/minimizer/ransac_minimizer.h`). They solve the
 same :cpp:class:`Problem` as the regular minimizers, but they assume that some
 measurements are **gross outliers**: wrong data association, not just noise.
 They find the estimate that most measurements agree with, refine it on those
 measurements, and report which measurements were inliers.
 
 This page explains when to use them, the theory behind them, exactly what the
-implementation does, how to call it from C++ and Python, and how to tune it.
+implementation does, how to call it from Python and C++, and how to tune it.
 How to write custom factors and states that work with RANSAC is covered in
 :doc:`custom_factors_and_states`. Complete runnable programs are in
-``examples/ransac_pnp`` (C++) and ``python/examples/ransac_pnp.py``.
+``python/examples/ransac_pnp.py`` (Python) and ``examples/ransac_pnp`` (C++).
 
 .. contents:: On this page
    :local:
@@ -48,9 +48,9 @@ Use the RANSAC minimizers when:
   (feature mismatches, wrong loop closures, spurious returns);
 - you need the inlier set, not just the estimate;
 - the **free state is small**: the sum of the tangent dimensions of all
-  non-constant state blocks must be at most ``kMaxRansacTangentDim = 64``
+  non-constant states must be at most ``kMaxRansacTangentDim = 64``
   (a camera pose is 6, a pose plus a focal length is 7, a rig of 10 poses
-  is 60). Constant blocks (e.g. known 3D points) do not count, however many
+  is 60). Constant states (e.g. known 3D points) do not count, however many
   there are, and the number of factors is unlimited.
 
 Typical problems: PnP (pose from 3D-2D matches), point-cloud registration
@@ -84,13 +84,13 @@ measurements as possible within the noise level, and that partition.
 
 In cuNLS every residual batch has a **role**:
 
-``kSampled`` (Python ``RansacRole.sampled``)
+``RansacRole.sampled`` (C++ ``RansacRole::kSampled``)
   Data factors that may be outliers. RANSAC samples from them and classifies
   every one of them. Each sampled batch has an **inlier threshold**
   :math:`\tau`: factor :math:`i` is an inlier of state :math:`x` iff
   :math:`\|r_i(x)\| \le \tau`.
 
-``kAlwaysOn`` (Python ``RansacRole.always_on``)
+``RansacRole.always_on`` (C++ ``RansacRole::kAlwaysOn``)
   Trusted factors: priors, motion models, known extrinsic constraints. They
   are part of every solve and never classified.
 
@@ -144,7 +144,7 @@ configurations they cannot evaluate. ``PnPFactorBatch``, for example,
 returns zero residual and zero Jacobian for points behind the camera. A
 hypothesis that puts every point behind the camera would then look perfect.
 With ``require_informative_inliers`` (default on), a factor counts as an
-inlier only if its Jacobian has a non-zero entry on a free state block.
+inlier only if its Jacobian has a non-zero entry on a free state.
 
 -------------------------------------------------------------------------------
 How many hypotheses?
@@ -266,10 +266,10 @@ instead and ``RansacSummary::refinement_reverted`` is set.
 What the implementation does
 ===============================================================================
 
-One call to ``Minimize(stream, problem)``:
+One call to ``minimize(stream, problem)`` (C++ ``Minimize``):
 
 1. **Validate and lay out** the problem (see :ref:`ransac-limits`): find the
-   free blocks and their tangent columns (:math:`D` total), the role of every
+   free states and their tangent columns (:math:`D` total), the role of every
    residual batch, the sample size :math:`s`.
 2. **Rounds** (at most ``max_rounds``), each with :math:`K` =
    ``hypotheses_per_round`` hypotheses solved **in parallel on the GPU**:
@@ -322,48 +322,21 @@ stream.
 Usage
 ===============================================================================
 
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``set_num_active_factors(n)`` /
+   ``set_num_active_states(n)`` (C++: ``SetNumActiveFactors`` /
+   ``SetNumActiveStates``) before solving, and again whenever the problem
+   size changes. See :ref:`capacity-and-active-count`.
+
 Build the problem exactly as for the regular minimizers. Then choose the
 roles and thresholds, run the minimizer, and read the inlier mask. The
-example below is the PnP problem from ``examples/ransac_pnp``: one SE(3)
-pose state and one ``PnPFactorBatch`` with a factor per 3D-2D
-correspondence, all pointing to the pose.
-
--------------------------------------------------------------------------------
-C++
--------------------------------------------------------------------------------
-
-.. code-block:: cpp
-
-   #include "cunls/cunls.h"
-
-   // ... states, factors and problem built as usual:
-   //   problem.AddStateBatch(&pose_state);
-   //   problem.AddFactorBatch(&pnp, pointers);          // residual batch 0
-
-   cunls::RansacLevenbergMarquardtMinimizerOptions options;
-   cunls::RansacMinimizerOptions &ransac = options.base_options;
-   // One entry per residual batch, in the order they were added to the problem.
-   ransac.factor_batches = {{cunls::RansacRole::kSampled, /*inlier_threshold=*/0.01f}};
-   ransac.seed = 1;
-
-   cunls::RansacLevenbergMarquardtMinimizer minimizer(options);
-   cunls::RansacSummary summary = minimizer.Minimize(stream, problem);
-
-   // The estimate is now in the problem's state batches (here: pose_state).
-   // Inlier mask of residual batch 0: device memory, one byte per factor.
-   std::vector<uint8_t> mask(minimizer.InlierMaskSize(0));
-   cudaMemcpy(mask.data(), minimizer.InlierMask(0), mask.size(), cudaMemcpyDeviceToHost);
-
-   printf("%zu rounds, %zu inliers (%.1f%%)\n", summary.num_rounds, summary.num_inliers,
-          100.f * summary.inlier_ratio);
-
-``RansacGaussNewtonMinimizer`` takes a ``RansacMinimizerOptions`` directly:
-
-.. code-block:: cpp
-
-   cunls::RansacMinimizerOptions options;
-   options.default_inlier_threshold = 0.01f;   // every batch sampled with this threshold
-   cunls::RansacGaussNewtonMinimizer minimizer(options);
+example below is the PnP problem from ``python/examples/ransac_pnp.py``
+(C++: ``examples/ransac_pnp``): one SE(3) pose state and one
+``PnPFactorBatch`` with a factor per 3D-2D correspondence, all pointing to
+the pose.
 
 -------------------------------------------------------------------------------
 Python
@@ -373,7 +346,11 @@ Python
 
    import pycunls
 
-   # ... states, factors and problem built as usual (residual batch 0 = PnP).
+   # ... states, factors and problem built as usual:
+   #   pose_state.set_num_active_states(1)
+   #   pnp.set_num_active_factors(num_matches)
+   #   problem.add_state_batch(pose_state)
+   #   problem.add_factor_batch(pnp, pointers)          # residual batch 0
 
    options = pycunls.RansacLevenbergMarquardtMinimizerOptions()
    ransac = options.base_options          # a reference: edits change `options`
@@ -394,6 +371,47 @@ Python
    complete list.
 
 -------------------------------------------------------------------------------
+C++
+-------------------------------------------------------------------------------
+
+.. code-block:: cpp
+
+   #include "cunls/cunls.h"
+
+   // ... states, factors and problem built as usual:
+   //   pose_state.SetNumActiveStates(1);
+   //   pnp.SetNumActiveFactors(num_matches);
+   //   problem.AddStateBatch(&pose_state);
+   //   problem.AddFactorBatch(&pnp, pointers);          // residual batch 0
+
+   cunls::RansacLevenbergMarquardtMinimizerOptions options;
+   cunls::RansacMinimizerOptions &ransac = options.base_options;
+   // One entry per residual batch, in the order they were added to the problem.
+   ransac.factor_batches = {{cunls::RansacRole::kSampled, /*inlier_threshold=*/0.01f}};
+   ransac.seed = 1;
+
+   cunls::RansacLevenbergMarquardtMinimizer minimizer(options);
+   cunls::RansacSummary summary = minimizer.Minimize(stream, problem);
+
+   // The estimate is now in the problem's state batches (here: pose_state).
+   // Inlier mask of residual batch 0: device memory, one byte per factor.
+   std::vector<uint8_t> mask(minimizer.InlierMaskSize(0));
+   cudaMemcpy(mask.data(), minimizer.InlierMask(0), mask.size(), cudaMemcpyDeviceToHost);
+
+   printf("%zu rounds, %zu inliers (%.1f%%)\n", summary.num_rounds, summary.num_inliers,
+          100.f * summary.inlier_ratio);
+
+``RansacGaussNewtonMinimizer`` takes a ``RansacMinimizerOptions`` directly
+(Python: ``pycunls.RansacGaussNewtonMinimizer(options)`` with a
+``pycunls.RansacMinimizerOptions``):
+
+.. code-block:: cpp
+
+   cunls::RansacMinimizerOptions options;
+   options.default_inlier_threshold = 0.01f;   // every batch sampled with this threshold
+   cunls::RansacGaussNewtonMinimizer minimizer(options);
+
+-------------------------------------------------------------------------------
 Roles in practice
 -------------------------------------------------------------------------------
 
@@ -401,15 +419,16 @@ Roles in practice
   ``factor_batches`` empty and set ``default_inlier_threshold``; every batch is
   then sampled with that threshold.
 - **Data plus priors** (e.g. a pose prior from odometry): mark the prior
-  batches ``kAlwaysOn``. They take part in every hypothesis solve and the
+  batches ``RansacRole.always_on`` (C++ ``kAlwaysOn``). They take part in every hypothesis solve and the
   refinement and, with ``score_always_on``, in the score. If the prior may be
   wrong by much more than its stated uncertainty, set ``score_always_on =
-  false`` so it does not veto the correct hypothesis.
+  False`` (C++ ``false``) so it does not veto the correct hypothesis.
 - **Several data batches** (e.g. one per camera of a rig): mark each
-  ``kSampled`` with its own threshold. Samples are drawn from the union of all
-  sampled factors, and ``InlierMask(i)`` gives the mask of batch ``i``.
+  ``RansacRole.sampled`` (C++ ``kSampled``) with its own threshold. Samples
+  are drawn from the union of all sampled factors, and ``inlier_mask(i)``
+  (C++ ``InlierMask(i)``) gives the mask of batch ``i``.
 - **Known quantities** (3D landmarks in PnP, rig extrinsics): put them in
-  state batches with constant blocks (``const_state_ids``); they cost nothing
+  state batches with constant states (``const_state_ids``); they cost nothing
   towards :math:`D`.
 
 -------------------------------------------------------------------------------
@@ -471,14 +490,15 @@ Defaults are tuned on PnP and work for most small problems.
      - Sampler seed. Same seed and problem, bitwise identical result.
    * - ``scoring``
      - MSAC
-     - ``kMSAC`` or ``kInlierCount``.
+     - ``RansacScoring.msac`` or ``RansacScoring.inlier_count`` (C++
+       ``kMSAC`` or ``kInlierCount``).
    * - ``score_always_on``
      - true
      - Add the always-on cost to the score.
    * - ``require_informative_inliers``
      - true
      - Count a factor as an inlier only if its Jacobian is non-zero on a free
-       block. Disable only for factors that never report zero residuals for
+       state. Disable only for factors that never report zero residuals for
        invalid configurations; it saves one Jacobian evaluation per scored
        factor.
    * - ``scoring_subset_size``
@@ -504,8 +524,9 @@ Defaults are tuned on PnP and work for most small problems.
        cost decrease.
    * - ``linear_solver``
      - LDLT
-     - ``kLDLT`` gives rank-deficient directions a zero step, which suits the
-       near-singular systems minimal samples produce. ``kCholesky`` marks such
+     - ``RansacLinearSolverType.ldlt`` (C++ ``kLDLT``) gives rank-deficient
+       directions a zero step, which suits the near-singular systems minimal
+       samples produce. ``cholesky`` (C++ ``kCholesky``) marks such
        hypotheses invalid.
 
 ``RansacLevenbergMarquardtMinimizerOptions`` adds the damping parameters of
@@ -540,19 +561,19 @@ and ``refinement_reverted``.
 Limits and requirements
 ===============================================================================
 
-``Minimize`` throws ``std::invalid_argument`` (Python ``ValueError``) with an
-explanatory message when:
+``minimize`` raises ``ValueError`` (C++: ``Minimize`` throws
+``std::invalid_argument``) with an explanatory message when:
 
 - the free tangent dimension :math:`D` is 0 or exceeds 64;
 - no residual batch is sampled, or the sample size exceeds the number of
   sampled factors;
 - ``factor_batches`` is non-empty but its length differs from the number of
   residual batches, or a sampled batch has a non-positive threshold;
-- a factor references more than 8 state blocks, or a state block that
+- a factor references more than 8 states, or a state that
   belongs to no registered state batch;
 - a residual batch uses numeric Jacobians (``JacobianMode::kNumeric``), which
   RANSAC does not support yet;
-- ``Problem::CheckConsistency()`` fails, or an option is out of range
+- ``Problem.check_consistency()`` (C++ ``Problem::CheckConsistency()``) fails, or an option is out of range
   (``hypotheses_per_round``, ``max_rounds`` or ``hypothesis_iterations`` of 0,
   ``confidence`` outside (0, 1)).
 

@@ -67,6 +67,17 @@ and velocity except the fixed anchor to create the initial estimate.
 5. Build one `ConstantVelocityInformationSE3FactorBatch` factor per
    consecutive pair, from per-factor `dt` and a shared `Qc` diagonal.
 
+Each batch is constructed with its **capacity** (how many states / factors
+its bound device buffers hold, fixed for the batch's lifetime) and starts
+with 0 active; `SetNumActiveStates` / `SetNumActiveFactors` set the **active
+count** the next solve uses (host-only: no allocation, no device work; a
+solve without it throws). Size the capacity once for the largest problem you
+expect; the active count may change between solves up to it, so a real-time
+application allocates once and reuses the same buffers every frame while the
+problem size changes. The example keeps the two in separate variables
+(`*_capacity` vs. `num_*`); it solves every slot once, so each active count
+equals its capacity.
+
 Fixing both `T_0` and `v_0` (rather than just `T_0`, as in
 `pose_graph_optimization`) is required here: with only relative
 pose-velocity constraints, one full gauge degree of freedom (12 DOF) would

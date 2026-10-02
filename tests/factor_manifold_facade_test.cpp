@@ -34,7 +34,6 @@
 #include <utility>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -128,12 +127,14 @@ TEST(FactorManifoldFacadeTest, BetweenFactorBatchSE3DeducedMatchesDirectClass) {
   CudaStream stream;
 
   SE3BetweenFactorBatch direct(deltas_dev.data(), kN);
+  direct.SetNumActiveFactors(direct.Capacity());
   dvector<float> res_direct(6 * kN), jac_direct(72 * kN);
   direct.Evaluate(res_direct.data(), jac_direct.data(),
                   reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
 
   // CTAD: no <manifold::SE3> written anywhere.
   BetweenFactorBatch facade(deltas_dev.data(), kN);
+  facade.SetNumActiveFactors(facade.Capacity());
   dvector<float> res_facade(6 * kN), jac_facade(72 * kN);
   facade.Evaluate(res_facade.data(), jac_facade.data(),
                   reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
@@ -166,12 +167,14 @@ TEST(FactorManifoldFacadeTest, PriorFactorBatchSO2DeducedMatchesDirectClass) {
   CudaStream stream;
 
   SO2PriorFactorBatch direct(observations_dev.data(), kN);
+  direct.SetNumActiveFactors(direct.Capacity());
   dvector<float> res_direct(kN), jac_direct(2 * kN);
   direct.Evaluate(res_direct.data(), jac_direct.data(),
                   reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
 
   // CTAD: no <manifold::SO2> written anywhere.
   PriorFactorBatch facade(observations_dev.data(), kN);
+  facade.SetNumActiveFactors(facade.Capacity());
   dvector<float> res_facade(kN), jac_facade(2 * kN);
   facade.Evaluate(res_facade.data(), jac_facade.data(),
                   reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
@@ -185,8 +188,8 @@ TEST(FactorManifoldFacadeTest, PriorFactorBatchSO2DeducedMatchesDirectClass) {
   }
 }
 
-// Similarity3's between-factor deduction guide also disambiguates a leading
-// cuBLASHandle& argument correctly.
+// Similarity3's between-factor deduction guide resolves from the measurement
+// pointer type alone, like the other manifolds.
 TEST(FactorManifoldFacadeTest, BetweenFactorBatchSimilarity3DeducedCompiles) {
   constexpr size_t kN = 1;
   Similarity3Transform identity{};
@@ -194,10 +197,10 @@ TEST(FactorManifoldFacadeTest, BetweenFactorBatchSimilarity3DeducedCompiles) {
   std::vector<Similarity3Transform> deltas(kN, identity);
   dvector<Similarity3Transform> deltas_dev(deltas);
 
-  cuBLASHandle cublas;
-  BetweenFactorBatch facade(cublas, deltas_dev.data(), kN);
+  BetweenFactorBatch facade(deltas_dev.data(), kN);
+  facade.SetNumActiveFactors(facade.Capacity());
   static_assert(std::is_same_v<decltype(facade), BetweenFactorBatch<manifold::Similarity3>>);
-  EXPECT_EQ(facade.NumFactors(), kN);
+  EXPECT_EQ(facade.NumActiveFactors(), kN);
 }
 
 // Motion-prior facades: explicit template argument only (no CTAD).
@@ -205,14 +208,16 @@ TEST(FactorManifoldFacadeTest, ConstantVelocityFactorBatchExplicitTemplateArgume
   const float dt = 0.1f;
   dvector<float> dt_dev(std::vector<float>{dt});
   ConstantVelocityFactorBatch<manifold::SE3> factor(dt_dev.data(), 1);
-  EXPECT_EQ(factor.NumFactors(), 1u);
+  factor.SetNumActiveFactors(factor.Capacity());
+  EXPECT_EQ(factor.NumActiveFactors(), 1u);
 }
 
 TEST(FactorManifoldFacadeTest, ConstantAccelerationFactorBatchExplicitTemplateArgument) {
   const float dt = 0.1f;
   dvector<float> dt_dev(std::vector<float>{dt});
   ConstantAccelerationFactorBatch<manifold::SE3> factor(dt_dev.data(), 1);
-  EXPECT_EQ(factor.NumFactors(), 1u);
+  factor.SetNumActiveFactors(factor.Capacity());
+  EXPECT_EQ(factor.NumActiveFactors(), 1u);
 }
 
 }  // namespace

@@ -29,7 +29,7 @@ namespace cunls {
  * @param x Pointer to input vectors on GPU.
  * @param delta Pointer to delta vectors on GPU.
  * @param x_plus_delta Pointer to output vectors on GPU.
- * @param num_params Number of state blocks.
+ * @param num_params Number of states.
  * @param dim Dimension of each vector.
  * @param stream CUDA stream for async execution.
  */
@@ -37,13 +37,13 @@ void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta
                          int dim, cudaStream_t stream);
 
 /**
- * @brief Batch of Euclidean vector state blocks with compile-time dimension.
+ * @brief Batch of Euclidean vector states with compile-time dimension.
  *
- * For Euclidean state blocks, the tangent and ambient spaces are identical
+ * For Euclidean states, the tangent and ambient spaces are identical
  * (both have dimension Dim), and the Plus operation reduces to element-wise
  * vector addition: x_plus_delta = x + delta.
  *
- * @tparam Dim The dimension of each vector state block.
+ * @tparam Dim The dimension of each vector state.
  */
 template <int Dim>
 class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
@@ -51,33 +51,35 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
   using Base = SizedStateBatch<Dim, Dim>;
 
   /**
-   * @brief Constructs a batch of vector state blocks.
+   * @brief Constructs a batch of vector states.
    *
    * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least num_blocks * Dim floats of
+   *                   Must point to at least capacity * Dim floats of
    * allocated memory.
-   * @param num_blocks The number of vector state blocks in this batch.
+   * @param capacity Number of states the buffer holds. The active count
+   *        starts at 0: call SetNumActiveStates(n) before solving.
    */
-  VectorStateBatch(const float *device_ptr, size_t num_blocks) : Base(device_ptr, num_blocks) {}
+  VectorStateBatch(const float *device_ptr, size_t capacity) : Base(device_ptr, capacity) {}
 
   /**
-   * @brief Constructs a batch of vector state blocks with constant state
+   * @brief Constructs a batch of vector states with constant state
    * constraints.
    *
    * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least num_blocks * Dim floats of
+   *                   Must point to at least capacity * Dim floats of
    * allocated memory.
-   * @param num_blocks The number of vector state blocks in this batch.
+   * @param capacity Number of states the buffer holds. The active count
+   *        starts at 0: call SetNumActiveStates(n) before solving.
    * @param device_constant_state_ids Pointer to GPU device memory containing
-   * the indices of state blocks that should remain constant.
-   * @param num_const_state_blocks The number of constant state blocks.
+   * the indices of states that should remain constant.
+   * @param const_capacity Number of ids the constant-id buffer holds.
    */
-  VectorStateBatch(const float *device_ptr, size_t num_blocks, const int *device_constant_state_ids,
-                   size_t num_const_state_blocks)
-      : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks) {}
+  VectorStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                   size_t const_capacity)
+      : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
   /**
-   * @brief Computes x_plus_delta = x + delta element-wise for all blocks.
+   * @brief Computes x_plus_delta = x + delta element-wise for all states.
    *
    * @param x             Device pointer to current state values.
    * @param delta         Device pointer to tangent-space updates.
@@ -86,7 +88,8 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override {
-    CalculateVectorPlus(x, delta, x_plus_delta, this->num_blocks_ * num_replicas, Dim, stream);
+    CalculateVectorPlus(x, delta, x_plus_delta, this->num_active_states_ * num_replicas, Dim,
+                        stream);
   }
 
  private:

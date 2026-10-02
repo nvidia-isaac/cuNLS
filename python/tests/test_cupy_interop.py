@@ -34,19 +34,23 @@ class TestDevicePointerExtraction:
     def test_accepts_cupy_array(self):
         data = cp.zeros(30, dtype=cp.float32)
         sb = pycunls.VectorStateBatch3(data, 10)
-        assert sb.num_state_blocks == 10
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
+        assert sb.num_active_states == 10
 
     def test_accepts_int_pointer(self):
         data = cp.zeros(30, dtype=cp.float32)
         ptr = int(data.data.ptr)
         sb = pycunls.VectorStateBatch3(ptr, 10)
-        assert sb.num_state_blocks == 10
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
+        assert sb.num_active_states == 10
 
     def test_cupy_and_int_give_same_ptr(self):
         data = cp.zeros(30, dtype=cp.float32)
         sb_cp = pycunls.VectorStateBatch3(data, 10)
+        sb_cp.set_num_active_states(sb_cp.capacity, sb_cp.const_capacity)
         sb_int = pycunls.VectorStateBatch3(int(data.data.ptr), 10)
-        assert sb_cp.state_block_device_ptr(0) == sb_int.state_block_device_ptr(0)
+        sb_int.set_num_active_states(sb_int.capacity, sb_int.const_capacity)
+        assert sb_cp.state_device_ptr(0) == sb_int.state_device_ptr(0)
 
 
 class TestCuPyRoundTrip:
@@ -61,11 +65,13 @@ class TestCuPyRoundTrip:
         obs_gpu = cp.asarray(target)
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
+        sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
+        fb.set_num_active_factors(fb.capacity)
 
         problem = pycunls.Problem()
         problem.add_state_batch(sb)
-        problem.add_factor_batch(fb, [sb.state_block_device_ptr(0)])
+        problem.add_factor_batch(fb, [sb.state_device_ptr(0)])
         assert problem.check_consistency()
 
         opts = pycunls.MinimizerOptions()
@@ -82,4 +88,5 @@ class TestCuPyRoundTrip:
         """Factor constructors should accept CuPy arrays directly."""
         obs = cp.zeros(20, dtype=cp.float32)
         fb = pycunls.ReprojectionFactorBatch(obs, 10)
-        assert fb.num_factors == 10
+        fb.set_num_active_factors(fb.capacity)
+        assert fb.num_active_factors == 10

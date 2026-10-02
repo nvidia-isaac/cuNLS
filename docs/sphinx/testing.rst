@@ -1,8 +1,10 @@
 ###############################################################################
-Build and Run Tests
+C++ Tests
 ###############################################################################
 
-cuNLS tests are built through CMake when `BUILD_TESTING=ON`.
+The cuNLS C++ library tests (GoogleTest) are built through CMake when
+``BUILD_TESTING=ON``. For the Python (``pycunls``) tests, see
+:doc:`pycunls_testing`.
 
 ===============================================================================
 Step-by-step

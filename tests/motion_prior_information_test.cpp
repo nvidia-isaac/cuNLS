@@ -31,7 +31,6 @@
 #include <random>
 #include <vector>
 
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
@@ -222,6 +221,7 @@ TEST(MotionPriorInformationTest, InformationFactorBatchFusesWeightIntoResidualAn
 
   // Unweighted evaluation.
   ConstantVelocitySE3FactorBatch unweighted(dt_dev.data(), 1);
+  unweighted.SetNumActiveFactors(unweighted.Capacity());
   dvector<float> res_dev(12);
   dvector<float> jac_dev(12 * 24);
   unweighted.Evaluate(res_dev.data(), jac_dev.data(), ptrs_dev.data(), stream.GetStream());
@@ -240,10 +240,9 @@ TEST(MotionPriorInformationTest, InformationFactorBatchFusesWeightIntoResidualAn
   sqrt_info_dev.CopyToHost(s.data(), 12 * 12);
 
   // Weighted evaluation via InformationFactorBatch.
-  cuBLASHandle cublas_handle;
   InformationFactorBatch<ConstantVelocitySE3FactorBatch> weighted(
-      cublas_handle, reinterpret_cast<const Matrix<12> *>(sqrt_info_dev.data()), 1, dt_dev.data(),
-      1);
+      reinterpret_cast<const Matrix<12> *>(sqrt_info_dev.data()), 1, dt_dev.data(), 1);
+  weighted.SetNumActiveFactors(weighted.Capacity());
   dvector<float> res_w_dev(12);
   dvector<float> jac_w_dev(12 * 24);
   weighted.Evaluate(res_w_dev.data(), jac_w_dev.data(), ptrs_dev.data(), stream.GetStream());
@@ -269,10 +268,10 @@ TEST(MotionPriorInformationTest, InformationFactorBatchFusesWeightIntoResidualAn
   // computing sqrt-information and composing it with InformationFactorBatch
   // above: users should never have to do that composition themselves.
   dvector<float> qc_dev2(qc);
-  cuBLASHandle cublas_handle2;
   CudaStream stream2;
-  ConstantVelocityInformationSE3FactorBatch convenience(cublas_handle2, stream2.GetStream(),
-                                                        dt_dev.data(), qc_dev2.data(), 1);
+  ConstantVelocityInformationSE3FactorBatch convenience(stream2.GetStream(), dt_dev.data(),
+                                                        qc_dev2.data(), 1);
+  convenience.SetNumActiveFactors(convenience.Capacity());
   dvector<float> res_c_dev(12);
   dvector<float> jac_c_dev(12 * 24);
   convenience.Evaluate(res_c_dev.data(), jac_c_dev.data(), ptrs_dev.data(), stream2.GetStream());
@@ -293,14 +292,14 @@ TEST(MotionPriorInformationTest, InformationFactorBatchFusesWeightIntoResidualAn
 // a single trivial (identity pose, zero velocity/acceleration) factor.
 TEST(MotionPriorInformationTest, AllConvenienceAliasesConstructAndEvaluate) {
   CudaStream stream;
-  cuBLASHandle cublas_handle;
   dvector<float> dt_dev(std::vector<float>{0.1f});
 
   {
     std::vector<float> qc = {1, 1, 1, 1, 1, 1};
     dvector<float> qc_dev(qc);
-    ConstantVelocityInformationSE3FactorBatch fb(cublas_handle, stream.GetStream(), dt_dev.data(),
-                                                 qc_dev.data(), 1);
+    ConstantVelocityInformationSE3FactorBatch fb(stream.GetStream(), dt_dev.data(), qc_dev.data(),
+                                                 1);
+    fb.SetNumActiveFactors(fb.Capacity());
     dvector<float> res(12), jac(12 * 24);
     SE3Transform identity{};
     identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
@@ -317,8 +316,9 @@ TEST(MotionPriorInformationTest, AllConvenienceAliasesConstructAndEvaluate) {
   {
     std::vector<float> qc = {1, 1, 1, 1, 1, 1};
     dvector<float> qc_dev(qc);
-    ConstantAccelerationInformationSE3FactorBatch fb(cublas_handle, stream.GetStream(),
-                                                     dt_dev.data(), qc_dev.data(), 1);
+    ConstantAccelerationInformationSE3FactorBatch fb(stream.GetStream(), dt_dev.data(),
+                                                     qc_dev.data(), 1);
+    fb.SetNumActiveFactors(fb.Capacity());
     dvector<float> res(18), jac(18 * 36);
     SE3Transform identity{};
     identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
@@ -337,8 +337,9 @@ TEST(MotionPriorInformationTest, AllConvenienceAliasesConstructAndEvaluate) {
   {
     std::vector<float> qc = {1};
     dvector<float> qc_dev(qc);
-    ConstantVelocityInformationSO2FactorBatch fb(cublas_handle, stream.GetStream(), dt_dev.data(),
-                                                 qc_dev.data(), 1);
+    ConstantVelocityInformationSO2FactorBatch fb(stream.GetStream(), dt_dev.data(), qc_dev.data(),
+                                                 1);
+    fb.SetNumActiveFactors(fb.Capacity());
     dvector<float> res(2), jac(2 * 4);
     Matrix<2> identity{1, 0, 0, 1};
     dvector<Matrix<2>> pose_dev({identity, identity});

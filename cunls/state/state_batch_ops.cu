@@ -35,15 +35,15 @@ namespace cunls {
  * @brief CUDA kernel that marks constant state entries as false in a binary
  * pattern.
  *
- * For each constant state block index in const_ids, sets all tangent_dim
- * entries in binary_states corresponding to that block to false.
+ * For each constant state index in const_ids, sets all tangent_dim
+ * entries in binary_states corresponding to that state to false.
  *
  * @param binary_states Device array of booleans (one per scalar tangent state
  * component). Pre-filled with true; this kernel sets entries to false for
- * constant blocks.
- * @param tangent_dim   Tangent space dimension per state block.
- * @param const_ids     Device array of constant state block indices.
- * @param num_const_ids Number of constant state blocks.
+ * constant states.
+ * @param tangent_dim   Tangent space dimension per state.
+ * @param const_ids     Device array of constant state indices.
+ * @param num_const_ids Number of constant states.
  *
  * Grid/block: launched with ceil(num_const_ids / 32) blocks of 32 threads.
  */
@@ -66,34 +66,33 @@ __global__ void binary_pattern_kernel(bool *__restrict__ binary_states, size_t t
  * as true.
  *
  * First fills the entire binary_pattern vector with true, then launches
- * binary_pattern_kernel to set entries for constant state blocks to false.
+ * binary_pattern_kernel to set entries for constant states to false.
  *
  * @param stream                 CUDA stream for asynchronous execution.
- * @param tangent_dim            Tangent space dimension per state block.
- * @param const_state_block_ids  Device pointer to constant state block indices,
- *                               or nullptr if no blocks are constant.
- * @param num_const_state_blocks Number of constant state blocks.
+ * @param tangent_dim            Tangent space dimension per state.
+ * @param const_state_ids  Device pointer to constant state indices,
+ *                               or nullptr if no states are constant.
+ * @param num_const_states Number of constant states.
  * @param binary_pattern         Output device vector of booleans (resized by
  * caller).
  */
-void fill_binary_pattern(cudaStream_t stream, size_t tangent_dim, const int *const_state_block_ids,
-                         size_t num_const_state_blocks,
-                         thrust::device_vector<bool> &binary_pattern) {
+void fill_binary_pattern(cudaStream_t stream, size_t tangent_dim, const int *const_state_ids,
+                         size_t num_const_states, thrust::device_vector<bool> &binary_pattern) {
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
   // Fill pattern with trues
   thrust::fill(stream_policy, binary_pattern.begin(), binary_pattern.end(), true);
 
-  if (const_state_block_ids == nullptr || num_const_state_blocks == 0) {
+  if (const_state_ids == nullptr || num_const_states == 0) {
     return;
   }
 
   bool *input_ptr = thrust::raw_pointer_cast(binary_pattern.data());
   size_t block_size = 32;  // one WARP
-  size_t num_blocks = (num_const_state_blocks + block_size - 1) / block_size;
+  size_t num_blocks = (num_const_states + block_size - 1) / block_size;
 
-  // Set the pattern to false for the constant state blocks
-  binary_pattern_kernel<<<num_blocks, block_size, 0, stream>>>(
-      input_ptr, tangent_dim, const_state_block_ids, num_const_state_blocks);
+  // Set the pattern to false for the constant states
+  binary_pattern_kernel<<<num_blocks, block_size, 0, stream>>>(input_ptr, tangent_dim,
+                                                               const_state_ids, num_const_states);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -124,30 +123,29 @@ StateBatchOps::StateBatchOps(cudaStream_t stream, const std::vector<StateBatch *
   Preprocess(stream, state_batches);
 }
 
-/** @copydoc ComputeStateBlockColumnOffsets */
-void ComputeStateBlockColumnOffsets(cudaStream_t stream, int first_column,
-                                    const StateBatch *state_batch,
-                                    DeviceVector<int> &column_offsets) {
+/** @copydoc ComputeStateColumnOffsets */
+void ComputeStateColumnOffsets(cudaStream_t stream, int first_column, const StateBatch *state_batch,
+                               DeviceVector<int> &column_offsets) {
   const int *const_state_ids = state_batch->ConstStateIds();
-  const size_t num_const_state_blocks = state_batch->NumConstStateBlocks();
+  const size_t num_const_states = state_batch->NumConstStates();
   const size_t tangent_size = state_batch->TangentSize();
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
-  column_offsets.resize(state_batch->NumStateBlocks());
+  column_offsets.resize(state_batch->NumActiveStates());
   thrust::device_ptr<int> begin(column_offsets.data());
   thrust::device_ptr<int> end = begin + column_offsets.size();
   thrust::fill(stream_policy, begin, end, static_cast<int>(tangent_size));
 
-  if (const_state_ids != nullptr && num_const_state_blocks > 0) {
-    // Give constant blocks width zero so the scan skips over them, then stamp
+  if (const_state_ids != nullptr && num_const_states > 0) {
+    // Give constant states width zero so the scan skips over them, then stamp
     // them with -1 once the offsets are in place.
     auto zero_it = thrust::make_constant_iterator(0);
     thrust::device_ptr<const int> const_ids_ptr(const_state_ids);
-    thrust::scatter(stream_policy, zero_it, zero_it + num_const_state_blocks, const_ids_ptr, begin);
+    thrust::scatter(stream_policy, zero_it, zero_it + num_const_states, const_ids_ptr, begin);
     thrust::exclusive_scan(stream_policy, begin, end, begin, first_column);
     auto minus_one_it = thrust::make_constant_iterator(-1);
-    thrust::scatter(stream_policy, minus_one_it, minus_one_it + num_const_state_blocks,
-                    const_ids_ptr, begin);
+    thrust::scatter(stream_policy, minus_one_it, minus_one_it + num_const_states, const_ids_ptr,
+                    begin);
   } else {
     thrust::exclusive_scan(stream_policy, begin, end, begin, first_column);
   }
@@ -160,7 +158,7 @@ void StateBatchOps::InitUpdatesVector(const std::vector<StateBatch *> &state_bat
   // Calculate the total size of the state_updates_ buffer
   for (const auto batch : state_batches) {
     size_t tangent_dim = batch->TangentSize();
-    size_t num_blocks = batch->NumStateBlocks();
+    size_t num_blocks = batch->NumActiveStates();
 
     updates_size += num_blocks * tangent_dim;
   }
@@ -172,7 +170,7 @@ void StateBatchOps::InitUpdatesVector(const std::vector<StateBatch *> &state_bat
   // Fill the ptrs to the updates w.r.t individual state batches.
   for (const auto batch : state_batches) {
     delta_ptrs_.push_back(delta_ptr);
-    delta_ptr += batch->NumStateBlocks() * batch->TangentSize();
+    delta_ptr += batch->NumActiveStates() * batch->TangentSize();
     assert(delta_ptr <= delta_end && "State updates buffer overflow");
   }
 }
@@ -190,9 +188,9 @@ void StateBatchOps::InitMapping(cudaStream_t stream,
   for (auto batch : state_batches) {
     size_t tangent_dim = batch->TangentSize();
     const int *const_state_ids = batch->ConstStateIds();
-    size_t num_const_blocks = batch->NumConstStateBlocks();
+    size_t num_const_blocks = batch->NumConstStates();
 
-    size_t num_elements = batch->NumStateBlocks() * tangent_dim;
+    size_t num_elements = batch->NumActiveStates() * tangent_dim;
     temp_buffer.resize(num_elements);
     fill_binary_pattern(stream, tangent_dim, const_state_ids, num_const_blocks, temp_buffer);
 

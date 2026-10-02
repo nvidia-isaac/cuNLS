@@ -56,7 +56,7 @@ file they were read from. Measured performance is in §15.
   optional `EvaluateIndexed` / `PlusReplicated` of the first implementation,
   §15):** `FactorBatch::Evaluate(res, jac, ptrs, stream, factor_ids = nullptr,
   num_factor_ids = 0)` evaluates n items, item t being factor `factor_ids[t]`
-  (or `t % NumFactors()`) against its own pointer row, and
+  (or `t % NumActiveFactors()`) against its own pointer row, and
   `StateBatch::Plus(x, delta, out, stream, num_replicas = 1)` processes
   contiguous copies of the batch. The defaults give the old behavior. Every
   built-in factor and state implements them (bitwise equal to plain
@@ -96,9 +96,9 @@ Requirements:
   number of state batches. Any number of factor batches of any type, each with
   any number of factors, can constrain it. The single restriction is on the
   total **free** tangent dimension `D` (sum of `TangentSize()` over all
-  non-constant state blocks, across all state batches), which must not exceed
+  non-constant states, across all state batches), which must not exceed
   `kMaxRansacTangentDim` (§3.3). Otherwise the minimizer fails with an
-  actionable error. Constant state blocks don't count toward `D`, whatever
+  actionable error. Constant states don't count toward `D`, whatever
   their number.
 - **R3: their own options, a restricted linear solver set.** Per-hypothesis
   normal equations are tiny and dense, so only batched in-kernel dense solvers
@@ -119,13 +119,13 @@ not hypothesis sampling (§14).
 ## 1. Current conventions (read from the code at `de4e9cb`)
 
 - `FactorBatch::Evaluate(residuals, jacobians, state_pointers, stream)`
-  (`cunls/factor/factor_batch.h`) evaluates **all** `NumFactors()` factors in
+  (`cunls/factor/factor_batch.h`) evaluates **all** `NumActiveFactors()` factors in
   one host-launched call. Factor *i* reads its measurement at index *i* and its
   states through `state_pointers[i * num_blocks + b]`. **The state pointers are
   arbitrary per factor**, and that's what §4.1 exploits: one call can evaluate
   different factors against different hypotheses' states.
 - `StateBatch::Plus(x, delta, x_plus_delta, stream)` (`cunls/state/state_batch.h`)
-  updates exactly `NumStateBlocks()` blocks from arbitrary `x`/`delta`/output
+  updates exactly `NumActiveStates()` blocks from arbitrary `x`/`delta`/output
   pointers, so it can be applied to any replica of a batch's storage.
 - **Many built-in objects keep `mutable` scratch buffers used inside
   `Evaluate`/`Plus`:** every Lie-group state (`SO2/SO3/SE2/SE3/Similarity2/3/SL4StateBatch`)
@@ -205,7 +205,7 @@ sampled batches. The rank contributed by always-on factors isn't inferred
 
 ### 3.2 States
 
-- **Free** state blocks (not constant) are the hypothesis unknowns. Each
+- **Free** states (not constant) are the hypothesis unknowns. Each
   hypothesis gets its own copy (*replica*) of every state batch that contains
   at least one free block. The whole batch is replicated, not just its free
   blocks, so each replica is a valid argument for that batch's own `Plus`.
@@ -214,7 +214,7 @@ sampled batches. The rank contributed by always-on factors isn't inferred
 - **Fully constant** state batches (e.g. landmark positions held fixed in a
   camera-resection problem) are **not** replicated. All hypotheses' pointers
   refer to one shared copy, so thousands of constant points cost nothing extra.
-- Replica memory is `(K + 1) × Σ_{replicated batches} NumStateBlocks × AmbientSize`.
+- Replica memory is `(K + 1) × Σ_{replicated batches} NumActiveStates × AmbientSize`.
   The extra replica is a *parking* copy of the initial guess (§4.1). Users
   should keep constant blocks in their own state batch; the minimizer logs a
   warning when a replicated batch is more than half constant blocks.
@@ -427,7 +427,7 @@ factors.
 5. **Candidate cost:** residual-only evaluation against the candidate tables
    (waves for sampled batches), then per-hypothesis cost reduction (one kernel).
 6. **Accept/reject** per hypothesis (one kernel): copy the accepted candidate
-   state blocks to current; update per-hypothesis convergence flags.
+   states to current; update per-hypothesis convergence flags.
 
 The iteration count is fixed (`hypothesis_iterations`, typically 3–10) and
 there's no host sync. Converged or invalid hypotheses still receive their

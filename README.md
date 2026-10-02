@@ -5,17 +5,20 @@
 <h3 align="center">GPU-Accelerated Nonlinear Least-Squares Solver</h3>
 
 <p align="center">
-  <code>CUDA/C++</code>&ensp;·&ensp;<code>Gauss-Newton</code>&ensp;·&ensp;<code>RANSAC</code>&ensp;·&ensp;<code>Factor Graph</code>&ensp;·&ensp;<code>Manifold Optimization</code>&ensp;·&ensp;<code>Sparse Linear Algebra</code>
+  <code>Python</code>&ensp;·&ensp;<code>CUDA/C++</code>&ensp;·&ensp;<code>Gauss-Newton</code>&ensp;·&ensp;<code>RANSAC</code>&ensp;·&ensp;<code>Factor Graph</code>&ensp;·&ensp;<code>Manifold Optimization</code>&ensp;·&ensp;<code>Sparse Linear Algebra</code>
 </p>
 
 ---
 
-**cuNLS** is a CUDA/C++ library for solving nonlinear least-squares problems on the GPU.
-It is built around batched factor evaluation, sparse Jacobian assembly, and sparse linear
-solvers — designed for large-scale geometric estimation workloads such as bundle adjustment,
-pose graph optimization, and ICP-style alignment. For problems where many measurements are
-gross outliers (wrong matches), its GPU **RANSAC minimizers** solve the same problems robustly
-and return the inlier set.
+**cuNLS** solves nonlinear least-squares problems on the GPU from Python. The `pycunls`
+package works directly on [CuPy](https://cupy.dev/) arrays, ships built-in manifold states,
+factors and robust losses, and lets you write custom factor and state kernels in Python with
+[NVIDIA Warp](https://github.com/NVIDIA/warp). It is built around batched factor evaluation,
+sparse Jacobian assembly, and sparse linear solvers — designed for large-scale geometric
+estimation workloads such as bundle adjustment, pose graph optimization, and ICP-style
+alignment. For problems where many measurements are gross outliers (wrong matches), its GPU
+**RANSAC minimizers** solve the same problems robustly and return the inlier set. The same
+solver is available as a CUDA/C++ library with a C++ API for native applications.
 
 cuNLS solves optimization problems of the form:
 
@@ -48,28 +51,89 @@ cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per 
 
 | Category | Details |
 |---|---|
+| **APIs** | Python (`pycunls`, nanobind bindings with first-class CuPy interop; constructors accept a `cupy.ndarray` or a raw device pointer) and C++ (`cunls`, shared or static library) |
 | **Manifold support** | SO(2), SO(3), SE(2), SE(3), Sim(2), Sim(3), SL(4), Euclidean vectors |
 | **Solvers** | Gauss-Newton, Levenberg-Marquardt with adaptive damping |
 | **Robust estimation (RANSAC)** | `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`: hundreds of hypotheses solved in parallel on the GPU from minimal samples, MSAC scoring, adaptive stopping, refinement on the inliers, per-factor inlier mask. Works with any factor and state type (built-in or custom) whose total free dimension is ≤ 64; any number of factors. Deterministic for a fixed seed; see [RANSAC](docs/sphinx/ransac.rst) |
 | **Robust losses** | Huber, Cauchy, Arctan, SoftL1, Tolerant, Tukey, Scaled |
 | **Built-in factors** | Reprojection, PnP, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, symmetric point-to-plane, prior, constant-velocity/constant-acceleration motion priors (SO(2)/SO(3)/SE(2)/SE(3)) |
-| **Custom factors and states** | User-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++, or CuPy / NVIDIA Warp kernels in Python; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
-| **Numeric Jacobians** | Finite-difference Jacobians for any factor batch (manifold-aware, reuses each state's `Plus` retraction), selectable globally (`MinimizerOptions::jacobian_mode`) or per factor group (`Problem::AddFactorBatch`'s override) — write a factor with only a residual and let cuNLS differentiate it; see [Numeric Jacobians](docs/sphinx/numeric_jacobians.rst) |
-| **Linear solver** | Block-sparse PCG (variable block-Jacobi preconditioner, default), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [Installation](docs/sphinx/installation.rst)), dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
+| **Custom factors and states** | CuPy / NVIDIA Warp kernels in Python, or user-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
+| **Numeric Jacobians** | Finite-difference Jacobians for any factor batch (manifold-aware, reuses each state's `Plus` retraction), selectable globally (`MinimizerOptions.jacobian_mode`) or per factor group (the `jacobian_mode_override` of `Problem.add_factor_batch`) — write a factor with only a residual and let cuNLS differentiate it; see [Numeric Jacobians](docs/sphinx/numeric_jacobians.rst) |
+| **Linear solver** | Block-sparse PCG (variable block-Jacobi preconditioner, default), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [C++ Installation](docs/sphinx/installation.rst)), dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
 | **Safety checks** | Optional runtime validation (linear-solver diagnostics and more) — disable via `MinimizerOptions::disable_safety_checks` for low-latency solves |
 | **Execution model** | Fully asynchronous via CUDA streams |
 
-## Prerequisites
+## Installation
+
+### Python package (pycunls)
+
+`pycunls` exposes cuNLS to Python via [nanobind](https://github.com/wjakob/nanobind),
+with first-class [CuPy](https://cupy.dev/) interop and optional
+[NVIDIA Warp](https://github.com/NVIDIA/warp) support for writing custom
+factor kernels in Python. The wheel statically links the cuNLS core library and dynamically
+links the CUDA runtime libraries, so it is specific to the CUDA version it was built with.
+See [Installation](docs/sphinx/pycunls_installation.rst) for details.
+
+#### Prerequisites
 
 - NVIDIA GPU with compatible driver
 - CUDA Toolkit (`nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`)
 - CMake >= 3.22
 - C++17 compiler
 - GNU Make
+- Python >= 3.10
 
-## Installation
+#### Build the wheel in Docker
 
-### Build locally
+Requires Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+
+```bash
+./scripts/build_pycunls_in_docker.sh [local_output_dir]
+```
+
+The output directory defaults to `./dist`. The script builds the wheel inside
+a container with the source mounted read-only. Intermediate build directories
+live inside the container and are discarded; only the final `.whl` file is
+written to the host output directory.
+
+#### Build the wheel locally
+
+```bash
+cd python
+pip install scikit-build-core nanobind
+pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist
+```
+
+#### Install the wheel
+
+```bash
+pip install ./dist/pycunls-*.whl
+```
+
+#### Editable install for development
+
+For an editable (in-place) install that reflects source changes without
+rebuilding:
+
+```bash
+cd python
+pip install scikit-build-core nanobind
+pip install -e ".[test]" --no-build-isolation
+```
+
+This installs `pycunls` along with all test dependencies (`pytest`,
+`cupy-cuda12x`, `warp-lang`). Other optional dependency groups:
+
+```bash
+pip install -e ".[warp]"   # warp-lang only
+pip install -e ".[all]"    # all optional extras
+```
+
+### C++ library
+
+Prerequisites are the same as for the Python package, without Python.
+
+#### Build locally
 
 ```bash
 ./scripts/build_cunls.sh <build_dir> <Release|Coverage> [install_dir]
@@ -81,7 +145,7 @@ Example — release build with install:
 ./scripts/build_cunls.sh build Release /tmp/cunls_install
 ```
 
-### Build with Docker
+#### Build with Docker
 
 1. Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 2. Run:
@@ -90,22 +154,30 @@ Example — release build with install:
 ./scripts/build_cunls_in_docker.sh <Release|Coverage> [local_install_dir]
 ```
 
-The Docker build produces **both** shared and static variants. Intermediate
-build directories live inside the container and are discarded; only the final
-install directory is mounted to the host.
+The Docker build produces **both** shared and static variants, installed to separate
+directories so their CMake package configs don't overwrite each other. The CMake build
+directories are kept in the output directory (needed by `test_cunls_in_docker.sh`).
 
 Install artifacts (default `build_docker/`, or the specified directory):
 
 ```
 <install_dir>/
-  include/cunls/        # headers
-  lib/
-    libcunls.so         # shared library
-    libcunls.a          # static library (with bundled deps)
-    cmake/cunls/        # CMake package config
+  shared/               # set CMAKE_PREFIX_PATH here for libcunls.so
+    include/cunls/      # headers
+    lib/
+      libcunls.so       # shared library
+      cmake/cunls/      # CMake package config (shared)
+  static/               # set CMAKE_PREFIX_PATH here for libcunls.a
+    include/cunls/      # headers
+    lib/
+      libcunls.a        # static library (with bundled deps)
+      cmake/cunls/      # CMake package config (static)
+  cudss/                # cuDSS headers + libs (optional, dlopen()'d at runtime)
+  build_shared/         # CMake build directories (used by the C++ tests)
+  build_static/
 ```
 
-### Direct CMake build
+#### Direct CMake build
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/cunls_install
@@ -132,7 +204,65 @@ Set `-DCUDSS_PLATFORM` explicitly to override it.
 
 ## Quick Start
 
-The following minimal program solves a 1-D prior problem: a scalar variable $x$ pulled toward a target $o = 2$.
+> [!IMPORTANT]
+> **Capacity vs. active count.** Every factor and state batch has two sizes. The constructor takes
+> the **capacity**: how many factors / states its device buffers hold, fixed for the batch's
+> lifetime. The **active count** starts at **zero** and is set with `set_num_active_factors(n)` /
+> `set_num_active_states(n)` (C++: `SetNumActiveFactors` / `SetNumActiveStates`), any `n`
+> up to the capacity. It is a host-only setter, so a real-time application allocates once for its
+> largest problem and changes the active counts every frame. A solve with nothing active throws. See
+> [Capacity and active count](docs/sphinx/introduction.rst).
+
+Both quick starts solve the same 1-D prior problem: a scalar variable $x$ pulled toward a
+target $o = 2$ by a prior factor with residual $r = x - o$, so the optimum is $x^* = 2$.
+
+### Python
+
+**minimal.py**
+
+```python
+import cupy as cp
+import pycunls
+
+stream = pycunls.CudaStream()
+
+# Initial guess: x = 0.  Target observation: o = 2.
+state_gpu = cp.array([0.0], dtype=cp.float32)
+obs_gpu   = cp.array([2.0], dtype=cp.float32)
+
+# Capacity: how many states / factors the buffers hold (fixed per batch).
+# Batches start with 0 active entries; the active count is set separately and
+# may change between solves up to the capacity. Here every slot is used.
+state_batch = pycunls.VectorStateBatch1(state_gpu, 1)
+state_batch.set_num_active_states(1)
+
+prior = pycunls.PriorVectorFactorBatch1(obs_gpu, 1)
+prior.set_num_active_factors(1)
+
+state_ptrs = [state_batch.state_device_ptr(0)]
+
+problem = pycunls.Problem()
+problem.add_state_batch(state_batch)
+problem.add_factor_batch(prior, state_ptrs)
+
+minimizer = pycunls.LevenbergMarquardtMinimizer()
+summary   = minimizer.minimize(stream, problem)  # updates state_gpu in place
+
+print(f"Iterations:   {summary.num_iterations}")
+print(f"Initial cost: {summary.initial_cost}")
+print(f"Final cost:   {summary.final_cost}")
+print(f"Solution x:   {cp.asnumpy(state_gpu)}")
+```
+
+**Run:**
+
+```bash
+python minimal.py
+```
+
+See the [Quick Start](docs/sphinx/pycunls_quick_start.rst) for a step-by-step walkthrough.
+
+### C++
 
 **main.cpp**
 
@@ -152,11 +282,18 @@ int main() {
   cunls::dvector<float> d_state(h_state);
   cunls::dvector<float> d_obs(h_obs);
 
-  cunls::VectorStateBatch<1> state_batch(d_state.data(), 1);
+  // Capacity: how many states / factors the buffers hold (fixed per batch).
+  // Batches start with 0 active entries; the active count is set separately and
+  // may change between solves up to the capacity. Here every slot is used.
+  const size_t capacity = 1;
+  const size_t num_states = 1, num_factors = 1;
+  cunls::VectorStateBatch<1> state_batch(d_state.data(), capacity);
   cunls::PriorVectorFactorBatch<1> prior(
-      reinterpret_cast<const cunls::Vector<1>*>(d_obs.data()), 1);
+      reinterpret_cast<const cunls::Vector<1>*>(d_obs.data()), capacity);
+  state_batch.SetNumActiveStates(num_states);  // active count
+  prior.SetNumActiveFactors(num_factors);       // active count
 
-  std::vector<float*> state_ptrs = {state_batch.StateBlockDevicePtr(0)};
+  std::vector<float*> state_ptrs = {state_batch.StateDevicePtr(0)};
 
   cunls::Problem problem;
   problem.AddStateBatch(&state_batch);
@@ -213,6 +350,19 @@ When a fraction of the measurements are gross outliers, swap the minimizer — t
 the same. Mark each residual batch as sampled (may contain outliers, classified with an inlier
 threshold in residual units) or always-on (trusted priors):
 
+**Python**
+
+```python
+options = pycunls.RansacLevenbergMarquardtMinimizerOptions()
+options.base_options.factor_batches = [
+    pycunls.RansacFactorBatchOptions(pycunls.RansacRole.sampled, 0.01)]
+minimizer = pycunls.RansacLevenbergMarquardtMinimizer(options)
+summary = minimizer.minimize(stream, problem)  # estimate written back
+mask = minimizer.inlier_mask(0)                # numpy uint8, 1 = inlier
+```
+
+**C++**
+
 ```cpp
 cunls::RansacLevenbergMarquardtMinimizerOptions options;
 options.base_options.factor_batches = {{cunls::RansacRole::kSampled, /*inlier_threshold=*/0.01f}};
@@ -222,30 +372,36 @@ cunls::RansacSummary summary = minimizer.Minimize(stream, problem);  // estimate
 const uint8_t *inliers = minimizer.InlierMask(0);                    // device, 1 byte per factor
 ```
 
-```python
-options = pycunls.RansacLevenbergMarquardtMinimizerOptions()
-options.base_options.factor_batches = [
-    pycunls.RansacFactorBatchOptions(pycunls.RansacRole.sampled, 0.01)]
-minimizer = pycunls.RansacLevenbergMarquardtMinimizer(options)
-summary = minimizer.minimize(stream, problem)
-mask = minimizer.inlier_mask(0)  # numpy uint8
-```
-
 On PnP it recovers the pose at up to 90% outliers, where least squares (even with a Huber loss)
 fails, in 1.4 ms for 1,000 correspondences and 15 ms for 1,000,000. See
 [RANSAC](docs/sphinx/ransac.rst) for the theory, options and tuning, and
-[`examples/ransac_pnp`](examples/ransac_pnp) / [`python/examples/ransac_pnp.py`](python/examples/ransac_pnp.py)
+[`python/examples/ransac_pnp.py`](python/examples/ransac_pnp.py) / [`examples/ransac_pnp`](examples/ransac_pnp)
 for complete programs.
 
-## Tutorial Examples
+## Examples
 
-The `examples/` directory contains complete working pipelines:
+### Python examples
+
+The `python/examples/` directory contains end-to-end pipelines using `pycunls`:
+
+| Example | Description |
+|---|---|
+| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy |
+| `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
+| `custom_warp_factor.py` | Custom factor kernel using NVIDIA Warp |
+| `custom_warp_state.py` | Custom state batch (positive-scalar manifold) using NVIDIA Warp |
+| `ransac_pnp.py` | Robust PnP with 50% outliers using `RansacLevenbergMarquardtMinimizer` |
+
+### C++ examples
+
+The `examples/` directory contains complete working C++ pipelines:
 
 | Example | Description | Key API |
 |---|---|---|
 | **Sparse Bundle Adjustment** | Jointly optimize camera poses and 3D landmarks from multi-view reprojection error | `ReprojectionFactorBatch`, `SE3StateBatch`, `VectorStateBatch<3>` |
 | **Pose Graph Optimization** | Recover a chain of SE(3) poses from consecutive relative-transform measurements | `SE3BetweenFactorBatch`, `SE3StateBatch` |
 | **Custom Factor** | User-defined CUDA kernel for a 1-D difference chain | `SizedFactorBatch<1,1,1>`, `PriorVectorFactorBatch<1>` |
+| **Motion Prior** | Constant-velocity pose + velocity chain with a closed-form process-noise covariance | `ConstantVelocityInformationSE3FactorBatch`, `SE3StateBatch`, `VectorStateBatch<6>` |
 | **PnP** | Camera pose from 3D-2D correspondences, analytic vs. numeric Jacobians | `PnPFactorBatch`, `SE3StateBatch` |
 | **RANSAC PnP** | Camera pose from correspondences with 50% gross outliers; inlier mask | `RansacLevenbergMarquardtMinimizer`, `PnPFactorBatch` |
 
@@ -264,78 +420,23 @@ Or build in Docker:
 ./examples/build_in_docker.sh Release ./artifacts/examples
 ```
 
-## Python Bindings (pycunls)
+## Testing
 
-`pycunls` exposes cuNLS to Python via [nanobind](https://github.com/wjakob/nanobind),
-with first-class [CuPy](https://cupy.dev/) interop and optional
-[NVIDIA Warp](https://github.com/NVIDIA/warp) support for writing custom
-factor kernels in Python.
+Tests require a GPU.
 
-### Build the wheel in Docker
-
-Requires Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-
-```bash
-./scripts/build_pycunls_in_docker.sh [local_output_dir]
-```
-
-The output directory defaults to `./dist`. The script builds the wheel inside
-a container with the source mounted read-only. Intermediate build directories
-live inside the container and are discarded; only the final `.whl` file is
-written to the host output directory.
-
-### Build the wheel locally
-
-```bash
-cd python
-pip install scikit-build-core nanobind
-pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist
-```
-
-### Install the wheel
-
-```bash
-pip install ./dist/pycunls-*.whl
-```
-
-### Editable install for development
-
-For an editable (in-place) install that reflects source changes without
-rebuilding:
-
-```bash
-cd python
-pip install scikit-build-core nanobind
-pip install -e ".[test]" --no-build-isolation
-```
-
-This installs `pycunls` along with all test dependencies (`pytest`,
-`cupy-cuda12x`, `warp-lang`). Other optional dependency groups:
-
-```bash
-pip install -e ".[warp]"   # warp-lang only
-pip install -e ".[all]"    # all optional extras
-```
-
-### Run Python tests
+### Python tests
 
 ```bash
 pytest -v python/tests
 ```
 
-### Python examples
+Or in Docker, against a wheel built by `build_pycunls_in_docker.sh`:
 
-The `python/examples/` directory contains end-to-end pipelines using `pycunls`:
+```bash
+./scripts/test_pycunls_in_docker.sh ./dist
+```
 
-| Example | Description |
-|---|---|
-| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy |
-| `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
-| `custom_warp_factor.py` | Custom factor kernel using NVIDIA Warp |
-| `custom_warp_state.py` | Custom state batch (positive-scalar manifold) using NVIDIA Warp |
-| `ransac_pnp.py` | Robust PnP with 50% outliers using `RansacLevenbergMarquardtMinimizer` |
-
-## C++ Testing
+### C++ tests
 
 ```bash
 cmake -S . -B build/tests -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -347,6 +448,12 @@ Or run the test binary directly:
 
 ```bash
 ./build/tests/bin/nls_tests
+```
+
+Or in Docker, against the output of `build_cunls_in_docker.sh`:
+
+```bash
+./scripts/test_cunls_in_docker.sh ./build_docker
 ```
 
 Coverage build:

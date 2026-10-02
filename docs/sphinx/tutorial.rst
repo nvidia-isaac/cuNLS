@@ -1,12 +1,23 @@
 ###############################################################################
-Tutorial
+C++ Tutorial
 ###############################################################################
+
+This tutorial covers the cuNLS **C++ API**. For the Python version
+(``pycunls``), see :doc:`pycunls_tutorial`.
+
+.. important::
+
+   **Capacity vs. active count.** Factor and state batches are constructed with
+   their *capacity* (how many factors / states their buffers hold) and
+   start with **zero** active entries: call ``SetNumActiveFactors(n)`` /
+   ``SetNumActiveStates(n)`` before solving, and again whenever the problem size
+   changes. See :ref:`capacity-and-active-count`.
 
 ===============================================================================
 Overview
 ===============================================================================
 
-This tutorial walks through three complete cuNLS examples, each demonstrating a
+This tutorial walks through three complete C++ cuNLS examples, each demonstrating a
 different optimization pattern. Every example follows the same high-level flow
 described in the :doc:`introduction`:
 
@@ -188,8 +199,18 @@ gauge anchor.
 
 **Step 3 — Wrap the device memory in state batches.**
 A state batch wraps device memory without copying it. Poses use
-`SE3StateBatch` with block 0 marked constant; points use `VectorStateBatch<3>`
+`SE3StateBatch` with state 0 marked constant; points use `VectorStateBatch<3>`
 (see :doc:`api/state`).
+
+**Capacity and active count.** The count passed to a batch constructor is
+its *capacity*: how many states (state batches) or factors (factor batches)
+the bound device buffers hold, fixed for the batch's lifetime. Right after
+construction nothing is active. ``SetNumActiveStates`` /
+``SetNumActiveFactors`` set the *active count*: how many of the first states
+or factors the next solve uses. They are host-only (no allocation) and may be
+called again between solves with any count up to the capacity, so one set of
+batches serves problems of changing size. In this example every slot is
+used, so active = capacity.
 
 .. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
    :language: cpp
@@ -198,10 +219,12 @@ A state batch wraps device memory without copying it. Poses use
    :dedent: 4
 
 **Step 4 — Build the reprojection factor batch and its state pointers.**
-Each reprojection factor reads two state blocks, ``[pose, point]``. The
+Each reprojection factor reads two states, ``[pose, point]``. The
 state-pointer list is flattened in factor order, two pointers per factor, and
-tells cuNLS which blocks every factor reads. ``z_threshold`` guards points
-almost behind a camera (see :doc:`api/factor`).
+tells cuNLS which states every factor reads. ``z_threshold`` guards points
+almost behind a camera (see :doc:`api/factor`). Like state batches, a factor
+batch is constructed with its capacity and starts with 0 active factors:
+``SetNumActiveFactors`` activates them.
 
 .. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
    :language: cpp
@@ -339,7 +362,7 @@ PGO API used
      - Manifold-generic facade; deduced here to SE(3) via CTAD from the
        deltas pointer's type. Computes the relative-transform residual
        :math:`\mathrm{Log}(\Delta \, T_i^{-1} \, T_{i+1})` and its
-       Jacobians w.r.t. both pose blocks.
+       Jacobians w.r.t. both poses.
    * - `Problem` (:doc:`api/minimizer`)
      - Assembles the factor graph.
    * - `LevenbergMarquardtMinimizer` (:doc:`api/minimizer`)
@@ -372,7 +395,9 @@ measurements. Pose :math:`T_0` is the gauge anchor.
    :dedent: 4
 
 **Step 3 — Wrap the chain in one state batch.**
-All poses live in a single `SE3StateBatch`; only block 0 is constant.
+All poses live in a single `SE3StateBatch`; only state 0 is constant.
+``SetNumActiveStates`` activates all poses and the constant state (batches
+start with 0 active entries).
 
 .. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
    :language: cpp
@@ -382,7 +407,8 @@ All poses live in a single `SE3StateBatch`; only block 0 is constant.
 
 **Step 4 — Build the between factors and their state pointers.**
 `BetweenFactorBatch` deduces its manifold (SE(3)) from the type of the
-measurements. Factor :math:`i` reads ``[T_i, T_{i+1}]``.
+measurements. Factor :math:`i` reads ``[T_i, T_{i+1}]``. ``SetNumActiveFactors``
+activates all of them.
 
 .. literalinclude:: ../../examples/pose_graph_optimization/main.cpp
    :language: cpp
@@ -512,8 +538,8 @@ Custom factor API used
    * - `VectorStateBatch<1>` (:doc:`api/state`)
      - Stores all :math:`N` scalar states in :math:`\mathbb{R}^1`.
    * - `SizedFactorBatch<1, 1, 1>` (:doc:`api/factor`)
-     - Compile-time base for the custom factor (residual dim = 1, two state
-       blocks of tangent dim 1 each).
+     - Compile-time base for the custom factor (residual dim = 1, two states
+       of tangent dim 1 each).
    * - `PriorFactorBatch<manifold::Vector<1>>` (:doc:`api/factor`)
      - Manifold-generic facade over the built-in prior factor that pulls
        :math:`x_0` toward the observed anchor value.
@@ -529,9 +555,9 @@ All steps of the solve live in ``RunChainExample``, which ``main`` calls twice: 
 
 **Step 1 — Implement the CUDA kernel.**
 The kernel is launched with one thread per *item*: one factor evaluated
-against its own set of state blocks. Item ``idx`` reads the measurement of its
+against its own set of states. Item ``idx`` reads the measurement of its
 factor (``factor_ids[idx]``, or ``idx % num_factors`` when ``factor_ids`` is
-null), its two state block pointers ``state_pointers[2 * idx ..]``, and writes
+null), its two state pointers ``state_pointers[2 * idx ..]``, and writes
 row ``idx`` of the outputs. The regular minimizers pass ``factor_ids ==
 nullptr`` and one item per factor; the RANSAC minimizers evaluate many items
 per factor (see :doc:`custom_factors_and_states`).
@@ -543,8 +569,11 @@ per factor (see :doc:`custom_factors_and_states`).
 
 **Step 2 — Subclass SizedFactorBatch<1, 1, 1>.**
 The template arguments encode the residual dimension (1) and the tangent
-dimensions of the two state blocks (1, 1). The class stores a device pointer to
-the measurements and launches the kernel in ``Evaluate``.
+dimensions of the two states (1, 1). The constructor passes the
+capacity (the number of measurements the buffer holds) to the base class, which
+keeps the active count ``NumActiveFactors()``: 0 until ``SetNumActiveFactors`` is called.
+The class stores a device pointer to the measurements and launches the kernel
+in ``Evaluate`` over the active factors.
 
 .. literalinclude:: ../../examples/custom_factor/main.cu
    :language: cpp
@@ -575,7 +604,8 @@ differences unchanged.
    :dedent: 2
 
 **Step 5 — Build the state batch.**
-All scalar states share one `VectorStateBatch<1>`.
+All scalar states share one `VectorStateBatch<1>`, activated with
+``SetNumActiveStates``.
 
 .. literalinclude:: ../../examples/custom_factor/main.cu
    :language: cpp
@@ -586,7 +616,8 @@ All scalar states share one `VectorStateBatch<1>`.
 **Step 6 — Build the factor batches and their state pointers.**
 Difference factors read ``[x_i, x_{i+1}]``; the shipped prior reads
 ``x_0``. The residual-only class is used in Part 2 (see
-:doc:`numeric_jacobians`).
+:doc:`numeric_jacobians`). Every factor batch is activated with
+``SetNumActiveFactors``.
 
 .. literalinclude:: ../../examples/custom_factor/main.cu
    :language: cpp

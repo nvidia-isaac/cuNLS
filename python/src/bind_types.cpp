@@ -26,7 +26,6 @@
 #include <nanobind/stl/vector.h>
 
 #include "bindings.h"
-#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
@@ -46,7 +45,7 @@ uintptr_t extract_device_ptr(nb::handle obj) {
 }
 
 void bind_types(nb::module_ &m) {
-  // --- CUDA stream / cuBLAS handle wrappers ---
+  // --- CUDA stream wrapper ---
 
   nb::class_<cunls::CudaStream>(m, "CudaStream", "RAII wrapper for a CUDA stream.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)
@@ -56,9 +55,6 @@ void bind_types(nb::module_ &m) {
             return reinterpret_cast<uintptr_t>(self.GetStream());
           },
           "Returns the underlying cudaStream_t as an integer handle.");
-
-  nb::class_<cunls::cuBLASHandle>(m, "CublasHandle", "RAII wrapper for a cuBLAS handle.")
-      .def(nb::init<>());
 
   // --- Enumerations for solver/multiplier strategy selection ---
 

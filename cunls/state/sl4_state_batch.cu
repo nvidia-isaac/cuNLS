@@ -51,24 +51,21 @@ __global__ void sl4_matmul_kernel(const float *__restrict__ x, const float *__re
 
 }  // namespace
 
-SL4StateBatch::SL4StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      twists_(num_blocks * 15) {}
+SL4StateBatch::SL4StateBatch(const float *device_ptr, size_t capacity)
+    : Base(device_ptr, capacity), delta_transforms_(capacity), twists_(capacity * 15) {}
 
-SL4StateBatch::SL4StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks, const int *device_constant_state_ids,
-                             size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
-      cublas_handle_(cublas_handle),
-      delta_transforms_(num_blocks),
-      twists_(num_blocks * 15) {}
+SL4StateBatch::SL4StateBatch(const float *device_ptr, size_t capacity,
+                             const int *device_constant_state_ids, size_t const_capacity)
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
+      delta_transforms_(capacity),
+      twists_(capacity * 15) {}
 
 void SL4StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {
-  const int n = static_cast<int>(NumStateBlocks() * num_replicas);
+  const int n = static_cast<int>(NumActiveStates() * num_replicas);
+  if (n == 0) {
+    return;
+  }
   // Scratch is sized for all replicas; resize keeps capacity, so it grows once.
   twists_.resize(static_cast<size_t>(n) * 15);
   delta_transforms_.resize(static_cast<size_t>(n));
@@ -88,7 +85,6 @@ void SL4StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta
   sl4_matmul_kernel<<<grid, kBlockSize, 0, stream>>>(
       x, reinterpret_cast<const float *>(delta_transforms_.data()), x_plus_delta, n);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-  static_cast<void>(cublas_handle_);
 }
 
 }  // namespace cunls

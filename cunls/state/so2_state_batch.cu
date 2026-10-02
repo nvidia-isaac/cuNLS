@@ -61,29 +61,23 @@ void LaunchFusedSo2Plus(cudaStream_t stream, const float *x, const float *delta,
 
 }  // namespace
 
-SO2StateBatch::SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks)
-    : Base(device_ptr, num_blocks),
-      cublas_handle_(cublas_handle),
-      delta_rotations_(num_blocks),
-      angles_(num_blocks) {}
+SO2StateBatch::SO2StateBatch(const float *device_ptr, size_t capacity)
+    : Base(device_ptr, capacity), delta_rotations_(capacity), angles_(capacity) {}
 
-SO2StateBatch::SO2StateBatch(cuBLASHandle &cublas_handle, const float *device_ptr,
-                             size_t num_blocks, const int *device_constant_state_ids,
-                             size_t num_const_state_blocks)
-    : Base(device_ptr, num_blocks, device_constant_state_ids, num_const_state_blocks),
-      cublas_handle_(cublas_handle),
-      delta_rotations_(num_blocks),
-      angles_(num_blocks) {}
+SO2StateBatch::SO2StateBatch(const float *device_ptr, size_t capacity,
+                             const int *device_constant_state_ids, size_t const_capacity)
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
+      delta_rotations_(capacity),
+      angles_(capacity) {}
 
 void SO2StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
                                 bool invert_delta, cudaStream_t stream) {
-  LaunchFusedSo2Plus(stream, x, delta, result, NumStateBlocks(), invert_delta);
+  LaunchFusedSo2Plus(stream, x, delta, result, NumActiveStates(), invert_delta);
 }
 
 void SO2StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {
-  LaunchFusedSo2Plus(stream, x, delta, x_plus_delta, NumStateBlocks() * num_replicas, false);
+  LaunchFusedSo2Plus(stream, x, delta, x_plus_delta, NumActiveStates() * num_replicas, false);
 }
 
 }  // namespace cunls
