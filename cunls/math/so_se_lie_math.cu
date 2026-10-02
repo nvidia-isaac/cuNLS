@@ -206,54 +206,53 @@ __device__ void compute_log_so3(const float *rotation_matrix, const size_t rotat
 
   memset(twist, 0, 3 * sizeof(float));
 
-  if (fabsf(3.f - trace) < tol) {
-    return;
-  }
+  // v = vee((R - R^T) / 2) = sin(theta) n. theta = atan2(|v|, cos(theta)) is
+  // accurate at every angle in float32; acos((trace - 1) / 2) is not near 0,
+  // and cutting off near the identity zeroed residuals up to ~3e-3 rad.
+  const float v0 =
+      0.5f * (rotation_matrix[2 * rotation_pitch + 1] - rotation_matrix[1 * rotation_pitch + 2]);
+  const float v1 =
+      0.5f * (rotation_matrix[0 * rotation_pitch + 2] - rotation_matrix[2 * rotation_pitch + 0]);
+  const float v2 =
+      0.5f * (rotation_matrix[1 * rotation_pitch + 0] - rotation_matrix[0 * rotation_pitch + 1]);
+  const float sin_theta = norm3df(v0, v1, v2);
+  const float cos_theta = 0.5f * (trace - 1.0f);
+  const float theta = atan2f(sin_theta, cos_theta);
 
-  float cos_theta = fminf(1.0f, fmaxf(-1.0f, 0.5f * (trace - 1.0f)));
-  float theta = acosf(cos_theta);
-  float sin_theta = sinf(theta);
-
-  if (sin_theta < tol) {
-    // theta ≈ π (or ≈ 0, already handled above): the standard formula
-    // has a 0/0 singularity.  Extract the axis from the column of (R + I)
-    // with the largest diagonal.  For theta = π, R = 2nnᵀ − I, so the
-    // largest R[j][j] = 2n_j² − 1 gives the best-conditioned axis component.
+  (void)tol;
+  if (cos_theta < 0.f && sin_theta < 1e-3f) {
+    // Near pi, sin(theta) ~ 0 and v carries no reliable axis. The symmetric
+    // part gives it exactly at any angle: (R + R^T) / 2 - cos(theta) I =
+    // (1 - cos(theta)) n n^T. Take the column with the largest diagonal
+    // (best conditioned) and fix the sign with v = sin(theta) n.
+    const float b00 = rotation_matrix[0] - cos_theta;
+    const float b11 = rotation_matrix[rotation_pitch + 1] - cos_theta;
+    const float b22 = rotation_matrix[2 * rotation_pitch + 2] - cos_theta;
     int best = 0;
-    float best_diag = rotation_matrix[0];
-    float d1 = rotation_matrix[rotation_pitch + 1];
-    float d2 = rotation_matrix[2 * rotation_pitch + 2];
-    if (d1 > best_diag) {
-      best = 1;
-      best_diag = d1;
-    }
-    if (d2 > best_diag) {
-      best = 2;
-      best_diag = d2;
-    }
-
-    // Read only the chosen column of (R + I) and normalize
-    float v0 = rotation_matrix[best] + ((best == 0) ? 1.0f : 0.0f);
-    float v1 = rotation_matrix[rotation_pitch + best] + ((best == 1) ? 1.0f : 0.0f);
-    float v2 = rotation_matrix[2 * rotation_pitch + best] + ((best == 2) ? 1.0f : 0.0f);
-    float sq = v0 * v0 + v1 * v1 + v2 * v2;
+    if (b11 > b00 && b11 >= b22) best = 1;
+    if (b22 > b00 && b22 > b11) best = 2;
+    auto sym = [&](int r, int c) {
+      return 0.5f * (rotation_matrix[r * rotation_pitch + c] +
+                     rotation_matrix[c * rotation_pitch + r]) -
+             (r == c ? cos_theta : 0.f);
+    };
+    float n0 = sym(0, best), n1 = sym(1, best), n2 = sym(2, best);
+    const float sq = n0 * n0 + n1 * n1 + n2 * n2;
     if (sq > 0.0f) {
-      float scale = theta * __frsqrt_rn(sq);
-      twist[0] = v0 * scale;
-      twist[1] = v1 * scale;
-      twist[2] = v2 * scale;
+      float scale = theta * rsqrtf(sq);
+      if (n0 * v0 + n1 * v1 + n2 * v2 < 0.f) scale = -scale;
+      twist[0] = n0 * scale;
+      twist[1] = n1 * scale;
+      twist[2] = n2 * scale;
     }
     return;
   }
 
-  float k = (0.5f * theta) / sin_theta;
-
-  twist[0] =
-      k * (rotation_matrix[2 * rotation_pitch + 1] - rotation_matrix[1 * rotation_pitch + 2]);
-  twist[1] =
-      k * (rotation_matrix[0 * rotation_pitch + 2] - rotation_matrix[2 * rotation_pitch + 0]);
-  twist[2] =
-      k * (rotation_matrix[1 * rotation_pitch + 0] - rotation_matrix[0 * rotation_pitch + 1]);
+  // theta / sin(theta), with its series near 0 (theta ~ sin(theta) there).
+  const float k = sin_theta > 1e-4f ? theta / sin_theta : 1.f + sin_theta * sin_theta / 6.f;
+  twist[0] = k * v0;
+  twist[1] = k * v1;
+  twist[2] = k * v2;
 }
 
 /**
@@ -328,11 +327,16 @@ __device__ void compute_Q_left(const float *twist, const size_t Q_pitch, float *
                                float tol = 1e-5) {
   float phi = norm3df(twist[0], twist[1], twist[2]);
 
-  float A = 1.f / 6.f;
-  float B = 1.f / 24.f;
-  float C = 1.f / 120.f;
-
-  if (phi > tol) {
+  (void)tol;
+  // The closed forms cancel catastrophically in float32 for small angles (B
+  // loses ~1e-2 relative at phi = 0.05): use their Taylor series below 0.3.
+  float A, B, C;
+  if (phi < 0.3f) {
+    const float p2 = phi * phi, p4 = p2 * p2;
+    A = 1.f / 6.f - p2 / 120.f + p4 / 5040.f;
+    B = 1.f / 24.f - p2 / 720.f + p4 / 40320.f;
+    C = 1.f / 120.f - p2 / 2520.f + p4 / 120960.f;
+  } else {
     float s = sinf(phi);
     float c = cosf(phi);
 

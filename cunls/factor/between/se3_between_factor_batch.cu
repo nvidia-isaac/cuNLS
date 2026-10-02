@@ -187,9 +187,13 @@ __device__ __forceinline__ void so3_jac_left_inv_row(const float *phi, int r, fl
 // by a designated thread and stored to shared memory for all 6 threads to read.
 __device__ __forceinline__ void compute_Q_full(const float *tw, float *Q) {
   float phi_norm = norm3df(tw[0], tw[1], tw[2]);
-  float A = 1.f / 6.f, B = 1.f / 24.f, C = 1.f / 120.f;
-  constexpr float tol = 1e-5f;
-  if (phi_norm > tol) {
+  // Taylor series below 0.3: the closed forms cancel catastrophically in
+  // float32 for small angles (see compute_Q_left in so_se_lie_math.cu).
+  const float p2s = phi_norm * phi_norm, p4s = p2s * p2s;
+  float A = 1.f / 6.f - p2s / 120.f + p4s / 5040.f;
+  float B = 1.f / 24.f - p2s / 720.f + p4s / 40320.f;
+  float C = 1.f / 120.f - p2s / 2520.f + p4s / 120960.f;
+  if (phi_norm >= 0.3f) {
     float s = sinf(phi_norm), c = cosf(phi_norm);
     float p2 = phi_norm * phi_norm, p3 = p2 * phi_norm;
     float p4 = p3 * phi_norm, p5 = p4 * phi_norm;
