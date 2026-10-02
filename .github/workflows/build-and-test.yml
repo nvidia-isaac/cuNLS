@@ -29,7 +29,9 @@ env:
 
 jobs:
   build-matrix:
-    name: "${{ matrix.config.platform || 'x86_64' }} / ubuntu-${{ matrix.config.ubuntu }} / cuda-${{ matrix.config.cuda }}"
+    # No " / " here: the jobs list shows called-workflow jobs as "build-matrix / <name>"
+    # and keeps only the text after the last slash.
+    name: "${{ matrix.config.platform || 'x86_64' }}, ubuntu-${{ matrix.config.ubuntu }}, cuda-${{ matrix.config.cuda }}"
     runs-on: ${{ matrix.config.runner || fromJson('["self-hosted","gpu"]') }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     strategy:
