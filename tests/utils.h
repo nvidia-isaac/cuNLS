@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -32,6 +33,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
+#include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
@@ -365,6 +367,51 @@ inline SparseLinearSolverType SolverTypeFromEnv() {
     return SparseLinearSolverType::cuDSS;
   }
   return SparseLinearSolverType::BlockSparsePCG;
+}
+
+/** @brief True when cunls was built with CUNLS_ENABLE_CUDSS=ON. */
+#ifdef CUNLS_ENABLE_CUDSS
+inline constexpr bool kCuDSSEnabled = true;
+#else
+inline constexpr bool kCuDSSEnabled = false;
+#endif
+
+/**
+ * @brief Removes solver types this build cannot create (cuDSS when
+ *        CUNLS_ENABLE_CUDSS=OFF) from a test parameter list.
+ */
+inline std::vector<SparseLinearSolverType> AvailableSolverTypes(
+    std::vector<SparseLinearSolverType> types) {
+  if (!kCuDSSEnabled) {
+    types.erase(std::remove(types.begin(), types.end(), SparseLinearSolverType::cuDSS),
+                types.end());
+  }
+  return types;
+}
+
+/**
+ * @brief Solver ids of the typed minimizer tests.
+ *
+ * Ids 0 and 1 are the cuDSSLinearSolverMode values (cuDSS backend);
+ * kBlockSparsePCGSolverId selects BlockSparsePCG, which needs no cuDSS.
+ */
+inline constexpr int kBlockSparsePCGSolverId = 2;
+
+/** @brief Solver id for tests that need a working sparse solver of any kind. */
+inline constexpr int kDefaultTestSolverId = kCuDSSEnabled ? 0 : kBlockSparsePCGSolverId;
+
+/** @brief Points @p options at the solver selected by @p solver_id. */
+inline void ConfigureTestSolver(int solver_id, MinimizerOptions &options) {
+  if (solver_id == kBlockSparsePCGSolverId) {
+    options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;
+    return;
+  }
+  options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
+  options.sparse_linear_solver_config.cudss_solver_options = {
+      .mode = static_cast<cuDSSLinearSolverMode>(solver_id),
+      .nthreads = 1,
+      .threading_lib_path = "",
+  };
 }
 
 /** Reads CUNLS_PCG_BLOCK_SIZE; defaults to ``fallback`` if unset/invalid. */

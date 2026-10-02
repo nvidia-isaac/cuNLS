@@ -17,18 +17,29 @@
 
 #include "cunls/linear_solver/sparse_linear_solver.h"
 
+#include <stdexcept>
+
 #include "cunls/common/cudss_helper.h"
 
 namespace cunls {
 
 /** @copydoc CreateSparseLinearSolver
  * @throws std::invalid_argument If an unsupported solver type is specified.
+ * @throws std::runtime_error If @p type is cuDSS and cunls was built with
+ *         CUNLS_ENABLE_CUDSS=OFF.
  */
 SparseLinearSolverPtr CreateSparseLinearSolver(SparseLinearSolverType type,
                                                const SparseLinearSolverConfig &config) {
   switch (type) {
     case SparseLinearSolverType::cuDSS:
+#ifdef CUNLS_ENABLE_CUDSS
       return std::make_unique<cuDSSLinearSolver>(config.cudss_solver_options);
+#else
+      throw std::runtime_error(
+          "SparseLinearSolverType::cuDSS is unavailable: cunls was built with "
+          "CUNLS_ENABLE_CUDSS=OFF. Rebuild with -DCUNLS_ENABLE_CUDSS=ON or choose "
+          "another solver type.");
+#endif
     case SparseLinearSolverType::DenseLDLT:
       return std::make_unique<DenseLDLTSolver>();
     case SparseLinearSolverType::DenseCholesky:
