@@ -15,6 +15,9 @@ DOCKERFILE=$(dirname "$(realpath "$0")")/Dockerfile
 DOCKER_BUILD_ARGS=""
 [ -n "${CUDA_VERSION:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg CUDA_VERSION=$CUDA_VERSION"
 [ -n "${UBUNTU_VERSION:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg UBUNTU_VERSION=$UBUNTU_VERSION"
+[ -n "${BASE_IMAGE:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg BASE_IMAGE=$BASE_IMAGE"
+[ -n "${UBUNTU_PORTS_MIRROR:-}" ] \
+  && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg UBUNTU_PORTS_MIRROR=$UBUNTU_PORTS_MIRROR"
 docker build -f "$DOCKERFILE" . --network host $DOCKER_BUILD_ARGS --tag cunls:local
 
 TTY_FLAG=""
@@ -23,7 +26,7 @@ TTY_FLAG=""
 # Container mounts:
 #   /cunls          (ro) — source tree
 #   /cunls_install  (rw) — wheel output (host: $LOCAL_OUTPUT_DIR)
-docker run --gpus all --rm $TTY_FLAG \
+docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
   -v "$LOCAL_OUTPUT_DIR:/cunls_install" \
   -e OUTPUT_DIR=/cunls_install \

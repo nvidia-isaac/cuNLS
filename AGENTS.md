@@ -11,7 +11,7 @@ cuNLS is a GPU-accelerated nonlinear least-squares solver library written in CUD
 - **Testing**: GoogleTest (C++), pytest (Python). Tests require a GPU.
 - **Dependencies**: cuDSS, spdlog, CUDA Toolkit (cusparse, cublas, cusolver). All fetched via CMake `FetchContent`.
 - **Docker**: All builds run inside Docker containers via `scripts/Dockerfile`. Parameterized by `CUDA_VERSION` and `UBUNTU_VERSION` build args.
-- **CI**: GitHub Actions on nvidia-isaac org shared self-hosted GPU runners (AWS, auto-scaling, `[self-hosted, gpu]`). Nightly schedule with 4-entry matrix (CUDA 12/13 x Ubuntu 22.04/24.04).
+- **CI**: GitHub Actions on nvidia-isaac org shared self-hosted GPU runners (AWS, auto-scaling, `[self-hosted, gpu]`), plus the org's Jetson runners (`jetson-orin`, `jetson-thor`) for nightly only. Nightly matrix: x86_64 CUDA 12.6/12.8/13.2 x Ubuntu 22.04/24.04, Orin (JetPack 6.1, CUDA 12.6), Thor (JetPack 7.1, CUDA 13.0).
 - **Python package**: `pycunls` -- statically links `libcunls.a`, dynamically links CUDA runtime libs. Wheel is CUDA-version-specific.
 
 ### Repository structure
@@ -108,7 +108,7 @@ Do not create reusable workflows (`workflow_call`) or composite actions until th
 
 ### 10. Runner tags reflect infrastructure, not build parameters
 
-All GPU jobs use `runs-on: [self-hosted, gpu]`. CUDA version, Ubuntu version, and architecture are controlled by Docker build args, not runner labels. The nvidia-isaac org has a shared pool of 10 auto-scaling GPU runners -- do not encode CUDA or OS versions in runner tags.
+x86_64 GPU jobs use `runs-on: [self-hosted, gpu]`. CUDA version, Ubuntu version, and CUDA architectures are controlled by Docker build args, not runner labels. The nvidia-isaac org has a shared pool of 10 auto-scaling GPU runners -- do not encode CUDA or OS versions in runner tags. Jetson jobs select hardware with `jetson-orin` / `jetson-thor`, because the device is infrastructure; their CUDA version is fixed by the host JetPack driver, and Orin overrides the Docker `BASE_IMAGE` with an L4T-compatible NGC CUDA image.
 
 ### 11. Artifacts flow through the filesystem, not between jobs
 
@@ -150,7 +150,7 @@ $OUTPUT_DIR/                    # host build output
   build_static/                 # cmake build directory
   cpp-test-results.xml
 
-cunls-x86_64-cuda13.2.0-ubuntu24.04.tar.gz   # release asset
+cunls-x86_64-cuda13.2.0-ubuntu24.04.tar.gz   # release asset (also orin-*, thor-*)
   output/shared/                # set CMAKE_PREFIX_PATH here for .so
   output/static/                # set CMAKE_PREFIX_PATH here for .a
 ```

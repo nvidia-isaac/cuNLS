@@ -18,7 +18,7 @@ fi
 TTY_FLAG=""
 [ -t 0 ] && TTY_FLAG="-it"
 
-docker run --gpus all --rm $TTY_FLAG \
+docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
   -v "$OUTPUT_DIR:/cunls_install" \
   cunls:local bash -c '

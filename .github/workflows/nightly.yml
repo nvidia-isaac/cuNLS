@@ -47,8 +47,9 @@ jobs:
     if: needs.check-changes.outputs.should_build == 'true'
     uses: ./.github/workflows/build-and-test.yml
     with:
-      # Jetson (aarch64) is DISABLED pending infra changes. To re-enable,
-      # add entries with archs:"72;87" and the confirmed Jetson runner labels.
+      # Jetson CUDA versions must match the host JetPack driver: Orin runs
+      # JetPack 6.1 (CUDA 12.6, Ubuntu 22.04) and Thor runs JetPack 7.1
+      # (CUDA 13.0, Ubuntu 24.04).
       matrix_json: |
         [
           {"ubuntu":"22.04","cuda":"12.6.3","archs":"75;80;86;89"},
@@ -56,7 +57,12 @@ jobs:
           {"ubuntu":"22.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
           {"ubuntu":"24.04","cuda":"12.6.3","archs":"75;80;86;89"},
           {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
-          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"}
+          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
+          {"ubuntu":"22.04","cuda":"12.6.11","archs":"87","platform":"orin","runner":["self-hosted","jetson-orin"],
+           "base_image":"nvcr.io/nvidia/12.6.11-devel:12.6.11-devel-aarch64-ubuntu22.04",
+           "ports_mirror":"http://mirrors.ocf.berkeley.edu/ubuntu-ports"},
+          {"ubuntu":"24.04","cuda":"13.0.1","archs":"110","platform":"thor","runner":["self-hosted","jetson-thor"],
+           "ports_mirror":"http://mirrors.ocf.berkeley.edu/ubuntu-ports"}
         ]
       artifact_retention_days: 30
       upload_binaries: true
@@ -161,7 +167,7 @@ jobs:
           echo "" >> release-notes.md
           echo "Commit: ${{ github.sha }}" >> release-notes.md
 
-          for dir in artifacts/cunls-x86_64-*; do
+          for dir in artifacts/cunls-*; do
             [ -d "$dir" ] || continue
             NAME=$(basename "$dir")
             tar czf "release-assets/${NAME}.tar.gz" -C "$dir" .
