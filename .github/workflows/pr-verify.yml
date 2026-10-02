@@ -59,7 +59,9 @@ jobs:
           {"ubuntu":"22.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
           {"ubuntu":"24.04","cuda":"12.6.3","archs":"75;80;86;89"},
           {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
-          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"}
+          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
+          {"ubuntu":"24.04","cuda":"13.0.1","archs":"110","platform":"thor","runner":["self-hosted","jetson-thor"],
+           "ports_mirror":"http://mirrors.ocf.berkeley.edu/ubuntu-ports"}
         ]
       artifact_retention_days: 14
       upload_binaries: false

@@ -11,7 +11,7 @@ cuNLS is a GPU-accelerated nonlinear least-squares solver library written in CUD
 - **Testing**: GoogleTest (C++), pytest (Python). Tests require a GPU.
 - **Dependencies**: cuDSS, spdlog, CUDA Toolkit (cusparse, cublas, cusolver). All fetched via CMake `FetchContent`.
 - **Docker**: All builds run inside Docker containers via `scripts/Dockerfile`. Parameterized by `CUDA_VERSION` and `UBUNTU_VERSION` build args.
-- **CI**: GitHub Actions on nvidia-isaac org shared self-hosted GPU runners (AWS, auto-scaling, `[self-hosted, gpu]`), plus the org's Jetson runners (`jetson-orin`, `jetson-thor`) for nightly only. Nightly matrix: x86_64 CUDA 12.6/12.8/13.2 x Ubuntu 22.04/24.04, Orin (JetPack 6.1, CUDA 12.6), Thor (JetPack 7.1, CUDA 13.0).
+- **CI**: GitHub Actions on nvidia-isaac org shared self-hosted GPU runners (AWS, auto-scaling, `[self-hosted, gpu]`), plus the org's Jetson runners (`jetson-orin`, `jetson-thor`). Nightly matrix: x86_64 CUDA 12.6/12.8/13.2 x Ubuntu 22.04/24.04, Orin (JetPack 6.1, CUDA 12.6), Thor (JetPack 7.1, CUDA 13.0). PR verification runs the same x86_64 entries plus Thor.
 - **Python package**: `pycunls` -- statically links `libcunls.a`, dynamically links CUDA runtime libs. Wheel is CUDA-version-specific.
 
 ### Repository structure
