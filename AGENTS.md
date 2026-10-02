@@ -150,7 +150,7 @@ $OUTPUT_DIR/                    # host build output
   build_static/                 # cmake build directory
   cpp-test-results.xml
 
-cunls-x86_64-cuda13.2.0-ubuntu24.04.tar.gz   # release asset (also orin-*, thor-*)
+cunls-x86_64-cuda13.2.0-ubuntu24.04.tar.gz   # release asset (also aarch64-orin-*, aarch64-thor-*)
   output/shared/                # set CMAKE_PREFIX_PATH here for .so
   output/static/                # set CMAKE_PREFIX_PATH here for .a
 ```

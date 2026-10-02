@@ -58,10 +58,10 @@ jobs:
           {"ubuntu":"24.04","cuda":"12.6.3","archs":"75;80;86;89"},
           {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
           {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
-          {"ubuntu":"22.04","cuda":"12.6.11","archs":"87","platform":"orin","runner":["self-hosted","jetson-orin"],
+          {"ubuntu":"22.04","cuda":"12.6.11","archs":"87","host_arch":"aarch64","platform":"orin","runner":["self-hosted","jetson-orin"],
            "base_image":"nvcr.io/nvidia/12.6.11-devel:12.6.11-devel-aarch64-ubuntu22.04",
            "ports_mirror":"http://mirrors.ocf.berkeley.edu/ubuntu-ports"},
-          {"ubuntu":"24.04","cuda":"13.0.1","archs":"110","platform":"thor","runner":["self-hosted","jetson-thor"],
+          {"ubuntu":"24.04","cuda":"13.0.1","archs":"110","host_arch":"aarch64","platform":"thor","runner":["self-hosted","jetson-thor"],
            "ports_mirror":"http://mirrors.ocf.berkeley.edu/ubuntu-ports"}
         ]
       artifact_retention_days: 30
