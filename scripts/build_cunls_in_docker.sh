@@ -15,6 +15,9 @@ DOCKERFILE=$(dirname "$(realpath $0)")/Dockerfile
 DOCKER_BUILD_ARGS=""
 [ -n "${CUDA_VERSION:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg CUDA_VERSION=$CUDA_VERSION"
 [ -n "${UBUNTU_VERSION:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg UBUNTU_VERSION=$UBUNTU_VERSION"
+[ -n "${BASE_IMAGE:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg BASE_IMAGE=$BASE_IMAGE"
+[ -n "${UBUNTU_PORTS_MIRROR:-}" ] \
+  && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg UBUNTU_PORTS_MIRROR=$UBUNTU_PORTS_MIRROR"
 docker build -f $DOCKERFILE . --network host $DOCKER_BUILD_ARGS --tag cunls:local
 
 # Source is read-only; builds happen in the install directory so artifacts
@@ -36,4 +39,4 @@ BUILD_CMD="$BUILD_CMD && cp -r $INSTALL_DIR/build_shared/_deps/cudss-src/lib $IN
 
 TTY_FLAG=""
 [ -t 0 ] && TTY_FLAG="-it"
-docker run --gpus all --rm $TTY_FLAG $DOCKER_VOLUMES cunls:local /bin/bash -c "$BUILD_CMD"
+docker run --runtime=nvidia --gpus all --rm $TTY_FLAG $DOCKER_VOLUMES cunls:local /bin/bash -c "$BUILD_CMD"

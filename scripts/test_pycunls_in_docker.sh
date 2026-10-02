@@ -20,7 +20,7 @@ TTY_FLAG=""
 # Container mounts:
 #   /cunls          (ro) — source tree
 #   /cunls_install  (rw) — wheel dir + test output (host: $WHEEL_DIR)
-docker run --gpus all --rm $TTY_FLAG \
+docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
   -v "$WHEEL_DIR:/cunls_install" \
   cunls:local bash -c '
