@@ -137,6 +137,13 @@ class TestWarpFactorBatch:
             assert len(fb._default_ids_counts) <= 2
         assert sorted(fb._default_ids_counts) == [5, 9]
 
+    def test_default_factor_ids_need_active_factors(self):
+        """Items without active factors are an error; zero items are fine."""
+        fb = WarpFactorBatch(1, [1], 10)  # 0 active factors
+        assert fb.factor_ids(0, 0).shape == (0,)
+        with pytest.raises(ValueError, match="set_num_active_factors"):
+            fb.factor_ids(0, 4)
+
     def test_end_to_end_convergence(self, stream):
         """Solve a 3D vector-prior problem using a Warp-based factor."""
         target = np.array([1.0, 2.0, 3.0], dtype=np.float32)

@@ -115,11 +115,16 @@ class WarpFactorBatch(CustomFactorBatch):
         ``ids[t]``. The cache keeps the arrays of the current and the previous
         active factor count only, so changing the count every frame does not
         accumulate arrays, while kernels still reading the previous count's
-        arrays stay valid.
+        arrays stay valid. Raises ``ValueError`` when ``num_items > 0`` but the
+        batch has no active factors.
         """
         if factor_ids_ptr != 0:
             return self.wrap_array(factor_ids_ptr, wp.int32, num_items)
         num_factors = self.num_active_factors
+        if num_factors == 0 and num_items > 0:
+            raise ValueError(
+                f"factor_ids: {num_items} items requested but the batch has 0 active "
+                "factors; call set_num_active_factors() first")
         if not self._default_ids_counts or self._default_ids_counts[-1] != num_factors:
             if num_factors in self._default_ids_counts:
                 self._default_ids_counts.remove(num_factors)
@@ -130,7 +135,9 @@ class WarpFactorBatch(CustomFactorBatch):
         key = (num_items, num_factors)
         ids = self._default_ids.get(key)
         if ids is None:
-            values = np.arange(num_items, dtype=np.int32) % num_factors
+            values = np.arange(num_items, dtype=np.int32)
+            if num_factors > 0:
+                values %= num_factors
             ids = wp.array(values, dtype=wp.int32, device=self._device)
             self._default_ids[key] = ids
         return ids
