@@ -6,9 +6,8 @@ on:
       matrix_json:
         description: >
           JSON array of matrix entries. Each entry must have: ubuntu, cuda, archs.
-          Optional: host_arch (`uname -m`, default "x86_64"), platform (device, e.g. "orin"),
-          runner (default ["self-hosted","gpu"]), base_image (overrides the Docker base image),
-          ports_mirror (Ubuntu Ports mirror URL).
+          Optional: platform (default "x86_64"), runner (default ["self-hosted","gpu"]),
+          base_image (overrides the Docker base image), ports_mirror (Ubuntu Ports mirror URL).
           Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"}]
         type: string
         required: true
@@ -30,7 +29,7 @@ env:
 
 jobs:
   build-matrix:
-    name: "${{ matrix.config.host_arch || 'x86_64' }}${{ matrix.config.platform && format(' / {0}', matrix.config.platform) || '' }} / ubuntu-${{ matrix.config.ubuntu }} / cuda-${{ matrix.config.cuda }}"
+    name: "${{ matrix.config.platform || 'x86_64' }} / ubuntu-${{ matrix.config.ubuntu }} / cuda-${{ matrix.config.cuda }}"
     runs-on: ${{ matrix.config.runner || fromJson('["self-hosted","gpu"]') }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     strategy:
@@ -38,21 +37,13 @@ jobs:
       matrix:
         config: ${{ fromJson(inputs.matrix_json) }}
     env:
-      HOST_ARCH: ${{ matrix.config.host_arch || 'x86_64' }}
-      CONFIG_NAME: ${{ matrix.config.host_arch || 'x86_64' }}${{ matrix.config.platform && format('-{0}', matrix.config.platform) || '' }}-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+      CONFIG_NAME: ${{ matrix.config.platform || 'x86_64' }}-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
       CUDA_VERSION: ${{ matrix.config.cuda }}
       UBUNTU_VERSION: ${{ matrix.config.ubuntu }}
       BASE_IMAGE: ${{ matrix.config.base_image }}
       UBUNTU_PORTS_MIRROR: ${{ matrix.config.ports_mirror }}
 
     steps:
-      - name: Verify host architecture
-        run: |
-          if [ "$(uname -m)" != "$HOST_ARCH" ]; then
-            echo "::error::Matrix entry declares host_arch $HOST_ARCH but runner $RUNNER_NAME is $(uname -m). Fix the host_arch or runner field in matrix_json."
-            exit 1
-          fi
-
       - name: Verify GPU
         run: nvidia-smi
 
