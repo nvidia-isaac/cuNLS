@@ -8,8 +8,8 @@ operation so the solver can update states in tangent space while keeping them on
 the manifold. This page introduces manifolds, then documents the Python state
 batch classes, then the C++ API.
 
-**Python** — ``pycunls``
-  |  **C++** — ``cunls/state``
+- **Python** — ``pycunls``
+- **C++** — ``cunls/state``
 
 ================================================================================
 Manifolds

@@ -61,6 +61,9 @@ constexpr size_t kMaxBlockSize = 256;
 /** @copydoc CalculateVectorPlus */
 void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta, size_t num_params,
                          int dim, cudaStream_t stream) {
+  if (num_params == 0) {
+    return;
+  }
   size_t num_cuda_blocks = (num_params + kMaxBlockSize - 1) / kMaxBlockSize;
   vector_plus_kernel<<<num_cuda_blocks, kMaxBlockSize, 0, stream>>>(x, delta, x_plus_delta,
                                                                     num_params, dim);

@@ -76,6 +76,9 @@ class WarpFactorBatch(CustomFactorBatch):
         super().__init__(residual_size, state_sizes, capacity)
         self._device = device
         self._default_ids: dict[Tuple[int, int], wp.array] = {}
+        # Active counts with cached default ids: the current one and the one
+        # before it (whose arrays in-flight kernels may still read).
+        self._default_ids_counts: List[int] = []
 
     # ------------------------------------------------------------------
     # Helpers
@@ -109,14 +112,25 @@ class WarpFactorBatch(CustomFactorBatch):
         Wraps ``factor_ids_ptr`` when it is non-null; otherwise returns
         ``t % num_active_factors`` for ``t < num_items`` (built once per item count
         and active factor count, and cached). Kernels can then always read
-        ``ids[t]``.
+        ``ids[t]``. The cache keeps the arrays of the current and the previous
+        active factor count only, so changing the count every frame does not
+        accumulate arrays, while kernels still reading the previous count's
+        arrays stay valid.
         """
         if factor_ids_ptr != 0:
             return self.wrap_array(factor_ids_ptr, wp.int32, num_items)
-        key = (num_items, self.num_active_factors)
+        num_factors = self.num_active_factors
+        if not self._default_ids_counts or self._default_ids_counts[-1] != num_factors:
+            if num_factors in self._default_ids_counts:
+                self._default_ids_counts.remove(num_factors)
+            self._default_ids_counts.append(num_factors)
+            del self._default_ids_counts[:-2]
+            self._default_ids = {key: ids for key, ids in self._default_ids.items()
+                                 if key[1] in self._default_ids_counts}
+        key = (num_items, num_factors)
         ids = self._default_ids.get(key)
         if ids is None:
-            values = np.arange(num_items, dtype=np.int32) % self.num_active_factors
+            values = np.arange(num_items, dtype=np.int32) % num_factors
             ids = wp.array(values, dtype=wp.int32, device=self._device)
             self._default_ids[key] = ids
         return ids

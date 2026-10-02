@@ -11,8 +11,8 @@ the full residual and Jacobian formulas. In the C++ API, links to the
 corresponding state batch types are in the :ref:`factor-inputs` section and in
 each factor’s **Inputs** subsection.
 
-**Python** — ``pycunls``
-  |  **C++** — ``cunls/factor``
+- **Python** — ``pycunls``
+- **C++** — ``cunls/factor``
 
 ================================================================================
 Python API (``pycunls``)
@@ -579,7 +579,7 @@ Python wrapper subclasses ``FactorBatch`` only.
 
 - **inner_factor** (``FactorBatch``) — the factor batch to wrap.
 - **weight** (``float``) — uniform scalar weight applied to all factors.
-- **weights** (``DevicePointer``) — ``inner_factor.capacity`` contiguous
+- **weights** (``DevicePointer``, keyword-only) — ``inner_factor.capacity`` contiguous
   floats, one weight per factor.
 
 Exactly one of ``weight`` or ``weights`` must be provided.
@@ -861,6 +861,9 @@ Abstract base (:code:`cunls/factor/factor_batch.h`).
 
   :returns: [out] Number of factors the measurement buffers hold: the
     ``capacity`` passed to the constructor. Constant for the batch's lifetime.
+    A custom batch constructed without a capacity (one that overrides
+    ``NumActiveFactors()`` instead) has a fixed size, and its capacity is
+    ``NumActiveFactors()``.
 
 .. cpp:function:: void SetNumActiveFactors(size_t num_active_factors)
 

@@ -63,6 +63,9 @@ SL4StateBatch::SL4StateBatch(const float *device_ptr, size_t capacity,
 void SL4StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {
   const int n = static_cast<int>(NumActiveStates() * num_replicas);
+  if (n == 0) {
+    return;
+  }
   // Scratch is sized for all replicas; resize keeps capacity, so it grows once.
   twists_.resize(static_cast<size_t>(n) * 15);
   delta_transforms_.resize(static_cast<size_t>(n));

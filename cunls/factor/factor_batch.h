@@ -164,9 +164,11 @@ class FactorBatch {
    * @brief Number of factors the batch's buffers hold: the capacity passed to
    * the constructor. Constant for the lifetime of the batch; SetNumActiveFactors
    * accepts any value up to it. Custom batches pass it to the base constructor
-   * (FactorBatch(capacity) / SizedFactorBatch(capacity)).
+   * (FactorBatch(capacity) / SizedFactorBatch(capacity)). A batch constructed
+   * without one (that overrides NumActiveFactors() instead) has a fixed size:
+   * its capacity is NumActiveFactors(), like StateBatch::Capacity().
    */
-  virtual size_t Capacity() const { return capacity_; }
+  virtual size_t Capacity() const { return capacity_ != 0 ? capacity_ : NumActiveFactors(); }
 
   /**
    * @brief Sets the number of active factors, for buffers that are allocated

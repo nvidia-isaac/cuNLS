@@ -187,6 +187,10 @@ class NumericDiffJacobianBuilder {
     // Address fingerprint of the last successful upload, used to cheaply
     // detect whether the cached device data is still valid.
     std::vector<const float *> last_owner_data_ptr;  // size P.
+    // Active state count of each position's owner at the last rebuild (size
+    // P): the slot layout and scratch sizes depend on it, so a change in an
+    // owner's active count invalidates the cache even at the same addresses.
+    std::vector<size_t> last_num_active_states;
     const float *last_xpd_base = nullptr;
 
     // Per-residual-batch device scratch (never shared across residual

@@ -39,6 +39,8 @@ and ``numeric`` (C++ ``kAnalytic`` / ``kNumeric``). It can be set two ways:
    # Option A: set the global default for every factor batch in the problem.
    options = pycunls.MinimizerOptions()
    options.jacobian_mode = pycunls.JacobianMode.numeric
+   minimizer = pycunls.GaussNewtonMinimizer(options)
+   # (Levenberg-Marquardt: set it on LevenbergMarquardtMinimizerOptions().base_options.)
 
    # Option B: override just one factor group, leaving everything else
    # (including shipped factors) on the global default (analytic here).
@@ -55,6 +57,7 @@ The same in C++:
    // Option A: set the global default for every factor batch in the problem.
    cunls::MinimizerOptions options;
    options.jacobian_mode = cunls::JacobianMode::kNumeric;
+   cunls::GaussNewtonMinimizer minimizer(options);
 
    // Option B: override just one factor group, leaving everything else
    // (including shipped factors) on the global default (kAnalytic here).

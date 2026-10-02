@@ -144,7 +144,11 @@ void Similarity3StateBatch::ApplyUpdate(const float *x, const float *delta, floa
 
 void Similarity3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                                  cudaStream_t stream, size_t num_replicas) {
-  ApplyUpdate(x, delta, x_plus_delta, false, stream, NumActiveStates() * num_replicas);
+  const size_t num_transforms = NumActiveStates() * num_replicas;
+  if (num_transforms == 0) {
+    return;
+  }
+  ApplyUpdate(x, delta, x_plus_delta, false, stream, num_transforms);
 }
 
 }  // namespace cunls

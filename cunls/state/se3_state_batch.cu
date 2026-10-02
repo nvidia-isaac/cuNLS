@@ -109,6 +109,9 @@ SE3StateBatch::SE3StateBatch(const float *device_ptr, size_t capacity,
 void SE3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {
   const int num_transforms = static_cast<int>(NumActiveStates() * num_replicas);
+  if (num_transforms == 0) {
+    return;
+  }
   const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
   se3_plus_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, x_plus_delta, num_transforms);
   THROW_ON_CUDA_ERROR(cudaGetLastError());

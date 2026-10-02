@@ -274,7 +274,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
                        cache.step_size != options.relative_step_size || cache.F != F ||
                        cache.P != P || cache.residual_size != residual_size ||
                        cache.total_cols != total_cols ||
-                       cache.last_owner_data_ptr != owner_data_ptr;
+                       cache.last_owner_data_ptr != owner_data_ptr ||
+                       cache.last_num_active_states != num_active_states;
 
   if (!needs_rebuild) {
     // x_plus_delta_scratch's own address can only change if it needed to
@@ -463,6 +464,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     cache.central = central;
     cache.step_size = options.relative_step_size;
     cache.last_owner_data_ptr = owner_data_ptr;
+    cache.last_num_active_states = num_active_states;
     cache.last_xpd_base = cache.x_plus_delta_scratch.data();
   } else {
     // ---- Fast path: structure, options, and all relevant addresses are

@@ -62,6 +62,7 @@
 #include "cunls/state/similarity2_state_batch.h"
 #include "cunls/state/similarity3_state_batch.h"
 #include "cunls/state/sl4_state_batch.h"
+#include "cunls/state/so2_state_batch.h"
 #include "cunls/state/so3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "tests/evaluate_items_check.h"
@@ -276,13 +277,15 @@ class FixedSizeFactor : public FactorBatch {
   size_t NumActiveFactors() const override { return 5; }
 };
 
-TEST(FactorCapacity, OverridingNumActiveFactorsWithoutCapacityIsRejected) {
+TEST(FactorCapacity, OverridingNumActiveFactorsFixesTheSize) {
   FixedSizeFactor factor;
   EXPECT_EQ(factor.NumActiveFactors(), 5u);
-  EXPECT_EQ(factor.Capacity(), 0u);  // capacity is what the base was constructed with
-  EXPECT_THROW(factor.SetNumActiveFactors(3), std::invalid_argument);
+  EXPECT_EQ(factor.Capacity(), 5u);  // no base capacity: falls back to NumActiveFactors()
+  EXPECT_THROW(factor.SetNumActiveFactors(6), std::invalid_argument);  // above the capacity
+  EXPECT_THROW(factor.SetNumActiveFactors(3), std::logic_error);       // cannot be resized
+  EXPECT_NO_THROW(factor.SetNumActiveFactors(5));
 
-  // The problem reports NumActiveFactors() > Capacity().
+  // The problem accepts it without a Capacity() override.
   std::vector<float> zeros(5, 0.f);
   auto x = ToDevice(zeros);
   VectorStateBatch<1> states(x.data(), 5);
@@ -292,7 +295,8 @@ TEST(FactorCapacity, OverridingNumActiveFactorsWithoutCapacityIsRejected) {
   Problem problem;
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&factor, pointers);
-  EXPECT_FALSE(problem.CheckConsistency());
+  EXPECT_NO_THROW(problem.CheckSizes());
+  EXPECT_TRUE(problem.CheckConsistency());
 }
 
 TEST(FactorCapacity, ActiveCountStartsAtZero) {
@@ -369,6 +373,29 @@ TEST(StateCapacity, SL4StateBatch) {
         [&](size_t count) { return std::make_unique<SL4StateBatch>(x.data(), count); }, 16, 15,
         kCapacity, kActive, replicas, x);
   }
+}
+
+/** Plus with nothing active (0 states, or 0 replicas) is a no-op, not an empty launch. */
+template <class Batch>
+void ExpectEmptyPlusIsNoOp(size_t ambient, size_t tangent) {
+  dvector<float> x(kCapacity * ambient), delta(kCapacity * tangent), out(kCapacity * ambient);
+  Batch batch(x.data(), kCapacity);  // 0 active states
+  CudaStream stream;
+  EXPECT_NO_THROW(batch.Plus(x.data(), delta.data(), out.data(), stream.GetStream()));
+  batch.SetNumActiveStates(kCapacity);
+  EXPECT_NO_THROW(batch.Plus(x.data(), delta.data(), out.data(), stream.GetStream(), 0));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+}
+
+TEST(StateCapacity, EmptyPlusIsANoOp) {
+  ExpectEmptyPlusIsNoOp<VectorStateBatch<3>>(3, 3);
+  ExpectEmptyPlusIsNoOp<SO2StateBatch>(4, 1);
+  ExpectEmptyPlusIsNoOp<SO3StateBatch>(9, 3);
+  ExpectEmptyPlusIsNoOp<SE2StateBatch>(9, 3);
+  ExpectEmptyPlusIsNoOp<SE3StateBatch>(16, 6);
+  ExpectEmptyPlusIsNoOp<Similarity2StateBatch>(9, 4);
+  ExpectEmptyPlusIsNoOp<Similarity3StateBatch>(16, 7);
+  ExpectEmptyPlusIsNoOp<SL4StateBatch>(16, 15);
 }
 
 TEST(StateCapacity, ConstantIdCount) {

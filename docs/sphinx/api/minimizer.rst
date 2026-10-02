@@ -23,8 +23,8 @@ See :doc:`../ransac` for the theory and a walkthrough; the reference is in
 This page presents the theory shared by both APIs, then the Python API, then
 the C++ API.
 
-**Python** — ``pycunls``
-  |  **C++** — ``cunls/minimizer``
+- **Python** — ``pycunls``
+- **C++** — ``cunls/minimizer``
 
 ================================================================================
 Theory — Gauss-Newton and Levenberg-Marquardt

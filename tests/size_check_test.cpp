@@ -41,7 +41,8 @@ constexpr size_t kCapacity = 8;
 
 /** A 1D prior problem built at capacity; sizes are left for each test to set. */
 struct PriorProblem {
-  dvector<Vector<1>> states{kCapacity}, targets{kCapacity};
+  // Finite contents: the solve tests read every active entry.
+  dvector<Vector<1>> states{Vector<1>{0.f}, kCapacity}, targets{Vector<1>{1.f}, kCapacity};
   VectorStateBatch<1> state_batch{reinterpret_cast<const float *>(states.data()), kCapacity};
   PriorVectorFactorBatch<1> prior{targets.data(), kCapacity};
   Problem problem;
@@ -89,6 +90,11 @@ TEST(SizeCheck, SetSizesSolve) {
   CudaStream stream;
   EXPECT_NO_THROW(p.problem.CheckSizes());
   EXPECT_NO_THROW(LevenbergMarquardtMinimizer().Minimize(stream.GetStream(), p.problem));
+  std::vector<Vector<1>> solved(kCapacity);
+  p.states.CopyToHost(solved.data(), kCapacity);
+  for (size_t i = 0; i < kCapacity; ++i) {
+    EXPECT_NEAR(solved[i][0], i < 5 ? 1.f : 0.f, 1e-4f) << i;  // inactive states untouched
+  }
 }
 
 TEST(SizeCheck, HostListMustCoverActiveFactors) {

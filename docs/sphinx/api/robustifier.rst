@@ -7,8 +7,8 @@ minimizer to reduce the influence of outliers in non-linear least squares.
 This page explains what the loss outputs mean, then documents the Python loss
 classes, then the C++ classes together with the formula of each loss.
 
-**Python** — ``pycunls``
-  |  **C++** — ``cunls/robustifier``
+- **Python** — ``pycunls``
+- **C++** — ``cunls/robustifier``
 
 ================================================================================
 Overview
@@ -102,11 +102,20 @@ gradient and Gauss-Newton system without recomputing :math:`\rho`.
      \tilde{f} = \frac{\sqrt{\rho'}}{1-\alpha}\, f,\qquad
      \tilde{J} = \sqrt{\rho'}\,\left(I - \alpha\, \frac{f f^\top}{\|f\|^2}\right) J
 
-  yield a Gauss-Newton step equivalent to the robustified problem. When
-  :math:`2\rho''\|f\|^2 + \rho' \lesssim 0`, :math:`\alpha` is capped (e.g.
-  :math:`\alpha \le 1-\epsilon`) to avoid numerical issues. The robustifier
-  output :math:`(\rho(s), \rho'(s), \rho''(s))` is used to compute
-  :math:`\alpha` and the scaling factors :math:`\sqrt{\rho'}` and
+  When :math:`s > 0` and :math:`\rho'' > 0`, the root
+  :math:`\alpha = 1 - \sqrt{1 + 2 s \rho''/\rho'}` is real and below 1, and
+  the rescaled residual and Jacobian yield a Gauss-Newton step equivalent to
+  that of the robustified Gauss-Newton Hessian above.
+
+  Otherwise (:math:`s = 0`, or :math:`\rho'' \le 0`, the usual case for a
+  robust loss in its outlier region, where :math:`H` can be indefinite) the
+  solver uses :math:`\alpha = 0`: residual and Jacobian are scaled by
+  :math:`\sqrt{\rho'}` only. This drops the :math:`2\rho''\, r r^\top`
+  curvature term, so it is an approximation that keeps the system positive
+  semi-definite, not an exact equivalent of the robustified problem.
+
+  The robustifier output :math:`(\rho(s), \rho'(s), \rho''(s))` is used to
+  compute :math:`\alpha` and the scaling factors :math:`\sqrt{\rho'}` and
   :math:`(1-\alpha)^{-1}` applied to residuals and Jacobians in the solver.
   This is the standard "Triggs correction" used by robust nonlinear
   least-squares solvers to keep a Gauss-Newton-style Jacobian approximation

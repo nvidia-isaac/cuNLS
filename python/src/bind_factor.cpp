@@ -461,7 +461,7 @@ void bind_factor(nb::module_ &m) {
       "    The factor batch to wrap.\n"
       "weight : float, optional\n"
       "    Uniform scalar weight applied to all factors.\n"
-      "weights : DevicePointer, optional\n"
+      "weights : DevicePointer, optional, keyword-only\n"
       "    Device buffer with ``inner_factor.capacity`` floats (one per "
       "factor).\n\n"
       "Exactly one of ``weight`` or ``weights`` must be provided.")
@@ -477,7 +477,9 @@ void bind_factor(nb::module_ &m) {
             auto ptr = reinterpret_cast<const float *>(extract_device_ptr(weights));
             new (self) PyWeightedFactorBatch(inner, ptr);
           },
-          nb::arg("inner_factor"), nb::arg("weights"), nb::keep_alive<1, 2>(),
+          // Keyword-only, so a positional number always selects the scalar `weight`
+          // overload instead of being read as a device pointer.
+          nb::arg("inner_factor"), nb::kw_only(), nb::arg("weights"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>())
       .def_prop_ro("num_active_factors", &PyWeightedFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &PyWeightedFactorBatch::ResidualsSize)

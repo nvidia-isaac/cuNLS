@@ -262,6 +262,21 @@ TEST(DynamicProblem, NumericJacobiansFollowConnectivityChanges) {
   }
 }
 
+TEST(DynamicProblem, NumericJacobiansFollowActiveStateCounts) {
+  // The anchor prior keeps the same connectivity (state 0) every frame while
+  // the active state count changes: its numeric-diff cache must be rebuilt
+  // for the new count, not reused.
+  LevenbergMarquardtMinimizerOptions o = SolverOptions();
+  o.base_options.jacobian_mode = JacobianMode::kNumeric;
+  BoundProblem bound(BoundProblem::Form::kDeviceIndices, o);
+  uint32_t seed = 31;
+  for (int num_states : {60, 150, 90, 150}) {
+    const Frame frame = MakeFrame(num_states, num_states / 2, seed++);
+    const auto solved = bound.Solve(frame);
+    EXPECT_LT(MaxError(solved, frame.gt), 1e-2f) << num_states << " states";
+  }
+}
+
 TEST(DynamicProblem, RansacWithDeviceIndexTable) {
   // Per-frame PnP: one pose, matches rewritten in place, index table all zeros.
   constexpr int kCap = 2000;

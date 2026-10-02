@@ -250,6 +250,14 @@ class TestWeightedFactorBatch:
         assert fb.residuals_size == dim
         assert fb.state_sizes() == [dim]
 
+    def test_positional_number_is_a_scalar_weight(self):
+        # ``weights`` is keyword-only: a positional number never becomes a pointer.
+        inner = pycunls.PriorVectorFactorBatch3(cp.zeros(3, dtype=cp.float32), 1)
+        fb = pycunls.WeightedFactorBatch(inner, 2)
+        assert fb.capacity == 1
+        with pytest.raises(TypeError):
+            pycunls.WeightedFactorBatch(inner, cp.ones(4, dtype=cp.float32))
+
     def test_wraps_se3_between(self):
         num = 10
         deltas = cp.zeros(num * 16, dtype=cp.float32)

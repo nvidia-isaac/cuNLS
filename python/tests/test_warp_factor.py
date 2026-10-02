@@ -126,6 +126,17 @@ class TestWarpFactorBatch:
         arr = fb.wrap_array(data.ptr, wp.float32, 5)
         assert arr.shape == (5,)
 
+    def test_default_factor_ids_cache_is_bounded(self):
+        """Default ids are t % num_active_factors; only two active counts stay cached."""
+        fb = WarpFactorBatch(1, [1], 10)
+        for count in [3, 5, 7, 5, 9]:
+            fb.set_num_active_factors(count)
+            ids = fb.factor_ids(0, 2 * count).numpy()
+            np.testing.assert_array_equal(ids, np.arange(2 * count) % count)
+            assert {key[1] for key in fb._default_ids} <= {count, *fb._default_ids_counts}
+            assert len(fb._default_ids_counts) <= 2
+        assert sorted(fb._default_ids_counts) == [5, 9]
+
     def test_end_to_end_convergence(self, stream):
         """Solve a 3D vector-prior problem using a Warp-based factor."""
         target = np.array([1.0, 2.0, 3.0], dtype=np.float32)

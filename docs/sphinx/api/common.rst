@@ -7,8 +7,8 @@ This page documents the utility types shared by the rest of the API. The
 (``cunls/common``) additionally provides utility containers, type aliases,
 profiling wrappers, and CUDA library handle abstractions.
 
-**Python** — ``pycunls``
-  |  **C++** — ``cunls/common``
+- **Python** — ``pycunls``
+- **C++** — ``cunls/common``
 
 Python API (``pycunls``)
 ------------------------
