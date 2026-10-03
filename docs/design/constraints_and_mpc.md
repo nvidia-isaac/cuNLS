@@ -2,19 +2,21 @@
 
 Status: design proposal, on branch `dev/ak/constraints_mpc` (from `main`).
 
-### Dependencies on the experimental PyTorch branch
+Scope: constraints, dynamics factors and MPC, **without** differentiation.
+Differentiable MPC (gradients through the controller, learning cost weights
+and models) has its own design, `docs/design/differentiable_mpc.md`, and
+follows once the experimental PyTorch work is on `main`.
 
-This work starts from `main`. Three things it relies on exist so far only on
-the experimental branch `dev/ak/updates_v2` (differentiable solves):
+### Prerequisites from the experimental branch (core C++ only)
+
+This work starts from `main`. Two pieces of core C++ written on the
+experimental branch `dev/ak/updates_v2` are needed here; neither involves
+PyTorch, and nothing from the PyTorch integration is ported:
 
 | needed | on `dev/ak/updates_v2` | plan here |
 |---|---|---|
-| per-subproblem step control (`Problem::SetProblemPartition`, `ProblemPartition`): batched MPC instances that converge independently | commit "Per-subproblem convergence for batched problems" (core C++ only) | **port first** (phase C0): it has no PyTorch dependency |
-| core bug fixes found there: LM accepting steps to a NaN cost; SO3/SE3 log and Jacobian precision; SE2 / Sim2 / Sim3 / SL4 math | several commits | **port with C0** (dynamics factors on SE(2)/SE(3) hit exactly these code paths) |
-| implicit backward, `NLSLayer`, `pycunls.lie` | the PyTorch work | **wait**: differentiable MPC (phase DM1) starts once that work lands on `main` |
-
-Everything else (constraints, dynamics factors, the MPC builder, the
-real-time mode, the tridiagonal solver) depends only on `main`.
+| per-subproblem step control (`Problem::SetProblemPartition`, `ProblemPartition`): batched MPC instances that converge independently | commit "Per-subproblem convergence for batched problems" | port in phase C0, without the PyTorch tests and docs |
+| core bug fixes: Levenberg-Marquardt accepting steps to a NaN cost; SO3/SE3 log and Jacobian precision; SE2 / Sim2 / Sim3 / SL4 math | several commits | port in phase C0 (dynamics factors on SE(2)/SE(3) run through exactly these code paths) |
 
 ## 1. Summary
 
@@ -33,13 +35,12 @@ things:
    quadrotors, legged robots, generic integrators) that tie consecutive states
    and controls together, plus a template for user models.
 3. **MPC support**: a Python horizon builder, warm-start shifting, a
-   real-time mode (fixed iterations, no host round trips, CUDA-graph capture),
-   a batched block-tridiagonal linear solver for time chains, and
-   differentiable MPC through the existing backward pass.
+   real-time mode (fixed iterations, no host round trips, CUDA-graph capture)
+   and a batched block-tridiagonal linear solver for time chains.
 
 The goal is to show cuNLS as a general GPU nonlinear least-squares engine:
 the same core solves estimation, control and planning, batched over thousands
-of instances, and differentiably.
+of instances.
 
 ### 1.1 Principles
 
@@ -124,15 +125,6 @@ for t in control_loop:
 control batches, dynamics factors, cost factors (existing priors, betweens and
 weights), constraint wrappers and the subproblem partition. Everything it
 builds is an ordinary `Problem`, so users can add their own factors.
-
-### 2.3 Differentiable MPC (after the PyTorch work lands)
-
-`ocp.layer()` returns an `NLSLayer` / `BatchedNLSLayer` whose inputs are the
-reference, the cost weights, model parameters (mass, inertia, drag, wheelbase,
-...) and the initial state; outputs are the optimal trajectories and controls.
-Training through it learns cost weights from demonstrations (inverse optimal
-control), dynamics parameters from logs (system identification through the
-controller) or a policy network that outputs MPC references.
 
 ---
 
@@ -236,34 +228,6 @@ and exact: clamp in `Plus`, and freeze the active components in the linear
 solve. It is a second implementation of the same semantics, so it is
 deferred until profiles show the AL bounds to be a bottleneck.
 
-### 3.6 Implicit differentiation with constraints
-
-At an AL solution, the inner problem's stationarity holds at fixed (λ, μ, ρ).
-The existing backward pass differentiates exactly that inner problem, so it
-works unchanged, but it treats the multipliers as constants. The exact KKT
-sensitivity (multipliers respond to θ as well) differs in the constrained
-directions by O(1/ρ):
-
-```
-exact:        [ H    A_actᵀ ] [w]   [∂L/∂x]          inner (v1):   (H + ρ A_actᵀ A_act) w = ∂L/∂x
-              [ A_act  0    ] [ν] = [  0  ]
-```
-
-The inner system is the KKT system with the zero block replaced by
-`−(1/ρ) I` (eliminate ν = ρ A w). Plan:
-
-- **v1:** inner-problem backward (already implemented); documented error
-  O(1/ρ) in the constrained directions, tested against finite differences
-  of the whole constrained solve.
-- **v2:** exact KKT. Solve with the regularized system and remove the
-  regularization by iterative refinement on the KKT residual (each pass is
-  one solve with the same matrix; it converges at rate ~1/(ρ λ_min(A H⁻¹Aᵀ))),
-  i.e. reuse the backward refinement loop that exists for PCG.
-
-Active-set changes make x\*(θ) nondifferentiable at the switching points
-(a known property of constrained optimization layers, also in OptNet and
-cvxpylayers); gradients there are one-sided.
-
 ---
 
 ## 4. Dynamics factors
@@ -292,9 +256,10 @@ estimation-style problems and for robust warm starts).
 Jacobians: ∂r/∂x_{k+1} = J_r⁻¹(r) on Lie parts (identity on vector parts);
 ∂r/∂x_k and ∂r/∂u_k = −J_l⁻¹(r) Ad(…) ∂Φ/∂(·) composed from the model's
 continuous Jacobians and the integrator's chain rule (§4.6). Parameters are
-inputs (differentiable through `InputVjp`), or vector state batches when they
+inputs (per-factor device buffers, like measurements), or vector state batches when they
 are to be estimated (system identification: one parameter state shared by
-every factor of a trajectory).
+every factor of a trajectory). Gradients with respect to these inputs belong
+to the differentiable-MPC design.
 
 State and control layout use existing state batches: poses in
 `SE2StateBatch` / `SE3StateBatch` / `SO3StateBatch`, velocities, rates,
@@ -376,7 +341,7 @@ model, e.g. MIT Cheetah convex MPC, here with full nonlinear rotation).
 - State: base pose `T ∈ SE(3)`, world velocity v, body rates ω. Control:
   ground reaction forces `f_i ∈ R³` for each foot i.
 - Inputs per step: contact schedule `s_{k,i} ∈ {0, 1}` and foot positions
-  `p_{k,i}` (from the gait planner; differentiable inputs).
+  `p_{k,i}` (from the gait planner; per-step inputs).
 - Dynamics: `m v̇ = Σ_i s_i f_i + m g`;
   `J ω̇ + ω × J ω = Rᵀ Σ_i s_i (p_i − p) × f_i`; `Ṙ = R ω^`.
 - Constraints (where the AL machinery earns its keep): unilateral normal
@@ -528,22 +493,6 @@ cuDSS also handles these systems (and is the fallback for general
 structures); the dedicated solver targets the many-small-instances regime
 where cuDSS's per-call overhead dominates.
 
-### 5.5 Differentiable MPC (depends on the PyTorch work)
-
-The MPC problem is an ordinary cuNLS problem, so `NLSLayer` /
-`BatchedNLSLayer` apply directly; the new parts are input gradients for the
-dynamics-model parameters (`InputVjp` on the dynamics factors: "params",
-"dt", "contact_schedule" is non-differentiable) and the constrained backward
-(§3.6). Learning tests (as in the differentiable-solve work):
-
-- **M1. Cost weights from demonstrations**: a diff-drive robot tracks paths
-  with unknown expert weights; learn the weights so the MPC reproduces the
-  expert trajectories.
-- **M2. System identification through the controller**: quadrotor with
-  wrong mass and drag; learn them from logged closed-loop trajectories.
-- **M3. Learned reference**: a small network outputs references for a batch
-  of quadrupeds (L1) and is trained on a task loss through the MPC.
-
 ---
 
 ## 6. Phases
@@ -556,11 +505,11 @@ dynamics-model parameters (`InputVjp` on the dynamics factors: "params",
 | **M1. MPC (eager)** | `pycunls.mpc.Horizon`, warm-start shift, cost and constraint helpers; examples: diff-drive path tracking, car (bicycle) racing line, quadrotor (Q2) waypoint flight, biped LIPM walking | closed-loop simulations track their references; obstacle and bound constraints hold to tolerance |
 | **D2. Dynamics library, tier 2** | Q1 (rotor thrusts), W3 (dynamic bicycle), W4 (skid steer), L1 (single rigid body with contacts), `FrictionConeFactorBatch`, `AttitudeConeFactorBatch`, clearance factors | as D1; quadruped trotting in simulation with friction-cone satisfaction |
 | **R1. Real-time** | structure reuse, device-only control, fixed-iteration PCG, CUDA-graph capture, `BlockTridiagonal` solver | latency and throughput targets (§7) on a reference GPU |
-| **DM1. Differentiable MPC** (after the PyTorch work is on `main`) | parameter `InputVjp` on dynamics factors, constrained backward v1, learning tests M1-M3; then exact KKT backward (v2) | gradients against finite differences of the closed-loop solve; M1-M3 learn |
 
-C0 comes first. C1 is independent of MPC and useful on its own (articulated-body fitting
-with joint limits, calibration with physical bounds, any engineering
-least-squares problem with limits). D1 does not depend on C1 (soft dynamics
+C0 comes first. Differentiable MPC is not a phase here: see
+`docs/design/differentiable_mpc.md`. C1 is independent of MPC and useful on
+its own (articulated-body fitting with joint limits, calibration with
+physical bounds, any engineering least-squares problem with limits). D1 does not depend on C1 (soft dynamics
 work without constraints); M1 needs both.
 
 ## 7. Targets (to be measured)
@@ -577,8 +526,7 @@ reference for single instances), Crocoddyl / Aligator (DDP, CPU), ALTRO
 (AL-iLQR), cuRobo (GPU, manipulators), GPU MPPI implementations
 (sampling-based; the throughput reference for batches). The claim to test:
 cuNLS matches CPU solvers on single-instance latency within a small factor
-and exceeds them by orders of magnitude in batched throughput, while also
-providing gradients.
+and exceeds them by orders of magnitude in batched throughput.
 
 ## 8. Testing
 
@@ -595,8 +543,6 @@ providing gradients.
   with mismatch (robustness), constraint satisfaction over the whole run,
   determinism of the real-time mode (same inputs, same outputs, same
   iteration count).
-- **Differentiable**: finite differences of the whole constrained solve; the
-  learning tests M1-M3.
 
 ## 9. Open questions
 
@@ -608,11 +554,9 @@ providing gradients.
 2. **Inequality handling in the inner solve.** The masked Jacobian is
    standard but can chatter at the activation boundary; a smoothed max
    (softplus with a small temperature) is the alternative if it does.
-3. **Multipliers in the backward pass.** Whether v1 (inner problem) is good
-   enough for learning tasks in practice, or v2 is needed before DM1 ships.
-4. **Ordering for the tridiagonal solver**: explicit time indices from the
+3. **Ordering for the tridiagonal solver**: explicit time indices from the
    builder (proposed) vs. automatic detection (bandwidth-reducing ordering
    of the Hessian pattern).
-5. **Python model authoring**: Warp kernels (consistent with custom factors)
+4. **Python model authoring**: Warp kernels (consistent with custom factors)
    vs. PyTorch-defined dynamics with `torch.func` Jacobians compiled into a
    factor (lower barrier, slower).
