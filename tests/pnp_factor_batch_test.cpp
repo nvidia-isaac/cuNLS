@@ -40,6 +40,7 @@
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
@@ -395,10 +396,10 @@ TEST_P(PnPSolverTest, LevenbergMarquardtConverges) {
 }
 
 INSTANTIATE_TEST_SUITE_P(AllSolvers, PnPSolverTest,
-                         ::testing::Values(SparseLinearSolverType::cuDSS,
-                                           SparseLinearSolverType::DenseLDLT,
-                                           SparseLinearSolverType::DenseCholesky,
-                                           SparseLinearSolverType::DenseQR),
+                         ::testing::ValuesIn(test_utils::AvailableSolverTypes(
+                             {SparseLinearSolverType::cuDSS, SparseLinearSolverType::DenseLDLT,
+                              SparseLinearSolverType::DenseCholesky,
+                              SparseLinearSolverType::DenseQR})),
                          [](const ::testing::TestParamInfo<SparseLinearSolverType> &info) {
                            switch (info.param) {
                              case SparseLinearSolverType::cuDSS:

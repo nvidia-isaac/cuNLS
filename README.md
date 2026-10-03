@@ -202,6 +202,10 @@ Toolkits installed without a `targets/` directory (e.g. distro packages under `/
 `linux-x86_64` on x86_64 and require an explicit platform on aarch64.
 Set `-DCUDSS_PLATFORM` explicitly to override it.
 
+Pass `-DCUNLS_ENABLE_CUDSS=OFF` to build without the cuDSS backend: the cuDSS archive is not
+downloaded and `SparseLinearSolverType::cuDSS` throws `std::runtime_error` when a solver is created.
+All other solvers work as usual, and the C++ tests skip the cuDSS cases.
+
 ## Quick Start
 
 > [!IMPORTANT]

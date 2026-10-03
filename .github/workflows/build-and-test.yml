@@ -6,6 +6,8 @@ on:
       matrix_json:
         description: >
           JSON array of matrix entries. Each entry must have: ubuntu, cuda, archs.
+          Optional: platform (default "x86_64"), runner (default ["self-hosted","gpu"]),
+          base_image (overrides the Docker base image), ports_mirror (Ubuntu Ports mirror URL).
           Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"}]
         type: string
         required: true
@@ -27,13 +29,21 @@ env:
 
 jobs:
   build-matrix:
-    name: "x86_64 / ubuntu-${{ matrix.config.ubuntu }} / cuda-${{ matrix.config.cuda }}"
-    runs-on: [self-hosted, gpu]
+    # No " / " here: the jobs list shows called-workflow jobs as "build-matrix / <name>"
+    # and keeps only the text after the last slash.
+    name: "${{ matrix.config.platform || 'x86_64' }}, ubuntu-${{ matrix.config.ubuntu }}, cuda-${{ matrix.config.cuda }}"
+    runs-on: ${{ matrix.config.runner || fromJson('["self-hosted","gpu"]') }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
         config: ${{ fromJson(inputs.matrix_json) }}
+    env:
+      CONFIG_NAME: ${{ matrix.config.platform || 'x86_64' }}-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+      CUDA_VERSION: ${{ matrix.config.cuda }}
+      UBUNTU_VERSION: ${{ matrix.config.ubuntu }}
+      BASE_IMAGE: ${{ matrix.config.base_image }}
+      UBUNTU_PORTS_MIRROR: ${{ matrix.config.ports_mirror }}
 
     steps:
       - name: Verify GPU
@@ -43,8 +53,6 @@ jobs:
 
       - name: Build C++ libraries
         run: |
-          CUDA_VERSION="${{ matrix.config.cuda }}" \
-          UBUNTU_VERSION="${{ matrix.config.ubuntu }}" \
           EXTRA_CMAKE_ARGS="-DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.config.archs }}" \
           ./scripts/build_cunls_in_docker.sh Release ./output
 
@@ -52,10 +60,7 @@ jobs:
         run: ./scripts/test_cunls_in_docker.sh ./output
 
       - name: Build Python wheel
-        run: |
-          CUDA_VERSION="${{ matrix.config.cuda }}" \
-          UBUNTU_VERSION="${{ matrix.config.ubuntu }}" \
-          ./scripts/build_pycunls_in_docker.sh ./output/wheel
+        run: ./scripts/build_pycunls_in_docker.sh ./output/wheel
 
       - name: Run Python tests
         run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
@@ -64,7 +69,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: test-results-cpp-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          name: test-results-cpp-${{ env.CONFIG_NAME }}
           path: output/cpp-test-results.xml
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: warn
@@ -73,7 +78,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: test-results-python-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          name: test-results-python-${{ env.CONFIG_NAME }}
           path: output/wheel/python-test-results.xml
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: warn
@@ -82,7 +87,7 @@ jobs:
         if: ${{ always() && inputs.upload_binaries }}
         uses: actions/upload-artifact@v6
         with:
-          name: cunls-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          name: cunls-${{ env.CONFIG_NAME }}
           path: |
             output/shared/
             output/static/
@@ -96,7 +101,7 @@ jobs:
         if: ${{ always() && inputs.upload_binaries }}
         uses: actions/upload-artifact@v6
         with:
-          name: cudss-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          name: cudss-${{ env.CONFIG_NAME }}
           path: output/cudss/
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: warn
@@ -105,7 +110,7 @@ jobs:
         if: ${{ always() && inputs.upload_binaries }}
         uses: actions/upload-artifact@v6
         with:
-          name: pycunls-x86_64-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+          name: pycunls-${{ env.CONFIG_NAME }}
           path: output/wheel/*.whl
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: warn

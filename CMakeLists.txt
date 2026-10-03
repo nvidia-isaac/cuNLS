@@ -34,16 +34,24 @@ include(cmake/AddCUDSS.cmake)
 include(cmake/BundleStaticDeps.cmake)
 
 add_spdlog()
-# cuDSS is fetched as a prebuilt archive purely for its headers; cunls loads
-# libcudss.so at runtime via dlopen() (see cunls/common/cudss_dynamic.h), so
-# cuDSS is an OPTIONAL runtime dependency and its binaries are never linked
-# into or bundled with cunls. Default to 0.8.0.10; 0.7.1.4 is still supported
-# via -DCUDSS_VERSION=0.7.1.4. CUDSS_LIB_DIR (set by add_cudss) points at the
-# downloaded libcudss.so/.a for packaging cuDSS as a standalone artifact.
-set(CUDSS_VERSION "0.8.0.10" CACHE STRING "cuDSS version to download")
-set(CUDSS_PLATFORM "auto" CACHE STRING "cuDSS redistribution platform")
-set_property(CACHE CUDSS_PLATFORM PROPERTY STRINGS auto linux-x86_64 linux-aarch64 linux-sbsa)
-add_cudss(VERSION "${CUDSS_VERSION}" PLATFORM "${CUDSS_PLATFORM}")
+
+# With CUNLS_ENABLE_CUDSS=OFF the cuDSS archive is not downloaded, the cuDSS
+# backend is not compiled, and SparseLinearSolverType::cuDSS throws at solver
+# creation. The other solvers are unaffected.
+option(CUNLS_ENABLE_CUDSS "Build the cuDSS sparse direct solver backend" ON)
+
+if(CUNLS_ENABLE_CUDSS)
+  # cuDSS is fetched as a prebuilt archive purely for its headers; cunls loads
+  # libcudss.so at runtime via dlopen() (see cunls/common/cudss_dynamic.h), so
+  # cuDSS is an OPTIONAL runtime dependency and its binaries are never linked
+  # into or bundled with cunls. Default to 0.8.0.10; 0.7.1.4 is still supported
+  # via -DCUDSS_VERSION=0.7.1.4. CUDSS_LIB_DIR (set by add_cudss) points at the
+  # downloaded libcudss.so/.a for packaging cuDSS as a standalone artifact.
+  set(CUDSS_VERSION "0.8.0.10" CACHE STRING "cuDSS version to download")
+  set(CUDSS_PLATFORM "auto" CACHE STRING "cuDSS redistribution platform")
+  set_property(CACHE CUDSS_PLATFORM PROPERTY STRINGS auto linux-x86_64 linux-aarch64 linux-sbsa)
+  add_cudss(VERSION "${CUDSS_VERSION}" PLATFORM "${CUDSS_PLATFORM}")
+endif()
 
 set(CUNLS_LIBS spdlog::spdlog CUDA::cusparse CUDA::cublas CUDA::cusolver ${CMAKE_DL_LIBS})
 
@@ -283,12 +291,17 @@ if(BUILD_TESTING)
   target_link_libraries(nls_tests PRIVATE ${TEST_LIBS})
 
   include(GoogleTest)
-  # Tests exercise SparseLinearSolverType::cuDSS, which dlopen()s libcudss.so
-  # at runtime; point LD_LIBRARY_PATH at the copy FetchContent downloaded for
-  # this build so the tests find it without a system-wide cuDSS install.
-  gtest_discover_tests(nls_tests
-    PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${CUDSS_LIB_DIR}:$ENV{LD_LIBRARY_PATH}"
-  )
+  if(CUNLS_ENABLE_CUDSS)
+    # Tests exercise SparseLinearSolverType::cuDSS, which dlopen()s libcudss.so
+    # at runtime; point LD_LIBRARY_PATH at the copy FetchContent downloaded for
+    # this build so the tests find it without a system-wide cuDSS install.
+    target_compile_definitions(nls_tests PRIVATE CUNLS_ENABLE_CUDSS)
+    gtest_discover_tests(nls_tests
+      PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${CUDSS_LIB_DIR}:$ENV{LD_LIBRARY_PATH}"
+    )
+  else()
+    gtest_discover_tests(nls_tests)
+  endif()
 
 endif()
 
