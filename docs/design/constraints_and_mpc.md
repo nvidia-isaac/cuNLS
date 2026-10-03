@@ -267,71 +267,77 @@ steering, controls in `VectorStateBatchN`.
 
 ### 4.2 Wheeled robots
 
-**W1. Unicycle / differential drive** (most mobile bases, warehouse AMRs).
+Two models: a two-wheel differential-drive robot (exactly the NVIDIA Carter
+layout) and a four-wheel car with Ackermann steering.
 
-- State: pose `T ∈ SE(2)`. Control: `u = (v, ω)` body speed and yaw rate,
-  or wheel speeds `(ω_L, ω_R)` with `v = r(ω_R + ω_L)/2`,
-  `ω = r(ω_R − ω_L)/b` (wheel radius r, track b).
-- Exact discretization (constant twist over dt): `T_{k+1} = T_k Exp(dt [v, 0, ω])`.
-- Residual: `Log((T_k Exp(dt ξ(u_k)))⁻¹ T_{k+1}) ∈ R³`.
-- Parameters: r, b (wheel-odometry calibration through the same factor).
+**W1. Differential drive: two driven wheels plus passive casters
+(NVIDIA Carter).**
 
-**W2. Kinematic bicycle (car-like, Ackermann).**
+- State: pose `T ∈ SE(2)`; optionally the wheel speeds `(ω_L, ω_R)` as a
+  vector state, so that motor acceleration limits can be imposed.
+- Control: wheel angular velocities `(ω_L, ω_R)` (the commands the Carter
+  base accepts), or their accelerations when the speeds are states
+  (`ω_{k+1} = ω_k + dt α_k`).
+- Kinematics: body speed `v = r (ω_R + ω_L) / 2`, yaw rate
+  `ω = r (ω_R − ω_L) / b`, with wheel radius r and track width b (from the
+  robot's description). Casters are passive and carry no dynamics.
+- Exact discretization (constant twist over dt):
+  `T_{k+1} = T_k Exp(dt [v, 0, ω])`; residual
+  `Log((T_k Exp(dt ξ(u_k)))⁻¹ T_{k+1}) ∈ R³`.
+- Parameters: r, b (calibratable through the same factor, e.g. from wheel
+  odometry).
+- Typical constraints: wheel speed limits `|ω_L|, |ω_R| ≤ ω_max`, wheel
+  acceleration limits, obstacle clearance (the footprint as a circle or a few
+  circles).
 
-- State: pose `T ∈ SE(2)`, speed v; optional steering angle δ as a state with
-  rate control. Control: acceleration a and steering δ (or steering rate).
-- Body twist with slip angle `β = atan(l_r tan δ / L)`:
-  `ξ = [v cos β, v sin β, v cos β tan δ / L]`; `T_{k+1} = T_k Exp(dt ξ)`,
-  `v_{k+1} = v_k + dt a`.
-- Parameters: wheelbase L, rear axle distance l_r.
-- Typical constraints: |δ| ≤ δ_max, |a| ≤ a_max, steering-rate bounds, lateral
-  acceleration `v² tan δ / L ≤ a_lat`.
+**W2. Four-wheel car (Ackermann steering), kinematic bicycle model.**
 
-**W3. Dynamic bicycle with linear tires** (racing, high speed).
+- The two front and the two rear wheels are lumped into one wheel per axle,
+  the standard model for car path planning and tracking.
+- State: pose `T ∈ SE(2)` of the rear-axle center, speed v and steering angle
+  δ (both vector states: real steering and drive actuators are rate and
+  acceleration limited).
+- Control: acceleration a and steering rate `δ̇`.
+- Kinematics (rear-axle reference, no slip): body twist
+  `ξ = [v, 0, v tan δ / L]`; `T_{k+1} = T_k Exp(dt ξ)`,
+  `v_{k+1} = v_k + dt a`, `δ_{k+1} = δ_k + dt δ̇`.
+- Parameters: wheelbase L.
+- Typical constraints: `|δ| ≤ δ_max`, `|δ̇| ≤ δ̇_max`, `a_min ≤ a ≤ a_max`,
+  lateral acceleration `|v² tan δ / L| ≤ a_lat` (keeps the no-slip model
+  valid), lane boundaries as halfspaces, obstacle clearance.
+- Validity: the kinematic model holds at moderate lateral acceleration
+  (roughly below 0.5 g, everyday driving and parking). High-speed, near-limit
+  driving needs tire forces (a dynamic bicycle model); it is a later
+  extension through the user-model template.
 
-- State: pose `T ∈ SE(2)`, body velocities `(v_x, v_y, r)`. Control: drive
-  force (or throttle) and steering δ.
-- Tire slip angles `α_f = δ − atan((v_y + l_f r)/v_x)`,
-  `α_r = −atan((v_y − l_r r)/v_x)`; lateral forces `F_y = C α` (linear) or a
-  simplified Pacejka `F_y = D sin(C atan(B α))`.
-- `m(v̇_x − v_y r) = F_x − F_yf sin δ`, `m(v̇_y + v_x r) = F_yr + F_yf cos δ`,
-  `I_z ṙ = l_f F_yf cos δ − l_r F_yr`; pose by `Exp` of the body twist.
-- Integrator: RK4 on the velocity part, Lie-Euler on the pose (§4.6).
-- Parameters: m, I_z, l_f, l_r, cornering stiffnesses (learnable).
+### 4.3 Quadrotor
 
-**W4. Skid-steer** (tracked robots, 4-wheel skid steer): unicycle with
-instantaneous-center-of-rotation slip parameters, `v = r(ω_R + ω_L)/2 · s_v`,
-`ω = r(ω_R − ω_L)/(χ b)`; χ (effective track) and s_v are the usual
-calibrated quantities.
-
-### 4.3 Quadrotors
-
-**Q1. Rigid body with rotor thrusts** (full model).
+**Q1. Rigid body with rotor thrusts.**
 
 - State: pose `T = (R, p) ∈ SE(3)`, world velocity `v ∈ R³`, body rates
-  `ω ∈ R³`. Control: rotor thrusts `f ∈ R⁴` (or collective thrust and body
-  torques).
-- Allocation: `[T_c; τ] = M f`, with M from arm length l, rotor positions and
-  drag-torque coefficient k_m (X and + layouts, also hexa/octo by M).
-- Continuous dynamics: `ṗ = v`, `v̇ = g + R e₃ T_c / m − D v` (optional linear
-  drag D), `Ṙ = R ω^`, `ω̇ = J⁻¹(τ − ω × J ω)`.
+  `ω ∈ R³`.
+- Control: the four rotor thrusts `f ∈ R⁴`.
+- Allocation: `[T_c; τ] = M f`, with M from the arm length l, the rotor
+  layout (X or +) and the rotor drag-torque coefficient k_m.
+- Continuous dynamics: `ṗ = v`, `v̇ = g + R e₃ T_c / m − D v` (optional
+  linear drag D), `Ṙ = R ω^`, `ω̇ = J⁻¹(τ − ω × J ω)`.
 - Discretization: semi-implicit Lie-Euler (default) or RK4 on (p, v, ω) with
   `R_{k+1} = R_k Exp(dt ω̄)` (RKMK for the rotation; §4.6).
-- Parameters: m, J (diagonal or full), l, k_m, D (all learnable: system
-  identification of a drone through its controller).
+- Parameters: m, J (diagonal or full), l, k_m, D.
 - Typical constraints: `0 ≤ f_i ≤ f_max`, tilt `e₃ᵀ R e₃ ≥ cos θ_max`,
   speed limits, obstacle clearance.
 
-**Q2. Thrust and body-rate control** (the interface most autopilots
-expose, e.g. PX4 offboard): state `(T, v)`; control `(T_c, ω_cmd)`; the rate
-loop is assumed fast. `R_{k+1} = R_k Exp(dt ω_cmd)`,
-`v_{k+1} = v_k + dt (g + R e₃ T_c/m)`. Cheaper and often better conditioned
-than Q1 for trajectory tracking.
-
-**Q3. Point mass with acceleration control** (planning layer, differential
-flatness): state `(p, v) ∈ R⁶`, control `a ∈ R³`, exact double integrator;
-thrust/tilt limits become the constraint `‖a − g‖ ≤ T_max/m` and a cone on
-the direction of `a − g`.
+Why this model: its inputs are the real actuators and it keeps the full
+rigid-body rotational dynamics, so the MPC respects what the vehicle can
+actually do (saturated rotors, finite angular acceleration). Simpler models
+(thrust plus body rates, or a point mass) assume an inner controller that
+tracks the commands perfectly, which breaks down exactly in aggressive
+maneuvers. What Q1 still idealizes: thrust responds instantly (real motors
+have time constants of tens of milliseconds; an optional extension makes the
+thrusts states with commanded thrusts as controls, `f_{k+1} = f_k + dt (f_cmd − f_k)/τ_m`),
+no rotor drag or blade flapping beyond the linear drag term, no ground or
+wind effects. Q1 is also stiffer than the simple models: it needs shorter
+steps (dt around 10-25 ms) and more horizon steps for the same look-ahead.
 
 ### 4.4 Legged robots
 
@@ -350,19 +356,9 @@ model, e.g. MIT Cheetah convex MPC, here with full nonlinear rotation).
   `f_n ≥ 0`, or the 4-sided pyramid), zero force in swing (`s = 0`: force
   bounds collapse to 0).
 - Parameters: m, J, μ.
-
-**L2. Linear inverted pendulum** (biped walking, ZMP preview control).
-
-- State: CoM position and velocity in the plane `(c, ċ) ∈ R⁴`. Control: ZMP
-  `z ∈ R²` (or CoM jerk with ZMP as output).
-- `c̈ = (g / h)(c − z)`; exact discretization with `cosh`/`sinh` of
-  `dt sqrt(g/h)` (a linear factor with constant Jacobians).
-- Constraint: ZMP inside the support polygon of the stance foot or feet
-  (linear inequalities per edge, from the footstep plan).
-
-**L3. Centroidal dynamics with kinematics** (later phase): adds joint
-positions and the centroidal momentum matrix; depends on a rigid-body
-dynamics library and is out of scope for the first version.
+- Scope: leg masses and joint torque limits are outside this model (they
+  belong to a whole-body controller below the MPC, or to a later
+  centroidal/whole-body model).
 
 ### 4.5 Generic models
 
@@ -371,7 +367,7 @@ dynamics library and is out of scope for the first version.
 with acceleration or jerk control). Exact linear discretization.
 
 **G2. Lie-group kinematics**: `T_{k+1} = T_k Exp(dt ξ_k)` with the twist as
-control, on SE(2), SE(3), SO(3) (the kinematic core of W1, Q2, camera
+control, on SE(2), SE(3), SO(3) (the kinematic core of W1 and W2, camera
 motion, satellite attitude).
 
 **G3. User models**: `ContinuousDynamics` + integrator template (§4.6) in
@@ -402,7 +398,7 @@ discrete map:
 | `SemiImplicitEuler` | 1 (symplectic for mechanical systems) | velocities first, then pose | 1 |
 | `Midpoint` | 2 | RKMK-2 | 2 |
 | `RK4` | 4 | RKMK-4 (Munthe-Kaas: stages in the Lie algebra with `dexp⁻¹` corrections) | 4 |
-| `Exact` | — | model-specific closed form (W1, G1, G2, L2) | 1 |
+| `Exact` | — | model-specific closed form (W1, W2 with constant controls over a step, G1, G2) | 1 |
 
 Python users get the same through Warp (`pycunls.warp` kernels for
 `Derivative`, the integrator applied by the library) or through numeric
@@ -421,7 +417,7 @@ Mostly existing factors, plus a few new ones:
 | control and state bounds | `BoundFactorBatch<Dim>` | new |
 | obstacle clearance | `SphereClearanceFactorBatch` (point/sphere robot vs spheres), `EllipsoidClearance`, signed distance field lookup (`SdfClearanceFactorBatch`, trilinear in a 3D texture) | new |
 | friction cone, force limits | `FrictionConeFactorBatch` (smooth cone), bounds | new |
-| support polygon (ZMP) | `HalfspaceFactorBatch` (aᵀ x ≤ b, per-factor a, b) | new |
+| lanes, polygonal free space | `HalfspaceFactorBatch` (aᵀ x ≤ b, per-factor a, b) | new |
 | tilt / attitude cone | `AttitudeConeFactorBatch` | new |
 | actuator rate limits | between on controls + bounds via `ConstraintFactorBatch` | wrapper |
 
@@ -501,9 +497,9 @@ where cuDSS's per-call overhead dominates.
 |---|---|---|
 | **C0. Port prerequisites** (done) | subproblem partition and the core bug fixes from `dev/ak/updates_v2` (§ Prerequisites) | their tests pass on this branch; no PyTorch code involved |
 | **C1. Constraints** | `ConstraintFactorBatch` (equality, inequality), `BoundFactorBatch<Dim>`, `ConstrainedMinimizer` (AL outer loop, per-subproblem penalties), `HalfspaceFactorBatch`; Python bindings; docs | Hock-Schittkowski subset and random convex QPs match a reference solver (cvxpy / scipy) to 1e-4; constrained batched problems with per-subproblem stopping; no regressions |
-| **D1. Dynamics library, tier 1** | `DynamicsFactorBatch<Model, Integrator>` template; models W1, W2, Q2, Q3, L2, G1, G2; integrators Euler, semi-implicit, RK4, exact | every model's Jacobians against central differences (float64 reference); trajectories against an independent float64 integration |
-| **M1. MPC (eager)** | `pycunls.mpc.Horizon`, warm-start shift, cost and constraint helpers; examples: diff-drive path tracking, car (bicycle) racing line, quadrotor (Q2) waypoint flight, biped LIPM walking | closed-loop simulations track their references; obstacle and bound constraints hold to tolerance |
-| **D2. Dynamics library, tier 2** | Q1 (rotor thrusts), W3 (dynamic bicycle), W4 (skid steer), L1 (single rigid body with contacts), `FrictionConeFactorBatch`, `AttitudeConeFactorBatch`, clearance factors | as D1; quadruped trotting in simulation with friction-cone satisfaction |
+| **D1. Dynamics library, tier 1** | `DynamicsFactorBatch<Model, Integrator>` template; models W1 (Carter), W2 (car), G1, G2; integrators Euler, semi-implicit, RK4, exact | every model's Jacobians against central differences (float64 reference); trajectories against an independent float64 integration |
+| **M1. MPC (eager)** | `pycunls.mpc.Horizon`, warm-start shift, cost and constraint helpers; examples: Carter path tracking among obstacles, car lane keeping and parking | closed-loop simulations track their references; obstacle and bound constraints hold to tolerance |
+| **D2. Dynamics library, tier 2** | Q1 (quadrotor, rotor thrusts), L1 (quadruped, single rigid body with contacts), `FrictionConeFactorBatch`, `AttitudeConeFactorBatch`, clearance factors | as D1; quadrotor waypoint flight with thrust and tilt limits; quadruped trotting in simulation with friction-cone satisfaction |
 | **R1. Real-time** | structure reuse, device-only control, fixed-iteration PCG, CUDA-graph capture, `BlockTridiagonal` solver | latency and throughput targets (§7) on a reference GPU |
 
 C0 comes first. Differentiable MPC is not a phase here: see
@@ -516,8 +512,9 @@ work without constraints); M1 needs both.
 
 | scenario | instances | horizon | target |
 |---|---|---|---|
-| diff-drive tracking, warm, real-time mode | 1 | 50 | < 0.5 ms per step |
-| quadrotor (Q2) waypoints, warm | 1 | 40 | < 1 ms per step |
+| Carter (W1) tracking, warm, real-time mode | 1 | 50 | < 0.5 ms per step |
+| car (W2) lane keeping, warm | 1 | 50 | < 0.5 ms per step |
+| quadrotor (Q1) waypoints, warm | 1 | 40 | < 1 ms per step |
 | quadrotor (Q1) batched | 4096 | 40 | < 10 ms per step |
 | quadruped (L1) with friction cones | 1 / 1024 | 20 | < 2 ms / < 15 ms per step |
 
