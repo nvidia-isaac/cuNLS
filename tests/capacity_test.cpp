@@ -17,8 +17,7 @@
 
 /**
  * @file capacity_test.cpp
- * @brief Capacity and active sizes of factor and state batches
- * (docs/design/reusable_buffers.md):
+ * @brief Capacity and active sizes of factor and state batches:
  *  - a factor batch built for N factors and resized to n < N evaluates bitwise
  *    like a batch built for exactly n factors; resizing above N throws;
  *  - a state batch resized to n states updates exactly its first n states, also

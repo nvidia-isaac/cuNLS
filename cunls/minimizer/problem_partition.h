@@ -32,12 +32,24 @@
 
 namespace cunls {
 
+/**
+ * @brief Subproblem id of every active factor of residual batch
+ * `residual_batch_index`, read through the problem's own state storage
+ * (Problem::DeviceStatePointers: call Problem::PrepareStatePointers first).
+ * Writes NumActiveFactors() ints to `factor_problem`; asynchronous on
+ * `stream`. The partition itself is validated by the minimizers.
+ */
+void ComputeFactorProblemIds(cudaStream_t stream, const Problem &problem,
+                             size_t residual_batch_index, int *factor_problem);
+
 /** @brief Step-control parameters shared by every subproblem. */
 struct BatchedStepControlParams {
   bool levenberg_marquardt = false;
   float state_tolerance = 0.f;
   float cost_tolerance = 0.f;
   int max_consecutive_rejected_steps = 0;  ///< 0: never stop on rejections.
+  /// Line search on: any step (full or shortened) that decreases the cost is taken.
+  bool line_search = false;
   // Levenberg-Marquardt only.
   float relative_reduction_tolerance = 0.f;
   float step_accept_threshold = 0.f;
@@ -103,7 +115,20 @@ class ProblemPartition {
    */
   void StepControl(cudaStream_t stream, const BatchedStepControlParams &params, float *d_out);
 
-  /** @brief Per-subproblem device arrays (NumProblems() entries). */
+  /**
+   * @brief Line search: every active subproblem whose NewCost() is not below
+   * its cost gets StepScale() = 0.5 and is marked shortened (others 1). Writes
+   * the number of such subproblems to `d_count` (one float).
+   */
+  void MarkLineSearch(cudaStream_t stream, float *d_count);
+
+  /**
+   * @brief Per-subproblem device arrays (NumProblems() entries). StepScale() is
+   * written by MarkLineSearch; Shortened() marks subproblems whose step was
+   * shortened since ResetAccumulators (StepControl takes such a step when it
+   * decreases the cost).
+   */
+  const float *StepScale() const { return step_scale_.data(); }
   float *Cost() { return cost_.data(); }
   float *NewCost() { return new_cost_.data(); }
   float *StepSquared() { return step_squared_.data(); }
@@ -111,8 +136,10 @@ class ProblemPartition {
   float *MatrixWeight() { return matrix_weight_.data(); }
   const float *Lambda() const { return lambda_.data(); }
   const int *Accept() const { return accept_.data(); }
+  /** @brief Nonzero for subproblems still iterating (not converged). */
+  const int *Active() const { return active_.data(); }
 
-  /** @brief Zeroes the per-iteration accumulators (new cost, step, weights). */
+  /** @brief Zeroes the per-iteration accumulators (new cost, step, weights, shortened flags). */
   void ResetAccumulators(cudaStream_t stream);
 
  private:
@@ -125,7 +152,8 @@ class ProblemPartition {
   dvector<int> column_offsets_;  ///< Build() scratch.
   dvector<uint8_t> views_;       ///< Build(): per state batch, storage and ids.
   dvector<float> cost_, new_cost_, step_squared_, diag_weight_, matrix_weight_, lambda_;
-  dvector<int> active_, rejected_, accept_;
+  dvector<float> step_scale_;
+  dvector<int> active_, rejected_, accept_, shortened_;
 };
 
 }  // namespace cunls

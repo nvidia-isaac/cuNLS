@@ -39,6 +39,16 @@ Sparse linear system abstraction and implementation used by minimizers.
     computes alpha/beta on device; convergence is polled every K
     iterations to keep CPU launches ahead of the GPU.
 
+- `block_tridiagonal_solver.h`: `BlockTridiagonalSolver` — direct solver for
+  systems that are block tridiagonal in time (trajectories, MPC). Needs
+  `Problem::SetStateStages` (stage = time index per state) and optionally the
+  subproblem partition. `Initialize` maps every CSR entry to a stage block on
+  the host (once per structure; rejects couplings of non-adjacent stages);
+  `Solve` scatters into D_k / C_k blocks and runs the block Cholesky (Riccati)
+  recursion, one warp per subproblem, registers + shuffles, cp.async
+  prefetch of the next stage, kernel templated on the stage block size
+  M <= 32 (dispatch table). No host synchronization (graph-capturable).
+
 ## Expected system form
 
 - Solves SPD systems given as `CSRSparseMatrix` or, for backends that report

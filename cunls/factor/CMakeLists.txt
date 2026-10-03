@@ -7,6 +7,19 @@ add_library(cunls_factor OBJECT
   between/so2_between_factor_batch.cu
   between/so3_between_factor_batch.cu
   between/vector_between_factor_batch.cu
+  bound_factor_batch.cu
+  constraint_factor_batch.cu
+  clearance/se2_disk_clearance_factor_batch.cu
+  clearance/se3_sphere_clearance_factor_batch.cu
+  dynamics/se2_differential_drive_factor_batch.cu
+  dynamics/se2_kinematic_bicycle_factor_batch.cu
+  dynamics/se3_differential_drive_factor_batch.cu
+  dynamics/se3_kinematic_bicycle_factor_batch.cu
+  dynamics/se2_kinematics_factor_batch.cu
+  dynamics/so3_kinematics_factor_batch.cu
+  dynamics/se3_kinematics_factor_batch.cu
+  dynamics/quadrotor_factor_batch.cu
+  dynamics/quadruped_factor_batch.cu
   information/information_factor_batch_kernels.cu
   information/motion_prior_information.cu
   motion/constant_acceleration_se2_factor_batch.cu

@@ -189,6 +189,7 @@ bool LevenbergMarquardtMinimizer::AcceptStep(float step_quality) {
  */
 void LevenbergMarquardtMinimizer::Initialize(cudaStream_t stream, Problem &problem) {
   GaussNewtonMinimizer::Initialize(stream, problem);
-  lambda_ = options_.initial_lambda;
 }
+
+void LevenbergMarquardtMinimizer::BeginCall() { lambda_ = options_.initial_lambda; }
 }  // namespace cunls

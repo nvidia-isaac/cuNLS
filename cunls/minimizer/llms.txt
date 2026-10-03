@@ -13,6 +13,12 @@ optimization.
   `GaussNewtonMinimizer`
 - `levenberg_marquardt_minimizer.h`:
   `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer`
+- `augmented_lagrangian_minimizer.h`: `AugmentedLagrangianMinimizer`,
+  `AugmentedLagrangianMinimizerOptions`, `AugmentedLagrangianMinimizerSummary` (augmented
+  Lagrangian outer loop around a GN/LM minimizer; finds constraint batches by
+  type; per-subproblem penalties and stopping on the device; uses the
+  per-call `Minimize(stream, problem, MinimizeCallOptions)` hook for capped,
+  line-searched inner solves). Guide: `docs/sphinx/constraints.rst`.
 - `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
 - `sparse_matrix.h`: CSR diagonal ops, scaling, norms (free functions)
 - `normal_equations.h`: `NormalEquations` (owns H, the working LHS, and their
@@ -36,7 +42,10 @@ optimization.
    (`H = J^T J`, `-J^T r`); the global Jacobian is never materialized.
 3. Solve the sparse linear system.
 4. Apply manifold-aware state updates (`StateBatchOps`).
-5. Accept/reject step and iterate until convergence.
+5. Accept/reject step and iterate until convergence. With
+   `MinimizerOptions::max_line_search_steps > 0`, a step that does not
+   decrease the cost is halved along its direction, and any step that
+   decreases the cost is taken (per subproblem in batched mode).
 
 ## Important constraints
 
@@ -52,7 +61,7 @@ optimization.
 - Use only `FactorBatch::Evaluate` and `StateBatch::Plus`, through their item
   (`factor_ids`, `num_factor_ids`) and replica (`num_replicas`) parameters;
   every factor and state batch must honor them. Guide:
-  `docs/sphinx/ransac.rst`; design: `docs/design/ransac_minimizers.md`.
+  `docs/sphinx/ransac.rst`.
 - Each hypothesis (slot) owns a replica of every state batch with a free state;
   fully constant batches are shared.
 - Sampling (`SlotSet::DrawSamples`): slot p's minimal sample is the first s
@@ -68,3 +77,19 @@ optimization.
 - By default an inlier must have a non-zero Jacobian on a free state
   (`require_informative_inliers`), which stops zero-residual degenerate
   configurations (e.g. PnP points behind the camera) from scoring as perfect.
+
+## Real time (R1)
+
+- `MinimizeCallOptions::reuse_structure`: skip Initialize / symbolic analysis /
+  partition build when the caller vouches for an unchanged structure (host size
+  signature checked; `solver_ready_`, `partition_ready_` track what was built).
+- `MinimizeCallOptions::fixed_iterations`: always the partitioned (device step
+  control) path, also for one problem; fixed line-search and bound-refinement
+  counts; no read-backs; summary costs NaN.
+- `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`,
+  `use_cuda_graph`; `SetOptions` keeps the warm state. Graph: first eligible
+  call eager, second captured (relaxed mode), later replayed; the status
+  read-back stays outside. Capture needs every op on the stream without host
+  syncs or pageable copies (MinimizerState copies use cudaMemcpyAsync for this).
+- `NormalEquations`: cached CSR diagonal positions, value-only lhs copies,
+  `ZeroMaskedLhsRowsColumns` (held bounds touch only the held rows).

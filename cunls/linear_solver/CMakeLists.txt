@@ -1,5 +1,6 @@
 add_library(cunls_linear_solver OBJECT
   block_sparse_pcg_solver.cu
+  block_tridiagonal_solver.cu
   cudss_sparse_linear_solver.cpp
   dense_cholesky_solver.cu
   dense_linear_solver.cu

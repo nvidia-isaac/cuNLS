@@ -1,6 +1,7 @@
 add_library(cunls_minimizer OBJECT
   block_hessian_assembler.cu
   bsr_matrix.cu
+  augmented_lagrangian_minimizer.cu
   hessian_structure.cu
   device_reduction.cu
   gauss_newton_minimizer.cu

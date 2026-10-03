@@ -53,6 +53,27 @@ __global__ void vector_plus_kernel(const float *x, const float *delta, float *x_
   }
 }
 
+__global__ void project_kernel(float *x, const float *free, const float *lower, const float *upper,
+                               size_t n) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i >= n || free[i] == 0.f) return;
+  x[i] = fminf(fmaxf(x[i], lower[i]), upper[i]);
+}
+
+/**
+ * A component within a relative 1e-6 of a bound counts as at it (projection
+ * puts it exactly there; this catches initial values and float round-off).
+ */
+__global__ void mask_kernel(const float *x, const float *direction, const float *lower,
+                            const float *upper, float *mask, size_t n) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i >= n) return;
+  const float v = x[i], d = direction[i], lo = lower[i], hi = upper[i];
+  const bool at_lower = v <= lo + 1e-6f * (1.f + fabsf(lo));
+  const bool at_upper = v >= hi - 1e-6f * (1.f + fabsf(hi));
+  if ((at_lower && d <= 0.f) || (at_upper && d >= 0.f)) mask[i] = 0.f;
+}
+
 /** @brief Maximum CUDA block size for the vector_plus_kernel. */
 constexpr size_t kMaxBlockSize = 256;
 
@@ -67,6 +88,23 @@ void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta
   size_t num_cuda_blocks = (num_params + kMaxBlockSize - 1) / kMaxBlockSize;
   vector_plus_kernel<<<num_cuda_blocks, kMaxBlockSize, 0, stream>>>(x, delta, x_plus_delta,
                                                                     num_params, dim);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ProjectVectorToBounds(float *x, const float *free, const float *lower, const float *upper,
+                           size_t num_values, cudaStream_t stream) {
+  if (num_values == 0) return;
+  project_kernel<<<(num_values + kMaxBlockSize - 1) / kMaxBlockSize, kMaxBlockSize, 0, stream>>>(
+      x, free, lower, upper, num_values);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void MaskVectorActiveBounds(const float *x, const float *direction, const float *lower,
+                            const float *upper, float *mask, size_t num_values,
+                            cudaStream_t stream) {
+  if (num_values == 0) return;
+  mask_kernel<<<(num_values + kMaxBlockSize - 1) / kMaxBlockSize, kMaxBlockSize, 0, stream>>>(
+      x, direction, lower, upper, mask, num_values);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

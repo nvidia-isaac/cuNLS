@@ -30,7 +30,7 @@
 //   cast to float* because nanobind cannot automatically convert a Python
 //   list[int] to std::vector<float*>.
 //
-//   Device connectivity tables (docs/design/reusable_buffers.md) are taken as
+//   Device connectivity tables are taken as
 //   DevicePointer objects (a CuPy array or an int): a uint64 table of state
 //   pointers (keyword-only `state_pointer_table`, so a CuPy array is never
 //   mistaken for a host list), or an int32 table of state indices together
@@ -169,5 +169,19 @@ void bind_problem(nb::module_ &m) {
           "belongs to subproblem state_problem_ids[b][s] (device int32 arrays, one per state "
           "batch). Every factor must stay within one subproblem. The minimizers then accept, "
           "damp and stop each subproblem on its own. num_problems <= 1 clears the partition.")
+      .def(
+          "set_state_stages",
+          [](cunls::Problem &self, const std::vector<nb::handle> &stages) {
+            std::vector<const int *> ptrs;
+            for (const auto &h : stages) {
+              ptrs.push_back(reinterpret_cast<const int *>(extract_device_ptr(h)));
+            }
+            self.SetStateStages(ptrs);
+          },
+          nb::arg("state_stages"), nb::keep_alive<1, 2>(),
+          "Declare a time ordering of the states for the BlockTridiagonal linear solver: state "
+          "s of state batch b belongs to stage state_stages[b][s] (device int32 arrays, one per "
+          "state batch). Factors may only connect states of the same or adjacent stages within "
+          "a subproblem. An empty list clears the stages.")
       .def_prop_ro("num_problems", &cunls::Problem::NumProblems);
 }

@@ -56,7 +56,6 @@ namespace cunls {
  * GPU), together with measurements, states and the sizes set through
  * FactorBatch::SetNumActiveFactors / StateBatch::SetNumActiveStates. Only the first
  * NumActiveFactors() x B entries of a table are read (B = StateSizes().size()).
- * See docs/design/reusable_buffers.md.
  */
 class Problem {
  public:
@@ -308,6 +307,25 @@ class Problem {
   /** @brief Per state batch: device subproblem ids (empty when no partition). */
   const std::vector<const int *> &StateProblemIds() const { return state_problem_ids_; }
 
+  /**
+   * @brief Declares a time ordering of the states ("stages"), for the
+   * block-tridiagonal linear solver (SparseLinearSolverType::BlockTridiagonal).
+   *
+   * State s of state batch b belongs to stage `state_stages[b][s]` (device
+   * arrays of at least NumActiveStates() ints, values >= 0; not owned, read
+   * when the solver is initialized). Within each subproblem, factors may only
+   * connect states of the same or adjacent stages: the normal equations are
+   * then block tridiagonal in stage order. A trajectory of N steps typically
+   * puts x_k and u_k in stage k.
+   *
+   * @param state_stages One device array per state batch, in the order the
+   *        batches were added; an empty vector clears the stages.
+   */
+  void SetStateStages(const std::vector<const int *> &state_stages);
+
+  /** @brief Per state batch: device stage ids (empty when not set). */
+  const std::vector<const int *> &StateStages() const { return state_stages_; }
+
  private:
   /**
    * @brief Validates that all inputs are non-null and sizes are consistent.
@@ -357,6 +375,7 @@ class Problem {
   mutable std::vector<std::vector<float *>> state_pointers_;
   size_t num_problems_ = 0;                     ///< SetProblemPartition().
   std::vector<const int *> state_problem_ids_;  ///< SetProblemPartition().
+  std::vector<const int *> state_stages_;       ///< SetStateStages().
   std::vector<std::optional<JacobianMode>>
       jacobian_mode_overrides_;  ///< Per-residual-batch JacobianMode
                                  ///< override, index-aligned with

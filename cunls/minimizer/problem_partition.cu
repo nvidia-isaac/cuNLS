@@ -68,7 +68,7 @@ __global__ void factor_problem_kernel(float *const *pointers, size_t num_items, 
     for (int b = 0; b < num_batches; ++b) {
       const BatchView v = batches[b];
       if (p >= v.base && p < v.base + v.count * v.ambient) {
-        id = v.ids[(p - v.base) / v.ambient];
+        id = v.ids != nullptr ? v.ids[(p - v.base) / v.ambient] : 0;
         break;
       }
     }
@@ -92,7 +92,7 @@ __global__ void row_problem_kernel(const int *column_offsets, const int *ids, si
   if (s >= num_states) return;
   const int column = column_offsets[s];
   if (column < 0) return;  // constant state: no rows
-  const int id = ids[s];
+  const int id = ids != nullptr ? ids[s] : 0;
   if (id < 0 || id >= num_problems) atomicOr(error, kIdOutOfRange);
   for (int t = 0; t < tangent; ++t) row_problem[column + t] = id;
 }
@@ -130,7 +130,7 @@ __global__ void scale_rows_kernel(const int *keys, const float *per_problem, con
 __global__ void copy_accepted_kernel(const float *from, float *to, const int *ids,
                                      const int *accept, size_t ambient, size_t n) {
   const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (i < n && accept[ids[i / ambient]]) to[i] = from[i];
+  if (i < n && accept[ids != nullptr ? ids[i / ambient] : 0]) to[i] = from[i];
 }
 
 __global__ void init_control_kernel(const float *cost, size_t num_problems, float cost_tolerance,
@@ -152,11 +152,26 @@ __global__ void init_control_kernel(const float *cost, size_t num_problems, floa
  * (EvaluateAndCheckConvergence, AcceptStep, RejectStep and the Minimize loop),
  * applied to each subproblem.
  */
+__global__ void line_search_kernel(size_t num_problems, const float *cost, const float *new_cost,
+                                   const int *active, float *step_scale, int *shortened,
+                                   float *count) {
+  const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (p >= num_problems) return;
+  // Written so that a NaN new cost is shortened too.
+  if (active[p] && !(new_cost[p] < cost[p])) {
+    step_scale[p] = 0.5f;
+    shortened[p] = 1;
+    atomicAdd(count, 1.f);
+  } else {
+    step_scale[p] = 1.f;
+  }
+}
+
 __global__ void step_control_kernel(BatchedStepControlParams params, size_t num_problems,
                                     float *cost, const float *new_cost, const float *step_squared,
                                     const float *diag_weight, const float *matrix_weight,
-                                    float *lambda, int *active, int *rejected, int *accept,
-                                    float *out) {
+                                    const int *shortened, float *lambda, int *active, int *rejected,
+                                    int *accept, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   int take = 0;
@@ -178,13 +193,18 @@ __global__ void step_control_kernel(BatchedStepControlParams params, size_t num_
     if (!isfinite(updated)) {
       converged = false;  // a step to a non-finite cost is rejected, never taken
     }
-    if (converged) {
+    // Written so that NaN quality (non-finite cost) rejects.
+    const bool reject =
+        params.levenberg_marquardt ? !(quality >= params.step_accept_threshold) : !(quality < 1.f);
+    if (params.line_search && updated < current && (shortened[p] || reject)) {
+      // Line search: a (possibly shortened) step that decreases the cost is
+      // taken, and the damping stays (see MinimizerOptions::max_line_search_steps).
+      take = 1;
+      rejected[p] = 0;
+    } else if (converged) {
       take = updated <= current;
       active[p] = 0;
     } else {
-      // Written so that NaN quality (non-finite cost) rejects.
-      const bool reject = params.levenberg_marquardt ? !(quality >= params.step_accept_threshold)
-                                                     : !(quality < 1.f);
       if (reject) {
         if (params.levenberg_marquardt) lambda[p] *= params.lambda_upscale;
         rejected[p] += 1;
@@ -210,6 +230,41 @@ __global__ void step_control_kernel(BatchedStepControlParams params, size_t num_
 
 }  // namespace
 
+void ComputeFactorProblemIds(cudaStream_t stream, const Problem &problem,
+                             size_t residual_batch_index, int *factor_problem) {
+  const auto &state_batches = problem.GetStateBatches();
+  const auto &ids = problem.StateProblemIds();
+  const size_t n =
+      problem.GetResidualBatches()[residual_batch_index].GetFactorBatch()->NumActiveFactors();
+  if (n == 0) return;
+  if (problem.NumProblems() <= 1 || ids.size() != state_batches.size()) {
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_problem, 0, n * sizeof(int), stream));
+    return;
+  }
+  std::vector<BatchView> views;
+  for (size_t b = 0; b < state_batches.size(); ++b) {
+    const StateBatch *batch = state_batches[b];
+    const size_t count = batch->NumActiveStates();
+    if (count == 0) continue;
+    const float *base = batch->StateDevicePtr(0);
+    if (batch->StateDevicePtr(count - 1) != base + (count - 1) * batch->AmbientSize()) {
+      throw std::invalid_argument(
+          "Problem partition: a state batch does not store its states contiguously");
+    }
+    views.push_back({base, batch->AmbientSize(), count, ids[b]});
+  }
+  dvector<BatchView> d_views(views, stream);
+  dvector<int> error(0, 1, stream);
+  const size_t slots = problem.NumStatePointers(residual_batch_index) / n;
+  factor_problem_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+      problem.DeviceStatePointers(residual_batch_index), n, slots, d_views.data(),
+      static_cast<int>(views.size()), static_cast<int>(problem.NumProblems()), factor_problem,
+      error.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  // d_views and error are freed at scope exit: wait for the kernel.
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+}
+
 void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
                              const MinimizerState &state, size_t num_rows) {
   num_problems_ = problem.NumProblems();
@@ -221,10 +276,12 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   error_.resize(1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(error_.data(), 0, sizeof(int), stream));
 
+  // Without a partition every state belongs to subproblem 0 (null id arrays).
+  const bool partitioned = ids.size() == state_batches.size();
   std::vector<BatchView> views;
   for (size_t b = 0; b < state_batches.size(); ++b) {
     views.push_back({states[b].data(), state_batches[b]->AmbientSize(),
-                     state_batches[b]->NumActiveStates(), ids[b]});
+                     state_batches[b]->NumActiveStates(), partitioned ? ids[b] : nullptr});
   }
   // Reused across solves (no allocation once sized); the copy is ordered on
   // the stream before the kernels that read it.
@@ -259,16 +316,17 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
     if (count == 0) continue;
     ComputeStateColumnOffsets(stream, first_column, batch, column_offsets_);
     row_problem_kernel<<<Blocks(count), kThreads, 0, stream>>>(
-        column_offsets_.data(), ids[b], count, static_cast<int>(batch->TangentSize()), num_problems,
-        row_problem_.data(), error_.data());
+        column_offsets_.data(), partitioned ? ids[b] : nullptr, count,
+        static_cast<int>(batch->TangentSize()), num_problems, row_problem_.data(), error_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     first_column += static_cast<int>((count - batch->NumConstStates()) * batch->TangentSize());
   }
 
-  for (auto *v : {&cost_, &new_cost_, &step_squared_, &diag_weight_, &matrix_weight_, &lambda_}) {
+  for (auto *v : {&cost_, &new_cost_, &step_squared_, &diag_weight_, &matrix_weight_, &lambda_,
+                  &step_scale_}) {
     v->resize(num_problems_);
   }
-  for (auto *v : {&active_, &rejected_, &accept_}) v->resize(num_problems_);
+  for (auto *v : {&active_, &rejected_, &accept_, &shortened_}) v->resize(num_problems_);
 
   int error = 0;
   THROW_ON_CUDA_ERROR(
@@ -292,6 +350,15 @@ void ProblemPartition::ResetAccumulators(cudaStream_t stream) {
   for (auto *v : {&new_cost_, &step_squared_, &diag_weight_, &matrix_weight_}) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(v->data(), 0, bytes, stream));
   }
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(shortened_.data(), 0, num_problems_ * sizeof(int), stream));
+}
+
+void ProblemPartition::MarkLineSearch(cudaStream_t stream, float *d_count) {
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_count, 0, sizeof(float), stream));
+  line_search_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
+      num_problems_, cost_.data(), new_cost_.data(), active_.data(), step_scale_.data(),
+      shortened_.data(), d_count);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 void ProblemPartition::AccumulateFactorCosts(cudaStream_t stream, const float *factor_costs,
@@ -327,7 +394,8 @@ void ProblemPartition::CopyAccepted(cudaStream_t stream, const Problem &problem,
     const size_t n = from.GetStates()[b].size();
     if (n == 0) continue;
     copy_accepted_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-        from.GetStates()[b].data(), to.GetStates()[b].data(), ids[b], accept_.data(),
+        from.GetStates()[b].data(), to.GetStates()[b].data(),
+        ids.size() == state_batches.size() ? ids[b] : nullptr, accept_.data(),
         state_batches[b]->AmbientSize(), n);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
@@ -347,8 +415,8 @@ void ProblemPartition::StepControl(cudaStream_t stream, const BatchedStepControl
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   step_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
       params, num_problems_, cost_.data(), new_cost_.data(), step_squared_.data(),
-      diag_weight_.data(), matrix_weight_.data(), lambda_.data(), active_.data(), rejected_.data(),
-      accept_.data(), d_out);
+      diag_weight_.data(), matrix_weight_.data(), shortened_.data(), lambda_.data(), active_.data(),
+      rejected_.data(), accept_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

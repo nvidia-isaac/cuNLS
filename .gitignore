@@ -3,3 +3,6 @@ viz/
 
 # Rendered video outputs (only the GIFs in assets/ are committed, via Git LFS)
 *.mp4
+
+# Design notes are kept locally, not in the repository
+docs/design/

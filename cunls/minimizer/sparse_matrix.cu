@@ -419,6 +419,192 @@ void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, s
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
+__global__ void scale_in_place_kernel(float *a, float s, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) a[i] *= s;
+}
+
+namespace {
+/** Index of column `col` in the sorted col_ids[begin, end), or -1. */
+__device__ int FindColumn(const int *__restrict__ col_ids, int begin, int end, int col) {
+  int lo = begin, hi = end - 1;
+  while (lo <= hi) {
+    const int mid = (lo + hi) >> 1;
+    const int c = col_ids[mid];
+    if (c == col) return mid;
+    if (c < col) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return -1;
+}
+
+__global__ void find_diagonal_kernel(const int *__restrict__ row_offsets,
+                                     const int *__restrict__ col_ids, int num_rows,
+                                     int *__restrict__ positions) {
+  const int row = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row >= num_rows) return;
+  positions[row] = FindColumn(col_ids, row_offsets[row], row_offsets[row + 1], row);
+}
+
+__global__ void extract_diagonal_at_kernel(const float *__restrict__ values,
+                                           const int *__restrict__ positions, int n,
+                                           float *__restrict__ diagonal) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const int e = positions[i];
+  diagonal[i] = e >= 0 ? values[e] : 0.f;
+}
+
+__global__ void add_scaled_diagonal_at_kernel(float scale, const float *__restrict__ diagonal,
+                                              const int *__restrict__ positions, int n,
+                                              float *__restrict__ values) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const int e = positions[i];
+  if (e >= 0) values[e] += scale * diagonal[i];
+}
+
+/** One warp per row; masked rows zero their entries and the mirrored column entries. */
+__global__ void zero_masked_csr_kernel(const int *__restrict__ row_offsets,
+                                       const int *__restrict__ col_ids, float *__restrict__ values,
+                                       const float *__restrict__ mask, int num_rows) {
+  const int row = blockIdx.x * blockDim.y + threadIdx.y;
+  if (row >= num_rows || mask[row] != 0.f) return;
+  const int lane = threadIdx.x;
+  for (int e = row_offsets[row] + lane; e < row_offsets[row + 1]; e += WARP_SIZE) {
+    const int col = col_ids[e];
+    if (col == row) {
+      if (!(values[e] > 0.f)) values[e] = 1.f;
+      continue;
+    }
+    values[e] = 0.f;
+    const int mirror = FindColumn(col_ids, row_offsets[col], row_offsets[col + 1], row);
+    if (mirror >= 0) values[mirror] = 0.f;
+  }
+}
+
+/**
+ * One warp per scalar row of a BSR matrix: a masked row zeroes its row in
+ * every tile of its block row and its column in the mirrored tiles.
+ */
+__global__ void zero_masked_bsr_kernel(const int *__restrict__ row_offsets,
+                                       const int *__restrict__ col_ids, float *__restrict__ values,
+                                       const float *__restrict__ mask, int block_size,
+                                       int num_rows) {
+  const int row = blockIdx.x * blockDim.y + threadIdx.y;
+  if (row >= num_rows || mask[row] != 0.f) return;
+  const int lane = threadIdx.x;
+  const int bs = block_size, bs2 = bs * bs;
+  const int I = row / bs, r = row % bs;
+  for (int t = row_offsets[I] + lane; t < row_offsets[I + 1]; t += WARP_SIZE) {
+    const int J = col_ids[t];
+    float *tile = values + static_cast<size_t>(t) * bs2;
+    const int mt = J == I ? t : FindColumn(col_ids, row_offsets[J], row_offsets[J + 1], I);
+    float *mirror = mt >= 0 ? values + static_cast<size_t>(mt) * bs2 : nullptr;
+    for (int c = 0; c < bs; ++c) {
+      if (J == I && c == r) continue;
+      tile[r * bs + c] = 0.f;                // (row, J*bs + c)
+      if (mirror) mirror[c * bs + r] = 0.f;  // (J*bs + c, row)
+    }
+    if (J == I && !(tile[r * bs + r] > 0.f)) tile[r * bs + r] = 1.f;
+  }
+}
+
+__global__ void hold_outward_kernel(const float *step_mask, float *held_mask, float *extra,
+                                    int *count, int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const bool newly_held = held_mask[i] != 0.f && step_mask[i] == 0.f;
+  extra[i] = newly_held ? 0.f : 1.f;
+  if (newly_held) {
+    held_mask[i] = 0.f;
+    atomicAdd(count, 1);
+  }
+}
+}  // namespace
+
+void HoldOutwardSteps(cudaStream_t stream, const dvector<float> &step_mask,
+                      dvector<float> &held_mask, dvector<float> &extra, int *d_count) {
+  const size_t n = held_mask.size();
+  extra.resize(n);
+  if (n == 0) return;
+  constexpr int kBlock = 256;
+  int grid = static_cast<int>((n + kBlock - 1) / kBlock);
+  hold_outward_kernel<<<grid, kBlock, 0, stream>>>(step_mask.data(), held_mask.data(), extra.data(),
+                                                   d_count, static_cast<int>(n));
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void FindDiagonalPositions(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                           dvector<int> &positions) {
+  const int n = static_cast<int>(matrix.NumRows());
+  positions.resize(n);
+  if (n == 0) return;
+  find_diagonal_kernel<<<(n + 255) / 256, 256, 0, stream>>>(
+      matrix.row_offsets.data(), matrix.col_ids.data(), n, positions.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ExtractDiagonalAt(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                       const dvector<int> &positions, dvector<float> &diagonal) {
+  const int n = static_cast<int>(positions.size());
+  diagonal.resize(n);
+  if (n == 0) return;
+  extract_diagonal_at_kernel<<<(n + 255) / 256, 256, 0, stream>>>(
+      matrix.values.data(), positions.data(), n, diagonal.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void AddScaledDiagonalAt(cudaStream_t stream, float scale, const dvector<float> &diagonal,
+                         const dvector<int> &positions, CSRSparseMatrix &matrix) {
+  const int n = static_cast<int>(positions.size());
+  if (n == 0) return;
+  add_scaled_diagonal_at_kernel<<<(n + 255) / 256, 256, 0, stream>>>(
+      scale, diagonal.data(), positions.data(), n, matrix.values.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void CopyCSRValues(cudaStream_t stream, const CSRSparseMatrix &input, CSRSparseMatrix &output) {
+  if (&input == &output || input.values.size() == 0) return;
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(output.values.data(), input.values.data(),
+                                      input.values.size() * sizeof(float), cudaMemcpyDeviceToDevice,
+                                      stream));
+}
+
+void ZeroMaskedRowsColumns(cudaStream_t stream, CSRSparseMatrix &matrix,
+                           const dvector<float> &mask) {
+  const int n = static_cast<int>(matrix.NumRows());
+  if (n == 0) return;
+  dim3 block(WARP_SIZE, 4);
+  dim3 grid((n + block.y - 1) / block.y);
+  zero_masked_csr_kernel<<<grid, block, 0, stream>>>(
+      matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(), mask.data(), n);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ZeroMaskedRowsColumns(cudaStream_t stream, BSRSparseMatrix &matrix,
+                           const dvector<float> &mask) {
+  const int n = matrix.NumRows();
+  if (n == 0) return;
+  dim3 block(WARP_SIZE, 4);
+  dim3 grid((n + block.y - 1) / block.y);
+  zero_masked_bsr_kernel<<<grid, block, 0, stream>>>(matrix.row_offsets.data(),
+                                                     matrix.col_ids.data(), matrix.values.data(),
+                                                     mask.data(), matrix.block_size, n);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ScaleInPlace(cudaStream_t stream, float *a, float s, size_t n) {
+  if (n == 0) return;
+  constexpr int kBlock = 256;
+  int grid = static_cast<int>((n + kBlock - 1) / kBlock);
+  scale_in_place_kernel<<<grid, kBlock, 0, stream>>>(a, s, static_cast<int>(n));
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
 /**
  * @brief Async diagonally-weighted squared step: d_out[0] = step^T diag(w) step.
  */

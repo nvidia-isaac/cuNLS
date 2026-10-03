@@ -30,6 +30,7 @@
 #include <nanobind/stl/vector.h>
 
 #include "bindings.h"
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se2_between_factor_batch.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
@@ -39,6 +40,20 @@
 #include "cunls/factor/between/so2_between_factor_batch.h"
 #include "cunls/factor/between/so3_between_factor_batch.h"
 #include "cunls/factor/between/vector_between_factor_batch.h"
+#include "cunls/factor/bound_factor_batch.h"
+#include "cunls/factor/clearance/se2_disk_clearance_factor_batch.h"
+#include "cunls/factor/clearance/se3_sphere_clearance_factor_batch.h"
+#include "cunls/factor/constraint_factor_batch.h"
+#include "cunls/factor/dynamics/quadrotor_factor_batch.h"
+#include "cunls/factor/dynamics/quadruped_factor_batch.h"
+#include "cunls/factor/dynamics/se2_differential_drive_factor_batch.h"
+#include "cunls/factor/dynamics/se2_kinematic_bicycle_factor_batch.h"
+#include "cunls/factor/dynamics/se2_kinematics_factor_batch.h"
+#include "cunls/factor/dynamics/se3_differential_drive_factor_batch.h"
+#include "cunls/factor/dynamics/se3_kinematic_bicycle_factor_batch.h"
+#include "cunls/factor/dynamics/se3_kinematics_factor_batch.h"
+#include "cunls/factor/dynamics/so3_kinematics_factor_batch.h"
+#include "cunls/factor/halfspace_factor_batch.h"
 #include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/point_to_plane_factor_batch.h"
 #include "cunls/factor/point_to_point_factor_batch.h"
@@ -90,6 +105,82 @@ void bind_vector_between_factor(nb::module_ &m, const char *name) {
             new (self) Class(ptr, capacity);
           },
           nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
+      .def_prop_ro("residuals_size", &Class::ResidualsSize)
+      .def("state_sizes", &Class::StateSizes);
+}
+
+template <int Dim>
+void bind_bound_factor(nb::module_ &m, const char *name) {
+  using Class = cunls::BoundFactorBatch<Dim>;
+  nb::class_<Class, cunls::ConstraintFactorBatchBase>(
+      m, name,
+      "Box constraints lower <= x <= upper on the components of a vector state (an "
+      "inequality constraint batch: add it to the problem directly and solve with "
+      "AugmentedLagrangianMinimizer).\n\n"
+      "Parameters\n"
+      "----------\n"
+      "lower, upper : DevicePointer\n"
+      "    Device buffers of capacity * Dim floats (per factor and component); -inf / +inf\n"
+      "    leave a side unbounded.\n"
+      "capacity : int\n"
+      "    Number of factors the buffers hold.\n"
+      "scale : float\n"
+      "    Positive row scale.")
+      .def(
+          "__init__",
+          [](Class *self, nb::handle lower, nb::handle upper, size_t capacity, float scale) {
+            new (self)
+                Class(reinterpret_cast<const float *>(extract_device_ptr(lower)),
+                      reinterpret_cast<const float *>(extract_device_ptr(upper)), capacity, scale);
+          },
+          nb::arg("lower"), nb::arg("upper"), nb::arg("capacity"), nb::arg("scale") = 1.f,
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
+      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
+      .def_prop_ro("residuals_size", &Class::ResidualsSize)
+      .def("state_sizes", &Class::StateSizes);
+}
+
+template <int Dim>
+void bind_halfspace_factor(nb::module_ &m, const char *name) {
+  using Class = cunls::HalfspaceFactorBatch<Dim>;
+  nb::class_<Class, cunls::FactorBatch>(
+      m, name,
+      "Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in "
+      "ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "normals : DevicePointer\n"
+      "    Device buffer of capacity * Dim floats (a).\n"
+      "offsets : DevicePointer\n"
+      "    Device buffer of capacity floats (b).\n"
+      "capacity : int\n"
+      "    Number of factors the buffers hold.")
+      .def(
+          "__init__",
+          [](Class *self, nb::handle normals, nb::handle offsets, size_t capacity) {
+            new (self)
+                Class(reinterpret_cast<const float *>(extract_device_ptr(normals)),
+                      reinterpret_cast<const float *>(extract_device_ptr(offsets)), capacity);
+          },
+          nb::arg("normals"), nb::arg("offsets"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>())
+      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
+      .def_prop_ro("residuals_size", &Class::ResidualsSize)
+      .def("state_sizes", &Class::StateSizes);
+}
+
+// Lie-group kinematics factors: (time_steps, capacity) constructors.
+template <class Class>
+void bind_kinematics_factor(nb::module_ &m, const char *name, const char *doc) {
+  nb::class_<Class, cunls::FactorBatch>(m, name, doc)
+      .def(
+          "__init__",
+          [](Class *self, nb::handle time_steps, size_t capacity) {
+            new (self)
+                Class(reinterpret_cast<const float *>(extract_device_ptr(time_steps)), capacity);
+          },
+          nb::arg("time_steps"), nb::arg("capacity"), nb::keep_alive<1, 2>())
       .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
       .def_prop_ro("residuals_size", &Class::ResidualsSize)
       .def("state_sizes", &Class::StateSizes);
@@ -399,12 +490,16 @@ void bind_factor(nb::module_ &m) {
   bind_prior_vector_factor<1>(m, "PriorVectorFactorBatch1");
   bind_prior_vector_factor<2>(m, "PriorVectorFactorBatch2");
   bind_prior_vector_factor<3>(m, "PriorVectorFactorBatch3");
+  bind_prior_vector_factor<4>(m, "PriorVectorFactorBatch4");
   bind_prior_vector_factor<6>(m, "PriorVectorFactorBatch6");
+  bind_prior_vector_factor<12>(m, "PriorVectorFactorBatch12");
 
   bind_vector_between_factor<1>(m, "VectorBetweenFactorBatch1");
   bind_vector_between_factor<2>(m, "VectorBetweenFactorBatch2");
   bind_vector_between_factor<3>(m, "VectorBetweenFactorBatch3");
+  bind_vector_between_factor<4>(m, "VectorBetweenFactorBatch4");
   bind_vector_between_factor<6>(m, "VectorBetweenFactorBatch6");
+  bind_vector_between_factor<12>(m, "VectorBetweenFactorBatch12");
 
   // --- Point-to-Point ---
   nb::class_<cunls::PointToPointFactorBatch, cunls::FactorBatch>(
@@ -534,4 +629,341 @@ void bind_factor(nb::module_ &m) {
       .def_prop_ro("num_active_factors", &PyWeightedFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &PyWeightedFactorBatch::ResidualsSize)
       .def("state_sizes", &PyWeightedFactorBatch::StateSizes);
+
+  // --- Constraints (augmented Lagrangian; solved by AugmentedLagrangianMinimizer) ---
+  nb::enum_<cunls::ConstraintKind>(m, "ConstraintKind", "Kind of a constraint row.")
+      .value("Equality", cunls::ConstraintKind::kEquality, "c(x) = 0")
+      .value("Inequality", cunls::ConstraintKind::kInequality, "c(x) <= 0");
+
+  nb::class_<cunls::ConstraintFactorBatchBase, cunls::FactorBatch>(
+      m, "ConstraintFactorBatchBase",
+      "A factor batch whose rows are constraints. Evaluates the augmented Lagrangian "
+      "residuals of its multipliers (one per row) and penalties (one per factor); "
+      "AugmentedLagrangianMinimizer updates both.")
+      .def_prop_ro("kind", &cunls::ConstraintFactorBatchBase::Kind)
+      .def_prop_ro("scale", &cunls::ConstraintFactorBatchBase::Scale)
+      .def_prop_ro(
+          "multipliers_ptr",
+          [](cunls::ConstraintFactorBatchBase &self) {
+            return reinterpret_cast<uintptr_t>(self.Multipliers());
+          },
+          "Device pointer to capacity * residuals_size float multipliers (row r of factor f "
+          "at f * residuals_size + r).")
+      .def_prop_ro(
+          "penalties_ptr",
+          [](cunls::ConstraintFactorBatchBase &self) {
+            return reinterpret_cast<uintptr_t>(self.Penalties());
+          },
+          "Device pointer to capacity float penalties, one per factor.")
+      .def(
+          "reset_multipliers",
+          [](cunls::ConstraintFactorBatchBase &self, cunls::CudaStream &stream) {
+            self.ResetMultipliers(stream.GetStream());
+          },
+          nb::arg("stream"), "Sets every multiplier to 0.")
+      .def(
+          "set_penalty",
+          [](cunls::ConstraintFactorBatchBase &self, float penalty, cunls::CudaStream &stream) {
+            self.SetPenalty(penalty, stream.GetStream());
+          },
+          nb::arg("penalty"), nb::arg("stream"), "Sets the penalty of every factor.");
+
+  nb::class_<cunls::ConstraintFactorBatch, cunls::ConstraintFactorBatchBase>(
+      m, "ConstraintFactorBatch",
+      "Turns any factor batch into constraint rows: every residual row r of the wrapped "
+      "batch becomes scale * r(x) = 0 (Equality) or scale * r(x) <= 0 (Inequality).\n\n"
+      "Parameters\n"
+      "----------\n"
+      "inner_factor : FactorBatch\n"
+      "    The factor batch whose residuals are the constraint rows.\n"
+      "kind : ConstraintKind\n"
+      "    Equality or Inequality.\n"
+      "scale : float\n"
+      "    Positive row scale, so that the constraint tolerance means the same in meters,\n"
+      "    radians or newtons.")
+      .def(nb::init<cunls::FactorBatch *, cunls::ConstraintKind, float>(), nb::arg("inner_factor"),
+           nb::arg("kind"), nb::arg("scale") = 1.f, nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::ConstraintFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::ConstraintFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::ConstraintFactorBatch::StateSizes);
+
+  bind_bound_factor<1>(m, "BoundFactorBatch1");
+  bind_bound_factor<2>(m, "BoundFactorBatch2");
+  bind_bound_factor<3>(m, "BoundFactorBatch3");
+  bind_bound_factor<4>(m, "BoundFactorBatch4");
+  bind_bound_factor<6>(m, "BoundFactorBatch6");
+  bind_bound_factor<12>(m, "BoundFactorBatch12");
+
+  bind_halfspace_factor<1>(m, "HalfspaceFactorBatch1");
+  bind_halfspace_factor<2>(m, "HalfspaceFactorBatch2");
+  bind_halfspace_factor<3>(m, "HalfspaceFactorBatch3");
+  bind_halfspace_factor<6>(m, "HalfspaceFactorBatch6");
+
+  // --- Dynamics (between consecutive trajectory steps) ---
+  nb::class_<cunls::SE2DifferentialDriveFactorBatch, cunls::FactorBatch>(
+      m, "SE2DifferentialDriveFactorBatch",
+      "Two driven wheels plus casters (NVIDIA Carter), kinematic. States: pose T_k "
+      "(SE2StateBatch), wheel speeds (omega_L, omega_R) [rad/s] (VectorStateBatch2), pose "
+      "T_{k+1}. Residual Log((T_k Exp(dt_k xi(u_k)))^-1 T_{k+1}) with the body twist "
+      "xi = [r (omega_R + omega_L) / 2, 0, r (omega_R - omega_L) / b]; exact for wheel speeds "
+      "held over the step. Analytic Jacobians.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "time_steps : DevicePointer\n"
+      "    Device buffer of ``capacity`` step durations dt_k [s].\n"
+      "wheel_radius, track_width : float\n"
+      "    r and b [m].\n"
+      "capacity : int\n"
+      "    Number of factors (steps) the buffer holds.")
+      .def(
+          "__init__",
+          [](cunls::SE2DifferentialDriveFactorBatch *self, nb::handle time_steps,
+             float wheel_radius, float track_width, size_t capacity) {
+            new (self) cunls::SE2DifferentialDriveFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(time_steps)), wheel_radius,
+                track_width, capacity);
+          },
+          nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
+          nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE2DifferentialDriveFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE2DifferentialDriveFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE2DifferentialDriveFactorBatch::StateSizes);
+
+  nb::class_<cunls::SE2KinematicBicycleFactorBatch, cunls::FactorBatch>(
+      m, "SE2KinematicBicycleFactorBatch",
+      "Car with Ackermann steering (kinematic bicycle, rear axle). States: pose T_k "
+      "(SE2StateBatch), z_k = (v, delta) (VectorStateBatch2), control u_k = (a, delta rate) "
+      "(VectorStateBatch2), pose T_{k+1}, z_{k+1}. Euler step: residual "
+      "[Log((T_k Exp(dt_k xi(z_k)))^-1 T_{k+1}); z_{k+1} - z_k - dt_k u_k] with "
+      "xi = [v, 0, v tan(delta) / L]. Analytic Jacobians.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "time_steps : DevicePointer\n"
+      "    Device buffer of ``capacity`` step durations dt_k [s].\n"
+      "wheelbase : float\n"
+      "    L [m].\n"
+      "capacity : int\n"
+      "    Number of factors (steps) the buffer holds.")
+      .def(
+          "__init__",
+          [](cunls::SE2KinematicBicycleFactorBatch *self, nb::handle time_steps, float wheelbase,
+             size_t capacity) {
+            new (self) cunls::SE2KinematicBicycleFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(time_steps)), wheelbase,
+                capacity);
+          },
+          nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE2KinematicBicycleFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE2KinematicBicycleFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE2KinematicBicycleFactorBatch::StateSizes);
+
+  nb::class_<cunls::SE3DifferentialDriveFactorBatch, cunls::FactorBatch>(
+      m, "SE3DifferentialDriveFactorBatch",
+      "Carter driving on non-planar terrain. States: pose T_k (SE3StateBatch; x forward, z up), "
+      "wheel speeds (VectorStateBatch2), pose T_{k+1}. Residual: rows 2..5 (yaw, forward, "
+      "lateral, vertical) of Log((T_k Exp(dt_k xi))^-1 T_{k+1}) with xi = [0, 0, omega, v, 0, "
+      "0]; roll and pitch are left to terrain factors. Analytic Jacobians.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "time_steps : DevicePointer\n"
+      "    Device buffer of ``capacity`` step durations [s].\n"
+      "wheel_radius, track_width : float\n"
+      "    r and b [m].\n"
+      "capacity : int\n"
+      "    Number of factors (steps) the buffer holds.")
+      .def(
+          "__init__",
+          [](cunls::SE3DifferentialDriveFactorBatch *self, nb::handle time_steps,
+             float wheel_radius, float track_width, size_t capacity) {
+            new (self) cunls::SE3DifferentialDriveFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(time_steps)), wheel_radius,
+                track_width, capacity);
+          },
+          nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
+          nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE3DifferentialDriveFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE3DifferentialDriveFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE3DifferentialDriveFactorBatch::StateSizes);
+
+  nb::class_<cunls::SE3KinematicBicycleFactorBatch, cunls::FactorBatch>(
+      m, "SE3KinematicBicycleFactorBatch",
+      "Car (kinematic bicycle) on non-planar roads. States: pose T_k (SE3StateBatch), (v, delta), "
+      "(a, delta rate), pose T_{k+1}, (v, delta). Residual: rows 2..5 of "
+      "Log((T_k Exp(dt_k xi))^-1 T_{k+1}) with xi = [0, 0, v tan(delta) / L, v, 0, 0], and "
+      "z_{k+1} - z_k - dt_k u_k; roll and pitch are left to terrain factors.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "time_steps : DevicePointer\n"
+      "    Device buffer of ``capacity`` step durations [s].\n"
+      "wheelbase : float\n"
+      "    L [m].\n"
+      "capacity : int\n"
+      "    Number of factors (steps) the buffer holds.")
+      .def(
+          "__init__",
+          [](cunls::SE3KinematicBicycleFactorBatch *self, nb::handle time_steps, float wheelbase,
+             size_t capacity) {
+            new (self) cunls::SE3KinematicBicycleFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(time_steps)), wheelbase,
+                capacity);
+          },
+          nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE3KinematicBicycleFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE3KinematicBicycleFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE3KinematicBicycleFactorBatch::StateSizes);
+
+  bind_kinematics_factor<cunls::SE2KinematicsFactorBatch>(
+      m, "SE2KinematicsFactorBatch",
+      "X_{k+1} = X_k Exp(dt_k xi_k) on SE(2) with the body twist [v_x, v_y, omega] as control. "
+      "States: X_k (SE2StateBatch), xi_k (VectorStateBatch3), X_{k+1}. Residual "
+      "Log((X_k Exp(dt xi))^-1 X_{k+1}); exact for a constant twist. time_steps: device buffer "
+      "of capacity step durations.");
+  bind_kinematics_factor<cunls::SO3KinematicsFactorBatch>(
+      m, "SO3KinematicsFactorBatch",
+      "R_{k+1} = R_k Exp(dt_k omega_k) on SO(3) with the body rate as control. States: R_k "
+      "(SO3StateBatch), omega_k (VectorStateBatch3), R_{k+1}. time_steps: device buffer of "
+      "capacity step durations.");
+  bind_kinematics_factor<cunls::SE3KinematicsFactorBatch>(
+      m, "SE3KinematicsFactorBatch",
+      "T_{k+1} = T_k Exp(dt_k xi_k) on SE(3) with the body twist [omega, v] as control. States: "
+      "T_k (SE3StateBatch), xi_k (VectorStateBatch6), T_{k+1}. time_steps: device buffer of "
+      "capacity step durations.");
+
+  // --- Quadrotor and quadruped (single rigid body) ---
+  nb::class_<cunls::QuadrotorParameters>(
+      m, "QuadrotorParameters",
+      "Quadrotor in X configuration (body x forward, y left, z up). Rotor i at a (s_x, s_y), "
+      "a = arm_length / sqrt(2), (s_x, s_y) = (+1, -1), (-1, +1), (+1, +1), (-1, -1) for i = 0..3; "
+      "rotors 0, 1 spin counter-clockwise (yaw torque -k_m f_i), rotors 2, 3 clockwise "
+      "(+k_m f_i).")
+      .def(nb::init<>())
+      .def_rw("mass", &cunls::QuadrotorParameters::mass)
+      .def_prop_rw(
+          "inertia",
+          [](const cunls::QuadrotorParameters &p) {
+            return std::vector<float>{p.inertia[0], p.inertia[1], p.inertia[2]};
+          },
+          [](cunls::QuadrotorParameters &p, const std::vector<float> &j) {
+            if (j.size() != 3)
+              throw std::invalid_argument("inertia needs 3 values (J_x, J_y, J_z)");
+            for (int i = 0; i < 3; ++i) p.inertia[i] = j[i];
+          },
+          "Diagonal body inertia (J_x, J_y, J_z) [kg m^2].")
+      .def_rw("arm_length", &cunls::QuadrotorParameters::arm_length)
+      .def_rw("torque_coefficient", &cunls::QuadrotorParameters::torque_coefficient)
+      .def_rw("linear_drag", &cunls::QuadrotorParameters::linear_drag)
+      .def_rw("gravity", &cunls::QuadrotorParameters::gravity);
+
+  nb::class_<cunls::QuadrotorFactorBatch, cunls::FactorBatch>(
+      m, "QuadrotorFactorBatch",
+      "Quadrotor rigid-body dynamics with rotor thrusts as controls (Euler). States: pose T_k "
+      "(SE3StateBatch), world velocity v_k (VectorStateBatch3), body rates omega_k "
+      "(VectorStateBatch3), rotor thrusts f_k (VectorStateBatch4), T_{k+1}, v_{k+1}, "
+      "omega_{k+1}. Residual (12): pose defect, velocity and rate rows. Analytic Jacobians.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "time_steps : DevicePointer\n"
+      "    Device buffer of ``capacity`` step durations [s].\n"
+      "parameters : QuadrotorParameters\n"
+      "capacity : int\n"
+      "    Number of factors (steps) the buffer holds.")
+      .def(
+          "__init__",
+          [](cunls::QuadrotorFactorBatch *self, nb::handle time_steps,
+             const cunls::QuadrotorParameters &parameters, size_t capacity) {
+            new (self) cunls::QuadrotorFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(time_steps)), parameters,
+                capacity);
+          },
+          nb::arg("time_steps"), nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::QuadrotorFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::QuadrotorFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::QuadrotorFactorBatch::StateSizes);
+
+  nb::class_<cunls::QuadrupedParameters>(m, "QuadrupedParameters",
+                                         "Single-rigid-body quadruped: mass, inertia, gravity.")
+      .def(nb::init<>())
+      .def_rw("mass", &cunls::QuadrupedParameters::mass)
+      .def_prop_rw(
+          "inertia",
+          [](const cunls::QuadrupedParameters &p) {
+            return std::vector<float>{p.inertia[0], p.inertia[1], p.inertia[2]};
+          },
+          [](cunls::QuadrupedParameters &p, const std::vector<float> &j) {
+            if (j.size() != 3)
+              throw std::invalid_argument("inertia needs 3 values (J_x, J_y, J_z)");
+            for (int i = 0; i < 3; ++i) p.inertia[i] = j[i];
+          },
+          "Diagonal body inertia (J_x, J_y, J_z) [kg m^2].")
+      .def_rw("gravity", &cunls::QuadrupedParameters::gravity);
+
+  nb::class_<cunls::QuadrupedFactorBatch, cunls::FactorBatch>(
+      m, "QuadrupedFactorBatch",
+      "Quadruped base as a single rigid body driven by four foot forces (Euler). States: base "
+      "pose T_k (SE3StateBatch), world velocity v_k, body rates omega_k, foot forces F_k "
+      "(VectorStateBatch12, world frame), T_{k+1}, v_{k+1}, omega_{k+1}. Per-step inputs: contact "
+      "flags (4 per factor) and world foot positions (12 per factor). Analytic Jacobians.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "time_steps : DevicePointer\n"
+      "    Device buffer of ``capacity`` step durations [s].\n"
+      "contacts : DevicePointer\n"
+      "    4 floats per factor: 1 for a foot in stance, 0 in swing.\n"
+      "foot_positions : DevicePointer\n"
+      "    12 floats per factor: world positions of feet 0..3.\n"
+      "parameters : QuadrupedParameters\n"
+      "capacity : int\n"
+      "    Number of factors (steps) the buffers hold.")
+      .def(
+          "__init__",
+          [](cunls::QuadrupedFactorBatch *self, nb::handle time_steps, nb::handle contacts,
+             nb::handle foot_positions, const cunls::QuadrupedParameters &parameters,
+             size_t capacity) {
+            new (self) cunls::QuadrupedFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(time_steps)),
+                reinterpret_cast<const float *>(extract_device_ptr(contacts)),
+                reinterpret_cast<const float *>(extract_device_ptr(foot_positions)), parameters,
+                capacity);
+          },
+          nb::arg("time_steps"), nb::arg("contacts"), nb::arg("foot_positions"),
+          nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>())
+      .def_prop_ro("num_active_factors", &cunls::QuadrupedFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::QuadrupedFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::QuadrupedFactorBatch::StateSizes);
+
+  // --- Obstacle clearance (constraint functions; wrap as inequalities) ---
+  nb::class_<cunls::SE2DiskClearanceFactorBatch, cunls::FactorBatch>(
+      m, "SE2DiskClearanceFactorBatch",
+      "Clearance c = (radius + margin) - |p - center| between an SE(2) pose's origin and a disk "
+      "(feasible: c <= 0); wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality). "
+      "obstacles: device buffer of 3 floats per factor (center x, y, radius).")
+      .def(
+          "__init__",
+          [](cunls::SE2DiskClearanceFactorBatch *self, nb::handle obstacles, float margin,
+             size_t capacity) {
+            new (self) cunls::SE2DiskClearanceFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(obstacles)), margin, capacity);
+          },
+          nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE2DiskClearanceFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE2DiskClearanceFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE2DiskClearanceFactorBatch::StateSizes);
+
+  nb::class_<cunls::SE3SphereClearanceFactorBatch, cunls::FactorBatch>(
+      m, "SE3SphereClearanceFactorBatch",
+      "Clearance c = (radius + margin) - |p - center| between an SE(3) pose's origin and a "
+      "sphere (feasible: c <= 0); wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality). "
+      "obstacles: device buffer of 4 floats per factor (center x, y, z, radius).")
+      .def(
+          "__init__",
+          [](cunls::SE3SphereClearanceFactorBatch *self, nb::handle obstacles, float margin,
+             size_t capacity) {
+            new (self) cunls::SE3SphereClearanceFactorBatch(
+                reinterpret_cast<const float *>(extract_device_ptr(obstacles)), margin, capacity);
+          },
+          nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE3SphereClearanceFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE3SphereClearanceFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE3SphereClearanceFactorBatch::StateSizes);
 }

@@ -94,6 +94,12 @@ class NormalEquations {
   void ScaleLhsSymmetric(cudaStream_t stream, const dvector<float> &scale);
 
   /**
+   * @brief Zeroes the rows and columns i with mask[i] == 0 of the working
+   * left-hand side, keeping a positive diagonal (see ZeroMaskedRowsColumns).
+   */
+  void ZeroMaskedLhsRowsColumns(cudaStream_t stream, const dvector<float> &mask);
+
+  /**
    * @brief Async `step^T H step` against the assembled (undamped) Hessian.
    *
    * @param stream CUDA stream for GPU operations.
@@ -137,9 +143,11 @@ class NormalEquations {
   BSRSparseMatrix bsr_hessian_;
   BSRSparseMatrix bsr_lhs_;
 
-  CSRMatrixDimensions csr_dims_;   ///< Cached dims for the scalar SpMV.
-  dvector<int> tile_row_scratch_;  ///< Tile-to-block-row map for scaling.
-  dvector<float> spmv_scratch_;    ///< SpMV result, either layout.
+  CSRMatrixDimensions csr_dims_;        ///< Cached dims for the scalar SpMV.
+  dvector<int> tile_row_scratch_;       ///< Tile-to-block-row map for scaling.
+  dvector<float> spmv_scratch_;         ///< SpMV result, either layout.
+  dvector<int> csr_diagonal_;           ///< Scalar layout: position of each diagonal entry.
+  bool csr_lhs_pattern_ready_ = false;  ///< csr_lhs_ holds the pattern; copy values only.
 
   int block_size_ = 1;
 };

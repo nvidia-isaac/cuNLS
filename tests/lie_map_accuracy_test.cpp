@@ -18,7 +18,8 @@
 // Accuracy of the batched exp / log kernels in float32 across scales, from
 // near-identity elements (where series and closed forms switch) to large
 // ones: SE2 exp and log against a double-precision closed form, and
-// log(exp(xi)) round trips for SE2, Sim3 and SL4.
+// log(exp(xi)) round trips for SE2, Sim3 and SL4; SE3 exp and log against a
+// double-precision closed form.
 
 #include <gtest/gtest.h>
 
@@ -102,6 +103,48 @@ TEST_P(LieMapAccuracy, SE2ExpAndLogMatchDoublePrecision) {
   const float tol = 2e-6f * std::max(1.f, scale);
   EXPECT_LT(MaxError(ToHost(d_t), ref), tol) << "exp, scale " << scale;
   EXPECT_LT(MaxError(ToHost(d_log), xi), 5 * tol) << "log(exp), scale " << scale;
+}
+
+// SE(3) with small rotations and unit translations: the left Jacobian that
+// maps rho to the translation must stay accurate where its coefficients
+// cancel in float32 ((1 - cos θ)/θ² was 100% wrong at θ = 1e-4).
+TEST_P(LieMapAccuracy, SE3ExpAndLogMatchDoublePrecision) {
+  const float scale = GetParam();
+  CudaStream stream;
+  std::vector<float> xi = RandomTangents(6, 1.f, 4);
+  for (size_t i = 0; i < kN; ++i)
+    for (int k = 0; k < 3; ++k) xi[6 * i + k] *= scale;  // rotation at this scale
+  ClampRotations(xi, 6, 0, 3);
+  std::vector<float> ref(kN * 16);
+  for (size_t i = 0; i < kN; ++i) {
+    const double w[3] = {xi[6 * i], xi[6 * i + 1], xi[6 * i + 2]};
+    const double th = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+    const double a = th < 1e-6 ? 1 - th * th / 6 : std::sin(th) / th;
+    const double b = th < 1e-6 ? 0.5 - th * th / 24 : (1 - std::cos(th)) / (th * th);
+    const double c = th < 1e-4 ? 1.0 / 6 - th * th / 120 : (th - std::sin(th)) / (th * th * th);
+    const double K[9] = {0, -w[2], w[1], w[2], 0, -w[0], -w[1], w[0], 0};
+    double K2[9] = {};
+    for (int r = 0; r < 3; ++r)
+      for (int col = 0; col < 3; ++col)
+        for (int k = 0; k < 3; ++k) K2[r * 3 + col] += K[r * 3 + k] * K[k * 3 + col];
+    double T[16] = {};
+    for (int r = 0; r < 3; ++r) {
+      for (int col = 0; col < 3; ++col) {
+        const double id = r == col ? 1.0 : 0.0;
+        T[r * 4 + col] = id + a * K[r * 3 + col] + b * K2[r * 3 + col];
+        const double J = id + b * K[r * 3 + col] + c * K2[r * 3 + col];
+        T[r * 4 + 3] += J * xi[6 * i + 3 + col];
+      }
+    }
+    T[15] = 1;
+    std::copy(T, T + 16, ref.begin() + 16 * i);
+  }
+  dvector<float> d_xi(xi), d_t(kN * 16), d_log(kN * 6);
+  ComputeExpSE3(stream.GetStream(), d_xi.data(), 6, 4, 16, kN, d_t.data());
+  ComputeLogSE3(stream.GetStream(), d_t.data(), 4, 16, 6, kN, d_log.data());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  EXPECT_LT(MaxError(ToHost(d_t), ref), 2e-6) << "exp, rotation scale " << scale;
+  EXPECT_LT(MaxError(ToHost(d_log), xi), 1e-5) << "log(exp), rotation scale " << scale;
 }
 
 TEST_P(LieMapAccuracy, Sim3LogInvertsExp) {

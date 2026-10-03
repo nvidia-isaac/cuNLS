@@ -153,6 +153,25 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
             return reinterpret_cast<uintptr_t>(self.StateDevicePtr(idx));
           },
           nb::arg("index"))
+      .def(
+          "set_bounds",
+          [](Class &self, nb::handle lower, nb::handle upper) {
+            if (lower.is_none() && upper.is_none()) {
+              self.SetBounds(nullptr, nullptr);
+              return;
+            }
+            if (lower.is_none() || upper.is_none()) {
+              throw std::invalid_argument("set_bounds: need both bounds or neither");
+            }
+            self.SetBounds(reinterpret_cast<const float *>(extract_device_ptr(lower)),
+                           reinterpret_cast<const float *>(extract_device_ptr(upper)));
+          },
+          nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>(),
+          "Box bounds lower <= x <= upper per component (device float32 arrays of "
+          "capacity * dim; ±inf: unbounded), enforced by projection in the "
+          "Gauss-Newton and Levenberg-Marquardt minimizers. None, None removes them.")
+      .def_prop_ro("has_bounds", &Class::HasBounds)
       .def_prop_ro("num_active_states", &Class::NumActiveStates)
       .def_prop_ro("tangent_size", &Class::TangentSize)
       .def_prop_ro("ambient_size", &Class::AmbientSize);
@@ -212,7 +231,9 @@ void bind_state(nb::module_ &m) {
   bind_vector_state_batch<1>(m, "VectorStateBatch1");
   bind_vector_state_batch<2>(m, "VectorStateBatch2");
   bind_vector_state_batch<3>(m, "VectorStateBatch3");
+  bind_vector_state_batch<4>(m, "VectorStateBatch4");
   bind_vector_state_batch<6>(m, "VectorStateBatch6");
+  bind_vector_state_batch<12>(m, "VectorStateBatch12");
 
   {
     auto cls = nb::class_<cunls::SE3StateBatch, cunls::StateBatch>(
