@@ -21,7 +21,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <memory>
+#include <vector>
 
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
@@ -29,6 +31,7 @@
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
+#include "cunls/factor/sized_factor_batch.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -434,6 +437,79 @@ TEST(MinimizeBufferReuse, GaussNewtonStateBatchCountDecreases) {
 
     EXPECT_NO_THROW(minimizer.Minimize(stream.GetStream(), one_batch_problem));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+}
+
+}  // namespace cunls
+
+namespace cunls {
+namespace {
+
+/**
+ * r = x - 5 on a 1-D state, but NaN beyond x = 2: the undamped step from x = 0
+ * lands where the cost is not finite.
+ */
+class NanBeyondTwoFactor : public SizedFactorBatch<1, 1> {
+ public:
+  NanBeyondTwoFactor() : SizedFactorBatch(1) {}
+  bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
+                cudaStream_t stream, const int *, size_t num_factor_ids) const override {
+    const size_t n = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+    for (size_t i = 0; i < n; ++i) {
+      const float *state = nullptr;
+      float x = 0.f;
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&state, state_pointers + i, sizeof(float *),
+                                          cudaMemcpyDeviceToHost, stream));
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+      THROW_ON_CUDA_ERROR(
+          cudaMemcpyAsync(&x, state, sizeof(float), cudaMemcpyDeviceToHost, stream));
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+      const float r = x > 2.f ? std::nanf("") : x - 5.f, j = 1.f;
+      THROW_ON_CUDA_ERROR(
+          cudaMemcpyAsync(residuals + i, &r, sizeof(float), cudaMemcpyHostToDevice, stream));
+      if (jacobians != nullptr) {
+        THROW_ON_CUDA_ERROR(
+            cudaMemcpyAsync(jacobians + i, &j, sizeof(float), cudaMemcpyHostToDevice, stream));
+      }
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    }
+    return true;
+  }
+};
+
+}  // namespace
+
+// A trial step to a non-finite cost is rejected (and the damping raised), by
+// both minimizers, with and without a subproblem partition; it was accepted
+// by Levenberg-Marquardt, whose test rho < threshold is false for NaN.
+TEST(NonFiniteTrialStep, IsRejected) {
+  for (int kind = 0; kind < 4; ++kind) {
+    CudaStream stream;
+    dvector<float> x(std::vector<float>{0.f});
+    VectorStateBatch<1> states(x.data(), 1);
+    states.SetNumActiveStates(1);
+    NanBeyondTwoFactor factor;
+    factor.SetNumActiveFactors(1);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&factor, std::vector<float *>{states.StateDevicePtr(0)});
+    dvector<int> ids(std::vector<int>{0});
+    if (kind >= 2) problem.SetProblemPartition(2, {ids.data()});  // 2nd subproblem empty
+    MinimizerOptions options;
+    options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    MinimizerSummary summary;
+    if (kind % 2 == 0) {
+      LevenbergMarquardtMinimizerOptions lm;
+      lm.base_options = options;
+      summary = LevenbergMarquardtMinimizer(lm).Minimize(stream.GetStream(), problem);
+    } else {
+      summary = GaussNewtonMinimizer(options).Minimize(stream.GetStream(), problem);
+    }
+    std::vector<float> host(1);
+    x.CopyToHost(host.data(), 1);
+    EXPECT_TRUE(std::isfinite(summary.final_cost)) << "case " << kind;
+    EXPECT_LE(summary.final_cost, summary.initial_cost) << "case " << kind;
+    EXPECT_LE(host[0], 2.f) << "case " << kind;
   }
 }
 

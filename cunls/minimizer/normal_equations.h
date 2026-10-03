@@ -107,6 +107,10 @@ class NormalEquations {
                                 const dvector<float> &step, float *d_out, float *d_partials,
                                 dvector<uint8_t> &buffer);
 
+  /** @brief y = (assembled, undamped Hessian) * x, in either storage layout. */
+  void MultiplyHessian(cudaStream_t stream, void *cusparse_handle, const dvector<float> &x,
+                       dvector<float> &y, dvector<uint8_t> &buffer) const;
+
   /** @brief Hands the working left-hand side to the solver for symbolic setup. */
   bool InitializeSolver(cudaStream_t stream, SparseLinearSolver &solver, const Problem &problem,
                         const dvector<float> &rhs, dvector<float> &step);

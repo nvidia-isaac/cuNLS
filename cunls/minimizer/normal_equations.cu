@@ -113,6 +113,17 @@ void NormalEquations::WeightedSquaredStepAsync(cudaStream_t stream, void *cuspar
                                   buffer, d_out, d_partials);
 }
 
+void NormalEquations::MultiplyHessian(cudaStream_t stream, void *cusparse_handle,
+                                      const dvector<float> &x, dvector<float> &y,
+                                      dvector<uint8_t> &buffer) const {
+  if (UsesBlockStorage()) {
+    MultiplyBSRByDenseVector(stream, bsr_hessian_, x, y);
+    return;
+  }
+  MultiplyCSRByDenseVector(stream, cusparse_handle, csr_hessian_, csr_dims_.num_rows,
+                           csr_dims_.num_cols, csr_dims_.num_nonzeros, x, y, buffer);
+}
+
 bool NormalEquations::InitializeSolver(cudaStream_t stream, SparseLinearSolver &solver,
                                        const Problem &problem, const dvector<float> &rhs,
                                        dvector<float> &step) {

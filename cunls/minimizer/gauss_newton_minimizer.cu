@@ -17,6 +17,9 @@
 
 #include <numeric>
 #include <stdexcept>
+#include <string>
+#include <tuple>
+#include <utility>
 
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
@@ -421,6 +424,10 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &pr
     return summary;
   }
 
+  if (problem.NumProblems() > 1) {
+    return MinimizeBatched(stream, problem);
+  }
+
   // Create minimizer state snapshots for current and updated states
   current_state_.Recreate(stream, problem);
   updated_state_.Recreate(stream, problem);
@@ -518,6 +525,108 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &pr
   Copy(stream, current_state_, problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 
+  return summary;
+}
+
+BatchedStepControlParams GaussNewtonMinimizer::BatchedParams() const {
+  BatchedStepControlParams params;
+  params.levenberg_marquardt = false;
+  params.state_tolerance = options_.state_tolerance;
+  params.cost_tolerance = options_.cost_tolerance;
+  params.max_consecutive_rejected_steps = static_cast<int>(options_.max_consecutive_rejected_steps);
+  return params;
+}
+
+/**
+ * @brief Minimize with per-subproblem step control.
+ *
+ * The same iteration as Minimize(), with every decision taken per subproblem
+ * on the device: each subproblem accepts or rejects its own step (its states
+ * are copied from the trial state only when accepted), keeps its own damping
+ * and leaves the iteration at its own convergence. The linear system is solved
+ * for all subproblems together; converged subproblems keep their states. One
+ * 2-float read-back per iteration: the total cost and the number of active
+ * subproblems; the loop ends when none is active.
+ */
+MinimizerSummary GaussNewtonMinimizer::MinimizeBatched(cudaStream_t stream, Problem &problem) {
+  MinimizerSummary summary;
+  current_state_.Recreate(stream, problem);
+  updated_state_.Recreate(stream, problem);
+  partition_.Build(stream, problem, current_state_, state_ops_.NumReducedStates());
+  batched_ = true;
+  struct Reset {
+    bool &flag;
+    ~Reset() { flag = false; }
+  } reset{batched_};
+
+  if (d_scalars_.size() < 2) d_scalars_.resize(2);
+  if (h_scalars_.size() < 2) h_scalars_.resize(2);
+  auto read_back = [&]() {
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(h_scalars_.data(), d_scalars_.data(), 2 * sizeof(float),
+                                        cudaMemcpyDeviceToHost, stream));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    return std::make_pair(h_scalars_[0], static_cast<size_t>(h_scalars_[1]));
+  };
+  // ComputeCostAsync leaves the per-factor costs at the start of buffer_.
+  auto factor_costs = [&]() { return reinterpret_cast<const float *>(buffer_.data()); };
+
+  ComputeCostAsync(stream, problem, current_state_, d_scalars_.data());
+  partition_.AccumulateFactorCosts(stream, factor_costs(), partition_.Cost());
+  partition_.InitStepControl(stream, options_.cost_tolerance, BatchedInitialLambda(),
+                             d_scalars_.data());
+  auto [cost, active] = read_back();
+  summary.initial_cost = cost;
+  summary.final_cost = cost;
+  LogMessage("Initial cost = {}, {} of {} subproblems active", cost, active,
+             partition_.NumProblems());
+  if (active == 0) {
+    return summary;
+  }
+
+  BuildSystem(stream, problem, current_state_);
+  step_.resize(rhs_work_.size());
+  {
+    auto sa_range = profiler_domain_.CreateDomainRange("PerformSymbolicAnalysis");
+    if (!normal_equations_.InitializeSolver(stream, *solver_, problem, rhs_work_, step_)) {
+      std::string str = "Failed to initialize linear solver";
+      LogError(str);
+      throw std::runtime_error(str);
+    }
+  }
+
+  const BatchedStepControlParams params = BatchedParams();
+  for (summary.num_iterations = 0; summary.num_iterations < options_.max_num_iterations;) {
+    auto it_range = profiler_domain_.CreateDomainRange("Iteration");
+    summary.iteration_costs.push_back(summary.final_cost);
+    {
+      auto solve_range = profiler_domain_.CreateDomainRange("LinearSolve");
+      if (!normal_equations_.Solve(stream, *solver_, rhs_work_, step_)) {
+        std::string str = "Failed to solve linear system";
+        LogError(str);
+        throw std::runtime_error(str);
+      }
+    }
+    MapScaledLinearSolutionToTangentStep(stream, step_);
+    UpdateStates(stream, current_state_, step_, updated_state_);
+
+    partition_.ResetAccumulators(stream);
+    ComputeCostAsync(stream, problem, updated_state_, d_scalars_.data());
+    partition_.AccumulateFactorCosts(stream, factor_costs(), partition_.NewCost());
+    partition_.AccumulateRows(stream, step_.data(), nullptr, nullptr, partition_.StepSquared());
+    AccumulatePredictedReduction(stream);
+    partition_.StepControl(stream, params, d_scalars_.data());
+    partition_.CopyAccepted(stream, problem, updated_state_, current_state_);
+    std::tie(cost, active) = read_back();
+    summary.num_iterations++;
+    summary.final_cost = cost;
+    LogMessage("Iteration #{}: cost = {}, {} subproblems active", summary.num_iterations, cost,
+               active);
+    if (active == 0) break;
+    BuildSystem(stream, problem, current_state_);
+  }
+
+  Copy(stream, current_state_, problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   return summary;
 }
 }  // namespace cunls

@@ -377,6 +377,12 @@ static void SpMVImpl(cudaStream_t stream, void *handle, const CSRSparseMatrix &m
  * First copies the input matrix, then uses a CUDA kernel to add the scaled
  * diagonal elements to the existing diagonal entries of the matrix.
  */
+void MultiplyCSRByDenseVector(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
+                              int num_rows, int num_cols, int num_nonzeros, const dvector<float> &x,
+                              dvector<float> &y, dvector<uint8_t> &buffer) {
+  SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, false, x, y, buffer);
+}
+
 void AddScaledDiagonal(cudaStream_t stream, float scale, const dvector<float> &diagonal,
                        const CSRSparseMatrix &matrix, CSRSparseMatrix &result) {
   int num_rows = diagonal.size();

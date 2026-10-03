@@ -311,6 +311,29 @@ bool Problem::CheckForValidInputs() const {
   return true;
 }
 
+void Problem::SetProblemPartition(size_t num_problems,
+                                  const std::vector<const int *> &state_problem_ids) {
+  if (num_problems <= 1) {
+    num_problems_ = 0;
+    state_problem_ids_.clear();
+    return;
+  }
+  if (state_problem_ids.size() != state_batches_.size()) {
+    throw std::invalid_argument(
+        "Problem::SetProblemPartition: expected one id array per state "
+        "batch (" +
+        std::to_string(state_batches_.size()) + "), got " +
+        std::to_string(state_problem_ids.size()));
+  }
+  for (const int *ids : state_problem_ids) {
+    if (ids == nullptr) {
+      throw std::invalid_argument("Problem::SetProblemPartition: null id array");
+    }
+  }
+  num_problems_ = num_problems;
+  state_problem_ids_ = state_problem_ids;
+}
+
 void Problem::CheckSizes() const {
   const std::string error = SizeError();
   if (!error.empty()) {

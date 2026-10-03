@@ -499,7 +499,7 @@ where cuDSS's per-call overhead dominates.
 
 | phase | content | exit criteria |
 |---|---|---|
-| **C0. Port prerequisites** | subproblem partition and the core bug fixes from `dev/ak/updates_v2` (§ Dependencies) | their tests pass on this branch; no PyTorch code involved |
+| **C0. Port prerequisites** (done) | subproblem partition and the core bug fixes from `dev/ak/updates_v2` (§ Prerequisites) | their tests pass on this branch; no PyTorch code involved |
 | **C1. Constraints** | `ConstraintFactorBatch` (equality, inequality), `BoundFactorBatch<Dim>`, `ConstrainedMinimizer` (AL outer loop, per-subproblem penalties), `HalfspaceFactorBatch`; Python bindings; docs | Hock-Schittkowski subset and random convex QPs match a reference solver (cvxpy / scipy) to 1e-4; constrained batched problems with per-subproblem stopping; no regressions |
 | **D1. Dynamics library, tier 1** | `DynamicsFactorBatch<Model, Integrator>` template; models W1, W2, Q2, Q3, L2, G1, G2; integrators Euler, semi-implicit, RK4, exact | every model's Jacobians against central differences (float64 reference); trajectories against an independent float64 integration |
 | **M1. MPC (eager)** | `pycunls.mpc.Horizon`, warm-start shift, cost and constraint helpers; examples: diff-drive path tracking, car (bicycle) racing line, quadrotor (Q2) waypoint flight, biped LIPM walking | closed-loop simulations track their references; obstacle and bound constraints hold to tolerance |

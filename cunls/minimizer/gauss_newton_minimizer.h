@@ -33,6 +33,7 @@
 #include "cunls/minimizer/normal_equations.h"
 #include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/minimizer/problem_partition.h"
 #include "cunls/minimizer/sparse_matrix.h"
 #include "cunls/state/state_batch_ops.h"
 
@@ -358,6 +359,30 @@ class GaussNewtonMinimizer {
    */
   void ComputeCostAsync(cudaStream_t stream, const Problem &problem,
                         const MinimizerState &minimizer_state, float *d_cost_out);
+
+  /**
+   * @brief Minimize for a problem with several subproblems
+   * (Problem::SetProblemPartition): per-subproblem step control on the device.
+   * Called by Minimize() after Initialize().
+   */
+  MinimizerSummary MinimizeBatched(cudaStream_t stream, Problem &problem);
+
+  /** @brief Batched mode: the step-control rules (Gauss-Newton here). */
+  virtual BatchedStepControlParams BatchedParams() const;
+
+  /** @brief Batched mode: the initial damping of every subproblem. */
+  virtual float BatchedInitialLambda() const { return 0.f; }
+
+  /**
+   * @brief Batched mode: accumulates per-subproblem predicted-reduction terms
+   * into partition_ (Levenberg-Marquardt); nothing for Gauss-Newton.
+   */
+  virtual void AccumulatePredictedReduction(cudaStream_t stream) {}
+
+  /// Subproblem maps and step-control state; batched_ is true while
+  /// MinimizeBatched runs (BuildSystem overrides then damp per subproblem).
+  ProblemPartition partition_;
+  bool batched_ = false;
 
  private:
   /**

@@ -154,5 +154,20 @@ void bind_problem(nb::module_ &m) {
           "GPU check of every active connection (for connectivity rewritten on the device). "
           "Synchronizes the stream; logs the first failure.")
       .def("check_consistency", &cunls::Problem::CheckConsistency,
-           "Validate that all state batches and factor batches are consistent.");
+           "Validate that all state batches and factor batches are consistent.")
+      .def(
+          "set_problem_partition",
+          [](cunls::Problem &self, size_t num_problems, const std::vector<nb::handle> &ids) {
+            std::vector<const int *> ptrs;
+            for (const auto &h : ids) {
+              ptrs.push_back(reinterpret_cast<const int *>(extract_device_ptr(h)));
+            }
+            self.SetProblemPartition(num_problems, ptrs);
+          },
+          nb::arg("num_problems"), nb::arg("state_problem_ids"), nb::keep_alive<1, 3>(),
+          "Declare the problem a batch of independent subproblems: state s of state batch b "
+          "belongs to subproblem state_problem_ids[b][s] (device int32 arrays, one per state "
+          "batch). Every factor must stay within one subproblem. The minimizers then accept, "
+          "damp and stop each subproblem on its own. num_problems <= 1 clears the partition.")
+      .def_prop_ro("num_problems", &cunls::Problem::NumProblems);
 }

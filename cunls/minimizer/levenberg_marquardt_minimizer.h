@@ -184,9 +184,19 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    */
   bool RejectStep(float step_quality) override;
 
+  /** @brief Batched mode: the LM rules, applied per subproblem. */
+  BatchedStepControlParams BatchedParams() const override;
+
+  float BatchedInitialLambda() const override { return options_.initial_lambda; }
+
+  /** @brief Batched mode: per-subproblem step^T diag(H) step and step^T H step. */
+  void AccumulatePredictedReduction(cudaStream_t stream) override;
+
   const LevenbergMarquardtMinimizerOptions options_;  ///< LM-specific options.
 
-  dvector<float> diagonal_;  ///< Diagonal of the Hessian matrix (J^T J).
+  dvector<float> diagonal_;      ///< Diagonal of the Hessian matrix (J^T J).
+  dvector<float> damping_;       ///< Batched mode: per-row lambda * diag(H).
+  dvector<float> hessian_step_;  ///< Batched mode: H * step.
 
   float lambda_;  ///< Current damping factor.
 };

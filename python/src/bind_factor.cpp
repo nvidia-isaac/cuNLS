@@ -43,7 +43,10 @@
 #include "cunls/factor/point_to_plane_factor_batch.h"
 #include "cunls/factor/point_to_point_factor_batch.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
+#include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
+#include "cunls/factor/prior/similarity2_prior_factor_batch.h"
+#include "cunls/factor/prior/similarity3_prior_factor_batch.h"
 #include "cunls/factor/prior/sl4_prior_factor_batch.h"
 #include "cunls/factor/prior/so2_prior_factor_batch.h"
 #include "cunls/factor/prior/so3_prior_factor_batch.h"
@@ -344,6 +347,53 @@ void bind_factor(nb::module_ &m) {
       .def_prop_ro("num_active_factors", &cunls::SO2PriorFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::SO2PriorFactorBatch::ResidualsSize)
       .def("state_sizes", &cunls::SO2PriorFactorBatch::StateSizes);
+
+  // --- SE2 Prior ---
+  nb::class_<cunls::SE2PriorFactorBatch, cunls::FactorBatch>(
+      m, "SE2PriorFactorBatch", "Batched SE(2) prior factor. Residual=3, States=[SE2(3)].")
+      .def(
+          "__init__",
+          [](cunls::SE2PriorFactorBatch *self, nb::handle observations, size_t capacity) {
+            auto ptr =
+                reinterpret_cast<const cunls::SE2Transform *>(extract_device_ptr(observations));
+            new (self) cunls::SE2PriorFactorBatch(ptr, capacity);
+          },
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::SE2PriorFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::SE2PriorFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::SE2PriorFactorBatch::StateSizes);
+
+  // --- Similarity2 Prior ---
+  nb::class_<cunls::Similarity2PriorFactorBatch, cunls::FactorBatch>(
+      m, "Similarity2PriorFactorBatch",
+      "Batched Sim(2) prior factor. Residual=4, States=[Similarity2(4)].")
+      .def(
+          "__init__",
+          [](cunls::Similarity2PriorFactorBatch *self, nb::handle observations, size_t capacity) {
+            auto ptr = reinterpret_cast<const cunls::Similarity2Transform *>(
+                extract_device_ptr(observations));
+            new (self) cunls::Similarity2PriorFactorBatch(ptr, capacity);
+          },
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::Similarity2PriorFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::Similarity2PriorFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::Similarity2PriorFactorBatch::StateSizes);
+
+  // --- Similarity3 Prior ---
+  nb::class_<cunls::Similarity3PriorFactorBatch, cunls::FactorBatch>(
+      m, "Similarity3PriorFactorBatch",
+      "Batched Sim(3) prior factor. Residual=7, States=[Similarity3(7)].")
+      .def(
+          "__init__",
+          [](cunls::Similarity3PriorFactorBatch *self, nb::handle observations, size_t capacity) {
+            auto ptr = reinterpret_cast<const cunls::Similarity3Transform *>(
+                extract_device_ptr(observations));
+            new (self) cunls::Similarity3PriorFactorBatch(ptr, capacity);
+          },
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+      .def_prop_ro("num_active_factors", &cunls::Similarity3PriorFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::Similarity3PriorFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::Similarity3PriorFactorBatch::StateSizes);
 
   // --- Prior Vector Factors ---
   bind_prior_vector_factor<1>(m, "PriorVectorFactorBatch1");

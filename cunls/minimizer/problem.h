@@ -282,6 +282,32 @@ class Problem {
    */
   JacobianMode JacobianModeFor(size_t residual_batch_index, JacobianMode global_default) const;
 
+  /**
+   * @brief Declares that the problem is a batch of independent subproblems.
+   *
+   * State s of state batch b belongs to subproblem `state_problem_ids[b][s]`
+   * (device arrays of at least NumActiveStates() ints, values in
+   * [0, num_problems); not owned, read at every solve). Every factor must
+   * connect states of one subproblem only (checked at solve time).
+   *
+   * With more than one subproblem the minimizers run per-subproblem step
+   * control: each subproblem accepts or rejects its own steps, keeps its own
+   * Levenberg-Marquardt damping and stops at its own convergence, so a
+   * subproblem never waits on, or is held back by, another one. The linear
+   * system is still solved for all of them at once (it is block diagonal).
+   *
+   * @param num_problems Number of subproblems (0 or 1: one problem).
+   * @param state_problem_ids One device array per state batch, in the order
+   *        the batches were added.
+   */
+  void SetProblemPartition(size_t num_problems, const std::vector<const int *> &state_problem_ids);
+
+  /** @brief Number of subproblems (1 when no partition is set). */
+  size_t NumProblems() const { return num_problems_ > 1 ? num_problems_ : 1; }
+
+  /** @brief Per state batch: device subproblem ids (empty when no partition). */
+  const std::vector<const int *> &StateProblemIds() const { return state_problem_ids_; }
+
  private:
   /**
    * @brief Validates that all inputs are non-null and sizes are consistent.
@@ -329,6 +355,8 @@ class Problem {
   /// Host pointer lists returned by GetStatePointers(): the user's lists for
   /// host-list batches, downloads of the device tables otherwise.
   mutable std::vector<std::vector<float *>> state_pointers_;
+  size_t num_problems_ = 0;                     ///< SetProblemPartition().
+  std::vector<const int *> state_problem_ids_;  ///< SetProblemPartition().
   std::vector<std::optional<JacobianMode>>
       jacobian_mode_overrides_;  ///< Per-residual-batch JacobianMode
                                  ///< override, index-aligned with

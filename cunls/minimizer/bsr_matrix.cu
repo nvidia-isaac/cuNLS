@@ -339,11 +339,8 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-/**
- * @brief y = A * x for block storage, into a caller-owned buffer.
- *
- * Internal: the only caller is ComputeWeightedSquaredStepAsync below.
- */
+}  // namespace
+
 void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
                               const dvector<float> &x, dvector<float> &y) {
   y.resize(static_cast<size_t>(matrix.NumRows()));
@@ -354,8 +351,6 @@ void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix
                     matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(),
                     x.data(), y.data());
 }
-
-}  // namespace
 
 int ChooseHessianBlockSize(const Problem &problem, int max_block_size) {
   int block_size = 0;

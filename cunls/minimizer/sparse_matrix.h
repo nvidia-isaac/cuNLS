@@ -128,4 +128,9 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
 
 void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, size_t n);
 
+/** @brief y = A * x for scalar CSR storage (cuSPARSE SpMV; y is resized). */
+void MultiplyCSRByDenseVector(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
+                              int num_rows, int num_cols, int num_nonzeros, const dvector<float> &x,
+                              dvector<float> &y, dvector<uint8_t> &buffer);
+
 }  // namespace cunls

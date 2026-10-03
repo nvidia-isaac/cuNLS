@@ -161,6 +161,78 @@ Prior on a 3-D rigid transform.  Residual =
 
 **C++ reference:** :ref:`cpp-se3-prior-factor-batch`.
 
+.. _py-se2-prior-factor:
+
+``pycunls.SE2PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on a 2-D rigid transform.  Residual =
+:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)` (3-vector), Jacobian =
+:math:`J_r^{-1}(r)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.SE2PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 9`` floats holding
+  row-major 3×3 target transforms.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from ``SE2StateBatch``
+(see :ref:`py-lie-state-batches`).
+
+**C++ reference:** :ref:`cpp-se2-prior-factor-batch`.
+
+.. _py-sim2-prior-factor:
+
+``pycunls.Similarity2PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on a 2-D similarity.  Residual =
+:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)` (4-vector), Jacobian =
+:math:`J_r^{-1}(r)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.Similarity2PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 9`` floats holding
+  row-major 3×3 target transforms.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from ``Similarity2StateBatch``
+(see :ref:`py-lie-state-batches`).
+
+**C++ reference:** :ref:`cpp-similarity2-prior-factor-batch`.
+
+.. _py-sim3-prior-factor:
+
+``pycunls.Similarity3PriorFactorBatch``
+--------------------------------------------------------------------------------
+
+Prior on a 3-D similarity.  Residual =
+:math:`\mathrm{Log}(T_\mathrm{target}^{-1} T)` (7-vector), Jacobian =
+:math:`J_r^{-1}(r)`.
+
+**Constructor**
+
+.. code-block:: python
+
+   fb = pycunls.Similarity3PriorFactorBatch(observations, capacity)
+
+- **observations** (``DevicePointer``) — ``capacity × 16`` floats holding
+  row-major 4×4 target transforms.
+- **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+
+**State layout:** one state per factor from ``Similarity3StateBatch``
+(see :ref:`py-lie-state-batches`).
+
+**C++ reference:** :ref:`cpp-similarity3-prior-factor-batch`.
+
 .. _py-sl4-prior-factor:
 
 ``pycunls.SL4PriorFactorBatch``

@@ -249,6 +249,7 @@ if(BUILD_TESTING)
     tests/size_check_test.cpp
     tests/lie_jacobian_accuracy_test.cpp
     tests/lie_map_accuracy_test.cpp
+    tests/problem_partition_test.cpp
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)

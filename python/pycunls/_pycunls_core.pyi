@@ -583,6 +583,48 @@ class SO3PriorFactorBatch(FactorBatch):
     def residuals_size(self) -> int: ...
     def state_sizes(self) -> list[int]: ...
 
+class SE2PriorFactorBatch(FactorBatch):
+    """Batched SE(2) prior factor. Residual=3, States=[SE2(3)]."""
+
+    def __init__(
+        self,
+        observations: DevicePointer,
+        capacity: int,
+    ) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class Similarity2PriorFactorBatch(FactorBatch):
+    """Batched Sim(2) prior factor. Residual=4, States=[Similarity2(4)]."""
+
+    def __init__(
+        self,
+        observations: DevicePointer,
+        capacity: int,
+    ) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class Similarity3PriorFactorBatch(FactorBatch):
+    """Batched Sim(3) prior factor. Residual=7, States=[Similarity3(7)]."""
+
+    def __init__(
+        self,
+        observations: DevicePointer,
+        capacity: int,
+    ) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
 class SO2PriorFactorBatch(FactorBatch):
     """Batched SO(2) prior factor. Residual=1, States=[SO2(1)]."""
 
@@ -964,6 +1006,17 @@ class Problem:
     def check_consistency(self) -> bool:
         """Validate that all state batches and factor batches are consistent."""
         ...
+    def set_problem_partition(
+        self, num_problems: int, state_problem_ids: list[DevicePointer]
+    ) -> None:
+        """Declare the problem a batch of independent subproblems: state s of state
+        batch b belongs to subproblem state_problem_ids[b][s] (device int32 arrays,
+        one per state batch). Every factor must stay within one subproblem. The
+        minimizers then accept, damp and stop each subproblem on its own.
+        num_problems <= 1 clears the partition."""
+        ...
+    @property
+    def num_problems(self) -> int: ...
 
 # ===================================================================
 # Minimizers
