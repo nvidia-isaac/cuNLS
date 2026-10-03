@@ -238,8 +238,8 @@ factor.
 --------------------------------------------------------------------------------
 
 Constrains the relative rotation between two SO(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^\top R_l^\top R_r)`.  Two states per
-factor.
+:math:`\mathrm{Log}(\Delta R_l^\top R_r)` (the convention of the other
+between factors). Two states per factor.
 
 **Constructor**
 
@@ -262,8 +262,8 @@ factor.
 --------------------------------------------------------------------------------
 
 Constrains the relative rotation between two SO(3) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^\top R_l^\top R_r)`.  Two states per
-factor.
+:math:`\mathrm{Log}(\Delta R_l^\top R_r)` (the convention of the other
+between factors). Two states per factor.
 
 **Constructor**
 
@@ -1216,7 +1216,7 @@ Header: :code:`cunls/factor/between/so2_between_factor_batch.h`
 Constrains the relative rotation between two SO(2) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{\top} \, R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \bigr)
 
 .. list-table::
    :header-rows: 1
@@ -1251,7 +1251,7 @@ Header: :code:`cunls/factor/between/so3_between_factor_batch.h`
 Constrains the relative rotation between two SO(3) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{\top} \, R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \bigr)
 
 .. list-table::
    :header-rows: 1

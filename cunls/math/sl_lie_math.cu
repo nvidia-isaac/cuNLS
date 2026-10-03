@@ -279,36 +279,36 @@ __device__ void Mat4Exp(const float *A, float *E) {
   }
 }
 
-// Matrix square root via Denman–Beavers (product form of Newton's method):
-//   X_{k+1} = (X_k + A * X_k^{-1}) / 2
-//
-// Converges quadratically to √A when A has no eigenvalues on R⁻.
-// Terminates early when ‖X_{k+1} − X_k‖_F < ε.
+// Matrix square root via the Denman–Beavers iteration:
+//   Y_0 = A, Z_0 = I;  Y_{k+1} = (Y_k + Z_k^{-1}) / 2,  Z_{k+1} = (Z_k + Y_k^{-1}) / 2,
+// with Y_k → √A and Z_k → √A^{-1}. Converges quadratically when A has no
+// eigenvalues on R⁻ and, unlike the plain Newton iteration X ← (X + A X^{-1}) / 2,
+// is numerically stable for non-normal A. Terminates when ‖Y_{k+1} − Y_k‖_F < ε.
 __device__ void Mat4SqrtNewton(const float *A, float *S) {
-  float X[16];
-  Mat4Copy(A, X);
-  float T1[16], T2[16];
+  float Y[16], Z[16], Yi[16], Zi[16];
+  Mat4Copy(A, Y);
+#pragma unroll
+  for (int i = 0; i < 16; ++i) Z[i] = IsDiag4(i) ? 1.f : 0.f;
   for (int it = 0; it < 32; ++it) {
-    if (!Inv4(X, T1)) {
+    if (!Inv4(Y, Yi) || !Inv4(Z, Zi)) {
 #pragma unroll
       for (int i = 0; i < 16; ++i) S[i] = IsDiag4(i) ? 1.f : 0.f;
       return;
     }
-    Mat4Mul(A, T1, T2);  // T2 = A * X^{-1}
     float diff_sq = 0.f;
 #pragma unroll
     for (int i = 0; i < 16; ++i) {
-      float xn = 0.5f * (X[i] + T2[i]);
-      float d = X[i] - xn;
+      float yn = 0.5f * (Y[i] + Zi[i]);
+      float d = Y[i] - yn;
       diff_sq += d * d;
-      X[i] = xn;
+      Y[i] = yn;
+      Z[i] = 0.5f * (Z[i] + Yi[i]);
     }
     if (sqrtf(diff_sq) < 1e-6f) {
-      Mat4Copy(X, S);
-      return;
+      break;
     }
   }
-  Mat4Copy(X, S);
+  Mat4Copy(Y, S);
 }
 
 // log(T) via inverse scaling-and-squaring.

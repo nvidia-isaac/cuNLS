@@ -53,6 +53,43 @@ __device__ __forceinline__ void InverseSE2(const float *T, float *Ti) {
   Ti[8] = 1.0f;
 }
 
+/**
+ * (a/2) cot(a/2) and (1 - (a/2) cot(a/2)) / a, accurate in float32 for all a
+ * in (-2 pi, 2 pi): a series below |a| = 0.5 (where the second cancels).
+ */
+__device__ __forceinline__ void HalfCotCoefficients(float a, float *half_cot, float *rest) {
+  const float a2 = a * a;
+  if (fabsf(a) < 0.5f) {
+    const float q =
+        1.0f / 12.0f + a2 * (1.0f / 720.0f + a2 * (1.0f / 30240.0f + a2 * (1.0f / 1209600.0f)));
+    *half_cot = 1.0f - a2 * q;
+    *rest = a * q;
+  } else {
+    const float h = 0.5f * a;
+    *half_cot = h * cosf(h) / sinf(h);
+    *rest = (1.0f - *half_cot) / a;
+  }
+}
+
+/**
+ * SE(2) right-Jacobian inverse J_r^{-1}(xi) (row-major 3x3) for xi = [v1, v2, a]:
+ * [[c, -a/2, v1 r + v2/2], [a/2, c, v2 r - v1/2], [0, 0, 1]], with c, r from
+ * HalfCotCoefficients. J_l^{-1}(xi) = J_r^{-1}(-xi).
+ */
+__device__ __forceinline__ void SE2JrInv(float v1, float v2, float a, float *J) {
+  float c, r;
+  HalfCotCoefficients(a, &c, &r);
+  J[0] = c;
+  J[1] = -0.5f * a;
+  J[2] = v1 * r + 0.5f * v2;
+  J[3] = 0.5f * a;
+  J[4] = c;
+  J[5] = v2 * r - 0.5f * v1;
+  J[6] = 0.0f;
+  J[7] = 0.0f;
+  J[8] = 1.0f;
+}
+
 /** T^{-1} = [R^T, -s R^T t; 0 0 s] for T = [R t; 0 0 1/s]. */
 __device__ __forceinline__ void InverseSim2(const float *T, float *Ti) {
   const float r00 = T[0], r01 = T[1], tx = T[2];

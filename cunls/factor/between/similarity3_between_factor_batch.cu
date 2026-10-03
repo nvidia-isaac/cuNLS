@@ -142,8 +142,8 @@ __device__ __forceinline__ void sim3_jr_inv(const float *xi, float *J) {
     J[38] += -0.5f * w[1];
     J[39] += 0.5f * w[0];
     J[40] += 0.5f * lam;
-    J[21] += -0.5f * u[2];
-    J[22] += 0.5f * u[1];
+    J[22] += -0.5f * u[2];  // row 3 of the 0.5 [u]_x block: [0, -u2, u1] / 2
+    J[23] += 0.5f * u[1];
     J[28] += 0.5f * u[2];
     J[30] += -0.5f * u[0];
     J[35] += -0.5f * u[1];

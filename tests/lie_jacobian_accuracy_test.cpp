@@ -15,27 +15,37 @@
  * limitations under the License.
  */
 
-// Accuracy of the analytic Jacobians of the SO3/SE3 prior and between factors
-// at small residual angles, where closed forms such as (t - sin t) / t^3 lose
-// float32 precision. Reference: central differences of the factor's own
-// residual along the state's Plus.
+// Accuracy of the analytic Jacobians of the Lie-group prior and between factors
+// (SO3, SE3, SE2, Sim2, Sim3) at small residuals, where closed forms such as
+// (t - sin t) / t^3 lose float32 precision. Reference: central differences of
+// the factor's own residual along the state's Plus.
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <utility>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/between/se2_between_factor_batch.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/between/similarity2_between_factor_batch.h"
+#include "cunls/factor/between/similarity3_between_factor_batch.h"
 #include "cunls/factor/between/so3_between_factor_batch.h"
+#include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
+#include "cunls/factor/prior/similarity2_prior_factor_batch.h"
+#include "cunls/factor/prior/similarity3_prior_factor_batch.h"
 #include "cunls/factor/prior/so3_prior_factor_batch.h"
+#include "cunls/state/se2_state_batch.h"
 #include "cunls/state/se3_state_batch.h"
+#include "cunls/state/similarity2_state_batch.h"
+#include "cunls/state/similarity3_state_batch.h"
 #include "cunls/state/so3_state_batch.h"
 
 namespace cunls {
@@ -121,6 +131,80 @@ float JacobianError(const Factor &factor, std::vector<dvector<float> *> states, 
 }
 
 class LieJacobianAccuracy : public ::testing::TestWithParam<float> {};
+
+/**
+ * Prior and between (Delta = I) Jacobian errors for d x d group matrices with
+ * `tangent` coordinates: states X ~ Exp(N(0, state_scale)), measurements
+ * Z = X * Exp(noise) with noise of size residual_scale. (Sim states use a
+ * smaller state_scale: scales e^{3 sigma} make float32 central differences
+ * noisier than the tolerance.)
+ */
+template <class States, class Prior, class Between, class Transform>
+std::pair<float, float> PriorAndBetweenErrors(int d, size_t tangent, float residual_scale,
+                                              float state_scale, uint32_t seed,
+                                              cudaStream_t stream) {
+  const size_t ambient = d * d;
+  auto x = RandomElements<States>(ambient, tangent, state_scale, seed, stream);
+  auto noise = RandomElements<States>(ambient, tangent, residual_scale, seed + 1, stream);
+  dvector<float> z(kN * ambient);
+  {
+    auto xh = ToHost(x), nh = ToHost(noise);
+    std::vector<float> zh(kN * ambient, 0.f);
+    for (size_t f = 0; f < kN; ++f) {
+      for (int i = 0; i < d; ++i) {
+        for (int j = 0; j < d; ++j) {
+          float acc = 0.f;
+          for (int k = 0; k < d; ++k)
+            acc += xh[f * ambient + i * d + k] * nh[f * ambient + k * d + j];
+          zh[f * ambient + i * d + j] = acc;
+        }
+      }
+    }
+    z.CopyFromHost(zh.data(), zh.size());
+  }
+  Prior prior(reinterpret_cast<const Transform *>(z.data()), kN);
+  prior.SetNumActiveFactors(kN);
+  const float prior_error = JacobianError<States>(prior, {&x}, ambient, tangent, tangent, stream);
+  std::vector<float> eye(kN * ambient, 0.f);
+  for (size_t f = 0; f < kN; ++f) {
+    for (int k = 0; k < d; ++k) eye[f * ambient + k * (d + 1)] = 1.f;
+  }
+  dvector<float> deltas(eye);
+  Between between(reinterpret_cast<const Transform *>(deltas.data()), kN);
+  between.SetNumActiveFactors(kN);
+  const float between_error =
+      JacobianError<States>(between, {&x, &z}, ambient, tangent, tangent, stream);
+  return {prior_error, between_error};
+}
+
+TEST_P(LieJacobianAccuracy, SE2PriorAndBetween) {
+  CudaStream stream;
+  auto [prior, between] =
+      PriorAndBetweenErrors<SE2StateBatch, SE2PriorFactorBatch, SE2BetweenFactorBatch,
+                            SE2Transform>(3, 3, GetParam(), 1.0f, 11, stream.GetStream());
+  EXPECT_LT(prior, 1e-3f) << "residual scale " << GetParam();
+  EXPECT_LT(between, 1e-3f) << "residual scale " << GetParam();
+}
+
+TEST_P(LieJacobianAccuracy, Sim2PriorAndBetween) {
+  CudaStream stream;
+  auto [prior, between] =
+      PriorAndBetweenErrors<Similarity2StateBatch, Similarity2PriorFactorBatch,
+                            Similarity2BetweenFactorBatch, Similarity2Transform>(
+          3, 4, GetParam(), 0.3f, 13, stream.GetStream());
+  EXPECT_LT(prior, 1e-3f) << "residual scale " << GetParam();
+  EXPECT_LT(between, 1e-3f) << "residual scale " << GetParam();
+}
+
+TEST_P(LieJacobianAccuracy, Sim3PriorAndBetween) {
+  CudaStream stream;
+  auto [prior, between] =
+      PriorAndBetweenErrors<Similarity3StateBatch, Similarity3PriorFactorBatch,
+                            Similarity3BetweenFactorBatch, Similarity3Transform>(
+          4, 7, GetParam(), 0.3f, 15, stream.GetStream());
+  EXPECT_LT(prior, 1e-3f) << "residual scale " << GetParam();
+  EXPECT_LT(between, 1e-3f) << "residual scale " << GetParam();
+}
 
 TEST_P(LieJacobianAccuracy, SE3PriorAndBetween) {
   const float residual_scale = GetParam();

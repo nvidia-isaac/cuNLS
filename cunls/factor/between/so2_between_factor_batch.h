@@ -15,7 +15,8 @@ namespace cunls {
 /**
  * @brief Batch factor for SO(2) between constraints.
  *
- * residual = Log(R_delta^T * R_left^T * R_right) (scalar angle).
+ * residual = Log(R_left^T * R_right * R_delta) (scalar angle; SO(2) is abelian, so
+ * this is Log(R_delta * R_left^-1 * R_right), the convention of the other groups).
  * Since SO(2) is abelian, Jacobians are exact: H_left = -1, H_right = 1.
  */
 class SO2BetweenFactorBatch : public SizedFactorBatch<1, 1, 1> {

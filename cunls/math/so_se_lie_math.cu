@@ -1284,7 +1284,7 @@ constexpr size_t kSE2MathBlockSize = 256;
  *   V = [[sin(theta)/theta,    -(1-cos(theta))/theta],
  *        [(1-cos(theta))/theta,  sin(theta)/theta    ]]
  *
- * For |theta| < 1e-3, V approaches I and [tx, ty] ~ [v_x, v_y].
+ * Both coefficients are evaluated without cancellation (series near 0).
  */
 __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, float *transforms,
                                size_t transform_stride, size_t size) {
@@ -1301,16 +1301,19 @@ __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, floa
   float c = cosf(w);
   float s = sinf(w);
 
-  float tx, ty;
-  if (fabsf(w) < 1e-3f) {
-    tx = vx;
-    ty = vy;
+  // sin(w) / w and (1 - cos w) / w = 2 sin^2(w/2) / w (no cancellation).
+  float sinw_over_w, one_minus_cosw_over_w;
+  if (fabsf(w) < 1e-2f) {
+    const float w2 = w * w;
+    sinw_over_w = 1.0f - w2 / 6.0f;
+    one_minus_cosw_over_w = w * (0.5f - w2 / 24.0f);
   } else {
-    float sinw_over_w = s / w;
-    float one_minus_cosw_over_w = (1.0f - c) / w;
-    tx = vx * sinw_over_w - vy * one_minus_cosw_over_w;
-    ty = vx * one_minus_cosw_over_w + vy * sinw_over_w;
+    const float sh = sinf(0.5f * w);
+    sinw_over_w = s / w;
+    one_minus_cosw_over_w = 2.0f * sh * sh / w;
   }
+  const float tx = vx * sinw_over_w - vy * one_minus_cosw_over_w;
+  const float ty = vx * one_minus_cosw_over_w + vy * sinw_over_w;
 
   float *T = transforms + idx * transform_stride;
   T[0] = c;
@@ -1331,12 +1334,8 @@ __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, floa
  *   theta = atan2(sin, cos) from R
  *   [v_x, v_y] = V(theta)^{-1} * t
  *
- * Logmap:
- * For |theta| < 1e-3, V^{-1} ~ I and [v_x, v_y] ~ [tx, ty].
- *
- * The V^{-1} computation uses the identity:
- *   V^{-1} = (theta / (2*(1-cos))) * R_pi/2 * ((c-1)*I + s*J) * [tx,ty]
- * where R_pi/2 rotates by 90 degrees: (x,y) -> (-y, x).
+ * with V^{-1} = [[h, theta/2], [-theta/2, h]], h = (theta/2) cot(theta/2)
+ * (float32-safe for all theta, including near 0).
  */
 __global__ void log_se2_kernel(const float *transforms, size_t transform_stride, float *tangent,
                                size_t tangent_stride, size_t size) {
@@ -1353,22 +1352,13 @@ __global__ void log_se2_kernel(const float *transforms, size_t transform_stride,
   float tx = T[2];
   float ty = T[5];
 
-  float theta = atan2f(s, c);
-
-  if (fabsf(theta) < 1e-3f) {
-    xi[0] = tx;
-    xi[1] = ty;
-    xi[2] = theta;
-  } else {
-    float c_1 = c - 1.0f;
-    float det = c_1 * c_1 + s * s;
-    float dx = c_1 * tx + s * ty;
-    float dy = -s * tx + c_1 * ty;
-    float factor = theta / det;
-    xi[0] = factor * (-dy);
-    xi[1] = factor * dx;
-    xi[2] = theta;
-  }
+  const float theta = atan2f(s, c);
+  // V^{-1} = [[h, theta/2], [-theta/2, h]] with h = (theta/2) cot(theta/2).
+  float h, unused;
+  lie_device::HalfCotCoefficients(theta, &h, &unused);
+  xi[0] = h * tx + 0.5f * theta * ty;
+  xi[1] = -0.5f * theta * tx + h * ty;
+  xi[2] = theta;
 }
 
 /**
@@ -1399,7 +1389,7 @@ __global__ void inverse_se2_kernel(const float *transforms, size_t transform_str
  *               [0,                      0,              1 ]] where cot =
  * sin(alpha)/(1 - cos(alpha)).
  *
- * For |alpha| < 1e-3 (near identity): J_r^{-1} ~ I + small corrections.
+ * Evaluated by lie_device::SE2JrInv (float32-safe series near alpha = 0).
  */
 __global__ void __launch_bounds__(256, 4)
     jacobian_right_inverse_se2_kernel(const float *tangent, size_t tangent_stride, float *jacobians,
@@ -1412,34 +1402,7 @@ __global__ void __launch_bounds__(256, 4)
   const float *xi = tangent + idx * tangent_stride;
   float *J = jacobians + idx * jacobian_stride;
 
-  float v1 = xi[0];
-  float v2 = xi[1];
-  float alpha = xi[2];
-
-  if (fabsf(alpha) > 1e-3f) {
-    float alpha_inv = 1.0f / alpha;
-    float half_cot_half_alpha = 0.5f * sinf(alpha) / (1.0f - cosf(alpha));
-
-    J[0] = alpha * half_cot_half_alpha;
-    J[1] = -0.5f * alpha;
-    J[2] = v1 * alpha_inv - v1 * half_cot_half_alpha + 0.5f * v2;
-    J[3] = 0.5f * alpha;
-    J[4] = alpha * half_cot_half_alpha;
-    J[5] = v2 * alpha_inv - 0.5f * v1 - v2 * half_cot_half_alpha;
-    J[6] = 0.0f;
-    J[7] = 0.0f;
-    J[8] = 1.0f;
-  } else {
-    J[0] = 1.0f;
-    J[1] = 0.0f;
-    J[2] = 0.5f * v2;
-    J[3] = 0.0f;
-    J[4] = 1.0f;
-    J[5] = -0.5f * v1;
-    J[6] = 0.0f;
-    J[7] = 0.0f;
-    J[8] = 1.0f;
-  }
+  lie_device::SE2JrInv(xi[0], xi[1], xi[2], J);
 }
 
 void ComputeExpSE2(cudaStream_t stream, const float *tangent, size_t tangent_stride,

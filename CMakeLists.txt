@@ -248,6 +248,7 @@ if(BUILD_TESTING)
     tests/dynamic_problem_test.cpp
     tests/size_check_test.cpp
     tests/lie_jacobian_accuracy_test.cpp
+    tests/lie_map_accuracy_test.cpp
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)
