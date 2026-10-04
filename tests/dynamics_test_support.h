@@ -230,7 +230,8 @@ inline std::vector<Vec> Perturbed(const std::vector<Slot> &slots, const Vec &del
  * Evaluates `factor` (capacity = items.size()) on the items and compares
  * residuals (tolerance `res_tol` relative) and Jacobians (`jac_tol` relative,
  * per entry) with `reference` and its central differences; checks that the
- * residual-only path equals the Jacobian path and the item contract.
+ * residual-only path matches the Jacobian path (to round-off) and the item
+ * contract.
  */
 inline void CheckFactor(FactorBatch &factor, const std::vector<std::vector<Slot>> &items,
                         const ReferenceResidual &reference, const std::string &label,
@@ -271,7 +272,11 @@ inline void CheckFactor(FactorBatch &factor, const std::vector<std::vector<Slot>
     for (int i = 0; i < m; ++i) {
       EXPECT_NEAR(res[t * m + i], r0[i], res_tol * (1 + std::fabs(r0[i])))
           << label << " item " << t << " row " << i;
-      EXPECT_EQ(res_only[t * m + i], res[t * m + i]) << label << " residual-only path";
+      // Separate kernel instantiations (residual-only / with Jacobians): the
+      // compiler may contract multiply-adds differently in each (CUDA 13 on
+      // sm_110 does), so they agree to round-off only.
+      EXPECT_NEAR(res_only[t * m + i], res[t * m + i], 2e-6 * (1 + std::fabs(res[t * m + i])))
+          << label << " residual-only path";
     }
     const double h = 1e-6;
     for (int c = 0; c < cols; ++c) {

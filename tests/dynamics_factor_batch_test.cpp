@@ -216,7 +216,11 @@ void CheckAgainstReference(const Model &m, FactorBatch &factor, const std::strin
     for (int i = 0; i < n; ++i) {
       EXPECT_NEAR(res[t * n + i], r0[i], 2e-5 * (1 + std::fabs(r0[i])))
           << label << " item " << t << " row " << i;
-      EXPECT_EQ(res_only[t * n + i], res[t * n + i]) << label << " residual-only path";
+      // The residual-only and Jacobian variants are separate kernel
+      // instantiations; the compiler may contract multiply-adds differently in
+      // each (it does for CUDA 13 on sm_110), so they agree to round-off only.
+      EXPECT_NEAR(res_only[t * n + i], res[t * n + i], 2e-6 * (1 + std::fabs(res[t * n + i])))
+          << label << " residual-only path";
     }
     // Central differences of every column.
     const double h = 1e-6;
