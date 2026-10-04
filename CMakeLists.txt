@@ -268,6 +268,7 @@ if(BUILD_TESTING)
     tests/lie_kinematics_factor_batch_test.cpp
     tests/quadrotor_factor_batch_test.cpp
     tests/quadruped_factor_batch_test.cpp
+    tests/imu_factor_batch_test.cpp
     tests/clearance_factor_batch_test.cpp
     tests/augmented_lagrangian_nonlinear_test.cu
   )

@@ -53,6 +53,7 @@
 #include "cunls/factor/dynamics/se3_kinematics_factor_batch.h"
 #include "cunls/factor/dynamics/so3_kinematics_factor_batch.h"
 #include "cunls/factor/halfspace_factor_batch.h"
+#include "cunls/factor/imu_factor_batch.h"
 #include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/information/motion_prior_information.h"
 #include "cunls/factor/motion/constant_acceleration_factor_batch.h"

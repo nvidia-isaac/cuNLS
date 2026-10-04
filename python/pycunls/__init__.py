@@ -161,6 +161,8 @@ from pycunls._pycunls_core import (
     QuadrotorFactorBatch,
     QuadrupedParameters,
     QuadrupedFactorBatch,
+    ImuParameters,
+    ImuFactorBatch,
     SE2DiskClearanceFactorBatch,
     SE3SphereClearanceFactorBatch,
     # --- Custom state trampoline ---
@@ -278,6 +280,8 @@ __all__ = [
     "QuadrotorFactorBatch",
     "QuadrupedParameters",
     "QuadrupedFactorBatch",
+    "ImuParameters",
+    "ImuFactorBatch",
     "SE2DiskClearanceFactorBatch",
     "SE3SphereClearanceFactorBatch",
     "CustomStateBatch",
