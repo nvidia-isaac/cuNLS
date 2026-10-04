@@ -31,6 +31,11 @@ namespace nb = nanobind;
 // .data.ptr attribute yields one (e.g. a cupy.ndarray).
 uintptr_t extract_device_ptr(nb::handle obj);
 
+// Same, and when obj is an array (has .dtype) checks that its dtype is
+// `dtype` (e.g. "float32"), raising TypeError naming `name` otherwise. Plain
+// ints (raw pointers) pass unchecked.
+uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name);
+
 // --- Binding registration entry points (one per translation unit) ----------
 
 void bind_types(nb::module_ &m);      // CudaStream, enums, options

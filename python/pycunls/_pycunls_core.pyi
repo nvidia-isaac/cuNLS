@@ -1291,6 +1291,36 @@ class QuadrupedFactorBatch(FactorBatch):
     def residuals_size(self) -> int: ...
     def state_sizes(self) -> list[int]: ...
 
+class ImuParameters:
+    """Sensor model of ImuFactorBatch (gravity, noise densities, IMU-body extrinsic)."""
+
+    gravity: list[float]
+    gyro_noise_density: float
+    accel_noise_density: float
+    integration_noise_density: float
+    gyro_bias_random_walk: float
+    accel_bias_random_walk: float
+    body_from_imu: list[float]
+
+    def __init__(self) -> None: ...
+
+class ImuFactorBatch(FactorBatch):
+    """IMU factor between keyframes (X_a, v_a, b_a, X_b, v_b, b_b), X = rig_from_world."""
+
+    def __init__(
+        self,
+        imu_samples: DevicePointer,
+        sample_offsets: DevicePointer,
+        num_samples: int,
+        parameters: ImuParameters,
+        capacity: int,
+    ) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
 class SE2DiskClearanceFactorBatch(FactorBatch):
     """Clearance (radius + margin) - |p - center| of an SE(2) pose to a disk (wrap as inequality)."""
 

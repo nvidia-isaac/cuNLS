@@ -45,6 +45,20 @@ uintptr_t extract_device_ptr(nb::handle obj) {
   return nb::cast<uintptr_t>(obj.attr("data").attr("ptr"));
 }
 
+uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name) {
+  if (!nb::isinstance<nb::int_>(obj) && nb::hasattr(obj, "dtype")) {
+    // str(dtype), e.g. "float32". nb::str(handle) calls str(); an accessor or
+    // object argument would only be borrowed.
+    const nb::object dt = obj.attr("dtype");
+    const std::string actual = nb::str(nb::handle(dt)).c_str();
+    if (actual != dtype) {
+      throw nb::type_error(
+          (std::string(name) + " must have dtype " + dtype + ", got " + actual).c_str());
+    }
+  }
+  return extract_device_ptr(obj);
+}
+
 void bind_types(nb::module_ &m) {
   // --- CUDA stream wrapper ---
 

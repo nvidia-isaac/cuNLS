@@ -47,6 +47,7 @@ Guides
    ransac
    constraints
    dynamics
+   imu
    mpc
    custom_factors_and_states
    numeric_jacobians

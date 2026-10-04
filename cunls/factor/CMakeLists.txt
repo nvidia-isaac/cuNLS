@@ -20,6 +20,7 @@ add_library(cunls_factor OBJECT
   dynamics/se3_kinematics_factor_batch.cu
   dynamics/quadrotor_factor_batch.cu
   dynamics/quadruped_factor_batch.cu
+  imu_factor_batch.cu
   information/information_factor_batch_kernels.cu
   information/motion_prior_information.cu
   motion/constant_acceleration_se2_factor_batch.cu

@@ -54,6 +54,7 @@
 #include "cunls/factor/dynamics/se3_kinematics_factor_batch.h"
 #include "cunls/factor/dynamics/so3_kinematics_factor_batch.h"
 #include "cunls/factor/halfspace_factor_batch.h"
+#include "cunls/factor/imu_factor_batch.h"
 #include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/point_to_plane_factor_batch.h"
 #include "cunls/factor/point_to_point_factor_batch.h"
@@ -931,6 +932,81 @@ void bind_factor(nb::module_ &m) {
       .def_prop_ro("num_active_factors", &cunls::QuadrupedFactorBatch::NumActiveFactors)
       .def_prop_ro("residuals_size", &cunls::QuadrupedFactorBatch::ResidualsSize)
       .def("state_sizes", &cunls::QuadrupedFactorBatch::StateSizes);
+
+  // --- IMU (raw samples between keyframes marginalized inside the factor) ---
+  nb::class_<cunls::ImuParameters>(
+      m, "ImuParameters",
+      "Sensor model of ImuFactorBatch. Noise densities are continuous-time (defaults: the "
+      "ADIS16448 of the EuRoC MAV dataset); gravity defaults to (0, 0, -9.80665), +Z up; "
+      "body_from_imu is the row-major 4x4 pose of the IMU in the body (rig) frame, rig_from_imu "
+      "(identity).")
+      .def(nb::init<>())
+      .def_prop_rw(
+          "gravity",
+          [](const cunls::ImuParameters &p) {
+            return std::vector<float>(p.gravity.begin(), p.gravity.end());
+          },
+          [](cunls::ImuParameters &p, const std::vector<float> &g) {
+            if (g.size() != 3) throw std::invalid_argument("gravity needs 3 values");
+            for (int i = 0; i < 3; ++i) p.gravity[i] = g[i];
+          },
+          "World-frame gravity [m/s^2].")
+      .def_rw("gyro_noise_density", &cunls::ImuParameters::gyro_noise_density)
+      .def_rw("accel_noise_density", &cunls::ImuParameters::accel_noise_density)
+      .def_rw("integration_noise_density", &cunls::ImuParameters::integration_noise_density)
+      .def_rw("gyro_bias_random_walk", &cunls::ImuParameters::gyro_bias_random_walk)
+      .def_rw("accel_bias_random_walk", &cunls::ImuParameters::accel_bias_random_walk)
+      .def_prop_rw(
+          "body_from_imu",
+          [](const cunls::ImuParameters &p) {
+            return std::vector<float>(p.body_from_imu.begin(), p.body_from_imu.end());
+          },
+          [](cunls::ImuParameters &p, const std::vector<float> &T) {
+            if (T.size() != 16)
+              throw std::invalid_argument("body_from_imu needs 16 values (row-major 4x4)");
+            for (int i = 0; i < 16; ++i) p.body_from_imu[i] = T[i];
+          },
+          "Pose of the IMU in the body frame, row-major 4x4 (16 floats).");
+
+  nb::class_<cunls::ImuFactorBatch, cunls::FactorBatch>(
+      m, "ImuFactorBatch",
+      "IMU factor between two keyframes; the raw samples between them define a chain of Euler "
+      "steps whose intermediate states are marginalized inside the factor (Schur complement, "
+      "recomputed every evaluation). States: X_a (SE3StateBatch, rig_from_world as in "
+      "ReprojectionFactorBatch / PnPFactorBatch), v_a (VectorStateBatch3, world velocity of the "
+      "IMU), b_a = [b_g; b_a] (VectorStateBatch6), X_b, v_b, b_b. Residual (15): "
+      "the whitened defect of keyframe b against the prediction (9) and the bias random walk "
+      "(6). Analytic Jacobians.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "imu_samples : DevicePointer\n"
+      "    float32, 7 per sample (gyro xyz [rad/s], specific force xyz [m/s^2], dt [s]), IMU "
+      "frame, all factors back to back.\n"
+      "sample_offsets : DevicePointer\n"
+      "    int32, capacity + 1 CSR offsets: factor f uses samples [offsets[f], offsets[f + 1]) "
+      "(at least one).\n"
+      "num_samples : int\n"
+      "    Number of samples imu_samples holds; only sizes the work split (num_samples / "
+      "capacity is taken as the typical chain length).\n"
+      "parameters : ImuParameters\n"
+      "capacity : int\n"
+      "    Number of factors (keyframe pairs) the buffers hold.")
+      .def(
+          "__init__",
+          [](cunls::ImuFactorBatch *self, nb::handle imu_samples, nb::handle sample_offsets,
+             size_t num_samples, const cunls::ImuParameters &parameters, size_t capacity) {
+            new (self) cunls::ImuFactorBatch(reinterpret_cast<const float *>(extract_device_ptr(
+                                                 imu_samples, "float32", "imu_samples")),
+                                             reinterpret_cast<const int *>(extract_device_ptr(
+                                                 sample_offsets, "int32", "sample_offsets")),
+                                             num_samples, parameters, capacity);
+          },
+          nb::arg("imu_samples"), nb::arg("sample_offsets"), nb::arg("num_samples"),
+          nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
+          nb::keep_alive<1, 3>())
+      .def_prop_ro("num_active_factors", &cunls::ImuFactorBatch::NumActiveFactors)
+      .def_prop_ro("residuals_size", &cunls::ImuFactorBatch::ResidualsSize)
+      .def("state_sizes", &cunls::ImuFactorBatch::StateSizes);
 
   // --- Obstacle clearance (constraint functions; wrap as inequalities) ---
   nb::class_<cunls::SE2DiskClearanceFactorBatch, cunls::FactorBatch>(

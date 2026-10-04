@@ -29,7 +29,9 @@ flow described in the :doc:`introduction`:
    :ref:`MinimizerSummary <py-minimizer-summary-label>`.
 
 The examples increase in complexity. For problems with gross outliers, see
-:doc:`ransac` and ``python/examples/ransac_pnp.py``; for the full custom-type
+:doc:`ransac` and ``python/examples/ransac_pnp.py``; for visual-inertial
+bundle adjustment, see :doc:`imu` and
+``python/examples/imu_bundle_adjustment.py``; for the full custom-type
 contract (needed by RANSAC), see :doc:`custom_factors_and_states`.
 
 - :ref:`pycunls_tutorial:Sparse Bundle Adjustment` — uses

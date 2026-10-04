@@ -512,6 +512,53 @@ state per correspondence (typically the same camera pose pointer repeated).
 
 **C++ reference:** :ref:`cpp-pnp-factor-batch`.
 
+.. _py-imu-factor:
+
+``pycunls.ImuFactorBatch``
+--------------------------------------------------------------------------------
+
+IMU factor between two keyframes. The raw samples between them are integrated
+and the intermediate states eliminated inside the factor at every evaluation
+(Schur complement). Theory, conventions and an example: :doc:`../imu`.
+
+**Constructor**
+
+.. code-block:: python
+
+   p = pycunls.ImuParameters()
+   fb = pycunls.ImuFactorBatch(imu_samples, sample_offsets, num_samples, p, capacity)
+
+- **imu_samples** (``DevicePointer``, float32) — ``num_samples × 7``:
+  gyroscope [rad/s], specific force [m/s²] (IMU frame) and the step duration
+  [s] of every sample, all factors back to back.
+- **sample_offsets** (``DevicePointer``, int32) — ``capacity + 1`` CSR offsets:
+  factor ``f`` uses samples ``[offsets[f], offsets[f + 1])``, at least one (a
+  factor without samples evaluates to zero rows).
+- **num_samples** (``int``) — samples in ``imu_samples``. Only sizes the work
+  split (``num_samples / capacity`` is taken as the typical chain length).
+- **parameters** (``ImuParameters``) — ``gravity`` (3 floats, default
+  ``[0, 0, -9.80665]``), ``gyro_noise_density``, ``accel_noise_density``,
+  ``integration_noise_density``, ``gyro_bias_random_walk``,
+  ``accel_bias_random_walk`` (continuous-time, all positive; defaults: EuRoC
+  ADIS16448) and ``body_from_imu`` (16 floats, row-major rig_from_imu,
+  default identity).
+- **capacity** (``int``) — keyframe pairs the buffers hold; 0 are active until
+  ``set_num_active_factors``.
+
+Arrays of another dtype raise ``TypeError``; raw integer pointers are accepted
+unchecked.
+
+**State layout (per factor, in order):** ``X_a`` (``SE3StateBatch``,
+rig_from_world, the pose state of the reprojection and PnP factors), ``v_a``
+(``VectorStateBatch3``, world velocity of the IMU), ``b_a``
+(``VectorStateBatch6``, ``[b_g; b_a]``), ``X_b``, ``v_b``, ``b_b``.
+``state_sizes()`` returns ``[6, 3, 6, 6, 3, 6]``.
+
+**Residual (15):** the whitened defect of keyframe ``b`` against the
+prediction (9), then the bias random walk (6).
+
+**C++ reference:** :ref:`cpp-imu-factor-batch`.
+
 .. _py-icp-factors:
 
 ``pycunls.PointToPointFactorBatch``
@@ -1954,6 +2001,64 @@ observations). Optional ``poses_camera_from_rig`` uses the same composition as
   :param ``capacity``: [in] Number of PnP correspondences the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :param ``z_threshold``: [in] Minimum valid camera-frame depth.
   :returns: Constructor has no return value.
+
+.. _cpp-imu-factor-batch:
+
+ImuFactorBatch
+--------------
+
+Header: :code:`cunls/factor/imu_factor_batch.h`
+
+IMU factor between two keyframes, with the raw samples between them
+marginalized inside the factor. Every evaluation integrates the Euler chain
+from keyframe :math:`a` at the current bias, propagates the covariance
+:math:`\Sigma` of the prediction, and returns the exact Schur complement of the
+chain onto the keyframe states. Theory, conventions and an example:
+:doc:`../imu`.
+
+.. math::
+   r_{0:9} = L^{-1} \begin{bmatrix} \mathrm{Log}(\hat R^\top R_b) \\ v_b - \hat v \\ p_b - \hat p \end{bmatrix},
+   \quad \Sigma = L L^\top, \qquad
+   r_{9:15} = \frac{b_b - b_a}{\sigma_b \sqrt{T}}
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 14 22 15 18
+
+   * - Residual
+     - Residual dim
+     - Jacobian
+     - Jacobian dims
+     - Manifold
+   * - Whitened chain defect + bias random walk
+     - 15
+     - Analytic
+     - :math:`15 \times 30`
+     - SE(3), :math:`\mathbb{R}^3`, :math:`\mathbb{R}^6` (twice)
+
+**States (per factor, in order):** :math:`X_a` (``SE3StateBatch``,
+rig_from_world), :math:`v_a` (``VectorStateBatch<3>``, world velocity of the
+IMU), :math:`b_a = [b_g; b_a]` (``VectorStateBatch<6>``), :math:`X_b`,
+:math:`v_b`, :math:`b_b`. The IMU's pose in the world is
+:math:`X^{-1}\,T_{bi}` with :math:`T_{bi}` = ``ImuParameters::body_from_imu``.
+
+.. cpp:struct:: ImuParameters
+
+   Sensor model: ``Vector<3> gravity`` (default :math:`(0, 0, -9.80665)`),
+   ``gyro_noise_density`` [rad/s/√Hz], ``accel_noise_density`` [m/s²/√Hz],
+   ``integration_noise_density`` [m/√s], ``gyro_bias_random_walk``
+   [rad/s²/√Hz], ``accel_bias_random_walk`` [m/s³/√Hz] (continuous-time, all
+   positive; defaults: EuRoC ADIS16448), ``SE3Transform body_from_imu``
+   (rig_from_imu, default identity).
+
+.. cpp:function:: ImuFactorBatch(const float* imu_samples, const int* sample_offsets, size_t num_samples, const ImuParameters& parameters, size_t capacity)
+
+  :param ``imu_samples``: [in] Device array of 7 floats per sample (gyroscope, specific force, step duration), all factors back to back.
+  :param ``sample_offsets``: [in] Device array of ``capacity + 1`` CSR offsets; factor ``f`` uses samples ``[offsets[f], offsets[f + 1])``.
+  :param ``num_samples``: [in] Samples the buffer holds; sizes the work split only.
+  :param ``parameters``: [in] Gravity, noise densities and extrinsic (copied).
+  :param ``capacity``: [in] Keyframe pairs the buffers hold. 0 are active until ``SetNumActiveFactors``.
+  :throws ``std::invalid_argument``: A buffer is null or a noise density is not positive.
 
 .. _cpp-point-to-point-factor-batch:
 
