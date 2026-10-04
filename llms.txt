@@ -14,6 +14,9 @@ cuNLS organizes optimization into:
   robust estimation with gross outliers (free tangent dimension <= 64);
   guide: `docs/sphinx/ransac.rst`, examples: `examples/ransac_pnp`,
   `python/examples/ransac_pnp.py`.
+- `ImuFactorBatch` for visual-inertial estimation (raw IMU samples between
+  keyframes, marginalized inside the factor); guide: `docs/sphinx/imu.rst`,
+  example: `python/examples/imu_bundle_adjustment.py`.
 - Sparse backends (`BlockSparsePCG` default, plus `cuDSS` direct and
   dense LDLT/Cholesky/QR fallbacks) and robust losses.
 
