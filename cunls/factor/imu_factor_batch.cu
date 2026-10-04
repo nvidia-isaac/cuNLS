@@ -39,8 +39,9 @@ constexpr int kMaxGroupSize = 32;                // lanes per factor, at most a 
 // registers), and the fewest samples worth a lane of their own.
 constexpr int kTargetThreadsPerSM = 256;
 constexpr int kMinSamplesPerLane = 4;
-// Floor for variances (Σ's Cholesky pivots, the bias random walk σ_b² T): keeps
-// a numerically singular Σ or an empty / zero-duration chain finite, not NaN or inf.
+// Floor for variances (Σ's Cholesky pivots, the bias random walk σ_b² T) of
+// valid chains: keeps a numerically singular Σ finite instead of NaN or inf.
+// Chains without duration are skipped instead (zero rows), see ImuKernel.
 constexpr float kMinVariance = 1e-36f;
 
 /**
@@ -584,6 +585,16 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
       const float wg = prm.gyro_bias_random_walk, wa = prm.accel_bias_random_walk;
       sigma_inv[i] = rsqrtf(fmaxf(wg * wg * Tsum, kMinVariance));
       sigma_inv[3 + i] = rsqrtf(fmaxf(wa * wa * Tsum, kMinVariance));
+    }
+    // A chain without duration (no samples: offsets[f] == offsets[f + 1], or
+    // only Δt <= 0) has zero covariance and carries no information: skip it
+    // with all-zero rows (a zero whitening) rather than whitening by the floor,
+    // which would give it weights near 1e18 and let it dominate the solve.
+    if (!(Tsum > 0.f)) {
+#pragma unroll
+      for (int i = 0; i < 45; ++i) Li[i] = 0.f;
+#pragma unroll
+      for (int i = 0; i < 6; ++i) sigma_inv[i] = 0.f;
     }
 #pragma unroll
     for (int i = 0; i < 9; ++i) {

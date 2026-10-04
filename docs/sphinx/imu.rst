@@ -605,9 +605,12 @@ example:
 When this happens, loosen the noise densities or down-weight the IMU factors.
 This trades some statistical efficiency for convergence.
 
-**Invalid input.** A factor without samples, or of zero duration, is invalid.
-It still evaluates to finite values (the variances are floored), so it cannot
-put NaNs into the solve.
+**Empty chains.** A factor without samples (``offsets[f] == offsets[f + 1]``),
+or whose samples have no positive duration, has zero covariance and carries no
+information. It evaluates to all-zero residual and Jacobian rows, so it adds
+nothing to the solve. States constrained only by such a factor (for example the
+velocity of the next keyframe) are then unobserved; give each pair at least
+one sample.
 
 ===============================================================================
 Limits

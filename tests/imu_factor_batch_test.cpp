@@ -746,25 +746,36 @@ TEST(ImuFactorBatch, NoiselessChainHasZeroResidual) {
       EXPECT_NEAR(res[t * 15 + i], 0.f, 0.05f) << "N = " << samples[t].size() << " row " << i;
 }
 
-TEST(ImuFactorBatch, EmptyChainStaysFinite) {
+TEST(ImuFactorBatch, ChainWithoutDurationIsSkipped) {
   // A factor without samples (offsets[f] == offsets[f + 1]) or of zero
-  // duration is invalid input, but must not put inf / NaN into the solve.
+  // duration has zero covariance and no information: its rows are all zero,
+  // not whitened by the variance floor (which would weigh them by ~1e18). A
+  // valid chain in the same batch is whitened as usual.
   const ImuParameters params = TestParameters();
   const Model m = ToModel(params);
   std::mt19937 rng(29);
   Samples zero_dt = Rounded(RandomSamples(rng, 3));
   for (Sample &s : zero_dt) s.dt = 0.0;
-  const std::vector<Samples> samples = {Samples{}, zero_dt};
+  const Samples valid = Rounded(RandomSamples(rng, 20));
+  const std::vector<Samples> samples = {Samples{}, zero_dt, valid};
   std::vector<std::vector<Slot>> items;
   for (const Samples &s : samples) items.push_back(RandomItem(rng, m, s, 1e-2));
   DeviceSamples d(samples);
-  dvector<float> d_samples(std::vector<float>(7, 0.f));  // non-null buffer for the empty batch
-  ImuFactorBatch factor(d.count > 0 ? d.samples.data() : d_samples.data(), d.offsets.data(),
-                        d.count, params, samples.size());
+  ImuFactorBatch factor(d.samples.data(), d.offsets.data(), d.count, params, samples.size());
   std::vector<float> res, jac;
   EvaluateItems(factor, items, &res, &jac);
-  for (float v : res) EXPECT_TRUE(std::isfinite(v));
-  for (float v : jac) EXPECT_TRUE(std::isfinite(v));
+  for (int t = 0; t < 2; ++t) {
+    for (int i = 0; i < 15; ++i) EXPECT_EQ(res[t * 15 + i], 0.f) << "item " << t << " row " << i;
+    for (int i = 0; i < 450; ++i) EXPECT_EQ(jac[t * 450 + i], 0.f) << "item " << t;
+  }
+  const Whitening w = BaseWhitening(m, valid, SlotValues(items[2]));
+  const Vec r = Reference(m, valid, w, SlotValues(items[2]));
+  double r_max = 0;
+  for (int i = 0; i < 15; ++i) {
+    EXPECT_NEAR(res[2 * 15 + i], r[i], 5e-4 * (1 + std::fabs(r[i]))) << "valid chain, row " << i;
+    r_max = std::max(r_max, std::fabs(r[i]));
+  }
+  EXPECT_GT(r_max, 0.0);
 }
 
 TEST(ImuFactorBatch, LevenbergMarquardtRecoversKeyframes) {

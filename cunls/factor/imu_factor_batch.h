@@ -112,7 +112,8 @@ class ImuFactorBatch : public SizedFactorBatch<15, 6, 3, 6, 6, 3, 6> {
    * @param sample_offsets Device array of capacity + 1 offsets (CSR row
    *        pointers): factor f uses samples [offsets[f], offsets[f + 1]); at
    *        least one, with positive Δt, the first starting at keyframe a and
-   *        the last ending at keyframe b.
+   *        the last ending at keyframe b. A factor without samples or of zero
+   *        duration carries no information and evaluates to all-zero rows.
    * @param num_samples Number of samples imu_samples holds. Only sizes the
    *        work split: num_samples / capacity is taken as the typical chain
    *        length, and short chains in small batches are split over several

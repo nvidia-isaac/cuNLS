@@ -532,7 +532,8 @@ and the intermediate states eliminated inside the factor at every evaluation
   gyroscope [rad/s], specific force [m/s²] (IMU frame) and the step duration
   [s] of every sample, all factors back to back.
 - **sample_offsets** (``DevicePointer``, int32) — ``capacity + 1`` CSR offsets:
-  factor ``f`` uses samples ``[offsets[f], offsets[f + 1])``, at least one.
+  factor ``f`` uses samples ``[offsets[f], offsets[f + 1])``, at least one (a
+  factor without samples evaluates to zero rows).
 - **num_samples** (``int``) — samples in ``imu_samples``. Only sizes the work
   split (``num_samples / capacity`` is taken as the typical chain length).
 - **parameters** (``ImuParameters``) — ``gravity`` (3 floats, default

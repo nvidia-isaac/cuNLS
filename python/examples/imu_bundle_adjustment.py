@@ -109,6 +109,11 @@ def main():
     parser.add_argument("--keyframes", type=int, default=10)
     parser.add_argument("--samples-per-keyframe", type=int, default=40)
     args = parser.parse_args()
+    # Every IMU factor joins two keyframes and needs a nonempty sample range.
+    if args.keyframes < 2:
+        parser.error("--keyframes must be at least 2")
+    if args.samples_per_keyframe < 1:
+        parser.error("--samples-per-keyframe must be at least 1")
     K, N = args.keyframes, args.samples_per_keyframe
     rng = np.random.default_rng(0)
 
