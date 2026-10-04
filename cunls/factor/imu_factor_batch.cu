@@ -470,42 +470,48 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
 
   // --- Leader: world frame, defect, Σ = L Lᵀ, residual ---
   float res[kRows] = {}, Li[45] = {};
-  float Ra[9] = {}, Rb[9] = {}, R0[9] = {}, Rh[9] = {}, Tsum = 0.f, sigma_inv[6] = {};
+  // States are rig_from_world X = (R_x, t_x), as in ReprojectionFactorBatch / PnPFactorBatch.
+  // The IMU in the world: R_imu = R_xᵀ R_bi, p_imu = R_xᵀ (t_bi - t_x).
+  float Xa[9] = {}, Xb[9] = {}, R0[9] = {}, Rh[9] = {}, pa[3] = {}, pb[3] = {}, Tsum = 0.f,
+        sigma_inv[6] = {};
   if (leader) {
     const float *Ta = s[0], *Tb = s[3];
+    float ta[3], tb[3];
 #pragma unroll
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 3; ++i) {
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        Ra[i * 3 + j] = __ldg(Ta + i * 4 + j);
-        Rb[i * 3 + j] = __ldg(Tb + i * 4 + j);
+        Xa[i * 3 + j] = __ldg(Ta + i * 4 + j);
+        Xb[i * 3 + j] = __ldg(Tb + i * 4 + j);
       }
-    Mul(Ra, prm.R_bi, R0);  // IMU rotation at keyframe a
-    Mul(R0, sum.R, Rh);     // R̂
+      ta[i] = prm.t_bi[i] - __ldg(Ta + i * 4 + 3);
+      tb[i] = prm.t_bi[i] - __ldg(Tb + i * 4 + 3);
+    }
+#pragma unroll
+    for (int i = 0; i < 3; ++i) {
+      pa[i] = Xa[i] * ta[0] + Xa[3 + i] * ta[1] + Xa[6 + i] * ta[2];
+      pb[i] = Xb[i] * tb[0] + Xb[3 + i] * tb[1] + Xb[6 + i] * tb[2];
+    }
+    MulAt(Xa, prm.R_bi, R0);  // IMU rotation at keyframe a
+    Mul(R0, sum.R, Rh);       // R̂
     Tsum = sum.T;
     float e[9];
     {
       float RbI[9], Rt[9];
-      Mul(Rb, prm.R_bi, RbI);
+      MulAt(Xb, prm.R_bi, RbI);
       MulAt(Rh, RbI, Rt);  // R̂ᵀ R_b,imu
       lie_device::LogSO3(Rt, 3, e);
     }
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
-      // p_imu = p + R t_bi; v̂ - v_a = g T + R0 Δv; p̂ - p_a - v_a T = ½ g T² + R0 Δp.
-      const float pa =
-          __ldg(Ta + i * 4 + 3) +
-          (Ra[i * 3] * prm.t_bi[0] + Ra[i * 3 + 1] * prm.t_bi[1] + Ra[i * 3 + 2] * prm.t_bi[2]);
-      const float pb =
-          __ldg(Tb + i * 4 + 3) +
-          (Rb[i * 3] * prm.t_bi[0] + Rb[i * 3 + 1] * prm.t_bi[1] + Rb[i * 3 + 2] * prm.t_bi[2]);
+      // v̂ - v_a = g T + R0 Δv; p̂ - p_a - v_a T = ½ g T² + R0 Δp.
       const float va = __ldg(s[1] + i), vb = __ldg(s[4] + i);
       const float dv = prm.g[i] * Tsum +
                        (R0[i * 3] * sum.v[0] + R0[i * 3 + 1] * sum.v[1] + R0[i * 3 + 2] * sum.v[2]);
       const float dp = 0.5f * prm.g[i] * Tsum * Tsum +
                        (R0[i * 3] * sum.p[0] + R0[i * 3 + 1] * sum.p[1] + R0[i * 3 + 2] * sum.p[2]);
       e[3 + i] = (vb - va) - dv;
-      e[6 + i] = (pb - pa) - va * Tsum - dp;
+      e[6 + i] = (pb[i] - pa[i]) - va * Tsum - dp;
     }
 
     // Σ in the world frame: C Q Cᵀ, C = diag(I, R0, R0); packed lower, then L and L⁻¹.
@@ -582,34 +588,31 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
   if constexpr (!kJacobian) return;
 
   // --- Jacobian rows L⁻¹ D⁻¹ ∂e/∂x (D = diag(J_l⁻¹(e_R), I, I)), one row at a time ---
-  // Sensitivities of the prediction in the world frame: φ_a column [Δ̂Rᵀ; -R0 [Δv]x; -R0 [Δp]x]
-  // (times R_biᵀ: state perturbations map to the IMU tangent by φ_imu = R_biᵀ φ,
-  // δp_imu = R ρ - R [t_bi]x φ), gyro bias [G_R; R0 G_Vg; R0 G_Pg], accel [0; R0 G_Va; R0 G_Pa].
-  // Unwhitened rows by block:
-  //   T_a: -[Ψ_φ - [0; 0; R_a [t]x] | [0; 0; R_a]]   v_a: -[0; I; T I]
-  //   b_a: -[G_g | G_a]   T_b: [[R̂ᵀ R_b, 0]; 0; [-R_b [t]x, R_b]]   v_b: [0; I; 0]
+  // Sensitivities of the prediction in the world frame: φ_a column Ψ_φ = [ΔRᵀ; -R0 [Δv]x;
+  // -R0 [Δp]x], gyro bias [G_R; R0 G_Vg; R0 G_Pg], accel [0; R0 G_Va; R0 G_Pa]. A state
+  // perturbation X Exp([φ; ρ]) (φ in the world frame) moves the IMU by φ_imu = -R_imuᵀ φ =
+  // -R_biᵀ R_x φ and δp_imu = [p_imu]x φ - ρ. Unwhitened rows by block:
+  //   X_a: [Ψ_φ R_biᵀ R_x,a - [0; 0; [p_a]x] | [0; 0; I]]   v_a: -[0; I; T I]
+  //   b_a: -[G_g | G_a]   X_b: [[-R̂ᵀ; 0; [p_b]x] | [0; 0; -I]]   v_b: [0; I; 0]
   float PR[9] = {}, PV[9] = {}, PP[9] = {}, GVg[9] = {}, GPg[9] = {}, GVa[9] = {}, GPa[9] = {};
-  float RaT[9] = {}, RbT[9] = {}, RhRb[9] = {};
+  float Sa[9] = {}, Sb[9] = {}, RhT[9] = {};
   if (leader) {
-    float X[9];
-    // PR = ΔRᵀ R_biᵀ.
-#pragma unroll
-    for (int i = 0; i < 3; ++i)
-#pragma unroll
-      for (int j = 0; j < 3; ++j)
-        PR[i * 3 + j] = sum.R[i] * prm.R_bi[j * 3] + sum.R[3 + i] * prm.R_bi[j * 3 + 1] +
-                        sum.R[6 + i] * prm.R_bi[j * 3 + 2];
+    float X[9], Y[9], BX[9];
+    MulAt(prm.R_bi, Xa, BX);  // R_biᵀ R_x,a
+    MulAt(sum.R, BX, PR);     // ΔRᵀ R_biᵀ R_x,a
     MulSkew(R0, sum.v, -1.f, X);
-    MulBt(X, prm.R_bi, PV);
-    MulSkew(R0, sum.p, -1.f, X);
-    MulBt(X, prm.R_bi, PP);
+    Mul(X, BX, PV);
+    MulSkew(R0, sum.p, -1.f, Y);
+    Mul(Y, BX, PP);
     Mul(R0, sum.GVg, GVg);
     Mul(R0, sum.GPg, GPg);
     Mul(R0, sum.GVa, GVa);
     Mul(R0, sum.GPa, GPa);
-    MulSkew(Ra, prm.t_bi, 1.f, RaT);
-    MulSkew(Rb, prm.t_bi, 1.f, RbT);
-    MulAt(Rh, Rb, RhRb);
+    const float I[9] = {1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f};
+    MulSkew(I, pa, 1.f, Sa);  // [p_a]x
+    MulSkew(I, pb, 1.f, Sb);
+#pragma unroll
+    for (int i = 0; i < 9; ++i) RhT[i] = -Rh[(i % 3) * 3 + i / 3];  // -R̂ᵀ
   }
   float row[kColumns];
 #pragma unroll
@@ -619,18 +622,16 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
 #pragma unroll
       for (int j = 0; j < 9; ++j) l[j] = j <= i ? Li[Tri(i, j)] : 0.f;
       const float *lR = l, *lV = l + 3, *lP = l + 6;
-      float x[3], y[3], z[3];
-      // T_a
+      float x[3], y[3], z[3], w[3];
+      // X_a
       RowMul(lR, PR, x);
       RowMul(lV, PV, y);
       RowMul(lP, PP, z);
-      float w[3], q[3];
-      RowMul(lP, RaT, w);
-      RowMul(lP, Ra, q);
+      RowMul(lP, Sa, w);
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        row[j] = -(x[j] + y[j] + z[j]) + w[j];
-        row[3 + j] = -q[j];
+        row[j] = x[j] + y[j] + z[j] - w[j];
+        row[3 + j] = lP[j];
         row[6 + j] = -(lV[j] + Tsum * lP[j]);  // v_a
       }
       // b_a: gyro, accel
@@ -643,14 +644,13 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
       RowMul(lP, GPa, y);
 #pragma unroll
       for (int j = 0; j < 3; ++j) row[12 + j] = -(x[j] + y[j]);
-      // T_b, v_b, b_b
-      RowMul(lR, RhRb, x);
-      RowMul(lP, RbT, y);
-      RowMul(lP, Rb, z);
+      // X_b, v_b, b_b
+      RowMul(lR, RhT, x);
+      RowMul(lP, Sb, y);
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        row[15 + j] = x[j] - y[j];
-        row[18 + j] = z[j];
+        row[15 + j] = x[j] + y[j];
+        row[18 + j] = -lP[j];
         row[21 + j] = lV[j];
         row[24 + j] = 0.f;
         row[27 + j] = 0.f;

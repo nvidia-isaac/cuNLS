@@ -59,9 +59,9 @@ def test_integrated_keyframes_have_zero_cost(stream):
     R, v, pos = so3_exp(np.array([0.1, -0.3, 0.2])), np.array([1.0, -0.5, 0.2]), np.zeros(3)
     poses, vels, samples = [], [], []
     for k in range(keyframes):
-        T = np.eye(4)
+        T = np.eye(4)  # world_from_imu; the states are rig_from_world (IMU = rig)
         T[:3, :3], T[:3, 3] = R, pos
-        poses.append(T)
+        poses.append(np.linalg.inv(T))
         vels.append(v.copy())
         if k + 1 == keyframes:
             break

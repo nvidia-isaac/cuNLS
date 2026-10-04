@@ -14,10 +14,12 @@ reintegration policy. Design: ``docs/design/imu_schur_complement_factor.md``.
 Model
 ===============================================================================
 
-States (in order): pose :math:`T_a` (``SE3StateBatch``, world from body),
+States (in order): pose :math:`X_a` (``SE3StateBatch``, rig from world: the
+same pose state as ``ReprojectionFactorBatch`` and ``PnPFactorBatch``),
 velocity :math:`v_a` (``VectorStateBatch3``, world-frame velocity of the IMU),
-bias :math:`b_a = [b_g; b_a]` (``VectorStateBatch6``), then :math:`T_b, v_b,
-b_b`. The IMU pose is :math:`T\,T_{bi}` with the extrinsic ``body_from_imu``.
+bias :math:`b_a = [b_g; b_a]` (``VectorStateBatch6``), then :math:`X_b, v_b,
+b_b`. The IMU's pose in the world is :math:`X^{-1} T_{bi}` with the extrinsic
+``body_from_imu`` (rig from IMU).
 
 Each sample :math:`(\tilde\omega_k, \tilde a_k, \Delta t_k)` (IMU frame, the
 step starting at the sample) is one Euler step with the bias of keyframe a:

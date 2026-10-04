@@ -47,7 +47,7 @@ manifold-generic, compile-time-deduced facade:
   per-factor time steps, analytic Jacobians; each kernel in its factor's own
   `.cu`, Lie operations from `cunls/math/lie_device.cuh`. Guide: `docs/sphinx/dynamics.rst`.
 - IMU: `imu_factor_batch.h` (`ImuFactorBatch`, `ImuParameters`): keyframe pair
-  (T_a, v_a, b_a, T_b, v_b, b_b), raw samples in a ragged CSR device array
+  (X_a, v_a, b_a, X_b, v_b, b_b; X = rig_from_world, as reprojection / PnP), raw samples in a ragged CSR device array
   (7 floats each, `sample_offsets`); the intermediate states of the Euler chain
   are marginalized inside the factor every evaluation (covariance-form Riccati
   sweep; chains split over 1-32 lanes as composable summaries, sized from

@@ -938,7 +938,8 @@ void bind_factor(nb::module_ &m) {
       m, "ImuParameters",
       "Sensor model of ImuFactorBatch. Noise densities are continuous-time (defaults: the "
       "ADIS16448 of the EuRoC MAV dataset); gravity defaults to (0, 0, -9.80665), +Z up; "
-      "body_from_imu is the row-major 4x4 pose of the IMU in the body frame (identity).")
+      "body_from_imu is the row-major 4x4 pose of the IMU in the body (rig) frame, rig_from_imu "
+      "(identity).")
       .def(nb::init<>())
       .def_prop_rw(
           "gravity",
@@ -971,8 +972,9 @@ void bind_factor(nb::module_ &m) {
       m, "ImuFactorBatch",
       "IMU factor between two keyframes; the raw samples between them define a chain of Euler "
       "steps whose intermediate states are marginalized inside the factor (Schur complement, "
-      "recomputed every evaluation). States: T_a (SE3StateBatch), v_a (VectorStateBatch3, world "
-      "velocity of the IMU), b_a = [b_g; b_a] (VectorStateBatch6), T_b, v_b, b_b. Residual (15): "
+      "recomputed every evaluation). States: X_a (SE3StateBatch, rig_from_world as in "
+      "ReprojectionFactorBatch / PnPFactorBatch), v_a (VectorStateBatch3, world velocity of the "
+      "IMU), b_a = [b_g; b_a] (VectorStateBatch6), X_b, v_b, b_b. Residual (15): "
       "the whitened defect of keyframe b against the prediction (9) and the bias random walk "
       "(6). Analytic Jacobians.\n\n"
       "Parameters\n"

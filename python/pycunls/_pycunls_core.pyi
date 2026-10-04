@@ -1305,7 +1305,7 @@ class ImuParameters:
     def __init__(self) -> None: ...
 
 class ImuFactorBatch(FactorBatch):
-    """IMU factor between keyframes (T_a, v_a, b_a, T_b, v_b, b_b), samples marginalized inside."""
+    """IMU factor between keyframes (X_a, v_a, b_a, X_b, v_b, b_b), X = rig_from_world."""
 
     def __init__(
         self,

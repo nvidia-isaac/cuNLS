@@ -229,9 +229,9 @@ Vec PredictedCovariance(const Model &m, const Samples &samples, Vec R, const dou
   return S;
 }
 
-/** IMU state at a keyframe from the body pose slot and the velocity slot. */
-NavState ImuState(const Model &m, const Vec &T_body, const Vec &v) {
-  const Vec T = Mul4(T_body, m.body_from_imu);
+/** IMU state at a keyframe from the pose slot (body_from_world) and the velocity slot. */
+NavState ImuState(const Model &m, const Vec &X, const Vec &v) {
+  const Vec T = Mul4(Inv4(X), m.body_from_imu);  // world_from_imu
   return {Rot(T), {v[0], v[1], v[2]}, {T[3], T[7], T[11]}};
 }
 
@@ -326,22 +326,22 @@ std::vector<Slot> RandomItem(std::mt19937 &rng, const Model &m, const Samples &s
   std::normal_distribution<double> normal(0.0, 1.0);
   double x[6];
   for (double &c : x) c = normal(rng);
-  const Vec Ta = Exp6(x);
+  const Vec Xa = Exp6(x);  // body_from_world
   const Vec va = {normal(rng), normal(rng), normal(rng)};
   Vec ba(6);
   for (int i = 0; i < 6; ++i) ba[i] = (i < 3 ? 0.02 : 0.2) * normal(rng);
   // Round the keyframe a states to float first: the prediction must start from them.
-  const Vec Ta_f = RoundToFloat(Ta), va_f = RoundToFloat(va), ba_f = RoundToFloat(ba);
-  const NavState pred = Integrate(m, samples, ImuState(m, Ta_f, va_f), ba_f.data());
+  const Vec Xa_f = RoundToFloat(Xa), va_f = RoundToFloat(va), ba_f = RoundToFloat(ba);
+  const NavState pred = Integrate(m, samples, ImuState(m, Xa_f, va_f), ba_f.data());
   double d[6];
   for (int i = 0; i < 6; ++i) d[i] = noise * normal(rng);
   const Vec Tb_imu = Mul4(Pose(pred.R, pred.p), Exp6(d));
-  const Vec Tb = Mul4(Tb_imu, Inv4(m.body_from_imu));
+  const Vec Xb = Mul4(m.body_from_imu, Inv4(Tb_imu));  // body_from_world
   Vec vb(3), bb(6);
   for (int i = 0; i < 3; ++i) vb[i] = pred.v[i] + noise * normal(rng);
   for (int i = 0; i < 6; ++i) bb[i] = ba_f[i] + 0.01 * normal(rng);
-  return {{SlotKind::kSE3, ToFloat(Ta_f)},    {SlotKind::kVector, ToFloat(va_f)},
-          {SlotKind::kVector, ToFloat(ba_f)}, {SlotKind::kSE3, ToFloat(Tb)},
+  return {{SlotKind::kSE3, ToFloat(Xa_f)},    {SlotKind::kVector, ToFloat(va_f)},
+          {SlotKind::kVector, ToFloat(ba_f)}, {SlotKind::kSE3, ToFloat(Xb)},
           {SlotKind::kVector, ToFloat(vb)},   {SlotKind::kVector, ToFloat(bb)}};
 }
 
@@ -681,13 +681,22 @@ TEST(ImuFactorBatch, LanesPerFactorAgree) {
         res_err = std::max(
             res_err, std::fabs(res[static_cast<size_t>(f) * 15 + i] - r0) / (1 + std::fabs(r0)));
       }
-      for (int i = 0; i < 450; ++i) {
-        const double j0 = jac0[t * 450 + i];
-        jac_err = std::max(
-            jac_err, std::fabs(jac[static_cast<size_t>(f) * 450 + i] - j0) / (1 + std::fabs(j0)));
+      // Relative to the row's largest entry: with poses rotated about the
+      // world origin, small entries are differences of large lever-arm terms
+      // and carry the round-off of the whole row.
+      for (int r = 0; r < 15; ++r) {
+        double row_max = 0;
+        for (int c = 0; c < 30; ++c)
+          row_max = std::max(row_max, std::fabs(double(jac0[t * 450 + r * 30 + c])));
+        for (int c = 0; c < 30; ++c) {
+          const double d = std::fabs(jac[static_cast<size_t>(f) * 450 + r * 30 + c] -
+                                     jac0[t * 450 + r * 30 + c]);
+          jac_err = std::max(jac_err, d / (1 + row_max));
+        }
       }
     }
-    EXPECT_LT(res_err, 5e-4) << c.copies << " factors, hint " << c.hint;
+    // 1000-sample chains summed in different orders.
+    EXPECT_LT(res_err, 1e-3) << c.copies << " factors, hint " << c.hint;
     EXPECT_LT(jac_err, 5e-4) << c.copies << " factors, hint " << c.hint;
   }
 }
@@ -738,7 +747,7 @@ TEST(ImuFactorBatch, LevenbergMarquardtRecoversKeyframes) {
   std::vector<Vec> poses, vels;
   NavState x{ExpSO3(xi), {1.0, -0.5, 0.2}, {0.3, 0.1, -0.2}};
   for (int k = 0; k < kKeyframes; ++k) {
-    poses.push_back(Mul4(Pose(x.R, x.p), Inv4(Tbi)));
+    poses.push_back(Mul4(Tbi, Inv4(Pose(x.R, x.p))));  // body_from_world
     vels.push_back({x.v[0], x.v[1], x.v[2]});
     if (k + 1 < kKeyframes) {
       samples.push_back(Rounded(RandomSamples(rng, kSamples)));
@@ -825,10 +834,9 @@ int EnvInt(const char *name, int fallback) {
 /**
  * VIO-shaped problem for profiling under nsys: K keyframes joined by IMU
  * factors (N samples each), 10 K landmarks each seen by up to 7 nearby
- * keyframes (reprojection factors), keyframe 0 fixed. Truth is consistent
- * for both factor types (the pose state serves as world_from_body for the
- * IMU and as camera_from_world for the reprojections), the initial values
- * are perturbed. Sizes: CUNLS_IMU_PROFILE_KEYFRAMES (101),
+ * keyframes (reprojection factors), keyframe 0 fixed. Both factor types
+ * read the same rig_from_world pose states (camera = rig = IMU); truth is
+ * consistent, the initial values are perturbed. Sizes: CUNLS_IMU_PROFILE_KEYFRAMES (101),
  * CUNLS_IMU_PROFILE_SAMPLES (200), CUNLS_IMU_PROFILE_LANDMARKS (10 K);
  * CUNLS_IMU_PROFILE_SOLVER=cudss selects
  * cuDSS instead of the default PCG. Run with --gtest_also_run_disabled_tests.
@@ -857,7 +865,7 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
   NavState x{ExpSO3(std::vector<double>{0.1, 0.2, -0.1}.data()), {1.0, 0.0, 0.0}, {0, 0, 0}};
   Sample cur{{0, 0, 0}, {0, 0, 9.8}, 0.005};
   for (int k = 0; k < K; ++k) {
-    poses.push_back(Pose(x.R, x.p));
+    poses.push_back(Inv4(Pose(x.R, x.p)));  // rig_from_world
     vels.push_back({x.v[0], x.v[1], x.v[2]});
     if (k + 1 == K) break;
     Samples ss(N);
@@ -899,8 +907,8 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
   std::vector<float> h_poses, h_vels, h_biases(6 * K, 0.f);
   for (int k = 0; k < K; ++k) {
     double d[6];
-    // Translation only: the state is also camera_from_world, where a rotation
-    // about the world origin moves distant points by meters.
+    // Translation only: a rotation of rig_from_world turns the world about
+    // its origin, which moves distant points by meters.
     for (int i = 0; i < 6; ++i) d[i] = (k == 0 || i < 3 ? 0.0 : 0.01) * normal(rng);
     const auto q = ToFloat(Mul4(poses[k], Exp6(d)));
     h_poses.insert(h_poses.end(), q.begin(), q.end());

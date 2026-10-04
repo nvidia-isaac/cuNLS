@@ -48,8 +48,8 @@ struct ImuParameters {
   /// (about 1e-2 / 1e-1) if it does.
   float gyro_bias_random_walk = 1.9393e-5f;
   float accel_bias_random_walk = 3.0e-3f;
-  /// Pose of the IMU in the body frame (row-major 4x4 SE(3)); identity when
-  /// the IMU is the body frame.
+  /// Pose of the IMU in the body (rig) frame, rig_from_imu (row-major 4x4
+  /// SE(3)); identity when the IMU is the body frame.
   float body_from_imu[16] = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
                              0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f};
 };
@@ -59,10 +59,12 @@ struct ImuParameters {
  * marginalized inside the factor (Schur complement, recomputed every
  * evaluation; no preintegration cache, no reference bias).
  *
- * States (in order): pose T_a (SE3StateBatch, world_from_body), velocity v_a
- * (VectorStateBatch<3>), bias b_a = [b_g; b_a] (VectorStateBatch<6>), and
- * T_b, v_b, b_b at the next keyframe. v is the world-frame velocity of the
- * IMU (the body velocity when the IMU sits at the body origin).
+ * States (in order): pose X_a (SE3StateBatch, body_from_world: the same rig
+ * pose as ReprojectionFactorBatch and PnPFactorBatch read, so the factors can
+ * share it), velocity v_a (VectorStateBatch<3>), bias b_a = [b_g; b_a]
+ * (VectorStateBatch<6>), and X_b, v_b, b_b at the next keyframe. v is the
+ * world-frame velocity of the IMU (the body velocity when the IMU sits at the
+ * body origin). The IMU's pose in the world is X⁻¹ body_from_imu.
  *
  * The N samples (ω̃_k, ã_k, Δt_k) between the keyframes define a chain of
  * Euler steps between N - 1 intermediate states x_k = (R_k, v_k, p_k) of the
