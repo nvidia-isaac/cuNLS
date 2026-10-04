@@ -116,7 +116,8 @@ struct AugmentedLagrangianMinimizerOptions {
    * work of a call as a CUDA graph. The first such call runs eagerly, the
    * second is captured, later calls launch the graph (removing the kernel
    * launch overhead; the one status read-back stays). The graph is dropped
-   * when the options or the constraint batches change; if the capture fails
+   * when the options, the constraint batches or the bound arrays of the state
+   * batches (VectorStateBatch::SetBounds) change; if the capture fails
    * (e.g. a factor batch synchronizes or uses other streams), the calls run
    * eagerly. Default: false
    */
@@ -232,6 +233,9 @@ class AugmentedLagrangianMinimizer {
   void ReadStatus(cudaStream_t stream, AugmentedLagrangianMinimizerSummary &summary);
   void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) const;
 
+  /** @brief Bound array addresses of every state batch (the graph bakes them in). */
+  static std::vector<const float *> BoundsSignature(const Problem &problem);
+
   /** @brief Drops the captured graph. */
   void ResetGraph();
 
@@ -253,6 +257,7 @@ class AugmentedLagrangianMinimizer {
   bool graph_warm_ = false;           ///< An eligible call ran eagerly: the next one is captured.
   bool graph_failed_ = false;         ///< Capture failed: run eagerly until the options change.
   AugmentedLagrangianMinimizerSummary graph_summary_;  ///< Host part of the captured call.
+  std::vector<const float *> graph_bounds_;            ///< BoundsSignature at the capture.
   bool has_constraints_ = true;  ///< The last call had constraint batches (a status to read).
 
   dvector<float> penalty_;         ///< [constraint * P + p]

@@ -443,6 +443,20 @@ TEST_P(AugmentedLagrangianMinimizerTest, RealTimeBudget) {
   }
 }
 
+TEST(AugmentedLagrangianMinimizerOptions, RejectsInvalidOptions) {
+  auto inner = MakeMinimizer(Kind::kGaussNewton);
+  AugmentedLagrangianMinimizerOptions options;
+  options.max_outer_iterations = 0;
+  EXPECT_THROW(AugmentedLagrangianMinimizer(*inner, options), std::invalid_argument);
+  options = AugmentedLagrangianMinimizerOptions();
+  options.inner_iterations = 0;
+  EXPECT_THROW(AugmentedLagrangianMinimizer(*inner, options), std::invalid_argument);
+  AugmentedLagrangianMinimizer solver(*inner);
+  options = AugmentedLagrangianMinimizerOptions();
+  options.max_outer_iterations = 0;
+  EXPECT_THROW(solver.SetOptions(options), std::invalid_argument);
+}
+
 INSTANTIATE_TEST_SUITE_P(Minimizers, AugmentedLagrangianMinimizerTest,
                          ::testing::Values(Kind::kGaussNewton, Kind::kLevenbergMarquardt));
 

@@ -42,8 +42,8 @@ namespace cunls {
  * Analytic Jacobians. The model holds at moderate lateral acceleration (no
  * tire slip). Use as a soft factor or wrapped in
  * ConstraintFactorBatch(&factor, ConstraintKind::kEquality). For roads with
- * slopes and ramps, an SE(3) variant (same body twist) is the planned
- * SE3KinematicBicycleFactorBatch.
+ * slopes and ramps, SE3KinematicBicycleFactorBatch is the SE(3) variant (same
+ * body twist).
  */
 class SE2KinematicBicycleFactorBatch : public SizedFactorBatch<5, 3, 2, 2, 3, 2> {
  public:

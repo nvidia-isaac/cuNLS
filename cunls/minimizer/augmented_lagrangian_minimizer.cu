@@ -28,6 +28,7 @@
 #include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/problem_partition.h"
 #include "cunls/minimizer/residual_batch.h"
+#include "cunls/state/state_batch.h"
 
 namespace cunls {
 namespace {
@@ -174,11 +175,11 @@ AugmentedLagrangianMinimizer::AugmentedLagrangianMinimizer(
 void AugmentedLagrangianMinimizer::SetOptions(const AugmentedLagrangianMinimizerOptions &options) {
   if (!(options.initial_penalty > 0.f) || !(options.max_penalty >= options.initial_penalty) ||
       !(options.penalty_increase >= 1.f) || !(options.constraint_tolerance >= 0.f) ||
-      options.inner_iterations == 0) {
+      options.inner_iterations == 0 || options.max_outer_iterations == 0) {
     const std::string msg =
         "AugmentedLagrangianMinimizerOptions: need initial_penalty > 0, max_penalty >= "
-        "initial_penalty, "
-        "penalty_increase >= 1, constraint_tolerance >= 0 and inner_iterations > 0";
+        "initial_penalty, penalty_increase >= 1, constraint_tolerance >= 0, "
+        "inner_iterations > 0 and max_outer_iterations > 0";
     LogError(msg);
     throw std::invalid_argument(msg);
   }
@@ -248,6 +249,15 @@ std::vector<std::pair<const void *, size_t>> AugmentedLagrangianMinimizer::Const
   return signature;
 }
 
+std::vector<const float *> AugmentedLagrangianMinimizer::BoundsSignature(const Problem &problem) {
+  std::vector<const float *> signature;
+  for (const StateBatch *batch : problem.GetStateBatches()) {
+    signature.push_back(batch->LowerBounds());
+    signature.push_back(batch->UpperBounds());
+  }
+  return signature;
+}
+
 void AugmentedLagrangianMinimizer::ResetGraph() {
   if (graph_exec_ != nullptr) {
     cudaGraphExecDestroy(static_cast<cudaGraphExec_t>(graph_exec_));
@@ -294,6 +304,11 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     ResetGraph();
     return MinimizeEager(stream, problem, true);
   }
+  // The graph holds the bound arrays' addresses: bounds set, removed or moved
+  // to other buffers since the capture drop it (this call runs eagerly, the
+  // next one captures again).
+  std::vector<const float *> bounds = BoundsSignature(problem);
+  if (graph_exec_ != nullptr && bounds != graph_bounds_) ResetGraph();
   if (graph_exec_ != nullptr) {
     THROW_ON_CUDA_ERROR(cudaGraphLaunch(static_cast<cudaGraphExec_t>(graph_exec_), stream));
     AugmentedLagrangianMinimizerSummary summary = graph_summary_;
@@ -319,6 +334,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   if (captured && end == cudaSuccess && graph != nullptr &&
       cudaGraphInstantiate(&exec, graph, 0) == cudaSuccess) {
     graph_exec_ = exec;
+    graph_bounds_ = std::move(bounds);
   } else {
     if (captured) {
       LogWarning("AugmentedLagrangianMinimizer: CUDA graph capture failed ({}); running eagerly",

@@ -166,6 +166,39 @@ INSTANTIATE_TEST_SUITE_P(Minimizers, ProjectedBoundsTest,
                                                               Kind::kLevenbergMarquardt),
                                             ::testing::Values(1, 3)));
 
+// A problem that is already at zero cost exits before iterating; its states
+// are still projected onto their bounds (single problem and partitioned).
+TEST(ProjectedBounds, EarlyExitWritesProjectedStates) {
+  for (int chains : {1, 2}) {
+    // Targets outside the box: the priors are at zero cost at the start.
+    const std::vector<float> start = {3.f, -4.f, 0.5f, 2.f};
+    dvector<float> x(start), t(start), lo(std::vector<float>(4, -1.f)),
+        hi(std::vector<float>(4, 1.f));
+    VectorStateBatch<1> states(x.data(), 4);
+    states.SetNumActiveStates(4);
+    states.SetBounds(lo.data(), hi.data());
+    PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(t.data()), 4);
+    prior.SetNumActiveFactors(4);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    std::vector<float *> ptrs;
+    for (int i = 0; i < 4; ++i) ptrs.push_back(states.StateDevicePtr(i));
+    problem.AddFactorBatch(&prior, ptrs);
+    dvector<int> ids(std::vector<int>{0, 0, 1, 1});
+    if (chains > 1) problem.SetProblemPartition(chains, {ids.data()});
+    // Huge cost tolerance: every (sub)problem counts as converged at the start.
+    MinimizerOptions options;
+    options.cost_tolerance = 1e30f;
+    options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+    GaussNewtonMinimizer minimizer(options);
+    CudaStream stream;
+    minimizer.Minimize(stream.GetStream(), problem);
+    std::vector<float> result(4);
+    x.CopyToHost(result.data(), 4);
+    EXPECT_EQ(result, (std::vector<float>{1.f, -1.f, 0.5f, 1.f})) << chains << " subproblems";
+  }
+}
+
 TEST(ProjectedBounds, SetBoundsNeedsBothOrNeither) {
   dvector<float> x(std::vector<float>(2, 0.f)), lo(std::vector<float>(2, -1.f));
   VectorStateBatch<2> states(x.data(), 1);

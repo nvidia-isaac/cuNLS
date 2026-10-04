@@ -58,7 +58,7 @@ __global__ void __launch_bounds__(kBlockSize)
                                float track_width, float const *const *__restrict__ state_pointers,
                                float *__restrict__ residuals, float *__restrict__ jacobians,
                                int num_items, const int *__restrict__ factor_ids, int num_factors) {
-  constexpr int kStride = kJacobian ? kRows + kJacobianSize : kRows + 1;  // 61 or 5
+  constexpr int kStride = kJacobian ? kRows + kJacobianSize + 1 : kRows + 1;  // 61 or 5
   __shared__ float out[kBlockSize * kStride];
   const int first = blockIdx.x * kBlockSize;
   const int t = first + threadIdx.x;

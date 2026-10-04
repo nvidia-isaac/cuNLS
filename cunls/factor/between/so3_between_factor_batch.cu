@@ -20,7 +20,7 @@ constexpr size_t kTwistStride = 3;
 
 /**
  * @brief Fused kernel: collect L/R rotations from state pointers, compute
- *        R_error = Delta^T * (R_left^T * R_right) in one pass.
+ *        R_error = (R_left^T * R_right) * Delta^T in one pass.
  *
  * Replaces collect + TransposeSO3 + two cuBLAS GEMM calls.
  * Fully unrolled: two 3x3 multiplies use 54 FMAs with zero local memory.
@@ -199,7 +199,7 @@ bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
   poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
-  // Fused: collect L/R + compute R_error = Delta^T * (L^T * R) in one kernel
+  // Fused: collect L/R + compute R_error = (L^T * R) * Delta^T in one kernel
   collect_and_compute_so3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
       state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
       num_factors);

@@ -195,11 +195,30 @@ TEST(RealTimeGraph, ReplayMatchesEagerCalls) {
       ASSERT_NEAR(a[i], b[i], 5e-3f * (1.f + std::abs(a[i]))) << "call " << call << " entry " << i;
     }
   }
+  // New bound buffers (other addresses, tighter values): the graph holding the
+  // old addresses is dropped; the next call (8) runs eagerly, call 9 captures
+  // again, and the new bounds hold.
+  dvector<float> lower2(std::vector<float>(2 * Mpc::B * Mpc::N, -6.f));
+  dvector<float> upper2(std::vector<float>(2 * Mpc::B * Mpc::N, 6.f));
+  for (Mpc *m : {&eager, &graph}) m->control_states->SetBounds(lower2.data(), upper2.data());
+  for (int call = 8; call < 11; ++call) {
+    for (Mpc *m : {&eager, &graph}) {
+      m->Measure(call);
+      m->solver->Minimize(stream.GetStream(), m->problem);
+      EXPECT_EQ(m->solver->UsesCudaGraph(), m == &graph && call >= 9) << "call " << call;
+    }
+    const auto a = eager.States(), b = graph.States();
+    for (size_t i = 0; i < a.size(); ++i) {
+      ASSERT_NEAR(a[i], b[i], 5e-3f * (1.f + std::abs(a[i]))) << "call " << call << " entry " << i;
+    }
+    const size_t first_control = Mpc::B * (Mpc::N + 1) * 9;
+    for (size_t i = first_control; i < b.size(); ++i) EXPECT_LE(std::abs(b[i]), 6.f + 1e-5f);
+  }
   // The controls respect their bounds (projection) and the plans move forward.
   const auto s = graph.States();
   const size_t controls = Mpc::B * (Mpc::N + 1) * 9;
   for (size_t i = controls; i < s.size(); ++i) {
-    EXPECT_LE(std::abs(s[i]), 12.f + 1e-5f);
+    EXPECT_LE(std::abs(s[i]), 6.f + 1e-5f);
   }
 }
 

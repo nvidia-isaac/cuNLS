@@ -524,6 +524,24 @@ class Horizon:
 # ---------------------------------------------------------------------------
 
 
+class _StreamHandle:
+    """Exposes a raw cudaStream_t handle through the CUDA stream protocol."""
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def __cuda_stream__(self):
+        return (0, self.handle)
+
+
+def _cupy_stream(stream) -> cp.cuda.Stream:
+    """A CuPy view of a :class:`pycunls.CudaStream` (for events, not ownership)."""
+    handle = stream.get_stream()
+    if hasattr(cp.cuda.Stream, "from_external"):  # CuPy >= 14
+        return cp.cuda.Stream.from_external(_StreamHandle(handle))
+    return cp.cuda.ExternalStream(handle)
+
+
 def _device_view(ptr: int, n: int, owner) -> cp.ndarray:
     mem = cp.cuda.UnownedMemory(ptr, n * 4, owner)
     return cp.ndarray((n,), cp.float32, cp.cuda.MemoryPointer(mem, 0))
@@ -602,9 +620,18 @@ class Controller:
         self._started = True
 
     def step(self, stream, pose=None, **vectors) -> cp.ndarray:
-        """Shift, set the measured state, solve; returns the first controls ``[B, nu]``."""
+        """Shift, set the measured state, solve; returns the first controls ``[B, nu]``.
+
+        The shift and the state writes run on CuPy's current stream, the solve on
+        ``stream``; events order them (the solve after the writes, the returned
+        copy after the solve), also when the two streams differ.
+        """
+        current = cp.cuda.get_current_stream()
+        solver = _cupy_stream(stream)
         if self._started:
             self.shift()
         self.set_initial_state(pose, **vectors)
+        solver.wait_event(current.record())
         self.solve(stream)
+        current.wait_event(solver.record())
         return self.horizon.controls[:, 0].copy()

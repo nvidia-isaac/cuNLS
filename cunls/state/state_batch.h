@@ -192,6 +192,10 @@ class StateBatch {
   /** @brief Whether the batch has bounds (default: none). */
   virtual bool HasBounds() const { return false; }
 
+  /** @brief Device lower / upper bound arrays (nullptr without bounds). */
+  virtual const float *LowerBounds() const { return nullptr; }
+  virtual const float *UpperBounds() const { return nullptr; }
+
   /**
    * @brief Clamps the components of the N active states to the bounds where
    * `free[i] != 0` (N * T floats, same layout as x).

@@ -550,8 +550,13 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &pr
   summary.final_cost = summary.initial_cost;
   LogMessage("Initial cost = {}", summary.initial_cost);
 
-  // Early exit if already converged
+  // Early exit if already converged; the problem still gets the states
+  // projected onto their bounds.
   if (summary.initial_cost < options_.cost_tolerance) {
+    if (state_ops_.HasBounds()) {
+      Copy(stream, current_state_, problem);
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    }
     return summary;
   }
 
@@ -727,6 +732,12 @@ MinimizerSummary GaussNewtonMinimizer::MinimizeBatched(cudaStream_t stream, Prob
   summary.initial_cost = cost;
   summary.final_cost = cost;
   if (active == 0) {
+    // Nothing to iterate; the problem still gets the states projected onto
+    // their bounds (the read-back above already synchronized the stream).
+    if (state_ops_.HasBounds()) {
+      Copy(stream, current_state_, problem);
+      if (!fixed) THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    }
     return summary;
   }
 

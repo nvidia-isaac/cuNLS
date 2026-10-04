@@ -43,8 +43,8 @@ namespace cunls {
  *
  * Use as a soft factor (weighted) or as a hard constraint:
  * ConstraintFactorBatch(&factor, ConstraintKind::kEquality). For driving on
- * non-planar terrain, an SE(3) variant (same twist in the body frame) is the
- * planned SE3DifferentialDriveFactorBatch.
+ * non-planar terrain, SE3DifferentialDriveFactorBatch is the SE(3) variant
+ * (same twist in the body frame).
  */
 class SE2DifferentialDriveFactorBatch : public SizedFactorBatch<3, 3, 2, 3> {
  public:

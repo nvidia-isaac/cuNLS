@@ -131,6 +131,8 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
   }
 
   bool HasBounds() const override { return lower_ != nullptr; }
+  const float *LowerBounds() const override { return lower_; }
+  const float *UpperBounds() const override { return upper_; }
 
   void ProjectToBounds(float *x, const float *free, cudaStream_t stream) const override {
     if (lower_ == nullptr) return;

@@ -219,4 +219,3 @@ C++
    cunls::AugmentedLagrangianMinimizerOptions options;  // constraint_tolerance, ...
    cunls::AugmentedLagrangianMinimizer solver(inner, options);
    cunls::AugmentedLagrangianMinimizerSummary summary = solver.Minimize(stream, problem);
-
