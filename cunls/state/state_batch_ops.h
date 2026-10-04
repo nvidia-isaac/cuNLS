@@ -83,7 +83,8 @@ class StateBatchOps {
    *
    * Scatters the reduced delta vector into per-batch segments (zero-filling
    * entries that correspond to constant states), then dispatches the Plus
-   * operation on each state batch.
+   * operation on each state batch and projects the non-constant states of the
+   * bounded batches onto their bounds.
    *
    * @param stream           CUDA stream for asynchronous execution.
    * @param x_ptrs           Vector of device pointers to current state values,
@@ -95,6 +96,27 @@ class StateBatchOps {
    */
   void Plus(cudaStream_t stream, const std::vector<const float *> &x_ptrs,
             const DeviceVector<float> &delta, std::vector<float *> &x_plus_delta_ptrs);
+
+  /** @brief Whether any of the state batches has bounds (StateBatch::HasBounds). */
+  bool HasBounds() const;
+
+  /**
+   * @brief Projects the non-constant states of the bounded batches onto their
+   * bounds, in place (one pointer per state batch; Plus does it already).
+   */
+  void ProjectToBounds(cudaStream_t stream, const std::vector<float *> &x_ptrs);
+
+  /**
+   * @brief Free-component mask of a reduced vector: mask[i] = 0 where the
+   * component sits at a bound and the reduced `direction` points outward,
+   * 1 elsewhere (StateBatch::MaskActiveBounds).
+   *
+   * @param x_ptrs    Current state values, one pointer per state batch.
+   * @param direction Reduced vector (e.g. the negative gradient).
+   * @param mask      Output, resized to NumReducedStates().
+   */
+  void BoundMask(cudaStream_t stream, const std::vector<const float *> &x_ptrs,
+                 const DeviceVector<float> &direction, DeviceVector<float> &mask);
 
   /**
    * @brief Returns the number of reduced (non-constant) states.
@@ -137,6 +159,13 @@ class StateBatchOps {
   /** @brief Device buffer storing the full tangent-space updates for all
    * states. */
   DeviceVector<float> state_updates_;
+
+  /** @brief Full-size flags: 1 for the components of non-constant states. */
+  DeviceVector<float> free_;
+
+  /** @brief Full-size scratch of BoundMask. */
+  DeviceVector<float> bound_direction_;
+  DeviceVector<float> bound_mask_;
 
   /** @brief Number of scalar state components remaining after excluding
    * constant states. */

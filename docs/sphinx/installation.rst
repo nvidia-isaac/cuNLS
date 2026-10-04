@@ -128,7 +128,7 @@ Notes
 
   - Neither ``libcunls.so``/``libcunls.a`` nor the ``pycunls`` wheel bundle or
     depend on cuDSS at load time — every other solver (``DenseLDLT``,
-    ``DenseCholesky``, ``DenseQR``, ``BlockSparsePCG``) works with no cuDSS
+    ``DenseCholesky``, ``DenseQR``, ``BlockSparsePCG``, ``BlockTridiagonal``) works with no cuDSS
     installed at all.
   - To use the cuDSS solver, download a cuDSS release matching your CUDA
     major version from

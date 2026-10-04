@@ -33,6 +33,7 @@
 #include "cunls/minimizer/normal_equations.h"
 #include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/minimizer/problem_partition.h"
 #include "cunls/minimizer/sparse_matrix.h"
 #include "cunls/state/state_batch_ops.h"
 
@@ -199,6 +200,28 @@ struct MinimizerOptions {
   JacobianMode jacobian_mode = JacobianMode::kAnalytic;
 
   /**
+   * @brief Backtracking line search: when a step does not decrease the cost,
+   * it is halved along the same direction up to this many times, and the first
+   * shorter step that decreases the cost is taken. Any step that decreases the
+   * cost is then taken, also one the step-quality rule would reject
+   * (Levenberg-Marquardt keeps its damping: the step length is the line
+   * search's job). Useful when the cost has kinks or curvature the
+   * Gauss-Newton model does not see, such as the inequality rows and curved
+   * constraints of constraint batches. 0 disables it. Default: 0
+   */
+  size_t max_line_search_steps = 0;
+
+  /**
+   * @brief Bounded states (StateBatch::HasBounds): at most this many extra
+   * linear solves per iteration that also hold the free components the step
+   * would push through their bound (active-set refinement of projected
+   * Gauss-Newton). With MinimizeCallOptions::fixed_iterations exactly this
+   * many (there is no read-back to stop early), so real-time callers may set
+   * 0 or 1. Default: 3
+   */
+  size_t max_bound_refinements = 3;
+
+  /**
    * @brief Tuning for numeric-diff Jacobians. Ignored when `jacobian_mode`
    * (and every per-group override) is `kAnalytic`.
    */
@@ -208,6 +231,42 @@ struct MinimizerOptions {
 /**
  * @brief Gauss-Newton nonlinear least-squares optimizer.
  */
+/** @brief Per-call overrides of MinimizerOptions (GaussNewtonMinimizer::Minimize). */
+struct MinimizeCallOptions {
+  /** @brief Iteration cap of the call. */
+  size_t max_num_iterations = 50;
+  /** @brief Line-search steps of the call (see MinimizerOptions::max_line_search_steps). */
+  size_t max_line_search_steps = 0;
+  /**
+   * @brief Optional device array of Problem::NumProblems() ints: after the
+   * call, entry p is nonzero when subproblem p was still iterating at the
+   * iteration cap (not converged), 0 otherwise. Asynchronous on the stream.
+   */
+  int *problem_at_cap = nullptr;
+  /**
+   * @brief The problem's structure is unchanged since this minimizer's
+   * previous Minimize call on it: same batches, connectivity (also the
+   * contents of device index tables), active and constant counts, constant
+   * ids and subproblem partition; only state values, factor data and bounds
+   * may differ. The call then skips the structure setup (index expansion,
+   * Hessian pattern, symbolic analysis of the linear solver, partition maps).
+   * A cheap host-side check of the sizes falls back to the full setup when
+   * they differ; changes it cannot see (rewritten index tables or constant
+   * ids at the same sizes) must not be combined with this flag.
+   */
+  bool reuse_structure = false;
+  /**
+   * @brief Real-time mode: exactly `max_num_iterations` iterations, each with
+   * exactly `max_line_search_steps` line-search evaluations, and no host
+   * synchronization. Acceptance and convergence are decided per subproblem on
+   * the device (a converged or rejected subproblem keeps its states), also for
+   * a problem without a partition. The returned summary is not read back: the
+   * iteration count is the cap and the costs are NaN. Combined with
+   * reuse_structure, the call is a fixed sequence of device work.
+   */
+  bool fixed_iterations = false;
+};
+
 class GaussNewtonMinimizer {
  public:
   /**
@@ -259,6 +318,16 @@ class GaussNewtonMinimizer {
    */
   MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
+  /**
+   * @brief Minimize() with the iteration cap and line search of `call` instead
+   * of the options' values, for this call only (used by AugmentedLagrangianMinimizer
+   * for its short, warm-started inner solves).
+   */
+  MinimizerSummary Minimize(cudaStream_t stream, Problem &problem, const MinimizeCallOptions &call);
+
+  /** @brief The options the minimizer was constructed with. */
+  const MinimizerOptions &Options() const { return options_; }
+
  protected:
   /**
    * @brief Fused cost evaluation + convergence check with a single D2H + sync.
@@ -301,6 +370,9 @@ class GaussNewtonMinimizer {
    */
   virtual bool RejectStep(float step_quality);
 
+  /** @brief RejectStep's decision, without its side effects (damping updates). */
+  virtual bool WouldRejectStep(float step_quality) const;
+
   /**
    * @brief Initializes internal data structures for optimization.
    *
@@ -311,6 +383,10 @@ class GaussNewtonMinimizer {
    * @param problem The optimization problem to initialize for.
    */
   virtual void Initialize(cudaStream_t stream, Problem &problem);
+
+  /** @brief Per-call reset of iteration state (every Minimize, also when the structure is reused).
+   */
+  virtual void BeginCall() {}
 
   /**
    * @brief Builds the Gauss-Newton linear system.
@@ -359,6 +435,40 @@ class GaussNewtonMinimizer {
   void ComputeCostAsync(cudaStream_t stream, const Problem &problem,
                         const MinimizerState &minimizer_state, float *d_cost_out);
 
+  /**
+   * @brief Minimize for a problem with several subproblems
+   * (Problem::SetProblemPartition): per-subproblem step control on the device.
+   * Called by Minimize() after Initialize().
+   */
+  MinimizerSummary MinimizeBatched(cudaStream_t stream, Problem &problem);
+
+  /** @brief Batched mode: the step-control rules (Gauss-Newton here). */
+  virtual BatchedStepControlParams BatchedParams() const;
+
+  /** @brief Batched mode: the initial damping of every subproblem. */
+  virtual float BatchedInitialLambda() const { return 0.f; }
+
+  /**
+   * @brief Batched mode: accumulates per-subproblem predicted-reduction terms
+   * into partition_ (Levenberg-Marquardt); nothing for Gauss-Newton.
+   */
+  virtual void AccumulatePredictedReduction(cudaStream_t stream) {}
+
+  /// Iteration cap and line search of the running Minimize call.
+  MinimizeCallOptions call_;
+  /// Problem and size signature of the last structure setup (reuse_structure).
+  const Problem *structure_problem_ = nullptr;
+  std::vector<size_t> structure_signature_;
+  /// The linear solver's symbolic analysis has run for the current structure.
+  bool solver_ready_ = false;
+  /// partition_ has been built for the current structure (batched / fixed-iteration paths).
+  bool partition_ready_ = false;
+
+  /// Subproblem maps and step-control state; batched_ is true while
+  /// MinimizeBatched runs (BuildSystem overrides then damp per subproblem).
+  ProblemPartition partition_;
+  bool batched_ = false;
+
  private:
   /**
    * @brief Applies diagonal column scaling to the normal-equation system.
@@ -387,6 +497,26 @@ class GaussNewtonMinimizer {
    * dx.
    */
   void MapScaledLinearSolutionToTangentStep(cudaStream_t stream, dvector<float> &step);
+
+  /**
+   * @brief Projected Gauss-Newton for bounded state batches: removes the
+   * components held at a bound from the normal equations (see
+   * StateBatch::HasBounds). No-op without bounds.
+   */
+  void HoldActiveBounds(cudaStream_t stream, const MinimizerState &minimizer_state,
+                        dvector<float> &rhs);
+
+  /** @brief Projects the bounded batches of a minimizer state onto their bounds. */
+  void ProjectToBounds(cudaStream_t stream, MinimizerState &minimizer_state);
+
+  /**
+   * @brief Solves the normal equations into step_ (with the active-set
+   * refinement of projected Gauss-Newton when there are bounds).
+   */
+  void SolveStep(cudaStream_t stream);
+
+  /** @brief Host-side size signature of the problem's structure (reuse_structure). */
+  std::vector<size_t> StructureSignature(const Problem &problem) const;
 
   /** @brief Sizes the per-factor Jacobian buffer for the problem. */
   void ResizeFactorJacobians();
@@ -431,6 +561,11 @@ class GaussNewtonMinimizer {
 
   /// Diagonal S when column_scaling is enabled; size = number of tangent DOFs.
   dvector<float> column_scale_;
+  /** @brief Free-component mask of HoldActiveBounds. */
+  dvector<float> bound_mask_;
+  dvector<float> bound_step_mask_;
+  dvector<float> bound_extra_;
+  dvector<int> bound_count_;
 
   dvector<float> step_;  ///< State update step vector.
 

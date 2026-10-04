@@ -176,6 +176,41 @@ class StateBatch {
       throw std::logic_error("SetNumActiveStates: this state batch cannot be resized");
     }
   }
+
+  /**
+   * @name Box bounds (projected Gauss-Newton)
+   *
+   * A batch with bounds keeps lower <= x <= upper per tangent component (only
+   * Euclidean batches, where the tangent and ambient spaces coincide, have
+   * them: VectorStateBatch::SetBounds). The Gauss-Newton and
+   * Levenberg-Marquardt minimizers project every update onto the box and hold
+   * the components at a bound that the step would push outward (they leave
+   * the linear solve). Constant states are not projected.
+   * @{
+   */
+
+  /** @brief Whether the batch has bounds (default: none). */
+  virtual bool HasBounds() const { return false; }
+
+  /** @brief Device lower / upper bound arrays (nullptr without bounds). */
+  virtual const float *LowerBounds() const { return nullptr; }
+  virtual const float *UpperBounds() const { return nullptr; }
+
+  /**
+   * @brief Clamps the components of the N active states to the bounds where
+   * `free[i] != 0` (N * T floats, same layout as x).
+   */
+  virtual void ProjectToBounds(float *x, const float *free, cudaStream_t stream) const {}
+
+  /**
+   * @brief Sets mask[i] = 0 for each component i of the N active states that
+   * sits at a bound with direction[i] pointing outward (at the lower bound
+   * with direction <= 0, at the upper with direction >= 0); leaves the other
+   * entries unchanged. All arrays N * T floats.
+   */
+  virtual void MaskActiveBounds(const float *x, const float *direction, float *mask,
+                                cudaStream_t stream) const {}
+  /** @} */
 };
 
 }  // namespace cunls

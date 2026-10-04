@@ -496,6 +496,30 @@ Creates an empty problem with no states or factors.
   and raises ``ValueError`` when no factor batch has active factors
   (``set_num_active_factors`` never called) or a count exceeds its capacity.
 
+- ``set_problem_partition(num_problems, state_problem_ids) -> None`` —
+  declares the problem a batch of independent subproblems (e.g. one PnP per
+  camera, one pose graph per training sample). ``state_problem_ids`` holds one
+  device ``int32`` array per state batch (in the order the batches were added):
+  state *s* of batch *b* belongs to subproblem ``state_problem_ids[b][s]``. Every
+  factor must connect states of one subproblem (checked at ``minimize``;
+  ``ValueError`` otherwise). Both minimizers then run their step control per
+  subproblem: each accepts or rejects its own steps, keeps its own
+  Levenberg-Marquardt damping and stops at its own convergence, exactly as if
+  solved alone, while the linear system is still solved for all of them at
+  once. Without a partition one shared decision covers the whole batch: a
+  subproblem whose step increases its cost is carried along by the others (or
+  holds them back). A subproblem that would stall alone stalls here too (raise
+  ``max_consecutive_rejected_steps`` to give hard ones more attempts).
+  ``num_problems <= 1`` clears the partition; ``num_problems`` reads it back.
+
+  The linear system stays one solve, so choose the linear solver with the
+  batch in mind: ``DenseCholesky`` runs without failure checks by default
+  (``disable_safety_checks``), and a factorization that breaks down on one
+  ill-conditioned subproblem's block corrupts the step of every subproblem;
+  ``DenseLDLT`` / ``DenseQR`` (pivoted) and ``cuDSS`` keep the blocks
+  independent. ``BlockSparsePCG`` stops on the residual of the whole batch, so
+  a subproblem with a large residual sets the accuracy the others get.
+
 .. _py-enums-label:
 
 --------------------------------------------------------------------------------
@@ -1055,6 +1079,21 @@ connectivity). Call before :cpp:func:`Minimize` to catch configuration errors.
   :returns: [out] ``true`` when graph inputs and connectivity are valid. Fails
     as well when no factor batch has active factors. Device tables are checked
     on the GPU (:cpp:func:`Validate`).
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+:code:`Problem::SetProblemPartition`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Purpose:** Declares the problem a batch of independent subproblems, so the
+minimizers accept, damp and stop each one on its own (on the device; one
+2-float read-back per iteration). See the Python
+``set_problem_partition`` above for the semantics.
+
+.. cpp:function:: void SetProblemPartition(size_t num_problems, const std::vector<const int *> &state_problem_ids)
+
+  :param ``num_problems``: [in] Number of subproblems; 0 or 1 clears the partition.
+  :param ``state_problem_ids``: [in] One device array per state batch (not owned,
+    read at every solve): the subproblem of each state.
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 :code:`Problem::SetStatePointers`

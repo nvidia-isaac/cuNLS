@@ -19,6 +19,8 @@
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+
 #include "sized_state_batch.h"
 
 namespace cunls {
@@ -35,6 +37,23 @@ namespace cunls {
  */
 void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta, size_t num_params,
                          int dim, cudaStream_t stream);
+
+/**
+ * @brief Clamps x to [lower, upper] element-wise where free[i] != 0.
+ *
+ * @param x Device array of num_values floats, updated in place.
+ * @param free Device array of num_values flags (0: leave the entry as it is).
+ * @param lower, upper Device arrays of num_values bounds (±inf: unbounded).
+ */
+void ProjectVectorToBounds(float *x, const float *free, const float *lower, const float *upper,
+                           size_t num_values, cudaStream_t stream);
+
+/**
+ * @brief mask[i] = 0 where x[i] sits at a bound and direction[i] points outward.
+ */
+void MaskVectorActiveBounds(const float *x, const float *direction, const float *lower,
+                            const float *upper, float *mask, size_t num_values,
+                            cudaStream_t stream);
 
 /**
  * @brief Batch of Euclidean vector states with compile-time dimension.
@@ -92,9 +111,47 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
                         stream);
   }
 
+  /**
+   * @brief Box bounds lower <= x <= upper per component, enforced by the
+   * Gauss-Newton and Levenberg-Marquardt minimizers by projection (see
+   * StateBatch::HasBounds): the iterates stay inside the box, and no
+   * constraint rows or penalties are involved.
+   *
+   * @param lower, upper Device arrays of Capacity() * Dim floats (state i at
+   *        `i * Dim`); ±inf leaves a side unbounded. Not owned: they must
+   *        outlive the solves. Both nullptr removes the bounds.
+   * @throws std::invalid_argument if exactly one of them is nullptr.
+   */
+  void SetBounds(const float *lower, const float *upper) {
+    if ((lower == nullptr) != (upper == nullptr)) {
+      throw std::invalid_argument("VectorStateBatch::SetBounds: need both bounds or neither");
+    }
+    lower_ = lower;
+    upper_ = upper;
+  }
+
+  bool HasBounds() const override { return lower_ != nullptr; }
+  const float *LowerBounds() const override { return lower_; }
+  const float *UpperBounds() const override { return upper_; }
+
+  void ProjectToBounds(float *x, const float *free, cudaStream_t stream) const override {
+    if (lower_ == nullptr) return;
+    ProjectVectorToBounds(x, free, lower_, upper_, this->num_active_states_ * Dim, stream);
+  }
+
+  void MaskActiveBounds(const float *x, const float *direction, float *mask,
+                        cudaStream_t stream) const override {
+    if (lower_ == nullptr) return;
+    MaskVectorActiveBounds(x, direction, lower_, upper_, mask, this->num_active_states_ * Dim,
+                           stream);
+  }
+
  private:
   /** @brief Default constructor (private, not for external use). */
   VectorStateBatch() = default;
+
+  const float *lower_ = nullptr;
+  const float *upper_ = nullptr;
 };
 
 }  // namespace cunls

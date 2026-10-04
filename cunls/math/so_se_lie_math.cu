@@ -43,344 +43,6 @@ __device__ void swap(T &a, T &b) {
   b = temp;
 }
 
-/**
- * @brief Device function to compute a 3x3 skew-symmetric matrix.
- *
- * Computes the skew-symmetric matrix [v]_× for a 3D vector v.
- *
- * @param translation Input 3D vector
- * @param ptr Output matrix pointer (3x3, row-major)
- * @param pitch Pitch (stride between rows) of the output matrix
- */
-__device__ void compute_skew_matrix(const float *translation, float *ptr, const size_t pitch) {
-  ptr[0 * pitch + 0] = 0;
-  ptr[0 * pitch + 1] = -translation[2];
-  ptr[0 * pitch + 2] = translation[1];
-
-  ptr[1 * pitch + 0] = translation[2];
-  ptr[1 * pitch + 1] = 0;
-  ptr[1 * pitch + 2] = -translation[0];
-
-  ptr[2 * pitch + 0] = -translation[1];
-  ptr[2 * pitch + 1] = translation[0];
-  ptr[2 * pitch + 2] = 0;
-}
-
-/**
- * @brief Device function to compute a Rodrigues-style matrix.
- *
- * Computes k1*I + k2*skew(phi) + k3*phi*phi^T + k4*skew(phi) for small angles.
- * This is a general form used for various SO(3) operations.
- *
- * @param phi Input 3D vector
- * @param k1 Coefficient for identity matrix
- * @param k2 Coefficient for skew-symmetric matrix
- * @param k3 Coefficient for outer product
- * @param k4 Additional coefficient for skew-symmetric matrix (used for small
- * angles)
- * @param ptr Output matrix pointer (3x3, row-major)
- * @param pitch Pitch (stride between rows) of the output matrix
- * @param tol Tolerance for small angle approximation
- */
-__device__ void compute_rodrigues_matrix(const float *phi, float k1, float k2, float k3, float k4,
-                                         float *ptr, const size_t pitch, float tol = 1e-5) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  assert(theta >= 0);
-  if (theta < tol) {
-    // I + k4 * skew(phi)
-    ptr[0 * pitch + 0] = 1;
-    ptr[0 * pitch + 1] = -k4 * phi[2];
-    ptr[0 * pitch + 2] = k4 * phi[1];
-
-    ptr[1 * pitch + 0] = k4 * phi[2];
-    ptr[1 * pitch + 1] = 1;
-    ptr[1 * pitch + 2] = -k4 * phi[0];
-
-    ptr[2 * pitch + 0] = -k4 * phi[1];
-    ptr[2 * pitch + 1] = k4 * phi[0];
-    ptr[2 * pitch + 2] = 1;
-    return;
-  }
-
-  float a = k2 * phi[2];
-  float b = k2 * phi[1];
-  float c = k2 * phi[0];
-
-  float phi01 = k3 * phi[0] * phi[1];
-  float phi02 = k3 * phi[0] * phi[2];
-  float phi12 = k3 * phi[1] * phi[2];
-
-  // k1 * I + k2 * skew(phi) + k3 * phi * phi.T
-  ptr[0 * pitch + 0] = k1 + k3 * phi[0] * phi[0];
-  ptr[0 * pitch + 1] = -a + phi01;
-  ptr[0 * pitch + 2] = b + phi02;
-
-  ptr[1 * pitch + 0] = a + phi01;
-  ptr[1 * pitch + 1] = k1 + k3 * phi[1] * phi[1];
-  ptr[1 * pitch + 2] = -c + phi12;
-
-  ptr[2 * pitch + 0] = -b + phi02;
-  ptr[2 * pitch + 1] = c + phi12;
-  ptr[2 * pitch + 2] = k1 + k3 * phi[2] * phi[2];
-}
-
-/**
- * @brief Device function to compute the exponential map for SO(3).
- *
- * Computes R = Exp(phi) using Rodrigues' formula.
- *
- * @param phi Input 3D twist vector
- * @param ptr Output rotation matrix pointer (3x3, row-major)
- * @param pitch Pitch (stride between rows) of the output matrix
- */
-__device__ void compute_exp_so3(const float *phi, float *ptr, const size_t pitch) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  float theta_squared = powf(theta, 2);
-
-  float k1 = cosf(theta);
-  float k2 = sinf(theta) / theta;
-  float k3 = (1 - k1) / theta_squared;
-
-  compute_rodrigues_matrix(phi, k1, k2, k3, 1, ptr, pitch);
-}
-
-/**
- * @brief Device function to compute the left Jacobian of SO(3).
- *
- * Computes J_l(phi), the left Jacobian of SO(3) at twist phi.
- *
- * @param phi Input 3D twist vector
- * @param ptr Output Jacobian matrix pointer (3x3, row-major)
- * @param pitch Pitch (stride between rows) of the output matrix
- */
-__device__ void compute_so3_jacobian_left(const float *phi, float *ptr, const size_t pitch) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  float theta_squared = powf(theta, 2);
-
-  float k1 = sinf(theta) / theta;
-  float k2 = (1 - cosf(theta)) / theta_squared;
-  float k3 = (1 - k1) / theta_squared;
-
-  compute_rodrigues_matrix(phi, k1, k2, k3, 0.5, ptr, pitch);
-}
-
-/**
- * @brief Device function to compute the inverse left Jacobian of SO(3).
- *
- * Computes J_l(phi)^{-1}, the inverse of the left Jacobian of SO(3).
- *
- * @param phi Input 3D twist vector
- * @param ptr Output inverse Jacobian matrix pointer (3x3, row-major)
- * @param pitch Pitch (stride between rows) of the output matrix
- */
-__device__ void compute_so3_jacobian_left_inverse(const float *phi, float *ptr,
-                                                  const size_t pitch) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  float theta_half = 0.5 * theta;
-  float theta_squared = powf(theta, 2);
-
-  float k1 = theta_half / tanf(theta_half);
-  float k2 = -theta_half / theta;
-  float k3 = (1 - k1) / theta_squared;
-
-  compute_rodrigues_matrix(phi, k1, k2, k3, -0.5, ptr, pitch);
-}
-
-/**
- * @brief Device function to compute the logarithm map for SO(3).
- *
- * Computes phi = Log(R), mapping a rotation matrix to a 3D twist vector.
- *
- * @param rotation_matrix Input rotation matrix pointer (3x3, row-major)
- * @param rotation_pitch Pitch (stride between rows) of the input matrix
- * @param twist Output 3D twist vector
- * @param tol Tolerance for detecting identity rotation
- */
-__device__ void compute_log_so3(const float *rotation_matrix, const size_t rotation_pitch,
-                                float *twist, float tol = 1e-5) {
-  float trace = 0;
-#pragma unroll
-  for (int i = 0; i < 3; i++) {
-    trace += rotation_matrix[i * rotation_pitch + i];
-  }
-
-  memset(twist, 0, 3 * sizeof(float));
-
-  if (fabsf(3.f - trace) < tol) {
-    return;
-  }
-
-  float cos_theta = fminf(1.0f, fmaxf(-1.0f, 0.5f * (trace - 1.0f)));
-  float theta = acosf(cos_theta);
-  float sin_theta = sinf(theta);
-
-  if (sin_theta < tol) {
-    // theta ≈ π (or ≈ 0, already handled above): the standard formula
-    // has a 0/0 singularity.  Extract the axis from the column of (R + I)
-    // with the largest diagonal.  For theta = π, R = 2nnᵀ − I, so the
-    // largest R[j][j] = 2n_j² − 1 gives the best-conditioned axis component.
-    int best = 0;
-    float best_diag = rotation_matrix[0];
-    float d1 = rotation_matrix[rotation_pitch + 1];
-    float d2 = rotation_matrix[2 * rotation_pitch + 2];
-    if (d1 > best_diag) {
-      best = 1;
-      best_diag = d1;
-    }
-    if (d2 > best_diag) {
-      best = 2;
-      best_diag = d2;
-    }
-
-    // Read only the chosen column of (R + I) and normalize
-    float v0 = rotation_matrix[best] + ((best == 0) ? 1.0f : 0.0f);
-    float v1 = rotation_matrix[rotation_pitch + best] + ((best == 1) ? 1.0f : 0.0f);
-    float v2 = rotation_matrix[2 * rotation_pitch + best] + ((best == 2) ? 1.0f : 0.0f);
-    float sq = v0 * v0 + v1 * v1 + v2 * v2;
-    if (sq > 0.0f) {
-      float scale = theta * __frsqrt_rn(sq);
-      twist[0] = v0 * scale;
-      twist[1] = v1 * scale;
-      twist[2] = v2 * scale;
-    }
-    return;
-  }
-
-  float k = (0.5f * theta) / sin_theta;
-
-  twist[0] =
-      k * (rotation_matrix[2 * rotation_pitch + 1] - rotation_matrix[1 * rotation_pitch + 2]);
-  twist[1] =
-      k * (rotation_matrix[0 * rotation_pitch + 2] - rotation_matrix[2 * rotation_pitch + 0]);
-  twist[2] =
-      k * (rotation_matrix[1 * rotation_pitch + 0] - rotation_matrix[0 * rotation_pitch + 1]);
-}
-
-/**
- * @brief Device function to multiply two 3x3 matrices: C = A * B.
- *
- * Both input and output matrices use a contiguous row-major layout with
- * pitch 3.
- *
- * @param A Left input matrix (3x3, row-major).
- * @param B Right input matrix (3x3, row-major).
- * @param C Output matrix (3x3, row-major).
- */
-__device__ void matmul_3x3(const float *A, const float *B, float *C) {
-#pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-#pragma unroll
-    for (uint8_t j = 0; j < 3; j++) {
-      C[i * 3 + j] =
-          A[i * 3 + 0] * B[0 * 3 + j] + A[i * 3 + 1] * B[1 * 3 + j] + A[i * 3 + 2] * B[2 * 3 + j];
-    }
-  }
-}
-
-/**
- * @brief Device function to accumulate a scaled 3x3 matrix: B += scale * A.
- *
- * @param A Input matrix (3x3, contiguous row-major).
- * @param scale Scalar multiplier.
- * @param B Output matrix (3x3, contiguous row-major), accumulated in-place.
- */
-__device__ void scale_add_3x3(const float *A, float scale, float *B) {
-#pragma unroll
-  for (uint8_t i = 0; i < 9; i++) {
-    B[i] += scale * A[i];
-  }
-}
-
-/**
- * @brief Device function to accumulate a scaled matrix product: C += scale * A
- * * B.
- *
- * @param A Left input matrix (3x3, contiguous row-major).
- * @param B Right input matrix (3x3, contiguous row-major).
- * @param scale Scalar multiplier applied to the product.
- * @param C Output matrix (3x3, contiguous row-major), accumulated in-place.
- */
-__device__ void matmul_add_3x3(const float *A, const float *B, float scale, float *C) {
-#pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-#pragma unroll
-    for (uint8_t j = 0; j < 3; j++) {
-      C[i * 3 + j] += scale * (A[i * 3 + 0] * B[0 * 3 + j] + A[i * 3 + 1] * B[1 * 3 + j] +
-                               A[i * 3 + 2] * B[2 * 3 + j]);
-    }
-  }
-}
-
-/**
- * @brief Device function to compute the Q matrix for SE(3) Jacobian
- * computation.
- *
- * Computes Q_left(xi), a 3x3 matrix used in the computation of the left
- * Jacobian of SE(3). This matrix relates the translation part of the twist to
- * the rotation part.
- *
- * @param twist Input 6D twist vector [phi, rho]
- * @param Q_pitch Pitch (stride between rows) of the output matrix
- * @param Q Output Q matrix pointer (3x3, row-major)
- * @param tol Tolerance for small angle approximation
- */
-__device__ void compute_Q_left(const float *twist, const size_t Q_pitch, float *Q,
-                               float tol = 1e-5) {
-  float phi = norm3df(twist[0], twist[1], twist[2]);
-
-  float A = 1.f / 6.f;
-  float B = 1.f / 24.f;
-  float C = 1.f / 120.f;
-
-  if (phi > tol) {
-    float s = sinf(phi);
-    float c = cosf(phi);
-
-    float phi_squared = phi * phi;
-    float phi_cubed = phi_squared * phi;
-    float phi_fourth = phi_cubed * phi;
-    float phi_fifth = phi_fourth * phi;
-
-    A = (phi - s) / phi_cubed;
-    B = (phi_squared * 0.5f + c - 1.f) / phi_fourth;
-    C = 0.5f * ((2.f + c) / phi_fourth - 3.f * s / phi_fifth);
-  }
-
-  float result[9];
-  memset(result, 0, 9 * sizeof(float));
-
-  float temp[9];
-  compute_skew_matrix(&twist[3], temp, 3);
-  scale_add_3x3(temp, 0.5, result);
-
-  float W[9];
-  compute_skew_matrix(twist, W, 3);
-
-  float VW[9];
-  matmul_3x3(temp, W, VW);
-  scale_add_3x3(VW, A, result);
-  matmul_add_3x3(VW, W, B, result);
-
-  float WV[9];
-  matmul_3x3(W, temp, WV);
-  scale_add_3x3(WV, A, result);
-
-  matmul_add_3x3(W, WV, B, result);
-
-  // compute WVW
-  matmul_3x3(WV, W, temp);
-  scale_add_3x3(temp, A - 3.f * B, result);
-
-  matmul_add_3x3(temp, W, C, result);
-  matmul_add_3x3(W, temp, C, result);
-
-  for (uint8_t i = 0; i < 3; i++) {
-    for (uint8_t j = 0; j < 3; j++) {
-      Q[i * Q_pitch + j] = result[i * 3 + j];
-    }
-  }
-}
-
 //-------------------------------- KERNELS --------------------------------
 
 /**
@@ -443,7 +105,7 @@ __global__ void exp_so3_kernel(const float *twist, const size_t twist_stride, fl
   float *exp_ptr = exp + tid * exp_stride;
   const float *twist_ptr = twist + tid * twist_stride;
 
-  compute_exp_so3(twist_ptr, exp_ptr, exp_pitch);
+  lie_device::ExpSO3(twist_ptr, exp_ptr, exp_pitch);
 }
 
 /**
@@ -470,7 +132,7 @@ __global__ void log_so3_kernel(const float *rotation_matrix, const size_t rotati
   float *twist_ptr = twist + tid * twist_stride;
   const float *rotation_matrix_ptr = rotation_matrix + tid * rotation_stride;
 
-  compute_log_so3(rotation_matrix_ptr, rotation_pitch, twist_ptr);
+  lie_device::LogSO3(rotation_matrix_ptr, rotation_pitch, twist_ptr);
 }
 
 /**
@@ -495,43 +157,9 @@ __global__ void exp_se3_kernel(const float *twist, const size_t twist_stride, fl
   if (tid >= size) {
     return;
   }
-
-  float *transform_ptr = transform + tid * transform_stride;
-  const float *twist_ptr = twist + tid * twist_stride;
-
-  float temp[6];
-  memcpy(temp, twist_ptr, 6 * sizeof(float));
-
-  float update[16];
-#pragma unroll
-  for (int i = 12; i < 15; i++) {
-    update[i] = 0;
-  }
-  update[15] = 1;  // set last row to [0, 0, 0, 1]
-
-  const size_t update_pitch = 4;
-
-  compute_so3_jacobian_left(temp, update, update_pitch);
-
-  update[0 * update_pitch + 3] = update[0 * update_pitch + 0] * temp[3] +
-                                 update[0 * update_pitch + 1] * temp[4] +
-                                 update[0 * update_pitch + 2] * temp[5];
-  update[1 * update_pitch + 3] = update[1 * update_pitch + 0] * temp[3] +
-                                 update[1 * update_pitch + 1] * temp[4] +
-                                 update[1 * update_pitch + 2] * temp[5];
-  update[2 * update_pitch + 3] = update[2 * update_pitch + 0] * temp[3] +
-                                 update[2 * update_pitch + 1] * temp[4] +
-                                 update[2 * update_pitch + 2] * temp[5];
-
-  compute_exp_so3(temp, update, update_pitch);
-
-#pragma unroll
-  for (uint8_t i = 0; i < 4; i++) {
-#pragma unroll
-    for (uint8_t j = 0; j < 4; j++) {
-      transform_ptr[i * transform_pitch + j] = update[i * update_pitch + j];
-    }
-  }
+  float xi[6];  // copied first: twist and transform may alias
+  memcpy(xi, twist + tid * twist_stride, 6 * sizeof(float));
+  lie_device::ExpSE3(xi, transform + tid * transform_stride, transform_pitch);
 }
 
 /**
@@ -569,7 +197,7 @@ __global__ void jacobian_so3_kernel(bool left, const float *twist, const size_t 
     }
   }
 
-  compute_so3_jacobian_left(temp, jacobian_ptr, jacobian_pitch);
+  lie_device::SO3JacobianLeft(temp, jacobian_ptr, jacobian_pitch);
 }
 
 /**
@@ -610,7 +238,7 @@ __global__ void __launch_bounds__(256, 4)
     }
   }
 
-  compute_so3_jacobian_left_inverse(temp, jacobian_inv_ptr, jacobian_inv_pitch);
+  lie_device::SO3JacobianLeftInverse(temp, jacobian_inv_ptr, jacobian_inv_pitch);
 }
 
 /**
@@ -669,29 +297,9 @@ __global__ void log_se3_kernel(const float *transform, const size_t transform_pi
   if (tid >= size) {
     return;
   }
-
-  float *twist_ptr = twist + tid * twist_stride;
-  const float *transform_ptr = transform + tid * transform_stride;
-
-  float twist_se3[6];
-  compute_log_so3(transform_ptr, transform_pitch, twist_se3);
-
-  float translation[3];
-  translation[0] = transform_ptr[0 * transform_pitch + 3];
-  translation[1] = transform_ptr[1 * transform_pitch + 3];
-  translation[2] = transform_ptr[2 * transform_pitch + 3];
-
-  float J_inv[9];
-  compute_so3_jacobian_left_inverse(twist_se3, J_inv, 3);
-
-  twist_se3[3] = J_inv[0 * 3 + 0] * translation[0] + J_inv[0 * 3 + 1] * translation[1] +
-                 J_inv[0 * 3 + 2] * translation[2];
-  twist_se3[4] = J_inv[1 * 3 + 0] * translation[0] + J_inv[1 * 3 + 1] * translation[1] +
-                 J_inv[1 * 3 + 2] * translation[2];
-  twist_se3[5] = J_inv[2 * 3 + 0] * translation[0] + J_inv[2 * 3 + 1] * translation[1] +
-                 J_inv[2 * 3 + 2] * translation[2];
-
-  memcpy(twist_ptr, twist_se3, 6 * sizeof(float));
+  float xi[6];  // written last: twist and transform may alias
+  lie_device::LogSE3(transform + tid * transform_stride, transform_pitch, xi);
+  memcpy(twist + tid * twist_stride, xi, 6 * sizeof(float));
 }
 
 /**
@@ -781,60 +389,20 @@ __global__ void jacobian_se3_kernel(bool left, const float *twist, const size_t 
   if (tid >= size) {
     return;
   }
-
-  float *jacobian_ptr = jacobian + tid * jacobian_stride;
-  const float *twist_ptr = twist + tid * twist_stride;
-
-  float temp[6];
-  memcpy(temp, twist_ptr, 6 * sizeof(float));
-  if (!left) {
+  float xi[6];
+  const float sign = left ? 1.f : -1.f;  // J_r(xi) = J_l(-xi)
 #pragma unroll
-    for (uint8_t i = 0; i < 6; i++) {
-      temp[i] = -temp[i];
-    }
-  }
-
-  float J[36];
-  memset(J, 0, 36 * sizeof(float));
-
-  //   J[0:3, 0:3] = so3_jacobian_left(twist[0:3])
-  compute_so3_jacobian_left(temp, J, 6);
-
-  // J[3:6, 3:6] = so3_jacobian_left(twist[0:3])
-#pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-    float *dst = &J[(3 + i) * 6 + 3];
-    const float *src = &J[i * 6];
-    memcpy(dst, src, 3 * sizeof(float));
-  }
-
-  //   J[3:6, 0:3] = Q_left(twist)
-  compute_Q_left(temp, 6, &J[3 * 6]);
-
-#pragma unroll
-  for (uint8_t i = 0; i < 6; i++) {
-    float *dst = &jacobian_ptr[i * jacobian_pitch];
-    const float *src = &J[i * 6];
-    memcpy(dst, src, 6 * sizeof(float));
-  }
+  for (int i = 0; i < 6; i++) xi[i] = sign * twist[tid * twist_stride + i];
+  lie_device::SE3JacobianLeft(xi, jacobian + tid * jacobian_stride, jacobian_pitch);
 }
 
 /**
- * @brief Optimized CUDA kernel to compute the inverse Jacobian of SE(3).
+ * @brief CUDA kernel to compute the inverse Jacobian of SE(3).
  *
- * Computes J_l^{-1}(xi) or J_r^{-1}(xi) for a batch of 6D twist vectors.
- * The output is a 6x6 matrix with the structure:
+ * Computes J_l^{-1}(xi) or J_r^{-1}(xi) = J_l^{-1}(-xi) for a batch of 6D twist
+ * vectors (lie_device::SE3JacobianLeftInverse):
  *   [ J_l^{-1}(phi)                          |      0          ]
  *   [ -J_l^{-1}(phi) @ Q(xi) @ J_l^{-1}(phi)| J_l^{-1}(phi)  ]
- *
- * Performance optimizations:
- *   - __launch_bounds__ for controlled register allocation and improved
- * occupancy
- *   - __restrict__ pointers enable better load/store scheduling by the compiler
- *   - Eliminated redundant global memory zeroing (saves 36 wasted stores)
- *   - Single consolidated write pass instead of 3 scattered write phases
- *   - Q-block negation fused into the final store (eliminates separate negate
- * loop)
  */
 constexpr size_t se3_jac_inv_block_size = 128;  ///< Block size for SE(3) inverse Jacobian kernel
                                                 ///< (tuned for register pressure).
@@ -848,63 +416,11 @@ __global__ void __launch_bounds__(128, 4)
   if (tid >= size) {
     return;
   }
-
-  // --- Load twist via explicit scalar loads (cleaner codegen than memcpy) ---
-  const float *twist_ptr = twist + tid * twist_stride;
-  float tw[6];
+  float xi[6];
+  const float sign = left ? 1.f : -1.f;  // J_r^{-1}(xi) = J_l^{-1}(-xi)
 #pragma unroll
-  for (uint8_t i = 0; i < 6; i++) {
-    tw[i] = twist_ptr[i];
-  }
-  if (!left) {
-#pragma unroll
-    for (uint8_t i = 0; i < 6; i++) {
-      tw[i] = -tw[i];
-    }
-  }
-
-  // --- Compute J_left_inverse(phi) where phi = tw[0:3] ---
-  float J[9];
-  compute_so3_jacobian_left_inverse(tw, J, 3);
-
-  // --- Compute Q_left(twist) ---
-  float Q[9];
-  compute_Q_left(tw, 3, Q);
-
-  // --- Compute J_left_inv @ Q @ J_left_inv, stored back in Q ---
-  float T[9];
-  matmul_3x3(J, Q, T);
-  matmul_3x3(T, J, Q);
-
-  // --- Single consolidated write to global memory ---
-  // Writes the complete 6x6 output in one pass, eliminating the
-  // separate zeroing (36 wasted stores) and scattered partial writes.
-  float *out = jacobian + tid * jacobian_stride;
-
-  // Rows 0-2: [ J_left_inv | 0 ]
-#pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-    float *row = out + i * jacobian_pitch;
-    row[0] = J[i * 3 + 0];
-    row[1] = J[i * 3 + 1];
-    row[2] = J[i * 3 + 2];
-    row[3] = 0.0f;
-    row[4] = 0.0f;
-    row[5] = 0.0f;
-  }
-
-  // Rows 3-5: [ -(J @ Q @ J) | J_left_inv ]
-  // Negation is fused into the write, avoiding a separate negate pass.
-#pragma unroll
-  for (uint8_t i = 0; i < 3; i++) {
-    float *row = out + (3 + i) * jacobian_pitch;
-    row[0] = -Q[i * 3 + 0];
-    row[1] = -Q[i * 3 + 1];
-    row[2] = -Q[i * 3 + 2];
-    row[3] = J[i * 3 + 0];
-    row[4] = J[i * 3 + 1];
-    row[5] = J[i * 3 + 2];
-  }
+  for (int i = 0; i < 6; i++) xi[i] = sign * twist[tid * twist_stride + i];
+  lie_device::SE3JacobianLeftInverse(xi, jacobian + tid * jacobian_stride, jacobian_pitch);
 }
 
 /**
@@ -1280,7 +796,7 @@ constexpr size_t kSE2MathBlockSize = 256;
  *   V = [[sin(theta)/theta,    -(1-cos(theta))/theta],
  *        [(1-cos(theta))/theta,  sin(theta)/theta    ]]
  *
- * For |theta| < 1e-3, V approaches I and [tx, ty] ~ [v_x, v_y].
+ * Both coefficients are evaluated without cancellation (series near 0).
  */
 __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, float *transforms,
                                size_t transform_stride, size_t size) {
@@ -1289,35 +805,7 @@ __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, floa
     return;
   }
 
-  const float *xi = tangent + idx * tangent_stride;
-  float vx = xi[0];
-  float vy = xi[1];
-  float w = xi[2];
-
-  float c = cosf(w);
-  float s = sinf(w);
-
-  float tx, ty;
-  if (fabsf(w) < 1e-3f) {
-    tx = vx;
-    ty = vy;
-  } else {
-    float sinw_over_w = s / w;
-    float one_minus_cosw_over_w = (1.0f - c) / w;
-    tx = vx * sinw_over_w - vy * one_minus_cosw_over_w;
-    ty = vx * one_minus_cosw_over_w + vy * sinw_over_w;
-  }
-
-  float *T = transforms + idx * transform_stride;
-  T[0] = c;
-  T[1] = -s;
-  T[2] = tx;
-  T[3] = s;
-  T[4] = c;
-  T[5] = ty;
-  T[6] = 0.0f;
-  T[7] = 0.0f;
-  T[8] = 1.0f;
+  lie_device::ExpSE2(tangent + idx * tangent_stride, transforms + idx * transform_stride);
 }
 
 /**
@@ -1327,12 +815,8 @@ __global__ void exp_se2_kernel(const float *tangent, size_t tangent_stride, floa
  *   theta = atan2(sin, cos) from R
  *   [v_x, v_y] = V(theta)^{-1} * t
  *
- * Logmap:
- * For |theta| < 1e-3, V^{-1} ~ I and [v_x, v_y] ~ [tx, ty].
- *
- * The V^{-1} computation uses the identity:
- *   V^{-1} = (theta / (2*(1-cos))) * R_pi/2 * ((c-1)*I + s*J) * [tx,ty]
- * where R_pi/2 rotates by 90 degrees: (x,y) -> (-y, x).
+ * with V^{-1} = [[h, theta/2], [-theta/2, h]], h = (theta/2) cot(theta/2)
+ * (float32-safe for all theta, including near 0).
  */
 __global__ void log_se2_kernel(const float *transforms, size_t transform_stride, float *tangent,
                                size_t tangent_stride, size_t size) {
@@ -1341,30 +825,7 @@ __global__ void log_se2_kernel(const float *transforms, size_t transform_stride,
     return;
   }
 
-  const float *T = transforms + idx * transform_stride;
-  float *xi = tangent + idx * tangent_stride;
-
-  float c = T[0];
-  float s = T[3];
-  float tx = T[2];
-  float ty = T[5];
-
-  float theta = atan2f(s, c);
-
-  if (fabsf(theta) < 1e-3f) {
-    xi[0] = tx;
-    xi[1] = ty;
-    xi[2] = theta;
-  } else {
-    float c_1 = c - 1.0f;
-    float det = c_1 * c_1 + s * s;
-    float dx = c_1 * tx + s * ty;
-    float dy = -s * tx + c_1 * ty;
-    float factor = theta / det;
-    xi[0] = factor * (-dy);
-    xi[1] = factor * dx;
-    xi[2] = theta;
-  }
+  lie_device::LogSE2(transforms + idx * transform_stride, tangent + idx * tangent_stride);
 }
 
 /**
@@ -1395,7 +856,7 @@ __global__ void inverse_se2_kernel(const float *transforms, size_t transform_str
  *               [0,                      0,              1 ]] where cot =
  * sin(alpha)/(1 - cos(alpha)).
  *
- * For |alpha| < 1e-3 (near identity): J_r^{-1} ~ I + small corrections.
+ * Evaluated by lie_device::SE2JrInv (float32-safe series near alpha = 0).
  */
 __global__ void __launch_bounds__(256, 4)
     jacobian_right_inverse_se2_kernel(const float *tangent, size_t tangent_stride, float *jacobians,
@@ -1408,34 +869,7 @@ __global__ void __launch_bounds__(256, 4)
   const float *xi = tangent + idx * tangent_stride;
   float *J = jacobians + idx * jacobian_stride;
 
-  float v1 = xi[0];
-  float v2 = xi[1];
-  float alpha = xi[2];
-
-  if (fabsf(alpha) > 1e-3f) {
-    float alpha_inv = 1.0f / alpha;
-    float half_cot_half_alpha = 0.5f * sinf(alpha) / (1.0f - cosf(alpha));
-
-    J[0] = alpha * half_cot_half_alpha;
-    J[1] = -0.5f * alpha;
-    J[2] = v1 * alpha_inv - v1 * half_cot_half_alpha + 0.5f * v2;
-    J[3] = 0.5f * alpha;
-    J[4] = alpha * half_cot_half_alpha;
-    J[5] = v2 * alpha_inv - 0.5f * v1 - v2 * half_cot_half_alpha;
-    J[6] = 0.0f;
-    J[7] = 0.0f;
-    J[8] = 1.0f;
-  } else {
-    J[0] = 1.0f;
-    J[1] = 0.0f;
-    J[2] = 0.5f * v2;
-    J[3] = 0.0f;
-    J[4] = 1.0f;
-    J[5] = -0.5f * v1;
-    J[6] = 0.0f;
-    J[7] = 0.0f;
-    J[8] = 1.0f;
-  }
+  lie_device::SE2JrInv(xi[0], xi[1], xi[2], J);
 }
 
 void ComputeExpSE2(cudaStream_t stream, const float *tangent, size_t tangent_stride,

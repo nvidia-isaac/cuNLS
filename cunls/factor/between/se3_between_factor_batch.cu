@@ -174,29 +174,19 @@ __device__ __forceinline__ void rodrigues_row(const float *phi, int r, float k1,
 }
 
 __device__ __forceinline__ void so3_jac_left_inv_row(const float *phi, int r, float *row3) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  float th2 = theta * theta;
-  float half = 0.5f * theta;
-  float k1 = half / tanf(half);
-  float k2 = -half / theta;
-  float k3 = (1.0f - k1) / th2;
-  rodrigues_row(phi, r, k1, k2, k3, -0.5f, row3);
+  // k3 = (1 - (θ/2) cot(θ/2)) / θ² without cancellation (lie_device::HalfCotCoefficients).
+  const float theta = norm3df(phi[0], phi[1], phi[2]);
+  float k1, rest;
+  lie_device::HalfCotCoefficients(theta, &k1, &rest);
+  const float k3 = theta > 0.f ? rest / theta : 1.f / 12.f;
+  rodrigues_row(phi, r, k1, -0.5f, k3, -0.5f, row3);
 }
 
 // Compute full Q matrix (9 floats) for a given twist. Called once per factor
 // by a designated thread and stored to shared memory for all 6 threads to read.
 __device__ __forceinline__ void compute_Q_full(const float *tw, float *Q) {
-  float phi_norm = norm3df(tw[0], tw[1], tw[2]);
-  float A = 1.f / 6.f, B = 1.f / 24.f, C = 1.f / 120.f;
-  constexpr float tol = 1e-5f;
-  if (phi_norm > tol) {
-    float s = sinf(phi_norm), c = cosf(phi_norm);
-    float p2 = phi_norm * phi_norm, p3 = p2 * phi_norm;
-    float p4 = p3 * phi_norm, p5 = p4 * phi_norm;
-    A = (phi_norm - s) / p3;
-    B = (p2 * 0.5f + c - 1.f) / p4;
-    C = 0.5f * ((2.f + c) / p4 - 3.f * s / p5);
-  }
+  float A, B, C;
+  lie_device::QLeftCoefficients(norm3df(tw[0], tw[1], tw[2]), &A, &B, &C);
 
   const float *phi = tw;
   const float *rho = tw + 3;

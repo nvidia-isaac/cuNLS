@@ -128,4 +128,53 @@ void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
 
 void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, size_t n);
 
+/**
+ * @brief positions[i] = index of the diagonal entry (i, i) in the values of a
+ * square CSR matrix, or -1 when the row has none. Once per sparsity pattern.
+ */
+void FindDiagonalPositions(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                           dvector<int> &positions);
+
+/** @brief diagonal[i] = values[positions[i]] (0 where positions[i] < 0). */
+void ExtractDiagonalAt(cudaStream_t stream, const CSRSparseMatrix &matrix,
+                       const dvector<int> &positions, dvector<float> &diagonal);
+
+/** @brief values[positions[i]] += scale * diagonal[i] (in place). */
+void AddScaledDiagonalAt(cudaStream_t stream, float scale, const dvector<float> &diagonal,
+                         const dvector<int> &positions, CSRSparseMatrix &matrix);
+
+/** @brief Copies only the values of a CSR matrix with the same pattern. */
+void CopyCSRValues(cudaStream_t stream, const CSRSparseMatrix &input, CSRSparseMatrix &output);
+
+/**
+ * @brief For every i with mask[i] == 0: zeroes row i and column i of a
+ * symmetric matrix with a symmetric, column-sorted pattern, except the
+ * diagonal entry, which becomes 1 if it is not positive. Work proportional to
+ * the masked rows (the column entries are found by binary search in the rows
+ * they live in), so a mostly free mask costs about one read of the mask.
+ */
+void ZeroMaskedRowsColumns(cudaStream_t stream, CSRSparseMatrix &matrix,
+                           const dvector<float> &mask);
+
+/** @brief Block-storage counterpart of the CSR overload (scalar mask). */
+void ZeroMaskedRowsColumns(cudaStream_t stream, BSRSparseMatrix &matrix,
+                           const dvector<float> &mask);
+
+/** @brief a[i] *= s for i < n. */
+void ScaleInPlace(cudaStream_t stream, float *a, float s, size_t n);
+
+/**
+ * @brief Active-set refinement of projected Gauss-Newton: components free in
+ * `held_mask` (1) but marked by `step_mask` (0: at a bound, the step pushes
+ * outward) become held. Writes extra[i] = 0 for them, 1 elsewhere, updates
+ * held_mask, and adds their count to *d_count (device int).
+ */
+void HoldOutwardSteps(cudaStream_t stream, const dvector<float> &step_mask,
+                      dvector<float> &held_mask, dvector<float> &extra, int *d_count);
+
+/** @brief y = A * x for scalar CSR storage (cuSPARSE SpMV; y is resized). */
+void MultiplyCSRByDenseVector(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
+                              int num_rows, int num_cols, int num_nonzeros, const dvector<float> &x,
+                              dvector<float> &y, dvector<uint8_t> &buffer);
+
 }  // namespace cunls

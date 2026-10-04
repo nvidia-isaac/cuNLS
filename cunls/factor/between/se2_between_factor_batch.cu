@@ -7,6 +7,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se2_between_factor_batch.h"
 #include "cunls/factor/indexed_evaluation.cuh"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -109,53 +110,8 @@ __global__ void se2_between_jacobian_kernel(const float *residuals, const float 
 
   // J_r^{-1}(r) and J_l^{-1}(r) = J_r^{-1}(-r)
   float Jl[9], Jr[9];
-
-  if (fabsf(alpha) > 1e-3f) {
-    float ai = 1.0f / alpha;
-    float hch = 0.5f * sinf(alpha) / (1.0f - cosf(alpha));
-    float ach = alpha * hch;
-    float ha = 0.5f * alpha;
-
-    Jr[0] = ach;
-    Jr[1] = -ha;
-    Jr[2] = v1 * ai - v1 * hch + 0.5f * v2;
-    Jr[3] = ha;
-    Jr[4] = ach;
-    Jr[5] = v2 * ai - 0.5f * v1 - v2 * hch;
-    Jr[6] = 0.0f;
-    Jr[7] = 0.0f;
-    Jr[8] = 1.0f;
-
-    Jl[0] = ach;
-    Jl[1] = ha;
-    Jl[2] = v1 * ai - v1 * hch - 0.5f * v2;
-    Jl[3] = -ha;
-    Jl[4] = ach;
-    Jl[5] = v2 * ai + 0.5f * v1 - v2 * hch;
-    Jl[6] = 0.0f;
-    Jl[7] = 0.0f;
-    Jl[8] = 1.0f;
-  } else {
-    Jr[0] = 1.0f;
-    Jr[1] = 0.0f;
-    Jr[2] = 0.5f * v2;
-    Jr[3] = 0.0f;
-    Jr[4] = 1.0f;
-    Jr[5] = -0.5f * v1;
-    Jr[6] = 0.0f;
-    Jr[7] = 0.0f;
-    Jr[8] = 1.0f;
-
-    Jl[0] = 1.0f;
-    Jl[1] = 0.0f;
-    Jl[2] = -0.5f * v2;
-    Jl[3] = 0.0f;
-    Jl[4] = 1.0f;
-    Jl[5] = 0.5f * v1;
-    Jl[6] = 0.0f;
-    Jl[7] = 0.0f;
-    Jl[8] = 1.0f;
-  }
+  lie_device::SE2JrInv(v1, v2, alpha, Jr);
+  lie_device::SE2JrInv(-v1, -v2, -alpha, Jl);
 
   // H_left = -J_l^{-1} * Ad(Delta)
   // Ad(Delta) = [[dc, -ds, dty], [ds, dc, -dtx], [0, 0, 1]]

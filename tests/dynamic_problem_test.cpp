@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-// Reusable buffers (docs/design/reusable_buffers.md): factors, states and
+// Reusable buffers: factors, states and
 // connectivity bound once at capacity, rewritten in place between solves.
 
 #include <gtest/gtest.h>

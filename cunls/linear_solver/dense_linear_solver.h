@@ -33,6 +33,12 @@ namespace cunls {
  *  2) Triangular/diagonal solves in the permuted system
  *  3) Permutation back to the original variable ordering
  *
+ * Performance gap: the factorization kernel is slow at moderate sizes. A
+ * 250 x 250 system (an MPC horizon of 50 steps) took 3.9 ms per
+ * factorization, ~40x the cuSOLVER Cholesky of DenseCholeskySolver (89 µs)
+ * on an RTX PRO 5000 Blackwell. Prefer DenseCholesky for SPD systems (or
+ * BlockTridiagonal for trajectories) until the kernel is parallelized.
+ *
  * Both the factorization and solve phases run as single-block CUDA kernels.
  * Each kernel writes a success/failure flag (1 or 0) into a device-side int
  * buffer.  After both kernels are enqueued, a single cudaMemcpyAsync copies

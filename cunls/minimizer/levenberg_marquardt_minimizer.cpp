@@ -44,7 +44,38 @@ void LevenbergMarquardtMinimizer::BuildSystem(cudaStream_t stream, const Problem
                                               const MinimizerState &minimizer_state) {
   GaussNewtonMinimizer::BuildSystem(stream, problem, minimizer_state);
   normal_equations_.ExtractLhsDiagonal(stream, diagonal_);
+  if (batched_) {
+    // One lambda per subproblem: add lambda_p * diag(H) row by row.
+    damping_.resize(diagonal_.size());
+    partition_.ScaleRows(stream, partition_.Lambda(), diagonal_.data(), damping_.data());
+    normal_equations_.AddScaledDiagonalToLhs(stream, 1.f, damping_);
+    return;
+  }
   normal_equations_.AddScaledDiagonalToLhs(stream, lambda_, diagonal_);
+}
+
+BatchedStepControlParams LevenbergMarquardtMinimizer::BatchedParams() const {
+  BatchedStepControlParams params = GaussNewtonMinimizer::BatchedParams();
+  params.levenberg_marquardt = true;
+  params.relative_reduction_tolerance = options_.relative_reduction_tolerance;
+  params.step_accept_threshold = options_.step_accept_threshold;
+  params.lambda_upscale = options_.lambda_upscale;
+  params.lambda_downscale = options_.lambda_downscale;
+  params.lambda_downscale_threshold = options_.lambda_downscale_threshold;
+  params.lambda_min = options_.lambda_min;
+  params.lambda_max = options_.lambda_max;
+  return params;
+}
+
+void LevenbergMarquardtMinimizer::AccumulatePredictedReduction(cudaStream_t stream) {
+  // The single-problem terms of EvaluateAndCheckConvergence, per subproblem.
+  partition_.AccumulateRows(stream, step_.data(), nullptr, diagonal_.data(),
+                            partition_.DiagWeight());
+  hessian_step_.resize(step_.size());
+  normal_equations_.MultiplyHessian(stream, cusparse_handle_.GetHandle(stream), step_,
+                                    hessian_step_, buffer_);
+  partition_.AccumulateRows(stream, step_.data(), hessian_step_.data(), nullptr,
+                            partition_.MatrixWeight());
 }
 
 bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
@@ -109,7 +140,8 @@ bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
  * @return True if step should be rejected, false otherwise.
  */
 bool LevenbergMarquardtMinimizer::RejectStep(float step_quality) {
-  if (step_quality < options_.step_accept_threshold) {
+  // !(rho >= threshold): a NaN rho (a step to a non-finite cost) is rejected.
+  if (!(step_quality >= options_.step_accept_threshold)) {
     LogMessage("Reject step");
     // Increase lambda to make next step more conservative
     lambda_ *= options_.lambda_upscale;
@@ -157,6 +189,7 @@ bool LevenbergMarquardtMinimizer::AcceptStep(float step_quality) {
  */
 void LevenbergMarquardtMinimizer::Initialize(cudaStream_t stream, Problem &problem) {
   GaussNewtonMinimizer::Initialize(stream, problem);
-  lambda_ = options_.initial_lambda;
 }
+
+void LevenbergMarquardtMinimizer::BeginCall() { lambda_ = options_.initial_lambda; }
 }  // namespace cunls

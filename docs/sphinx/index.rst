@@ -45,6 +45,9 @@ Guides
    :maxdepth: 2
 
    ransac
+   constraints
+   dynamics
+   mpc
    custom_factors_and_states
    numeric_jacobians
 

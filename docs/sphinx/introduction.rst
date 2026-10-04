@@ -259,8 +259,7 @@ The same in C++:
   raises an error with an explanatory message.
 
 How connectivity is rewritten between solves (host lists, device pointer
-tables, device index tables) is described in
-``docs/design/reusable_buffers.md`` and in the ``Problem`` API reference
+tables, device index tables) is described in the ``Problem`` API reference
 (:doc:`api/minimizer`).
 
 ===============================================================================

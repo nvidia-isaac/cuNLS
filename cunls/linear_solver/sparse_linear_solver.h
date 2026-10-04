@@ -22,6 +22,7 @@
 #include <memory>
 
 #include "cunls/linear_solver/block_sparse_pcg_solver.h"
+#include "cunls/linear_solver/block_tridiagonal_solver.h"
 #include "cunls/linear_solver/cudss_sparse_linear_solver.h"
 #include "cunls/linear_solver/dense_cholesky_solver.h"
 #include "cunls/linear_solver/dense_linear_solver.h"
@@ -34,21 +35,25 @@ namespace cunls {
  * @brief Selects the linear solver backend for the Gauss-Newton system.
  */
 enum class SparseLinearSolverType {
-  cuDSS,           ///< Sparse direct solver using NVIDIA's cuDSS library.  The
-                   ///< only backend that cannot consume block storage.
-  DenseLDLT,       ///< Densifies the coefficient matrix and solves with a custom
-                   ///< CUDA pivoted LDLT kernel.
-  DenseCholesky,   ///< Densifies the coefficient matrix and solves with cuSOLVER
-                   ///< Cholesky factorization (cusolverDnSpotrf /
-                   ///< cusolverDnSpotrs).  Requires SPD matrix.
-  DenseQR,         ///< Densifies the coefficient matrix and solves with cuSOLVER
-                   ///< QR factorization (cusolverDnSgeqrf / cusolverDnSormqr /
-                   ///< cublasStrsm). Works for any non-singular square matrix.
-  BlockSparsePCG,  ///< Block-Jacobi preconditioned CG.  Iterative solver tuned
-                   ///< for SPD normal equations with uniform diagonal block
-                   ///< structure (e.g. 6x6 for SE3).  Skips the sparse direct
-                   ///< factorization cost; the preconditioner is refactored on
-                   ///< every Solve from the current diagonal tiles.
+  cuDSS,             ///< Sparse direct solver using NVIDIA's cuDSS library.  The
+                     ///< only backend that cannot consume block storage.
+  DenseLDLT,         ///< Densifies the coefficient matrix and solves with a custom
+                     ///< CUDA pivoted LDLT kernel.
+  DenseCholesky,     ///< Densifies the coefficient matrix and solves with cuSOLVER
+                     ///< Cholesky factorization (cusolverDnSpotrf /
+                     ///< cusolverDnSpotrs).  Requires SPD matrix.
+  DenseQR,           ///< Densifies the coefficient matrix and solves with cuSOLVER
+                     ///< QR factorization (cusolverDnSgeqrf / cusolverDnSormqr /
+                     ///< cublasStrsm). Works for any non-singular square matrix.
+  BlockSparsePCG,    ///< Block-Jacobi preconditioned CG.  Iterative solver tuned
+                     ///< for SPD normal equations with uniform diagonal block
+                     ///< structure (e.g. 6x6 for SE3).  Skips the sparse direct
+                     ///< factorization cost; the preconditioner is refactored on
+                     ///< every Solve from the current diagonal tiles.
+  BlockTridiagonal,  ///< Block Cholesky of systems that are block tridiagonal
+                     ///< in time (trajectories, MPC): needs the states'
+                     ///< stages (Problem::SetStateStages). One warp per
+                     ///< subproblem, no host synchronization.
 };
 
 /**

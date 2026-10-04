@@ -15,8 +15,7 @@
  * limitations under the License.
  */
 
-#include <thrust/copy.h>
-#include <thrust/device_ptr.h>
+#include <cassert>
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/minimizer_state.h"
@@ -123,19 +122,17 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
 
   const auto &state_batches = problem.GetStateBatches();
   {
-    // Copy state values from problem to local storage
-    auto stream_policy = thrust::cuda::par_nosync.on(stream);
-
+    // Copy state values from problem to local storage (plain async copies:
+    // capturable in a CUDA graph).
     for (size_t i = 0; i < state_batches.size(); i++) {
       const auto &param_batch_ptr = state_batches[i];
       auto &state_vec = states_[i];
 
-      float *ptr = param_batch_ptr->StateDevicePtr(0);
+      const float *ptr = param_batch_ptr->StateDevicePtr(0);
       size_t size = param_batch_ptr->NumActiveStates() * param_batch_ptr->AmbientSize();
-
-      thrust::device_ptr<float> src_ptr(ptr);
-      thrust::device_ptr<float> dst_ptr(state_vec.data());
-      thrust::copy(stream_policy, src_ptr, src_ptr + size, dst_ptr);
+      if (size == 0) continue;
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(state_vec.data(), ptr, size * sizeof(float),
+                                          cudaMemcpyDeviceToDevice, stream));
     }
   }
 
@@ -197,7 +194,6 @@ void MinimizerState::Copy(cudaStream_t stream, const std::vector<dvector<float>>
     states_.resize(from.size());
   }
 
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
   for (size_t i = 0; i < from.size(); i++) {
     const auto &from_dvec = from[i];
     auto &to_dvec = states_[i];
@@ -205,10 +201,10 @@ void MinimizerState::Copy(cudaStream_t stream, const std::vector<dvector<float>>
     if (to_dvec.size() != from_dvec.size()) {
       to_dvec.resize(from_dvec.size());
     }
-
-    thrust::device_ptr<const float> src_ptr(from_dvec.data());
-    thrust::device_ptr<float> dst_ptr(to_dvec.data());
-    thrust::copy(stream_policy, src_ptr, src_ptr + from_dvec.size(), dst_ptr);
+    if (from_dvec.size() == 0) continue;
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(to_dvec.data(), from_dvec.data(),
+                                        from_dvec.size() * sizeof(float), cudaMemcpyDeviceToDevice,
+                                        stream));
   }
 }
 
@@ -223,19 +219,16 @@ void MinimizerState::Copy(cudaStream_t stream, const std::vector<dvector<float>>
  * @param[out] problem Destination problem to update.
  */
 void Copy(cudaStream_t stream, const MinimizerState &state, Problem &problem) {
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-
   auto &state_batches = problem.GetStateBatches();
   const auto &state_values = state.GetStates();
 
   for (size_t i = 0; i < state_batches.size(); i++) {
     auto &param_batch_ptr = state_batches[i];
     const auto &dvec = state_values[i];
-
-    float *ptr = param_batch_ptr->StateDevicePtr(0);
-    thrust::device_ptr<const float> src_ptr(dvec.data());
-    thrust::device_ptr<float> dst_ptr(ptr);
-    thrust::copy(stream_policy, src_ptr, src_ptr + dvec.size(), dst_ptr);
+    if (dvec.size() == 0) continue;
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(param_batch_ptr->StateDevicePtr(0), dvec.data(),
+                                        dvec.size() * sizeof(float), cudaMemcpyDeviceToDevice,
+                                        stream));
   }
 }
 }  // namespace cunls

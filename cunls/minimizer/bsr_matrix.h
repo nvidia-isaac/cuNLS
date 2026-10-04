@@ -92,6 +92,10 @@ void ScaleSymmetric(cudaStream_t stream, BSRSparseMatrix &matrix, const dvector<
 void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
                          BSRSparseMatrix &output);
 
+/** @brief y = A * x for block storage (y is resized to the row count). */
+void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
+                              const dvector<float> &x, dvector<float> &y);
+
 /**
  * @brief Async BSR-weighted squared step: d_out[0] = step^T A step.
  *

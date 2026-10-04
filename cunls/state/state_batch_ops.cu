@@ -18,6 +18,7 @@
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
+#include <thrust/gather.h>
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -215,6 +216,58 @@ void StateBatchOps::Preprocess(cudaStream_t stream,
 
   InitUpdatesVector(state_batches);
   InitMapping(stream, state_batches);
+
+  // Free flags: 1 at the full positions of the reduced (non-constant) components.
+  auto stream_policy = thrust::cuda::par_nosync.on(stream);
+  free_.resize(state_updates_.size());
+  thrust::device_ptr<float> free_ptr(free_.data());
+  thrust::fill(stream_policy, free_ptr, free_ptr + free_.size(), 0.0f);
+  thrust::device_ptr<const int> map_ptr(map_.data());
+  auto one = thrust::make_constant_iterator(1.0f);
+  thrust::scatter(stream_policy, one, one + num_reduced_states_, map_ptr, free_ptr);
+}
+
+bool StateBatchOps::HasBounds() const {
+  for (const StateBatch *batch : user_state_batches_) {
+    if (batch->HasBounds()) return true;
+  }
+  return false;
+}
+
+void StateBatchOps::ProjectToBounds(cudaStream_t stream, const std::vector<float *> &x_ptrs) {
+  assert(x_ptrs.size() == delta_ptrs_.size());
+  for (size_t i = 0; i < x_ptrs.size(); i++) {
+    const StateBatch *batch = user_state_batches_[i];
+    if (!batch->HasBounds()) continue;
+    batch->ProjectToBounds(x_ptrs[i], free_.data() + (delta_ptrs_[i] - state_updates_.data()),
+                           stream);
+  }
+}
+
+void StateBatchOps::BoundMask(cudaStream_t stream, const std::vector<const float *> &x_ptrs,
+                              const DeviceVector<float> &direction, DeviceVector<float> &mask) {
+  assert(direction.size() == num_reduced_states_);
+  assert(x_ptrs.size() == delta_ptrs_.size());
+  auto stream_policy = thrust::cuda::par_nosync.on(stream);
+  bound_direction_.resize(state_updates_.size());
+  bound_mask_.resize(state_updates_.size());
+  mask.resize(num_reduced_states_);
+  thrust::device_ptr<float> dir_ptr(bound_direction_.data());
+  thrust::device_ptr<float> full_mask_ptr(bound_mask_.data());
+  thrust::fill(stream_policy, dir_ptr, dir_ptr + bound_direction_.size(), 0.0f);
+  thrust::fill(stream_policy, full_mask_ptr, full_mask_ptr + bound_mask_.size(), 1.0f);
+  thrust::device_ptr<const int> map_ptr(map_.data());
+  thrust::device_ptr<const float> in_ptr(direction.data());
+  thrust::scatter(stream_policy, in_ptr, in_ptr + num_reduced_states_, map_ptr, dir_ptr);
+  for (size_t i = 0; i < x_ptrs.size(); i++) {
+    const StateBatch *batch = user_state_batches_[i];
+    if (!batch->HasBounds()) continue;
+    const size_t offset = delta_ptrs_[i] - state_updates_.data();
+    batch->MaskActiveBounds(x_ptrs[i], bound_direction_.data() + offset,
+                            bound_mask_.data() + offset, stream);
+  }
+  thrust::device_ptr<float> out_ptr(mask.data());
+  thrust::gather(stream_policy, map_ptr, map_ptr + num_reduced_states_, full_mask_ptr, out_ptr);
 }
 
 /** @copydoc StateBatchOps::Plus */
@@ -238,6 +291,10 @@ void StateBatchOps::Plus(cudaStream_t stream, const std::vector<const float *> &
   for (size_t i = 0; i < x_ptrs.size(); i++) {
     auto state_batch = user_state_batches_[i];
     state_batch->Plus(x_ptrs[i], delta_ptrs_[i], x_plus_delta_ptrs[i], stream);
+    if (state_batch->HasBounds()) {
+      state_batch->ProjectToBounds(x_plus_delta_ptrs[i],
+                                   free_.data() + (delta_ptrs_[i] - state_updates_.data()), stream);
+    }
   }
 }
 

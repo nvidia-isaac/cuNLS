@@ -32,6 +32,14 @@ operations for applying tangent-space updates.
 - `Plus(x, delta, out, stream, num_replicas = 1)` processes `num_replicas`
   contiguous copies of the batch (replica r = states [r*N, (r+1)*N)); out does
   not overlap the inputs. RANSAC passes one replica per hypothesis.
+- Box bounds: `VectorStateBatch<Dim>::SetBounds(lower, upper)` (device arrays,
+  Capacity()*Dim floats, ±inf allowed; not owned). The virtual hooks
+  `HasBounds`, `ProjectToBounds(x, free)`, `MaskActiveBounds(x, direction, mask)`
+  are used by `StateBatchOps` (projects after `Plus`, skipping constant states;
+  `BoundMask` for the held set) and by the GN/LM minimizers (projected
+  Gauss-Newton: held components leave the normal equations, with one to three
+  active-set refinement solves in `SolveStep`). `Plus` itself never projects
+  (numeric differentiation perturbs through it).
 
 ## Related modules
 

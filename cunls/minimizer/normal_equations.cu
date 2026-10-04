@@ -55,6 +55,9 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
   int num_rows = 0, num_matrix_cols = 0, num_nonzeros = 0;
   ExtractMatrixMetadata(stream, csr_hessian_, num_rows, num_matrix_cols, num_nonzeros);
   csr_dims_.Set(num_rows, num_matrix_cols, num_nonzeros);
+  // The pattern is fixed from here on: locate the diagonal once.
+  FindDiagonalPositions(stream, csr_hessian_, csr_diagonal_);
+  csr_lhs_pattern_ready_ = false;
 }
 
 void NormalEquations::Assemble(cudaStream_t stream, const Problem &problem, const float *jacobians,
@@ -65,7 +68,12 @@ void NormalEquations::Assemble(cudaStream_t stream, const Problem &problem, cons
     return;
   }
   assembler_.Assemble(stream, problem, jacobians, residuals, csr_hessian_, rhs);
-  CopyCSRSparseMatrix(stream, csr_hessian_, csr_lhs_);
+  if (csr_lhs_pattern_ready_) {
+    CopyCSRValues(stream, csr_hessian_, csr_lhs_);
+  } else {
+    CopyCSRSparseMatrix(stream, csr_hessian_, csr_lhs_);
+    csr_lhs_pattern_ready_ = true;
+  }
 }
 
 void NormalEquations::ExtractHessianDiagonal(cudaStream_t stream, dvector<float> &diagonal) const {
@@ -73,7 +81,7 @@ void NormalEquations::ExtractHessianDiagonal(cudaStream_t stream, dvector<float>
     ExtractDiagonal(stream, bsr_hessian_, diagonal);
     return;
   }
-  ExtractDiagonal(stream, csr_hessian_, diagonal);
+  ExtractDiagonalAt(stream, csr_hessian_, csr_diagonal_, diagonal);
 }
 
 void NormalEquations::ExtractLhsDiagonal(cudaStream_t stream, dvector<float> &diagonal) const {
@@ -81,7 +89,7 @@ void NormalEquations::ExtractLhsDiagonal(cudaStream_t stream, dvector<float> &di
     ExtractDiagonal(stream, bsr_lhs_, diagonal);
     return;
   }
-  ExtractDiagonal(stream, csr_lhs_, diagonal);
+  ExtractDiagonalAt(stream, csr_lhs_, csr_diagonal_, diagonal);
 }
 
 void NormalEquations::AddScaledDiagonalToLhs(cudaStream_t stream, float scale,
@@ -90,7 +98,7 @@ void NormalEquations::AddScaledDiagonalToLhs(cudaStream_t stream, float scale,
     AddScaledDiagonal(stream, scale, diagonal, bsr_lhs_, bsr_lhs_);
     return;
   }
-  AddScaledDiagonal(stream, scale, diagonal, csr_lhs_, csr_lhs_);
+  AddScaledDiagonalAt(stream, scale, diagonal, csr_diagonal_, csr_lhs_);
 }
 
 void NormalEquations::ScaleLhsSymmetric(cudaStream_t stream, const dvector<float> &scale) {
@@ -99,6 +107,14 @@ void NormalEquations::ScaleLhsSymmetric(cudaStream_t stream, const dvector<float
     return;
   }
   ScaleSymmetricCSR(stream, csr_lhs_, scale);
+}
+
+void NormalEquations::ZeroMaskedLhsRowsColumns(cudaStream_t stream, const dvector<float> &mask) {
+  if (UsesBlockStorage()) {
+    ZeroMaskedRowsColumns(stream, bsr_lhs_, mask);
+    return;
+  }
+  ZeroMaskedRowsColumns(stream, csr_lhs_, mask);
 }
 
 void NormalEquations::WeightedSquaredStepAsync(cudaStream_t stream, void *cusparse_handle,
@@ -111,6 +127,17 @@ void NormalEquations::WeightedSquaredStepAsync(cudaStream_t stream, void *cuspar
   ComputeWeightedSquaredStepAsync(stream, cusparse_handle, csr_hessian_, csr_dims_.num_rows,
                                   csr_dims_.num_cols, csr_dims_.num_nonzeros, step, spmv_scratch_,
                                   buffer, d_out, d_partials);
+}
+
+void NormalEquations::MultiplyHessian(cudaStream_t stream, void *cusparse_handle,
+                                      const dvector<float> &x, dvector<float> &y,
+                                      dvector<uint8_t> &buffer) const {
+  if (UsesBlockStorage()) {
+    MultiplyBSRByDenseVector(stream, bsr_hessian_, x, y);
+    return;
+  }
+  MultiplyCSRByDenseVector(stream, cusparse_handle, csr_hessian_, csr_dims_.num_rows,
+                           csr_dims_.num_cols, csr_dims_.num_nonzeros, x, y, buffer);
 }
 
 bool NormalEquations::InitializeSolver(cudaStream_t stream, SparseLinearSolver &solver,

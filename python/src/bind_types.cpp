@@ -27,6 +27,7 @@
 
 #include "bindings.h"
 #include "cunls/common/cuda_stream.h"
+#include "cunls/common/log.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/jacobian_mode.h"
@@ -56,6 +57,21 @@ void bind_types(nb::module_ &m) {
           },
           "Returns the underlying cudaStream_t as an integer handle.");
 
+  // --- Logging ---
+
+  nb::enum_<cunls::Verbosity>(m, "Verbosity")
+      .value("Silent", cunls::Verbosity::Silent)
+      .value("Error", cunls::Verbosity::Error)
+      .value("Warning", cunls::Verbosity::Warning)
+      .value("Message", cunls::Verbosity::Message)
+      .value("Debug", cunls::Verbosity::Debug);
+
+  m.def(
+      "set_log_verbosity", [](cunls::Verbosity verbosity) { cunls::SetLoggerOptions(verbosity); },
+      nb::arg("verbosity"),
+      "Sets the library log level (default Silent). Message logs every "
+      "minimizer iteration to the console.");
+
   // --- Enumerations for solver/multiplier strategy selection ---
 
   nb::enum_<cunls::SparseLinearSolverType>(m, "SparseLinearSolverType")
@@ -63,7 +79,8 @@ void bind_types(nb::module_ &m) {
       .value("DenseLDLT", cunls::SparseLinearSolverType::DenseLDLT)
       .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky)
       .value("DenseQR", cunls::SparseLinearSolverType::DenseQR)
-      .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG);
+      .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG)
+      .value("BlockTridiagonal", cunls::SparseLinearSolverType::BlockTridiagonal);
 
   nb::enum_<cunls::ColumnScaling>(m, "ColumnScaling")
       .value("none", cunls::ColumnScaling::None)
@@ -107,6 +124,16 @@ void bind_types(nb::module_ &m) {
       .def_rw("cost_tolerance", &cunls::MinimizerOptions::cost_tolerance)
       .def_rw("max_consecutive_rejected_steps",
               &cunls::MinimizerOptions::max_consecutive_rejected_steps)
+      .def_rw(
+          "max_line_search_steps", &cunls::MinimizerOptions::max_line_search_steps,
+          "Backtracking line search: a step that does not decrease the cost is halved "
+          "along the same direction up to this many times; the first shorter step that "
+          "decreases the cost is taken (any decreasing step is taken, and LM keeps its damping). "
+          "0 (default) disables it.")
+      .def_rw("max_bound_refinements", &cunls::MinimizerOptions::max_bound_refinements,
+              "Bounded states: at most this many extra solves per iteration holding the free "
+              "components the step would push through their bound (exactly this many in "
+              "real-time calls). Default: 3.")
       .def_rw("sparse_linear_solver_type", &cunls::MinimizerOptions::sparse_linear_solver_type)
       .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
       .def_rw("jacobian_mode", &cunls::MinimizerOptions::jacobian_mode,
@@ -147,6 +174,8 @@ void bind_types(nb::module_ &m) {
       .def(nb::init<>())
       .def_rw("base_options", &cunls::LevenbergMarquardtMinimizerOptions::base_options)
       .def_rw("initial_lambda", &cunls::LevenbergMarquardtMinimizerOptions::initial_lambda)
+      .def_rw("relative_reduction_tolerance",
+              &cunls::LevenbergMarquardtMinimizerOptions::relative_reduction_tolerance)
       .def_rw("lambda_upscale", &cunls::LevenbergMarquardtMinimizerOptions::lambda_upscale)
       .def_rw("lambda_downscale", &cunls::LevenbergMarquardtMinimizerOptions::lambda_downscale)
       .def_rw("lambda_max", &cunls::LevenbergMarquardtMinimizerOptions::lambda_max)

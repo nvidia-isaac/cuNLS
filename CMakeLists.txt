@@ -255,6 +255,21 @@ if(BUILD_TESTING)
     tests/capacity_test.cpp
     tests/dynamic_problem_test.cpp
     tests/size_check_test.cpp
+    tests/lie_jacobian_accuracy_test.cpp
+    tests/lie_map_accuracy_test.cpp
+    tests/problem_partition_test.cpp
+    tests/augmented_lagrangian_minimizer_test.cpp
+    tests/projected_bounds_test.cpp
+    tests/structure_reuse_test.cpp
+    tests/block_tridiagonal_solver_test.cpp
+    tests/real_time_graph_test.cpp
+    tests/dynamics_factor_batch_test.cpp
+    tests/se3_dynamics_factor_batch_test.cpp
+    tests/lie_kinematics_factor_batch_test.cpp
+    tests/quadrotor_factor_batch_test.cpp
+    tests/quadruped_factor_batch_test.cpp
+    tests/clearance_factor_batch_test.cpp
+    tests/augmented_lagrangian_nonlinear_test.cu
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)

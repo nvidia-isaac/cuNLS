@@ -1,12 +1,14 @@
 add_library(cunls_minimizer OBJECT
   block_hessian_assembler.cu
   bsr_matrix.cu
+  augmented_lagrangian_minimizer.cu
   hessian_structure.cu
   device_reduction.cu
   gauss_newton_minimizer.cu
   levenberg_marquardt_minimizer.cpp
   minimizer_state.cu
   normal_equations.cu
+  problem_partition.cu
   numeric_diff_jacobian.cu
   problem.cpp
   problem_kernels.cu
