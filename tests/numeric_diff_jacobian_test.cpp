@@ -141,7 +141,7 @@ TEST(NumericDiffJacobianTest, VectorBetweenMatchesAnalytic) {
   ExpectJacobiansClose(jac_an_host, jac_num_host, kRelTol, kAbsTol);
 }
 
-// SO3BetweenFactorBatch: residual = Log(R_left^T * R_right * Delta^T). Uses
+// SO3BetweenFactorBatch: residual = Log(R_left^T * R_right * Delta). Uses
 // non-identity deltas (identity deltas make the left/right analytic-vs-Ad
 // ordering bug invisible, since Ad(I) = I). This regression-tests the fix to
 // so3_between_fused_jacobians_kernel (see so3_between_factor_batch.cu):

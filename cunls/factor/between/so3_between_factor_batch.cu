@@ -20,7 +20,7 @@ constexpr size_t kTwistStride = 3;
 
 /**
  * @brief Fused kernel: collect L/R rotations from state pointers, compute
- *        R_error = (R_left^T * R_right) * Delta^T in one pass.
+ *        R_error = (R_left^T * R_right) * Delta in one pass.
  *
  * Replaces collect + TransposeSO3 + two cuBLAS GEMM calls.
  * Fully unrolled: two 3x3 multiplies use 54 FMAs with zero local memory.
@@ -62,16 +62,16 @@ __global__ void collect_and_compute_so3_between_error_kernel(float const *const 
   const float d3 = D[3], d4 = D[4], d5 = D[5];
   const float d6 = D[6], d7 = D[7], d8 = D[8];
 
-  // error = temp * D^T  (27 FMAs)
-  out[0] = m0 * d0 + m1 * d1 + m2 * d2;
-  out[1] = m0 * d3 + m1 * d4 + m2 * d5;
-  out[2] = m0 * d6 + m1 * d7 + m2 * d8;
-  out[3] = m3 * d0 + m4 * d1 + m5 * d2;
-  out[4] = m3 * d3 + m4 * d4 + m5 * d5;
-  out[5] = m3 * d6 + m4 * d7 + m5 * d8;
-  out[6] = m6 * d0 + m7 * d1 + m8 * d2;
-  out[7] = m6 * d3 + m7 * d4 + m8 * d5;
-  out[8] = m6 * d6 + m7 * d7 + m8 * d8;
+  // error = temp * D  (27 FMAs)
+  out[0] = m0 * d0 + m1 * d3 + m2 * d6;
+  out[1] = m0 * d1 + m1 * d4 + m2 * d7;
+  out[2] = m0 * d2 + m1 * d5 + m2 * d8;
+  out[3] = m3 * d0 + m4 * d3 + m5 * d6;
+  out[4] = m3 * d1 + m4 * d4 + m5 * d7;
+  out[5] = m3 * d2 + m4 * d5 + m5 * d8;
+  out[6] = m6 * d0 + m7 * d3 + m8 * d6;
+  out[7] = m6 * d1 + m7 * d4 + m8 * d7;
+  out[8] = m6 * d2 + m7 * d5 + m8 * d8;
 }
 
 // Compute one row of J_l^{-1}(phi) via the Rodrigues formula:
@@ -127,16 +127,16 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *r
 
 // Fused kernel: computes BOTH left and right SO(3) Jacobians in one pass.
 //
-// Residual: r = Log(E), E = L^T * R * Delta^T  (see
+// Residual: r = Log(E), E = L^T * R * Delta  (see
 // collect_and_compute_so3_between_error_kernel). SO3StateBatch::Plus applies
 // a *right* local update (X' = X * Exp(eps)), so for the left pose L:
 //   E' = Exp(-eps_l) * E  =>  d r/d eps_l = -J_l^{-1}(r)         (no D factor)
 // and for the right pose R (perturbation passes through D via the SO(3)
-// adjoint Ad(D) = D):
-//   E' = E * Exp(D * eps_r)  =>  d r/d eps_r = J_r^{-1}(r) * D
+// adjoint Ad(D^T) = D^T):
+//   E' = L^T R Exp(eps_r) D = E * Exp(D^T * eps_r)  =>  d r/d eps_r = J_r^{-1}(r) * D^T
 //
 // Left  Jacobian (cols 0..2): -J_l^{-1}(r)
-// Right Jacobian (cols 3..5):  J_r^{-1}(r) * D,  J_r^{-1}(r) = J_l^{-1}(-r)
+// Right Jacobian (cols 3..5):  J_r^{-1}(r) * D^T,  J_r^{-1}(r) = J_l^{-1}(-r)
 // 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
 __global__ void __launch_bounds__(256, 4)
     so3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
@@ -165,7 +165,7 @@ __global__ void __launch_bounds__(256, 4)
     J[row * 6 + 2] = -jl[row * 3 + 2];
   }
 
-  // Right block: J_r_inv(phi) * D,  J_r_inv(phi) = J_l_inv(-phi)
+  // Right block: J_r_inv(phi) * D^T,  J_r_inv(phi) = J_l_inv(-phi)
   float neg_phi[3] = {-phi[0], -phi[1], -phi[2]};
   float jr[9];
 #pragma unroll
@@ -175,9 +175,9 @@ __global__ void __launch_bounds__(256, 4)
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
     float a0 = jr[row * 3 + 0], a1 = jr[row * 3 + 1], a2 = jr[row * 3 + 2];
-    J[row * 6 + 3] = a0 * D[0] + a1 * D[3] + a2 * D[6];
-    J[row * 6 + 4] = a0 * D[1] + a1 * D[4] + a2 * D[7];
-    J[row * 6 + 5] = a0 * D[2] + a1 * D[5] + a2 * D[8];
+    J[row * 6 + 3] = a0 * D[0] + a1 * D[1] + a2 * D[2];
+    J[row * 6 + 4] = a0 * D[3] + a1 * D[4] + a2 * D[5];
+    J[row * 6 + 5] = a0 * D[6] + a1 * D[7] + a2 * D[8];
   }
 }
 
@@ -199,7 +199,7 @@ bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
   poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
-  // Fused: collect L/R + compute R_error = (L^T * R) * Delta^T in one kernel
+  // Fused: collect L/R + compute R_error = (L^T * R) * Delta in one kernel
   collect_and_compute_so3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
       state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
       num_factors);

@@ -15,11 +15,12 @@ namespace cunls {
 /**
  * @brief Batch factor for SO(3) between constraints.
  *
- * residual = Log( R_left^{-1} * R_right * Delta^{-1} )  (3-vector).
+ * residual = Log( R_left^T * R_right * Delta )  (3-vector), the convention of
+ * SO2BetweenFactorBatch: zero at R_right = R_left * Delta^T.
  *
- * Left Jacobian: -J_l^{-1}(r). Right Jacobian: J_r^{-1}(r) * Ad(Delta), with
- * SO(3) adjoint Ad(R_delta) = R_delta. These follow from SO3StateBatch::Plus
- * applying a right-multiplicative local update (X' = X * Exp(eps)).
+ * Left Jacobian: -J_l^{-1}(r). Right Jacobian: J_r^{-1}(r) * Ad(Delta^T), with
+ * SO(3) adjoint Ad(R) = R. These follow from SO3StateBatch::Plus applying a
+ * right-multiplicative local update (X' = X * Exp(eps)).
  */
 class SO3BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
   using Base = SizedFactorBatch<3, 3, 3>;

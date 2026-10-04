@@ -310,9 +310,8 @@ factor.
 --------------------------------------------------------------------------------
 
 Constrains the relative rotation between two SO(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta R_l^\top R_r)`: zero at :math:`R_r = R_l \Delta^\top`
-(unlike the other between factors, whose residual is zero at
-:math:`R_r = R_l \Delta`). Two states per factor.
+:math:`\mathrm{Log}(R_l^\top R_r \Delta)` (zero at :math:`R_r = R_l \Delta^\top`;
+the same convention as ``SO3BetweenFactorBatch``). Two states per factor.
 
 **Constructor**
 
@@ -335,8 +334,8 @@ Constrains the relative rotation between two SO(2) frames.  Residual =
 --------------------------------------------------------------------------------
 
 Constrains the relative rotation between two SO(3) frames.  Residual =
-:math:`\mathrm{Log}(R_l^\top R_r \Delta^\top)` (zero at :math:`R_r = R_l \Delta`,
-the convention of the other between factors). Two states per factor.
+:math:`\mathrm{Log}(R_l^\top R_r \Delta)` (zero at :math:`R_r = R_l \Delta^\top`;
+the same convention as ``SO2BetweenFactorBatch``). Two states per factor.
 
 **Constructor**
 
@@ -1287,10 +1286,10 @@ SO2BetweenFactorBatch
 Header: :code:`cunls/factor/between/so2_between_factor_batch.h`
 
 Constrains the relative rotation between two SO(2) frames (zero at
-:math:`R_{\mathrm{right}} = R_{\mathrm{left}} \Delta^{\top}`, unlike the other between factors).
+:math:`R_{\mathrm{right}} = R_{\mathrm{left}} \Delta^{\top}`, as for SO(3)).
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta \, R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \, \Delta \bigr)
 
 .. list-table::
    :header-rows: 1
@@ -1325,7 +1324,7 @@ Header: :code:`cunls/factor/between/so3_between_factor_batch.h`
 Constrains the relative rotation between two SO(3) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \, \Delta^{\top} \bigr)
+   r = \mathrm{Log}\bigl( R_{\mathrm{left}}^{\top} \, R_{\mathrm{right}} \, \Delta \bigr)
 
 .. list-table::
    :header-rows: 1
