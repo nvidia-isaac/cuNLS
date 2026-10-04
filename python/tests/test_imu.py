@@ -47,6 +47,14 @@ def test_layout_and_parameters():
         pycunls.ImuFactorBatch(samples, offsets, 4, bad, 2)
     with pytest.raises(ValueError):
         p.body_from_imu = [1.0, 0.0]
+    # Array dtypes are checked (the kernel reads float32 samples, int32 offsets);
+    # raw integer pointers pass unchecked.
+    with pytest.raises(TypeError, match="imu_samples must have dtype float32"):
+        pycunls.ImuFactorBatch(samples.astype(cp.float64), offsets, 4, p, 2)
+    with pytest.raises(TypeError, match="sample_offsets must have dtype int32"):
+        pycunls.ImuFactorBatch(samples, offsets.astype(cp.int64), 4, p, 2)
+    raw = pycunls.ImuFactorBatch(samples.data.ptr, offsets.data.ptr, 4, p, 2)
+    assert raw.residuals_size == 15
 
 
 def test_integrated_keyframes_have_zero_cost(stream):

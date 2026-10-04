@@ -39,18 +39,9 @@ constexpr int kMaxGroupSize = 32;                // lanes per factor, at most a 
 // registers), and the fewest samples worth a lane of their own.
 constexpr int kTargetThreadsPerSM = 256;
 constexpr int kMinSamplesPerLane = 4;
-
-/** Per-launch constants derived from ImuParameters. */
-struct KernelParameters {
-  float g[3];
-  float gyro_var;         // σ_g²
-  float accel_var;        // σ_a²
-  float integration_var;  // σ_i²
-  float gyro_bias_var;    // σ_bg²
-  float accel_bias_var;   // σ_ba²
-  float R_bi[9];          // body_from_imu rotation
-  float t_bi[3];          // body_from_imu translation
-};
+// Floor for variances (Σ's Cholesky pivots, the bias random walk σ_b² T): keeps
+// a numerically singular Σ or an empty / zero-duration chain finite, not NaN or inf.
+constexpr float kMinVariance = 1e-36f;
 
 /**
  * Effect of a run of samples, in the frame of its first state (rotation I,
@@ -97,6 +88,24 @@ __device__ __forceinline__ void MulAt(const float *A, const float *B, float *C) 
 #pragma unroll
     for (int j = 0; j < 3; ++j)
       C[i * 3 + j] = A[i] * B[j] + A[3 + i] * B[3 + j] + A[6 + i] * B[6 + j];
+}
+
+/** C = Aᵀ R for 3x3 A and the rotation R of T. */
+__device__ __forceinline__ void MulAtRotation(const float *A, const SE3Transform &T, float *C) {
+#pragma unroll
+  for (int i = 0; i < 3; ++i)
+#pragma unroll
+    for (int j = 0; j < 3; ++j)
+      C[i * 3 + j] = A[i] * T[j] + A[3 + i] * T[4 + j] + A[6 + i] * T[8 + j];
+}
+
+/** C = Rᵀ A for the rotation R of T and 3x3 A. */
+__device__ __forceinline__ void MulRotationT(const SE3Transform &T, const float *A, float *C) {
+#pragma unroll
+  for (int i = 0; i < 3; ++i)
+#pragma unroll
+    for (int j = 0; j < 3; ++j)
+      C[i * 3 + j] = T[i] * A[j] + T[4 + i] * A[3 + j] + T[8 + i] * A[6 + j];
 }
 
 /** C = R A Rᵀ. */
@@ -208,7 +217,7 @@ __device__ __forceinline__ void Propagate(const float *F, const float *U, const 
 /** Appends one Euler step (sample `smp`: ω, a, Δt) with bias (bg, ba) to s. */
 template <bool kJacobian>
 __device__ __forceinline__ void Step(const float *smp, const float *bg, const float *ba,
-                                     const KernelParameters &prm, Summary &s) {
+                                     const ImuParameters &prm, Summary &s) {
   const float h = smp[6];
   const float th[3] = {(smp[0] - bg[0]) * h, (smp[1] - bg[1]) * h, (smp[2] - bg[2]) * h};
   const float a[3] = {smp[3] - ba[0], smp[4] - ba[1], smp[5] - ba[2]};
@@ -257,14 +266,16 @@ __device__ __forceinline__ void Step(const float *smp, const float *bg, const fl
   {
     float X[9];
     MulBt(Jr, Jr, X);
-    const float qr = prm.gyro_var * h, qv = prm.accel_var * h;
+    const float qr = prm.gyro_noise_density * prm.gyro_noise_density * h;
+    const float qv = prm.accel_noise_density * prm.accel_noise_density * h;
+    const float qi = prm.integration_noise_density * prm.integration_noise_density * h;
 #pragma unroll
     for (int i = 0; i < 9; ++i) s.QRR[i] += qr * X[i];
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
       s.QVV[i * 4] += qv;
       s.QVP[i * 4] += qv * half_h;
-      s.QPP[i * 4] += qv * half_h * half_h + prm.integration_var * h;
+      s.QPP[i * 4] += qv * half_h * half_h + qi;
     }
   }
 #pragma unroll
@@ -390,10 +401,10 @@ __device__ __forceinline__ void WriteGroupRows(float *stage, const int *items, i
  */
 template <bool kJacobian>
 __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
-    ImuKernel(const float *__restrict__ samples, const int *__restrict__ offsets,
-              KernelParameters prm, float const *const *__restrict__ state_pointers,
-              float *__restrict__ residuals, float *__restrict__ jacobians, int num_items,
-              const int *__restrict__ factor_ids, int num_factors, int group_size) {
+    ImuKernel(const float *__restrict__ samples, const int *__restrict__ offsets, ImuParameters prm,
+              float const *const *__restrict__ state_pointers, float *__restrict__ residuals,
+              float *__restrict__ jacobians, int num_items, const int *__restrict__ factor_ids,
+              int num_factors, int group_size) {
   // Per warp: the tree's summaries (16 slots) and, once the tree is done,
   // the output staging (32 rows) in the same region; then 32 item indices.
   extern __shared__ float smem[];
@@ -484,21 +495,21 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
         Xa[i * 3 + j] = __ldg(Ta + i * 4 + j);
         Xb[i * 3 + j] = __ldg(Tb + i * 4 + j);
       }
-      ta[i] = prm.t_bi[i] - __ldg(Ta + i * 4 + 3);
-      tb[i] = prm.t_bi[i] - __ldg(Tb + i * 4 + 3);
+      ta[i] = prm.body_from_imu[i * 4 + 3] - __ldg(Ta + i * 4 + 3);
+      tb[i] = prm.body_from_imu[i * 4 + 3] - __ldg(Tb + i * 4 + 3);
     }
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
       pa[i] = Xa[i] * ta[0] + Xa[3 + i] * ta[1] + Xa[6 + i] * ta[2];
       pb[i] = Xb[i] * tb[0] + Xb[3 + i] * tb[1] + Xb[6 + i] * tb[2];
     }
-    MulAt(Xa, prm.R_bi, R0);  // IMU rotation at keyframe a
-    Mul(R0, sum.R, Rh);       // R̂
+    MulAtRotation(Xa, prm.body_from_imu, R0);  // IMU rotation at keyframe a
+    Mul(R0, sum.R, Rh);                        // R̂
     Tsum = sum.T;
     float e[9];
     {
       float RbI[9], Rt[9];
-      MulAt(Xb, prm.R_bi, RbI);
+      MulAtRotation(Xb, prm.body_from_imu, RbI);
       MulAt(Rh, RbI, Rt);  // R̂ᵀ R_b,imu
       lie_device::LogSO3(Rt, 3, e);
     }
@@ -506,9 +517,9 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
     for (int i = 0; i < 3; ++i) {
       // v̂ - v_a = g T + R0 Δv; p̂ - p_a - v_a T = ½ g T² + R0 Δp.
       const float va = __ldg(s[1] + i), vb = __ldg(s[4] + i);
-      const float dv = prm.g[i] * Tsum +
+      const float dv = prm.gravity[i] * Tsum +
                        (R0[i * 3] * sum.v[0] + R0[i * 3 + 1] * sum.v[1] + R0[i * 3 + 2] * sum.v[2]);
-      const float dp = 0.5f * prm.g[i] * Tsum * Tsum +
+      const float dp = 0.5f * prm.gravity[i] * Tsum * Tsum +
                        (R0[i * 3] * sum.p[0] + R0[i * 3 + 1] * sum.p[1] + R0[i * 3 + 2] * sum.p[2]);
       e[3 + i] = (vb - va) - dv;
       e[6 + i] = (pb[i] - pa[i]) - va * Tsum - dp;
@@ -544,8 +555,7 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
       float d = L[Tri(j, j)];
 #pragma unroll
       for (int k = 0; k < j; ++k) d -= L[Tri(j, k)] * L[Tri(j, k)];
-      // Keeps a numerically singular Σ (e.g. no samples) finite instead of NaN.
-      d = sqrtf(fmaxf(d, 1e-36f));
+      d = sqrtf(fmaxf(d, kMinVariance));
       L[Tri(j, j)] = d;
       const float inv = 1.f / d;
 #pragma unroll
@@ -570,8 +580,10 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
     }
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
-      sigma_inv[i] = rsqrtf(prm.gyro_bias_var * Tsum);
-      sigma_inv[3 + i] = rsqrtf(prm.accel_bias_var * Tsum);
+      // The floor applies to the variance, not to T: σ_b² times a tiny T underflows to 0.
+      const float wg = prm.gyro_bias_random_walk, wa = prm.accel_bias_random_walk;
+      sigma_inv[i] = rsqrtf(fmaxf(wg * wg * Tsum, kMinVariance));
+      sigma_inv[3 + i] = rsqrtf(fmaxf(wa * wa * Tsum, kMinVariance));
     }
 #pragma unroll
     for (int i = 0; i < 9; ++i) {
@@ -598,8 +610,8 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
   float Sa[9] = {}, Sb[9] = {}, RhT[9] = {};
   if (leader) {
     float X[9], Y[9], BX[9];
-    MulAt(prm.R_bi, Xa, BX);  // R_biᵀ R_x,a
-    MulAt(sum.R, BX, PR);     // ΔRᵀ R_biᵀ R_x,a
+    MulRotationT(prm.body_from_imu, Xa, BX);  // R_biᵀ R_x,a
+    MulAt(sum.R, BX, PR);                     // ΔRᵀ R_biᵀ R_x,a
     MulSkew(R0, sum.v, -1.f, X);
     Mul(X, BX, PV);
     MulSkew(R0, sum.p, -1.f, Y);
@@ -724,29 +736,17 @@ bool ImuFactorBatch::Evaluate(float *residuals, float *jacobians,
   const size_t num_factors = NumActiveFactors();
   const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
   if (num_items == 0 || num_factors == 0) return true;
-  const ImuParameters &p = parameters_;
-  KernelParameters k;
-  for (int i = 0; i < 3; ++i) {
-    k.g[i] = p.gravity[i];
-    k.t_bi[i] = p.body_from_imu[i * 4 + 3];
-    for (int j = 0; j < 3; ++j) k.R_bi[i * 3 + j] = p.body_from_imu[i * 4 + j];
-  }
-  k.gyro_var = p.gyro_noise_density * p.gyro_noise_density;
-  k.accel_var = p.accel_noise_density * p.accel_noise_density;
-  k.integration_var = p.integration_noise_density * p.integration_noise_density;
-  k.gyro_bias_var = p.gyro_bias_random_walk * p.gyro_bias_random_walk;
-  k.accel_bias_var = p.accel_bias_random_walk * p.accel_bias_random_walk;
   const int group_size = GroupSize(num_factors, num_samples_ / std::max<size_t>(1, Capacity()));
   const size_t groups_per_block = kBlockSize / group_size;
   const unsigned blocks =
       static_cast<unsigned>((num_items + groups_per_block - 1) / groups_per_block);
   if (jacobians != nullptr) {
     ImuKernel<true><<<blocks, kBlockSize, SharedBytes(true, group_size), stream>>>(
-        imu_samples_, sample_offsets_, k, state_pointers, residuals, jacobians,
+        imu_samples_, sample_offsets_, parameters_, state_pointers, residuals, jacobians,
         static_cast<int>(num_items), factor_ids, static_cast<int>(num_factors), group_size);
   } else {
     ImuKernel<false><<<blocks, kBlockSize, SharedBytes(false, group_size), stream>>>(
-        imu_samples_, sample_offsets_, k, state_pointers, residuals, nullptr,
+        imu_samples_, sample_offsets_, parameters_, state_pointers, residuals, nullptr,
         static_cast<int>(num_items), factor_ids, static_cast<int>(num_factors), group_size);
   }
   THROW_ON_CUDA_ERROR(cudaGetLastError());

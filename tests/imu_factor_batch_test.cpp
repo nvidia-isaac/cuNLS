@@ -169,7 +169,7 @@ Model ToModel(const ImuParameters &p) {
   m.integration_var = double(p.integration_noise_density) * p.integration_noise_density;
   m.gyro_bias_var = double(p.gyro_bias_random_walk) * p.gyro_bias_random_walk;
   m.accel_bias_var = double(p.accel_bias_random_walk) * p.accel_bias_random_walk;
-  m.body_from_imu.assign(p.body_from_imu, p.body_from_imu + 16);
+  m.body_from_imu.assign(p.body_from_imu.begin(), p.body_from_imu.end());
   return m;
 }
 
@@ -354,11 +354,22 @@ struct DeviceSamples {
   dvector<float> samples;
   dvector<int> offsets;
   size_t count = 0;  // samples
-  explicit DeviceSamples(const std::vector<Samples> &per_factor) {
+  /** One factor per entry of per_factor. */
+  explicit DeviceSamples(const std::vector<Samples> &per_factor)
+      : DeviceSamples(per_factor, Indices(per_factor.size()), per_factor.size()) {}
+  /**
+   * `factors` factors, factor f using base[which[f % which.size()]], flattened
+   * directly (large replicated batches never hold Samples copies).
+   */
+  DeviceSamples(const std::vector<Samples> &base, const std::vector<int> &which, size_t factors) {
+    size_t total = 0;
+    for (size_t f = 0; f < factors; ++f) total += base[which[f % which.size()]].size();
     std::vector<float> flat;
+    flat.reserve(7 * total);
     std::vector<int> off = {0};
-    for (const Samples &ss : per_factor) {
-      for (const Sample &s : ss) {
+    off.reserve(factors + 1);
+    for (size_t f = 0; f < factors; ++f) {
+      for (const Sample &s : base[which[f % which.size()]]) {
         for (double w : s.w) flat.push_back(static_cast<float>(w));
         for (double a : s.a) flat.push_back(static_cast<float>(a));
         flat.push_back(static_cast<float>(s.dt));
@@ -367,7 +378,12 @@ struct DeviceSamples {
     }
     samples = dvector<float>(flat);
     offsets = dvector<int>(off);
-    count = flat.size() / 7;
+    count = total;
+  }
+  static std::vector<int> Indices(size_t n) {
+    std::vector<int> v(n);
+    for (size_t i = 0; i < n; ++i) v[i] = static_cast<int>(i);
+    return v;
   }
 };
 
@@ -612,15 +628,16 @@ TEST(ImuFactorBatch, IsTheSchurComplementOfTheExplicitChain) {
   }
 }
 
-/** Evaluates `items` replicated to `copies` factors; returns residuals and Jacobians. */
+/**
+ * Evaluates `copies` factors, factor f being item which[f % which.size()];
+ * returns residuals and Jacobians.
+ */
 void EvaluateReplicated(const ImuParameters &params, const std::vector<Samples> &samples,
-                        const std::vector<std::vector<Slot>> &items, int copies,
-                        size_t samples_per_factor_hint, std::vector<float> *res,
+                        const std::vector<std::vector<Slot>> &items, const std::vector<int> &which,
+                        int copies, size_t samples_per_factor_hint, std::vector<float> *res,
                         std::vector<float> *jac) {
-  const int n = static_cast<int>(items.size());
-  std::vector<Samples> all;
-  for (int c = 0; c < copies; ++c) all.push_back(samples[c % n]);
-  DeviceSamples d(all);
+  const int n = static_cast<int>(which.size());
+  DeviceSamples d(samples, which, copies);
   std::vector<float> storage;
   std::vector<size_t> offsets;
   for (const auto &item : items)
@@ -631,7 +648,7 @@ void EvaluateReplicated(const ImuParameters &params, const std::vector<Samples> 
   dvector<float> d_storage(storage);
   std::vector<float *> ptrs;
   for (int c = 0; c < copies; ++c)
-    for (int b = 0; b < 6; ++b) ptrs.push_back(d_storage.data() + offsets[(c % n) * 6 + b]);
+    for (int b = 0; b < 6; ++b) ptrs.push_back(d_storage.data() + offsets[which[c % n] * 6 + b]);
   dvector<float *> d_ptrs(ptrs);
   dvector<float> d_res(static_cast<size_t>(copies) * 15), d_jac(static_cast<size_t>(copies) * 450);
   const size_t hint = samples_per_factor_hint > 0 ? samples_per_factor_hint * copies : d.count;
@@ -648,10 +665,11 @@ void EvaluateReplicated(const ImuParameters &params, const std::vector<Samples> 
 
 TEST(ImuFactorBatch, LanesPerFactorAgree) {
   // Chains run on 1 to 32 lanes, by batch size and typical chain length (the
-  // num_samples hint), each factor using at most one lane per 8 of its own
+  // num_samples hint), each factor using at most one lane per 4 of its own
   // samples. Every split gives the same factor up to round-off (the order of
   // summation differs): hints for 1, 2, ..., 32 lanes, and a batch large
-  // enough for one lane per chain whatever the hint.
+  // enough for one lane per chain whatever the hint (short chains only, up to
+  // 40 samples, which the hint alone would split over 8 lanes).
   const int kLengths[] = {1, 2, 3, 7, 40, 200, 1000};
   constexpr int kItems = 42;
   const ImuParameters params = TestParameters();
@@ -663,19 +681,25 @@ TEST(ImuFactorBatch, LanesPerFactorAgree) {
     samples.push_back(Rounded(RandomSamples(rng, kLengths[t % 7])));
     items.push_back(RandomItem(rng, m, samples.back(), 1e-2));
   }
+  const std::vector<int> all = DeviceSamples::Indices(kItems);
+  std::vector<int> short_chains;
+  for (int t = 0; t < kItems; ++t)
+    if (samples[t].size() <= 40) short_chains.push_back(t);
   std::vector<float> res0, jac0;
-  EvaluateReplicated(params, samples, items, kItems, 1, &res0, &jac0);  // one lane per chain
+  EvaluateReplicated(params, samples, items, all, kItems, 1, &res0, &jac0);  // one lane per chain
   struct Case {
+    const std::vector<int> *which;
     int copies;
     size_t hint;
   };
-  for (const Case c : {Case{kItems, 16}, Case{kItems, 32}, Case{kItems, 64}, Case{kItems, 128},
-                       Case{kItems, 256}, Case{kItems, 512}, Case{65536, 512}}) {
+  for (const Case c : {Case{&all, kItems, 16}, Case{&all, kItems, 32}, Case{&all, kItems, 64},
+                       Case{&all, kItems, 128}, Case{&all, kItems, 256}, Case{&all, kItems, 512},
+                       Case{&short_chains, 65536, 512}}) {
     std::vector<float> res, jac;
-    EvaluateReplicated(params, samples, items, c.copies, c.hint, &res, &jac);
+    EvaluateReplicated(params, samples, items, *c.which, c.copies, c.hint, &res, &jac);
     double res_err = 0, jac_err = 0;
     for (int f = 0; f < c.copies; ++f) {
-      const int t = f % kItems;
+      const int t = (*c.which)[f % c.which->size()];
       for (int i = 0; i < 15; ++i) {
         const double r0 = res0[t * 15 + i];
         res_err = std::max(
@@ -722,6 +746,27 @@ TEST(ImuFactorBatch, NoiselessChainHasZeroResidual) {
       EXPECT_NEAR(res[t * 15 + i], 0.f, 0.05f) << "N = " << samples[t].size() << " row " << i;
 }
 
+TEST(ImuFactorBatch, EmptyChainStaysFinite) {
+  // A factor without samples (offsets[f] == offsets[f + 1]) or of zero
+  // duration is invalid input, but must not put inf / NaN into the solve.
+  const ImuParameters params = TestParameters();
+  const Model m = ToModel(params);
+  std::mt19937 rng(29);
+  Samples zero_dt = Rounded(RandomSamples(rng, 3));
+  for (Sample &s : zero_dt) s.dt = 0.0;
+  const std::vector<Samples> samples = {Samples{}, zero_dt};
+  std::vector<std::vector<Slot>> items;
+  for (const Samples &s : samples) items.push_back(RandomItem(rng, m, s, 1e-2));
+  DeviceSamples d(samples);
+  dvector<float> d_samples(std::vector<float>(7, 0.f));  // non-null buffer for the empty batch
+  ImuFactorBatch factor(d.count > 0 ? d.samples.data() : d_samples.data(), d.offsets.data(),
+                        d.count, params, samples.size());
+  std::vector<float> res, jac;
+  EvaluateItems(factor, items, &res, &jac);
+  for (float v : res) EXPECT_TRUE(std::isfinite(v));
+  for (float v : jac) EXPECT_TRUE(std::isfinite(v));
+}
+
 TEST(ImuFactorBatch, LevenbergMarquardtRecoversKeyframes) {
   // Keyframes along a noiseless IMU trajectory with a constant bias; pose
   // priors on every keyframe stand in for vision. Velocities start at zero,
@@ -733,8 +778,6 @@ TEST(ImuFactorBatch, LevenbergMarquardtRecoversKeyframes) {
   ImuParameters params;
   params.gyro_bias_random_walk = 1e-2f;
   params.accel_bias_random_walk = 1e-1f;
-  params.gyro_bias_random_walk = 3e-3f;
-  params.accel_bias_random_walk = 3e-2f;
   const double xi[6] = {0.05, 0.1, -0.2, 0.1, 0.05, -0.03};
   const Vec Tbi = Exp6(xi);
   for (int i = 0; i < 16; ++i) params.body_from_imu[i] = static_cast<float>(Tbi[i]);
@@ -986,15 +1029,19 @@ TEST(ImuFactorBatch, DISABLED_Throughput) {
   const Model m = ToModel(params);
   std::mt19937 rng(1);
   // CUNLS_IMU_BENCH_SAMPLES / CUNLS_IMU_BENCH_FACTORS select one configuration.
+  // The sweep runs 65536 factors with short chains only (20 samples); an
+  // explicit configuration runs as given.
   std::vector<int> lengths = {20, 200, 1000}, counts = {16, 128, 1024, 4096, 16384, 65536};
+  const bool explicit_config =
+      EnvInt("CUNLS_IMU_BENCH_SAMPLES", 0) > 0 || EnvInt("CUNLS_IMU_BENCH_FACTORS", 0) > 0;
   if (EnvInt("CUNLS_IMU_BENCH_SAMPLES", 0) > 0) lengths = {EnvInt("CUNLS_IMU_BENCH_SAMPLES", 0)};
   if (EnvInt("CUNLS_IMU_BENCH_FACTORS", 0) > 0) counts = {EnvInt("CUNLS_IMU_BENCH_FACTORS", 0)};
   for (int n : lengths) {
     for (int factors : counts) {
+      if (!explicit_config && factors >= 65536 && n > 20) continue;
       const Samples s = Rounded(RandomSamples(rng, n));
-      const std::vector<Samples> samples(factors, s);
       const std::vector<Slot> item = RandomItem(rng, m, s, 1e-3);
-      DeviceSamples d(samples);
+      DeviceSamples d({s}, {0}, factors);
       std::vector<float> storage;
       for (const Slot &sl : item)
         storage.insert(storage.end(), sl.storage.begin(), sl.storage.end());

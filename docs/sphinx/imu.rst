@@ -58,8 +58,8 @@ Usage
    # samples: (total, 7) float32 rows (wx, wy, wz, ax, ay, az, dt)
    # offsets: int32, factor f uses samples[offsets[f]:offsets[f + 1]]
    p = pycunls.ImuParameters()       # EuRoC ADIS16448 noise, gravity -Z
-   imu = pycunls.ImuFactorBatch(cp.asarray(samples), cp.asarray(offsets), len(samples),
-                                p, pairs)
+   imu = pycunls.ImuFactorBatch(cp.asarray(samples, dtype=cp.float32),
+                                cp.asarray(offsets, dtype=cp.int32), len(samples), p, pairs)
    imu.set_num_active_factors(pairs)
    ptrs = []
    for k in range(pairs):

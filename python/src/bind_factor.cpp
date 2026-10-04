@@ -944,7 +944,7 @@ void bind_factor(nb::module_ &m) {
       .def_prop_rw(
           "gravity",
           [](const cunls::ImuParameters &p) {
-            return std::vector<float>(p.gravity, p.gravity + 3);
+            return std::vector<float>(p.gravity.begin(), p.gravity.end());
           },
           [](cunls::ImuParameters &p, const std::vector<float> &g) {
             if (g.size() != 3) throw std::invalid_argument("gravity needs 3 values");
@@ -959,7 +959,7 @@ void bind_factor(nb::module_ &m) {
       .def_prop_rw(
           "body_from_imu",
           [](const cunls::ImuParameters &p) {
-            return std::vector<float>(p.body_from_imu, p.body_from_imu + 16);
+            return std::vector<float>(p.body_from_imu.begin(), p.body_from_imu.end());
           },
           [](cunls::ImuParameters &p, const std::vector<float> &T) {
             if (T.size() != 16)
@@ -980,8 +980,8 @@ void bind_factor(nb::module_ &m) {
       "Parameters\n"
       "----------\n"
       "imu_samples : DevicePointer\n"
-      "    7 floats per sample (gyro xyz [rad/s], specific force xyz [m/s^2], dt [s]), IMU frame, "
-      "all factors back to back.\n"
+      "    float32, 7 per sample (gyro xyz [rad/s], specific force xyz [m/s^2], dt [s]), IMU "
+      "frame, all factors back to back.\n"
       "sample_offsets : DevicePointer\n"
       "    int32, capacity + 1 CSR offsets: factor f uses samples [offsets[f], offsets[f + 1]) "
       "(at least one).\n"
@@ -995,10 +995,11 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::ImuFactorBatch *self, nb::handle imu_samples, nb::handle sample_offsets,
              size_t num_samples, const cunls::ImuParameters &parameters, size_t capacity) {
-            new (self) cunls::ImuFactorBatch(
-                reinterpret_cast<const float *>(extract_device_ptr(imu_samples)),
-                reinterpret_cast<const int *>(extract_device_ptr(sample_offsets)), num_samples,
-                parameters, capacity);
+            new (self) cunls::ImuFactorBatch(reinterpret_cast<const float *>(extract_device_ptr(
+                                                 imu_samples, "float32", "imu_samples")),
+                                             reinterpret_cast<const int *>(extract_device_ptr(
+                                                 sample_offsets, "int32", "sample_offsets")),
+                                             num_samples, parameters, capacity);
           },
           nb::arg("imu_samples"), nb::arg("sample_offsets"), nb::arg("num_samples"),
           nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),

@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
 
 namespace cunls {
@@ -33,7 +34,7 @@ namespace cunls {
 struct ImuParameters {
   /// World-frame gravity [m/s²]. Default: +Z up (ROS REP-103). A wrong
   /// direction (e.g. a Z-down / NED world) still converges, to a wrong answer.
-  float gravity[3] = {0.f, 0.f, -9.80665f};
+  Vector<3> gravity = {0.f, 0.f, -9.80665f};
   // Noise defaults: the ADIS16448 of the EuRoC MAV dataset.
   float gyro_noise_density = 1.6968e-4f;  ///< σ_g [rad/s/√Hz]
   float accel_noise_density = 2.0e-3f;    ///< σ_a [m/s²/√Hz]
@@ -48,10 +49,10 @@ struct ImuParameters {
   /// (about 1e-2 / 1e-1) if it does.
   float gyro_bias_random_walk = 1.9393e-5f;
   float accel_bias_random_walk = 3.0e-3f;
-  /// Pose of the IMU in the body (rig) frame, rig_from_imu (row-major 4x4
-  /// SE(3)); identity when the IMU is the body frame.
-  float body_from_imu[16] = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
-                             0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f};
+  /// Pose of the IMU in the body (rig) frame, rig_from_imu; identity when
+  /// the IMU is the body frame.
+  SE3Transform body_from_imu = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+                                0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f};
 };
 
 /**
