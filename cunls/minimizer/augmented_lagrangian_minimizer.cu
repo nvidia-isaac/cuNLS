@@ -185,8 +185,6 @@ void AugmentedLagrangianMinimizer::SetOptions(const AugmentedLagrangianMinimizer
     throw std::invalid_argument(msg);
   }
   options_ = options;
-  ResetGraph();
-  graph_failed_ = false;
 }
 
 float AugmentedLagrangianMinimizer::ComputeObjective(cudaStream_t stream, const Problem &problem) {
@@ -252,25 +250,6 @@ std::vector<std::pair<const void *, size_t>> AugmentedLagrangianMinimizer::Const
   return signature;
 }
 
-std::vector<const float *> AugmentedLagrangianMinimizer::BoundsSignature(const Problem &problem) {
-  std::vector<const float *> signature;
-  for (const StateBatch *batch : problem.GetStateBatches()) {
-    signature.push_back(batch->LowerBounds());
-    signature.push_back(batch->UpperBounds());
-  }
-  return signature;
-}
-
-void AugmentedLagrangianMinimizer::ResetGraph() {
-  if (graph_exec_ != nullptr) {
-    cudaGraphExecDestroy(static_cast<cudaGraphExec_t>(graph_exec_));
-    graph_exec_ = nullptr;
-  }
-  graph_warm_ = false;
-}
-
-AugmentedLagrangianMinimizer::~AugmentedLagrangianMinimizer() { ResetGraph(); }
-
 void AugmentedLagrangianMinimizer::ReadStatus(cudaStream_t stream,
                                               AugmentedLagrangianMinimizerSummary &summary) {
   std::array<float, kNumOut> out{};
@@ -308,67 +287,11 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
           "constraints are hard and take no loss (robust losses belong on objective factors)");
     }
   }
-  // CUDA graph: a real-time call with an unchanged structure is a fixed
-  // sequence of device work. The first such call runs eagerly (it sizes every
-  // buffer), the second is captured, later calls replay the graph; the final
-  // status read-back stays outside the graph.
-  const bool eligible = options_.use_cuda_graph && options_.real_time && options_.warm_start &&
-                        options_.reuse_structure && !graph_failed_ && problem_ == &problem &&
-                        ConstraintSignature(problem) == signature_;
-  if (!eligible) {
-    ResetGraph();
-    return MinimizeEager(stream, problem, true);
-  }
-  // The graph holds the bound arrays' addresses: bounds set, removed or moved
-  // to other buffers since the capture drop it (this call runs eagerly, the
-  // next one captures again).
-  std::vector<const float *> bounds = BoundsSignature(problem);
-  if (graph_exec_ != nullptr && bounds != graph_bounds_) ResetGraph();
-  if (graph_exec_ != nullptr) {
-    THROW_ON_CUDA_ERROR(cudaGraphLaunch(static_cast<cudaGraphExec_t>(graph_exec_), stream));
-    AugmentedLagrangianMinimizerSummary summary = graph_summary_;
-    if (has_constraints_) ReadStatus(stream, summary);
-    return summary;
-  }
-  if (!graph_warm_) {
-    graph_warm_ = true;
-    return MinimizeEager(stream, problem, true);
-  }
-  THROW_ON_CUDA_ERROR(cudaStreamBeginCapture(stream, cudaStreamCaptureModeRelaxed));
-  bool captured = false;
-  try {
-    graph_summary_ = MinimizeEager(stream, problem, false);
-    captured = true;
-  } catch (const std::exception &e) {
-    LogWarning("AugmentedLagrangianMinimizer: CUDA graph capture failed ({}); running eagerly",
-               e.what());
-  }
-  cudaGraph_t graph = nullptr;
-  const cudaError_t end = cudaStreamEndCapture(stream, &graph);
-  cudaGraphExec_t exec = nullptr;
-  if (captured && end == cudaSuccess && graph != nullptr &&
-      cudaGraphInstantiate(&exec, graph, 0) == cudaSuccess) {
-    graph_exec_ = exec;
-    graph_bounds_ = std::move(bounds);
-  } else {
-    if (captured) {
-      LogWarning("AugmentedLagrangianMinimizer: CUDA graph capture failed ({}); running eagerly",
-                 cudaGetErrorString(end));
-    }
-    graph_failed_ = true;
-    cudaGetLastError();  // clear a sticky capture error
-  }
-  if (graph != nullptr) cudaGraphDestroy(graph);
-  if (graph_exec_ == nullptr) return MinimizeEager(stream, problem, true);
-  THROW_ON_CUDA_ERROR(cudaGraphLaunch(static_cast<cudaGraphExec_t>(graph_exec_), stream));
-  AugmentedLagrangianMinimizerSummary summary = graph_summary_;
-  if (has_constraints_) ReadStatus(stream, summary);
-  return summary;
+  return Solve(stream, problem);
 }
 
-AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::MinimizeEager(cudaStream_t stream,
-                                                                                Problem &problem,
-                                                                                bool read_back) {
+AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Solve(cudaStream_t stream,
+                                                                        Problem &problem) {
   AugmentedLagrangianMinimizerSummary summary;
   summary.num_problems = problem.NumProblems();
 
@@ -411,11 +334,9 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::MinimizeEager(
     summary.initial_cost = inner.initial_cost;
     summary.final_cost = inner.final_cost;
     summary.num_converged = summary.num_problems;
-    has_constraints_ = false;
     return summary;
   }
 
-  has_constraints_ = true;
   num_problems_ = problem.NumProblems();
   size_t total_rows = 0;
   if (reuse) {
@@ -559,9 +480,8 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::MinimizeEager(
     ScatterPenalties(stream);
   }
   if (real_time) {
-    // The one read-back of a real-time call (the last outer iteration's
-    // status); left to the caller when the call is being captured.
-    if (read_back) ReadStatus(stream, summary);
+    // The one read-back of a real-time call: the last outer iteration's status.
+    ReadStatus(stream, summary);
     return summary;
   }
   FillStatus(out.data(), summary);

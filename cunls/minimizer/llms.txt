@@ -86,10 +86,8 @@ optimization.
 - `MinimizeCallOptions::fixed_iterations`: always the partitioned (device step
   control) path, also for one problem; fixed line-search and bound-refinement
   counts; no read-backs; summary costs NaN.
-- `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`,
-  `use_cuda_graph`; `SetOptions` keeps the warm state. Graph: first eligible
-  call eager, second captured (relaxed mode), later replayed; the status
-  read-back stays outside. Capture needs every op on the stream without host
-  syncs or pageable copies (MinimizerState copies use cudaMemcpyAsync for this).
+- `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`;
+  `SetOptions` keeps the warm state. A real-time call reads its status back
+  once, at the end.
 - `NormalEquations`: cached CSR diagonal positions, value-only lhs copies,
   `ZeroMaskedLhsRowsColumns` (held bounds touch only the held rows).

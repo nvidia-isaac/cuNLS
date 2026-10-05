@@ -262,7 +262,7 @@ if(BUILD_TESTING)
     tests/projected_bounds_test.cpp
     tests/structure_reuse_test.cpp
     tests/block_tridiagonal_solver_test.cpp
-    tests/real_time_graph_test.cpp
+    tests/real_time_test.cpp
     tests/minimizer_benchmark_test.cpp
     tests/dynamics_factor_batch_test.cpp
     tests/se3_dynamics_factor_batch_test.cpp

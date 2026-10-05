@@ -110,18 +110,6 @@ struct AugmentedLagrangianMinimizerOptions {
    * Default: false
    */
   bool real_time = false;
-
-  /**
-   * @brief With real_time, warm_start and reuse_structure: replay the device
-   * work of a call as a CUDA graph. The first such call runs eagerly, the
-   * second is captured, later calls launch the graph (removing the kernel
-   * launch overhead; the one status read-back stays). The graph is dropped
-   * when the options, the constraint batches or the bound arrays of the state
-   * batches (VectorStateBatch::SetBounds) change; if the capture fails
-   * (e.g. a factor batch synchronizes or uses other streams), the calls run
-   * eagerly. Default: false
-   */
-  bool use_cuda_graph = false;
 };
 
 /** @brief Why the outer loop stopped. */
@@ -190,8 +178,6 @@ class AugmentedLagrangianMinimizer {
       GaussNewtonMinimizer &minimizer,
       const AugmentedLagrangianMinimizerOptions &options = AugmentedLagrangianMinimizerOptions());
 
-  ~AugmentedLagrangianMinimizer();
-
   AugmentedLagrangianMinimizer(const AugmentedLagrangianMinimizer &) = delete;
   AugmentedLagrangianMinimizer &operator=(const AugmentedLagrangianMinimizer &) = delete;
 
@@ -211,9 +197,6 @@ class AugmentedLagrangianMinimizer {
    */
   void SetOptions(const AugmentedLagrangianMinimizerOptions &options);
 
-  /** @brief Whether the last call replayed (or captured) a CUDA graph (Options::use_cuda_graph). */
-  bool UsesCudaGraph() const { return graph_exec_ != nullptr; }
-
  private:
   struct Constraint {
     size_t residual_batch;             ///< Index into Problem::GetResidualBatches().
@@ -222,9 +205,8 @@ class AugmentedLagrangianMinimizer {
     dvector<int> factor_problem;       ///< Per factor: subproblem (empty: all 0).
   };
 
-  /** @brief The solve itself; `read_back` false leaves out the final status read-back. */
-  AugmentedLagrangianMinimizerSummary MinimizeEager(cudaStream_t stream, Problem &problem,
-                                                    bool read_back);
+  /** @brief The solve itself (Minimize validates the problem first). */
+  AugmentedLagrangianMinimizerSummary Solve(cudaStream_t stream, Problem &problem);
 
   /** @brief Constraint batches with their active sizes, and the number of subproblems. */
   static std::vector<std::pair<const void *, size_t>> ConstraintSignature(const Problem &problem);
@@ -232,12 +214,6 @@ class AugmentedLagrangianMinimizer {
   /** @brief Reads the control kernel's scalars into the summary (one synchronization). */
   void ReadStatus(cudaStream_t stream, AugmentedLagrangianMinimizerSummary &summary);
   void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) const;
-
-  /** @brief Bound array addresses of every state batch (the graph bakes them in). */
-  static std::vector<const float *> BoundsSignature(const Problem &problem);
-
-  /** @brief Drops the captured graph. */
-  void ResetGraph();
 
   /** @brief Cost of the non-constraint residual batches at the problem's states. */
   float ComputeObjective(cudaStream_t stream, const Problem &problem);
@@ -253,12 +229,6 @@ class AugmentedLagrangianMinimizer {
   /// Signature (batch pointers and sizes) of the last solve, for warm_start.
   std::vector<std::pair<const void *, size_t>> signature_;
   const Problem *problem_ = nullptr;  ///< Problem of the last solve.
-  void *graph_exec_ = nullptr;        ///< cudaGraphExec_t of the captured real-time call.
-  bool graph_warm_ = false;           ///< An eligible call ran eagerly: the next one is captured.
-  bool graph_failed_ = false;         ///< Capture failed: run eagerly until the options change.
-  AugmentedLagrangianMinimizerSummary graph_summary_;  ///< Host part of the captured call.
-  std::vector<const float *> graph_bounds_;            ///< BoundsSignature at the capture.
-  bool has_constraints_ = true;  ///< The last call had constraint batches (a status to read).
 
   dvector<float> penalty_;         ///< [constraint * P + p]
   dvector<float> violation_;       ///< [constraint * P + p], this outer iteration.

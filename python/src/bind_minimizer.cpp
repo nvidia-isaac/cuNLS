@@ -110,11 +110,7 @@ void bind_minimizer(nb::module_ &m) {
               "Fixed budget without host synchronization (one read-back at the end): exactly "
               "max_outer_iterations outer iterations of inner_iterations inner iterations "
               "(the last final_inner_iterations if > 0). Costs in the summary are NaN. "
-              "Default: False.")
-      .def_rw("use_cuda_graph", &cunls::AugmentedLagrangianMinimizerOptions::use_cuda_graph,
-              "With real_time, warm_start and reuse_structure: capture the device work of a call "
-              "as a CUDA graph (on the second such call) and replay it. Falls back to eager calls "
-              "if the capture fails. Default: False.");
+              "Default: False.");
 
   nb::enum_<cunls::AugmentedLagrangianMinimizerStatus>(m, "AugmentedLagrangianMinimizerStatus")
       .value("Converged", cunls::AugmentedLagrangianMinimizerStatus::kConverged)
@@ -173,7 +169,5 @@ void bind_minimizer(nb::module_ &m) {
             self.SetOptions(options);
           },
           "Options of the following calls (a copy; assign a modified one). Assigning keeps "
-          "the warm-start state.")
-      .def_prop_ro("uses_cuda_graph", &cunls::AugmentedLagrangianMinimizer::UsesCudaGraph,
-                   "Whether the last call captured or replayed a CUDA graph.");
+          "the warm-start state.");
 }

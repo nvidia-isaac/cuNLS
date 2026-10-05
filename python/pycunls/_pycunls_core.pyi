@@ -1719,7 +1719,6 @@ class AugmentedLagrangianMinimizerOptions:
     warm_start: bool
     reuse_structure: bool
     real_time: bool
-    use_cuda_graph: bool
 
     def __init__(self) -> None: ...
 
@@ -1766,10 +1765,6 @@ class AugmentedLagrangianMinimizer:
         ...
     @options.setter
     def options(self, value: AugmentedLagrangianMinimizerOptions) -> None: ...
-    @property
-    def uses_cuda_graph(self) -> bool:
-        """Whether the last call captured or replayed a CUDA graph."""
-        ...
 
 # ---------------------------------------------------------------------------
 # RANSAC minimizers

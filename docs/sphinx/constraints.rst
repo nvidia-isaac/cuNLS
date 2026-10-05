@@ -189,8 +189,7 @@ Real time
    iterations of ``inner_iterations`` inner iterations, every decision on the
    GPU, one read-back per call (the summary's costs are NaN). With
    ``warm_start`` and ``reuse_structure`` the penalties and violation history
-   continue from call to call; ``use_cuda_graph`` captures the second such call
-   and replays it. ``solver.options = o`` switches the options between calls
+   continue from call to call. ``solver.options = o`` switches the options between calls
    and keeps the warm-start state (a converged first solve, then a real-time
    budget).
 
