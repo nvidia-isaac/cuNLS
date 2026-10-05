@@ -87,11 +87,11 @@ struct SbaProblemHost {
   /// Per-obs: 4 floats (2x2 sqrt info), then 2 floats (observation xy); size
   /// n_obs*6.
   std::vector<float> obs_sqrt_info_and_xy;
-  std::vector<int32_t> camera_ids;            ///< Camera index for each observation.
-  std::vector<int32_t> point_ids;             ///< Point index for each observation.
-  std::vector<int32_t> pose_ids;              ///< Pose index for each observation.
+  std::vector<int32_t> camera_ids;  ///< Camera index for each observation.
+  std::vector<int32_t> point_ids;   ///< Point index for each observation.
+  std::vector<int32_t> pose_ids;    ///< Pose index for each observation.
   std::vector<SE3Transform> poses;  ///< Rig poses as stored (world-to-rig), 16 floats each.
-  std::vector<Vector<3>> points;              ///< 3D points in world frame.
+  std::vector<Vector<3>> points;    ///< 3D points in world frame.
   std::vector<SE3Transform> camera_from_rig;  ///< Camera-in-rig transforms per camera.
 };
 

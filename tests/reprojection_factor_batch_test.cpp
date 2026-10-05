@@ -452,8 +452,8 @@ class ReprojectionFactorBatchTest : public ::testing::Test {
   // Ground truth data
   /// Ground truth camera_from_world poses; the pose states hold their inverses (world_from_rig).
   std::vector<SE3Transform> ground_truth_poses_;
-  std::vector<Point3D> ground_truth_points_;      ///< Ground truth 3D points
-  std::vector<Observation2D> observations_;       ///< 2D observations (normalized)
+  std::vector<Point3D> ground_truth_points_;  ///< Ground truth 3D points
+  std::vector<Observation2D> observations_;   ///< 2D observations (normalized)
 
   profiler::Domain profiler_domain_{"ReprojectionFactorBatchTest"};
 };

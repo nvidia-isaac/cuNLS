@@ -92,8 +92,8 @@ class BlockTridiagonalSolver : public SparseLinearSolver {
   dvector<int> row_slot_;
   /// Per (p, k): number of unknowns of the stage (rows past it are padding).
   dvector<int> stage_sizes_;
-  dvector<float> blocks_;   ///< P*K*m*m D blocks (then L), P*K*m*m C blocks (then W).
-  dvector<float> vectors_;  ///< P*K*m right-hand side, then solution.
+  dvector<float> blocks_;      ///< P*K*m*m D blocks (then L), P*K*m*m C blocks (then W).
+  dvector<float> vectors_;     ///< P*K*m right-hand side, then solution.
   dvector<int> num_singular_;  ///< Non-positive pivots of the last Solve.
   bool safety_checks_enabled_ = true;
 };
