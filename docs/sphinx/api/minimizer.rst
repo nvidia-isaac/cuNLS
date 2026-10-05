@@ -149,7 +149,9 @@ values and then override individual fields.
 - **max_consecutive_rejected_steps** (``int``, default ``5``) — how many
   consecutive rejected steps (cost increased or step quality below
   acceptance threshold) are allowed before the minimizer treats the current
-  estimate as converged.  Set to ``0`` to disable this criterion.
+  estimate as converged.  Levenberg-Marquardt applies it only once
+  :math:`\lambda` has reached ``lambda_max`` (the damping is exhausted).  Set
+  to ``0`` to disable this criterion.
 - **sparse_linear_solver_type** (``SparseLinearSolverType``, default
   ``BlockSparsePCG``) — selects the linear-system backend.
   ``BlockSparsePCG`` runs block-Jacobi preconditioned conjugate gradient
@@ -251,7 +253,9 @@ parameters for Levenberg-Marquardt.
   coefficient :math:`\lambda`.  Larger values make the first step more
   like gradient descent; smaller values start closer to Gauss-Newton.
 - **lambda_upscale** (``float``, default ``2.0``) — factor by which
-  :math:`\lambda` is *increased* after a rejected step (cost went up).
+  :math:`\lambda` is *increased* after a rejected step; the :math:`k`-th
+  consecutive rejection multiplies by ``lambda_upscale`` :math:`\cdot 2^{k-1}`
+  (Nielsen's rule), so the damping escalates quickly when the model is poor.
 - **lambda_downscale** (``float``, default ``0.5``) — factor by which
   :math:`\lambda` is *decreased* after a very successful step (step quality
   above ``lambda_downscale_threshold``).
@@ -612,7 +616,8 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
 - **max_consecutive_rejected_steps** [in]: Maximum number of consecutive
   rejected steps before declaring convergence. When every trial step is rejected
   (cost increases or step quality below acceptance threshold) this many times
-  in a row, the minimizer treats the current solution as converged. Set to 0 to
+  in a row, the minimizer treats the current solution as converged
+  (Levenberg-Marquardt: once :math:`\lambda` is at ``lambda_max``). Set to 0 to
   disable. Default: 5.
 - **sparse_linear_solver_type** [in]: Linear backend; options are
   ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate gradient;
@@ -709,7 +714,8 @@ constructing a :code:`LevenbergMarquardtMinimizer`.
 - **relative_reduction_tolerance** [in]: Convergence threshold on predicted
   relative cost reduction. Default: 1e-6.
 - **lambda_upscale** [in]: Factor by which :math:`\lambda` is increased after a
-  rejected step. Default: 2.0.
+  rejected step, times :math:`2^{k-1}` at the :math:`k`-th consecutive rejection.
+  Default: 2.0.
 - **lambda_downscale** [in]: Factor by which :math:`\lambda` is decreased after a
   very successful step. Default: 0.5.
 - **lambda_max** [in]: Upper bound for :math:`\lambda`. Default: 1e+6.

@@ -17,6 +17,9 @@
 
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/common/types.h"
@@ -116,7 +119,10 @@ bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
   float diag_weight = h_scalars_[2];
   float matrix_weight = h_scalars_[3];
 
-  float predicted_relative_reduction = (matrix_weight + 2.f * lambda_ * diag_weight) / current_cost;
+  // The damped step solves (H + λD) δ = -g, so the model decrease -gᵀδ - ½ δᵀHδ is
+  // ½ δᵀHδ + λ δᵀDδ (H undamped; cost = ½ Σ ρ). Relative to the current cost:
+  float predicted_relative_reduction =
+      (0.5f * matrix_weight + lambda_ * diag_weight) / current_cost;
 
   LogMessage("Predicted relative reduction = {}", predicted_relative_reduction);
   LogMessage("Step squared norm = {}", step_sq_norm);
@@ -134,7 +140,8 @@ bool LevenbergMarquardtMinimizer::EvaluateAndCheckConvergence(
  * @brief Determines if a step should be rejected (LM version).
  *
  * Rejects step if rho < step_accept_threshold. When rejecting, increases
- * lambda by lambda_upscale to make the next step more conservative.
+ * lambda by lambda_upscale * 2^(k-1) at the k-th consecutive rejection, so the
+ * damping escalates until the model is trusted (see lambda_upscale).
  *
  * @param step_quality Rho metric (actual/predicted cost reduction).
  * @return True if step should be rejected, false otherwise.
@@ -143,8 +150,11 @@ bool LevenbergMarquardtMinimizer::RejectStep(float step_quality) {
   // !(rho >= threshold): a NaN rho (a step to a non-finite cost) is rejected.
   if (!(step_quality >= options_.step_accept_threshold)) {
     LogMessage("Reject step");
-    // Increase lambda to make next step more conservative
-    lambda_ *= options_.lambda_upscale;
+    // Increase lambda to make next step more conservative, faster at each
+    // consecutive rejection.
+    lambda_ *= options_.lambda_upscale * std::ldexp(1.f, std::min(consecutive_rejects_, 30));
+    lambda_ = std::min(lambda_, options_.lambda_max);
+    ++consecutive_rejects_;
     return true;
   }
   return false;
@@ -164,6 +174,7 @@ bool LevenbergMarquardtMinimizer::RejectStep(float step_quality) {
 bool LevenbergMarquardtMinimizer::AcceptStep(float step_quality) {
   if (step_quality >= options_.step_accept_threshold) {
     LogMessage("Accept step");
+    consecutive_rejects_ = 0;
 
     // If step is very successful, decrease lambda to be more aggressive
     if (step_quality > options_.lambda_downscale_threshold) {
@@ -191,5 +202,8 @@ void LevenbergMarquardtMinimizer::Initialize(cudaStream_t stream, Problem &probl
   GaussNewtonMinimizer::Initialize(stream, problem);
 }
 
-void LevenbergMarquardtMinimizer::BeginCall() { lambda_ = options_.initial_lambda; }
+void LevenbergMarquardtMinimizer::BeginCall() {
+  lambda_ = options_.initial_lambda;
+  consecutive_rejects_ = 0;
+}
 }  // namespace cunls

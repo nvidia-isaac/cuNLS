@@ -109,7 +109,9 @@ struct MinimizerOptions {
    * When the optimizer rejects this many steps in a row (i.e., every trial
    * step increases cost or falls below the acceptance threshold), the
    * minimizer treats the current solution as converged because it can no
-   * longer make progress.  Set to 0 to disable this criterion.
+   * longer make progress.  Levenberg-Marquardt escalates its damping on each
+   * rejection and applies this cap only once lambda has reached lambda_max
+   * (the damping is exhausted).  Set to 0 to disable this criterion.
    * Default: 5
    */
   size_t max_consecutive_rejected_steps = 5;
@@ -381,6 +383,12 @@ class GaussNewtonMinimizer {
 
   /** @brief RejectStep's decision, without its side effects (damping updates). */
   virtual bool WouldRejectStep(float step_quality) const;
+
+  /** @brief A (shortened) line-search step was taken instead of AcceptStep. */
+  virtual void LineSearchStepTaken() {}
+
+  /** @brief Whether rejected steps count towards max_consecutive_rejected_steps. */
+  virtual bool DampingExhausted() const { return true; }
 
   /**
    * @brief Initializes internal data structures for optimization.

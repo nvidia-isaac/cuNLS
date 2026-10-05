@@ -180,7 +180,8 @@ __global__ void step_control_kernel(BatchedStepControlParams params, size_t num_
     bool converged;
     float quality;
     if (params.levenberg_marquardt) {
-      const float predicted = (matrix_weight[p] + 2.f * lambda[p] * diag_weight[p]) / current;
+      // Model decrease ½ δᵀHδ + λ δᵀDδ (see LevenbergMarquardtMinimizer), relative.
+      const float predicted = (0.5f * matrix_weight[p] + lambda[p] * diag_weight[p]) / current;
       quality = (1.f - updated / current) / predicted;  // rho
       converged = step_squared[p] < params.state_tolerance ||
                   predicted < params.relative_reduction_tolerance ||
@@ -206,10 +207,17 @@ __global__ void step_control_kernel(BatchedStepControlParams params, size_t num_
       active[p] = 0;
     } else {
       if (reject) {
-        if (params.levenberg_marquardt) lambda[p] *= params.lambda_upscale;
+        // Nielsen's escalation: the k-th consecutive rejection multiplies by
+        // lambda_upscale * 2^(k-1) (see LevenbergMarquardtMinimizerOptions).
+        if (params.levenberg_marquardt) {
+          lambda[p] = fminf(lambda[p] * params.lambda_upscale * ldexpf(1.f, min(rejected[p], 30)),
+                            params.lambda_max);
+        }
         rejected[p] += 1;
+        // Levenberg-Marquardt stops only once its damping is exhausted.
         if (params.max_consecutive_rejected_steps > 0 &&
-            rejected[p] >= params.max_consecutive_rejected_steps) {
+            rejected[p] >= params.max_consecutive_rejected_steps &&
+            (!params.levenberg_marquardt || lambda[p] >= params.lambda_max)) {
           active[p] = 0;
         }
       } else {

@@ -54,8 +54,11 @@ struct LevenbergMarquardtMinimizerOptions {
   /**
    * @brief Factor by which lambda is increased when a step is rejected.
    *
-   * When a step increases the cost, lambda is multiplied by this factor to
-   * make the next step more conservative.
+   * The k-th consecutive rejection multiplies lambda by
+   * lambda_upscale * 2^(k-1) (Nielsen's rule, as in Ceres and g2o), so the
+   * damping escalates quickly when the model is poor: with the default,
+   * 2, 4, 8, 16, 32, i.e. 2^15 after five rejections. An accepted step resets
+   * the escalation. Lambda stays within [lambda_min, lambda_max].
    * Default: 2.0
    */
   float lambda_upscale = 2.0f;
@@ -185,6 +188,12 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    */
   bool RejectStep(float step_quality) override;
 
+  /** @brief Resets the damping escalation (the damping itself stays). */
+  void LineSearchStepTaken() override { consecutive_rejects_ = 0; }
+
+  /** @brief Rejections count towards the cap once lambda is at lambda_max. */
+  bool DampingExhausted() const override { return lambda_ >= options_.lambda_max; }
+
   bool WouldRejectStep(float step_quality) const override {
     return !(step_quality >= options_.step_accept_threshold);
   }
@@ -203,7 +212,8 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
   dvector<float> damping_;       ///< Batched mode: per-row lambda * diag(H).
   dvector<float> hessian_step_;  ///< Batched mode: H * step.
 
-  float lambda_;  ///< Current damping factor.
+  float lambda_;                 ///< Current damping factor.
+  int consecutive_rejects_ = 0;  ///< Rejections since the last accepted step.
 };
 
 }  // namespace cunls

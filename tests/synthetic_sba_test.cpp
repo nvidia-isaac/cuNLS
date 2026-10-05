@@ -25,6 +25,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <random>
@@ -106,7 +107,8 @@ class SyntheticSbaTest : public ::testing::TestWithParam<SyntheticSbaParams> {
       p_cam[1] = T[1] * dx + T[5] * dy + T[9] * dz;
       p_cam[2] = T[2] * dx + T[6] * dy + T[10] * dz;
     }
-    if (!(p_cam[2] > 0.05f)) {
+    // A real camera: points at least 1 m deep, inside a 90 degree field of view.
+    if (!(p_cam[2] > 1.f) || std::fabs(p_cam[0]) > p_cam[2] || std::fabs(p_cam[1]) > p_cam[2]) {
       return false;
     }
     out[0] = p_cam[0] / p_cam[2];
@@ -339,7 +341,17 @@ TEST_P(SyntheticSbaTest, Optimize) {
 
   EXPECT_TRUE(std::isfinite(summary.initial_cost));
   EXPECT_TRUE(std::isfinite(summary.final_cost));
-  EXPECT_LE(summary.final_cost, summary.initial_cost + 1e-3f);
+  // Observation noise sigma = 1e-3 on both coordinates: at the optimum the cost
+  // (1/2 sum r^2) is about n_obs * 1e-6 or below (the states absorb part of it).
+  EXPECT_LT(summary.final_cost, 2e-6 * n_obs) << "initial cost " << summary.initial_cost;
+  // Camera positions (world_from_cam translations) back at the truth.
+  std::vector<SE3Transform> final_poses(params.n_poses);
+  poses_d.CopyToHost(final_poses.data(), final_poses.size());
+  float max_err = 0.f;
+  for (int i = 0; i < params.n_poses; ++i)
+    for (int k : {3, 7, 11})
+      max_err = std::max(max_err, std::fabs(final_poses[i][k] - gt_poses[i][k]));
+  EXPECT_LT(max_err, 0.05f);  // ~1.5 cm after the 10 iterations
 }
 
 INSTANTIATE_TEST_SUITE_P(

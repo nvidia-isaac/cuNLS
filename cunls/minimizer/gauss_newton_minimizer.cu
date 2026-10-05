@@ -633,6 +633,7 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &pr
       if (shortened_cost < summary.final_cost && (shortened || WouldRejectStep(step_quality))) {
         LogMessage("Line search: step taken, cost = {}", shortened_cost);
         consecutive_rejected = 0;
+        LineSearchStepTaken();
         summary.final_cost = shortened_cost;
         current_state_.Copy(stream, updated_state_.GetStates());
         BuildSystem(stream, problem, current_state_);
@@ -654,7 +655,7 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &pr
       LogMessage("Reject step");
       consecutive_rejected++;
       if (options_.max_consecutive_rejected_steps > 0 &&
-          consecutive_rejected >= options_.max_consecutive_rejected_steps) {
+          consecutive_rejected >= options_.max_consecutive_rejected_steps && DampingExhausted()) {
         LogMessage("Converged: {} consecutive rejected steps", consecutive_rejected);
         stopped = true;
         break;

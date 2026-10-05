@@ -533,4 +533,44 @@ TEST(NonFiniteTrialStep, IsRejected) {
   }
 }
 
+// On a linear problem the LM model is exact, so the gain ratio rho is 1 and
+// every step is "very successful": lambda shrinks each iteration and LM turns
+// into Gauss-Newton. Priors give H = I, so from lambda_0 = 10 the step is
+// -g / (1 + lambda) and twelve iterations reach the optimum to ~1e-20 of the
+// initial cost. A model decrease overestimated 2x (rho = 0.5 < 0.75) keeps
+// lambda at 10 and leaves ~10% of the cost. Single problem and subproblems.
+TEST(LevenbergMarquardt, LinearProblemShrinksDamping) {
+  for (bool partitioned : {false, true}) {
+    CudaStream stream;
+    constexpr int kN = 8;
+    std::vector<Vector<3>> targets(kN);
+    for (int i = 0; i < kN; ++i) targets[i] = {float(i), -2.f * i, 0.5f};
+    dvector<Vector<3>> x(std::vector<Vector<3>>(kN, Vector<3>{0.f, 0.f, 0.f}));
+    dvector<Vector<3>> t(targets);
+    VectorStateBatch<3> states(reinterpret_cast<const float *>(x.data()), kN);
+    states.SetNumActiveStates(kN);
+    PriorVectorFactorBatch<3> priors(t.data(), kN);
+    priors.SetNumActiveFactors(kN);
+    std::vector<float *> ptrs;
+    for (int i = 0; i < kN; ++i) ptrs.push_back(states.StateDevicePtr(i));
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&priors, ptrs);
+    std::vector<int> ids(kN);
+    for (int i = 0; i < kN; ++i) ids[i] = i % 2;
+    dvector<int> d_ids(ids);
+    if (partitioned) problem.SetProblemPartition(2, {d_ids.data()});
+    LevenbergMarquardtMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    options.base_options.max_num_iterations = 12;
+    options.base_options.state_tolerance = 0.f;
+    options.base_options.cost_tolerance = 0.f;
+    options.relative_reduction_tolerance = 0.f;
+    options.initial_lambda = 10.f;
+    const MinimizerSummary summary =
+        LevenbergMarquardtMinimizer(options).Minimize(stream.GetStream(), problem);
+    EXPECT_LT(summary.final_cost, 1e-6f * summary.initial_cost) << "partitioned " << partitioned;
+  }
+}
+
 }  // namespace cunls

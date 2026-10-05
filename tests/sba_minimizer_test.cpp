@@ -321,14 +321,19 @@ class SbaMinimizerTestFixture : public ::testing::Test {
 // -----------------------------------------------------------------------------
 /**
  * @brief Runs LM on each (or the selected) binary SBA problem and checks
- * convergence.
+ * that it makes progress.
  *
  * Opens filtered_ba_problems.bin; if CUNLS_SBA_PROBLEM_INDEX is set, runs only
- * that 0-based problem index, otherwise runs all problems in the file. For each
- * problem: builds Problem via BuildProblemFromHost, runs
- * LevenbergMarquardtMinimizer, and asserts initial/final cost are finite and
- * final cost <= initial cost (within tolerance). Skips empty problems; skips if
- * data file or selected index is missing.
+ * that 0-based problem index, otherwise runs all problems in the file.
+ *
+ * The file has no ground truth, and its initial states are far from consistent
+ * (median initial residual ~0.2 in normalized coordinates under any pose or
+ * camera-axis convention); under the stored world-to-rig convention 41 of its
+ * 119 problems have every point behind the cameras and so a zero cost. This is
+ * therefore a robustness test on real problem structure, not an accuracy test
+ * (accuracy: SyntheticSbaTest). Per problem with a nonzero cost: finite costs
+ * and a strict decrease; over the file: the geometric-mean cost reduction,
+ * about 0.08 (it was 0.12 to 0.15 when LM gave up after a few rejected steps).
  */
 TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
   std::string path = std::string(kTestDataDir) + "/filtered_ba_problems.bin";
@@ -369,6 +374,8 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
 
   SbaProblemHost host;
   int current_index = 0;
+  int num_solved = 0, num_zero_cost = 0;
+  double log_reduction_sum = 0.0;
   bool processed_requested = false;
 
   while (ReadOneSbaProblem(in, host)) {
@@ -397,8 +404,13 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
 
     EXPECT_TRUE(std::isfinite(summary.initial_cost)) << "Initial cost must be finite (no NaNs)";
     EXPECT_TRUE(std::isfinite(summary.final_cost)) << "Final cost must be finite (no NaNs)";
-    EXPECT_LE(summary.final_cost, summary.initial_cost + 1e-6f)
-        << "Final cost must be <= initial cost";
+    if (summary.initial_cost > 0.f) {
+      EXPECT_LT(summary.final_cost, summary.initial_cost) << "no progress";
+      log_reduction_sum += std::log(summary.final_cost / summary.initial_cost);
+      ++num_solved;
+    } else {
+      ++num_zero_cost;  // every point behind the cameras (see above)
+    }
 
     if (problem_index >= 0) {
       processed_requested = true;
@@ -409,6 +421,12 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
 
   if (problem_index >= 0 && !processed_requested) {
     GTEST_SKIP() << "Problem index " << problem_index << " not found in file";
+  }
+  RecordProperty("problems_with_zero_cost", num_zero_cost);
+  if (problem_index < 0) {
+    ASSERT_GT(num_solved, 0);
+    EXPECT_LT(std::exp(log_reduction_sum / num_solved), 0.1)
+        << "geometric-mean final / initial cost over " << num_solved << " problems";
   }
 }
 
