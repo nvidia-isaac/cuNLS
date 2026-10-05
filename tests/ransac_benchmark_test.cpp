@@ -173,6 +173,7 @@ struct RigProblem {
       pts[c].CopyFromHost(s.points_world.data(), s.points_world.size());
       pnp.push_back(
           std::make_unique<PnPFactorBatch>(obs[c].data(), pts[c].data(), s.observations.size()));
+      pnp.back()->SetNumActiveFactors(pnp.back()->Capacity());
       std::vector<float *> ptrs(s.observations.size(), state->StateDevicePtr(c));
       if (loss) {
         problem.AddFactorBatch(pnp.back().get(), loss.get(), ptrs);
