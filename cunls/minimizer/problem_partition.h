@@ -105,7 +105,7 @@ class ProblemPartition {
    * to `d_out`.
    */
   void InitStepControl(cudaStream_t stream, float cost_tolerance, float initial_lambda,
-                       float *d_out);
+                       const int *frozen, float *d_out);
 
   /**
    * @brief Decides, for every active subproblem, from NewCost(), StepSquared()

@@ -490,6 +490,9 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::MinimizeEager(
     call.max_num_iterations = cap;
     call.max_line_search_steps = options_.inner_line_search_steps;
     call.problem_at_cap = at_cap_.data();
+    // Finished subproblems (done or stalled) keep their states: re-solving one
+    // for the others' sake could move it off the point that was accepted.
+    call.problem_frozen = problem_status_.data();
     call.fixed_iterations = real_time;
     call.constraints_managed = true;
     // Later outer iterations solve the same structure.

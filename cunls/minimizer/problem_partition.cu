@@ -134,11 +134,13 @@ __global__ void copy_accepted_kernel(const float *from, float *to, const int *id
 }
 
 __global__ void init_control_kernel(const float *cost, size_t num_problems, float cost_tolerance,
-                                    float initial_lambda, float *lambda, int *active, int *rejected,
-                                    int *accept, float *out) {
+                                    float initial_lambda, const int *frozen, float *lambda,
+                                    int *active, int *rejected, int *accept, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
-  const int is_active = cost[p] >= cost_tolerance;
+  // A frozen subproblem (MinimizeCallOptions::problem_frozen) is never active:
+  // it takes no step and keeps its states.
+  const int is_active = cost[p] >= cost_tolerance && (frozen == nullptr || frozen[p] == 0);
   active[p] = is_active;
   rejected[p] = 0;
   accept[p] = 0;
@@ -412,11 +414,11 @@ void ProblemPartition::CopyAccepted(cudaStream_t stream, const Problem &problem,
 }
 
 void ProblemPartition::InitStepControl(cudaStream_t stream, float cost_tolerance,
-                                       float initial_lambda, float *d_out) {
+                                       float initial_lambda, const int *frozen, float *d_out) {
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   init_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
-      cost_.data(), num_problems_, cost_tolerance, initial_lambda, lambda_.data(), active_.data(),
-      rejected_.data(), accept_.data(), d_out);
+      cost_.data(), num_problems_, cost_tolerance, initial_lambda, frozen, lambda_.data(),
+      active_.data(), rejected_.data(), accept_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

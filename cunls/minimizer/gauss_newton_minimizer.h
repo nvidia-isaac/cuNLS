@@ -246,6 +246,13 @@ struct MinimizeCallOptions {
    */
   int *problem_at_cap = nullptr;
   /**
+   * @brief Optional device array of Problem::NumProblems() ints, read at the
+   * start of the call: a subproblem whose entry is nonzero is not iterated
+   * (its states stay as they are). AugmentedLagrangianMinimizer freezes the
+   * subproblems it has finished. Used with a subproblem partition.
+   */
+  const int *problem_frozen = nullptr;
+  /**
    * @brief The problem's structure is unchanged since this minimizer's
    * previous Minimize call on it: same batches, connectivity (also the
    * contents of device index tables), active and constant counts, constant

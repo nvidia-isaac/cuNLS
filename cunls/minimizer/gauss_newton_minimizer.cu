@@ -733,7 +733,7 @@ MinimizerSummary GaussNewtonMinimizer::MinimizeBatched(cudaStream_t stream, Prob
   ComputeCostAsync(stream, problem, current_state_, d_scalars_.data());
   partition_.AccumulateFactorCosts(stream, factor_costs(), partition_.Cost());
   partition_.InitStepControl(stream, options_.cost_tolerance, BatchedInitialLambda(),
-                             d_scalars_.data());
+                             call_.problem_frozen, d_scalars_.data());
   float cost = std::numeric_limits<float>::quiet_NaN();
   size_t active = partition_.NumProblems();
   if (!fixed) {
