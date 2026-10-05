@@ -49,9 +49,10 @@ constexpr float kInf = std::numeric_limits<float>::infinity();
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<GaussNewtonMinimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind, size_t line_search_steps = 0) {
   MinimizerOptions options;
   options.max_num_iterations = 50;
+  options.max_line_search_steps = line_search_steps;
   options.state_tolerance = 1e-12f;
   options.cost_tolerance = 1e-12f;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
@@ -140,11 +141,8 @@ TEST_P(ProjectedBoundsTest, CoupledChainsMatchReference) {
   dvector<int> d_ids(ids);
   if (num_chains > 1) problem.SetProblemPartition(num_chains, {d_ids.data()});
 
-  auto minimizer = MakeMinimizer(kind);
-  MinimizeCallOptions call;
-  call.max_num_iterations = 50;
-  call.max_line_search_steps = 10;
-  minimizer->Minimize(stream.GetStream(), problem, call);
+  auto minimizer = MakeMinimizer(kind, /*line_search_steps=*/10);
+  minimizer->Minimize(stream.GetStream(), problem);
 
   std::vector<float> result(total);
   x.CopyToHost(result.data(), total);

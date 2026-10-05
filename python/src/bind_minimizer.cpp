@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-// Bindings for the Gauss-Newton and Levenberg-Marquardt minimizers.
+// Bindings for the minimizers: the Minimizer base with GaussNewtonMinimizer
+// and LevenbergMarquardtMinimizer, and the augmented Lagrangian around them.
 //
 // Both minimizers follow the same pattern:
 //   1. Construct with an options struct (MinimizerOptions or LM-specific).
-//   2. Call minimize(stream, problem) -> MinimizerSummary.
+//   2. Call minimize(stream, problem) -> MinimizerSummary (on the base).
 //
 // The minimize() wrapper releases the GIL before entering the C++ solver
 // so that other Python threads (or async tasks) are not blocked during what
@@ -34,17 +35,17 @@
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem.h"
 
 void bind_minimizer(nb::module_ &m) {
-  nb::class_<cunls::GaussNewtonMinimizer>(
-      m, "GaussNewtonMinimizer", "Gauss-Newton minimizer for nonlinear least-squares problems.")
-      .def(nb::init<const cunls::MinimizerOptions &>(),
-           nb::arg("options") = cunls::MinimizerOptions())
+  nb::class_<cunls::Minimizer>(
+      m, "Minimizer",
+      "Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer. Not "
+      "constructible; accepts either (e.g. AugmentedLagrangianMinimizer's inner minimizer).")
       .def(
           "minimize",
-          [](cunls::GaussNewtonMinimizer &self, cunls::CudaStream &stream,
-             cunls::Problem &problem) {
+          [](cunls::Minimizer &self, cunls::CudaStream &stream, cunls::Problem &problem) {
             cunls::MinimizerSummary summary;
             {
               nb::gil_scoped_release release;
@@ -53,25 +54,25 @@ void bind_minimizer(nb::module_ &m) {
             return summary;
           },
           nb::arg("stream"), nb::arg("problem"),
-          "Run the Gauss-Newton optimizer. Returns a MinimizerSummary.");
+          "Minimize the problem's cost from its current states; the states are updated in "
+          "place. Returns a MinimizerSummary.")
+      .def_prop_ro(
+          "options", [](const cunls::Minimizer &self) { return self.Options(); },
+          "Options the minimizer runs with (a copy; for Levenberg-Marquardt the base options "
+          "with max_consecutive_rejected_steps widened by the damping's escalation room).");
 
-  nb::class_<cunls::LevenbergMarquardtMinimizer, cunls::GaussNewtonMinimizer>(
-      m, "LevenbergMarquardtMinimizer", "Levenberg-Marquardt minimizer (damped Gauss-Newton).")
+  nb::class_<cunls::GaussNewtonMinimizer, cunls::Minimizer>(
+      m, "GaussNewtonMinimizer",
+      "Gauss-Newton: solves the undamped normal equations and takes every step that lowers "
+      "the cost.")
+      .def(nb::init<const cunls::MinimizerOptions &>(),
+           nb::arg("options") = cunls::MinimizerOptions());
+
+  nb::class_<cunls::LevenbergMarquardtMinimizer, cunls::Minimizer>(
+      m, "LevenbergMarquardtMinimizer",
+      "Levenberg-Marquardt: Gauss-Newton with an adaptive damping per subproblem.")
       .def(nb::init<const cunls::LevenbergMarquardtMinimizerOptions &>(),
-           nb::arg("options") = cunls::LevenbergMarquardtMinimizerOptions())
-      .def(
-          "minimize",
-          [](cunls::LevenbergMarquardtMinimizer &self, cunls::CudaStream &stream,
-             cunls::Problem &problem) {
-            cunls::MinimizerSummary summary;
-            {
-              nb::gil_scoped_release release;
-              summary = self.Minimize(stream.GetStream(), problem);
-            }
-            return summary;
-          },
-          nb::arg("stream"), nb::arg("problem"),
-          "Run the Levenberg-Marquardt optimizer. Returns a MinimizerSummary.");
+           nb::arg("options") = cunls::LevenbergMarquardtMinimizerOptions());
 
   // --- Augmented Lagrangian outer loop for problems with constraint batches ---
   nb::class_<cunls::AugmentedLagrangianMinimizerOptions>(
@@ -144,8 +145,7 @@ void bind_minimizer(nb::module_ &m) {
       "(ConstraintFactorBatch, BoundFactorBatchN), around a Gauss-Newton or "
       "Levenberg-Marquardt minimizer. Without constraint batches it is the wrapped "
       "minimizer.")
-      .def(nb::init<cunls::GaussNewtonMinimizer &,
-                    const cunls::AugmentedLagrangianMinimizerOptions &>(),
+      .def(nb::init<cunls::Minimizer &, const cunls::AugmentedLagrangianMinimizerOptions &>(),
            nb::arg("minimizer"), nb::arg("options") = cunls::AugmentedLagrangianMinimizerOptions(),
            nb::keep_alive<1, 2>())
       .def(

@@ -125,8 +125,11 @@ The utility type :ref:`CudaStream <py-cuda-stream-label>` is documented in
 ``pycunls.MinimizerOptions``
 --------------------------------------------------------------------------------
 
-Configuration for the base Gauss-Newton iteration loop.  Create with default
-values and then override individual fields.
+Options common to ``GaussNewtonMinimizer`` and ``LevenbergMarquardtMinimizer``
+(the latter takes them as ``LevenbergMarquardtMinimizerOptions.base_options``).
+Every criterion is applied per subproblem (``Problem.set_problem_partition``); a
+problem without a partition is one subproblem.  Create with default values and
+then override individual fields.
 
 **Constructor**
 
@@ -149,9 +152,9 @@ values and then override individual fields.
 - **max_consecutive_rejected_steps** (``int``, default ``5``) — how many
   consecutive rejected steps (cost increased or step quality below
   acceptance threshold) are allowed before the minimizer treats the current
-  estimate as converged.  Levenberg-Marquardt applies it only once
-  :math:`\lambda` has reached ``lambda_max`` (the damping is exhausted).  Set
-  to ``0`` to disable this criterion.
+  estimate as converged.  Levenberg-Marquardt adds the rejections its damping
+  needs to escalate from ``lambda_min`` to ``lambda_max``, so the cap counts
+  the rejections at full damping.  Set to ``0`` to disable this criterion.
 - **sparse_linear_solver_type** (``SparseLinearSolverType``, default
   ``BlockSparsePCG``) — selects the linear-system backend.
   ``BlockSparsePCG`` runs block-Jacobi preconditioned conjugate gradient
@@ -161,6 +164,14 @@ values and then override individual fields.
   ``DenseCholesky`` converts to dense and uses cuSOLVER Cholesky
   (requires SPD); ``DenseQR`` converts to dense and uses cuSOLVER QR
   factorization (works for any non-singular matrix).
+- **reuse_structure** (``bool``, default ``False``) — the problem's structure
+  is unchanged since this minimizer's previous ``minimize`` on it (same
+  batches, connectivity, active and constant counts, partition; only state
+  values, factor data and bounds may differ).  Calls after the first then
+  skip the structure setup (index expansion, Hessian pattern, symbolic
+  analysis of the linear solver).  A size change falls back to the full
+  setup; rewritten index tables at the same sizes must not be combined with
+  this option.  Typical use: a real-time loop re-solving the same problem.
 - **column_scaling** (``ColumnScaling``, default ``ColumnScaling.none``) —
   optional diagonal scaling :math:`S` for the normal equations
   (:math:`S H S\, z = S b`, then :math:`\Delta x = S z`). See
@@ -211,8 +222,8 @@ column-scaling note in the theory section earlier on this page.
 ``pycunls.MinimizerSummary``
 --------------------------------------------------------------------------------
 
-Returned by ``GaussNewtonMinimizer.minimize`` and
-``LevenbergMarquardtMinimizer.minimize``.  All fields are read-only
+Returned by ``Minimizer.minimize`` (``GaussNewtonMinimizer`` and
+``LevenbergMarquardtMinimizer``).  All fields are read-only
 properties.
 
 **Properties**
@@ -285,16 +296,51 @@ parameters for Levenberg-Marquardt.
    lm_opts.base_options   = opts
    lm_opts.initial_lambda = 1e-3
 
+.. _py-minimizer-label:
+
+--------------------------------------------------------------------------------
+``pycunls.Minimizer``
+--------------------------------------------------------------------------------
+
+Common base of ``GaussNewtonMinimizer`` and ``LevenbergMarquardtMinimizer``.
+Not constructible; use it to accept either minimizer (for example the inner
+minimizer of ``AugmentedLagrangianMinimizer``).  Each iteration builds the
+normal equations :math:`J^T J \,\Delta x = -J^T r` at the current states,
+lets the subclass adjust them (Levenberg-Marquardt adds its damping), solves
+for the step, evaluates the cost at the trial states (with optional line
+search), lets the subclass classify the step, and takes or rejects it.  With a
+problem partition every decision is taken per subproblem.
+
+**Methods**
+
+- ``minimize(stream: CudaStream, problem: Problem) -> MinimizerSummary`` —
+  minimizes the cost starting from the problem's current states.  The state
+  memory owned by the state batches inside *problem* is updated **in-place**
+  on the GPU (also when the iteration limit is hit); states with bounds are
+  first projected onto them.  All GPU work is issued on *stream*, which is
+  synchronized before the call returns.  Returns a
+  :ref:`MinimizerSummary <py-minimizer-summary-label>` with iteration count
+  and cost statistics.
+
+**Properties**
+
+- ``options`` (``MinimizerOptions``, read-only copy) — the options the
+  minimizer runs with (for Levenberg-Marquardt the base options, with
+  ``max_consecutive_rejected_steps`` widened by the damping's escalation
+  room).
+
 .. _py-gauss-newton-label:
 
 --------------------------------------------------------------------------------
 ``pycunls.GaussNewtonMinimizer``
 --------------------------------------------------------------------------------
 
-Iterative Gauss-Newton solver.  At each iteration it evaluates residuals and
-Jacobians, assembles and solves the normal equations
-:math:`J^T J \,\Delta x = -J^T r`, applies the tangent-space step via each
-state batch's Plus operation, and checks convergence.
+Gauss-Newton (a :ref:`Minimizer <py-minimizer-label>`): solves the undamped
+normal equations and takes every step that lowers the cost.  A step that does
+not lower the cost is rejected and the subproblem stops (with line search it
+is shortened first).  Converged when :math:`\|\Delta x\|^2` <
+``state_tolerance``, the cost < ``cost_tolerance``, or the step does not lower
+the cost.
 
 **Constructor**
 
@@ -305,27 +351,19 @@ state batch's Plus operation, and checks convergence.
 - **options** (``MinimizerOptions``, optional) — solver configuration.  When
   omitted, default options are used.
 
-**Methods**
-
-- ``minimize(stream: CudaStream, problem: Problem) -> MinimizerSummary`` —
-  runs the Gauss-Newton iteration on *problem*.  The state memory owned by
-  the state batches inside *problem* is updated **in-place** on the GPU.
-  All GPU work is issued on *stream*; call
-  ``cp.cuda.runtime.streamSynchronize(stream.get_stream())`` afterwards to
-  ensure results are visible on the host.  Returns a
-  :ref:`MinimizerSummary <py-minimizer-summary-label>` with iteration count
-  and cost statistics.
-
 .. _py-lm-label:
 
 --------------------------------------------------------------------------------
 ``pycunls.LevenbergMarquardtMinimizer``
 --------------------------------------------------------------------------------
 
-Levenberg-Marquardt solver (damped Gauss-Newton).  Solves
+Levenberg-Marquardt (a :ref:`Minimizer <py-minimizer-label>`): Gauss-Newton
+with adaptive damping, one :math:`\lambda` per subproblem.  Solves
 :math:`(J^T J + \lambda\,\mathrm{diag}(J^T J))\,\Delta x = -J^T r` and
-adapts :math:`\lambda` based on step quality.  More robust than pure
-Gauss-Newton when the initial guess is far from the solution.
+adapts :math:`\lambda` from the gain ratio :math:`\rho` (actual over
+predicted cost reduction).  More robust than pure Gauss-Newton when the
+initial guess is far from the solution.  Rejected steps leave the states
+unchanged.
 
 **Constructor**
 
@@ -337,13 +375,7 @@ Gauss-Newton when the initial guess is far from the solution.
 - **options** (``LevenbergMarquardtMinimizerOptions``, optional) — LM
   configuration including damping schedule.  When omitted, default options
   are used.
-
-**Methods**
-
-- ``minimize(stream: CudaStream, problem: Problem) -> MinimizerSummary`` —
-  same interface as ``GaussNewtonMinimizer.minimize``.  Runs the LM
-  iteration instead of pure Gauss-Newton.  State is updated in-place;
-  rejected steps are automatically rolled back.
+- **Raises** ``ValueError`` unless ``0 < lambda_min <= lambda_max``.
 
 .. _py-ransac-label:
 
@@ -591,22 +623,27 @@ Structures
 :code:`MinimizerSummary`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Returned by :cpp:func:`GaussNewtonMinimizer::Minimize` and
-:cpp:func:`LevenbergMarquardtMinimizer::Minimize`. Holds solve statistics for
-inspecting iteration count and cost history.
+Returned by :cpp:func:`Minimizer::Minimize`. Holds solve statistics for
+inspecting iteration count and cost history. Costs are totals over all
+subproblems.
 
-- **num_iterations** [out]: Number of nonlinear iterations performed.
-- **initial_cost** [out]: Objective value before the first iteration.
-- **final_cost** [out]: Objective value at termination.
-- **iteration_costs** [out]: Per-iteration cost history (for plotting or debugging).
+- **num_iterations** [out]: Iterations performed (each builds and solves one
+  linear system, including the last one that converged).
+- **initial_cost** [out]: Cost of the states passed in, after projection onto
+  their bounds.
+- **final_cost** [out]: Cost of the states written back to the problem.
+- **iteration_costs** [out]: Cost at the start of each iteration (for plotting
+  or debugging).
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 :code:`MinimizerOptions`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Options for the **Gauss-Newton** minimizer: iteration limit, convergence
-tolerances, consecutive rejected-step limit, and sparse linear solver choice.
-Used when constructing a :code:`GaussNewtonMinimizer`.
+Options common to :code:`GaussNewtonMinimizer` and
+:code:`LevenbergMarquardtMinimizer` (header :code:`cunls/minimizer/minimizer.h`):
+iteration limit, convergence tolerances, consecutive rejected-step limit,
+sparse linear solver choice, bounds, line search and structure reuse. Every
+criterion is applied per subproblem.
 
 - **max_num_iterations** [in]: Maximum number of iterations. Default: 50.
 - **state_tolerance** [in]: Convergence threshold on squared step norm; optimizer
@@ -617,8 +654,8 @@ Used when constructing a :code:`GaussNewtonMinimizer`.
   rejected steps before declaring convergence. When every trial step is rejected
   (cost increases or step quality below acceptance threshold) this many times
   in a row, the minimizer treats the current solution as converged
-  (Levenberg-Marquardt: once :math:`\lambda` is at ``lambda_max``). Set to 0 to
-  disable. Default: 5.
+  (Levenberg-Marquardt: counted at full damping, after the rejections that
+  escalate :math:`\lambda` to ``lambda_max``). Set to 0 to disable. Default: 5.
 - **sparse_linear_solver_type** [in]: Linear backend; options are
   ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate gradient;
   layout auto-derived from the problem's state batches), ``cuDSS`` (sparse
@@ -852,62 +889,106 @@ initial guess and **final_cost** is the refined cost over the inliers and the
 Class APIs
 --------------------------------------------------------------------------------
 
+.. _minimizer-class-label:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+:code:`Minimizer`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Purpose:** Common base of :code:`GaussNewtonMinimizer` and
+:code:`LevenbergMarquardtMinimizer` (header :code:`cunls/minimizer/minimizer.h`).
+Holds everything the two share: the iteration, the linear system, bounds,
+line search, structure reuse and the per-subproblem bookkeeping. Not
+instantiable on its own; use a :code:`Minimizer&` to accept either. Each
+iteration:
+
+1. builds the normal equations :math:`H \Delta x = -g` at the current states
+   (with column scaling, holding states at active bounds),
+2. lets the subclass update them (``UpdateSystem``: Levenberg-Marquardt adds
+   :math:`\lambda_p \operatorname{diag}(H)` per subproblem :math:`p`),
+3. solves for the step,
+4. evaluates the cost at the trial states, shortening the step by line search
+   if enabled,
+5. lets the subclass classify each subproblem's step (``ClassifySteps``:
+   reject, converged),
+6. takes or rejects each step and stops each subproblem that converged or hit
+   the rejection cap.
+
+With a problem partition (:cpp:func:`Problem::SetProblemPartition`) the
+linear system is solved for all subproblems together and every decision in
+steps 4 to 6 is taken per subproblem; a problem without a partition is one
+subproblem. Each iteration makes one small read-back to the host (total cost,
+number of running subproblems), plus one per line-search step.
+
+.. cpp:function:: MinimizerSummary Minimizer::Minimize(cudaStream_t stream, Problem& problem)
+
+  Minimizes the problem's cost, starting from its current states.
+
+  :param ``stream``: [in] CUDA stream for all device work; synchronized before
+    the call returns.
+  :param ``problem``: [in,out] Problem (factor graph + state batches); its
+    states are updated in place, also when the iteration limit is hit. States
+    with bounds are first projected onto them.
+  :returns: [out] :cpp:class:`MinimizerSummary` with iteration count and cost statistics.
+
+  Throws ``std::invalid_argument`` if the problem has constraint factor batches
+  (solve those with :code:`AugmentedLagrangianMinimizer`) or invalid sizes,
+  connectivity or partition; ``std::runtime_error`` if the linear solver fails.
+
+  **Note:** A minimizer instance retains working buffers (normal-equation matrix,
+  RHS, and internal state snapshots) across calls; when the problem size is
+  unchanged, device memory is reused instead of reallocated. With
+  ``MinimizerOptions::reuse_structure`` the structure setup is skipped too.
+
+.. cpp:function:: const MinimizerOptions& Minimizer::Options() const
+
+  :returns: [out] The options the minimizer runs with (for Levenberg-Marquardt
+    the base options, with ``max_consecutive_rejected_steps`` widened by the
+    damping's escalation room).
+
 .. _gauss-newton-minimizer-ctor-label:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:code:`GaussNewtonMinimizer::GaussNewtonMinimizer`
+:code:`GaussNewtonMinimizer`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Purpose:** Constructs a Gauss-Newton minimizer that will solve
-:math:`J^T J \Delta x = -J^T r` each iteration and update the problem state
-until convergence.
+**Purpose:** A :code:`Minimizer` that solves the undamped normal equations
+:math:`J^T J \Delta x = -J^T r` and takes every step that lowers the cost. Per
+subproblem, a step is rejected if it does not lower the cost, and the
+subproblem has converged if :math:`\|\Delta x\|^2 <` ``state_tolerance``,
+the trial cost is below ``cost_tolerance``, or the step does not lower the
+cost.
 
-.. cpp:function:: GaussNewtonMinimizer(const MinimizerOptions& options = MinimizerOptions())
+.. cpp:function:: explicit GaussNewtonMinimizer(const MinimizerOptions& options = MinimizerOptions())
 
   :param ``options``: [in] Solver options (max iterations, tolerances, linear solver); copied into the minimizer.
-  :returns: [out] Constructor has no return value.
-
-.. _gauss-newton-minimize-label:
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:code:`GaussNewtonMinimizer::Minimize`
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Purpose:** Runs the Gauss-Newton iteration on the given problem: at each step
-evaluates residuals and Jacobians, assembles and solves the normal equations,
-applies the tangent step via the state batches’ Plus, and checks convergence.
-Updates the problem’s state in-place when steps are accepted.
-
-.. cpp:function:: MinimizerSummary Minimize(cudaStream_t stream, Problem& problem)
-
-  :param ``stream``: [in] CUDA stream for evaluation, linear algebra, and state updates.
-  :param ``problem``: [in,out] Problem (factor graph + state batches); state memory is updated in-place.
-  :returns: [out] :cpp:class:`MinimizerSummary` with iteration count and cost statistics.
-
-  **Note:** A minimizer instance retains working buffers (normal-equation matrix,
-  RHS, and internal state snapshots) across calls to :cpp:func:`Minimize`; when
-  the problem size is unchanged, device memory is reused instead of reallocating
-  each time.
 
 .. _lm-minimizer-ctor-label:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:code:`LevenbergMarquardtMinimizer::LevenbergMarquardtMinimizer`
+:code:`LevenbergMarquardtMinimizer`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Purpose:** Constructs a Levenberg-Marquardt minimizer that solves the damped
-system :math:`(J^T J + \lambda D) \Delta x = -J^T r` and adapts :math:`\lambda`
-from step quality. More robust than Gauss-Newton when the initial guess is far
-from the solution.
+**Purpose:** A :code:`Minimizer` that solves the damped system
+:math:`(J^T J + \lambda \operatorname{diag}(J^T J)) \Delta x = -J^T r` with
+one :math:`\lambda` per subproblem. With :math:`\rho` the actual over the
+predicted cost reduction (:math:`\tfrac12 \Delta x^T H \Delta x + \lambda
+\Delta x^T D \Delta x`): :math:`\rho \ge` ``step_accept_threshold`` takes the
+step (and shrinks :math:`\lambda` by ``lambda_downscale`` when
+:math:`\rho >` ``lambda_downscale_threshold``); otherwise the step is rejected
+and the k-th consecutive rejection multiplies :math:`\lambda` by
+``lambda_upscale`` :math:`\cdot 2^{k-1}`. Converged when
+:math:`\|\Delta x\|^2 <` ``state_tolerance``, the predicted relative reduction
+is below ``relative_reduction_tolerance``, or the trial cost is below
+``cost_tolerance``. :math:`\lambda` stays in
+[``lambda_min``, ``lambda_max``] and starts at ``initial_lambda`` on every call.
+More robust than Gauss-Newton when the initial guess is far from the solution.
 
-.. cpp:function:: LevenbergMarquardtMinimizer(const LevenbergMarquardtMinimizerOptions& options = LevenbergMarquardtMinimizerOptions())
+.. cpp:function:: explicit LevenbergMarquardtMinimizer(const LevenbergMarquardtMinimizerOptions& options = LevenbergMarquardtMinimizerOptions())
 
   :param ``options``: [in] LM options (damping, accept/reject thresholds, etc.).
-  :returns: [out] Constructor has no return value.
 
-:cpp:func:`LevenbergMarquardtMinimizer` also provides :cpp:func:`Minimize` with
-the same signature as :cpp:func:`GaussNewtonMinimizer::Minimize`; it runs the LM
-iteration instead of pure Gauss-Newton.
+  Throws ``std::invalid_argument`` unless ``0 < lambda_min <= lambda_max``.
 
 .. _ransac-classes-label:
 

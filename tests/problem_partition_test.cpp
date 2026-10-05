@@ -109,7 +109,7 @@ std::vector<float> ToFloat(const std::vector<Mat3> &m, size_t first, size_t coun
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<GaussNewtonMinimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
   MinimizerOptions options;
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-12f;
@@ -213,8 +213,9 @@ TEST(ProblemPartition, SetterValidatesArguments) {
 
 }  // namespace
 
-// MinimizeCallOptions::problem_frozen: a frozen subproblem keeps its states
-// exactly, the others are solved (Gauss-Newton and Levenberg-Marquardt).
+// InnerSolve::problem_frozen (AugmentedLagrangianMinimizer's finished
+// subproblems): a frozen subproblem keeps its states exactly, the others are
+// solved (Gauss-Newton and Levenberg-Marquardt).
 TEST(ProblemPartition, FrozenSubproblemsKeepTheirStates) {
   for (bool lm : {false, true}) {
     CudaStream stream;
@@ -234,14 +235,17 @@ TEST(ProblemPartition, FrozenSubproblemsKeepTheirStates) {
     problem.SetProblemPartition(2, {ids.data()});
     MinimizerOptions options;
     options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
-    MinimizeCallOptions call;
-    call.problem_frozen = frozen.data();
+    internal::InnerSolve settings;
+    settings.max_num_iterations = options.max_num_iterations;
+    settings.problem_frozen = frozen.data();
     if (lm) {
       LevenbergMarquardtMinimizerOptions lm_options;
       lm_options.base_options = options;
-      LevenbergMarquardtMinimizer(lm_options).Minimize(stream.GetStream(), problem, call);
+      LevenbergMarquardtMinimizer minimizer(lm_options);
+      internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
     } else {
-      GaussNewtonMinimizer(options).Minimize(stream.GetStream(), problem, call);
+      GaussNewtonMinimizer minimizer(options);
+      internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
     }
     std::vector<float> out(4);
     x.CopyToHost(out.data(), 4);

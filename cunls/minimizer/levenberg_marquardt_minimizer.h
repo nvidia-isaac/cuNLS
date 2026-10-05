@@ -19,20 +19,17 @@
 
 #include <cuda_runtime.h>
 
-#include <stdexcept>
-
-#include "gauss_newton_minimizer.h"
+#include "cunls/common/cusparse_helper.h"
+#include "cunls/minimizer/minimizer.h"
 
 namespace cunls {
 
 /**
- * @brief Configuration options for the Levenberg-Marquardt optimizer.
- *
- * Extends MinimizerOptions with Levenberg-Marquardt specific parameters for
- * controlling the damping factor lambda and step acceptance criteria.
+ * @brief Options of LevenbergMarquardtMinimizer: the common MinimizerOptions
+ * plus the damping λ and the step acceptance rule.
  */
 struct LevenbergMarquardtMinimizerOptions {
-  /** @brief Base Gauss-Newton options. */
+  /** @brief Options common to all minimizers. */
   MinimizerOptions base_options;
 
   /**
@@ -47,8 +44,8 @@ struct LevenbergMarquardtMinimizerOptions {
   /**
    * @brief Convergence threshold for predicted relative cost reduction.
    *
-   * Optimizer terminates when the predicted relative reduction falls below
-   * this threshold.
+   * A subproblem has converged when the cost reduction its linear model
+   * predicts, relative to its cost, falls below this threshold.
    * Default: 1e-6
    */
   float relative_reduction_tolerance = 1e-6;
@@ -68,8 +65,9 @@ struct LevenbergMarquardtMinimizerOptions {
   /**
    * @brief Factor by which lambda is decreased when a step is accepted.
    *
-   * When a step is very successful, lambda is multiplied by this factor to
-   * make the next step more aggressive (closer to Gauss-Newton).
+   * When a step is very successful (rho > lambda_downscale_threshold), lambda
+   * is multiplied by this factor to make the next step more aggressive
+   * (closer to Gauss-Newton).
    * Default: 0.5
    */
   float lambda_downscale = 0.5f;
@@ -113,117 +111,66 @@ struct LevenbergMarquardtMinimizerOptions {
 };
 
 /**
- * @brief Levenberg-Marquardt optimizer for nonlinear least squares problems.
+ * @brief Levenberg-Marquardt: Gauss-Newton with adaptive damping.
  *
- * Extends GaussNewtonMinimizer with adaptive damping to improve robustness.
- * The Levenberg-Marquardt algorithm solves:
- *   (J^T J + lambda * diag(J^T J)) dx = -J^T r
+ * Solves (H + λ diag(H)) δ = -g with one λ per subproblem. A large λ gives
+ * short, gradient-like steps; a small λ gives Gauss-Newton steps. More robust
+ * than GaussNewtonMinimizer far from the solution and when H is close to
+ * singular.
  *
- * where lambda is a damping factor that:
- * - Increases when steps are rejected (making the algorithm more conservative)
- * - Decreases when steps are very successful (making it more aggressive)
+ * Per subproblem, ρ = actual cost reduction / reduction predicted by the
+ * linear model, ½ δᵀHδ + λ δᵀ diag(H) δ:
+ *   - ρ ≥ step_accept_threshold: the step is good; if also
+ *     ρ > lambda_downscale_threshold, λ shrinks by lambda_downscale;
+ *   - otherwise the step is rejected and λ grows: the k-th consecutive
+ *     rejection multiplies it by lambda_upscale · 2^(k-1);
+ *   - converged if ‖δ‖² < state_tolerance, the predicted relative reduction
+ *     < relative_reduction_tolerance, or the trial cost < cost_tolerance.
+ * λ always stays in [lambda_min, lambda_max] and starts at initial_lambda on
+ * every Minimize() call.
  *
- * This provides a smooth interpolation between gradient descent (large lambda)
- * and Gauss-Newton (lambda = 0), making it more robust than pure Gauss-Newton
- * while often converging faster than gradient descent.
+ * See Minimizer for the iteration and LevenbergMarquardtMinimizerOptions for
+ * the settings.
  */
-class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
+class LevenbergMarquardtMinimizer : public Minimizer {
  public:
   /**
-   * @brief Constructs a Levenberg-Marquardt optimizer.
+   * @brief Constructs the minimizer; see LevenbergMarquardtMinimizerOptions.
    *
-   * @param options Configuration options. Defaults to standard LM options.
+   * Options() returns options.base_options with max_consecutive_rejected_steps
+   * widened by the rejections the damping needs to escalate from lambda_min to
+   * lambda_max.
+   *
+   * @throws std::invalid_argument unless 0 < lambda_min <= lambda_max.
    */
-  LevenbergMarquardtMinimizer(
-      const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions())
-      : GaussNewtonMinimizer(options.base_options), options_(options) {
-    if (!(options_.lambda_min > 0.f)) {
-      throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_min must be positive");
-    }
-    if (!(options_.lambda_max >= options_.lambda_min)) {
-      throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_max must be >= lambda_min");
-    }
-  }
+  explicit LevenbergMarquardtMinimizer(
+      const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions());
 
  private:
   /**
-   * @brief Initializes LM-specific data structures.
-   *
-   * Calls base class initialization and sets initial lambda value.
+   * @brief Sets every subproblem's λ to initial_lambda on iteration 0, and
+   * otherwise updates it from the outcome of the previous step (see the class
+   * comment); then adds λ_p diag(H) to the rows of subproblem p.
    */
-  void Initialize(cudaStream_t stream, Problem &problem) override;
-  void BeginCall() override;
+  void UpdateSystem(cudaStream_t stream, size_t iteration, NormalEquations &system,
+                    const ProblemPartition &partition) override;
 
-  /**
-   * @brief Builds the Levenberg-Marquardt linear system.
-   *
-   * Extends the Gauss-Newton system by adding lambda times the diagonal of the
-   * (possibly column-scaled) Hessian to lhs: (H_s + lambda * diag(H_s)) z = b_s
-   * with physical step dx = S z when column scaling is enabled; otherwise S =
-   * I.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param problem The optimization problem.
-   * @param minimizer_state Current minimizer state.
-   * @param[out] lhs Output left-hand side matrix (H + lambda * diag(H)).
-   * @param[out] rhs Output right-hand side vector (-J^T r).
-   */
-  void BuildSystem(cudaStream_t stream, const Problem &problem,
-                   const MinimizerState &minimizer_state) override;
+  /** @brief Computes ρ per subproblem and applies the rules of the class comment. */
+  void ClassifySteps(cudaStream_t stream, const NormalEquations &system, const dvector<float> &step,
+                     ProblemPartition &partition) override;
 
-  bool EvaluateAndCheckConvergence(cudaStream_t stream, const Problem &problem,
-                                   const MinimizerState &updated_state, float current_cost,
-                                   const dvector<float> &step, float &updated_cost,
-                                   float &step_quality) override;
+  const LevenbergMarquardtMinimizerOptions options_;  ///< As constructed (not widened).
 
-  /**
-   * @brief Determines if a step should be accepted (LM version).
-   *
-   * Accepts step if rho >= step_accept_threshold. If step is very successful
-   * (rho > lambda_downscale_threshold), decreases lambda.
-   *
-   * @param step_quality Rho metric (actual/predicted cost reduction).
-   * @return True if step should be accepted, false otherwise.
-   */
-  bool AcceptStep(float step_quality) override;
-
-  /**
-   * @brief Determines if a step should be rejected (LM version).
-   *
-   * Rejects step if rho < step_accept_threshold. Increases lambda when
-   * rejecting a step.
-   *
-   * @param step_quality Rho metric (actual/predicted cost reduction).
-   * @return True if step should be rejected, false otherwise.
-   */
-  bool RejectStep(float step_quality) override;
-
-  /** @brief Resets the damping escalation (the damping itself stays). */
-  void LineSearchStepTaken() override { consecutive_rejects_ = 0; }
-
-  /** @brief Rejections count towards the cap once lambda is at lambda_max. */
-  bool DampingExhausted() const override { return lambda_ >= options_.lambda_max; }
-
-  bool WouldRejectStep(float step_quality) const override {
-    return !(step_quality >= options_.step_accept_threshold);
-  }
-
-  /** @brief Batched mode: the LM rules, applied per subproblem. */
-  BatchedStepControlParams BatchedParams() const override;
-
-  float BatchedInitialLambda() const override { return options_.initial_lambda; }
-
-  /** @brief Batched mode: per-subproblem step^T diag(H) step and step^T H step. */
-  void AccumulatePredictedReduction(cudaStream_t stream) override;
-
-  const LevenbergMarquardtMinimizerOptions options_;  ///< LM-specific options.
-
-  dvector<float> diagonal_;      ///< Diagonal of the Hessian matrix (J^T J).
-  dvector<float> damping_;       ///< Batched mode: per-row lambda * diag(H).
-  dvector<float> hessian_step_;  ///< Batched mode: H * step.
-
-  float lambda_;                 ///< Current damping factor.
-  int consecutive_rejects_ = 0;  ///< Rejections since the last accepted step.
+  dvector<float> lambda_;           ///< Per subproblem: current damping λ.
+  dvector<float> next_lambda_;      ///< Per subproblem: λ being updated (swapped with lambda_).
+  dvector<float> quality_;          ///< Per subproblem: ρ of the last step (for the λ update).
+  dvector<float> diag_weight_;      ///< Per subproblem: δᵀ diag(H) δ.
+  dvector<float> matrix_weight_;    ///< Per subproblem: δᵀ H δ.
+  dvector<float> diagonal_;         ///< Per row: diag(H) of the working left-hand side.
+  dvector<float> damping_;          ///< Per row: λ diag(H).
+  dvector<float> hessian_step_;     ///< Per row: H δ.
+  cuSPARSEHandle cusparse_handle_;  ///< For H δ in CSR storage.
+  dvector<uint8_t> buffer_;         ///< cuSPARSE scratch of H δ.
 };
 
 }  // namespace cunls

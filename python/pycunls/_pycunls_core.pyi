@@ -102,7 +102,7 @@ class NumericDiffOptions:
     def __init__(self) -> None: ...
 
 class MinimizerOptions:
-    """Options for Gauss-Newton and Levenberg-Marquardt minimizers."""
+    """Options common to GaussNewtonMinimizer and LevenbergMarquardtMinimizer."""
 
     max_num_iterations: int
     state_tolerance: float
@@ -110,6 +110,7 @@ class MinimizerOptions:
     max_consecutive_rejected_steps: int
     max_bound_refinements: int
     max_line_search_steps: int
+    reuse_structure: bool
     sparse_linear_solver_type: SparseLinearSolverType
     column_scaling: ColumnScaling
     jacobian_mode: JacobianMode
@@ -1684,21 +1685,29 @@ class Problem:
 # Minimizers
 # ===================================================================
 
-class GaussNewtonMinimizer:
-    """Gauss-Newton minimizer for nonlinear least-squares problems."""
+class Minimizer:
+    """Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer.
+
+    Not constructible; use it to accept either minimizer.
+    """
+
+    def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
+        """Minimize the problem's cost from its current states (updated in place)."""
+        ...
+    @property
+    def options(self) -> MinimizerOptions:
+        """Options the minimizer runs with (a copy)."""
+        ...
+
+class GaussNewtonMinimizer(Minimizer):
+    """Gauss-Newton: undamped normal equations; takes every step that lowers the cost."""
 
     def __init__(self, options: MinimizerOptions = ...) -> None: ...
-    def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
-        """Run the Gauss-Newton optimizer. Returns a MinimizerSummary."""
-        ...
 
-class LevenbergMarquardtMinimizer(GaussNewtonMinimizer):
-    """Levenberg-Marquardt minimizer (damped Gauss-Newton)."""
+class LevenbergMarquardtMinimizer(Minimizer):
+    """Levenberg-Marquardt: Gauss-Newton with an adaptive damping per subproblem."""
 
     def __init__(self, options: LevenbergMarquardtMinimizerOptions = ...) -> None: ...
-    def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
-        """Run the Levenberg-Marquardt optimizer. Returns a MinimizerSummary."""
-        ...
 
 # ---------------------------------------------------------------------------
 # Constrained minimization (augmented Lagrangian)
@@ -1754,7 +1763,7 @@ class AugmentedLagrangianMinimizer:
     """Augmented Lagrangian solver for problems with constraint factor batches."""
 
     def __init__(
-        self, minimizer: GaussNewtonMinimizer, options: AugmentedLagrangianMinimizerOptions = ...
+        self, minimizer: Minimizer, options: AugmentedLagrangianMinimizerOptions = ...
     ) -> None: ...
     def minimize(self, stream: CudaStream, problem: Problem) -> AugmentedLagrangianMinimizerSummary:
         """Minimize the objective subject to the constraint batches."""

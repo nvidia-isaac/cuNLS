@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-// MinimizeCallOptions::reuse_structure: a solve that reuses the structure of
-// the previous call gives the same result as a fresh minimizer, for a single
-// problem and a partitioned one, with Gauss-Newton and Levenberg-Marquardt;
-// a size change falls back to the full setup. MinimizeCallOptions::
-// fixed_iterations (real time, device-side control) reaches the same solution.
+// Structure reuse (MinimizerOptions::reuse_structure, through the inner-solve
+// settings internal::InnerSolve): a solve that reuses the structure of the
+// previous call gives the same result as a fresh minimizer, for a single
+// problem and a partitioned one, with Gauss-Newton and Levenberg-Marquardt; a
+// size change falls back to the full setup. InnerSolve::fixed_iterations (the
+// real-time mode of AugmentedLagrangianMinimizer) reaches the same solution.
 
 #include <gtest/gtest.h>
 
@@ -44,7 +45,7 @@ namespace {
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<GaussNewtonMinimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
   MinimizerOptions options;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
   if (kind == Kind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
@@ -108,15 +109,15 @@ struct Chains {
     x.CopyFromHost(zero.data(), zero.size());
   }
 
-  std::vector<float> Solve(GaussNewtonMinimizer &minimizer, bool reuse, bool fixed = false,
+  std::vector<float> Solve(Minimizer &minimizer, bool reuse, bool fixed = false,
                            size_t iterations = 50) {
     CudaStream stream;
-    MinimizeCallOptions call;
-    call.max_line_search_steps = fixed ? 3 : 10;
-    call.reuse_structure = reuse;
-    call.fixed_iterations = fixed;
-    call.max_num_iterations = iterations;
-    minimizer.Minimize(stream.GetStream(), problem, call);
+    internal::InnerSolve settings;
+    settings.max_line_search_steps = fixed ? 3 : 10;
+    settings.reuse_structure = reuse;
+    settings.fixed_iterations = fixed;
+    settings.max_num_iterations = iterations;
+    internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
     std::vector<float> out(2 * total);
     x.CopyToHost(out.data(), out.size());
     return out;

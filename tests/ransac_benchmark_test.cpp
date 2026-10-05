@@ -229,7 +229,7 @@ RansacMinimizerOptions RansacOptions(int cameras, size_t hypotheses, size_t max_
 /** A configured minimizer that can run a RigProblem repeatedly. */
 struct Runner {
   Method method;
-  std::unique_ptr<GaussNewtonMinimizer> regular;
+  std::unique_ptr<Minimizer> regular;
   std::unique_ptr<RansacGaussNewtonMinimizer> ransac;
   RansacSummary last;
 

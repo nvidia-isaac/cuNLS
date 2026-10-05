@@ -66,6 +66,7 @@ from pycunls._pycunls_core import (
     MinimizerSummary,
     LevenbergMarquardtMinimizerOptions,
     # --- Minimizers ---
+    Minimizer,
     GaussNewtonMinimizer,
     LevenbergMarquardtMinimizer,
     # --- Constrained minimization (augmented Lagrangian) ---
@@ -210,6 +211,7 @@ __all__ = [
     "NumericDiffOptions",
     "MinimizerSummary",
     "LevenbergMarquardtMinimizerOptions",
+    "Minimizer",
     "GaussNewtonMinimizer",
     "LevenbergMarquardtMinimizer",
     "ConstraintKind",

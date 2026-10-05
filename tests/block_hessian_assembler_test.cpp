@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
+#include "cunls/common/cusparse_helper.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -56,7 +57,7 @@
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/bsr_matrix.h"
 #include "cunls/minimizer/device_reduction.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/normal_equations.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
@@ -96,20 +97,20 @@ class CSROnlySolver : public SparseLinearSolver {
 };
 
 /**
- * @brief Exposes one BuildSystem call and its outputs.
- *
- * BuildSystem is protected on GaussNewtonMinimizer, and hessian_/lhs_work_
- * live alongside it, so a thin subclass is the least invasive way to compare
- * the two assembly paths on identical input.
+ * @brief One system assembly of Minimizer (internal::SetUpStructure +
+ * internal::BuildSystem) and its outputs, so the assembly paths can be
+ * compared on identical input.
  */
-class SystemBuilder : public GaussNewtonMinimizer {
+class SystemBuilder {
  public:
   /**
    * @brief Builds with block storage (the default for a block-capable solver).
    */
-  SystemBuilder() : GaussNewtonMinimizer(MakeOptions(SparseLinearSolverType::BlockSparsePCG)) {}
+  SystemBuilder() : SystemBuilder(MakeOptions(SparseLinearSolverType::BlockSparsePCG)) {}
 
-  explicit SystemBuilder(const MinimizerOptions &options) : GaussNewtonMinimizer(options) {}
+  explicit SystemBuilder(const MinimizerOptions &options)
+      : SystemBuilder(options, CreateSparseLinearSolver(options.sparse_linear_solver_type,
+                                                        options.sparse_linear_solver_config)) {}
 
   /**
    * @brief Builds with scalar CSR storage.
@@ -124,46 +125,45 @@ class SystemBuilder : public GaussNewtonMinimizer {
     return SystemBuilder(options, std::make_unique<CSROnlySolver>());
   }
 
-  /** @brief Runs Initialize + one BuildSystem and syncs. */
+  /** @brief Runs the structure setup + one system build and syncs. */
   void Build(cudaStream_t stream, Problem &problem) {
-    Initialize(stream, problem);
-    current_state_.Recreate(stream, problem);
-    BuildSystem(stream, problem, current_state_);
+    internal::SetUpStructure(stream, problem, options_, state_ops_, system_);
+    state_.Recreate(stream, problem);
+    internal::BuildSystem(stream, problem, state_, options_, state_ops_, system_, bounds_,
+                          scratch_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 
   const CSRSparseMatrix &HessianAsCSR(cudaStream_t stream) {
-    if (!normal_equations_.UsesBlockStorage()) {
-      return normal_equations_.LhsCSR();
+    if (!system_.normal_equations.UsesBlockStorage()) {
+      return system_.normal_equations.LhsCSR();
     }
-    test_utils::ExpandBSRToCSR(stream, normal_equations_.LhsBSR(), csr_mirror_, expand_scratch_);
+    test_utils::ExpandBSRToCSR(stream, system_.normal_equations.LhsBSR(), csr_mirror_,
+                               expand_scratch_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     return csr_mirror_;
   }
 
-  const dvector<float> &Rhs() const { return rhs_work_; }
-  const dvector<float> &Residuals() const { return residuals_; }
-  const PerFactorJacobians &FactorJacobians() const { return factor_jacobians_; }
+  const dvector<float> &Rhs() const { return system_.rhs; }
+  const dvector<float> &Residuals() const { return system_.residuals; }
+  const PerFactorJacobians &FactorJacobians() const { return system_.factor_jacobians; }
   /** @brief step^T H step against the undamped Hessian, as LM computes it. */
   float WeightedSquaredStep(cudaStream_t stream, const dvector<float> &step) {
-    d_scalars_.resize(1);
-    d_reduce_partials_.resize(ReducePartialCount(step.size()));
-    normal_equations_.WeightedSquaredStepAsync(stream, cusparse_handle_.GetHandle(stream), step,
-                                               d_scalars_.data(), d_reduce_partials_.data(),
-                                               buffer_);
+    dvector<float> out_d(1), partials(ReducePartialCount(step.size()));
+    system_.normal_equations.WeightedSquaredStepAsync(stream, cusparse_handle_.GetHandle(stream),
+                                                      step, out_d.data(), partials.data(), buffer_);
     float out = 0.f;
     THROW_ON_CUDA_ERROR(
-        cudaMemcpyAsync(&out, d_scalars_.data(), sizeof(float), cudaMemcpyDeviceToHost, stream));
+        cudaMemcpyAsync(&out, out_d.data(), sizeof(float), cudaMemcpyDeviceToHost, stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     return out;
   }
-  NormalEquations &Equations() { return normal_equations_; }
-  bool UsesBlockStorage() const { return normal_equations_.UsesBlockStorage(); }
+  NormalEquations &Equations() { return system_.normal_equations; }
+  bool UsesBlockStorage() const { return system_.normal_equations.UsesBlockStorage(); }
 
  private:
-  SystemBuilder(const MinimizerOptions &options, SparseLinearSolverPtr solver)
-      : GaussNewtonMinimizer(options) {
-    solver_ = std::move(solver);
+  SystemBuilder(const MinimizerOptions &options, SparseLinearSolverPtr solver) : options_(options) {
+    system_.solver = std::move(solver);
   }
 
   static MinimizerOptions MakeOptions(SparseLinearSolverType solver) {
@@ -172,6 +172,14 @@ class SystemBuilder : public GaussNewtonMinimizer {
     return options;
   }
 
+  MinimizerOptions options_;
+  StateBatchOps state_ops_;
+  internal::MinimizerSystem system_;
+  internal::MinimizerBounds bounds_;
+  internal::MinimizerScratch scratch_;
+  MinimizerState state_;
+  cuSPARSEHandle cusparse_handle_;
+  dvector<uint8_t> buffer_;
   CSRSparseMatrix csr_mirror_;
   dvector<int> expand_scratch_;
 };

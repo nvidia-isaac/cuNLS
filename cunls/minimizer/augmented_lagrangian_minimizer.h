@@ -23,7 +23,7 @@
 
 #include "cunls/common/types.h"
 #include "cunls/factor/constraint_factor_batch.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem.h"
 
 namespace cunls {
@@ -92,7 +92,7 @@ struct AugmentedLagrangianMinimizerOptions {
 
   /**
    * @brief The problem's structure is unchanged since the previous Minimize
-   * call (see MinimizeCallOptions::reuse_structure): skip the structure setup
+   * call (see MinimizerOptions::reuse_structure): skip the structure setup
    * of the inner minimizer and of the constraint maps. Within one call the
    * outer iterations always reuse it. Default: false
    */
@@ -101,8 +101,10 @@ struct AugmentedLagrangianMinimizerOptions {
   /**
    * @brief Real-time mode: a fixed budget and no host synchronization but one
    * read-back at the end. Exactly max_outer_iterations outer iterations; each
-   * runs inner_iterations inner iterations (the last one
-   * final_inner_iterations if > 0) with MinimizeCallOptions::fixed_iterations.
+   * runs exactly inner_iterations inner iterations (the last one
+   * final_inner_iterations if > 0), each with exactly inner_line_search_steps
+   * line-search evaluations and MinimizerOptions::max_bound_refinements
+   * bound refinements.
    * Penalties, multipliers and per-subproblem status are updated on the
    * device; the summary reports the last outer iteration's violation and
    * status, and NaN costs. Typical use (receding horizon): a converged first
@@ -142,6 +144,18 @@ struct AugmentedLagrangianMinimizerSummary {
   size_t num_max_penalty = 0;
 };
 
+namespace internal {
+
+/** @brief A constraint batch of the problem, as found by AugmentedLagrangianMinimizer. */
+struct ConstraintBatchState {
+  size_t residual_batch;             ///< Index into Problem::GetResidualBatches().
+  ConstraintFactorBatchBase *batch;  ///< The constraint batch.
+  size_t num_factors;                ///< Active factors at the start of the solve.
+  dvector<int> factor_problem;       ///< Per factor: subproblem (empty: all 0).
+};
+
+}  // namespace internal
+
 /**
  * @brief Solves problems with constraint factor batches
  * (ConstraintFactorBatchBase: ConstraintFactorBatch, BoundFactorBatch) by the
@@ -171,11 +185,16 @@ struct AugmentedLagrangianMinimizerSummary {
 class AugmentedLagrangianMinimizer {
  public:
   /**
-   * @param minimizer Inner minimizer (not owned; must outlive this object).
+   * @brief Wraps an inner minimizer.
+   * @param minimizer Inner minimizer, GaussNewtonMinimizer or
+   *        LevenbergMarquardtMinimizer (not owned; must outlive this object).
+   *        Its options apply to the inner solves, except the iteration cap and
+   *        line search, which this class sets per outer iteration.
    * @param options Outer-loop options.
+   * @throws std::invalid_argument on invalid options (see SetOptions).
    */
   explicit AugmentedLagrangianMinimizer(
-      GaussNewtonMinimizer &minimizer,
+      Minimizer &minimizer,
       const AugmentedLagrangianMinimizerOptions &options = AugmentedLagrangianMinimizerOptions());
 
   AugmentedLagrangianMinimizer(const AugmentedLagrangianMinimizer &) = delete;
@@ -183,50 +202,43 @@ class AugmentedLagrangianMinimizer {
 
   /**
    * @brief Minimizes the problem's objective subject to its constraint
-   * batches. State values are updated in place.
+   * batches, starting from its current states.
+   *
+   * On return the problem's states hold the result and the constraint batches
+   * hold the final multipliers and penalties (the warm start of a following
+   * call). Enqueues work on `stream` and synchronizes it before returning.
+   *
+   * @param stream CUDA stream for all device work.
+   * @param problem Problem to solve; its states are updated in place.
+   * @return Outer and inner iteration counts, violation, costs and status.
+   * @throws std::invalid_argument if a constraint batch has a robust loss, or
+   *         as Minimizer::Minimize for an invalid problem.
    */
   AugmentedLagrangianMinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
+  /** @brief Options of the following Minimize() calls. */
   const AugmentedLagrangianMinimizerOptions &Options() const { return options_; }
 
   /**
    * @brief Replaces the options for the following calls; the warm-start state
    * (multipliers, penalties, structure) is kept. Typical use: a converged
    * first solve, then a fixed real-time budget.
-   * @throws std::invalid_argument on invalid options (as the constructor).
+   * @throws std::invalid_argument unless initial_penalty > 0, max_penalty >=
+   *         initial_penalty, penalty_increase >= 1, constraint_tolerance >= 0,
+   *         inner_iterations > 0 and max_outer_iterations > 0.
    */
   void SetOptions(const AugmentedLagrangianMinimizerOptions &options);
 
  private:
-  struct Constraint {
-    size_t residual_batch;             ///< Index into Problem::GetResidualBatches().
-    ConstraintFactorBatchBase *batch;  ///< The constraint batch.
-    size_t num_factors;                ///< Active factors at the start of the solve.
-    dvector<int> factor_problem;       ///< Per factor: subproblem (empty: all 0).
-  };
-
-  /** @brief The solve itself (Minimize validates the problem first). */
-  AugmentedLagrangianMinimizerSummary Solve(cudaStream_t stream, Problem &problem);
-
-  /** @brief Constraint batches with their active sizes, and the number of subproblems. */
-  static std::vector<std::pair<const void *, size_t>> ConstraintSignature(const Problem &problem);
-
-  /** @brief Reads the control kernel's scalars into the summary (one synchronization). */
-  void ReadStatus(cudaStream_t stream, AugmentedLagrangianMinimizerSummary &summary);
-  void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) const;
-
-  /** @brief Cost of the non-constraint residual batches at the problem's states. */
-  float ComputeObjective(cudaStream_t stream, const Problem &problem);
-
-  /** @brief penalties[f] = ρ[constraint, subproblem(f)] for every constraint batch. */
-  void ScatterPenalties(cudaStream_t stream);
-
-  GaussNewtonMinimizer &minimizer_;
+  // Implementation state; the behaviour lives in augmented_lagrangian_minimizer.cu.
+  Minimizer &minimizer_;  ///< Inner minimizer.
   AugmentedLagrangianMinimizerOptions options_;
 
-  std::vector<Constraint> constraints_;
-  size_t num_problems_ = 0;
-  /// Signature (batch pointers and sizes) of the last solve, for warm_start.
+  std::vector<internal::ConstraintBatchState>
+      constraints_;          ///< Constraint batches of the last solve.
+  size_t num_problems_ = 0;  ///< Subproblems of the last solve.
+  /// Constraint batches with their sizes, and the number of subproblems, of the
+  /// last solve (warm_start and reuse_structure apply only when unchanged).
   std::vector<std::pair<const void *, size_t>> signature_;
   const Problem *problem_ = nullptr;  ///< Problem of the last solve.
 
