@@ -304,6 +304,13 @@ class Problem {
   /** @brief Number of subproblems (1 when no partition is set). */
   size_t NumProblems() const { return num_problems_ > 1 ? num_problems_ : 1; }
 
+  /**
+   * @brief Whether a state batch has box bounds (VectorStateBatch::SetBounds).
+   * Such a problem is solved with AugmentedLagrangianMinimizer; the other
+   * minimizers reject it.
+   */
+  bool HasBoxBounds() const;
+
   /** @brief Per state batch: device subproblem ids (empty when no partition). */
   const std::vector<const int *> &StateProblemIds() const { return state_problem_ids_; }
 

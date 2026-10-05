@@ -316,8 +316,9 @@ problem partition every decision is taken per subproblem.
 - ``minimize(stream: CudaStream, problem: Problem) -> MinimizerSummary`` —
   minimizes the cost starting from the problem's current states.  The state
   memory owned by the state batches inside *problem* is updated **in-place**
-  on the GPU (also when the iteration limit is hit); states with bounds are
-  first projected onto them.  All GPU work is issued on *stream*, which is
+  on the GPU (also when the iteration limit is hit).  A problem with
+  box-bounded states or constraint batches raises ``ValueError``: solve it
+  with ``AugmentedLagrangianMinimizer``.  All GPU work is issued on *stream*, which is
   synchronized before the call returns.  Returns a
   :ref:`MinimizerSummary <py-minimizer-summary-label>` with iteration count
   and cost statistics.
@@ -636,8 +637,7 @@ subproblems.
 
 - **num_iterations** [out]: Iterations performed (each builds and solves one
   linear system, including the last one that converged).
-- **initial_cost** [out]: Cost of the states passed in, after projection onto
-  their bounds.
+- **initial_cost** [out]: Cost of the states passed in.
 - **final_cost** [out]: Cost of the states written back to the problem.
 - **iteration_costs** [out]: Cost at the start of each iteration (for plotting
   or debugging).
@@ -904,13 +904,13 @@ Class APIs
 
 **Purpose:** Common base of :code:`GaussNewtonMinimizer` and
 :code:`LevenbergMarquardtMinimizer` (header :code:`cunls/minimizer/minimizer.h`).
-Holds everything the two share: the iteration, the linear system, bounds,
-line search, structure reuse and the per-subproblem bookkeeping. Not
+Holds everything the two share: the iteration, the linear system, line
+search, structure reuse and the per-subproblem bookkeeping. Not
 instantiable on its own; use a :code:`Minimizer&` to accept either. Each
 iteration:
 
 1. builds the normal equations :math:`H \Delta x = -g` at the current states
-   (with column scaling, holding states at active bounds),
+   (with column scaling),
 2. lets the subclass update them (``UpdateSystem``: Levenberg-Marquardt adds
    :math:`\lambda_p \operatorname{diag}(H)` per subproblem :math:`p`),
 3. solves for the step,
@@ -934,12 +934,12 @@ number of running subproblems), plus one per line-search step.
   :param ``stream``: [in] CUDA stream for all device work; synchronized before
     the call returns.
   :param ``problem``: [in,out] Problem (factor graph + state batches); its
-    states are updated in place, also when the iteration limit is hit. States
-    with bounds are first projected onto them.
+    states are updated in place, also when the iteration limit is hit.
   :returns: [out] :cpp:class:`MinimizerSummary` with iteration count and cost statistics.
 
   Throws ``std::invalid_argument`` if the problem has constraint factor batches
-  (solve those with :code:`AugmentedLagrangianMinimizer`) or invalid sizes,
+  or box-bounded states (solve those with :code:`AugmentedLagrangianMinimizer`)
+  or invalid sizes,
   connectivity or partition; ``std::runtime_error`` if the linear solver fails.
 
   **Note:** A minimizer instance retains working buffers (normal-equation matrix,

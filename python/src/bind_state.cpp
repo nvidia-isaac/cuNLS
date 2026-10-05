@@ -171,9 +171,13 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
           nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(),
           "Box bounds lower <= x <= upper per component (device float32 arrays of "
-          "capacity * dim; ±inf: unbounded), enforced by projection in the "
-          "Gauss-Newton and Levenberg-Marquardt minimizers. None, None removes them.")
-      .def_prop_ro("has_bounds", &Class::HasBounds)
+          "capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem "
+          "with AugmentedLagrangianMinimizer, which keeps the iterates in the box "
+          "(projected Gauss-Newton); the other minimizers reject it. None, None removes them.")
+      .def_prop_ro(
+          "has_bounds", [](const Class &self) { return cunls::HasBoxBounds(&self); },
+          "Whether the batch has box bounds (solve such a problem with "
+          "AugmentedLagrangianMinimizer).")
       .def_prop_ro("num_active_states", &Class::NumActiveStates)
       .def_prop_ro("tangent_size", &Class::TangentSize)
       .def_prop_ro("ambient_size", &Class::AmbientSize);

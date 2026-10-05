@@ -16,10 +16,12 @@
  */
 
 // Box bounds on vector states (VectorStateBatch::SetBounds), enforced by
-// projection in the Gauss-Newton and Levenberg-Marquardt minimizers: coupled
+// AugmentedLagrangianMinimizer (projected Gauss-Newton in its inner solves,
+// with a Gauss-Newton or Levenberg-Marquardt inner minimizer): coupled
 // box-constrained least squares against a float64 reference (single problem
 // and a batch of subproblems), a constant state outside its bounds stays as
-// it is, and an infeasible initial guess is projected.
+// it is, an infeasible initial guess is projected, and the minimizers alone
+// reject a bounded problem.
 
 #include <gtest/gtest.h>
 
@@ -37,7 +39,9 @@
 #include "cunls/factor/between/vector_between_factor_batch.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
+#include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
@@ -49,10 +53,14 @@ constexpr float kInf = std::numeric_limits<float>::infinity();
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<Minimizer> MakeMinimizer(Kind kind, size_t line_search_steps = 0) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind,
+                                         JacobianMode jacobians = JacobianMode::kAnalytic) {
   MinimizerOptions options;
   options.max_num_iterations = 50;
-  options.max_line_search_steps = line_search_steps;
+  options.jacobian_mode = jacobians;
+  // One-sided differences: a perturbation clamped at an upper bound would give
+  // a zero derivative there (see NumericJacobiansMatchReference).
+  options.numeric_diff_options.method = NumericDiffOptions::Method::kForward;
   options.state_tolerance = 1e-12f;
   options.cost_tolerance = 1e-12f;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
@@ -88,11 +96,12 @@ std::vector<double> Reference(int num_chains, int n, double w, const std::vector
   return x;
 }
 
-class ProjectedBoundsTest : public ::testing::TestWithParam<std::tuple<Kind, int>> {};
-
-TEST_P(ProjectedBoundsTest, CoupledChainsMatchReference) {
-  const Kind kind = std::get<0>(GetParam());
-  const int num_chains = std::get<1>(GetParam());
+/**
+ * Coupled chains with bounds, a constant state outside the box and an
+ * infeasible initial guess, solved through the augmented Lagrangian; checks
+ * the result against the float64 reference.
+ */
+void SolveCoupledChains(Kind kind, int num_chains, JacobianMode jacobians, double tolerance) {
   constexpr int n = 8;
   constexpr float w = 2.f;
   const int total = num_chains * n;
@@ -115,7 +124,7 @@ TEST_P(ProjectedBoundsTest, CoupledChainsMatchReference) {
   VectorStateBatch<1> states(x.data(), total, d_const.data(), 1);
   states.SetNumActiveStates(total, 1);
   states.SetBounds(d_lo.data(), d_hi.data());
-  ASSERT_TRUE(states.HasBounds());
+  ASSERT_TRUE(HasBoxBounds(&states));
 
   PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(d_t.data()), total);
   prior.SetNumActiveFactors(total);
@@ -141,22 +150,40 @@ TEST_P(ProjectedBoundsTest, CoupledChainsMatchReference) {
   dvector<int> d_ids(ids);
   if (num_chains > 1) problem.SetProblemPartition(num_chains, {d_ids.data()});
 
-  auto minimizer = MakeMinimizer(kind, /*line_search_steps=*/10);
-  minimizer->Minimize(stream.GetStream(), problem);
+  // Bounds are enforced by the augmented Lagrangian (here without constraint
+  // rows: one projected inner solve, with its default line search).
+  auto minimizer = MakeMinimizer(kind, jacobians);
+  AugmentedLagrangianMinimizer(*minimizer).Minimize(stream.GetStream(), problem);
 
   std::vector<float> result(total);
   x.CopyToHost(result.data(), total);
   const auto expected = Reference(num_chains, n, w, t, lo, hi, x0, constant);
-  // Levenberg-Marquardt accepts steps by comparing float32 costs; near the
-  // minimum the relative decrease reaches the float32 round-off and it stops a
-  // little earlier than Gauss-Newton's exact Newton step.
-  const double tolerance = kind == Kind::kGaussNewton ? 2e-4 : 1e-3;
   for (int i = 0; i < total; ++i) {
     EXPECT_GE(result[i], lo[i]) << "component " << i;
     if (!constant[i]) EXPECT_LE(result[i], hi[i]) << "component " << i;
     EXPECT_NEAR(result[i], expected[i], tolerance) << "component " << i;
   }
   EXPECT_EQ(result[0], 3.f);  // constant, outside the box, untouched
+}
+
+class ProjectedBoundsTest : public ::testing::TestWithParam<std::tuple<Kind, int>> {};
+
+TEST_P(ProjectedBoundsTest, CoupledChainsMatchReference) {
+  // Levenberg-Marquardt accepts steps by comparing float32 costs; near the
+  // minimum the relative decrease reaches the float32 round-off and it stops a
+  // little earlier than Gauss-Newton's exact Newton step.
+  const Kind kind = std::get<0>(GetParam());
+  SolveCoupledChains(kind, std::get<1>(GetParam()), JacobianMode::kAnalytic,
+                     kind == Kind::kGaussNewton ? 2e-4 : 1e-3);
+}
+
+// Numeric (forward-difference) Jacobians of states at their bounds: the
+// perturbations cross the bound (the bounded Plus would clamp them and give a
+// zero derivative at an upper bound, wrongly holding the component there), so
+// the solution is the same as with analytic Jacobians.
+TEST_P(ProjectedBoundsTest, NumericJacobiansMatchReference) {
+  SolveCoupledChains(std::get<0>(GetParam()), std::get<1>(GetParam()), JacobianMode::kNumeric,
+                     2e-3);
 }
 
 INSTANTIATE_TEST_SUITE_P(Minimizers, ProjectedBoundsTest,
@@ -166,6 +193,7 @@ INSTANTIATE_TEST_SUITE_P(Minimizers, ProjectedBoundsTest,
 
 // A problem that is already at zero cost exits before iterating; its states
 // are still projected onto their bounds (single problem and partitioned).
+// Gauss-Newton and Levenberg-Marquardt alone reject the bounded problem.
 TEST(ProjectedBounds, EarlyExitWritesProjectedStates) {
   for (int chains : {1, 2}) {
     // Targets outside the box: the priors are at zero cost at the start.
@@ -190,7 +218,10 @@ TEST(ProjectedBounds, EarlyExitWritesProjectedStates) {
     options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
     GaussNewtonMinimizer minimizer(options);
     CudaStream stream;
-    minimizer.Minimize(stream.GetStream(), problem);
+    EXPECT_THROW(minimizer.Minimize(stream.GetStream(), problem), std::invalid_argument);
+    LevenbergMarquardtMinimizer lm;
+    EXPECT_THROW(lm.Minimize(stream.GetStream(), problem), std::invalid_argument);
+    AugmentedLagrangianMinimizer(minimizer).Minimize(stream.GetStream(), problem);
     std::vector<float> result(4);
     x.CopyToHost(result.data(), 4);
     EXPECT_EQ(result, (std::vector<float>{1.f, -1.f, 0.5f, 1.f})) << chains << " subproblems";
@@ -200,12 +231,12 @@ TEST(ProjectedBounds, EarlyExitWritesProjectedStates) {
 TEST(ProjectedBounds, SetBoundsNeedsBothOrNeither) {
   dvector<float> x(std::vector<float>(2, 0.f)), lo(std::vector<float>(2, -1.f));
   VectorStateBatch<2> states(x.data(), 1);
-  EXPECT_FALSE(states.HasBounds());
+  EXPECT_FALSE(HasBoxBounds(&states));
   EXPECT_THROW(states.SetBounds(lo.data(), nullptr), std::invalid_argument);
   states.SetBounds(lo.data(), lo.data());
-  EXPECT_TRUE(states.HasBounds());
+  EXPECT_TRUE(HasBoxBounds(&states));
   states.SetBounds(nullptr, nullptr);
-  EXPECT_FALSE(states.HasBounds());
+  EXPECT_FALSE(HasBoxBounds(&states));
 }
 
 }  // namespace

@@ -27,6 +27,7 @@
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/minimizer/ransac/ransac_kernels.h"
 #include "cunls/minimizer/ransac_minimizer.h"
+#include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
 namespace ransac_internal {
@@ -87,10 +88,10 @@ void RansacLayout::BuildStates(const Problem &problem) {
   dim_ = 0;
   std::ostringstream breakdown;
   for (size_t j = 0; j < batches.size(); ++j) {
-    if (batches[j]->HasBounds()) {
+    if (HasBoxBounds(batches[j])) {
       FailConfiguration("RANSAC: state batch " + Str(j) +
                         " has box bounds, which the RANSAC minimizers do not enforce; remove "
-                        "them or use GaussNewtonMinimizer / LevenbergMarquardtMinimizer");
+                        "them or use AugmentedLagrangianMinimizer");
     }
     const int free_blocks = BuildState(j, batches[j]);
     if (free_blocks > 0) {

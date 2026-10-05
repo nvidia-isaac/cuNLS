@@ -490,6 +490,7 @@ class Horizon:
         stages.append(cp.tile(cp.arange(N, dtype=cp.int32), B))
         self._keep += stages
         problem.set_state_stages(stages)
+        default_minimizer = minimizer is None
         if minimizer is None:
             mo = pycunls.MinimizerOptions()
             mo.sparse_linear_solver_type = pycunls.SparseLinearSolverType.BlockTridiagonal
@@ -500,11 +501,6 @@ class Horizon:
             # solve at a few iterations; 1e-4 let Levenberg-Marquardt stop
             # short (quadrotors drifting off their hover points).
             mo.state_tolerance = 1e-5
-            if real_time is not None:
-                # Levenberg-Marquardt's damping keeps the projected steps
-                # descending without the extra refinement solves (each a full
-                # linear solve per iteration in real time).
-                mo.max_bound_refinements = 0
             lm = pycunls.LevenbergMarquardtMinimizerOptions()
             lm.base_options = mo
             minimizer = pycunls.LevenbergMarquardtMinimizer(lm)
@@ -513,6 +509,11 @@ class Horizon:
             options.warm_start = True
             options.reuse_structure = True  # the horizon's structure never changes
             options.max_penalty = MAX_PENALTY
+            if real_time is not None and default_minimizer:
+                # Levenberg-Marquardt's damping keeps the projected steps
+                # descending without the extra refinement solves (each a full
+                # linear solve per iteration in real time).
+                options.max_bound_refinements = 0
         return Controller(self, problem, minimizer, options, real_time)
 
 

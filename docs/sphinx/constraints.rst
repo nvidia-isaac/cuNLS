@@ -10,11 +10,13 @@ obstacle clearance, goal conditions. cuNLS supports
 - inequality constraints :math:`c(x) \le 0`,
 - bounds :math:`l \le x \le u` on the components of vector states.
 
-Bounds are a property of the state batch (``set_bounds``) and are enforced by
-**projection** inside the Gauss-Newton and Levenberg-Marquardt minimizers: the
-iterates never leave the box, and no multipliers or penalties are involved.
-Equality and inequality constraints are solved by an **augmented Lagrangian**
-(AL) outer loop around either minimizer. A constraint is a factor batch whose
+All three are solved by ``AugmentedLagrangianMinimizer`` around a
+Gauss-Newton or Levenberg-Marquardt minimizer; the minimizers alone reject a
+problem with constraints. Bounds are a property of the state batch
+(``set_bounds``) and are enforced by **projection** (projected Gauss-Newton in
+the inner solves): the iterates never leave the box, and no multipliers or
+penalties are involved. Equality and inequality constraints are solved by the
+**augmented Lagrangian** (AL) outer loop. A constraint is a factor batch whose
 "residual" is the constraint value, so every factor (built-in, custom, Warp,
 numeric-diff) can be used as a constraint.
 
@@ -72,15 +74,19 @@ Bounds on vector states
    None`` removes them). The arrays are read at every solve and may be
    rewritten between solves.
 
-The minimizers run projected Gauss-Newton: the initial values are clamped
-into the box; at each iteration the components that sit at a bound with the
-gradient pointing outward are held (they leave the linear solve, their step
-is zero); a free component the solved step would still push through its
-bound is held as well and the system solved again (an active-set refinement,
-rarely more than one extra solve); every trial step, line-search steps
-included, is clamped into the box. Constant states are never projected (a
-measured initial state outside its bounds stays as it is). The RANSAC
-minimizers do not enforce bounds and reject a problem with bounded states.
+``AugmentedLagrangianMinimizer`` runs projected Gauss-Newton in its inner
+solves: the initial values are clamped into the box; at each iteration the
+components that sit at a bound with the gradient pointing outward are held
+(they leave the linear solve, their step is zero); a free component the
+solved step would still push through its bound is held as well and the
+system solved again (an active-set refinement, at most
+``max_bound_refinements`` extra solves, rarely more than one); every trial
+step, line-search steps included, is clamped into the box (the bounded
+state's :math:`\oplus`). Constant states are never projected (a measured initial
+state outside its bounds stays as it is). A problem with bounds and no
+constraint batches costs one inner solve (no outer iterations).
+``GaussNewtonMinimizer``, ``LevenbergMarquardtMinimizer`` and the RANSAC
+minimizers reject a problem with bounded states.
 
 Compared with bounds as AL constraints (``BoundFactorBatch`` below), this is
 exact at every iteration, needs no outer iterations, and keeps the

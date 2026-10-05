@@ -94,8 +94,9 @@ def test_box_projection(stream, kind):
 
 @pytest.mark.parametrize("kind", ["gn", "lm"])
 def test_projected_state_bounds(stream, kind):
-    """The same box through VectorStateBatch.set_bounds: a plain solve, exact,
-    from an infeasible initial guess."""
+    """The same box through VectorStateBatch.set_bounds: solved by the augmented
+    Lagrangian without outer iterations (projected Gauss-Newton), exact, from an
+    infeasible initial guess; the minimizers alone reject the bounded problem."""
     target = np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32)
     lower = np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32)
     upper = np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32)
@@ -111,7 +112,11 @@ def test_projected_state_bounds(stream, kind):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(2)])
-    make_minimizer(kind).minimize(stream, problem)
+    minimizer = make_minimizer(kind)
+    with pytest.raises(ValueError):
+        minimizer.minimize(stream, problem)
+    summary = pycunls.AugmentedLagrangianMinimizer(minimizer).minimize(stream, problem)
+    assert summary.outer_iterations == 1
     # LM stops when its float32 cost decrease vanishes, a little before GN's exact step.
     atol = 1e-5 if kind == "gn" else 1e-3
     np.testing.assert_allclose(cp.asnumpy(x), np.clip(target, lower, upper), atol=atol)

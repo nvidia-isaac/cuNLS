@@ -129,8 +129,7 @@ class SystemBuilder {
   void Build(cudaStream_t stream, Problem &problem) {
     internal::SetUpStructure(stream, problem, options_, state_ops_, system_);
     state_.Recreate(stream, problem);
-    internal::BuildSystem(stream, problem, state_, options_, state_ops_, system_, bounds_,
-                          scratch_);
+    internal::BuildSystem(stream, problem, state_, options_, system_, scratch_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 
@@ -180,7 +179,6 @@ class SystemBuilder {
   MinimizerOptions options_;
   StateBatchOps state_ops_;
   internal::MinimizerSystem system_;
-  internal::MinimizerBounds bounds_;
   internal::MinimizerScratch scratch_;
   MinimizerState state_;
   cuSPARSEHandle cusparse_handle_;

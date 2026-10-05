@@ -118,15 +118,13 @@ class SystemBuilder {
   }
 
   void Build(cudaStream_t stream, const Problem &problem) {
-    internal::BuildSystem(stream, problem, state_, options_, state_ops_, system_, bounds_,
-                          scratch_);
+    internal::BuildSystem(stream, problem, state_, options_, system_, scratch_);
   }
 
  private:
   MinimizerOptions options_;
   StateBatchOps state_ops_;
   internal::MinimizerSystem system_;
-  internal::MinimizerBounds bounds_;
   internal::MinimizerScratch scratch_;
   MinimizerState state_;
 };

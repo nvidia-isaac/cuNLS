@@ -107,6 +107,11 @@ void bind_minimizer(nb::module_ &m) {
               "The problem's structure is unchanged since the previous call (same batches, "
               "connectivity, active/constant counts, partition): skip the structure setup. "
               "Default: False.")
+      .def_rw("max_bound_refinements",
+              &cunls::AugmentedLagrangianMinimizerOptions::max_bound_refinements,
+              "Box-bounded states: at most this many extra solves per inner iteration holding "
+              "the free components the step would push through their bound (exactly this many "
+              "with real_time). Default: 3.")
       .def_rw("real_time", &cunls::AugmentedLagrangianMinimizerOptions::real_time,
               "Fixed budget without host synchronization (one read-back at the end): exactly "
               "max_outer_iterations outer iterations of inner_iterations inner iterations "

@@ -132,15 +132,6 @@ void ZeroMaskedRowsColumns(cudaStream_t stream, CSRSparseMatrix &matrix,
 void ZeroMaskedRowsColumns(cudaStream_t stream, BSRSparseMatrix &matrix,
                            const dvector<float> &mask);
 
-/**
- * @brief Active-set refinement of projected Gauss-Newton: components free in
- * `held_mask` (1) but marked by `step_mask` (0: at a bound, the step pushes
- * outward) become held. Writes extra[i] = 0 for them, 1 elsewhere, updates
- * held_mask, and adds their count to *d_count (device int).
- */
-void HoldOutwardSteps(cudaStream_t stream, const dvector<float> &step_mask,
-                      dvector<float> &held_mask, dvector<float> &extra, int *d_count);
-
 /** @brief y = A * x for scalar CSR storage (cuSPARSE SpMV; y is resized). */
 void MultiplyCSRByDenseVector(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,
                               int num_rows, int num_cols, int num_nonzeros, const dvector<float> &x,

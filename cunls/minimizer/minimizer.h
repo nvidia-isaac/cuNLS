@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include <functional>
 #include <vector>
 
 #include "cunls/common/pinned_vector.h"
@@ -62,7 +63,7 @@ struct MinimizerSummary {
   /** @brief Iterations performed (each builds and solves one linear system). */
   size_t num_iterations = 0;
 
-  /** @brief Total cost of the states passed in, after projection onto their bounds. */
+  /** @brief Total cost of the states passed in. */
   float initial_cost = 0.0f;
 
   /** @brief Total cost of the states written back to the problem. */
@@ -75,8 +76,8 @@ struct MinimizerSummary {
 /**
  * @brief Options common to GaussNewtonMinimizer and LevenbergMarquardtMinimizer.
  *
- * Convergence criteria, iteration limits, the linear solver and the treatment
- * of bounds. Every criterion is applied per subproblem (see
+ * Convergence criteria, iteration limits, the linear solver, line search and
+ * structure reuse. Every criterion is applied per subproblem (see
  * Problem::SetProblemPartition); a problem without a partition is one
  * subproblem.
  */
@@ -213,21 +214,11 @@ struct MinimizerOptions {
   size_t max_line_search_steps = 0;
 
   /**
-   * @brief Bounded states (StateBatch::HasBounds): at most this many extra
-   * linear solves per iteration that also hold the free components the step
-   * would push through their bound (active-set refinement of projected
-   * Gauss-Newton). In the real-time mode of AugmentedLagrangianMinimizer
-   * exactly this many (there is no read-back to stop early), so real-time
-   * callers may set 0 or 1. Default: 3
-   */
-  size_t max_bound_refinements = 3;
-
-  /**
    * @brief The problem's structure is unchanged since this minimizer's
    * previous Minimize() call on it: same batches, connectivity (also the
    * contents of device index tables), active and constant counts, constant
-   * ids and subproblem partition; only state values, factor data and bounds
-   * may differ. Calls after the first then skip the structure setup (index
+   * ids and subproblem partition; only state values, factor data and state
+   * bounds may differ. Calls after the first then skip the structure setup (index
    * expansion, Hessian pattern, symbolic analysis of the linear solver,
    * subproblem maps). A cheap host-side check of the sizes falls back to the
    * full setup when they differ; changes it cannot see (rewritten index
@@ -266,9 +257,21 @@ struct InnerSolve {
   /// synchronization. The returned summary has the cap as its iteration count
   /// and NaN costs.
   bool fixed_iterations = false;
-  /// The constraint batches evaluate augmented-Lagrangian rows with the
-  /// multipliers and penalties the caller manages (otherwise they are rejected).
+  /// The caller manages the problem's constraints: constraint batches
+  /// evaluate augmented-Lagrangian rows with its multipliers and penalties,
+  /// and box-bounded states are kept in their bounds by its restrict_system
+  /// (otherwise a problem with either is rejected).
   bool constraints_managed = false;
+  /// Removes unknowns from the linear system: zeroes their rows, columns and
+  /// right-hand side entries (keeping the diagonal), so their step is exactly
+  /// 0. Called every iteration once the normal equations are built (and
+  /// updated by the subclass) with `step` null, before the solve; then after
+  /// each solve with the solved `step`: returning true asks for another solve
+  /// (it removed more unknowns), false keeps the step. `state` holds the
+  /// current states. Empty: nothing is removed.
+  std::function<bool(cudaStream_t stream, const MinimizerState &state, NormalEquations &system,
+                     dvector<float> &rhs, const dvector<float> *step)>
+      restrict_system;
   /// Device array of Problem::NumProblems() ints, written: nonzero where a
   /// subproblem was still iterating at the iteration cap.
   int *problem_at_cap = nullptr;
@@ -301,14 +304,6 @@ struct MinimizerSystem {
   dvector<float> step;                      ///< The step δ, one entry per reduced row.
 };
 
-/** @brief Components held at their bounds (projected Gauss-Newton). */
-struct MinimizerBounds {
-  dvector<float> mask;       ///< Per row: 0 where held because of the gradient.
-  dvector<float> step_mask;  ///< Per row: 0 where the step leaves the bounds.
-  dvector<float> extra;      ///< Per row: 0 where held by an active-set refinement.
-  dvector<int> count;        ///< Components newly held by the last refinement.
-};
-
 /** @brief Scratch buffers and read-back slots. */
 struct MinimizerScratch {
   dvector<uint8_t> buffer;        ///< Per-factor costs, residuals and workspaces.
@@ -328,13 +323,13 @@ void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOption
 
 /**
  * @brief Step 1 of Minimize(): the Gauss-Newton system at `state`, H = JᵀJ and
- * rhs = -Jᵀr, then S H S z = S b with column scaling, and the components held
- * at their bounds removed. Requires SetUpStructure for the same problem.
- * Internal; tests use it to assemble systems in isolation.
+ * rhs = -Jᵀr, then S H S z = S b with column scaling. Requires SetUpStructure
+ * for the same problem. Internal; tests use it to assemble systems in
+ * isolation.
  */
 void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerState &state,
-                 const MinimizerOptions &options, StateBatchOps &state_ops, MinimizerSystem &system,
-                 MinimizerBounds &bounds, MinimizerScratch &scratch);
+                 const MinimizerOptions &options, MinimizerSystem &system,
+                 MinimizerScratch &scratch);
 
 }  // namespace internal
 
@@ -343,7 +338,7 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
  *
  * Minimizes the problem's total cost, ½ Σ ρ(‖r‖²), by repeating:
  *   1. build the normal equations H δ = -g at the current states (with
- *      column scaling, and holding states at active bounds),
+ *      column scaling),
  *   2. let the subclass update them (UpdateSystem),
  *   3. solve for the step δ,
  *   4. evaluate the cost at the trial states, shortening δ by line search
@@ -375,14 +370,15 @@ class Minimizer {
    * @brief Minimizes the problem's cost, starting from its current states.
    *
    * On return the problem's states hold the result (also when the iteration
-   * limit was hit). States with bounds are first projected onto them.
+   * limit was hit).
    * Enqueues work on `stream` and synchronizes it before returning.
    *
    * @param stream CUDA stream for all device work.
    * @param problem Problem to solve; its states are updated in place.
    * @return Iteration count and costs.
    * @throws std::invalid_argument if the problem has constraint factor
-   *         batches (solve those with AugmentedLagrangianMinimizer), or its
+   *         batches or box-bounded states (solve those with
+   *         AugmentedLagrangianMinimizer), or its
    *         sizes, connectivity or partition are invalid (see
    *         Problem::CheckSizes).
    * @throws std::runtime_error if the linear solver fails.
@@ -453,9 +449,8 @@ class Minimizer {
   const MinimizerOptions options_;
   internal::MinimizerStructure structure_;  ///< Cached setup of the last problem.
   internal::MinimizerSystem system_;        ///< Linearization, normal equations, step.
-  internal::MinimizerBounds bounds_;        ///< Components held at their bounds.
   internal::MinimizerScratch scratch_;      ///< Buffers and read-back slots.
-  StateBatchOps state_ops_;                 ///< Manifold plus, bounds, tangent layout.
+  StateBatchOps state_ops_;                 ///< Manifold plus and tangent layout.
   ProblemPartition partition_;              ///< Subproblems and their step bookkeeping.
   MinimizerState current_state_;            ///< States before the step.
   MinimizerState updated_state_;            ///< States at the trial point.

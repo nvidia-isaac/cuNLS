@@ -99,12 +99,22 @@ struct AugmentedLagrangianMinimizerOptions {
   bool reuse_structure = false;
 
   /**
+   * @brief Box-bounded states (VectorStateBatch::SetBounds): at most this many
+   * extra linear solves per inner iteration that also hold the free
+   * components the step would push through their bound (active-set
+   * refinement of projected Gauss-Newton; rarely more than one is needed).
+   * With real_time exactly this many (there is no read-back to stop early),
+   * so real-time callers may set 0 or 1; Levenberg-Marquardt's damping
+   * usually does without them. Default: 3
+   */
+  size_t max_bound_refinements = 3;
+
+  /**
    * @brief Real-time mode: a fixed budget and no host synchronization but one
    * read-back at the end. Exactly max_outer_iterations outer iterations; each
    * runs exactly inner_iterations inner iterations (the last one
    * final_inner_iterations if > 0), each with exactly inner_line_search_steps
-   * line-search evaluations and MinimizerOptions::max_bound_refinements
-   * bound refinements.
+   * line-search evaluations and max_bound_refinements bound refinements.
    * Penalties, multipliers and per-subproblem status are updated on the
    * device; the summary reports the last outer iteration's violation and
    * status, and NaN costs. Typical use (receding horizon): a converged first
@@ -230,6 +240,24 @@ class AugmentedLagrangianMinimizer {
   void SetOptions(const AugmentedLagrangianMinimizerOptions &options);
 
  private:
+  /**
+   * @brief Projected Gauss-Newton for the box-bounded states, run by every
+   * inner solve as its InnerSolve::restrict_system, at the current `state`.
+   *
+   * Before the solve (`step` null), once the normal equations are built (and,
+   * for Levenberg-Marquardt, damped): the components that sit at a bound
+   * with the steepest-descent direction (the right-hand side) pointing
+   * outward leave the system (rows, columns and rhs entries zeroed, diagonal
+   * kept), so their step is exactly 0. After a solve (`step` given): a free
+   * component the step still pushes through its bound is held too and true
+   * asks for another solve (active-set refinement), at most
+   * max_bound_refinements times; false keeps the step. Together with
+   * VectorStateBatch's bounded Plus, which clamps the moved components into
+   * the box, the iterates stay feasible.
+   */
+  bool HoldActiveBounds(cudaStream_t stream, const MinimizerState &state, NormalEquations &system,
+                        dvector<float> &rhs, const dvector<float> *step);
+
   // Implementation state; the behaviour lives in augmented_lagrangian_minimizer.cu.
   Minimizer &minimizer_;  ///< Inner minimizer.
   AugmentedLagrangianMinimizerOptions options_;
@@ -251,6 +279,15 @@ class AugmentedLagrangianMinimizer {
   dvector<float> d_out_;           ///< Read-back scalars.
   dvector<float> scratch_;         ///< Objective evaluation buffers.
   dvector<float> partials_;        ///< Reduction partials.
+
+  std::vector<size_t> bounded_;  ///< Box-bounded state batches of the problem.
+  std::vector<dvector<int>>
+      column_offsets_;              ///< Per state batch: column of each state (-1: constant).
+  dvector<float> bound_mask_;       ///< Per column: 0 where held at a bound.
+  dvector<float> bound_step_mask_;  ///< Per column: 0 where the step leaves the box.
+  dvector<float> bound_extra_;      ///< Per column: 0 where newly held by a refinement.
+  dvector<int> bound_count_;        ///< Components newly held by the last refinement.
+  size_t refinements_ = 0;          ///< Refinements of the current inner iteration.
 };
 
 }  // namespace cunls

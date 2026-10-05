@@ -108,7 +108,6 @@ class MinimizerOptions:
     state_tolerance: float
     cost_tolerance: float
     max_consecutive_rejected_steps: int
-    max_bound_refinements: int
     max_line_search_steps: int
     reuse_structure: bool
     sparse_linear_solver_type: SparseLinearSolverType
@@ -194,7 +193,9 @@ class VectorStateBatch1(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -221,7 +222,9 @@ class VectorStateBatch2(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -248,7 +251,9 @@ class VectorStateBatch3(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -275,7 +280,9 @@ class VectorStateBatch4(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -302,7 +309,9 @@ class VectorStateBatch12(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -329,7 +338,9 @@ class VectorStateBatch6(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -1727,6 +1738,7 @@ class AugmentedLagrangianMinimizerOptions:
     violation_decrease: float
     warm_start: bool
     reuse_structure: bool
+    max_bound_refinements: int
     real_time: bool
 
     def __init__(self) -> None: ...

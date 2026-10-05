@@ -34,7 +34,6 @@
 namespace cunls {
 namespace {
 
-using internal::MinimizerBounds;
 using internal::MinimizerScratch;
 using internal::MinimizerSystem;
 
@@ -155,33 +154,12 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
 }
 
 /**
- * Projected Gauss-Newton: the components at a bound that the steepest descent
- * direction (rhs = -gradient, scaled by positive factors) pushes outward leave
- * the system. Their rows and columns are zeroed and the diagonal is kept, so
- * their step is exactly zero and the others solve the reduced system.
+ * Solves the system into system.step (again after each further restriction
+ * the caller asks for, see InnerSolve::restrict_system), mapped back from the
+ * column scaling (dx = S z).
  */
-void HoldActiveBounds(cudaStream_t stream, StateBatchOps &state_ops, const MinimizerState &state,
-                      MinimizerSystem &system, MinimizerBounds &bounds) {
-  if (!state_ops.HasBounds() || system.rhs.empty()) return;
-  std::vector<const float *> x_ptrs;
-  for (const auto &params : state.GetStates()) x_ptrs.push_back(params.data());
-  state_ops.BoundMask(stream, x_ptrs, system.rhs, bounds.mask);
-  system.normal_equations.ZeroMaskedLhsRowsColumns(stream, bounds.mask);
-  ElementwiseMultiplyInPlace(stream, system.rhs.data(), bounds.mask.data(), system.rhs.size());
-}
-
-/**
- * Solves the system into system.step, mapped back from the column scaling.
- * With bounds, also the active-set refinement: a free component at a bound
- * (its gradient points inward) can still get an outward step through the
- * coupling with the others; projecting that step away would spoil the descent
- * direction. Such components are held too and the system solved again (rarely
- * more than one pass); with `fixed`, exactly max_bound_refinements passes,
- * without the read-back of the count.
- */
-void SolveStep(cudaStream_t stream, const MinimizerOptions &options, bool fixed,
-               StateBatchOps &state_ops, const MinimizerState &state, MinimizerSystem &system,
-               MinimizerBounds &bounds) {
+void SolveStep(cudaStream_t stream, const MinimizerOptions &options, const MinimizerState &state,
+               const internal::InnerSolve &inner, MinimizerSystem &system) {
   auto solve = [&]() {
     if (!system.normal_equations.Solve(stream, *system.solver, system.rhs, system.step)) {
       std::string str = "Failed to solve linear system";
@@ -190,40 +168,14 @@ void SolveStep(cudaStream_t stream, const MinimizerOptions &options, bool fixed,
     }
   };
   solve();
-  if (state_ops.HasBounds()) {
-    std::vector<const float *> x_ptrs;
-    for (const auto &params : state.GetStates()) x_ptrs.push_back(params.data());
-    if (bounds.count.size() < 1) bounds.count.resize(1);
-    for (size_t pass = 0; pass < options.max_bound_refinements; ++pass) {
-      state_ops.BoundMask(stream, x_ptrs, system.step, bounds.step_mask);
-      THROW_ON_CUDA_ERROR(cudaMemsetAsync(bounds.count.data(), 0, sizeof(int), stream));
-      HoldOutwardSteps(stream, bounds.step_mask, bounds.mask, bounds.extra, bounds.count.data());
-      if (!fixed) {
-        int count = 0;
-        THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&count, bounds.count.data(), sizeof(int),
-                                            cudaMemcpyDeviceToHost, stream));
-        THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-        if (count == 0) break;
-        LogMessage("Bounds: {} more components held", count);
-      }
-      system.normal_equations.ZeroMaskedLhsRowsColumns(stream, bounds.extra);
-      ElementwiseMultiplyInPlace(stream, system.rhs.data(), bounds.extra.data(), system.rhs.size());
-      solve();
-    }
+  while (inner.restrict_system &&
+         inner.restrict_system(stream, state, system.normal_equations, system.rhs, &system.step)) {
+    solve();
   }
-  // dx = S z.
   if (options.column_scaling != ColumnScaling::None && !system.step.empty()) {
     ElementwiseMultiplyInPlace(stream, system.step.data(), system.column_scale.data(),
                                system.step.size());
   }
-}
-
-/** Projects the bounded batches of a minimizer state onto their bounds. */
-void ProjectToBounds(cudaStream_t stream, StateBatchOps &state_ops, MinimizerState &state) {
-  if (!state_ops.HasBounds()) return;
-  std::vector<float *> x_ptrs;
-  for (auto &params : state.GetStates()) x_ptrs.push_back(params.data());
-  state_ops.ProjectToBounds(stream, x_ptrs);
 }
 
 /** updated = current ⊞ step, on each state's manifold. */
@@ -283,8 +235,8 @@ void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOption
 }
 
 void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerState &state,
-                 const MinimizerOptions &options, StateBatchOps &state_ops, MinimizerSystem &system,
-                 MinimizerBounds &bounds, MinimizerScratch &scratch) {
+                 const MinimizerOptions &options, MinimizerSystem &system,
+                 MinimizerScratch &scratch) {
   ComputeResidualAndJacobian(stream, problem, state, options, system, scratch);
   system.normal_equations.Assemble(stream, problem, system.factor_jacobians.data(),
                                    system.residuals.data(), system.rhs);
@@ -297,7 +249,6 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
     ElementwiseMultiplyInPlace(stream, system.rhs.data(), system.column_scale.data(),
                                system.rhs.size());
   }
-  HoldActiveBounds(stream, state_ops, state, system, bounds);
 }
 
 }  // namespace internal
@@ -333,6 +284,11 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
             "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has constraint "
             "factor batches; solve it with AugmentedLagrangianMinimizer");
       }
+    }
+    if (problem.HasBoxBounds()) {
+      throw std::invalid_argument(
+          "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has box-bounded "
+          "states (VectorStateBatch::SetBounds); solve it with AugmentedLagrangianMinimizer");
     }
   }
   auto range = m.profiler_domain_.CreateDomainRange("Minimize");
@@ -371,7 +327,6 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     return summary;
   }
 
-  ProjectToBounds(stream, m.state_ops_, current);
   if (!structure.partition_ready) {
     partition.Build(stream, problem, current, m.state_ops_.NumReducedStates());
     structure.partition_ready = true;
@@ -407,12 +362,6 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   summary.initial_cost = cost;
   summary.final_cost = cost;
   if (active == 0) {
-    // Nothing to iterate; the problem still gets the states projected onto
-    // their bounds.
-    if (m.state_ops_.HasBounds()) {
-      Copy(stream, current, problem);
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    }
     structure.problem = &problem;
     structure.signature = std::move(signature);
     return summary;
@@ -420,8 +369,11 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
 
   auto build = [&](size_t iteration) {
     auto build_range = m.profiler_domain_.CreateDomainRange("BuildSystem");
-    BuildSystem(stream, problem, current, options, m.state_ops_, system, m.bounds_, scratch);
+    BuildSystem(stream, problem, current, options, system, scratch);
     m.UpdateSystem(stream, iteration, system.normal_equations, partition);
+    if (inner.restrict_system) {
+      inner.restrict_system(stream, current, system.normal_equations, system.rhs, nullptr);
+    }
   };
   build(0);
   system.step.resize(system.rhs.size());
@@ -446,7 +398,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     summary.iteration_costs.push_back(summary.final_cost);
     {
       auto solve_range = m.profiler_domain_.CreateDomainRange("LinearSolve");
-      SolveStep(stream, options, fixed, m.state_ops_, current, system, m.bounds_);
+      SolveStep(stream, options, current, inner, system);
     }
     UpdateStates(stream, m.state_ops_, current, system.step, updated);
     if (params.line_search) partition.ResetLineSearch(stream);

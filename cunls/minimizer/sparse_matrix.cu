@@ -508,30 +508,7 @@ __global__ void zero_masked_bsr_kernel(const int *__restrict__ row_offsets,
   }
 }
 
-__global__ void hold_outward_kernel(const float *step_mask, float *held_mask, float *extra,
-                                    int *count, int n) {
-  const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) return;
-  const bool newly_held = held_mask[i] != 0.f && step_mask[i] == 0.f;
-  extra[i] = newly_held ? 0.f : 1.f;
-  if (newly_held) {
-    held_mask[i] = 0.f;
-    atomicAdd(count, 1);
-  }
-}
 }  // namespace
-
-void HoldOutwardSteps(cudaStream_t stream, const dvector<float> &step_mask,
-                      dvector<float> &held_mask, dvector<float> &extra, int *d_count) {
-  const size_t n = held_mask.size();
-  extra.resize(n);
-  if (n == 0) return;
-  constexpr int kBlock = 256;
-  int grid = static_cast<int>((n + kBlock - 1) / kBlock);
-  hold_outward_kernel<<<grid, kBlock, 0, stream>>>(step_mask.data(), held_mask.data(), extra.data(),
-                                                   d_count, static_cast<int>(n));
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
 
 void FindDiagonalPositions(cudaStream_t stream, const CSRSparseMatrix &matrix,
                            dvector<int> &positions) {

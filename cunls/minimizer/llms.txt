@@ -10,7 +10,7 @@ optimization.
 - `problem.h`: `Problem` (graph composition of states + factors)
 - `residual_batch.h`: `ResidualBatch` (factor + loss wrapper)
 - `minimizer.h`: `MinimizerOptions`, `MinimizerSummary`, `Minimizer` (common
-  base: the one iteration loop, linear system, bounds, line search, structure
+  base: the one iteration loop, linear system, line search, structure
   reuse, per-subproblem bookkeeping; private pure virtual hooks
   `UpdateSystem` / `ClassifySteps` are the whole GN/LM difference; private
   section is data only, behaviour in free functions in `minimizer.cu`);
@@ -30,7 +30,16 @@ optimization.
   Lagrangian outer loop around a GN/LM minimizer; finds constraint batches by
   type; per-subproblem penalties and stopping on the device; uses
   `internal::InnerMinimize` for capped, line-searched inner solves). Takes a
-  `Minimizer &`. Guide: `docs/sphinx/constraints.rst`.
+  `Minimizer &`. Also the only solver of box-bounded states (projected
+  Gauss-Newton): it clamps the initial free states into the box, and its
+  private `HoldActiveBounds` runs as `InnerSolve::restrict_system` (the one
+  callback the minimizer loop offers: before the solve, and after each solve
+  with the step, returning true for another solve) to hold the components at
+  an active bound plus up to `max_bound_refinements` active-set refinements
+  (AL option); the bounded `VectorStateBatch::Plus` clamps every moved
+  component. GN/LM/RANSAC reject
+  bounded problems (`Problem::HasBoxBounds`). Guide:
+  `docs/sphinx/constraints.rst`.
 - `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
 - `sparse_matrix.h`: CSR diagonal ops, scaling, norms (free functions)
 - `normal_equations.h`: `NormalEquations` (owns H, the working LHS, and their
