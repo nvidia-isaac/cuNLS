@@ -96,18 +96,4 @@ void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
 void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
                               const dvector<float> &x, dvector<float> &y);
 
-/**
- * @brief Async BSR-weighted squared step: d_out[0] = step^T A step.
- *
- * @param stream CUDA stream for GPU operations.
- * @param matrix BSR matrix A.
- * @param step Step vector.
- * @param[out] scratch Scratch for the SpMV result.
- * @param d_out Device destination for the scalar.
- * @param d_partials Reduction scratch; see device_reduction.h.
- */
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const BSRSparseMatrix &matrix,
-                                     const dvector<float> &step, dvector<float> &scratch,
-                                     float *d_out, float *d_partials);
-
 }  // namespace cunls

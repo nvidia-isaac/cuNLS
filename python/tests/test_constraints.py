@@ -94,8 +94,9 @@ def test_box_projection(stream, kind):
 
 @pytest.mark.parametrize("kind", ["gn", "lm"])
 def test_projected_state_bounds(stream, kind):
-    """The same box through VectorStateBatch.set_bounds: a plain solve, exact,
-    from an infeasible initial guess."""
+    """The same box through VectorStateBatch.set_bounds: solved by the augmented
+    Lagrangian without outer iterations (projected Gauss-Newton), exact, from an
+    infeasible initial guess; the minimizers alone reject the bounded problem."""
     target = np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32)
     lower = np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32)
     upper = np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32)
@@ -111,7 +112,11 @@ def test_projected_state_bounds(stream, kind):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(2)])
-    make_minimizer(kind).minimize(stream, problem)
+    minimizer = make_minimizer(kind)
+    with pytest.raises(ValueError):
+        minimizer.minimize(stream, problem)
+    summary = pycunls.AugmentedLagrangianMinimizer(minimizer).minimize(stream, problem)
+    assert summary.outer_iterations == 1
     # LM stops when its float32 cost decrease vanishes, a little before GN's exact step.
     atol = 1e-5 if kind == "gn" else 1e-3
     np.testing.assert_allclose(cp.asnumpy(x), np.clip(target, lower, upper), atol=atol)
@@ -203,7 +208,11 @@ def test_random_convex_qps_match_reference(stream, kind):
     assert summary.num_converged == batch
     assert summary.max_violation <= 1e-4
     result = cp.asnumpy(x).reshape(batch, n)
-    np.testing.assert_allclose(result, expected, atol=5e-4)
+    # Float32 inner solves stop when the cost decrease vanishes (LM a little
+    # before GN), and their accept / stop decisions vary run to run with the
+    # atomic cost sums: x lands up to ~6e-4 from the float64 optimum (LM; GN
+    # ~4.5e-4) over 30 runs each.
+    np.testing.assert_allclose(result, expected, atol=2e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +326,11 @@ def test_constraint_wrapper_api(stream):
     assert c.multipliers_ptr != 0
     with pytest.raises(ValueError):
         pycunls.ConstraintFactorBatch(inner, pycunls.ConstraintKind.Equality, scale=0.0)
+    # Wrapping a constraint would hide it from the augmented Lagrangian.
+    with pytest.raises(ValueError, match="constraint"):
+        pycunls.WeightedFactorBatch(c, 2.0)
+    with pytest.raises(ValueError, match="constraint"):
+        pycunls.InformationFactorBatch(c, cp.zeros(4 * 9, dtype=cp.float32))
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     assert options.constraint_tolerance == pytest.approx(1e-4)
     assert options.inner_line_search_steps == 10

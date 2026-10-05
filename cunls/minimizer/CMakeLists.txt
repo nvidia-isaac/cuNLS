@@ -5,7 +5,8 @@ add_library(cunls_minimizer OBJECT
   hessian_structure.cu
   device_reduction.cu
   gauss_newton_minimizer.cu
-  levenberg_marquardt_minimizer.cpp
+  levenberg_marquardt_minimizer.cu
+  minimizer.cu
   minimizer_state.cu
   normal_equations.cu
   problem_partition.cu

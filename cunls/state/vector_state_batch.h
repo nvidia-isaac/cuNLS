@@ -26,46 +26,55 @@
 namespace cunls {
 
 /**
- * @brief Computes element-wise addition of vectors: x_plus_delta = x + delta.
+ * @brief x_plus_delta = x + delta element-wise, for num_params states of `dim`
+ * components; with bounds, every component with a nonzero delta is then
+ * clamped into [lower, upper] (a component the step does not move stays as
+ * it is).
  *
- * @param x Pointer to input vectors on GPU.
- * @param delta Pointer to delta vectors on GPU.
- * @param x_plus_delta Pointer to output vectors on GPU.
- * @param num_params Number of states.
- * @param dim Dimension of each vector.
- * @param stream CUDA stream for async execution.
+ * @param x, delta, x_plus_delta Device arrays of num_params * dim floats.
+ * @param lower, upper Device bounds (both nullptr: none), `bound_values`
+ *        floats; component k uses entry k % bound_values (replicas share the
+ *        bounds).
  */
 void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta, size_t num_params,
-                         int dim, cudaStream_t stream);
+                         int dim, cudaStream_t stream, const float *lower = nullptr,
+                         const float *upper = nullptr, size_t bound_values = 0);
 
 /**
- * @brief Clamps x to [lower, upper] element-wise where free[i] != 0.
- *
- * @param x Device array of num_values floats, updated in place.
- * @param free Device array of num_values flags (0: leave the entry as it is).
- * @param lower, upper Device arrays of num_values bounds (±inf: unbounded).
+ * @brief Box bounds of a state batch: lower <= x <= upper per component
+ * (VectorStateBatch::SetBounds). Bounds are a constraint, enforced only by
+ * AugmentedLagrangianMinimizer; read through this interface (dynamic_cast
+ * from StateBatch), so StateBatch itself knows nothing about bounds.
  */
-void ProjectVectorToBounds(float *x, const float *free, const float *lower, const float *upper,
-                           size_t num_values, cudaStream_t stream);
+class BoxBoundedStates {
+ public:
+  virtual ~BoxBoundedStates() = default;
 
-/**
- * @brief mask[i] = 0 where x[i] sits at a bound and direction[i] points outward.
- */
-void MaskVectorActiveBounds(const float *x, const float *direction, const float *lower,
-                            const float *upper, float *mask, size_t num_values,
-                            cudaStream_t stream);
+  /** @brief Device lower bounds, Capacity() * dimension floats; nullptr: no bounds. */
+  virtual const float *LowerBounds() const = 0;
+
+  /** @brief Device upper bounds, Capacity() * dimension floats; nullptr: no bounds. */
+  virtual const float *UpperBounds() const = 0;
+};
+
+/** @brief Whether `batch` has box bounds (see BoxBoundedStates). */
+inline bool HasBoxBounds(const StateBatch *batch) {
+  const auto *bounded = dynamic_cast<const BoxBoundedStates *>(batch);
+  return bounded != nullptr && bounded->LowerBounds() != nullptr;
+}
 
 /**
  * @brief Batch of Euclidean vector states with compile-time dimension.
  *
  * For Euclidean states, the tangent and ambient spaces are identical
  * (both have dimension Dim), and the Plus operation reduces to element-wise
- * vector addition: x_plus_delta = x + delta.
+ * vector addition: x_plus_delta = x + delta. With box bounds (SetBounds),
+ * Plus keeps every component it moves inside the box.
  *
  * @tparam Dim The dimension of each vector state.
  */
 template <int Dim>
-class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
+class VectorStateBatch : public SizedStateBatch<Dim, Dim>, public BoxBoundedStates {
  public:
   using Base = SizedStateBatch<Dim, Dim>;
 
@@ -98,28 +107,34 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
       : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
   /**
-   * @brief Computes x_plus_delta = x + delta element-wise for all states.
+   * @brief x_plus_delta = x + delta element-wise for all states; with bounds,
+   * every component with a nonzero delta is clamped into the box (constant
+   * states, whose delta is 0, are never moved or clamped).
    *
    * @param x             Device pointer to current state values.
    * @param delta         Device pointer to tangent-space updates.
    * @param x_plus_delta  Device pointer to output state values.
    * @param stream        CUDA stream for asynchronous execution.
+   * @param num_replicas  Replicas of the batch (see StateBatch::Plus); they share the bounds.
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override {
     CalculateVectorPlus(x, delta, x_plus_delta, this->num_active_states_ * num_replicas, Dim,
-                        stream);
+                        stream, lower_, upper_, this->num_active_states_ * Dim);
   }
 
   /**
-   * @brief Box bounds lower <= x <= upper per component, enforced by the
-   * Gauss-Newton and Levenberg-Marquardt minimizers by projection (see
-   * StateBatch::HasBounds): the iterates stay inside the box, and no
-   * constraint rows or penalties are involved.
+   * @brief Box bounds lower <= x <= upper per component. Bounds are a
+   * constraint: solve a problem with bounded states with
+   * AugmentedLagrangianMinimizer, which keeps the iterates inside the box
+   * (projected Gauss-Newton); GaussNewtonMinimizer, LevenbergMarquardtMinimizer
+   * and the RANSAC minimizers reject it. Constant states are never moved.
    *
    * @param lower, upper Device arrays of Capacity() * Dim floats (state i at
    *        `i * Dim`); ±inf leaves a side unbounded. Not owned: they must
-   *        outlive the solves. Both nullptr removes the bounds.
+   *        outlive the solves, and are read at every solve (they may be
+   *        rewritten, or rebound with another call, between solves). Both
+   *        nullptr removes the bounds.
    * @throws std::invalid_argument if exactly one of them is nullptr.
    */
   void SetBounds(const float *lower, const float *upper) {
@@ -130,21 +145,10 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim> {
     upper_ = upper;
   }
 
-  bool HasBounds() const override { return lower_ != nullptr; }
+  /** @brief See BoxBoundedStates. */
   const float *LowerBounds() const override { return lower_; }
+  /** @brief See BoxBoundedStates. */
   const float *UpperBounds() const override { return upper_; }
-
-  void ProjectToBounds(float *x, const float *free, cudaStream_t stream) const override {
-    if (lower_ == nullptr) return;
-    ProjectVectorToBounds(x, free, lower_, upper_, this->num_active_states_ * Dim, stream);
-  }
-
-  void MaskActiveBounds(const float *x, const float *direction, float *mask,
-                        cudaStream_t stream) const override {
-    if (lower_ == nullptr) return;
-    MaskVectorActiveBounds(x, direction, lower_, upper_, mask, this->num_active_states_ * Dim,
-                           stream);
-  }
 
  private:
   /** @brief Default constructor (private, not for external use). */

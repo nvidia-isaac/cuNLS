@@ -262,7 +262,8 @@ if(BUILD_TESTING)
     tests/projected_bounds_test.cpp
     tests/structure_reuse_test.cpp
     tests/block_tridiagonal_solver_test.cpp
-    tests/real_time_graph_test.cpp
+    tests/real_time_test.cpp
+    tests/minimizer_benchmark_test.cpp
     tests/dynamics_factor_batch_test.cpp
     tests/se3_dynamics_factor_batch_test.cpp
     tests/lie_kinematics_factor_batch_test.cpp
@@ -270,6 +271,8 @@ if(BUILD_TESTING)
     tests/quadruped_factor_batch_test.cpp
     tests/imu_factor_batch_test.cpp
     tests/clearance_factor_batch_test.cpp
+    tests/pose_prior_factor_batch_test.cpp
+    tests/reprojection_reference_test.cpp
     tests/augmented_lagrangian_nonlinear_test.cu
   )
 

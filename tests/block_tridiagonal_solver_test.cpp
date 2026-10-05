@@ -38,6 +38,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se2_between_factor_batch.h"
 #include "cunls/factor/dynamics/se2_differential_drive_factor_batch.h"
+#include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
@@ -177,6 +178,40 @@ TEST(BlockTridiagonalSolver, NeedsStages) {
   Trajectories t(1, 4);
   t.problem.SetStateStages({});
   EXPECT_THROW(t.Solve(SparseLinearSolverType::BlockTridiagonal), std::runtime_error);
+}
+
+// A singular system (the second component of every state is unconstrained):
+// with safety checks the solve fails and the minimizer throws; without them
+// (the default, CUDA-graph capturable) it runs through on the floored pivots.
+TEST(BlockTridiagonalSolver, ReportsSingularPivotsWithSafetyChecks) {
+  for (bool safety_checks : {true, false}) {
+    constexpr int kStates = 4;
+    dvector<float> x(std::vector<float>(2 * kStates, 0.f)),
+        targets(std::vector<float>(2 * kStates, 1.f));
+    dvector<Matrix<2>> sqrt_info(std::vector<Matrix<2>>(kStates, Matrix<2>{1.f, 0.f, 0.f, 0.f}));
+    dvector<int> stages(std::vector<int>{0, 1, 2, 3});
+    VectorStateBatch<2> states(x.data(), kStates);
+    states.SetNumActiveStates(kStates);
+    InformationFactorBatch<PriorVectorFactorBatch<2>> priors(
+        sqrt_info.data(), kStates, reinterpret_cast<const Vector<2> *>(targets.data()), kStates);
+    priors.SetNumActiveFactors(kStates);
+    std::vector<float *> ptrs;
+    for (int i = 0; i < kStates; ++i) ptrs.push_back(states.StateDevicePtr(i));
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&priors, ptrs);
+    problem.SetStateStages({stages.data()});
+    MinimizerOptions options;
+    options.sparse_linear_solver_type = SparseLinearSolverType::BlockTridiagonal;
+    options.disable_safety_checks = !safety_checks;
+    GaussNewtonMinimizer gn(options);
+    CudaStream stream;
+    if (safety_checks) {
+      EXPECT_THROW(gn.Minimize(stream.GetStream(), problem), std::runtime_error);
+    } else {
+      EXPECT_NO_THROW(gn.Minimize(stream.GetStream(), problem));
+    }
+  }
 }
 
 /**

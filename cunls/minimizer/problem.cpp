@@ -28,6 +28,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/minimizer/problem_kernels.h"
+#include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
 
@@ -523,6 +524,13 @@ JacobianMode Problem::JacobianModeFor(size_t residual_batch_index,
     return *jacobian_mode_overrides_[residual_batch_index];
   }
   return global_default;
+}
+
+bool Problem::HasBoxBounds() const {
+  for (const StateBatch *batch : state_batches_) {
+    if (cunls::HasBoxBounds(batch)) return true;
+  }
+  return false;
 }
 
 }  // namespace cunls

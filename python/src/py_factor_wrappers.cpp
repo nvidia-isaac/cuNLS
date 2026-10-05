@@ -20,8 +20,10 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 #include "bindings.h"
+#include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/robustifier/scaled_loss_function_batch.h"
@@ -46,9 +48,25 @@ size_t PyFactorBatch::ResidualsSize() const { return residual_size_; }
 
 std::vector<size_t> PyFactorBatch::StateSizes() const { return state_sizes_; }
 
+namespace {
+
+// A wrapped constraint would be hidden from AugmentedLagrangianMinimizer (it
+// finds constraints by type) and solved as an ordinary weighted residual.
+void RejectConstraint(const cunls::FactorBatch *inner, const char *wrapper) {
+  if (dynamic_cast<const cunls::ConstraintFactorBatchBase *>(inner) != nullptr) {
+    throw std::invalid_argument(std::string(wrapper) +
+                                ": cannot wrap a constraint factor batch (constraints are hard; "
+                                "scale them with the constraint's own scale instead)");
+  }
+}
+
+}  // namespace
+
 PyInformationFactorBatch::PyInformationFactorBatch(cunls::FactorBatch *inner,
                                                    const float *sqrt_information_matrices_ptr)
-    : inner_(inner), sqrt_info_ptr_(sqrt_information_matrices_ptr) {}
+    : inner_(inner), sqrt_info_ptr_(sqrt_information_matrices_ptr) {
+  RejectConstraint(inner_, "InformationFactorBatch");
+}
 
 size_t PyInformationFactorBatch::ResidualsSize() const { return inner_->ResidualsSize(); }
 
@@ -86,11 +104,14 @@ bool PyInformationFactorBatch::Evaluate(float *residuals, float *jacobians,
 }
 
 PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner, float weight)
-    : inner_(inner), uniform_weight_(weight), per_factor_weights_(nullptr) {}
+    : inner_(inner), uniform_weight_(weight), per_factor_weights_(nullptr) {
+  RejectConstraint(inner_, "WeightedFactorBatch");
+}
 
 PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner,
                                              const float *per_factor_weights)
     : inner_(inner), uniform_weight_(0.0f), per_factor_weights_(per_factor_weights) {
+  RejectConstraint(inner_, "WeightedFactorBatch");
   if (per_factor_weights_ == nullptr) {
     throw std::invalid_argument("WeightedFactorBatch: per_factor_weights must not be null");
   }

@@ -20,7 +20,7 @@
  * @brief Wall-clock comparison of JacobianMode::kAnalytic vs kNumeric, across
  * problem types (PGO / SBA / PnP) and named problem sizes.
  *
- * Times repeated `GaussNewtonMinimizer::BuildSystem` calls (not full
+ * Times repeated `internal::BuildSystem` calls (not full
  * `Minimize()` runs) via CUDA events: `BuildSystem` is exactly the call that
  * computes residuals + Jacobians and assembles the normal equations, so it
  * isolates the cost the two Jacobian modes actually differ on. A full
@@ -71,8 +71,8 @@
 #include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/math/so_se_lie_math.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/jacobian_mode.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
@@ -100,23 +100,33 @@ const char *ToString(JacobianMode m) {
 }
 
 /**
- * @brief Exposes GaussNewtonMinimizer::Initialize/BuildSystem (both
- * protected). Same rationale/pattern as SystemBuilder in
- * tests/block_hessian_assembler_test.cpp: least invasive way to time
- * assembly in isolation from the rest of Minimize().
+ * @brief One system assembly of Minimizer (internal::SetUpStructure +
+ * internal::BuildSystem), to time assembly in isolation from the rest of
+ * Minimize(). Same pattern as SystemBuilder in
+ * tests/block_hessian_assembler_test.cpp.
  */
-class SystemBuilder : public GaussNewtonMinimizer {
+class SystemBuilder {
  public:
-  explicit SystemBuilder(const MinimizerOptions &options) : GaussNewtonMinimizer(options) {}
+  explicit SystemBuilder(const MinimizerOptions &options) : options_(options) {
+    system_.solver = CreateSparseLinearSolver(options.sparse_linear_solver_type,
+                                              options.sparse_linear_solver_config);
+  }
 
   void Prepare(cudaStream_t stream, Problem &problem) {
-    Initialize(stream, problem);
-    current_state_.Recreate(stream, problem);
+    internal::SetUpStructure(stream, problem, options_, state_ops_, system_);
+    state_.Recreate(stream, problem);
   }
 
   void Build(cudaStream_t stream, const Problem &problem) {
-    BuildSystem(stream, problem, current_state_);
+    internal::BuildSystem(stream, problem, state_, options_, system_, scratch_);
   }
+
+ private:
+  MinimizerOptions options_;
+  StateBatchOps state_ops_;
+  internal::MinimizerSystem system_;
+  internal::MinimizerScratch scratch_;
+  MinimizerState state_;
 };
 
 // ---------------------------------------------------------------------------

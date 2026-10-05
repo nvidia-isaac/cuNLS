@@ -90,3 +90,44 @@ class TestCuPyRoundTrip:
         fb = pycunls.ReprojectionFactorBatch(obs, 10)
         fb.set_num_active_factors(fb.capacity)
         assert fb.num_active_factors == 10
+
+
+class TestDtypeChecks:
+    """Every device buffer passed as a CuPy array is checked against the dtype
+    the kernels read (float32 data, int32 ids, uint64 pointer tables); raw
+    integer pointers are accepted unchecked."""
+
+    def test_state_batch_data_and_const_ids(self):
+        with pytest.raises(TypeError, match="data must have dtype float32, got float64"):
+            pycunls.VectorStateBatch3(cp.zeros(9, dtype=cp.float64), 3)
+        with pytest.raises(TypeError, match="const_ids must have dtype int32, got int64"):
+            pycunls.SE3StateBatch(cp.zeros(16 * 2, dtype=cp.float32), 2,
+                                  cp.arange(1), 1)
+        # Raw pointers are not checked.
+        data = cp.zeros(9, dtype=cp.float32)
+        pycunls.VectorStateBatch3(data.data.ptr, 3)
+
+    def test_factor_measurements_and_bounds(self):
+        with pytest.raises(TypeError, match="observations must have dtype float32"):
+            pycunls.ReprojectionFactorBatch(cp.zeros(4, dtype=cp.float64), 2)
+        with pytest.raises(TypeError, match="lower must have dtype float32"):
+            pycunls.BoundFactorBatch2(cp.zeros(4, dtype=cp.float64),
+                                      cp.zeros(4, dtype=cp.float32), 2)
+        states = pycunls.VectorStateBatch2(cp.zeros(4, dtype=cp.float32), 2)
+        with pytest.raises(TypeError, match="upper must have dtype float32"):
+            states.set_bounds(cp.zeros(4, dtype=cp.float32), cp.zeros(4, dtype=cp.int32))
+
+    def test_problem_tables(self):
+        x = cp.zeros(4, dtype=cp.float32)
+        states = pycunls.VectorStateBatch2(x, 2)
+        states.set_num_active_states(2)
+        prior = pycunls.PriorVectorFactorBatch2(cp.zeros(4, dtype=cp.float32), 2)
+        prior.set_num_active_factors(2)
+        problem = pycunls.Problem()
+        problem.add_state_batch(states)
+        table = cp.asarray([states.state_device_ptr(0), states.state_device_ptr(1)],
+                           dtype=cp.int64)
+        with pytest.raises(TypeError, match="state_pointer_table must have dtype uint64"):
+            problem.add_factor_batch(prior, state_pointer_table=table)
+        with pytest.raises(TypeError, match="state_problem_ids must have dtype int32"):
+            problem.set_problem_partition(2, [cp.arange(2)])

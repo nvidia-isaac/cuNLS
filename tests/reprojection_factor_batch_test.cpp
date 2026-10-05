@@ -45,6 +45,7 @@
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 
@@ -449,9 +450,10 @@ class ReprojectionFactorBatchTest : public ::testing::Test {
   const uint32_t fixed_seed_ = 12345;  ///< Random seed for reproducibility
 
   // Ground truth data
-  std::vector<SE3Transform> ground_truth_poses_;  ///< Ground truth camera poses
-  std::vector<Point3D> ground_truth_points_;      ///< Ground truth 3D points
-  std::vector<Observation2D> observations_;       ///< 2D observations (normalized)
+  /// Ground truth camera_from_world poses; the pose states hold their inverses (world_from_rig).
+  std::vector<SE3Transform> ground_truth_poses_;
+  std::vector<Point3D> ground_truth_points_;  ///< Ground truth 3D points
+  std::vector<Observation2D> observations_;   ///< 2D observations (normalized)
 
   profiler::Domain profiler_domain_{"ReprojectionFactorBatchTest"};
 };
@@ -466,7 +468,7 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateBasic) {
   auto test_range = profiler_domain_.CreateDomainRange("EvaluateBasic");
 
   // Copy data to device
-  dvector<SE3Transform> poses_device(ground_truth_poses_);
+  dvector<SE3Transform> poses_device(test_utils::InverseSE3(ground_truth_poses_));
   dvector<Point3D> points_device(ground_truth_points_);
   dvector<Observation2D> observations_device(observations_);
 
@@ -530,7 +532,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoints) {
   ASSERT_GT(initial_mse, 0.01f) << "Points should be significantly disturbed";
 
   // Copy data to device
-  dvector<SE3Transform> poses_device(ground_truth_poses_);
+  dvector<SE3Transform> poses_device(test_utils::InverseSE3(ground_truth_poses_));
   dvector<Point3D> points_device(disturbed_points);
   dvector<Observation2D> observations_device(observations_);
 
@@ -628,7 +630,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
   ASSERT_GT(initial_mse, 0.001f) << "Poses should be significantly disturbed";
 
   // Copy data to device
-  dvector<SE3Transform> poses_device(disturbed_poses);
+  dvector<SE3Transform> poses_device(test_utils::InverseSE3(disturbed_poses));
   dvector<Point3D> points_device(ground_truth_points_);
   dvector<Observation2D> observations_device(observations_);
 
@@ -694,6 +696,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeDisturbedPoses) {
   // Copy optimized poses back to host
   std::vector<SE3Transform> optimized_poses(num_poses_);
   poses_device.CopyToHost(optimized_poses.data(), num_poses_);
+  optimized_poses = test_utils::InverseSE3(optimized_poses);  // back to camera_from_world
 
   // Verify poses recovered to ground truth
   float final_mse = ComputePoseMSE(optimized_poses, ground_truth_poses_);
@@ -720,7 +723,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeJoint) {
   DisturbPoints(disturbed_points, 0.2f);
 
   // Copy data to device
-  dvector<SE3Transform> poses_device(disturbed_poses);
+  dvector<SE3Transform> poses_device(test_utils::InverseSE3(disturbed_poses));
   dvector<Point3D> points_device(disturbed_points);
   dvector<Observation2D> observations_device(observations_);
 
@@ -854,7 +857,7 @@ TEST_F(ReprojectionFactorBatchTest, EvaluateWithIdentityRigTransform) {
   auto test_range = profiler_domain_.CreateDomainRange("EvaluateWithIdentityRigTransform");
 
   // Copy data to device
-  dvector<SE3Transform> poses_device(ground_truth_poses_);
+  dvector<SE3Transform> poses_device(test_utils::InverseSE3(ground_truth_poses_));
   dvector<Point3D> points_device(ground_truth_points_);
   dvector<Observation2D> observations_device(observations_);
 
@@ -1035,7 +1038,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   ASSERT_GT(initial_mse, 0.001f) << "Rig poses should be disturbed";
 
   // Copy data to device
-  dvector<SE3Transform> rig_poses_device(disturbed_rig_poses);
+  dvector<SE3Transform> rig_poses_device(test_utils::InverseSE3(disturbed_rig_poses));
   dvector<Point3D> points_device(ground_truth_points_);
   dvector<Observation2D> observations_device(observations_with_rig);
   dvector<SE3Transform> camera_from_rig_device(camera_from_rig_transforms);
@@ -1101,6 +1104,7 @@ TEST_F(ReprojectionFactorBatchTest, OptimizeRigPosesWithCameraOffsets) {
   // Copy optimized rig poses back to host
   std::vector<SE3Transform> optimized_rig_poses(num_poses_);
   rig_poses_device.CopyToHost(optimized_rig_poses.data(), num_poses_);
+  optimized_rig_poses = test_utils::InverseSE3(optimized_rig_poses);  // back to rig_from_world
 
   // Verify rig poses recovered to ground truth
   float final_mse = ComputePoseMSE(optimized_rig_poses, ground_truth_poses_);
@@ -1162,7 +1166,8 @@ TEST_F(ReprojectionFactorBatchTest, RigTransformCompositionCorrectness) {
   }
 
   // Copy data to device
-  dvector<SE3Transform> rig_pose_device({rig_pose});
+  dvector<SE3Transform> rig_pose_device(
+      std::vector<SE3Transform>{test_utils::InverseSE3(rig_pose)});
   dvector<Point3D> points_device(test_points);
   dvector<Observation2D> observations_device(test_observations);
 

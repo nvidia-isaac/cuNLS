@@ -18,8 +18,9 @@
 // Real-time augmented Lagrangian on an MPC-shaped problem (SE(2) trajectories
 // with hard differential-drive dynamics, wheel-speed bounds by projection,
 // pose tracking, the block-tridiagonal solver, one subproblem per
-// trajectory): replaying the captured CUDA graph gives the same states as the
-// same calls run eagerly, while the measured first pose changes every call.
+// trajectory): warm-started real-time calls with a reused structure keep the
+// fixed budget and stay feasible while the measured first pose changes every
+// call, and bound buffers rebound between calls take effect.
 
 #include <gtest/gtest.h>
 
@@ -63,7 +64,7 @@ struct Mpc {
   std::unique_ptr<LevenbergMarquardtMinimizer> inner;
   std::unique_ptr<AugmentedLagrangianMinimizer> solver;
 
-  explicit Mpc(bool graph) {
+  Mpc() {
     std::vector<float> p, t;
     std::vector<int> cst, pid, cid, pst, cstg;
     for (int i = 0; i < B; ++i) {
@@ -145,7 +146,6 @@ struct Mpc {
     options.inner_iterations = 2;
     options.inner_line_search_steps = 2;
     options.max_penalty = 1e3f;
-    options.use_cuda_graph = graph;
     real_time_options = options;
   }
 
@@ -168,57 +168,34 @@ struct Mpc {
   }
 };
 
-TEST(RealTimeGraph, ReplayMatchesEagerCalls) {
-  Mpc eager(false), graph(true);
+TEST(RealTime, WarmStartedCallsStayFeasibleAndFollowNewBounds) {
+  Mpc m;
   CudaStream stream;
   for (int call = 0; call < 8; ++call) {
-    for (Mpc *m : {&eager, &graph}) {
-      m->Measure(call);
-      const auto summary = m->solver->Minimize(stream.GetStream(), m->problem);
-      if (call == 0) {
-        EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
-        m->solver->SetOptions(m->real_time_options);
-      } else {
-        // Call 1 runs eagerly, call 2 is captured, later calls replay.
-        EXPECT_EQ(m->solver->UsesCudaGraph(), m == &graph && call >= 2) << "call " << call;
-        EXPECT_EQ(summary.outer_iterations, 2u);
-        EXPECT_LE(summary.max_violation, 5e-2f);
-      }
-    }
-    // Levenberg-Marquardt's accept decisions compare float32 costs summed with
-    // atomics, so two identical solves agree to ~1e-3 only; a replay that did
-    // not run, or ran with stale inputs, would be off by far more (the
-    // measured pose moves every call).
-    const auto a = eager.States(), b = graph.States();
-    ASSERT_EQ(a.size(), b.size());
-    for (size_t i = 0; i < a.size(); ++i) {
-      ASSERT_NEAR(a[i], b[i], 5e-3f * (1.f + std::abs(a[i]))) << "call " << call << " entry " << i;
+    m.Measure(call);
+    const auto summary = m.solver->Minimize(stream.GetStream(), m.problem);
+    if (call == 0) {
+      EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
+      m.solver->SetOptions(m.real_time_options);
+    } else {
+      EXPECT_EQ(summary.outer_iterations, 2u) << "call " << call;
+      EXPECT_LE(summary.max_violation, 5e-2f) << "call " << call;
     }
   }
-  // New bound buffers (other addresses, tighter values): the graph holding the
-  // old addresses is dropped; the next call (8) runs eagerly, call 9 captures
-  // again, and the new bounds hold.
+  // New bound buffers (other addresses, tighter values) between real-time
+  // calls with a reused structure: the new bounds hold.
   dvector<float> lower2(std::vector<float>(2 * Mpc::B * Mpc::N, -6.f));
   dvector<float> upper2(std::vector<float>(2 * Mpc::B * Mpc::N, 6.f));
-  for (Mpc *m : {&eager, &graph}) m->control_states->SetBounds(lower2.data(), upper2.data());
+  m.control_states->SetBounds(lower2.data(), upper2.data());
+  const size_t first_control = Mpc::B * (Mpc::N + 1) * 9;
   for (int call = 8; call < 11; ++call) {
-    for (Mpc *m : {&eager, &graph}) {
-      m->Measure(call);
-      m->solver->Minimize(stream.GetStream(), m->problem);
-      EXPECT_EQ(m->solver->UsesCudaGraph(), m == &graph && call >= 9) << "call " << call;
+    m.Measure(call);
+    const auto summary = m.solver->Minimize(stream.GetStream(), m.problem);
+    EXPECT_LE(summary.max_violation, 5e-2f) << "call " << call;
+    const auto s = m.States();
+    for (size_t i = first_control; i < s.size(); ++i) {
+      EXPECT_LE(std::abs(s[i]), 6.f + 1e-5f) << "call " << call << " entry " << i;
     }
-    const auto a = eager.States(), b = graph.States();
-    for (size_t i = 0; i < a.size(); ++i) {
-      ASSERT_NEAR(a[i], b[i], 5e-3f * (1.f + std::abs(a[i]))) << "call " << call << " entry " << i;
-    }
-    const size_t first_control = Mpc::B * (Mpc::N + 1) * 9;
-    for (size_t i = first_control; i < b.size(); ++i) EXPECT_LE(std::abs(b[i]), 6.f + 1e-5f);
-  }
-  // The controls respect their bounds (projection) and the plans move forward.
-  const auto s = graph.States();
-  const size_t controls = Mpc::B * (Mpc::N + 1) * 9;
-  for (size_t i = controls; i < s.size(); ++i) {
-    EXPECT_LE(std::abs(s[i]), 6.f + 1e-5f);
   }
 }
 

@@ -456,7 +456,7 @@ class Horizon:
 
     def build(self, minimizer=None,
               options: Optional[pycunls.AugmentedLagrangianMinimizerOptions] = None,
-              real_time: Optional[Tuple[int, int]] = None, cuda_graph: bool = True):
+              real_time: Optional[Tuple[int, int]] = None):
         """Assemble the problem and return a :class:`Controller`.
 
         ``minimizer`` defaults to Levenberg-Marquardt with the block-tridiagonal
@@ -470,10 +470,7 @@ class Horizon:
         (:attr:`pycunls.AugmentedLagrangianMinimizerOptions.real_time`), with
         the penalty capped at :data:`REAL_TIME_MAX_PENALTY`. The warm start
         carries the solution and the multipliers forward, so the iterations of
-        consecutive steps add up, as in real-time iteration schemes. With
-        ``cuda_graph`` (default) the device work of a real-time step is
-        captured once and replayed
-        (:attr:`pycunls.AugmentedLagrangianMinimizerOptions.use_cuda_graph`).
+        consecutive steps add up, as in real-time iteration schemes.
         """
         problem = pycunls.Problem()
         problem.add_state_batch(self.pose_states)
@@ -493,6 +490,7 @@ class Horizon:
         stages.append(cp.tile(cp.arange(N, dtype=cp.int32), B))
         self._keep += stages
         problem.set_state_stages(stages)
+        default_minimizer = minimizer is None
         if minimizer is None:
             mo = pycunls.MinimizerOptions()
             mo.sparse_linear_solver_type = pycunls.SparseLinearSolverType.BlockTridiagonal
@@ -503,11 +501,6 @@ class Horizon:
             # solve at a few iterations; 1e-4 let Levenberg-Marquardt stop
             # short (quadrotors drifting off their hover points).
             mo.state_tolerance = 1e-5
-            if real_time is not None:
-                # Levenberg-Marquardt's damping keeps the projected steps
-                # descending without the extra refinement solves (each a full
-                # linear solve per iteration in real time).
-                mo.max_bound_refinements = 0
             lm = pycunls.LevenbergMarquardtMinimizerOptions()
             lm.base_options = mo
             minimizer = pycunls.LevenbergMarquardtMinimizer(lm)
@@ -516,7 +509,12 @@ class Horizon:
             options.warm_start = True
             options.reuse_structure = True  # the horizon's structure never changes
             options.max_penalty = MAX_PENALTY
-        return Controller(self, problem, minimizer, options, real_time, cuda_graph)
+            if real_time is not None and default_minimizer:
+                # Levenberg-Marquardt's damping keeps the projected steps
+                # descending without the extra refinement solves (each a full
+                # linear solve per iteration in real time).
+                options.max_bound_refinements = 0
+        return Controller(self, problem, minimizer, options, real_time)
 
 
 # ---------------------------------------------------------------------------
@@ -550,14 +548,12 @@ def _device_view(ptr: int, n: int, owner) -> cp.ndarray:
 class Controller:
     """Solves a :class:`Horizon`'s problem and runs the receding horizon."""
 
-    def __init__(self, horizon: Horizon, problem, minimizer, options, real_time=None,
-                 cuda_graph=True):
+    def __init__(self, horizon: Horizon, problem, minimizer, options, real_time=None):
         self.horizon, self.problem, self.minimizer = horizon, problem, minimizer
         self.solver = pycunls.AugmentedLagrangianMinimizer(minimizer, options)
         self.summary = None
         self._started = False
         self._real_time = real_time
-        self._cuda_graph = cuda_graph
 
     def solve(self, stream):
         """Solve the current problem (warm-started from the current buffers).
@@ -581,7 +577,6 @@ class Controller:
             o.initial_penalty = min(o.initial_penalty, o.max_penalty)
             o.warm_start = True
             o.reuse_structure = True
-            o.use_cuda_graph = self._cuda_graph
             self.solver.options = o
         return self.summary
 

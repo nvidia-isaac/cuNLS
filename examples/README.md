@@ -33,8 +33,9 @@ The Docker build script now:
 
 Available examples:
 - `sparse_bundle_adjustment`: Uses `ReprojectionFactorBatch` to jointly optimize
-  camera poses and 3D landmarks from synthetic observations (first pose fixed as
-  gauge anchor; remaining poses and all points optimized).
+  camera poses and 3D landmarks from synthetic observations (first two poses
+  fixed as gauge anchors for frame and scale; remaining poses and all points
+  optimized).
 - `pose_graph_optimization`: Uses `BetweenFactorBatch` (manifold deduced via
   CTAD, here SE(3)) to optimize a chain of poses from consecutive
   relative-transform measurements, with the first pose fixed as a gauge

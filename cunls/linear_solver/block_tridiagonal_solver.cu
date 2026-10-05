@@ -101,7 +101,7 @@ template <int M>
 __global__ void __launch_bounds__(kWarp)
     block_tridiagonal_kernel(int num_stages, const int *__restrict__ stage_sizes,
                              float *__restrict__ blocks, size_t c_offset,
-                             float *__restrict__ vectors) {
+                             float *__restrict__ vectors, int *__restrict__ num_singular) {
   constexpr int LD = M + 1;            // rows read one per lane: conflict free
   constexpr int LW = (M + 3) / 4 * 4;  // rows read by every lane (broadcast, float4)
   constexpr int MM = M * M;
@@ -176,7 +176,11 @@ __global__ void __launch_bounds__(kWarp)
     float inv_diag = 1.f;
 #pragma unroll
     for (int j = 0; j < M; ++j) {
-      const float pivot = fmaxf(__shfl_sync(kFull, s[j], j), kPivotFloor);
+      const float raw_pivot = __shfl_sync(kFull, s[j], j);
+      // A non-positive (or NaN) pivot: the system is singular. Counted, then
+      // replaced by a tiny positive one so the recursion completes.
+      if (lane == j && !(raw_pivot > kPivotFloor)) atomicAdd(num_singular, 1);
+      const float pivot = fmaxf(raw_pivot, kPivotFloor);
       const float inv = rsqrtf(pivot);
       const float d = pivot * inv;
       const float lij = lane > j ? s[j] * inv : (lane == j ? d : 0.f);
@@ -279,7 +283,7 @@ __global__ void __launch_bounds__(kWarp)
   }
 }
 
-using KernelPtr = void (*)(int, const int *, float *, size_t, float *);
+using KernelPtr = void (*)(int, const int *, float *, size_t, float *, int *);
 
 template <int... Ms>
 constexpr std::array<KernelPtr, sizeof...(Ms)> MakeKernelTable(std::integer_sequence<int, Ms...>) {
@@ -406,6 +410,7 @@ bool BlockTridiagonalSolver::Initialize(cudaStream_t stream, const Problem &prob
   stage_sizes_ = dvector<int>(stage_sizes);
   blocks_.resize(2 * c_offset);
   vectors_.resize(static_cast<size_t>(P) * K * m);
+  num_singular_.resize(1);  // here, not in Solve: Solve may run under CUDA-graph capture
   LogMessage("BlockTridiagonalSolver: {} subproblems, {} stages, stage blocks of {}", P, K, m);
   return true;
 }
@@ -421,15 +426,27 @@ bool BlockTridiagonalSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &s
   const size_t c_offset = blocks_.size() / 2;
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(blocks_.data(), 0, blocks_.size() * sizeof(float), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(vectors_.data(), 0, vectors_.size() * sizeof(float), stream));
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(num_singular_.data(), 0, sizeof(int), stream));
   scatter_matrix_kernel<<<Blocks(nnz), kThreads, 0, stream>>>(
       spd_matrix.values.data(), entry_slot_.data(), nnz, blocks_.data());
   gather_rhs_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(rhs.data(), row_slot_.data(),
                                                                 num_rows_, vectors_.data());
   kKernels[stage_size_ - 1]<<<num_problems_, kWarp, 0, stream>>>(
-      num_stages_, stage_sizes_.data(), blocks_.data(), c_offset, vectors_.data());
+      num_stages_, stage_sizes_.data(), blocks_.data(), c_offset, vectors_.data(),
+      num_singular_.data());
   scatter_solution_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(
       vectors_.data(), row_slot_.data(), num_rows_, result.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
+  if (safety_checks_enabled_) {
+    int num_singular = 0;
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(&num_singular, num_singular_.data(), sizeof(int),
+                                        cudaMemcpyDeviceToHost, stream));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    if (num_singular > 0) {
+      return Fail(std::to_string(num_singular) +
+                  " non-positive pivot(s): the system is singular (add damping or priors)");
+    }
+  }
   return true;
 }
 

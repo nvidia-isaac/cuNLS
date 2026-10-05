@@ -12,6 +12,9 @@ cp -r /cunls /tmp/cunls_src
 rm -rf /tmp/cunls_src/python/build /tmp/cunls_src/build_python
 
 cd /tmp/cunls_src/python
+# Without Ninja, scikit-build-core drives Makefiles serially unless a parallel
+# level is set: build with every core.
+export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}
 pip wheel . --no-build-isolation --no-deps --wheel-dir "$WHEEL_DIR"
 
 echo ""

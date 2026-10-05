@@ -17,8 +17,9 @@
 ``examples/sparse_bundle_adjustment/main.cpp``).
 
 Jointly refines N SE(3) camera poses and M 3D points from N x M reprojection
-factors (normalized image coordinates). Pose 0 is held constant to fix the
-gauge (the global rigid-body transform).
+factors (normalized image coordinates). Poses are the cameras' world poses
+(world_from_camera, the pose convention of cuNLS). Poses 0 and 1 are held
+constant to fix the gauge: the global rigid-body transform and the scale.
 """
 
 import cupy as cp
@@ -36,9 +37,11 @@ def main():
     poses_gpu = cp.asarray(scene.initial_poses.reshape(-1))
     points_gpu = cp.asarray(scene.initial_points.reshape(-1))
     observations_gpu = cp.asarray(scene.observations.reshape(-1))
-    const_ids_gpu = cp.array([0], dtype=cp.int32)  # pose 0 is constant
+    # Gauge anchors: pose 0 fixes the frame, pose 1 the scale (unobservable from
+    # reprojections alone).
+    const_ids_gpu = cp.array([0, 1], dtype=cp.int32)
 
-    # 3. State batches: SE(3) poses (one constant) and 3D points.
+    # 3. State batches: SE(3) poses (two constant) and 3D points.
     #    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
     #    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
     #    size it once for the largest problem you expect. Right after construction nothing is
@@ -50,11 +53,11 @@ def main():
     #    count equals its capacity.
     poses_capacity = num_poses  # every slot solved: active = capacity
     points_capacity = num_points
-    const_poses_capacity = 1  # entries of const_ids_gpu
+    const_poses_capacity = 2  # entries of const_ids_gpu
     pose_states = pycunls.SE3StateBatch(poses_gpu, poses_capacity, const_ids_gpu,
                                         const_poses_capacity)
     point_states = pycunls.VectorStateBatch3(points_gpu, points_capacity)
-    num_const_poses = 1  # active constant ids: the gauge anchor
+    num_const_poses = 2  # active constant ids: the gauge anchors
     pose_states.set_num_active_states(num_poses, num_const_poses)  # active counts
     point_states.set_num_active_states(num_points)
 

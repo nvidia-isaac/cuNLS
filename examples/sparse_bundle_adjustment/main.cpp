@@ -54,9 +54,11 @@ int main() {
     dvector<SE3Transform> poses(scene.initial_poses);
     dvector<Vector<3>> points(scene.initial_points);
     dvector<Vector<2>> observations(scene.observations);
-    dvector<int> constant_pose_ids(std::vector<int>{0});  // camera 0 is the gauge anchor
+    // Gauge anchors: camera 0 fixes the frame, camera 1 the scale (unobservable from
+    // reprojections alone).
+    dvector<int> constant_pose_ids(std::vector<int>{0, 1});
 
-    // 3. State batches wrap the device memory: SE(3) poses (one constant) and 3D points.
+    // 3. State batches wrap the device memory: SE(3) poses (two constant) and 3D points.
     //    Capacity vs. active count. A batch is constructed with its capacity: how many states (or
     //    factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
     //    size it once for the largest problem you expect. Right after construction nothing is
@@ -68,12 +70,12 @@ int main() {
     //    count equals its capacity.
     const size_t poses_capacity = num_poses;  // every slot solved: active = capacity
     const size_t points_capacity = num_points;
-    const size_t const_poses_capacity = 1;  // entries of constant_pose_ids
+    const size_t const_poses_capacity = 2;  // entries of constant_pose_ids
     cunls::SE3StateBatch pose_states(reinterpret_cast<const float *>(poses.data()), poses_capacity,
                                      constant_pose_ids.data(), const_poses_capacity);
     cunls::VectorStateBatch<3> point_states(reinterpret_cast<const float *>(points.data()),
                                             points_capacity);
-    const size_t num_const_poses = 1;  // active constant ids: the gauge anchor
+    const size_t num_const_poses = 2;  // active constant ids: the gauge anchors
     pose_states.SetNumActiveStates(num_poses, num_const_poses);  // active counts
     point_states.SetNumActiveStates(num_points);
 

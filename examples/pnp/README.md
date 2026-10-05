@@ -9,9 +9,12 @@ normalized observations, with the 3D structure held fixed (unlike
 Residual per correspondence (see `PnPFactorBatch`'s doc comment):
 
 ```
-P_cam = T_cam_from_world * P_world[i]
+P_cam = T_world_from_cam^-1 * P_world[i]
 r_i = [P_cam.x/P_cam.z - obs_i.x, P_cam.y/P_cam.z - obs_i.y]
 ```
+
+The pose state is the camera's pose in the world, `T_world_from_cam` (the pose
+convention of cuNLS).
 
 Jacobian: `2x6`, pose tangent only (no point derivatives, since the points
 are fixed).
@@ -44,7 +47,7 @@ so they can be compared directly.
 ## Walkthrough
 
 1. `examples::MakePnPScene` generates a ground-truth camera pose
-   (`T_cam_from_world`), `--num-points` random 3D world points visible from
+   (`T_world_from_cam`), `--num-points` random 3D world points visible from
    it, their noisy normalized 2D observations, and a perturbed initial pose.
 2. Build a single `SE3StateBatch` (one pose) and a `PnPFactorBatch` with one
    factor per correspondence, all referencing the same pose state.

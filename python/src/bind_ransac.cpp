@@ -15,8 +15,9 @@
  * limitations under the License.
  */
 
-// Bindings for the RANSAC minimizers (RansacGaussNewtonMinimizer,
-// RansacLevenbergMarquardtMinimizer), their options and summary.
+// Bindings for the RANSAC minimizers (the RansacMinimizer base with
+// RansacGaussNewtonMinimizer and RansacLevenbergMarquardtMinimizer), their
+// options and summary.
 //
 // Usage mirrors the regular minimizers: build an ordinary Problem, construct a
 // minimizer from its options, call minimize(stream, problem). The estimate is
@@ -43,6 +44,7 @@ using cunls::LogError;  // used by THROW_ON_CUDA_ERROR
 using cunls::RansacFactorBatchOptions;
 using cunls::RansacGaussNewtonMinimizer;
 using cunls::RansacLevenbergMarquardtMinimizerOptions;
+using cunls::RansacMinimizer;
 using cunls::RansacMinimizerOptions;
 using cunls::RansacSummary;
 
@@ -52,7 +54,7 @@ using MaskArray = nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>;
  * Copies the device inlier mask of residual batch `index` into a numpy array,
  * sized by the factor count recorded in the last minimize().
  */
-MaskArray InlierMask(const RansacGaussNewtonMinimizer &self, size_t index) {
+MaskArray InlierMask(const RansacMinimizer &self, size_t index) {
   const uint8_t *device = self.InlierMask(index);
   if (device == nullptr) {
     throw std::runtime_error(
@@ -68,8 +70,7 @@ MaskArray InlierMask(const RansacGaussNewtonMinimizer &self, size_t index) {
   return MaskArray(host, {n}, owner);
 }
 
-RansacSummary Minimize(RansacGaussNewtonMinimizer &self, cunls::CudaStream &stream,
-                       cunls::Problem &problem) {
+RansacSummary Minimize(RansacMinimizer &self, cunls::CudaStream &stream, cunls::Problem &problem) {
   nb::gil_scoped_release release;  // custom Python factors re-acquire it
   return self.Minimize(stream.GetStream(), problem);
 }
@@ -104,7 +105,7 @@ void BindOptions(nb::module_ &m) {
               "Inlier iff |r| <= inlier_threshold (raw residual norm).");
 
   nb::class_<RansacMinimizerOptions>(m, "RansacMinimizerOptions",
-                                     "Options shared by both RANSAC minimizers.")
+                                     "Options common to all RANSAC minimizers.")
       .def(nb::init<>())
       .def_rw("hypotheses_per_round", &RansacMinimizerOptions::hypotheses_per_round)
       .def_rw("max_rounds", &RansacMinimizerOptions::max_rounds)
@@ -167,23 +168,33 @@ void BindOptions(nb::module_ &m) {
 void bind_ransac(nb::module_ &m) {
   BindOptions(m);
 
-  nb::class_<RansacGaussNewtonMinimizer>(
-      m, "RansacGaussNewtonMinimizer",
-      "RANSAC over an ordinary Problem with Gauss-Newton hypotheses and refinement. "
-      "The total free tangent dimension must be <= 64.")
-      .def(nb::init<const RansacMinimizerOptions &>(),
-           nb::arg("options") = RansacMinimizerOptions())
+  nb::class_<RansacMinimizer>(
+      m, "RansacMinimizer",
+      "Common base of RansacGaussNewtonMinimizer and RansacLevenbergMarquardtMinimizer: "
+      "RANSAC over an ordinary Problem. Not constructible; accepts either. The total free "
+      "tangent dimension must be <= 64.")
       .def("minimize", &Minimize, nb::arg("stream"), nb::arg("problem"),
            "Run RANSAC; the estimate is written into the problem's state batches. "
            "Returns a RansacSummary.")
       .def("inlier_mask", &InlierMask, nb::arg("residual_batch_index"),
            "Inlier mask (numpy uint8, 1 = inlier) of a sampled residual batch, for the "
            "problem of the last minimize(). Raises RuntimeError for an out-of-range index, "
-           "an always_on batch, or before any run.");
+           "an always_on batch, or before any run.")
+      .def_prop_ro(
+          "options", [](const RansacMinimizer &self) { return self.Options(); },
+          "Options common to all RANSAC minimizers, as constructed (a copy).");
 
-  nb::class_<cunls::RansacLevenbergMarquardtMinimizer, RansacGaussNewtonMinimizer>(
+  nb::class_<RansacGaussNewtonMinimizer, RansacMinimizer>(
+      m, "RansacGaussNewtonMinimizer",
+      "RANSAC with Gauss-Newton hypotheses and refinement: a step is taken if it lowers the "
+      "cost; a hypothesis stops at the first step that does not.")
+      .def(nb::init<const RansacMinimizerOptions &>(),
+           nb::arg("options") = RansacMinimizerOptions());
+
+  nb::class_<cunls::RansacLevenbergMarquardtMinimizer, RansacMinimizer>(
       m, "RansacLevenbergMarquardtMinimizer",
-      "RANSAC with Levenberg-Marquardt hypotheses and refinement.")
+      "RANSAC with Levenberg-Marquardt hypotheses and refinement; each hypothesis carries its "
+      "own damping.")
       .def(nb::init<const RansacLevenbergMarquardtMinimizerOptions &>(),
            nb::arg("options") = RansacLevenbergMarquardtMinimizerOptions());
 }

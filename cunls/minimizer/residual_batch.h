@@ -20,11 +20,25 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <stdexcept>
+#include <string>
 
 #include "cunls/factor/factor_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
 
 namespace cunls {
+
+/**
+ * @brief Throws if a FactorBatch / ResidualBatch evaluation reported failure
+ * (`Evaluate` returned false): the minimizers stop instead of optimizing on
+ * unwritten residuals.
+ */
+inline void CheckEvaluate(bool ok, size_t residual_batch_index) {
+  if (!ok) {
+    throw std::runtime_error("Evaluate failed for residual batch " +
+                             std::to_string(residual_batch_index));
+  }
+}
 
 /**
  * @brief Returns the byte size of device scratch needed for one

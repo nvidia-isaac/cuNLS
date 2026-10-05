@@ -20,6 +20,7 @@
 #include <algorithm>
 
 #include "cunls/common/helper.h"
+#include "cunls/minimizer/ransac_minimizer.h"
 #include "cunls/minimizer/residual_batch.h"
 
 namespace cunls {
@@ -298,10 +299,11 @@ void SlotSet::Evaluate(cudaStream_t stream, const RansacLayout &layout, Target t
     // Without factor ids, item t evaluates factor t % N: exactly the per-slot layout.
     const int *ids = buf.factor_ids.empty() ? nullptr : buf.factor_ids.data();
     if (with_loss) {
-      r.residual_batch->Evaluate(stream, workspace_.data(), buf.res.data(), table, buf.cost.data(),
-                                 jac, ids, buf.items);
+      CheckEvaluate(r.residual_batch->Evaluate(stream, workspace_.data(), buf.res.data(), table,
+                                               buf.cost.data(), jac, ids, buf.items),
+                    b);
     } else {
-      r.factor->Evaluate(buf.res.data(), jac, table, stream, ids, buf.items);
+      CheckEvaluate(r.factor->Evaluate(buf.res.data(), jac, table, stream, ids, buf.items), b);
     }
   }
 }

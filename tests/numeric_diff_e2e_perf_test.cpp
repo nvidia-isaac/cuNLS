@@ -20,7 +20,7 @@
  * @brief Wall-clock comparison of JacobianMode::kAnalytic vs kNumeric across
  * problem types (PGO / SBA / PnP) and named problem sizes, this time timing
  * full `LevenbergMarquardtMinimizer::Minimize()` calls rather than just
- * `GaussNewtonMinimizer::BuildSystem()` (tests/numeric_diff_perf_test.cpp).
+ * `internal::BuildSystem()` (tests/numeric_diff_perf_test.cpp).
  *
  * The synthetic problem generators/sizes here are copy-identical to
  * numeric_diff_perf_test.cpp so the two benchmarks are directly comparable
@@ -257,7 +257,7 @@ class NumericDiffE2EPerfTest : public ::testing::TestWithParam<PerfParams> {
    * CSV.
    *
    * `Minimize()` writes the converged state back into the state batches'
-   * backing device buffers (GaussNewtonMinimizer::Minimize's final `Copy(
+   * backing device buffers (Minimizer::Minimize's final `Copy(
    * stream, current_state_, problem)`), so without `reset_state` every call
    * after the first would start from the previous call's converged (or
    * near-converged) state and trivially finish in ~1 iteration. `reset_state`

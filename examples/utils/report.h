@@ -25,7 +25,7 @@
 #include <string>
 
 #include "cunls/common/types.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/ransac_minimizer.h"
 #include "utils/validation.h"
 

@@ -66,6 +66,13 @@ read-only properties and methods.
   :math:`\mathbb{R}^3` point), and ``PnPFactorBatch`` returns ``[6]`` (pose
   only; 3-D points are fixed in the constructor).
 
+**Device buffers.** Constructor and state-batch arguments typed
+``DevicePointer`` take a CuPy array or a raw integer pointer. CuPy arrays are
+checked against the dtype the kernels read — ``float32`` for data and
+measurements, ``int32`` for ids and indices, ``uint64`` for state-pointer
+tables — and a mismatch raises ``TypeError`` (``cp.arange`` is int64, NumPy
+and CuPy default to float64). Raw integer pointers are not checked.
+
 **C++ reference:** :ref:`cpp-factor-batch`.
 
 .. _py-prior-vector-factor:
@@ -261,7 +268,7 @@ Prior on an SL(4) transform.  Residual =
 --------------------------------------------------------------------------------
 
 Constrains the relative pose between two SE(3) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+:math:`\mathrm{Log}(\Delta\, T_l^{-1} T_r)`, zero at :math:`\Delta = T_r^{-1} T_l`.  Two states per
 factor.
 
 **Constructor**
@@ -286,7 +293,7 @@ therefore contain ``2 × num_active_factors`` entries.
 --------------------------------------------------------------------------------
 
 Constrains the relative transform between two SE(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+:math:`\mathrm{Log}(\Delta\, T_l^{-1} T_r)`, zero at :math:`\Delta = T_r^{-1} T_l`.  Two states per
 factor.
 
 **Constructor**
@@ -358,7 +365,7 @@ the same convention as ``SO2BetweenFactorBatch``). Two states per factor.
 --------------------------------------------------------------------------------
 
 Constrains the relative transform between two Sim(2) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+:math:`\mathrm{Log}(\Delta\, T_l^{-1} T_r)`, zero at :math:`\Delta = T_r^{-1} T_l`.  Two states per
 factor.
 
 **Constructor**
@@ -382,7 +389,7 @@ factor.
 --------------------------------------------------------------------------------
 
 Constrains the relative transform between two Sim(3) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+:math:`\mathrm{Log}(\Delta\, T_l^{-1} T_r)`, zero at :math:`\Delta = T_r^{-1} T_l`.  Two states per
 factor.
 
 **Constructor**
@@ -406,7 +413,7 @@ factor.
 --------------------------------------------------------------------------------
 
 Constrains the relative transform between two SL(4) frames.  Residual =
-:math:`\mathrm{Log}(\Delta^{-1} T_l^{-1} T_r)`.  Two states per
+:math:`\mathrm{Log}(\Delta\, T_l^{-1} T_r)`, zero at :math:`\Delta = T_r^{-1} T_l`.  Two states per
 factor.
 
 **Constructor**
@@ -472,7 +479,10 @@ Reprojection error for bundle adjustment.  Observations must be in
 
 **State layout:** two states per factor — ``[SE3 pose, R^3 point]`` — from
 :ref:`SE3StateBatch <py-lie-state-batches>` and
-:ref:`VectorStateBatch3 <py-vector-state-batches>` respectively.
+:ref:`VectorStateBatch3 <py-vector-state-batches>` respectively. The pose is
+world_from_rig, the rig's pose in the world (:ref:`pose-convention`). This
+binding has no ``camera_from_rig`` argument: the camera is the rig (identity
+extrinsic), :math:`P_{\mathrm{cam}} = T^{-1} P`.
 
 **C++ reference:** :ref:`cpp-reprojection-factor-batch`.
 
@@ -482,7 +492,8 @@ Reprojection error for bundle adjustment.  Observations must be in
 --------------------------------------------------------------------------------
 
 PnP-style reprojection: **fixed** 3-D points in the constructor, **one** SE(3)
-state per correspondence (typically the same camera pose pointer repeated).
+state per correspondence (typically the same camera pose pointer repeated),
+world_from_rig (:ref:`pose-convention`).
 
 **Constructor (identity camera-from-rig)**
 
@@ -548,10 +559,10 @@ and the intermediate states eliminated inside the factor at every evaluation
 Arrays of another dtype raise ``TypeError``; raw integer pointers are accepted
 unchecked.
 
-**State layout (per factor, in order):** ``X_a`` (``SE3StateBatch``,
-rig_from_world, the pose state of the reprojection and PnP factors), ``v_a``
+**State layout (per factor, in order):** ``T_a`` (``SE3StateBatch``,
+world_from_rig, the pose state of the reprojection and PnP factors), ``v_a``
 (``VectorStateBatch3``, world velocity of the IMU), ``b_a``
-(``VectorStateBatch6``, ``[b_g; b_a]``), ``X_b``, ``v_b``, ``b_b``.
+(``VectorStateBatch6``, ``[b_g; b_a]``), ``T_b``, ``v_b``, ``b_b``.
 ``state_sizes()`` returns ``[6, 3, 6, 6, 3, 6]``.
 
 **Residual (15):** the whitened defect of keyframe ``b`` against the
@@ -586,7 +597,9 @@ Point-to-point ICP factor.  Residual = :math:`p - T q`.
 ``pycunls.PointToPlaneFactorBatch``
 --------------------------------------------------------------------------------
 
-Point-to-plane ICP factor.  Residual = :math:`n_q^\top (p - T q)`.
+Point-to-plane ICP factor.  Residual = :math:`n_q^\top (p - T q)`: distance of
+the transformed source point from the plane through :math:`p` with normal
+:math:`n_q`, given in the target frame (not rotated by :math:`T`).
 
 **Constructor**
 
@@ -597,7 +610,9 @@ Point-to-plane ICP factor.  Residual = :math:`n_q^\top (p - T q)`.
 
 - **p_observations** (``DevicePointer``) — target points (``× 3`` floats).
 - **q_observations** (``DevicePointer``) — source points (``× 3`` floats).
-- **nq_observations** (``DevicePointer``) — source normals (``× 3`` floats).
+- **nq_observations** (``DevicePointer``) — plane normals in the target frame
+  (``× 3`` floats); a normal estimated at the source point must be rotated into
+  the target frame first.
 - **capacity** (``int``) — number of correspondences the buffers hold; 0 are active until ``set_num_active_factors``.
 
 **State layout:** one state per factor from
@@ -629,6 +644,38 @@ Symmetric point-to-plane ICP factor.  Both frames contribute normals;
 :ref:`SE3StateBatch <py-lie-state-batches>`.
 
 **C++ reference:** :ref:`cpp-symmetric-point-to-plane-factor-batch`.
+
+.. _py-motion-prior-factors:
+
+Motion priors
+--------------------------------------------------------------------------------
+
+Constant-velocity (CV) and constant-acceleration (CA) priors between
+consecutive poses, for SE(3), SO(3), SE(2) and SO(2)
+(``ConstantVelocitySE3FactorBatch``, ``ConstantAccelerationSO2FactorBatch``,
+...). Residuals and state layout as in the C++ reference.
+
+.. code-block:: python
+
+   fb = pycunls.ConstantVelocitySE3FactorBatch(time_steps, capacity)
+   # Weighted by the closed-form process-noise information Q(dt)^-1:
+   fb = pycunls.ConstantVelocityInformationSE3FactorBatch(stream, time_steps, qc_diag, capacity)
+   fb.update(stream, n)  # after rewriting time_steps / qc_diag in place
+
+- **time_steps** (``DevicePointer``) — ``capacity`` float32 durations
+  :math:`\Delta t_k = t_{k+1} - t_k`.
+- **qc_diag** (``DevicePointer``) — the continuous-time process-noise PSD
+  diagonal, one float32 per tangent DOF (6 / 3 / 3 / 1), constant across the
+  batch. Smaller values trust the motion model more.
+- **stream** (``CudaStream``) — the information matrices are computed on it
+  at construction and by ``update``.
+
+**State layout:** CV ``[pose_k, pose_{k+1}, v_k, v_{k+1}]``, CA additionally
+``a_k, a_{k+1}``: poses from the matching Lie state batch (world_from_body,
+see :ref:`pose-convention`), velocities and accelerations (body frame) from
+``VectorStateBatch6`` / ``VectorStateBatch3`` / ``VectorStateBatch1``.
+
+**C++ reference:** :ref:`cpp-motion-prior-factors`.
 
 .. _py-information-factor-batch:
 
@@ -1265,7 +1312,7 @@ Header: :code:`cunls/factor/between/se3_between_factor_batch.h`
 Constrains the relative pose between two SE(3) frames (e.g. odometry, loop closure).
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{-1} \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr), \qquad r = 0 \iff \Delta = T_{\mathrm{right}}^{-1} T_{\mathrm{left}}
 
 .. list-table::
    :header-rows: 1
@@ -1300,7 +1347,7 @@ Header: :code:`cunls/factor/between/se2_between_factor_batch.h`
 Constrains the relative transform between two SE(2) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{-1} \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr), \qquad r = 0 \iff \Delta = T_{\mathrm{right}}^{-1} T_{\mathrm{left}}
 
 .. list-table::
    :header-rows: 1
@@ -1406,7 +1453,7 @@ Header: :code:`cunls/factor/between/similarity2_between_factor_batch.h`
 Constrains the relative transform between two Sim(2) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{-1} \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr), \qquad r = 0 \iff \Delta = T_{\mathrm{right}}^{-1} T_{\mathrm{left}}
 
 .. list-table::
    :header-rows: 1
@@ -1441,7 +1488,7 @@ Header: :code:`cunls/factor/between/similarity3_between_factor_batch.h`
 Constrains the relative transform between two Sim(3) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{-1} \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr), \qquad r = 0 \iff \Delta = T_{\mathrm{right}}^{-1} T_{\mathrm{left}}
 
 .. list-table::
    :header-rows: 1
@@ -1476,7 +1523,7 @@ Header: :code:`cunls/factor/between/sl4_between_factor_batch.h`
 Constrains the relative transform between two SL(4) frames.
 
 .. math::
-   r = \mathrm{Log}\bigl( \Delta^{-1} \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr)
+   r = \mathrm{Log}\bigl( \Delta \, T_{\mathrm{left}}^{-1} \, T_{\mathrm{right}} \bigr), \qquad r = 0 \iff \Delta = T_{\mathrm{right}}^{-1} T_{\mathrm{left}}
 
 .. list-table::
    :header-rows: 1
@@ -1593,6 +1640,8 @@ names:
   Header: :code:`cunls/factor/motion/constant_acceleration_factor_batch.h`.
   Identical mechanism and explicit-template-argument-only convention as
   ``ConstantVelocityFactorBatch<Manifold>``.
+
+.. _cpp-motion-prior-factors:
 
 Motion prior factors
 ---------------------
@@ -1923,7 +1972,7 @@ Header: :code:`cunls/factor/reprojection_factor_batch.h`
 Reprojection error for bundle adjustment. Observations in **normalized** image coordinates.
 
 .. math::
-   P_{\mathrm{cam}} = T_{\mathrm{cam}} P,\qquad
+   P_{\mathrm{cam}} = T_{\mathrm{cr}}\, T^{-1} P = T_{\mathrm{cr}} R^\top (P - t),\qquad
    r = \begin{bmatrix} P_{\mathrm{cam},x}/P_{\mathrm{cam},z} - x_n \\
                        P_{\mathrm{cam},y}/P_{\mathrm{cam},z} - y_n \end{bmatrix}
 
@@ -1942,7 +1991,18 @@ Reprojection error for bundle adjustment. Observations in **normalized** image c
      - :math:`2 \times 9`
      - SE(3) × :math:`\mathbb{R}^3`
 
-**Inputs:** Pose :math:`T_{\mathrm{cam}}` (state 1), 3D point :math:`P` (state 2). State: :code:`SE3StateBatch` then :code:`VectorStateBatch<3>` (see :doc:`state`). Observations :math:`(x_n, y_n)` and optional camera-from-rig from constructor.
+**Inputs:** Pose :math:`T = (R, t)` (state 1, world_from_rig, see
+:ref:`pose-convention`), 3D point :math:`P` (state 2). State:
+:code:`SE3StateBatch` then :code:`VectorStateBatch<3>` (see :doc:`state`).
+Observations :math:`(x_n, y_n)` and the optional camera-from-rig
+:math:`T_{\mathrm{cr}}` (identity if omitted) from the constructor.
+
+**Jacobians** (right perturbation :math:`T\,\mathrm{Exp}([\phi; \rho])` in the
+rig frame), with :math:`P_{\mathrm{rig}} = R^\top (P - t)` and
+:math:`A = \partial \pi / \partial P_{\mathrm{cam}}\; R_{\mathrm{cr}}`:
+:math:`\partial r / \partial \phi = A\,[P_{\mathrm{rig}}]_\times`,
+:math:`\partial r / \partial \rho = -A`,
+:math:`\partial r / \partial P = A R^\top`.
 
 .. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, size_t capacity, float z_threshold = 1e-3f)
 .. cpp:function:: ReprojectionFactorBatch(const Vector<2>* observations, const SE3Transform* poses_camera_from_rig, size_t capacity, float z_threshold = 1e-3f)
@@ -1987,9 +2047,9 @@ pose is optimized; the analytic Jacobian is therefore :math:`2 \times 6`.
 
 **Inputs:** Normalized observations :math:`(x_n,y_n)` and matching world points
 :math:`P_{\mathrm{world}}` from the constructor (one pair per factor). State: a
-single :code:`SE3StateBatch` state per factor (rig-from-world pose, or
-world-to-camera according to your convention—match how you built the
-observations). Optional ``poses_camera_from_rig`` uses the same composition as
+single :code:`SE3StateBatch` state per factor (world_from_rig pose, the
+convention of every pose state; see :ref:`pose-convention`). Optional
+``poses_camera_from_rig`` uses the same composition as
 `ReprojectionFactorBatch`.
 
 .. cpp:function:: PnPFactorBatch(const Vector<2>* observations, const Vector<3>* points_world, size_t capacity, float z_threshold = 1e-3f)
@@ -2036,11 +2096,11 @@ chain onto the keyframe states. Theory, conventions and an example:
      - :math:`15 \times 30`
      - SE(3), :math:`\mathbb{R}^3`, :math:`\mathbb{R}^6` (twice)
 
-**States (per factor, in order):** :math:`X_a` (``SE3StateBatch``,
-rig_from_world), :math:`v_a` (``VectorStateBatch<3>``, world velocity of the
-IMU), :math:`b_a = [b_g; b_a]` (``VectorStateBatch<6>``), :math:`X_b`,
+**States (per factor, in order):** :math:`T_a` (``SE3StateBatch``,
+world_from_rig), :math:`v_a` (``VectorStateBatch<3>``, world velocity of the
+IMU), :math:`b_a = [b_g; b_a]` (``VectorStateBatch<6>``), :math:`T_b`,
 :math:`v_b`, :math:`b_b`. The IMU's pose in the world is
-:math:`X^{-1}\,T_{bi}` with :math:`T_{bi}` = ``ImuParameters::body_from_imu``.
+:math:`T\,T_{bi}` with :math:`T_{bi}` = ``ImuParameters::body_from_imu``.
 
 .. cpp:struct:: ImuParameters
 
@@ -2103,7 +2163,9 @@ PointToPlaneFactorBatch
 
 Header: :code:`cunls/factor/point_to_plane_factor_batch.h`
 
-Plane-based ICP: signed distance from transformed source point to target plane.
+Plane-based ICP: signed distance from the transformed source point to the plane
+through the target point with normal :math:`n_q`, given in the target frame (not
+rotated by :math:`T`).
 
 .. math::
    r = n_q^\top (p - T q) = n_q \cdot (p - (R q + t))
@@ -2125,13 +2187,13 @@ With :math:`n' = R^\top n_q`, the Jacobian row is :math:`[n'^\top [q]_\times,\; 
      - :math:`1 \times 6`
      - SE(3)
 
-**Inputs:** :math:`T` = pose (state). State: one state from :code:`SE3StateBatch` (see :doc:`state`). :math:`p`, :math:`q`, :math:`n_q` = target point, source point, source normal (constructor).
+**Inputs:** :math:`T` = pose (state). State: one state from :code:`SE3StateBatch` (see :doc:`state`). :math:`p`, :math:`q`, :math:`n_q` = target point, source point, plane normal in the target frame (constructor).
 
 .. cpp:function:: PointToPlaneFactorBatch(const Vector<3>* p_observations_ptr, const Vector<3>* q_observations_ptr, const Vector<3>* nq_observations_ptr, size_t capacity)
 
   :param ``p_observations_ptr``: [in] Device pointer to target points.
   :param ``q_observations_ptr``: [in] Device pointer to source points.
-  :param ``nq_observations_ptr``: [in] Device pointer to source normals.
+  :param ``nq_observations_ptr``: [in] Device pointer to plane normals in the target frame.
   :param ``capacity``: [in] Number of correspondences the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 

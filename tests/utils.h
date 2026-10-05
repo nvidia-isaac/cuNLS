@@ -140,6 +140,29 @@ float3 TukeyLossCPU(float s, float a_squared);
  */
 float3 ScaledLossCPU(float a, const float3 &inner_rho);
 
+/**
+ * @brief Inverse of an SE(3) transform [R t; 0 1] -> [R^T -R^T t; 0 1].
+ *
+ * Pose states are world_from_rig; tests that generate camera_from_world
+ * (or rig_from_world) poses store their inverse.
+ */
+inline SE3Transform InverseSE3(const SE3Transform &T) {
+  SE3Transform out{};
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) out[i * 4 + j] = T[j * 4 + i];
+    out[i * 4 + 3] = -(T[0 * 4 + i] * T[3] + T[1 * 4 + i] * T[7] + T[2 * 4 + i] * T[11]);
+  }
+  out[15] = 1.0f;
+  return out;
+}
+
+/** Element-wise InverseSE3. */
+inline std::vector<SE3Transform> InverseSE3(const std::vector<SE3Transform> &poses) {
+  std::vector<SE3Transform> out(poses.size());
+  for (size_t i = 0; i < poses.size(); ++i) out[i] = InverseSE3(poses[i]);
+  return out;
+}
+
 // ============================================================================
 // Vector factory functions
 // ============================================================================

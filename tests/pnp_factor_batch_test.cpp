@@ -66,10 +66,11 @@ void ProjectNormalized(const Point3D &p_cam, Observation2D &obs) {
 }
 
 /**
- * @brief Builds one ground-truth world-to-camera pose and N visible world
- * points with matching normalized observations.
+ * @brief Builds one ground-truth camera pose and N visible world points with
+ * matching normalized observations. `world_from_cam` is the pose state
+ * (world_from_rig, camera = rig).
  */
-void MakeSinglePosePnPDataset(size_t num_points, SE3Transform &world_to_cam,
+void MakeSinglePosePnPDataset(size_t num_points, SE3Transform &world_from_cam,
                               std::vector<Point3D> &points_world,
                               std::vector<Observation2D> &observations) {
   std::mt19937 rng(kSeed);
@@ -93,7 +94,8 @@ void MakeSinglePosePnPDataset(size_t num_points, SE3Transform &world_to_cam,
 
   std::vector<SE3Transform> pose_h(1);
   pose_d.CopyToHost(pose_h.data(), 1);
-  world_to_cam = pose_h[0];
+  const SE3Transform world_to_cam = pose_h[0];
+  world_from_cam = test_utils::InverseSE3(world_to_cam);
 
   std::uniform_real_distribution<float> xy(-2.0f, 2.0f);
   points_world.resize(num_points);
@@ -117,8 +119,8 @@ void MakeSinglePosePnPDataset(size_t num_points, SE3Transform &world_to_cam,
   }
 }
 
-/** T_dist = exp(delta) * T on the GPU (same pattern as BA reprojection tests).
- */
+/** Disturbs the pose state on the GPU by a fixed random twist (same pattern as
+ * the BA reprojection tests). */
 void DisturbPoseOnDevice(cuBLASHandle &cublas, SE3Transform *pose_device, float rot_noise,
                          float trans_noise) {
   std::mt19937 rng(kSeed + 7);

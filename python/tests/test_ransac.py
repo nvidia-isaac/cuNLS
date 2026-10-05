@@ -50,15 +50,18 @@ def _pose(rx, ry, rz, t):
 
 
 def _pnp_scene(n, outlier_ratio, seed):
+    """Camera poses are returned as pose states (world_from_camera); they are
+    built as camera_from_world (the camera ~8 m from the origin, facing it)."""
     rng = np.random.default_rng(seed)
-    gt = _pose(0.1, -0.2, 0.05, [0.3, -0.2, 8.0])
+    cam_from_world = _pose(0.1, -0.2, 0.05, [0.3, -0.2, 8.0])
     pts = rng.uniform(-3, 3, (n, 3)).astype(np.float32)
-    cam = pts @ gt[:3, :3].T + gt[:3, 3]
+    cam = pts @ cam_from_world[:3, :3].T + cam_from_world[:3, 3]
     obs = cam[:, :2] / cam[:, 2:3] + rng.normal(0, 3e-3, (n, 2))
     is_outlier = rng.uniform(size=n) < outlier_ratio
     obs[is_outlier] += rng.choice([-1, 1], (is_outlier.sum(), 2)) * rng.uniform(
         0.1, 0.4, (is_outlier.sum(), 2))
     init = _pose(0.15, -0.25, 0.1, [0.5, -0.4, 8.5])
+    gt, init = (np.linalg.inv(T).astype(np.float32) for T in (cam_from_world, init))
     return gt, init, pts, obs.astype(np.float32), is_outlier
 
 

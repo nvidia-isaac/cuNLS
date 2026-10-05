@@ -229,9 +229,9 @@ Vec PredictedCovariance(const Model &m, const Samples &samples, Vec R, const dou
   return S;
 }
 
-/** IMU state at a keyframe from the pose slot (body_from_world) and the velocity slot. */
+/** IMU state at a keyframe from the pose slot (world_from_body) and the velocity slot. */
 NavState ImuState(const Model &m, const Vec &X, const Vec &v) {
-  const Vec T = Mul4(Inv4(X), m.body_from_imu);  // world_from_imu
+  const Vec T = Mul4(X, m.body_from_imu);  // world_from_imu
   return {Rot(T), {v[0], v[1], v[2]}, {T[3], T[7], T[11]}};
 }
 
@@ -326,7 +326,7 @@ std::vector<Slot> RandomItem(std::mt19937 &rng, const Model &m, const Samples &s
   std::normal_distribution<double> normal(0.0, 1.0);
   double x[6];
   for (double &c : x) c = normal(rng);
-  const Vec Xa = Exp6(x);  // body_from_world
+  const Vec Xa = Exp6(x);  // world_from_body
   const Vec va = {normal(rng), normal(rng), normal(rng)};
   Vec ba(6);
   for (int i = 0; i < 6; ++i) ba[i] = (i < 3 ? 0.02 : 0.2) * normal(rng);
@@ -336,7 +336,7 @@ std::vector<Slot> RandomItem(std::mt19937 &rng, const Model &m, const Samples &s
   double d[6];
   for (int i = 0; i < 6; ++i) d[i] = noise * normal(rng);
   const Vec Tb_imu = Mul4(Pose(pred.R, pred.p), Exp6(d));
-  const Vec Xb = Mul4(m.body_from_imu, Inv4(Tb_imu));  // body_from_world
+  const Vec Xb = Mul4(Tb_imu, Inv4(m.body_from_imu));  // world_from_body
   Vec vb(3), bb(6);
   for (int i = 0; i < 3; ++i) vb[i] = pred.v[i] + noise * normal(rng);
   for (int i = 0; i < 6; ++i) bb[i] = ba_f[i] + 0.01 * normal(rng);
@@ -801,7 +801,7 @@ TEST(ImuFactorBatch, LevenbergMarquardtRecoversKeyframes) {
   std::vector<Vec> poses, vels;
   NavState x{ExpSO3(xi), {1.0, -0.5, 0.2}, {0.3, 0.1, -0.2}};
   for (int k = 0; k < kKeyframes; ++k) {
-    poses.push_back(Mul4(Tbi, Inv4(Pose(x.R, x.p))));  // body_from_world
+    poses.push_back(Mul4(Pose(x.R, x.p), Inv4(Tbi)));  // world_from_body
     vels.push_back({x.v[0], x.v[1], x.v[2]});
     if (k + 1 < kKeyframes) {
       samples.push_back(Rounded(RandomSamples(rng, kSamples)));
@@ -889,7 +889,7 @@ int EnvInt(const char *name, int fallback) {
  * VIO-shaped problem for profiling under nsys: K keyframes joined by IMU
  * factors (N samples each), 10 K landmarks each seen by up to 7 nearby
  * keyframes (reprojection factors), keyframe 0 fixed. Both factor types
- * read the same rig_from_world pose states (camera = rig = IMU); truth is
+ * read the same world_from_rig pose states (camera = rig = IMU); truth is
  * consistent, the initial values are perturbed. Sizes: CUNLS_IMU_PROFILE_KEYFRAMES (101),
  * CUNLS_IMU_PROFILE_SAMPLES (200), CUNLS_IMU_PROFILE_LANDMARKS (10 K);
  * CUNLS_IMU_PROFILE_SOLVER=cudss selects
@@ -919,7 +919,7 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
   NavState x{ExpSO3(std::vector<double>{0.1, 0.2, -0.1}.data()), {1.0, 0.0, 0.0}, {0, 0, 0}};
   Sample cur{{0, 0, 0}, {0, 0, 9.8}, 0.005};
   for (int k = 0; k < K; ++k) {
-    poses.push_back(Inv4(Pose(x.R, x.p)));  // rig_from_world
+    poses.push_back(Pose(x.R, x.p));  // world_from_rig
     vels.push_back({x.v[0], x.v[1], x.v[2]});
     if (k + 1 == K) break;
     Samples ss(N);
@@ -933,20 +933,20 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
     samples.push_back(Rounded(ss));
     x = Integrate(m, samples.back(), x, bias);
   }
-  // Landmarks in front of an anchor keyframe (camera_from_world = pose), seen
+  // Landmarks in front of an anchor keyframe (world_from_camera = pose), seen
   // by the keyframes within ±3 of the anchor where they have depth.
   std::vector<float> h_points, h_obs;
   std::vector<int> obs_kf, obs_pt;
   for (int l = 0; l < L; ++l) {
     const int anchor = l % K;
     const double pc[3] = {2 * uniform(rng), 2 * uniform(rng), 4 + 2 * uniform(rng)};
-    const Vec Ti = Inv4(poses[anchor]);
+    const Vec &Ti = poses[anchor];
     const Vec Pw = {Ti[0] * pc[0] + Ti[1] * pc[1] + Ti[2] * pc[2] + Ti[3],
                     Ti[4] * pc[0] + Ti[5] * pc[1] + Ti[6] * pc[2] + Ti[7],
                     Ti[8] * pc[0] + Ti[9] * pc[1] + Ti[10] * pc[2] + Ti[11]};
     for (int i = 0; i < 3; ++i) h_points.push_back(static_cast<float>(Pw[i] + 0.05 * normal(rng)));
     for (int k = std::max(0, anchor - 3); k <= std::min(K - 1, anchor + 3); ++k) {
-      const Vec &T = poses[k];
+      const Vec T = Inv4(poses[k]);  // camera_from_world
       const double c[3] = {T[0] * Pw[0] + T[1] * Pw[1] + T[2] * Pw[2] + T[3],
                            T[4] * Pw[0] + T[5] * Pw[1] + T[6] * Pw[2] + T[7],
                            T[8] * Pw[0] + T[9] * Pw[1] + T[10] * Pw[2] + T[11]};
@@ -961,9 +961,7 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
   std::vector<float> h_poses, h_vels, h_biases(6 * K, 0.f);
   for (int k = 0; k < K; ++k) {
     double d[6];
-    // Translation only: a rotation of rig_from_world turns the world about
-    // its origin, which moves distant points by meters.
-    for (int i = 0; i < 6; ++i) d[i] = (k == 0 || i < 3 ? 0.0 : 0.01) * normal(rng);
+    for (int i = 0; i < 6; ++i) d[i] = (k == 0 ? 0.0 : i < 3 ? 0.002 : 0.01) * normal(rng);
     const auto q = ToFloat(Mul4(poses[k], Exp6(d)));
     h_poses.insert(h_poses.end(), q.begin(), q.end());
     for (int i = 0; i < 3; ++i)

@@ -117,18 +117,6 @@ void NormalEquations::ZeroMaskedLhsRowsColumns(cudaStream_t stream, const dvecto
   ZeroMaskedRowsColumns(stream, csr_lhs_, mask);
 }
 
-void NormalEquations::WeightedSquaredStepAsync(cudaStream_t stream, void *cusparse_handle,
-                                               const dvector<float> &step, float *d_out,
-                                               float *d_partials, dvector<uint8_t> &buffer) {
-  if (UsesBlockStorage()) {
-    ComputeWeightedSquaredStepAsync(stream, bsr_hessian_, step, spmv_scratch_, d_out, d_partials);
-    return;
-  }
-  ComputeWeightedSquaredStepAsync(stream, cusparse_handle, csr_hessian_, csr_dims_.num_rows,
-                                  csr_dims_.num_cols, csr_dims_.num_nonzeros, step, spmv_scratch_,
-                                  buffer, d_out, d_partials);
-}
-
 void NormalEquations::MultiplyHessian(cudaStream_t stream, void *cusparse_handle,
                                       const dvector<float> &x, dvector<float> &y,
                                       dvector<uint8_t> &buffer) const {

@@ -419,11 +419,6 @@ void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, s
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-__global__ void scale_in_place_kernel(float *a, float s, int n) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) a[i] *= s;
-}
-
 namespace {
 /** Index of column `col` in the sorted col_ids[begin, end), or -1. */
 __device__ int FindColumn(const int *__restrict__ col_ids, int begin, int end, int col) {
@@ -513,30 +508,7 @@ __global__ void zero_masked_bsr_kernel(const int *__restrict__ row_offsets,
   }
 }
 
-__global__ void hold_outward_kernel(const float *step_mask, float *held_mask, float *extra,
-                                    int *count, int n) {
-  const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) return;
-  const bool newly_held = held_mask[i] != 0.f && step_mask[i] == 0.f;
-  extra[i] = newly_held ? 0.f : 1.f;
-  if (newly_held) {
-    held_mask[i] = 0.f;
-    atomicAdd(count, 1);
-  }
-}
 }  // namespace
-
-void HoldOutwardSteps(cudaStream_t stream, const dvector<float> &step_mask,
-                      dvector<float> &held_mask, dvector<float> &extra, int *d_count) {
-  const size_t n = held_mask.size();
-  extra.resize(n);
-  if (n == 0) return;
-  constexpr int kBlock = 256;
-  int grid = static_cast<int>((n + kBlock - 1) / kBlock);
-  hold_outward_kernel<<<grid, kBlock, 0, stream>>>(step_mask.data(), held_mask.data(), extra.data(),
-                                                   d_count, static_cast<int>(n));
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
 
 void FindDiagonalPositions(cudaStream_t stream, const CSRSparseMatrix &matrix,
                            dvector<int> &positions) {
@@ -595,54 +567,6 @@ void ZeroMaskedRowsColumns(cudaStream_t stream, BSRSparseMatrix &matrix,
                                                      matrix.col_ids.data(), matrix.values.data(),
                                                      mask.data(), matrix.block_size, n);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void ScaleInPlace(cudaStream_t stream, float *a, float s, size_t n) {
-  if (n == 0) return;
-  constexpr int kBlock = 256;
-  int grid = static_cast<int>((n + kBlock - 1) / kBlock);
-  scale_in_place_kernel<<<grid, kBlock, 0, stream>>>(a, s, static_cast<int>(n));
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-/**
- * @brief Async diagonally-weighted squared step: d_out[0] = step^T diag(w) step.
- */
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const dvector<float> &weights,
-                                     const dvector<float> &step, float *d_out, float *d_partials) {
-  assert(step.size() == weights.size());
-  WeightedDotProductToDevice(stream, step.data(), weights.data(), step.data(), step.size(), d_out,
-                             d_partials);
-}
-
-/**
- * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
- *
- * Runs the SpMV into `scratch` and reduces against `step`, so the whole thing
- * stays on the stream with no host synchronization.  `scratch` is caller-owned
- * and resized here; it ties the buffer's lifetime to the object driving the
- * stream rather than to the thread.
- */
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
-                                     const CSRSparseMatrix &matrix, int num_rows, int num_cols,
-                                     int num_nonzeros, const dvector<float> &step,
-                                     dvector<float> &scratch, dvector<uint8_t> &buffer,
-                                     float *d_out, float *d_partials) {
-  SpMVImpl(stream, handle, matrix, num_rows, num_cols, num_nonzeros, /*transpose_matrix=*/false,
-           step, scratch, buffer);
-  DotProductToDevice(stream, step.data(), scratch.data(), step.size(), d_out, d_partials);
-}
-
-/**
- * @brief Computes the squared L2 norm of a step vector: step^T * step.
- *
- * @param stream CUDA stream for asynchronous operations.
- * @param step Step vector.
- * @return The squared L2 norm (scalar value).
- */
-void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float> &step, float *d_out,
-                             float *d_partials) {
-  DotProductToDevice(stream, step.data(), step.data(), step.size(), d_out, d_partials);
 }
 
 }  // namespace cunls

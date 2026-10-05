@@ -98,34 +98,6 @@ void InvertSqrtWithFloorInPlace(cudaStream_t stream, dvector<float> &v, float fl
 
 // ---- Async variants: write scalar result to device memory, no D2H or sync --
 
-/**
- * @brief Async squared step norm: d_out[0] = step^T * step.
- *
- * @param d_partials Scratch buffer with at least
- * ReducePartialCount(step.size()) floats (from device_reduction.h).
- */
-void ComputeSquaredStepAsync(cudaStream_t stream, const dvector<float> &step, float *d_out,
-                             float *d_partials);
-
-/**
- * @brief Async diag-weighted squared step: d_out[0] = step^T diag(w) step.
- */
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const dvector<float> &weights,
-                                     const dvector<float> &step, float *d_out, float *d_partials);
-
-/**
- * @brief Async sparse-weighted squared step: d_out[0] = step^T A step.
- *
- * Performs SpMV (A*step) then dot(step, A*step) into d_out, all on the stream.
- * `scratch` holds the SpMV result and is resized as needed; the caller owns it
- * so that one buffer per driver object cannot be shared across streams.
- */
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, void *handle,
-                                     const CSRSparseMatrix &matrix, int num_rows, int num_cols,
-                                     int num_nonzeros, const dvector<float> &step,
-                                     dvector<float> &scratch, dvector<uint8_t> &buffer,
-                                     float *d_out, float *d_partials);
-
 void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, size_t n);
 
 /**
@@ -159,18 +131,6 @@ void ZeroMaskedRowsColumns(cudaStream_t stream, CSRSparseMatrix &matrix,
 /** @brief Block-storage counterpart of the CSR overload (scalar mask). */
 void ZeroMaskedRowsColumns(cudaStream_t stream, BSRSparseMatrix &matrix,
                            const dvector<float> &mask);
-
-/** @brief a[i] *= s for i < n. */
-void ScaleInPlace(cudaStream_t stream, float *a, float s, size_t n);
-
-/**
- * @brief Active-set refinement of projected Gauss-Newton: components free in
- * `held_mask` (1) but marked by `step_mask` (0: at a bound, the step pushes
- * outward) become held. Writes extra[i] = 0 for them, 1 elsewhere, updates
- * held_mask, and adds their count to *d_count (device int).
- */
-void HoldOutwardSteps(cudaStream_t stream, const dvector<float> &step_mask,
-                      dvector<float> &held_mask, dvector<float> &extra, int *d_count);
 
 /** @brief y = A * x for scalar CSR storage (cuSPARSE SpMV; y is resized). */
 void MultiplyCSRByDenseVector(cudaStream_t stream, void *handle, const CSRSparseMatrix &matrix,

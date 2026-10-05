@@ -28,6 +28,7 @@
 #include <memory>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -35,11 +36,13 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se2_between_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se2_state_batch.h"
+#include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
 namespace {
@@ -107,7 +110,7 @@ std::vector<float> ToFloat(const std::vector<Mat3> &m, size_t first, size_t coun
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<GaussNewtonMinimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
   MinimizerOptions options;
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-12f;
@@ -209,5 +212,80 @@ TEST(ProblemPartition, SetterValidatesArguments) {
   EXPECT_EQ(problem.NumProblems(), 1u);
 }
 
+// A state batch added after SetProblemPartition leaves one batch without an
+// id array: the solve rejects the partition (it would otherwise run as one
+// subproblem).
+TEST(ProblemPartition, RejectsMissingIdArrays) {
+  const Graphs g(2, 4, 5);
+  dvector<float> poses(ToFloat(g.init, 0, 2 * g.n)), extra(std::vector<float>(1, 0.f));
+  SE2StateBatch states(poses.data(), 2 * g.n);
+  states.SetNumActiveStates(2 * g.n);
+  dvector<float> priors(ToFloat(g.priors, 0, 2));
+  SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(priors.data()), 2);
+  prior.SetNumActiveFactors(2);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0), states.StateDevicePtr(g.n)});
+  std::vector<int> ids_host(2 * g.n);
+  for (int i = 0; i < 2 * g.n; ++i) ids_host[i] = i / g.n;
+  dvector<int> ids(ids_host);
+  problem.SetProblemPartition(2, {ids.data()});
+  VectorStateBatch<1> late(extra.data(), 1);
+  late.SetNumActiveStates(1, 0);
+  problem.AddStateBatch(&late);
+  CudaStream stream;
+  GaussNewtonMinimizer minimizer;
+  try {
+    minimizer.Minimize(stream.GetStream(), problem);
+    FAIL() << "expected std::invalid_argument";
+  } catch (const std::invalid_argument &e) {
+    EXPECT_NE(std::string(e.what()).find("expected 2, got 1"), std::string::npos) << e.what();
+  }
+}
+
 }  // namespace
+
+// InnerSolve::problem_frozen (AugmentedLagrangianMinimizer's finished
+// subproblems): a frozen subproblem keeps its states exactly, the others are
+// solved (Gauss-Newton and Levenberg-Marquardt).
+TEST(ProblemPartition, FrozenSubproblemsKeepTheirStates) {
+  for (bool lm : {false, true}) {
+    CudaStream stream;
+    // Two subproblems of two states each, priors pulling every state to 1.
+    const std::vector<float> start = {0.f, 0.5f, -2.f, 3.f};
+    dvector<float> x(start), targets(std::vector<float>(4, 1.f));
+    dvector<int> ids(std::vector<int>{0, 0, 1, 1}), frozen(std::vector<int>{1, 0});
+    VectorStateBatch<1> states(x.data(), 4);
+    states.SetNumActiveStates(4);
+    PriorVectorFactorBatch<1> priors(reinterpret_cast<const Vector<1> *>(targets.data()), 4);
+    priors.SetNumActiveFactors(4);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    std::vector<float *> ptrs;
+    for (int i = 0; i < 4; ++i) ptrs.push_back(states.StateDevicePtr(i));
+    problem.AddFactorBatch(&priors, ptrs);
+    problem.SetProblemPartition(2, {ids.data()});
+    MinimizerOptions options;
+    options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    internal::InnerSolve settings;
+    settings.max_num_iterations = options.max_num_iterations;
+    settings.problem_frozen = frozen.data();
+    if (lm) {
+      LevenbergMarquardtMinimizerOptions lm_options;
+      lm_options.base_options = options;
+      LevenbergMarquardtMinimizer minimizer(lm_options);
+      internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
+    } else {
+      GaussNewtonMinimizer minimizer(options);
+      internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
+    }
+    std::vector<float> out(4);
+    x.CopyToHost(out.data(), 4);
+    EXPECT_EQ(out[0], start[0]) << "lm " << lm;  // frozen: bit-identical
+    EXPECT_EQ(out[1], start[1]) << "lm " << lm;
+    EXPECT_NEAR(out[2], 1.f, 1e-3f) << "lm " << lm;
+    EXPECT_NEAR(out[3], 1.f, 1e-3f) << "lm " << lm;
+  }
+}
+
 }  // namespace cunls

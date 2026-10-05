@@ -37,8 +37,8 @@ def _random_se3(rng, rot_scale, trans_scale):
 
 @dataclass
 class BundleAdjustmentScene:
-    gt_poses: np.ndarray         # (P, 4, 4) world -> camera
-    initial_poses: np.ndarray    # (P, 4, 4); pose 0 equals the ground truth (gauge)
+    gt_poses: np.ndarray         # (P, 4, 4) world_from_camera (the pose states)
+    initial_poses: np.ndarray    # (P, 4, 4); poses 0 and 1 equal the ground truth (gauge)
     gt_points: np.ndarray        # (M, 3)
     initial_points: np.ndarray   # (M, 3)
     observations: np.ndarray     # (P * M, 2) normalized coords, pose-major
@@ -53,7 +53,8 @@ def bundle_adjustment_scene(num_poses=6, num_points=800, seed=1234):
         twist[:3] = rng.uniform(-0.2, 0.2, 3).astype(np.float32)
         twist[3:5] = rng.uniform(-1.0, 1.0, 2).astype(np.float32)
         twist[5] = np.array(rng.uniform(7.0, 9.0), dtype=np.float32)
-        gt_poses.append(twist_to_se3(twist))
+        # Built as camera_from_world (the camera ~8 m from the origin, facing it).
+        gt_poses.append(se3_inverse(twist_to_se3(twist)).astype(np.float32))
 
     gt_points = np.empty((num_points, 3), dtype=np.float32)
     count = 0
@@ -70,12 +71,14 @@ def bundle_adjustment_scene(num_poses=6, num_points=800, seed=1234):
         for qi in range(num_points):
             observations[pi * num_points + qi] = project_normalized(gt_poses[pi], gt_points[qi])
 
+    # Perturb every camera but the first two, the gauge anchors (camera 0 fixes
+    # the frame, camera 1 the scale, which reprojections alone do not observe).
     initial_poses = np.stack(gt_poses)
-    for i in range(1, num_poses):
+    for i in range(2, num_poses):
         delta = np.zeros(6, dtype=np.float32)
         delta[:3] = rng.uniform(-0.02, 0.02, 3).astype(np.float32)
         delta[3:] = rng.uniform(-0.1, 0.1, 3).astype(np.float32)
-        initial_poses[i] = compose_se3(twist_to_se3(delta), gt_poses[i])
+        initial_poses[i] = compose_se3(gt_poses[i], twist_to_se3(delta))  # camera frame
 
     return BundleAdjustmentScene(np.stack(gt_poses), initial_poses, gt_points,
                                  initial_points, observations)
@@ -141,7 +144,7 @@ def positive_chain(num_states=128, seed=314159):
 
 @dataclass
 class PnPScene:
-    gt_pose: np.ndarray       # (4, 4) world -> camera
+    gt_pose: np.ndarray       # (4, 4) world_from_camera (the pose state)
     initial_pose: np.ndarray  # (4, 4)
     points: np.ndarray        # (N, 3) world points (known, constant)
     observations: np.ndarray  # (N, 2) normalized image coordinates
@@ -156,7 +159,8 @@ def pnp_scene(num_points, outlier_ratio, inlier_threshold=0.01, pixel_noise=3e-3
     twist = np.concatenate([rng.uniform(-0.3, 0.3, 3),
                             rng.uniform(-1.0, 1.0, 2),
                             [8.0 + rng.uniform(-1.0, 1.0)]]).astype(np.float32)
-    gt_pose = twist_to_se3(twist)
+    # Built as camera_from_world (the camera ~8 m from the origin, facing it).
+    gt_pose = se3_inverse(twist_to_se3(twist)).astype(np.float32)
 
     points = np.empty((num_points, 3), dtype=np.float32)
     observations = np.empty((num_points, 2), dtype=np.float32)
@@ -177,5 +181,5 @@ def pnp_scene(num_points, outlier_ratio, inlier_threshold=0.01, pixel_noise=3e-3
 
     delta = np.concatenate([rng.uniform(-0.1, 0.1, 3),
                             rng.uniform(-0.3, 0.3, 3)]).astype(np.float32)
-    initial_pose = compose_se3(twist_to_se3(delta), gt_pose)
+    initial_pose = compose_se3(gt_pose, twist_to_se3(delta))  # perturbed in the camera frame
     return PnPScene(gt_pose, initial_pose, points, observations, is_outlier)

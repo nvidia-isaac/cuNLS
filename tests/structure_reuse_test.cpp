@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 
-// MinimizeCallOptions::reuse_structure: a solve that reuses the structure of
-// the previous call gives the same result as a fresh minimizer, for a single
-// problem and a partitioned one, with Gauss-Newton and Levenberg-Marquardt;
-// a size change falls back to the full setup. MinimizeCallOptions::
-// fixed_iterations (real time, device-side control) reaches the same solution.
+// Structure reuse (AugmentedLagrangianMinimizerOptions::reuse_structure, which
+// the bounded problem needs; it reaches the inner minimizer through
+// internal::InnerSolve): a solve that reuses the structure of the previous
+// call gives the same result as a fresh minimizer, for a single problem and a
+// partitioned one, with Gauss-Newton and Levenberg-Marquardt; a size change
+// falls back to the full setup. The real-time mode (fixed iterations, device
+// step control) reaches the same solution.
 
 #include <gtest/gtest.h>
 
@@ -34,6 +36,7 @@
 #include "cunls/factor/between/vector_between_factor_batch.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
+#include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -44,7 +47,7 @@ namespace {
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<GaussNewtonMinimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
   MinimizerOptions options;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
   if (kind == Kind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
@@ -108,15 +111,17 @@ struct Chains {
     x.CopyFromHost(zero.data(), zero.size());
   }
 
-  std::vector<float> Solve(GaussNewtonMinimizer &minimizer, bool reuse, bool fixed = false,
+  /** One solve through the augmented Lagrangian (the states are bounded; no constraint rows). */
+  std::vector<float> Solve(Minimizer &minimizer, bool reuse, bool fixed = false,
                            size_t iterations = 50) {
     CudaStream stream;
-    MinimizeCallOptions call;
-    call.max_line_search_steps = fixed ? 3 : 10;
-    call.reuse_structure = reuse;
-    call.fixed_iterations = fixed;
-    call.max_num_iterations = iterations;
-    minimizer.Minimize(stream.GetStream(), problem, call);
+    AugmentedLagrangianMinimizerOptions options;
+    options.inner_line_search_steps = fixed ? 3 : 10;
+    options.reuse_structure = reuse;
+    options.real_time = fixed;
+    options.inner_iterations = iterations;
+    options.final_inner_iterations = iterations;
+    AugmentedLagrangianMinimizer(minimizer, options).Minimize(stream.GetStream(), problem);
     std::vector<float> out(2 * total);
     x.CopyToHost(out.data(), out.size());
     return out;

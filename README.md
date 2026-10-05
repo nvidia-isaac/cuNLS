@@ -60,7 +60,7 @@ cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per 
 | **Custom factors and states** | CuPy / NVIDIA Warp kernels in Python, or user-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
 | **Numeric Jacobians** | Finite-difference Jacobians for any factor batch (manifold-aware, reuses each state's `Plus` retraction), selectable globally (`MinimizerOptions.jacobian_mode`) or per factor group (the `jacobian_mode_override` of `Problem.add_factor_batch`) — write a factor with only a residual and let cuNLS differentiate it; see [Numeric Jacobians](docs/sphinx/numeric_jacobians.rst) |
 | **Linear solver** | Block-sparse PCG (variable block-Jacobi preconditioner, default), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [C++ Installation](docs/sphinx/installation.rst)), dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER) |
-| **Safety checks** | Optional runtime validation (linear-solver diagnostics and more) — disable via `MinimizerOptions::disable_safety_checks` for low-latency solves |
+| **Safety checks** | Optional runtime validation (linear-solver diagnostics and more), off by default for low-latency solves — enable with `MinimizerOptions::disable_safety_checks = false` when debugging |
 | **Execution model** | Fully asynchronous via CUDA streams |
 
 ## Installation

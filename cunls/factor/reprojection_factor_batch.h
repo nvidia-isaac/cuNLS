@@ -30,8 +30,10 @@ namespace cunls {
  * Observations must be in **normalized image coordinates** (intrinsics
  * removed).
  *
- * Residual per observation:
- *     P_cam = T_cam_from_world * P_world
+ * The pose state is world_from_rig T = (R, t) (the rig's pose in the world,
+ * the pose convention of cuNLS), perturbed on the right in the rig frame.
+ * Residual per observation, with the optional camera_from_rig E:
+ *     P_cam = E * T^{-1} * P_world = E * R^T (P_world - t)
  *     r = [P_cam.x / P_cam.z - x_n, P_cam.y / P_cam.z - y_n]
  *
  * Inherits from SizedFactorBatch<2, 6, 3>:
@@ -55,8 +57,8 @@ class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
   /**
    * @brief Constructs with custom camera-from-rig transforms.
    *
-   * The final camera pose is: T_cam_from_world = T_cam_from_rig *
-   * T_rig_from_world.
+   * The camera sees the point through T_cam_from_world = T_cam_from_rig *
+   * T_world_from_rig^{-1}.
    *
    * @param observations  Device pointer to normalized 2D observations.
    * @param poses_camera_from_rig  Per-observation camera-from-rig SE3

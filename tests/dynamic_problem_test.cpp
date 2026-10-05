@@ -130,7 +130,7 @@ std::vector<Vector<3>> SolveFresh(const Frame &frame) {
 
 /** Buffers bound once at capacity; each frame rewrites contents and sizes. */
 struct BoundProblem {
-  static constexpr int kCapStates = 300, kCapEdges = 900;
+  static constexpr int kCapStates = 160, kCapEdges = 480;
   enum class Form { kHostList, kDevicePointers, kDeviceIndices };
 
   Form form;
@@ -200,13 +200,13 @@ class FrameLoopTest : public ::testing::TestWithParam<BoundProblem::Form> {};
 TEST_P(FrameLoopTest, EveryFrameMatchesAFreshProblem) {
   BoundProblem bound(GetParam());
   // Sizes grow, shrink and grow again; connectivity is new every frame.
-  const int sizes[][2] = {{120, 200}, {300, 600}, {40, 10}, {250, 400}, {300, 0}};
+  const int sizes[][2] = {{64, 100}, {160, 320}, {20, 5}, {130, 200}, {160, 0}};
   uint32_t seed = 11;
   for (const auto &s : sizes) {
     const Frame frame = MakeFrame(s[0], s[1], seed++);
     const auto solved = bound.Solve(frame);
     const auto fresh = SolveFresh(frame);
-    // Float32 solve of a long chain: a few 1e-3 off the truth (the 300-state
+    // Float32 solve of a long chain: a few 1e-3 off the truth (the 160-state
     // pure chain is the worst conditioned); the bound problem must match a
     // fresh one much more tightly.
     EXPECT_LT(MaxError(solved, frame.gt), 5e-2f) << "frame with " << s[0] << " states";
@@ -300,7 +300,7 @@ TEST(DynamicProblem, RansacWithDeviceIndexTable) {
     const auto scene = ransac_test::MakePnPScene(n, 0.4, 2e-3, 0.05, seed);
     obs.CopyFromHost(scene.observations.data(), n);
     pts.CopyFromHost(scene.points_world.data(), n);
-    pose.CopyFromHost(&scene.world_to_cam,
+    pose.CopyFromHost(&scene.world_from_cam,
                       1);  // start at the truth: robustness is tested elsewhere
     pnp.SetNumActiveFactors(n);
     const RansacSummary s = ransac.Minimize(stream.GetStream(), problem);

@@ -19,6 +19,7 @@
 #include <string>
 
 #include "cunls/common/helper.h"
+#include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/problem_partition.h"
 #include "cunls/state/state_batch_ops.h"
 
@@ -38,6 +39,24 @@ struct BatchView {
 };
 
 enum ErrorBits : int { kMixedFactor = 1, kIdOutOfRange = 2, kUnknownPointer = 4 };
+
+/**
+ * Whether the problem has a partition into more than one subproblem; throws if
+ * it has one but not one id array per state batch (e.g. a state batch added
+ * after Problem::SetProblemPartition).
+ */
+bool HasPartition(const Problem &problem) {
+  if (problem.NumProblems() <= 1) return false;
+  const size_t expected = problem.GetStateBatches().size();
+  const size_t actual = problem.StateProblemIds().size();
+  if (actual != expected) {
+    throw std::invalid_argument("Problem partition: " + std::to_string(problem.NumProblems()) +
+                                " subproblems need one id array per state batch (expected " +
+                                std::to_string(expected) + ", got " + std::to_string(actual) +
+                                "); call SetProblemPartition after adding every state batch");
+  }
+  return true;
+}
 
 /**
  * Adds v to out[key]. When every lane of the warp has the same key (the usual
@@ -121,6 +140,12 @@ __global__ void accumulate_costs_kernel(const int *keys, const float *costs, siz
   SegmentedAdd(out, key, v);
 }
 
+__global__ void scale_rows_single_kernel(const float *per_problem, const float *in, size_t n,
+                                         float *out) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i < n) out[i] = per_problem[0] * in[i];
+}
+
 __global__ void scale_rows_kernel(const int *keys, const float *per_problem, const float *in,
                                   size_t n, float *out) {
   const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
@@ -133,25 +158,36 @@ __global__ void copy_accepted_kernel(const float *from, float *to, const int *id
   if (i < n && accept[ids != nullptr ? ids[i / ambient] : 0]) to[i] = from[i];
 }
 
+/**
+ * out[0] += cost, out[1] += active over the subproblems. One subproblem
+ * writes them directly (out need not be zeroed); otherwise atomics into a
+ * zeroed out.
+ */
+__device__ void AddToTotals(size_t num_problems, float cost, int active, float *out) {
+  if (num_problems == 1) {
+    out[0] = cost;
+    out[1] = active ? 1.f : 0.f;
+    return;
+  }
+  atomicAdd(out, cost);
+  if (active) atomicAdd(out + 1, 1.f);
+}
+
 __global__ void init_control_kernel(const float *cost, size_t num_problems, float cost_tolerance,
-                                    float initial_lambda, float *lambda, int *active, int *rejected,
-                                    int *accept, float *out) {
+                                    const int *frozen, int *active, int *rejected, int *accept,
+                                    int *outcome, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
-  const int is_active = cost[p] >= cost_tolerance;
+  // A frozen subproblem (InnerSolve::problem_frozen) is never active: it takes
+  // no step and keeps its states.
+  const int is_active = cost[p] >= cost_tolerance && (frozen == nullptr || frozen[p] == 0);
   active[p] = is_active;
   rejected[p] = 0;
   accept[p] = 0;
-  lambda[p] = initial_lambda;
-  atomicAdd(out, cost[p]);
-  if (is_active) atomicAdd(out + 1, 1.f);
+  outcome[p] = kStepInactive;
+  AddToTotals(num_problems, cost[p], is_active, out);
 }
 
-/**
- * The single-problem rules of GaussNewtonMinimizer / LevenbergMarquardtMinimizer
- * (EvaluateAndCheckConvergence, AcceptStep, RejectStep and the Minimize loop),
- * applied to each subproblem.
- */
 __global__ void line_search_kernel(size_t num_problems, const float *cost, const float *new_cost,
                                    const int *active, float *step_scale, int *shortened,
                                    float *count) {
@@ -167,65 +203,51 @@ __global__ void line_search_kernel(size_t num_problems, const float *cost, const
   }
 }
 
-__global__ void step_control_kernel(BatchedStepControlParams params, size_t num_problems,
-                                    float *cost, const float *new_cost, const float *step_squared,
-                                    const float *diag_weight, const float *matrix_weight,
-                                    const int *shortened, float *lambda, int *active, int *rejected,
-                                    int *accept, float *out) {
+/**
+ * The decision shared by every minimizer, per subproblem, from the
+ * minimizer's classification (reject, converged); see ProblemPartition::StepControl.
+ */
+__global__ void step_control_kernel(StepControlParams params, size_t num_problems, float *cost,
+                                    const float *new_cost, const int *reject, const int *converged,
+                                    const int *shortened, int *active, int *rejected, int *accept,
+                                    int *outcome, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   int take = 0;
+  int result = kStepInactive;
   if (active[p]) {
     const float current = cost[p], updated = new_cost[p];
-    bool converged;
-    float quality;
-    if (params.levenberg_marquardt) {
-      const float predicted = (matrix_weight[p] + 2.f * lambda[p] * diag_weight[p]) / current;
-      quality = (1.f - updated / current) / predicted;  // rho
-      converged = step_squared[p] < params.state_tolerance ||
-                  predicted < params.relative_reduction_tolerance ||
-                  updated < params.cost_tolerance;
-    } else {
-      quality = updated / current;
-      converged = step_squared[p] < params.state_tolerance || updated < params.cost_tolerance ||
-                  quality >= 1.f;
-    }
-    if (!isfinite(updated)) {
-      converged = false;  // a step to a non-finite cost is rejected, never taken
-    }
-    // Written so that NaN quality (non-finite cost) rejects.
-    const bool reject =
-        params.levenberg_marquardt ? !(quality >= params.step_accept_threshold) : !(quality < 1.f);
-    if (params.line_search && updated < current && (shortened[p] || reject)) {
+    // A step to a non-finite cost is rejected, never taken.
+    const bool finite = isfinite(updated);
+    const bool is_rejected = reject[p] != 0 || !finite;
+    if (params.line_search && updated < current && (shortened[p] || is_rejected)) {
       // Line search: a (possibly shortened) step that decreases the cost is
-      // taken, and the damping stays (see MinimizerOptions::max_line_search_steps).
+      // taken (see MinimizerOptions::max_line_search_steps).
       take = 1;
       rejected[p] = 0;
-    } else if (converged) {
+      result = kStepLineSearched;
+    } else if (converged[p] != 0 && finite) {
       take = updated <= current;
       active[p] = 0;
-    } else {
-      if (reject) {
-        if (params.levenberg_marquardt) lambda[p] *= params.lambda_upscale;
-        rejected[p] += 1;
-        if (params.max_consecutive_rejected_steps > 0 &&
-            rejected[p] >= params.max_consecutive_rejected_steps) {
-          active[p] = 0;
-        }
-      } else {
-        take = 1;
-        rejected[p] = 0;
-        if (params.levenberg_marquardt && quality > params.lambda_downscale_threshold) {
-          lambda[p] = fminf(fmaxf(lambda[p] * params.lambda_downscale, params.lambda_min),
-                            params.lambda_max);
-        }
+      result = kStepConverged;
+    } else if (is_rejected) {
+      rejected[p] += 1;
+      if (params.max_consecutive_rejected_steps > 0 &&
+          rejected[p] >= params.max_consecutive_rejected_steps) {
+        active[p] = 0;
       }
+      result = kStepRejected;
+    } else {
+      take = 1;
+      rejected[p] = 0;
+      result = kStepTaken;
     }
     if (take) cost[p] = updated;
   }
   accept[p] = take;
-  atomicAdd(out, cost[p]);
-  if (active[p]) atomicAdd(out + 1, 1.f);
+  outcome[p] = result;
+  AddToTotals(num_problems, cost[p], active[p], out);
+  if (num_problems == 1) out[2] = static_cast<float>(take);
 }
 
 }  // namespace
@@ -237,7 +259,7 @@ void ComputeFactorProblemIds(cudaStream_t stream, const Problem &problem,
   const size_t n =
       problem.GetResidualBatches()[residual_batch_index].GetFactorBatch()->NumActiveFactors();
   if (n == 0) return;
-  if (problem.NumProblems() <= 1 || ids.size() != state_batches.size()) {
+  if (!HasPartition(problem)) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_problem, 0, n * sizeof(int), stream));
     return;
   }
@@ -273,15 +295,26 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   const auto &states = state.GetStates();
   const int num_problems = static_cast<int>(num_problems_);
 
+  const auto &residual_batches = problem.GetResidualBatches();
+  num_factor_items_ = 0;
+  for (const auto &rb : residual_batches)
+    num_factor_items_ += rb.GetFactorBatch()->NumActiveFactors();
+  num_rows_ = num_rows;
+  for (auto *v : {&cost_, &new_cost_, &step_squared_, &step_scale_}) v->resize(num_problems_);
+  for (auto *v : {&active_, &rejected_, &reject_, &converged_, &outcome_, &accept_, &shortened_}) {
+    v->resize(num_problems_);
+  }
+  // Without a partition (one subproblem) every state belongs to subproblem 0,
+  // and every per-subproblem operation has a direct path: no maps to build or
+  // validate. A partition must have one id array per state batch.
+  if (!HasPartition(problem)) return;
+
   error_.resize(1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(error_.data(), 0, sizeof(int), stream));
-
-  // Without a partition every state belongs to subproblem 0 (null id arrays).
-  const bool partitioned = ids.size() == state_batches.size();
   std::vector<BatchView> views;
   for (size_t b = 0; b < state_batches.size(); ++b) {
     views.push_back({states[b].data(), state_batches[b]->AmbientSize(),
-                     state_batches[b]->NumActiveStates(), partitioned ? ids[b] : nullptr});
+                     state_batches[b]->NumActiveStates(), ids[b]});
   }
   // Reused across solves (no allocation once sized); the copy is ordered on
   // the stream before the kernels that read it.
@@ -290,10 +323,6 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
       cudaMemcpyAsync(views_.data(), views.data(), views_.size(), cudaMemcpyHostToDevice, stream));
   const auto *d_views = reinterpret_cast<const BatchView *>(views_.data());
 
-  const auto &residual_batches = problem.GetResidualBatches();
-  num_factor_items_ = 0;
-  for (const auto &rb : residual_batches)
-    num_factor_items_ += rb.GetFactorBatch()->NumActiveFactors();
   factor_problem_.resize(num_factor_items_);
   size_t offset = 0;
   for (size_t i = 0; i < residual_batches.size(); ++i) {
@@ -307,7 +336,6 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
     offset += n;
   }
 
-  num_rows_ = num_rows;
   row_problem_.resize(num_rows);
   int first_column = 0;
   for (size_t b = 0; b < state_batches.size(); ++b) {
@@ -316,17 +344,11 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
     if (count == 0) continue;
     ComputeStateColumnOffsets(stream, first_column, batch, column_offsets_);
     row_problem_kernel<<<Blocks(count), kThreads, 0, stream>>>(
-        column_offsets_.data(), partitioned ? ids[b] : nullptr, count,
-        static_cast<int>(batch->TangentSize()), num_problems, row_problem_.data(), error_.data());
+        column_offsets_.data(), ids[b], count, static_cast<int>(batch->TangentSize()), num_problems,
+        row_problem_.data(), error_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     first_column += static_cast<int>((count - batch->NumConstStates()) * batch->TangentSize());
   }
-
-  for (auto *v : {&cost_, &new_cost_, &step_squared_, &diag_weight_, &matrix_weight_, &lambda_,
-                  &step_scale_}) {
-    v->resize(num_problems_);
-  }
-  for (auto *v : {&active_, &rejected_, &accept_, &shortened_}) v->resize(num_problems_);
 
   int error = 0;
   THROW_ON_CUDA_ERROR(
@@ -345,11 +367,7 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   }
 }
 
-void ProblemPartition::ResetAccumulators(cudaStream_t stream) {
-  const size_t bytes = num_problems_ * sizeof(float);
-  for (auto *v : {&new_cost_, &step_squared_, &diag_weight_, &matrix_weight_}) {
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(v->data(), 0, bytes, stream));
-  }
+void ProblemPartition::ResetLineSearch(cudaStream_t stream) {
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(shortened_.data(), 0, num_problems_ * sizeof(int), stream));
 }
 
@@ -361,8 +379,19 @@ void ProblemPartition::MarkLineSearch(cudaStream_t stream, float *d_count) {
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ProblemPartition::AccumulateFactorCosts(cudaStream_t stream, const float *factor_costs,
-                                             float *costs) const {
+void ProblemPartition::SumFactorCosts(cudaStream_t stream, const float *factor_costs,
+                                      float *costs) {
+  if (num_problems_ == 1) {
+    // One subproblem: the deterministic reduction of a plain sum.
+    if (num_factor_items_ == 0) {
+      THROW_ON_CUDA_ERROR(cudaMemsetAsync(costs, 0, sizeof(float), stream));
+      return;
+    }
+    const size_t partials = ReducePartialCount(num_factor_items_);
+    if (partials_.size() < partials) partials_.resize(partials);
+    ReduceSumToDevice(stream, factor_costs, num_factor_items_, costs, partials_.data());
+    return;
+  }
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(costs, 0, num_problems_ * sizeof(float), stream));
   if (num_factor_items_ == 0) return;
   accumulate_costs_kernel<<<Blocks(num_factor_items_), kThreads, 0, stream>>>(
@@ -370,9 +399,25 @@ void ProblemPartition::AccumulateFactorCosts(cudaStream_t stream, const float *f
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ProblemPartition::AccumulateRows(cudaStream_t stream, const float *x, const float *y,
-                                      const float *w, float *out) const {
-  if (num_rows_ == 0) return;
+void ProblemPartition::SumRows(cudaStream_t stream, const float *x, const float *y, const float *w,
+                               float *out) {
+  if (num_rows_ == 0) {
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(out, 0, num_problems_ * sizeof(float), stream));
+    return;
+  }
+  if (num_problems_ == 1) {
+    // One subproblem: the deterministic reductions of a plain dot product.
+    const size_t partials = ReducePartialCount(num_rows_);
+    if (partials_.size() < partials) partials_.resize(partials);
+    if (w != nullptr) {
+      WeightedDotProductToDevice(stream, x, w, y != nullptr ? y : x, num_rows_, out,
+                                 partials_.data());
+    } else {
+      DotProductToDevice(stream, x, y != nullptr ? y : x, num_rows_, out, partials_.data());
+    }
+    return;
+  }
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(out, 0, num_problems_ * sizeof(float), stream));
   accumulate_by_key_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(row_problem_.data(), x, y, w,
                                                                        num_rows_, out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -381,6 +426,12 @@ void ProblemPartition::AccumulateRows(cudaStream_t stream, const float *x, const
 void ProblemPartition::ScaleRows(cudaStream_t stream, const float *per_problem, const float *in,
                                  float *out) const {
   if (num_rows_ == 0) return;
+  if (num_problems_ == 1) {
+    scale_rows_single_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(per_problem, in, num_rows_,
+                                                                         out);
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
+    return;
+  }
   scale_rows_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(row_problem_.data(), per_problem,
                                                                 in, num_rows_, out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -401,22 +452,21 @@ void ProblemPartition::CopyAccepted(cudaStream_t stream, const Problem &problem,
   }
 }
 
-void ProblemPartition::InitStepControl(cudaStream_t stream, float cost_tolerance,
-                                       float initial_lambda, float *d_out) {
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
+void ProblemPartition::InitStepControl(cudaStream_t stream, float cost_tolerance, const int *frozen,
+                                       float *d_out) {
+  if (num_problems_ > 1) THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   init_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
-      cost_.data(), num_problems_, cost_tolerance, initial_lambda, lambda_.data(), active_.data(),
-      rejected_.data(), accept_.data(), d_out);
+      cost_.data(), num_problems_, cost_tolerance, frozen, active_.data(), rejected_.data(),
+      accept_.data(), outcome_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-void ProblemPartition::StepControl(cudaStream_t stream, const BatchedStepControlParams &params,
+void ProblemPartition::StepControl(cudaStream_t stream, const StepControlParams &params,
                                    float *d_out) {
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
+  if (num_problems_ > 1) THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   step_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
-      params, num_problems_, cost_.data(), new_cost_.data(), step_squared_.data(),
-      diag_weight_.data(), matrix_weight_.data(), shortened_.data(), lambda_.data(), active_.data(),
-      rejected_.data(), accept_.data(), d_out);
+      params, num_problems_, cost_.data(), new_cost_.data(), reject_.data(), converged_.data(),
+      shortened_.data(), active_.data(), rejected_.data(), accept_.data(), outcome_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

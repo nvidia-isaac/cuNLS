@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -32,6 +33,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
+#include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -470,6 +472,37 @@ class NanBeyondTwoFactor : public SizedFactorBatch<1, 1> {
 // A trial step to a non-finite cost is rejected (and the damping raised), by
 // both minimizers, with and without a subproblem partition; it was accepted
 // by Levenberg-Marquardt, whose test rho < threshold is false for NaN.
+// A factor whose Evaluate reports failure stops the solve with an exception
+// instead of optimizing on unwritten residuals.
+class FailingFactorBatch : public SizedFactorBatch<1, 1> {
+ public:
+  explicit FailingFactorBatch(size_t capacity) : SizedFactorBatch(capacity) {}
+  bool Evaluate(float *, float *, float const *const *, cudaStream_t, const int *,
+                size_t) const override {
+    return false;
+  }
+};
+
+TEST(FailingFactor, MinimizersThrow) {
+  CudaStream stream;
+  dvector<float> x(std::vector<float>{1.f});
+  VectorStateBatch<1> states(x.data(), 1);
+  states.SetNumActiveStates(1);
+  FailingFactorBatch failing(1);
+  failing.SetNumActiveFactors(1);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&failing, {states.StateDevicePtr(0)});
+  MinimizerOptions options;
+  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+  GaussNewtonMinimizer gn(options);
+  EXPECT_THROW(gn.Minimize(stream.GetStream(), problem), std::runtime_error);
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = options;
+  LevenbergMarquardtMinimizer lm(lm_options);
+  EXPECT_THROW(lm.Minimize(stream.GetStream(), problem), std::runtime_error);
+}
+
 TEST(NonFiniteTrialStep, IsRejected) {
   for (int kind = 0; kind < 4; ++kind) {
     CudaStream stream;
@@ -498,6 +531,126 @@ TEST(NonFiniteTrialStep, IsRejected) {
     EXPECT_TRUE(std::isfinite(summary.final_cost)) << "case " << kind;
     EXPECT_LE(summary.final_cost, summary.initial_cost) << "case " << kind;
     EXPECT_LE(host[0], 2.f) << "case " << kind;
+  }
+}
+
+// On a linear problem the LM model is exact, so the gain ratio rho is 1 and
+// every step is "very successful": lambda shrinks each iteration and LM turns
+// into Gauss-Newton. Priors give H = I, so from lambda_0 = 10 the step is
+// -g / (1 + lambda) and twelve iterations reach the optimum to ~1e-20 of the
+// initial cost. A model decrease overestimated 2x (rho = 0.5 < 0.75) keeps
+// lambda at 10 and leaves ~10% of the cost. Single problem and subproblems.
+TEST(LevenbergMarquardt, LinearProblemShrinksDamping) {
+  for (bool partitioned : {false, true}) {
+    CudaStream stream;
+    constexpr int kN = 8;
+    std::vector<Vector<3>> targets(kN);
+    for (int i = 0; i < kN; ++i) targets[i] = {float(i), -2.f * i, 0.5f};
+    dvector<Vector<3>> x(std::vector<Vector<3>>(kN, Vector<3>{0.f, 0.f, 0.f}));
+    dvector<Vector<3>> t(targets);
+    VectorStateBatch<3> states(reinterpret_cast<const float *>(x.data()), kN);
+    states.SetNumActiveStates(kN);
+    PriorVectorFactorBatch<3> priors(t.data(), kN);
+    priors.SetNumActiveFactors(kN);
+    std::vector<float *> ptrs;
+    for (int i = 0; i < kN; ++i) ptrs.push_back(states.StateDevicePtr(i));
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&priors, ptrs);
+    std::vector<int> ids(kN);
+    for (int i = 0; i < kN; ++i) ids[i] = i % 2;
+    dvector<int> d_ids(ids);
+    if (partitioned) problem.SetProblemPartition(2, {d_ids.data()});
+    LevenbergMarquardtMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    options.base_options.max_num_iterations = 12;
+    options.base_options.state_tolerance = 0.f;
+    options.base_options.cost_tolerance = 0.f;
+    options.relative_reduction_tolerance = 0.f;
+    options.initial_lambda = 10.f;
+    const MinimizerSummary summary =
+        LevenbergMarquardtMinimizer(options).Minimize(stream.GetStream(), problem);
+    EXPECT_LT(summary.final_cost, 1e-6f * summary.initial_cost) << "partitioned " << partitioned;
+  }
+}
+
+// An initial damping of 0 is valid (Gauss-Newton steps), and a rejected step
+// still escalates from lambda_min: from x = 0 the undamped step lands where
+// the cost is NaN, so lambda must grow (to >= 1.5) before a step is taken.
+// lambda_min itself must be positive.
+TEST(LevenbergMarquardt, ZeroInitialLambdaEscalatesFromLambdaMin) {
+  for (bool partitioned : {false, true}) {
+    CudaStream stream;
+    dvector<float> x(std::vector<float>{0.f});
+    VectorStateBatch<1> states(x.data(), 1);
+    states.SetNumActiveStates(1);
+    NanBeyondTwoFactor factor;
+    factor.SetNumActiveFactors(1);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&factor, std::vector<float *>{states.StateDevicePtr(0)});
+    dvector<int> ids(std::vector<int>{0});
+    if (partitioned) problem.SetProblemPartition(2, {ids.data()});
+    LevenbergMarquardtMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    options.initial_lambda = 0.f;
+    const MinimizerSummary summary =
+        LevenbergMarquardtMinimizer(options).Minimize(stream.GetStream(), problem);
+    EXPECT_LT(summary.final_cost, summary.initial_cost) << "partitioned " << partitioned;
+  }
+  LevenbergMarquardtMinimizerOptions bad;
+  bad.lambda_min = 0.f;
+  EXPECT_THROW(LevenbergMarquardtMinimizer{bad}, std::invalid_argument);
+  LevenbergMarquardtMinimizerOptions inverted;
+  inverted.lambda_min = 1.f;
+  inverted.lambda_max = 0.5f;
+  EXPECT_THROW(LevenbergMarquardtMinimizer{inverted}, std::invalid_argument);
+  inverted.lambda_max = 1.f;  // equal bounds: a fixed damping
+  inverted.initial_lambda = 1.f;
+  EXPECT_NO_THROW(LevenbergMarquardtMinimizer{inverted});
+  // The damping may not start above its bound, and a rejection must grow it.
+  LevenbergMarquardtMinimizerOptions too_damped;
+  too_damped.lambda_max = 1.f;
+  too_damped.initial_lambda = 2.f;
+  EXPECT_THROW(LevenbergMarquardtMinimizer{too_damped}, std::invalid_argument);
+  for (float upscale : {1.f, 0.5f, 0.f}) {
+    LevenbergMarquardtMinimizerOptions no_growth;
+    no_growth.lambda_upscale = upscale;
+    EXPECT_THROW(LevenbergMarquardtMinimizer{no_growth}, std::invalid_argument) << upscale;
+  }
+}
+
+// Column scaling: the step is mapped back to physical coordinates (dx = S z),
+// so the predicted reduction's damping term is λ dxᵀ diag(H) dx with the
+// unscaled Hessian. On a linear problem the model is exact (ρ = 1) and the
+// first damped step is taken. A badly scaled residual (H = 1e-4) makes a
+// damping term weighted by diag(S H S) = 1 overestimate the prediction ~1e4
+// times: every step would be rejected and the cost would not move.
+TEST(LevenbergMarquardt, ColumnScalingPredictsWithTheUnscaledHessian) {
+  for (bool partitioned : {false, true}) {
+    CudaStream stream;
+    dvector<float> x(std::vector<float>{0.f, 0.f}), targets(std::vector<float>{1.f, -1.f});
+    VectorStateBatch<1> states(x.data(), 2);
+    states.SetNumActiveStates(2);
+    WeightedFactorBatch<PriorVectorFactorBatch<1>> prior(
+        0.01f, reinterpret_cast<const Vector<1> *>(targets.data()), size_t{2});
+    prior.SetNumActiveFactors(2);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, {states.StateDevicePtr(0), states.StateDevicePtr(1)});
+    dvector<int> ids(std::vector<int>{0, 1});
+    if (partitioned) problem.SetProblemPartition(2, {ids.data()});
+    LevenbergMarquardtMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    options.base_options.column_scaling = ColumnScaling::HessianDiagonal;
+    options.base_options.cost_tolerance = 0.f;
+    options.initial_lambda = 10.f;
+    const MinimizerSummary summary =
+        LevenbergMarquardtMinimizer(options).Minimize(stream.GetStream(), problem);
+    ASSERT_GE(summary.iteration_costs.size(), 2u);
+    EXPECT_LT(summary.iteration_costs[1], summary.iteration_costs[0])
+        << "partitioned " << partitioned;
+    EXPECT_LT(summary.final_cost, 1e-3f * summary.initial_cost) << "partitioned " << partitioned;
   }
 }
 

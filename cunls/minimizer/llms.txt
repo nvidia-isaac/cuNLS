@@ -9,16 +9,37 @@ optimization.
 
 - `problem.h`: `Problem` (graph composition of states + factors)
 - `residual_batch.h`: `ResidualBatch` (factor + loss wrapper)
-- `gauss_newton_minimizer.h`: `MinimizerOptions`, `MinimizerSummary`,
-  `GaussNewtonMinimizer`
+- `minimizer.h`: `MinimizerOptions`, `MinimizerSummary`, `Minimizer` (common
+  base: the one iteration loop, linear system, line search, structure
+  reuse, per-subproblem bookkeeping; private pure virtual hooks
+  `UpdateSystem` / `ClassifySteps` are the whole GN/LM difference; private
+  section is data only, behaviour in free functions in `minimizer.cu`);
+  `internal::InnerSolve` / `internal::InnerMinimize` (the AL's inner-solve
+  channel), `internal::SetUpStructure` / `internal::BuildSystem` (system
+  assembly, also used by tests)
+- `gauss_newton_minimizer.h`: `GaussNewtonMinimizer` (classify kernel only)
 - `levenberg_marquardt_minimizer.h`:
-  `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer`
+  `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer` (per
+  subproblem λ, ρ classify kernel, fused λ-update + damping kernel; all LM
+  state lives here)
+- `problem_partition.h`: `ProblemPartition` (subproblem maps, per-subproblem
+  sums, the common take/reject/line-search/cap decision `StepControl`;
+  one-subproblem fast paths, deterministic reductions)
 - `augmented_lagrangian_minimizer.h`: `AugmentedLagrangianMinimizer`,
   `AugmentedLagrangianMinimizerOptions`, `AugmentedLagrangianMinimizerSummary` (augmented
   Lagrangian outer loop around a GN/LM minimizer; finds constraint batches by
-  type; per-subproblem penalties and stopping on the device; uses the
-  per-call `Minimize(stream, problem, MinimizeCallOptions)` hook for capped,
-  line-searched inner solves). Guide: `docs/sphinx/constraints.rst`.
+  type; per-subproblem penalties and stopping on the device; uses
+  `internal::InnerMinimize` for capped, line-searched inner solves). Takes a
+  `Minimizer &`. Also the only solver of box-bounded states (projected
+  Gauss-Newton): it clamps the initial free states into the box, and its
+  private `HoldActiveBounds` runs as `InnerSolve::restrict_system` (the one
+  callback the minimizer loop offers: before the solve, and after each solve
+  with the step, returning true for another solve) to hold the components at
+  an active bound plus up to `max_bound_refinements` active-set refinements
+  (AL option); the bounded `VectorStateBatch::Plus` clamps every moved
+  component. GN/LM/RANSAC reject
+  bounded problems (`Problem::HasBoxBounds`). Guide:
+  `docs/sphinx/constraints.rst`.
 - `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
 - `sparse_matrix.h`: CSR diagonal ops, scaling, norms (free functions)
 - `normal_equations.h`: `NormalEquations` (owns H, the working LHS, and their
@@ -26,12 +47,14 @@ optimization.
 - `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
 - `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
 - `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
-- `ransac_minimizer.h`: `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
+- `ransac_minimizer.h`: `RansacMinimizer` (common base, holds the state by
+  value), `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
   `RansacMinimizerOptions`, `RansacSummary` (RANSAC over an ordinary `Problem`
   whose total free tangent dimension is <= `kMaxRansacTangentDim` = 64)
 - `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout` (problem
   description), `SlotSet` (slots with state replicas, solved in lockstep),
-  `HypothesisScorer`, `RansacContext` (rounds, refinement), and kernels
+  `HypothesisScorer`, `RansacContext` (data) + `RunRansac` (rounds,
+  refinement), and kernels
   (`ransac_kernels.h` declares all launchers)
 
 ## Solver flow
@@ -42,10 +65,12 @@ optimization.
    (`H = J^T J`, `-J^T r`); the global Jacobian is never materialized.
 3. Solve the sparse linear system.
 4. Apply manifold-aware state updates (`StateBatchOps`).
-5. Accept/reject step and iterate until convergence. With
+5. Classify (subclass) and take/reject each subproblem's step on the device
+   (`ProblemPartition::StepControl`); one 2-float read-back per iteration.
+   A problem without a partition is one subproblem. With
    `MinimizerOptions::max_line_search_steps > 0`, a step that does not
    decrease the cost is halved along its direction, and any step that
-   decreases the cost is taken (per subproblem in batched mode).
+   decreases the cost is taken (per subproblem).
 
 ## Important constraints
 
@@ -80,16 +105,14 @@ optimization.
 
 ## Real time (R1)
 
-- `MinimizeCallOptions::reuse_structure`: skip Initialize / symbolic analysis /
-  partition build when the caller vouches for an unchanged structure (host size
-  signature checked; `solver_ready_`, `partition_ready_` track what was built).
-- `MinimizeCallOptions::fixed_iterations`: always the partitioned (device step
-  control) path, also for one problem; fixed line-search and bound-refinement
-  counts; no read-backs; summary costs NaN.
-- `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`,
-  `use_cuda_graph`; `SetOptions` keeps the warm state. Graph: first eligible
-  call eager, second captured (relaxed mode), later replayed; the status
-  read-back stays outside. Capture needs every op on the stream without host
-  syncs or pageable copies (MinimizerState copies use cudaMemcpyAsync for this).
+- `MinimizerOptions::reuse_structure` (and `InnerSolve::reuse_structure`):
+  skip the structure setup / symbolic analysis / partition build when the
+  caller vouches for an unchanged structure (host size signature checked;
+  `MinimizerStructure` tracks what was built).
+- `InnerSolve::fixed_iterations` (AL real time): fixed line-search and
+  bound-refinement counts; no read-backs; summary costs NaN.
+- `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`;
+  `SetOptions` keeps the warm state. A real-time call reads its status back
+  once, at the end.
 - `NormalEquations`: cached CSR diagonal positions, value-only lhs copies,
   `ZeroMaskedLhsRowsColumns` (held bounds touch only the held rows).

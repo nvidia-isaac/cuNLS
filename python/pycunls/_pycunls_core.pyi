@@ -45,7 +45,7 @@ class CudaStream:
 # Logging
 # ===================================================================
 
-class Verbosity(enum.IntEnum):
+class Verbosity(enum.Enum):
     Silent = ...
     Error = ...
     Warning = ...
@@ -60,7 +60,7 @@ def set_log_verbosity(verbosity: Verbosity) -> None:
 # Enumerations
 # ===================================================================
 
-class SparseLinearSolverType(enum.IntEnum):
+class SparseLinearSolverType(enum.Enum):
     cuDSS = ...
     DenseLDLT = ...
     DenseCholesky = ...
@@ -68,13 +68,13 @@ class SparseLinearSolverType(enum.IntEnum):
     BlockSparsePCG = ...
     BlockTridiagonal = ...
 
-class ColumnScaling(enum.IntEnum):
+class ColumnScaling(enum.Enum):
     """Diagonal scaling mode for the GN/LM normal equations."""
 
     none = ...
     hessian_diagonal = ...
 
-class JacobianMode(enum.IntEnum):
+class JacobianMode(enum.Enum):
     """Selects how a factor batch's Jacobian is obtained: the factor's own
     analytic Evaluate() output, or finite differences on the manifold
     tangent space of each referenced state."""
@@ -82,7 +82,7 @@ class JacobianMode(enum.IntEnum):
     analytic = ...
     numeric = ...
 
-class NumericDiffMethod(enum.IntEnum):
+class NumericDiffMethod(enum.Enum):
     """Finite-difference scheme used when a factor batch resolves to
     JacobianMode.numeric."""
 
@@ -102,14 +102,14 @@ class NumericDiffOptions:
     def __init__(self) -> None: ...
 
 class MinimizerOptions:
-    """Options for Gauss-Newton and Levenberg-Marquardt minimizers."""
+    """Options common to GaussNewtonMinimizer and LevenbergMarquardtMinimizer."""
 
     max_num_iterations: int
     state_tolerance: float
     cost_tolerance: float
     max_consecutive_rejected_steps: int
-    max_bound_refinements: int
     max_line_search_steps: int
+    reuse_structure: bool
     sparse_linear_solver_type: SparseLinearSolverType
     column_scaling: ColumnScaling
     jacobian_mode: JacobianMode
@@ -193,7 +193,9 @@ class VectorStateBatch1(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -220,7 +222,9 @@ class VectorStateBatch2(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -247,7 +251,9 @@ class VectorStateBatch3(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -274,7 +280,9 @@ class VectorStateBatch4(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -301,7 +309,9 @@ class VectorStateBatch12(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -328,7 +338,9 @@ class VectorStateBatch6(StateBatch):
     def state_device_ptr(self, index: int) -> int: ...
     def set_bounds(self, lower: Optional[DevicePointer], upper: Optional[DevicePointer]) -> None:
         """Box bounds lower <= x <= upper per component (capacity * dim floats;
-        ±inf: unbounded), enforced by projection in GN/LM. None, None removes them."""
+        ±inf: unbounded). Solve the problem with AugmentedLagrangianMinimizer
+        (projected Gauss-Newton); the other minimizers reject it. None, None
+        removes them."""
         ...
     @property
     def has_bounds(self) -> bool: ...
@@ -593,6 +605,8 @@ class CustomFactorBatch(FactorBatch):
 class ReprojectionFactorBatch(FactorBatch):
     """Batched 2D reprojection factor. Residual=2, States=[SE3(6), Point(3)].
 
+    The pose state is world_from_rig (the rig's pose in the world); the camera is the
+    rig (identity camera_from_rig): P_cam = pose^-1 * P_world.
     Observations must be in normalized image coordinates (K^-1 applied).
     """
 
@@ -611,7 +625,7 @@ class ReprojectionFactorBatch(FactorBatch):
 class PnPFactorBatch(FactorBatch):
     """PnP reprojection: fixed 3D points (constructor), pose-only Jacobian.
 
-    Residual=2, single SE3 state per factor. Observations normalized (K^-1).
+    Residual=2, single SE3 state per factor (world_from_rig). Observations normalized (K^-1).
     """
 
     @overload
@@ -950,7 +964,7 @@ class PointToPointFactorBatch(FactorBatch):
     def state_sizes(self) -> list[int]: ...
 
 class PointToPlaneFactorBatch(FactorBatch):
-    """Batched point-to-plane factor: residual = Nq^T*(p - T*q). Residual=1, States=[SE3(6)]."""
+    """Point-to-plane factor: residual = Nq^T*(p - T*q), Nq in the target frame. States=[SE3(6)]."""
 
     def __init__(
         self,
@@ -1013,7 +1027,7 @@ class WeightedFactorBatch(FactorBatch):
 # Constraint factor batches (augmented Lagrangian)
 # ===================================================================
 
-class ConstraintKind(enum.IntEnum):
+class ConstraintKind(enum.Enum):
     """Kind of a constraint row."""
 
     Equality = 0
@@ -1241,6 +1255,190 @@ class SE3KinematicsFactorBatch(FactorBatch):
     def residuals_size(self) -> int: ...
     def state_sizes(self) -> list[int]: ...
 
+class ConstantVelocitySE3FactorBatch(FactorBatch):
+    """Constant-velocity motion prior: (pose_k, pose_k1, v_k, v_k1). SE3 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocityInformationSE3FactorBatch(FactorBatch):
+    """ConstantVelocitySE3FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationSE3FactorBatch(FactorBatch):
+    """Constant-acceleration motion prior: (pose_k, pose_k1, v_k, v_k1, a_k, a_k1). SE3 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationInformationSE3FactorBatch(FactorBatch):
+    """ConstantAccelerationSE3FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocitySO3FactorBatch(FactorBatch):
+    """Constant-velocity motion prior: (pose_k, pose_k1, v_k, v_k1). SO3 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocityInformationSO3FactorBatch(FactorBatch):
+    """ConstantVelocitySO3FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationSO3FactorBatch(FactorBatch):
+    """Constant-acceleration motion prior: (pose_k, pose_k1, v_k, v_k1, a_k, a_k1). SO3 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationInformationSO3FactorBatch(FactorBatch):
+    """ConstantAccelerationSO3FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocitySE2FactorBatch(FactorBatch):
+    """Constant-velocity motion prior: (pose_k, pose_k1, v_k, v_k1). SE2 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocityInformationSE2FactorBatch(FactorBatch):
+    """ConstantVelocitySE2FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationSE2FactorBatch(FactorBatch):
+    """Constant-acceleration motion prior: (pose_k, pose_k1, v_k, v_k1, a_k, a_k1). SE2 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationInformationSE2FactorBatch(FactorBatch):
+    """ConstantAccelerationSE2FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocitySO2FactorBatch(FactorBatch):
+    """Constant-velocity motion prior: (pose_k, pose_k1, v_k, v_k1). SO2 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantVelocityInformationSO2FactorBatch(FactorBatch):
+    """ConstantVelocitySO2FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationSO2FactorBatch(FactorBatch):
+    """Constant-acceleration motion prior: (pose_k, pose_k1, v_k, v_k1, a_k, a_k1). SO2 poses."""
+
+    def __init__(self, time_steps: DevicePointer, capacity: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
+class ConstantAccelerationInformationSO2FactorBatch(FactorBatch):
+    """ConstantAccelerationSO2FactorBatch weighted by the closed-form process-noise information Q(dt)^-1."""
+
+    def __init__(
+        self, stream: CudaStream, time_steps: DevicePointer, qc_diag: DevicePointer, capacity: int
+    ) -> None: ...
+    def update(self, stream: CudaStream, num: int) -> None: ...
+    @property
+    def num_active_factors(self) -> int: ...
+    @property
+    def residuals_size(self) -> int: ...
+    def state_sizes(self) -> list[int]: ...
+
 class QuadrotorParameters:
     """Quadrotor in X configuration (see the C++ documentation for the rotor layout)."""
 
@@ -1305,7 +1503,7 @@ class ImuParameters:
     def __init__(self) -> None: ...
 
 class ImuFactorBatch(FactorBatch):
-    """IMU factor between keyframes (X_a, v_a, b_a, X_b, v_b, b_b), X = rig_from_world."""
+    """IMU factor between keyframes (T_a, v_a, b_a, T_b, v_b, b_b), T = world_from_rig."""
 
     def __init__(
         self,
@@ -1498,21 +1696,29 @@ class Problem:
 # Minimizers
 # ===================================================================
 
-class GaussNewtonMinimizer:
-    """Gauss-Newton minimizer for nonlinear least-squares problems."""
+class Minimizer:
+    """Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer.
+
+    Not constructible; use it to accept either minimizer.
+    """
+
+    def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
+        """Minimize the problem's cost from its current states (updated in place)."""
+        ...
+    @property
+    def options(self) -> MinimizerOptions:
+        """Options the minimizer runs with (a copy)."""
+        ...
+
+class GaussNewtonMinimizer(Minimizer):
+    """Gauss-Newton: undamped normal equations; takes every step that lowers the cost."""
 
     def __init__(self, options: MinimizerOptions = ...) -> None: ...
-    def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
-        """Run the Gauss-Newton optimizer. Returns a MinimizerSummary."""
-        ...
 
-class LevenbergMarquardtMinimizer(GaussNewtonMinimizer):
-    """Levenberg-Marquardt minimizer (damped Gauss-Newton)."""
+class LevenbergMarquardtMinimizer(Minimizer):
+    """Levenberg-Marquardt: Gauss-Newton with an adaptive damping per subproblem."""
 
     def __init__(self, options: LevenbergMarquardtMinimizerOptions = ...) -> None: ...
-    def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
-        """Run the Levenberg-Marquardt optimizer. Returns a MinimizerSummary."""
-        ...
 
 # ---------------------------------------------------------------------------
 # Constrained minimization (augmented Lagrangian)
@@ -1532,12 +1738,12 @@ class AugmentedLagrangianMinimizerOptions:
     violation_decrease: float
     warm_start: bool
     reuse_structure: bool
+    max_bound_refinements: int
     real_time: bool
-    use_cuda_graph: bool
 
     def __init__(self) -> None: ...
 
-class AugmentedLagrangianMinimizerStatus(enum.IntEnum):
+class AugmentedLagrangianMinimizerStatus(enum.Enum):
     Converged = 0
     MaxOuterIterations = 1
     MaxPenalty = 2
@@ -1569,7 +1775,7 @@ class AugmentedLagrangianMinimizer:
     """Augmented Lagrangian solver for problems with constraint factor batches."""
 
     def __init__(
-        self, minimizer: GaussNewtonMinimizer, options: AugmentedLagrangianMinimizerOptions = ...
+        self, minimizer: Minimizer, options: AugmentedLagrangianMinimizerOptions = ...
     ) -> None: ...
     def minimize(self, stream: CudaStream, problem: Problem) -> AugmentedLagrangianMinimizerSummary:
         """Minimize the objective subject to the constraint batches."""
@@ -1580,16 +1786,12 @@ class AugmentedLagrangianMinimizer:
         ...
     @options.setter
     def options(self, value: AugmentedLagrangianMinimizerOptions) -> None: ...
-    @property
-    def uses_cuda_graph(self) -> bool:
-        """Whether the last call captured or replayed a CUDA graph."""
-        ...
 
 # ---------------------------------------------------------------------------
 # RANSAC minimizers
 # ---------------------------------------------------------------------------
 
-class RansacRole(enum.IntEnum):
+class RansacRole(enum.Enum):
     """Role of a residual batch in RANSAC."""
 
     sampled = ...
@@ -1597,7 +1799,7 @@ class RansacRole(enum.IntEnum):
     always_on = ...
     """Trusted factors (priors): in every solve, never classified."""
 
-class RansacScoring(enum.IntEnum):
+class RansacScoring(enum.Enum):
     """Hypothesis scoring rule."""
 
     msac = ...
@@ -1605,7 +1807,7 @@ class RansacScoring(enum.IntEnum):
     inlier_count = ...
     """Number of inliers (ties broken by MSAC)."""
 
-class RansacLinearSolverType(enum.IntEnum):
+class RansacLinearSolverType(enum.Enum):
     """Dense per-hypothesis solver."""
 
     cholesky = ...
@@ -1678,10 +1880,12 @@ class RansacSummary(MinimizerSummary):
     @property
     def refinement_reverted(self) -> bool: ...
 
-class RansacGaussNewtonMinimizer:
-    """RANSAC with Gauss-Newton hypotheses and refinement (free tangent dim <= 64)."""
+class RansacMinimizer:
+    """Common base of the RANSAC minimizers (free tangent dim <= 64).
 
-    def __init__(self, options: RansacMinimizerOptions = ...) -> None: ...
+    Not constructible; use it to accept either RANSAC minimizer.
+    """
+
     def minimize(self, stream: CudaStream, problem: Problem) -> RansacSummary:
         """Run RANSAC; the estimate is written into the problem's state batches."""
         ...
@@ -1690,8 +1894,17 @@ class RansacGaussNewtonMinimizer:
         problem of the last minimize(). Raises RuntimeError for an out-of-range
         index, an always_on batch, or before any run."""
         ...
+    @property
+    def options(self) -> RansacMinimizerOptions:
+        """Options common to all RANSAC minimizers, as constructed (a copy)."""
+        ...
 
-class RansacLevenbergMarquardtMinimizer(RansacGaussNewtonMinimizer):
+class RansacGaussNewtonMinimizer(RansacMinimizer):
+    """RANSAC with Gauss-Newton hypotheses and refinement."""
+
+    def __init__(self, options: RansacMinimizerOptions = ...) -> None: ...
+
+class RansacLevenbergMarquardtMinimizer(RansacMinimizer):
     """RANSAC with Levenberg-Marquardt hypotheses and refinement."""
 
     def __init__(self, options: RansacLevenbergMarquardtMinimizerOptions = ...) -> None: ...

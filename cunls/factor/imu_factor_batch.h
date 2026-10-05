@@ -60,12 +60,12 @@ struct ImuParameters {
  * marginalized inside the factor (Schur complement, recomputed every
  * evaluation; no preintegration cache, no reference bias).
  *
- * States (in order): pose X_a (SE3StateBatch, body_from_world: the same rig
+ * States (in order): pose T_a (SE3StateBatch, world_from_body: the same rig
  * pose as ReprojectionFactorBatch and PnPFactorBatch read, so the factors can
  * share it), velocity v_a (VectorStateBatch<3>), bias b_a = [b_g; b_a]
- * (VectorStateBatch<6>), and X_b, v_b, b_b at the next keyframe. v is the
+ * (VectorStateBatch<6>), and T_b, v_b, b_b at the next keyframe. v is the
  * world-frame velocity of the IMU (the body velocity when the IMU sits at the
- * body origin). The IMU's pose in the world is X⁻¹ body_from_imu.
+ * body origin). The IMU's pose in the world is T body_from_imu.
  *
  * The N samples (ω̃_k, ã_k, Δt_k) between the keyframes define a chain of
  * Euler steps between N - 1 intermediate states x_k = (R_k, v_k, p_k) of the

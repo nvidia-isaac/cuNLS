@@ -11,6 +11,23 @@ batch classes, then the C++ API.
 - **Python** — ``pycunls``
 - **C++** — ``cunls/state``
 
+.. _pose-convention:
+
+**Pose convention.** Every factor that reads a pose state (SE(2), SE(3), SO(2),
+SO(3)) takes it as **world_from_rig** :math:`T`: the pose of the rig (body,
+camera, robot) in the world, mapping rig coordinates to world coordinates. The
+reprojection and PnP factors see a world point at :math:`T^{-1} P` (then
+``camera_from_rig``); the IMU, dynamics, clearance and motion-prior factors
+use :math:`T` directly. If your data are world-to-camera (camera_from_world)
+poses, store their inverses.
+
+States are updated on the right, :math:`T \leftarrow T\,\mathrm{Exp}(\delta)`,
+so a solver step :math:`\delta` is expressed in the rig frame. Its scaling does
+not depend on where the world origin is: a scene kilometers away from the
+origin conditions and converges like one at the origin (with a rig-frame
+increment on camera_from_world poses, a rotation step would turn the world
+about its origin and move distant cameras by meters).
+
 ================================================================================
 Manifolds
 ================================================================================
@@ -181,16 +198,16 @@ right-multiplication by the exponential map:
    sb = pycunls.SE3StateBatch(data, capacity)
 
    # With constant states:
-   sb = pycunls.SE3StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.SE3StateBatch(data, capacity, const_state_ids, const_capacity)
 
 - **data** (``DevicePointer``) — contiguous GPU buffer of
   ``capacity × 16`` floats (row-major 4×4 matrices).
 - **capacity** (``int``) — number of states (poses) the buffer
   holds; 0 are active until ``set_num_active_states``.
-- **const_ids** (``DevicePointer``, optional) — GPU ``int32`` array of
+- **const_state_ids** (``DevicePointer``, optional) — GPU ``int32`` array of
   constant-state indices (e.g. a gauge anchor).
 - **const_capacity** (``int``, optional) — number of entries the
-  *const_ids* buffer holds.
+  *const_state_ids* buffer holds.
 
 --------------------------------------------------------------------------------
 ``pycunls.SO3StateBatch``
@@ -205,7 +222,7 @@ Tangent = 3 (rotation vector / axis-angle).  Plus:
 .. code-block:: python
 
    sb = pycunls.SO3StateBatch(data, capacity)
-   sb = pycunls.SO3StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.SO3StateBatch(data, capacity, const_state_ids, const_capacity)
 
 - **data** — ``capacity × 9`` floats (row-major 3×3).
 
@@ -222,7 +239,7 @@ Tangent = 1 (angle in radians).  Plus:
 .. code-block:: python
 
    sb = pycunls.SO2StateBatch(data, capacity)
-   sb = pycunls.SO2StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.SO2StateBatch(data, capacity, const_state_ids, const_capacity)
 
 - **data** — ``capacity × 4`` floats
   (:math:`[\cos\theta,\,-\sin\theta,\,\sin\theta,\,\cos\theta]`).
@@ -239,7 +256,7 @@ homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
 .. code-block:: python
 
    sb = pycunls.SE2StateBatch(data, capacity)
-   sb = pycunls.SE2StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.SE2StateBatch(data, capacity, const_state_ids, const_capacity)
 
 - **data** — ``capacity × 9`` floats (row-major 3×3).
 
@@ -257,7 +274,7 @@ homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
 .. code-block:: python
 
    sb = pycunls.Similarity2StateBatch(data, capacity)
-   sb = pycunls.Similarity2StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.Similarity2StateBatch(data, capacity, const_state_ids, const_capacity)
 
 --------------------------------------------------------------------------------
 ``pycunls.Similarity3StateBatch``
@@ -271,7 +288,7 @@ homogeneous matrix), Tangent = 3 (:math:`[v_x, v_y, \theta]`).
 .. code-block:: python
 
    sb = pycunls.Similarity3StateBatch(data, capacity)
-   sb = pycunls.Similarity3StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.Similarity3StateBatch(data, capacity, const_state_ids, const_capacity)
 
 --------------------------------------------------------------------------------
 ``pycunls.SL4StateBatch``
@@ -286,7 +303,7 @@ Plus: :math:`T \oplus \delta = T \cdot \mathrm{Exp}(\delta)`.
 .. code-block:: python
 
    sb = pycunls.SL4StateBatch(data, capacity)
-   sb = pycunls.SL4StateBatch(data, capacity, const_ids, const_capacity)
+   sb = pycunls.SL4StateBatch(data, capacity, const_state_ids, const_capacity)
 
 - **data** — ``capacity × 16`` floats (row-major 4×4).
 

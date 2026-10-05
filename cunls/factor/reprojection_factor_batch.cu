@@ -42,32 +42,118 @@
  * MATHEMATICAL DERIVATION
  * =============================================================================
  *
- * Projection model (pinhole, normalized coordinates):
- *     P_cam = R * P_world + t
- *     proj  = [P_cam.x / P_cam.z, P_cam.y / P_cam.z]
- *     r     = proj - observation
+ * Projection model (pinhole, normalized coordinates), pose state T =
+ * world_from_rig = (R, t), optional camera_from_rig E:
+ *     P_rig = R^T (P_world - t),   P_cam = E P_rig
+ *     r     = [P_cam.x / P_cam.z, P_cam.y / P_cam.z] - observation
  *
- * Jacobians:
- *   Jc = d(r)/d(P_cam) = [1/z, 0, -x/z^2; 0, 1/z, -y/z^2]
- *   d(r)/d(point) = Jc * R
- *   d(r)/d(translation) = Jc
- *   d(r)/d(rotation) = -Jc * R * [P_world]_x
+ * Jacobians (right perturbation T Exp([phi, rho]), rig frame; see
+ * the helpers below), with A = d(proj)/d(P_cam) * E_R:
+ *   d(r)/d(rotation)    = A [P_rig]_x   (row i: A_i x P_rig)
+ *   d(r)/d(translation) = -A
+ *   d(r)/d(point)       = A R^T
  */
 
-#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/reprojection_factor_batch.h"
 
 namespace cunls {
 
+namespace {
+
+/**
+ * Factor (measurement) index of evaluation item `item`: factor_ids[item], or
+ * item modulo the batch size when factor_ids is null (see FactorBatch::Evaluate).
+ */
+__device__ __forceinline__ int FactorMeasurementIndex(int item, const int *factor_ids,
+                                                      int num_factors) {
+  if (factor_ids != nullptr) {
+    return factor_ids[item];
+  }
+  return item < num_factors ? item : item % num_factors;
+}
+
+// Pinhole projection through a world_from_rig pose state (the same helpers
+// as in the other projection factor's kernel file).
+//
+// T = (R, t) is world_from_rig (rows 0..2 of a row-major 4x4, pitch 4), E an
+// optional camera_from_rig (same layout; nullptr = identity):
+//
+//   p_r = Rᵀ (P - t),   p_c = E p_r,   r = p_c.xy / p_c.z - obs
+//
+// The state is perturbed on the right, T Exp(δ), δ = [φ, ρ] in the rig frame:
+// p_r ← Exp(δ)⁻¹ p_r ≈ p_r + [p_r]x φ - ρ. With A = J_c E_R (2x3, J_c =
+// ∂(x/z, y/z)/∂p_c), row i of the Jacobian is
+//
+//   ∂r_i/∂φ = A_i × p_r,   ∂r_i/∂ρ = -A_i,   ∂r_i/∂P = A_i Rᵀ.
+//
+// The rotation columns scale with the depth p_r, not with the distance from
+// the world origin; P - t is formed first, so far-away scenes keep their
+// precision.
+
+/** p_r = Rᵀ (P - t) and p_c = E p_r (p_c = p_r without E). */
+__device__ __forceinline__ void RigAndCameraPoint(const float *__restrict__ T,
+                                                  const float *__restrict__ E, const float *P,
+                                                  float *p_r, float *p_c) {
+  const float d0 = P[0] - T[3], d1 = P[1] - T[7], d2 = P[2] - T[11];
+#pragma unroll
+  for (int j = 0; j < 3; ++j) p_r[j] = T[j] * d0 + T[4 + j] * d1 + T[8 + j] * d2;
+  if (E != nullptr) {
+#pragma unroll
+    for (int i = 0; i < 3; ++i)
+      p_c[i] = E[i * 4 + 3] + E[i * 4] * p_r[0] + E[i * 4 + 1] * p_r[1] + E[i * 4 + 2] * p_r[2];
+  } else {
+#pragma unroll
+    for (int i = 0; i < 3; ++i) p_c[i] = p_r[i];
+  }
+}
+
+/**
+ * Jacobian rows (see the file comment) for a valid projection (inv_z = 1 /
+ * p_c.z): pose[i][0..5] = [A_i × p_r, -A_i]; point[i][0..2] = A_i Rᵀ when
+ * `point` is not null.
+ */
+__device__ __forceinline__ void ProjectionJacobian(const float *__restrict__ T,
+                                                   const float *__restrict__ E, const float *p_r,
+                                                   const float *p_c, float inv_z, float (*pose)[6],
+                                                   float (*point)[3]) {
+  const float u = p_c[0] * inv_z, v = p_c[1] * inv_z;
+  // J_c = inv_z [[1, 0, -u], [0, 1, -v]].
+  float A[2][3];
+  if (E != nullptr) {
+#pragma unroll
+    for (int j = 0; j < 3; ++j) {
+      A[0][j] = inv_z * (E[j] - u * E[8 + j]);
+      A[1][j] = inv_z * (E[4 + j] - v * E[8 + j]);
+    }
+  } else {
+    A[0][0] = inv_z, A[0][1] = 0.f, A[0][2] = -u * inv_z;
+    A[1][0] = 0.f, A[1][1] = inv_z, A[1][2] = -v * inv_z;
+  }
+#pragma unroll
+  for (int i = 0; i < 2; ++i) {
+    const float *a = A[i];
+    pose[i][0] = a[1] * p_r[2] - a[2] * p_r[1];
+    pose[i][1] = a[2] * p_r[0] - a[0] * p_r[2];
+    pose[i][2] = a[0] * p_r[1] - a[1] * p_r[0];
+    pose[i][3] = -a[0];
+    pose[i][4] = -a[1];
+    pose[i][5] = -a[2];
+    if (point != nullptr) {
+#pragma unroll
+      for (int j = 0; j < 3; ++j)
+        point[i][j] = a[0] * T[j * 4] + a[1] * T[j * 4 + 1] + a[2] * T[j * 4 + 2];
+    }
+  }
+}
+
+}  // namespace
+
 constexpr size_t kBlockSize = 256;
 
 /**
- * @brief Fused kernel: read pose+point from state_pointers, optionally apply
- *        camera-from-rig transform, compute reprojection residual+Jacobian.
- *
- * Replaces: collect_states_kernel + cuBLAS SGEMM (or memcpy) +
- * reprojection_cost_kernel. The SE(3) camera-from-rig multiply is fully
- * unrolled inline, exploiting the [0 0 0 1] last row.
+ * @brief Fused kernel: read the world_from_rig pose and the point from
+ *        state_pointers, optionally apply camera-from-rig, compute the
+ *        reprojection residual and Jacobian in one pass.
  */
 __global__ void reprojection_fused_kernel(const Vector<2> *observations,
                                           float const *const *state_pointers,
@@ -81,108 +167,46 @@ __global__ void reprojection_fused_kernel(const Vector<2> *observations,
   constexpr int kResidualDim = 2;
   constexpr int kJacobianCols = 9;
 
+  if (residuals == nullptr) return;
   const float *__restrict__ rig = state_pointers[tid * 2];
   const float *__restrict__ pt = state_pointers[tid * 2 + 1];
-  const float P0 = pt[0], P1 = pt[1], P2 = pt[2];
+  const float P[3] = {pt[0], pt[1], pt[2]};
+  float T[12];  // world_from_rig, rows 0..2
+#pragma unroll
+  for (int i = 0; i < 12; i++) T[i] = rig[i];
+  const float *E = poses_camera_from_rig != nullptr ? poses_camera_from_rig[m].data() : nullptr;
 
-  float pose[12];
-
-  if (poses_camera_from_rig != nullptr) {
-    const float *__restrict__ E = poses_camera_from_rig[m].data();
-
-    const float e00 = E[0], e01 = E[1], e02 = E[2], e03 = E[3];
-    const float e10 = E[4], e11 = E[5], e12 = E[6], e13 = E[7];
-    const float e20 = E[8], e21 = E[9], e22 = E[10], e23 = E[11];
-
-    const float r00 = rig[0], r01 = rig[1], r02 = rig[2], r03 = rig[3];
-    const float r10 = rig[4], r11 = rig[5], r12 = rig[6], r13 = rig[7];
-    const float r20 = rig[8], r21 = rig[9], r22 = rig[10], r23 = rig[11];
-
-    pose[0] = e00 * r00 + e01 * r10 + e02 * r20;
-    pose[1] = e00 * r01 + e01 * r11 + e02 * r21;
-    pose[2] = e00 * r02 + e01 * r12 + e02 * r22;
-    pose[3] = e00 * r03 + e01 * r13 + e02 * r23 + e03;
-    pose[4] = e10 * r00 + e11 * r10 + e12 * r20;
-    pose[5] = e10 * r01 + e11 * r11 + e12 * r21;
-    pose[6] = e10 * r02 + e11 * r12 + e12 * r22;
-    pose[7] = e10 * r03 + e11 * r13 + e12 * r23 + e13;
-    pose[8] = e20 * r00 + e21 * r10 + e22 * r20;
-    pose[9] = e20 * r01 + e21 * r11 + e22 * r21;
-    pose[10] = e20 * r02 + e21 * r12 + e22 * r22;
-    pose[11] = e20 * r03 + e21 * r13 + e22 * r23 + e23;
+  float p_r[3], p_c[3];
+  RigAndCameraPoint(T, E, P, p_r, p_c);
+  float *res_ptr = residuals + tid * kResidualDim;
+  const bool valid = p_c[2] >= z_threshold;
+  float inv_z = 0.0f;
+  if (!valid) {
+    res_ptr[0] = 0.0f;
+    res_ptr[1] = 0.0f;
   } else {
-#pragma unroll
-    for (int i = 0; i < 12; i++) pose[i] = rig[i];
+    inv_z = __frcp_rn(p_c[2]);
+    const auto &obs = observations[m];
+    res_ptr[0] = p_c[0] * inv_z - obs[0];
+    res_ptr[1] = p_c[1] * inv_z - obs[1];
   }
 
-  float point_cam[3];
-  float inv_z;
-
-  if (residuals != nullptr) {
-    point_cam[0] = pose[3] + pose[0] * P0 + pose[1] * P1 + pose[2] * P2;
-    point_cam[1] = pose[7] + pose[4] * P0 + pose[5] * P1 + pose[6] * P2;
-    point_cam[2] = pose[11] + pose[8] * P0 + pose[9] * P1 + pose[10] * P2;
-
-    float *res_ptr = residuals + tid * kResidualDim;
-
-    if (point_cam[2] < z_threshold) {
-      res_ptr[0] = 0.0f;
-      res_ptr[1] = 0.0f;
-    } else {
-      inv_z = __frcp_rn(point_cam[2]);
-      const auto &obs = observations[m];
-      res_ptr[0] = point_cam[0] * inv_z - obs[0];
-      res_ptr[1] = point_cam[1] * inv_z - obs[1];
-    }
+  if (jacobians == nullptr) return;
+  constexpr int kJacobianBlockSize = kResidualDim * kJacobianCols;
+  float *jac_ptr = jacobians + tid * kJacobianBlockSize;
+  if (!valid) {
+#pragma unroll
+    for (int i = 0; i < kJacobianBlockSize; i++) jac_ptr[i] = 0.0f;
+    return;
   }
-
-  if (residuals != nullptr && jacobians != nullptr) {
-    constexpr int kJacobianBlockSize = kResidualDim * kJacobianCols;
-    float *jac_ptr = jacobians + tid * kJacobianBlockSize;
-
-    if (point_cam[2] < z_threshold) {
+  float J_pose[2][6], J_point[2][3];
+  ProjectionJacobian(T, E, p_r, p_c, inv_z, J_pose, J_point);
 #pragma unroll
-      for (int i = 0; i < kJacobianBlockSize; i++) jac_ptr[i] = 0.0f;
-      return;
-    }
-
-    float Jp[2][3];
-    {
-      float inv_z_sq = inv_z * inv_z;
-      const float &x = point_cam[0];
-      const float &y = point_cam[1];
-
-      float a = pose[8] * inv_z_sq;
-      float b = pose[9] * inv_z_sq;
-      float c = pose[10] * inv_z_sq;
-
-      Jp[0][0] = pose[0] * inv_z - a * x;
-      Jp[0][1] = pose[1] * inv_z - b * x;
-      Jp[0][2] = pose[2] * inv_z - c * x;
-
-      Jp[1][0] = pose[4] * inv_z - a * y;
-      Jp[1][1] = pose[5] * inv_z - b * y;
-      Jp[1][2] = pose[6] * inv_z - c * y;
-    }
-
-    constexpr int kPoseTangentDim = 6;
-
+  for (int i = 0; i < kResidualDim; i++) {
 #pragma unroll
-    for (int i = 0; i < kResidualDim; i++) {
+    for (int j = 0; j < 6; j++) jac_ptr[i * kJacobianCols + j] = J_pose[i][j];
 #pragma unroll
-      for (int j = 0; j < 3; j++) {
-        jac_ptr[i * kJacobianCols + 3 + j] = Jp[i][j];
-        jac_ptr[i * kJacobianCols + kPoseTangentDim + j] = Jp[i][j];
-      }
-    }
-
-    jac_ptr[0 * kJacobianCols + 0] = P1 * Jp[0][2] - Jp[0][1] * P2;
-    jac_ptr[0 * kJacobianCols + 1] = P2 * Jp[0][0] - Jp[0][2] * P0;
-    jac_ptr[0 * kJacobianCols + 2] = P0 * Jp[0][1] - Jp[0][0] * P1;
-
-    jac_ptr[1 * kJacobianCols + 0] = P1 * Jp[1][2] - Jp[1][1] * P2;
-    jac_ptr[1 * kJacobianCols + 1] = P2 * Jp[1][0] - Jp[1][2] * P0;
-    jac_ptr[1 * kJacobianCols + 2] = P0 * Jp[1][1] - Jp[1][0] * P1;
+    for (int j = 0; j < 3; j++) jac_ptr[i * kJacobianCols + 6 + j] = J_point[i][j];
   }
 }
 

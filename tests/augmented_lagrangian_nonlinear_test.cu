@@ -84,7 +84,7 @@ class HsRows : public FactorBatch {
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<GaussNewtonMinimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
   MinimizerOptions options;
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-12f;

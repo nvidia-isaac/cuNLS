@@ -67,7 +67,7 @@ struct BlockSparsePCGOptions {
    *
    * For a Gauss-Newton Hessian, the natural layout follows the order of
    * @ref Problem state batches with the tangent dimension of each batch
-   * as the segment block size.  @ref GaussNewtonMinimizer derives this
+   * as the segment block size.  @ref Minimizer derives this
    * layout automatically from the problem when the active solver is a
    * @ref BlockSparsePCGSolver.
    */

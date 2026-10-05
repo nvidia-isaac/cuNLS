@@ -19,11 +19,26 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
-#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
+
+namespace {
+
+/**
+ * Factor (measurement) index of evaluation item `item`: factor_ids[item], or
+ * item modulo the batch size when factor_ids is null (see FactorBatch::Evaluate).
+ */
+__device__ __forceinline__ int FactorMeasurementIndex(int item, const int *factor_ids,
+                                                      int num_factors) {
+  if (factor_ids != nullptr) {
+    return factor_ids[item];
+  }
+  return item < num_factors ? item : item % num_factors;
+}
+
+}  // namespace
 
 constexpr size_t block_size = 256;
 

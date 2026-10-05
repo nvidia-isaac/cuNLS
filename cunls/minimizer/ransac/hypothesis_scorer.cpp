@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "cunls/minimizer/ransac_minimizer.h"
+
 namespace cunls {
 namespace ransac_internal {
 
@@ -230,8 +232,9 @@ void HypothesisScorer::EvaluateChunk(cudaStream_t stream, const RansacLayout &la
                        count, first, false, buf.table.data());
     }
     // Hypothesis q's rows are items q * N .. q * N + N - 1 (factor t % N).
-    r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr, buf.table.data(),
-                       stream, nullptr, count * nf);
+    CheckEvaluate(r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr,
+                                     buf.table.data(), stream, nullptr, count * nf),
+                  b);
   }
 }
 
@@ -246,8 +249,9 @@ void HypothesisScorer::EvaluateSubsetChunk(cudaStream_t stream, const RansacLayo
     LaunchSubsetTables(stream, hypotheses.state_views(), r.blocks.data(), r.nb, buf.subset.data(),
                        buf.subset_size, count, first, buf.table.data(), buf.item_ids.data());
     const size_t items = static_cast<size_t>(count) * buf.subset_size;
-    r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr, buf.table.data(),
-                       stream, buf.item_ids.data(), items);
+    CheckEvaluate(r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr,
+                                     buf.table.data(), stream, buf.item_ids.data(), items),
+                  b);
   }
 }
 

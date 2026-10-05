@@ -99,20 +99,6 @@ class NormalEquations {
    */
   void ZeroMaskedLhsRowsColumns(cudaStream_t stream, const dvector<float> &mask);
 
-  /**
-   * @brief Async `step^T H step` against the assembled (undamped) Hessian.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param cusparse_handle Opaque cuSPARSE handle, used by the scalar path.
-   * @param step Step vector.
-   * @param[out] d_out Device destination for the scalar.
-   * @param[out] d_partials Reduction scratch; see device_reduction.h.
-   * @param[out] buffer Scratch for the scalar path's SpMV.
-   */
-  void WeightedSquaredStepAsync(cudaStream_t stream, void *cusparse_handle,
-                                const dvector<float> &step, float *d_out, float *d_partials,
-                                dvector<uint8_t> &buffer);
-
   /** @brief y = (assembled, undamped Hessian) * x, in either storage layout. */
   void MultiplyHessian(cudaStream_t stream, void *cusparse_handle, const dvector<float> &x,
                        dvector<float> &y, dvector<uint8_t> &buffer) const;
@@ -145,7 +131,6 @@ class NormalEquations {
 
   CSRMatrixDimensions csr_dims_;        ///< Cached dims for the scalar SpMV.
   dvector<int> tile_row_scratch_;       ///< Tile-to-block-row map for scaling.
-  dvector<float> spmv_scratch_;         ///< SpMV result, either layout.
   dvector<int> csr_diagonal_;           ///< Scalar layout: position of each diagonal entry.
   bool csr_lhs_pattern_ready_ = false;  ///< csr_lhs_ holds the pattern; copy values only.
 

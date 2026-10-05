@@ -33,7 +33,7 @@ NB_MODULE(_pycunls_core, m) {
   bind_state(m);      // StateBatch subclasses (VectorStateBatch, SE3StateBatch, ...)
   bind_factor(m);     // FactorBatch subclasses + CustomFactorBatch trampoline
   bind_loss(m);       // Robust loss functions (Huber, Cauchy, Tukey, ...)
-  bind_minimizer(m);  // GaussNewtonMinimizer, LevenbergMarquardtMinimizer
+  bind_minimizer(m);  // Minimizer, GaussNewtonMinimizer, LevenbergMarquardtMinimizer, AL
   bind_problem(m);    // Problem (assembles states, factors, and losses)
-  bind_ransac(m);     // RansacGaussNewtonMinimizer, RansacLevenbergMarquardtMinimizer
+  bind_ransac(m);     // RansacMinimizer and its Gauss-Newton / Levenberg-Marquardt variants
 }

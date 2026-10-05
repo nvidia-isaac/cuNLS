@@ -64,12 +64,12 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
   /**
    * @brief Evaluates the factor and optionally computes Jacobians.
    *
-   * Computes residuals = Log(T_left^{-1} * T_right) for each factor in the
+   * Computes residuals = Log(Delta * T_left^{-1} * T_right) for each factor in the
    * batch. If jacobians is not nullptr, also computes the Jacobians with
    * respect to both states.
    *
    * @param residuals Output residuals (6 floats per factor, device pointer)
-   * @param jacobians Output Jacobians (12x6 floats per factor, device pointer).
+   * @param jacobians Output Jacobians (6x12 floats per factor, device pointer).
    *                  Can be nullptr if Jacobians are not needed.
    * @param state_pointers Array of state pointers (device pointer to
    * device pointers)

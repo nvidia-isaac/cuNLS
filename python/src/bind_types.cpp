@@ -131,7 +131,8 @@ void bind_types(nb::module_ &m) {
   // from Python before passing the options to a minimizer constructor.
 
   nb::class_<cunls::MinimizerOptions>(
-      m, "MinimizerOptions", "Options for Gauss-Newton and Levenberg-Marquardt minimizers.")
+      m, "MinimizerOptions",
+      "Options common to GaussNewtonMinimizer and LevenbergMarquardtMinimizer.")
       .def(nb::init<>())
       .def_rw("max_num_iterations", &cunls::MinimizerOptions::max_num_iterations)
       .def_rw("state_tolerance", &cunls::MinimizerOptions::state_tolerance)
@@ -144,10 +145,11 @@ void bind_types(nb::module_ &m) {
           "along the same direction up to this many times; the first shorter step that "
           "decreases the cost is taken (any decreasing step is taken, and LM keeps its damping). "
           "0 (default) disables it.")
-      .def_rw("max_bound_refinements", &cunls::MinimizerOptions::max_bound_refinements,
-              "Bounded states: at most this many extra solves per iteration holding the free "
-              "components the step would push through their bound (exactly this many in "
-              "real-time calls). Default: 3.")
+      .def_rw("reuse_structure", &cunls::MinimizerOptions::reuse_structure,
+              "The problem's structure is unchanged since this minimizer's previous minimize() "
+              "on it (same batches, connectivity, active/constant counts, partition): later "
+              "calls skip the structure setup. A size change falls back to the full setup. "
+              "Default: False.")
       .def_rw("sparse_linear_solver_type", &cunls::MinimizerOptions::sparse_linear_solver_type)
       .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
       .def_rw("jacobian_mode", &cunls::MinimizerOptions::jacobian_mode,

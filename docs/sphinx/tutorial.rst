@@ -78,14 +78,15 @@ problem of jointly refining 3D structure and camera parameters to minimize
 projects into an image and where it was observed.
 
 Given :math:`M` cameras with poses :math:`T_1, \ldots, T_M \in \mathrm{SE}(3)`
-and :math:`N` 3D landmarks :math:`\mathbf{p}_1, \ldots, \mathbf{p}_N \in
+(each camera's pose in the world, world_from_camera; see
+:ref:`pose-convention`) and :math:`N` 3D landmarks :math:`\mathbf{p}_1, \ldots, \mathbf{p}_N \in
 \mathbb{R}^3`, we form one residual per observation. The projection model
 transforms a world point :math:`\mathbf{p}` into camera :math:`i`'s frame and
 divides by depth to obtain **normalized image coordinates**:
 
 .. math::
 
-   \mathbf{p}_{\mathrm{cam}} = T_i \, \mathbf{p}, \qquad
+   \mathbf{p}_{\mathrm{cam}} = T_i^{-1} \, \mathbf{p}, \qquad
    \hat{\mathbf{z}} = \begin{bmatrix}
      p_{\mathrm{cam},x} / p_{\mathrm{cam},z} \\
      p_{\mathrm{cam},y} / p_{\mathrm{cam},z}
@@ -111,12 +112,12 @@ errors across all :math:`K` observations:
      \frac{1}{2} \sum_{k=1}^{K}
        \left\| \pi(T_{i_k}, \mathbf{p}_{j_k}) - \mathbf{z}_k \right\|^2
 
-Because applying a rigid transform to every pose and point leaves all
-reprojection residuals unchanged, the system has a 6-DOF gauge freedom.
-Fixing one camera pose as a **gauge anchor** removes this freedom. In this
-example, the first pose :math:`T_0` is held constant while the remaining
-poses :math:`T_1, \ldots, T_{M-1}` and all 3D points are jointly optimized
-— the classic full bundle adjustment problem.
+Because applying a rigid transform to every pose and point, or scaling the
+whole scene, leaves all reprojection residuals unchanged, the system has a
+7-DOF gauge freedom (6 rigid + 1 scale). Fixing two camera poses as **gauge
+anchors** removes it. In this example, the first two poses :math:`T_0, T_1`
+are held constant while the remaining poses and all 3D points are jointly
+optimized — the classic full bundle adjustment problem.
 
 BA factor graph
 ~~~~~~~~~~~~~~~
@@ -136,9 +137,9 @@ connecting them.
 
 .. rst-class:: centered
 
-   *Factor graph for sparse bundle adjustment. The blue circle is the fixed
+   *Factor graph for sparse bundle adjustment. The blue circle is a fixed
    anchor pose*
-   :math:`T_0`\ *, green circles are optimized camera poses
+   :math:`T_0`\ *(the example also fixes* :math:`T_1` *for the scale), green circles are optimized camera poses
    (*\ `SE3StateBatch`\ *) and 3D point variables
    (*\ `VectorStateBatch<3>`\ *), and orange squares are reprojection factors
    (*\ `ReprojectionFactorBatch`\ *). Each factor connects one camera and one
@@ -154,8 +155,8 @@ BA API used
    * - Class
      - Role
    * - `SE3StateBatch` (:doc:`api/state`)
-     - Stores camera poses on the SE(3) manifold. The first pose is marked
-       constant via ``device_constant_state_ids``; the rest are optimized.
+     - Stores camera poses on the SE(3) manifold. The first two poses are
+       marked constant via ``device_constant_state_ids``; the rest are optimized.
    * - `VectorStateBatch<3>` (:doc:`api/state`)
      - Stores 3D landmark coordinates in :math:`\mathbb{R}^3`. All points
        are optimization variables.
@@ -174,9 +175,9 @@ BA code walkthrough
 
 **Step 1 — Generate synthetic data.**
 ``MakeBundleAdjustmentScene`` returns ground-truth SE(3) poses and 3D points
-(every point in front of every camera), a perturbed initial guess (pose
-:math:`T_0` stays exact), and the normalized observation of every point in
-every camera.
+(every point in front of every camera), a perturbed initial guess (poses
+:math:`T_0` and :math:`T_1` stay exact), and the normalized observation of
+every point in every camera.
 The scene comes from ``examples/utils/datasets.h``; the generators are ordinary
 host code and are not part of the lesson.
 
@@ -189,7 +190,7 @@ host code and are not part of the lesson.
 **Step 2 — Upload to the GPU.**
 ``dvector`` owns device memory. The initial guess is uploaded into the
 buffers the solver will update in place; ``constant_pose_ids`` lists the
-gauge anchor.
+gauge anchors.
 
 .. literalinclude:: ../../examples/sparse_bundle_adjustment/main.cpp
    :language: cpp
@@ -199,7 +200,8 @@ gauge anchor.
 
 **Step 3 — Wrap the device memory in state batches.**
 A state batch wraps device memory without copying it. Poses use
-`SE3StateBatch` with state 0 marked constant; points use `VectorStateBatch<3>`
+`SE3StateBatch` with states 0 and 1 marked constant (the gauge anchors);
+points use `VectorStateBatch<3>`
 (see :doc:`api/state`).
 
 **Capacity and active count.** The count passed to a batch constructor is

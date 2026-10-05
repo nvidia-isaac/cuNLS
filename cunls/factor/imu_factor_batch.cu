@@ -22,10 +22,26 @@
 
 #include "cunls/common/helper.h"
 #include "cunls/factor/imu_factor_batch.h"
-#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/lie_device.cuh"
 
 namespace cunls {
+
+namespace {
+
+/**
+ * Factor (measurement) index of evaluation item `item`: factor_ids[item], or
+ * item modulo the batch size when factor_ids is null (see FactorBatch::Evaluate).
+ */
+__device__ __forceinline__ int FactorMeasurementIndex(int item, const int *factor_ids,
+                                                      int num_factors) {
+  if (factor_ids != nullptr) {
+    return factor_ids[item];
+  }
+  return item < num_factors ? item : item % num_factors;
+}
+
+}  // namespace
+
 namespace {
 
 constexpr int kBlockSize = 128;
@@ -91,13 +107,13 @@ __device__ __forceinline__ void MulAt(const float *A, const float *B, float *C) 
       C[i * 3 + j] = A[i] * B[j] + A[3 + i] * B[3 + j] + A[6 + i] * B[6 + j];
 }
 
-/** C = Aᵀ R for 3x3 A and the rotation R of T. */
-__device__ __forceinline__ void MulAtRotation(const float *A, const SE3Transform &T, float *C) {
+/** C = A R for 3x3 A and the rotation R of T. */
+__device__ __forceinline__ void MulRotation(const float *A, const SE3Transform &T, float *C) {
 #pragma unroll
   for (int i = 0; i < 3; ++i)
 #pragma unroll
     for (int j = 0; j < 3; ++j)
-      C[i * 3 + j] = A[i] * T[j] + A[3 + i] * T[4 + j] + A[6 + i] * T[8 + j];
+      C[i * 3 + j] = A[i * 3] * T[j] + A[i * 3 + 1] * T[4 + j] + A[i * 3 + 2] * T[8 + j];
 }
 
 /** C = Rᵀ A for the rotation R of T and 3x3 A. */
@@ -482,35 +498,35 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
 
   // --- Leader: world frame, defect, Σ = L Lᵀ, residual ---
   float res[kRows] = {}, Li[45] = {};
-  // States are rig_from_world X = (R_x, t_x), as in ReprojectionFactorBatch / PnPFactorBatch.
-  // The IMU in the world: R_imu = R_xᵀ R_bi, p_imu = R_xᵀ (t_bi - t_x).
-  float Xa[9] = {}, Xb[9] = {}, R0[9] = {}, Rh[9] = {}, pa[3] = {}, pb[3] = {}, Tsum = 0.f,
+  // States are world_from_rig T = (R, t), the pose convention of cuNLS (as the
+  // reprojection and PnP factors). The IMU in the world: R_imu = R R_bi, p_imu = R t_bi + t.
+  const float tbi[3] = {prm.body_from_imu[3], prm.body_from_imu[7], prm.body_from_imu[11]};
+  float Ra[9] = {}, Rb[9] = {}, R0[9] = {}, Rh[9] = {}, pa[3] = {}, pb[3] = {}, Tsum = 0.f,
         sigma_inv[6] = {};
   if (leader) {
     const float *Ta = s[0], *Tb = s[3];
-    float ta[3], tb[3];
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        Xa[i * 3 + j] = __ldg(Ta + i * 4 + j);
-        Xb[i * 3 + j] = __ldg(Tb + i * 4 + j);
+        Ra[i * 3 + j] = __ldg(Ta + i * 4 + j);
+        Rb[i * 3 + j] = __ldg(Tb + i * 4 + j);
       }
-      ta[i] = prm.body_from_imu[i * 4 + 3] - __ldg(Ta + i * 4 + 3);
-      tb[i] = prm.body_from_imu[i * 4 + 3] - __ldg(Tb + i * 4 + 3);
     }
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
-      pa[i] = Xa[i] * ta[0] + Xa[3 + i] * ta[1] + Xa[6 + i] * ta[2];
-      pb[i] = Xb[i] * tb[0] + Xb[3 + i] * tb[1] + Xb[6 + i] * tb[2];
+      pa[i] = __ldg(Ta + i * 4 + 3) + Ra[i * 3] * tbi[0] + Ra[i * 3 + 1] * tbi[1] +
+              Ra[i * 3 + 2] * tbi[2];
+      pb[i] = __ldg(Tb + i * 4 + 3) + Rb[i * 3] * tbi[0] + Rb[i * 3 + 1] * tbi[1] +
+              Rb[i * 3 + 2] * tbi[2];
     }
-    MulAtRotation(Xa, prm.body_from_imu, R0);  // IMU rotation at keyframe a
-    Mul(R0, sum.R, Rh);                        // R̂
+    MulRotation(Ra, prm.body_from_imu, R0);  // IMU rotation at keyframe a
+    Mul(R0, sum.R, Rh);                      // R̂
     Tsum = sum.T;
     float e[9];
     {
       float RbI[9], Rt[9];
-      MulAtRotation(Xb, prm.body_from_imu, RbI);
+      MulRotation(Rb, prm.body_from_imu, RbI);
       MulAt(Rh, RbI, Rt);  // R̂ᵀ R_b,imu
       lie_device::LogSO3(Rt, 3, e);
     }
@@ -611,18 +627,20 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
   if constexpr (!kJacobian) return;
 
   // --- Jacobian rows L⁻¹ D⁻¹ ∂e/∂x (D = diag(J_l⁻¹(e_R), I, I)), one row at a time ---
-  // Sensitivities of the prediction in the world frame: φ_a column Ψ_φ = [ΔRᵀ; -R0 [Δv]x;
-  // -R0 [Δp]x], gyro bias [G_R; R0 G_Vg; R0 G_Pg], accel [0; R0 G_Va; R0 G_Pa]. A state
-  // perturbation X Exp([φ; ρ]) (φ in the world frame) moves the IMU by φ_imu = -R_imuᵀ φ =
-  // -R_biᵀ R_x φ and δp_imu = [p_imu]x φ - ρ. Unwhitened rows by block:
-  //   X_a: [Ψ_φ R_biᵀ R_x,a - [0; 0; [p_a]x] | [0; 0; I]]   v_a: -[0; I; T I]
-  //   b_a: -[G_g | G_a]   X_b: [[-R̂ᵀ; 0; [p_b]x] | [0; 0; -I]]   v_b: [0; I; 0]
+  // Sensitivities of the prediction in the world frame: the IMU rotation at a, perturbed
+  // R_imu Exp(φ_imu), changes e by -Ψ_φ φ_imu with Ψ_φ = [ΔRᵀ; -R0 [Δv]x; -R0 [Δp]x]; gyro
+  // bias [G_R; R0 G_Vg; R0 G_Pg], accel [0; R0 G_Va; R0 G_Pa]. A state perturbation
+  // T Exp([φ; ρ]) (rig frame) moves the IMU by φ_imu = R_biᵀ φ and
+  // δp_imu = -R [t_bi]x φ + R ρ. Unwhitened rows by block:
+  //   T_a: [-Ψ_φ R_biᵀ + [0; 0; R_a [t_bi]x] | [0; 0; -R_a]]   v_a: -[0; I; T I]
+  //   b_a: -[G_g | G_a]   T_b: [[R̂ᵀ R_b; 0; -R_b [t_bi]x] | [0; 0; R_b]]   v_b: [0; I; 0]
   float PR[9] = {}, PV[9] = {}, PP[9] = {}, GVg[9] = {}, GPg[9] = {}, GVa[9] = {}, GPa[9] = {};
-  float Sa[9] = {}, Sb[9] = {}, RhT[9] = {};
+  float Sa[9] = {}, Sb[9] = {}, RhTRb[9] = {};
   if (leader) {
     float X[9], Y[9], BX[9];
-    MulRotationT(prm.body_from_imu, Xa, BX);  // R_biᵀ R_x,a
-    MulAt(sum.R, BX, PR);                     // ΔRᵀ R_biᵀ R_x,a
+    const float I[9] = {1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f};
+    MulRotationT(prm.body_from_imu, I, BX);  // R_biᵀ
+    MulAt(sum.R, BX, PR);                    // ΔRᵀ R_biᵀ
     MulSkew(R0, sum.v, -1.f, X);
     Mul(X, BX, PV);
     MulSkew(R0, sum.p, -1.f, Y);
@@ -631,11 +649,9 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
     Mul(R0, sum.GPg, GPg);
     Mul(R0, sum.GVa, GVa);
     Mul(R0, sum.GPa, GPa);
-    const float I[9] = {1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f};
-    MulSkew(I, pa, 1.f, Sa);  // [p_a]x
-    MulSkew(I, pb, 1.f, Sb);
-#pragma unroll
-    for (int i = 0; i < 9; ++i) RhT[i] = -Rh[(i % 3) * 3 + i / 3];  // -R̂ᵀ
+    MulSkew(Ra, tbi, 1.f, Sa);  // R_a [t_bi]x
+    MulSkew(Rb, tbi, 1.f, Sb);
+    MulAt(Rh, Rb, RhTRb);  // R̂ᵀ R_b
   }
   float row[kColumns];
 #pragma unroll
@@ -645,16 +661,17 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
 #pragma unroll
       for (int j = 0; j < 9; ++j) l[j] = j <= i ? Li[Tri(i, j)] : 0.f;
       const float *lR = l, *lV = l + 3, *lP = l + 6;
-      float x[3], y[3], z[3], w[3];
-      // X_a
+      float x[3], y[3], z[3], w[3], u[3];
+      // T_a
       RowMul(lR, PR, x);
       RowMul(lV, PV, y);
       RowMul(lP, PP, z);
       RowMul(lP, Sa, w);
+      RowMul(lP, Ra, u);
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        row[j] = x[j] + y[j] + z[j] - w[j];
-        row[3 + j] = lP[j];
+        row[j] = w[j] - (x[j] + y[j] + z[j]);
+        row[3 + j] = -u[j];
         row[6 + j] = -(lV[j] + Tsum * lP[j]);  // v_a
       }
       // b_a: gyro, accel
@@ -667,13 +684,14 @@ __global__ void __launch_bounds__(kBlockSize, kJacobian ? 2 : 3)
       RowMul(lP, GPa, y);
 #pragma unroll
       for (int j = 0; j < 3; ++j) row[12 + j] = -(x[j] + y[j]);
-      // X_b, v_b, b_b
-      RowMul(lR, RhT, x);
+      // T_b, v_b, b_b
+      RowMul(lR, RhTRb, x);
       RowMul(lP, Sb, y);
+      RowMul(lP, Rb, u);
 #pragma unroll
       for (int j = 0; j < 3; ++j) {
-        row[15 + j] = x[j] + y[j];
-        row[18 + j] = -lP[j];
+        row[15 + j] = x[j] - y[j];
+        row[18 + j] = u[j];
         row[21 + j] = lV[j];
         row[24 + j] = 0.f;
         row[27 + j] = 0.f;

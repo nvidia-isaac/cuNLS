@@ -74,7 +74,7 @@ Constraints
    ``disk_obstacles(obstacles, margin)`` (inequality; disks for SE(2) models,
    spheres for SE(3)) go through the augmented Lagrangian loop.
 
-``build(minimizer=None, options=None, real_time=None, cuda_graph=True)``
+``build(minimizer=None, options=None, real_time=None)``
 assembles the problem. It declares the stages of the states (x_k and u_k in
 stage k, :meth:`pycunls.Problem.set_state_stages`), so the default inner
 minimizer, Levenberg-Marquardt, uses the block-tridiagonal linear solver
@@ -93,16 +93,15 @@ Real-time mode
 The first :meth:`Controller.step` solves to convergence; every later step runs
 a fixed budget of ``outer`` augmented-Lagrangian iterations of ``inner``
 Levenberg-Marquardt iterations with all control on the GPU and a single
-read-back, and with ``cuda_graph`` the step's device work is captured once and
-replayed as a CUDA graph. The warm start carries the plan and the multipliers
+read-back. The warm start carries the plan and the multipliers
 forward, so the iterations of consecutive steps add up (as in real-time
 iteration schemes); the penalty is capped at ``mpc.REAL_TIME_MAX_PENALTY``.
 On an RTX PRO 5000 a step takes about 0.3 ms for a Carter with a 50-step
 horizon, 0.6 ms for a quadrotor (40 steps) and 2.3 ms for 1024 quadrupeds
 (20 steps); the closed-loop tests track as well as with converged steps.
 
-The underlying options are :attr:`pycunls.AugmentedLagrangianMinimizerOptions.real_time`,
-``reuse_structure`` and ``use_cuda_graph``, and the solver's ``options``
+The underlying options are :attr:`pycunls.AugmentedLagrangianMinimizerOptions.real_time`
+and ``reuse_structure``, and the solver's ``options``
 property (assigning keeps the warm-start state).
 
 ===============================================================================

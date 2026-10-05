@@ -6,10 +6,25 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/so2_between_factor_batch.h"
-#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
+
+namespace {
+
+/**
+ * Factor (measurement) index of evaluation item `item`: factor_ids[item], or
+ * item modulo the batch size when factor_ids is null (see FactorBatch::Evaluate).
+ */
+__device__ __forceinline__ int FactorMeasurementIndex(int item, const int *factor_ids,
+                                                      int num_factors) {
+  if (factor_ids != nullptr) {
+    return factor_ids[item];
+  }
+  return item < num_factors ? item : item % num_factors;
+}
+
+}  // namespace
 
 constexpr size_t kBlockSize = 256;
 
@@ -19,7 +34,7 @@ constexpr size_t kSO2AngleStride = 1;
 
 /**
  * @brief Fused kernel: collect L/R SO(2) rotations, compute
- *        R_error = (R_L^T * R_R) * Delta^{-1} in one pass.
+ *        R_error = (R_L^T * R_R) * Delta in one pass.
  *
  * SO(2) is 2x2 so everything is done with scalar ops -- zero loops.
  * Replaces: collect + TransposeSO2 + 2x cuBLAS 2x2 GEMM.
@@ -47,7 +62,7 @@ __global__ void collect_and_compute_so2_between_error_kernel(float const *const 
   const float m2 = l1 * r0 + l3 * r2;
   const float m3 = l1 * r1 + l3 * r3;
 
-  // (L^T*R) * D  (D stores delta^{-1} in the cuBLAS convention)
+  // (L^T*R) * Delta
   const float d0 = D[0], d1 = D[1], d2 = D[2], d3 = D[3];
   out[0] = m0 * d0 + m1 * d2;
   out[1] = m0 * d1 + m1 * d3;

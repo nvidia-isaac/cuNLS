@@ -305,8 +305,8 @@ TEST_F(SparseMatrixTest, Copy) {
   }
 }
 
-/** @brief Verifies GPU vector-form weighted squared step norm: sum(steps[i]^2 *
- * weights[i]). */
+/** @brief Verifies the GPU diagonally weighted squared step norm sum(steps[i]^2 *
+ * weights[i]) (WeightedDotProductToDevice, as Levenberg-Marquardt uses it). */
 TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepFirst) {
   auto test_range = this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepFirstTest");
   // Generate random weights and steps
@@ -332,7 +332,8 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepFirst) {
     auto range = this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepFirst");
     result =
         RunAsyncReduction(stream.GetStream(), dsteps.size(), [&](float *d_out, float *d_partials) {
-          ComputeWeightedSquaredStepAsync(stream.GetStream(), dweights, dsteps, d_out, d_partials);
+          WeightedDotProductToDevice(stream.GetStream(), dsteps.data(), dweights.data(),
+                                     dsteps.data(), dsteps.size(), d_out, d_partials);
         });
   }
 
@@ -340,8 +341,8 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepFirst) {
   ASSERT_NEAR(result, gt_value, 1e-3);
 }
 
-/** @brief Verifies GPU matrix-form weighted squared step norm: steps^T * A *
- * steps. */
+/** @brief Verifies the GPU matrix-weighted squared step norm steps^T * A * steps
+ * (CSR SpMV, then a dot product). */
 TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
   auto test_range =
       this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepSecondTest");
@@ -376,11 +377,12 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
     int num_rows = 0, num_cols = 0, num_nonzeros = 0;
     ExtractMatrixMetadata(stream.GetStream(), input_matrix, num_rows, num_cols, num_nonzeros);
     dvector<float> spmv_scratch;
+    MultiplyCSRByDenseVector(stream.GetStream(), handle, input_matrix, num_rows, num_cols,
+                             num_nonzeros, dsteps, spmv_scratch, buffer);
     result =
         RunAsyncReduction(stream.GetStream(), dsteps.size(), [&](float *d_out, float *d_partials) {
-          ComputeWeightedSquaredStepAsync(stream.GetStream(), handle, input_matrix, num_rows,
-                                          num_cols, num_nonzeros, dsteps, spmv_scratch, buffer,
-                                          d_out, d_partials);
+          DotProductToDevice(stream.GetStream(), dsteps.data(), spmv_scratch.data(), dsteps.size(),
+                             d_out, d_partials);
         });
   }
 
