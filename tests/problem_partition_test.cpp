@@ -28,6 +28,7 @@
 #include <memory>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -209,6 +210,37 @@ TEST(ProblemPartition, SetterValidatesArguments) {
   EXPECT_EQ(problem.NumProblems(), 2u);
   problem.SetProblemPartition(0, {});
   EXPECT_EQ(problem.NumProblems(), 1u);
+}
+
+// A state batch added after SetProblemPartition leaves one batch without an
+// id array: the solve rejects the partition (it would otherwise run as one
+// subproblem).
+TEST(ProblemPartition, RejectsMissingIdArrays) {
+  const Graphs g(2, 4, 5);
+  dvector<float> poses(ToFloat(g.init, 0, 2 * g.n)), extra(std::vector<float>(1, 0.f));
+  SE2StateBatch states(poses.data(), 2 * g.n);
+  states.SetNumActiveStates(2 * g.n);
+  dvector<float> priors(ToFloat(g.priors, 0, 2));
+  SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(priors.data()), 2);
+  prior.SetNumActiveFactors(2);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0), states.StateDevicePtr(g.n)});
+  std::vector<int> ids_host(2 * g.n);
+  for (int i = 0; i < 2 * g.n; ++i) ids_host[i] = i / g.n;
+  dvector<int> ids(ids_host);
+  problem.SetProblemPartition(2, {ids.data()});
+  VectorStateBatch<1> late(extra.data(), 1);
+  late.SetNumActiveStates(1, 0);
+  problem.AddStateBatch(&late);
+  CudaStream stream;
+  GaussNewtonMinimizer minimizer;
+  try {
+    minimizer.Minimize(stream.GetStream(), problem);
+    FAIL() << "expected std::invalid_argument";
+  } catch (const std::invalid_argument &e) {
+    EXPECT_NE(std::string(e.what()).find("expected 2, got 1"), std::string::npos) << e.what();
+  }
 }
 
 }  // namespace

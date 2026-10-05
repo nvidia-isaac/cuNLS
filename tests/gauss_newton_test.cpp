@@ -33,6 +33,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
+#include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -605,7 +606,52 @@ TEST(LevenbergMarquardt, ZeroInitialLambdaEscalatesFromLambdaMin) {
   inverted.lambda_max = 0.5f;
   EXPECT_THROW(LevenbergMarquardtMinimizer{inverted}, std::invalid_argument);
   inverted.lambda_max = 1.f;  // equal bounds: a fixed damping
+  inverted.initial_lambda = 1.f;
   EXPECT_NO_THROW(LevenbergMarquardtMinimizer{inverted});
+  // The damping may not start above its bound, and a rejection must grow it.
+  LevenbergMarquardtMinimizerOptions too_damped;
+  too_damped.lambda_max = 1.f;
+  too_damped.initial_lambda = 2.f;
+  EXPECT_THROW(LevenbergMarquardtMinimizer{too_damped}, std::invalid_argument);
+  for (float upscale : {1.f, 0.5f, 0.f}) {
+    LevenbergMarquardtMinimizerOptions no_growth;
+    no_growth.lambda_upscale = upscale;
+    EXPECT_THROW(LevenbergMarquardtMinimizer{no_growth}, std::invalid_argument) << upscale;
+  }
+}
+
+// Column scaling: the step is mapped back to physical coordinates (dx = S z),
+// so the predicted reduction's damping term is λ dxᵀ diag(H) dx with the
+// unscaled Hessian. On a linear problem the model is exact (ρ = 1) and the
+// first damped step is taken. A badly scaled residual (H = 1e-4) makes a
+// damping term weighted by diag(S H S) = 1 overestimate the prediction ~1e4
+// times: every step would be rejected and the cost would not move.
+TEST(LevenbergMarquardt, ColumnScalingPredictsWithTheUnscaledHessian) {
+  for (bool partitioned : {false, true}) {
+    CudaStream stream;
+    dvector<float> x(std::vector<float>{0.f, 0.f}), targets(std::vector<float>{1.f, -1.f});
+    VectorStateBatch<1> states(x.data(), 2);
+    states.SetNumActiveStates(2);
+    WeightedFactorBatch<PriorVectorFactorBatch<1>> prior(
+        0.01f, reinterpret_cast<const Vector<1> *>(targets.data()), size_t{2});
+    prior.SetNumActiveFactors(2);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, {states.StateDevicePtr(0), states.StateDevicePtr(1)});
+    dvector<int> ids(std::vector<int>{0, 1});
+    if (partitioned) problem.SetProblemPartition(2, {ids.data()});
+    LevenbergMarquardtMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    options.base_options.column_scaling = ColumnScaling::HessianDiagonal;
+    options.base_options.cost_tolerance = 0.f;
+    options.initial_lambda = 10.f;
+    const MinimizerSummary summary =
+        LevenbergMarquardtMinimizer(options).Minimize(stream.GetStream(), problem);
+    ASSERT_GE(summary.iteration_costs.size(), 2u);
+    EXPECT_LT(summary.iteration_costs[1], summary.iteration_costs[0])
+        << "partitioned " << partitioned;
+    EXPECT_LT(summary.final_cost, 1e-3f * summary.initial_cost) << "partitioned " << partitioned;
+  }
 }
 
 }  // namespace cunls

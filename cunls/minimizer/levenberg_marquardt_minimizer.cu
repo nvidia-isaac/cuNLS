@@ -57,6 +57,13 @@ MinimizerOptions BaseOptions(const LevenbergMarquardtMinimizerOptions &o) {
   if (!(o.lambda_max >= o.lambda_min)) {
     throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_max must be >= lambda_min");
   }
+  if (!(o.initial_lambda <= o.lambda_max)) {
+    throw std::invalid_argument(
+        "LevenbergMarquardtMinimizer: initial_lambda must be <= lambda_max");
+  }
+  if (!(o.lambda_upscale > 1.f)) {
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_upscale must be > 1");
+  }
   MinimizerOptions base = o.base_options;
   if (base.max_consecutive_rejected_steps > 0) {
     base.max_consecutive_rejected_steps += RejectionsToMaxDamping(o);
@@ -172,8 +179,16 @@ void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, const Norma
   const size_t n = partition.NumProblems();
   diag_weight_.resize(n);
   matrix_weight_.resize(n);
-  // The predicted reduction's terms δᵀDδ and δᵀHδ, per subproblem.
-  partition.SumRows(stream, step.data(), nullptr, diagonal_.data(), diag_weight_.data());
+  // The predicted reduction's terms δᵀDδ and δᵀHδ, per subproblem. The step
+  // is in physical coordinates (dx = S z, see ColumnScaling), so the damping
+  // term λ zᵀ diag(S H S) z is λ dxᵀ diag(H) dx with the unscaled Hessian;
+  // without column scaling that is the diagonal UpdateSystem extracted.
+  const dvector<float> *hessian_diagonal = &diagonal_;
+  if (Options().column_scaling != ColumnScaling::None) {
+    system.ExtractHessianDiagonal(stream, hessian_diagonal_);
+    hessian_diagonal = &hessian_diagonal_;
+  }
+  partition.SumRows(stream, step.data(), nullptr, hessian_diagonal->data(), diag_weight_.data());
   hessian_step_.resize(step.size());
   system.MultiplyHessian(stream, cusparse_handle_.GetHandle(stream), step, hessian_step_, buffer_);
   partition.SumRows(stream, step.data(), hessian_step_.data(), nullptr, matrix_weight_.data());

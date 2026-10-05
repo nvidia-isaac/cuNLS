@@ -41,6 +41,24 @@ struct BatchView {
 enum ErrorBits : int { kMixedFactor = 1, kIdOutOfRange = 2, kUnknownPointer = 4 };
 
 /**
+ * Whether the problem has a partition into more than one subproblem; throws if
+ * it has one but not one id array per state batch (e.g. a state batch added
+ * after Problem::SetProblemPartition).
+ */
+bool HasPartition(const Problem &problem) {
+  if (problem.NumProblems() <= 1) return false;
+  const size_t expected = problem.GetStateBatches().size();
+  const size_t actual = problem.StateProblemIds().size();
+  if (actual != expected) {
+    throw std::invalid_argument("Problem partition: " + std::to_string(problem.NumProblems()) +
+                                " subproblems need one id array per state batch (expected " +
+                                std::to_string(expected) + ", got " + std::to_string(actual) +
+                                "); call SetProblemPartition after adding every state batch");
+  }
+  return true;
+}
+
+/**
  * Adds v to out[key]. When every lane of the warp has the same key (the usual
  * case: subproblems own contiguous ranges), the warp reduces first and issues
  * one atomic. Must be called by all lanes of the warp; key < 0 adds nothing.
@@ -241,7 +259,7 @@ void ComputeFactorProblemIds(cudaStream_t stream, const Problem &problem,
   const size_t n =
       problem.GetResidualBatches()[residual_batch_index].GetFactorBatch()->NumActiveFactors();
   if (n == 0) return;
-  if (problem.NumProblems() <= 1 || ids.size() != state_batches.size()) {
+  if (!HasPartition(problem)) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_problem, 0, n * sizeof(int), stream));
     return;
   }
@@ -286,10 +304,10 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   for (auto *v : {&active_, &rejected_, &reject_, &converged_, &outcome_, &accept_, &shortened_}) {
     v->resize(num_problems_);
   }
-  // Without a partition every state belongs to subproblem 0, and every
-  // per-subproblem operation has a direct path: no maps to build or validate.
-  const bool partitioned = ids.size() == state_batches.size();
-  if (!partitioned) return;
+  // Without a partition (one subproblem) every state belongs to subproblem 0,
+  // and every per-subproblem operation has a direct path: no maps to build or
+  // validate. A partition must have one id array per state batch.
+  if (!HasPartition(problem)) return;
 
   error_.resize(1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(error_.data(), 0, sizeof(int), stream));

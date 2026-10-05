@@ -36,7 +36,8 @@ struct LevenbergMarquardtMinimizerOptions {
    * @brief Initial value for the damping factor lambda.
    *
    * Controls the initial regularization strength. Higher values make the
-   * algorithm more conservative (closer to gradient descent).
+   * algorithm more conservative (closer to gradient descent). Must be
+   * <= lambda_max; 0 (Gauss-Newton steps) is allowed.
    * Default: 1e-3
    */
   float initial_lambda = 1e-3;
@@ -51,7 +52,8 @@ struct LevenbergMarquardtMinimizerOptions {
   float relative_reduction_tolerance = 1e-6;
 
   /**
-   * @brief Factor by which lambda is increased when a step is rejected.
+   * @brief Factor by which lambda is increased when a step is rejected; must
+   * be > 1.
    *
    * The k-th consecutive rejection multiplies lambda by
    * lambda_upscale * 2^(k-1) (Nielsen's rule, as in Ceres and g2o), so the
@@ -141,7 +143,8 @@ class LevenbergMarquardtMinimizer : public Minimizer {
    * widened by the rejections the damping needs to escalate from lambda_min to
    * lambda_max.
    *
-   * @throws std::invalid_argument unless 0 < lambda_min <= lambda_max.
+   * @throws std::invalid_argument unless 0 < lambda_min <= lambda_max,
+   *         initial_lambda <= lambda_max and lambda_upscale > 1.
    */
   explicit LevenbergMarquardtMinimizer(
       const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions());
@@ -161,16 +164,17 @@ class LevenbergMarquardtMinimizer : public Minimizer {
 
   const LevenbergMarquardtMinimizerOptions options_;  ///< As constructed (not widened).
 
-  dvector<float> lambda_;           ///< Per subproblem: current damping λ.
-  dvector<float> next_lambda_;      ///< Per subproblem: λ being updated (swapped with lambda_).
-  dvector<float> quality_;          ///< Per subproblem: ρ of the last step (for the λ update).
-  dvector<float> diag_weight_;      ///< Per subproblem: δᵀ diag(H) δ.
-  dvector<float> matrix_weight_;    ///< Per subproblem: δᵀ H δ.
-  dvector<float> diagonal_;         ///< Per row: diag(H) of the working left-hand side.
-  dvector<float> damping_;          ///< Per row: λ diag(H).
-  dvector<float> hessian_step_;     ///< Per row: H δ.
-  cuSPARSEHandle cusparse_handle_;  ///< For H δ in CSR storage.
-  dvector<uint8_t> buffer_;         ///< cuSPARSE scratch of H δ.
+  dvector<float> lambda_;            ///< Per subproblem: current damping λ.
+  dvector<float> next_lambda_;       ///< Per subproblem: λ being updated (swapped with lambda_).
+  dvector<float> quality_;           ///< Per subproblem: ρ of the last step (for the λ update).
+  dvector<float> diag_weight_;       ///< Per subproblem: δᵀ diag(H) δ.
+  dvector<float> matrix_weight_;     ///< Per subproblem: δᵀ H δ.
+  dvector<float> diagonal_;          ///< Per row: diag of the working left-hand side (S H S).
+  dvector<float> hessian_diagonal_;  ///< Per row: diag(H) unscaled (with column scaling).
+  dvector<float> damping_;           ///< Per row: λ diag(H).
+  dvector<float> hessian_step_;      ///< Per row: H δ.
+  cuSPARSEHandle cusparse_handle_;   ///< For H δ in CSR storage.
+  dvector<uint8_t> buffer_;          ///< cuSPARSE scratch of H δ.
 };
 
 }  // namespace cunls

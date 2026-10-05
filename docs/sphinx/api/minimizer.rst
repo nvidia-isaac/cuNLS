@@ -262,11 +262,13 @@ parameters for Levenberg-Marquardt.
   pre-configured ``MinimizerOptions`` instance here.
 - **initial_lambda** (``float``, default ``1e-3``) — starting damping
   coefficient :math:`\lambda`.  Larger values make the first step more
-  like gradient descent; smaller values start closer to Gauss-Newton.
+  like gradient descent; smaller values start closer to Gauss-Newton.  Must
+  not exceed ``lambda_max``.
 - **lambda_upscale** (``float``, default ``2.0``) — factor by which
   :math:`\lambda` is *increased* after a rejected step; the :math:`k`-th
   consecutive rejection multiplies by ``lambda_upscale`` :math:`\cdot 2^{k-1}`
   (Nielsen's rule), so the damping escalates quickly when the model is poor.
+  Must be greater than 1.
 - **lambda_downscale** (``float``, default ``0.5``) — factor by which
   :math:`\lambda` is *decreased* after a very successful step (step quality
   above ``lambda_downscale_threshold``).
@@ -754,12 +756,13 @@ Options for the **Levenberg-Marquardt** minimizer. Extends
 constructing a :code:`LevenbergMarquardtMinimizer`.
 
 - **base_options** [in]: Base Gauss-Newton options (:code:`MinimizerOptions`).
-- **initial_lambda** [in]: Initial damping coefficient. Default: 1e-3.
+- **initial_lambda** [in]: Initial damping coefficient; at most ``lambda_max``.
+  Default: 1e-3.
 - **relative_reduction_tolerance** [in]: Convergence threshold on predicted
   relative cost reduction. Default: 1e-6.
 - **lambda_upscale** [in]: Factor by which :math:`\lambda` is increased after a
-  rejected step, times :math:`2^{k-1}` at the :math:`k`-th consecutive rejection.
-  Default: 2.0.
+  rejected step, times :math:`2^{k-1}` at the :math:`k`-th consecutive rejection;
+  greater than 1. Default: 2.0.
 - **lambda_downscale** [in]: Factor by which :math:`\lambda` is decreased after a
   very successful step. Default: 0.5.
 - **lambda_max** [in]: Upper bound for :math:`\lambda`. Default: 1e+6.
