@@ -13,7 +13,7 @@ Defines residual/Jacobian models evaluated in GPU batches.
 
 Every factor reads pose states (SE2/SE3/SO2/SO3) as world_from_rig T (the
 rig's pose in the world), perturbed on the right (T Exp(δ), δ in the rig
-frame). Reprojection / PnP see a world point at E T^-1 P (projection.cuh).
+frame). Reprojection / PnP see a world point at E T^-1 P.
 
 ## Built-in factor families
 
@@ -86,7 +86,7 @@ manifold-generic, compile-time-deduced facade:
   when 0): item t is factor `factor_ids[t]` (or t % NumActiveFactors()) with its own
   pointer row `state_pointers[t * B ..]`; outputs are item-major. Results must
   match a plain evaluation bitwise. All built-in factors implement it (device
-  helper `FactorMeasurementIndex` in `indexed_evaluation.cuh`); RANSAC relies
+  helper `FactorMeasurementIndex`, defined in each factor's `.cu`); RANSAC relies
   on it.
 
 ## Related modules

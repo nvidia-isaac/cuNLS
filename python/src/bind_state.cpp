@@ -133,7 +133,7 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle data, size_t capacity) {
-            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
+            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
             new (self) Class(ptr, capacity);
           },
           nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
@@ -141,8 +141,9 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
           "__init__",
           [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
              size_t const_capacity) {
-            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
-            auto cids = reinterpret_cast<const int *>(extract_device_ptr(const_ids));
+            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
+            auto cids =
+                reinterpret_cast<const int *>(extract_device_ptr(const_ids, "int32", "const_ids"));
             new (self) Class(ptr, capacity, cids, const_capacity);
           },
           nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
@@ -163,8 +164,9 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
             if (lower.is_none() || upper.is_none()) {
               throw std::invalid_argument("set_bounds: need both bounds or neither");
             }
-            self.SetBounds(reinterpret_cast<const float *>(extract_device_ptr(lower)),
-                           reinterpret_cast<const float *>(extract_device_ptr(upper)));
+            self.SetBounds(
+                reinterpret_cast<const float *>(extract_device_ptr(lower, "float32", "lower")),
+                reinterpret_cast<const float *>(extract_device_ptr(upper, "float32", "upper")));
           },
           nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(),
@@ -184,7 +186,7 @@ void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
   cls.def(
          "__init__",
          [](Class *self, nb::handle data, size_t capacity) {
-           auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
+           auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
            new (self) Class(ptr, capacity);
          },
          nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
@@ -192,8 +194,9 @@ void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
           "__init__",
           [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
              size_t const_capacity) {
-            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data));
-            auto cids = reinterpret_cast<const int *>(extract_device_ptr(const_ids));
+            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
+            auto cids =
+                reinterpret_cast<const int *>(extract_device_ptr(const_ids, "int32", "const_ids"));
             new (self) Class(ptr, capacity, cids, const_capacity);
           },
           nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
@@ -283,7 +286,7 @@ void bind_state(nb::module_ &m) {
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
              size_t capacity) {
-            auto ptr = extract_device_ptr(data);
+            auto ptr = extract_device_ptr(data, "float32", "data");
             new (self) PyStateBatch(ptr, ambient_size, tangent_size, capacity, 0, 0);
           },
           nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("capacity"),
@@ -292,8 +295,8 @@ void bind_state(nb::module_ &m) {
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
              size_t capacity, nb::handle const_ids, size_t const_capacity) {
-            auto ptr = extract_device_ptr(data);
-            auto cids = extract_device_ptr(const_ids);
+            auto ptr = extract_device_ptr(data, "float32", "data");
+            auto cids = extract_device_ptr(const_ids, "int32", "const_ids");
             new (self)
                 PyStateBatch(ptr, ambient_size, tangent_size, capacity, cids, const_capacity);
           },

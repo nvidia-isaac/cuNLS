@@ -66,6 +66,13 @@ read-only properties and methods.
   :math:`\mathbb{R}^3` point), and ``PnPFactorBatch`` returns ``[6]`` (pose
   only; 3-D points are fixed in the constructor).
 
+**Device buffers.** Constructor and state-batch arguments typed
+``DevicePointer`` take a CuPy array or a raw integer pointer. CuPy arrays are
+checked against the dtype the kernels read — ``float32`` for data and
+measurements, ``int32`` for ids and indices, ``uint64`` for state-pointer
+tables — and a mismatch raises ``TypeError`` (``cp.arange`` is int64, NumPy
+and CuPy default to float64). Raw integer pointers are not checked.
+
 **C++ reference:** :ref:`cpp-factor-batch`.
 
 .. _py-prior-vector-factor:
@@ -635,6 +642,38 @@ Symmetric point-to-plane ICP factor.  Both frames contribute normals;
 :ref:`SE3StateBatch <py-lie-state-batches>`.
 
 **C++ reference:** :ref:`cpp-symmetric-point-to-plane-factor-batch`.
+
+.. _py-motion-prior-factors:
+
+Motion priors
+--------------------------------------------------------------------------------
+
+Constant-velocity (CV) and constant-acceleration (CA) priors between
+consecutive poses, for SE(3), SO(3), SE(2) and SO(2)
+(``ConstantVelocitySE3FactorBatch``, ``ConstantAccelerationSO2FactorBatch``,
+...). Residuals and state layout as in the C++ reference.
+
+.. code-block:: python
+
+   fb = pycunls.ConstantVelocitySE3FactorBatch(time_steps, capacity)
+   # Weighted by the closed-form process-noise information Q(dt)^-1:
+   fb = pycunls.ConstantVelocityInformationSE3FactorBatch(stream, time_steps, qc_diag, capacity)
+   fb.update(stream, n)  # after rewriting time_steps / qc_diag in place
+
+- **time_steps** (``DevicePointer``) — ``capacity`` float32 durations
+  :math:`\Delta t_k = t_{k+1} - t_k`.
+- **qc_diag** (``DevicePointer``) — the continuous-time process-noise PSD
+  diagonal, one float32 per tangent DOF (6 / 3 / 3 / 1), constant across the
+  batch. Smaller values trust the motion model more.
+- **stream** (``CudaStream``) — the information matrices are computed on it
+  at construction and by ``update``.
+
+**State layout:** CV ``[pose_k, pose_{k+1}, v_k, v_{k+1}]``, CA additionally
+``a_k, a_{k+1}``: poses from the matching Lie state batch (world_from_body,
+see :ref:`pose-convention`), velocities and accelerations (body frame) from
+``VectorStateBatch6`` / ``VectorStateBatch3`` / ``VectorStateBatch1``.
+
+**C++ reference:** :ref:`cpp-motion-prior-factors`.
 
 .. _py-information-factor-batch:
 
@@ -1599,6 +1638,8 @@ names:
   Header: :code:`cunls/factor/motion/constant_acceleration_factor_batch.h`.
   Identical mechanism and explicit-template-argument-only convention as
   ``ConstantVelocityFactorBatch<Manifold>``.
+
+.. _cpp-motion-prior-factors:
 
 Motion prior factors
 ---------------------

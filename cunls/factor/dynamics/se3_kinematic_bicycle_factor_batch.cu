@@ -19,10 +19,26 @@
 
 #include "cunls/common/helper.h"
 #include "cunls/factor/dynamics/se3_kinematic_bicycle_factor_batch.h"
-#include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/math/lie_device.cuh"
 
 namespace cunls {
+
+namespace {
+
+/**
+ * Factor (measurement) index of evaluation item `item`: factor_ids[item], or
+ * item modulo the batch size when factor_ids is null (see FactorBatch::Evaluate).
+ */
+__device__ __forceinline__ int FactorMeasurementIndex(int item, const int *factor_ids,
+                                                      int num_factors) {
+  if (factor_ids != nullptr) {
+    return factor_ids[item];
+  }
+  return item < num_factors ? item : item % num_factors;
+}
+
+}  // namespace
+
 namespace {
 
 constexpr int kBlockSize = 64;                   // keeps the staging buffer under 48 KB

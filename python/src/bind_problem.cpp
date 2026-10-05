@@ -105,7 +105,8 @@ void bind_problem(nb::module_ &m) {
              cunls::LossFunctionBatch *loss,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
             self.AddFactorBatch(factor_batch, loss,
-                                reinterpret_cast<float *const *>(extract_device_ptr(table)),
+                                reinterpret_cast<float *const *>(
+                                    extract_device_ptr(table, "uint64", "state_pointer_table")),
                                 jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::kw_only(), nb::arg("state_pointer_table"),
@@ -123,7 +124,8 @@ void bind_problem(nb::module_ &m) {
              cunls::LossFunctionBatch *loss,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
             self.AddFactorBatch(factor_batch, loss, slot_state_batches,
-                                reinterpret_cast<const int *>(extract_device_ptr(indices)),
+                                reinterpret_cast<const int *>(
+                                    extract_device_ptr(indices, "int32", "state_indices")),
                                 jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::arg("slot_state_batches"), nb::arg("state_indices"),
@@ -160,7 +162,8 @@ void bind_problem(nb::module_ &m) {
           [](cunls::Problem &self, size_t num_problems, const std::vector<nb::handle> &ids) {
             std::vector<const int *> ptrs;
             for (const auto &h : ids) {
-              ptrs.push_back(reinterpret_cast<const int *>(extract_device_ptr(h)));
+              ptrs.push_back(reinterpret_cast<const int *>(
+                  extract_device_ptr(h, "int32", "state_problem_ids")));
             }
             self.SetProblemPartition(num_problems, ptrs);
           },
@@ -174,7 +177,8 @@ void bind_problem(nb::module_ &m) {
           [](cunls::Problem &self, const std::vector<nb::handle> &stages) {
             std::vector<const int *> ptrs;
             for (const auto &h : stages) {
-              ptrs.push_back(reinterpret_cast<const int *>(extract_device_ptr(h)));
+              ptrs.push_back(
+                  reinterpret_cast<const int *>(extract_device_ptr(h, "int32", "state_stages")));
             }
             self.SetStateStages(ptrs);
           },

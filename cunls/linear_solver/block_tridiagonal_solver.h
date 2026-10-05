@@ -41,8 +41,11 @@ namespace cunls {
  * shared memory, O(K m³) work for K stages of at most m unknowns (m <= 32).
  * Stages smaller than m are padded with identity rows. No host
  * synchronization: the solve can be captured in a CUDA graph. A non-positive
- * pivot (a singular system) is replaced by a tiny positive one, as no
- * read-back reports it.
+ * pivot (a singular system) is counted on the device and replaced by a tiny
+ * positive one. With safety checks enabled (MinimizerOptions::
+ * disable_safety_checks = false) Solve reads the count back and fails, so the
+ * minimizer throws; with them disabled (the default; required for CUDA-graph
+ * capture) the solve stays free of host synchronization.
  *
  * Known gaps (measured on an RTX PRO 5000 Blackwell):
  *
@@ -73,6 +76,8 @@ class BlockTridiagonalSolver : public SparseLinearSolver {
   bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) override;
 
+  void DisableSafetyChecks() override { safety_checks_enabled_ = false; }
+
   /** @brief Largest stage block size supported (one warp per subproblem). */
   static constexpr int kMaxStageSize = 32;
 
@@ -89,6 +94,8 @@ class BlockTridiagonalSolver : public SparseLinearSolver {
   dvector<int> stage_sizes_;
   dvector<float> blocks_;   ///< P*K*m*m D blocks (then L), P*K*m*m C blocks (then W).
   dvector<float> vectors_;  ///< P*K*m right-hand side, then solution.
+  dvector<int> num_singular_;  ///< Non-positive pivots of the last Solve.
+  bool safety_checks_enabled_ = true;
 };
 
 }  // namespace cunls
