@@ -480,7 +480,9 @@ Reprojection error for bundle adjustment.  Observations must be in
 **State layout:** two states per factor — ``[SE3 pose, R^3 point]`` — from
 :ref:`SE3StateBatch <py-lie-state-batches>` and
 :ref:`VectorStateBatch3 <py-vector-state-batches>` respectively. The pose is
-world_from_rig, the rig's pose in the world (:ref:`pose-convention`).
+world_from_rig, the rig's pose in the world (:ref:`pose-convention`). This
+binding has no ``camera_from_rig`` argument: the camera is the rig (identity
+extrinsic), :math:`P_{\mathrm{cam}} = T^{-1} P`.
 
 **C++ reference:** :ref:`cpp-reprojection-factor-batch`.
 

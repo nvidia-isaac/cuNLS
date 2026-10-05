@@ -200,7 +200,8 @@ gauge anchors.
 
 **Step 3 — Wrap the device memory in state batches.**
 A state batch wraps device memory without copying it. Poses use
-`SE3StateBatch` with state 0 marked constant; points use `VectorStateBatch<3>`
+`SE3StateBatch` with states 0 and 1 marked constant (the gauge anchors);
+points use `VectorStateBatch<3>`
 (see :doc:`api/state`).
 
 **Capacity and active count.** The count passed to a batch constructor is

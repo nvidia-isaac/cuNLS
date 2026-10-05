@@ -19,6 +19,8 @@
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+
 #include "gauss_newton_minimizer.h"
 
 namespace cunls {
@@ -82,10 +84,11 @@ struct LevenbergMarquardtMinimizerOptions {
   float lambda_max = 1e+6;
 
   /**
-   * @brief Minimum allowed value for lambda.
+   * @brief Minimum allowed value for lambda; must be positive.
    *
    * Prevents lambda from becoming too small, which could cause numerical
-   * instability.
+   * instability. A rejected step escalates from at least this value, so an
+   * initial_lambda of 0 (pure Gauss-Newton steps) still recovers.
    * Default: 1e-6
    */
   float lambda_min = 1e-6;
@@ -133,7 +136,11 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
    */
   LevenbergMarquardtMinimizer(
       const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions())
-      : GaussNewtonMinimizer(options.base_options), options_(options) {}
+      : GaussNewtonMinimizer(options.base_options), options_(options) {
+    if (!(options_.lambda_min > 0.f)) {
+      throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_min must be positive");
+    }
+  }
 
  private:
   /**

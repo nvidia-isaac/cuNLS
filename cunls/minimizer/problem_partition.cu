@@ -210,7 +210,9 @@ __global__ void step_control_kernel(BatchedStepControlParams params, size_t num_
         // Nielsen's escalation: the k-th consecutive rejection multiplies by
         // lambda_upscale * 2^(k-1) (see LevenbergMarquardtMinimizerOptions).
         if (params.levenberg_marquardt) {
-          lambda[p] = fminf(lambda[p] * params.lambda_upscale * ldexpf(1.f, min(rejected[p], 30)),
+          // Floored at lambda_min first, so an initial lambda of 0 can grow.
+          lambda[p] = fminf(fmaxf(lambda[p], params.lambda_min) * params.lambda_upscale *
+                                ldexpf(1.f, min(rejected[p], 30)),
                             params.lambda_max);
         }
         rejected[p] += 1;

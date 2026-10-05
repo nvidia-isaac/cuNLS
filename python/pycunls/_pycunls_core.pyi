@@ -593,7 +593,8 @@ class CustomFactorBatch(FactorBatch):
 class ReprojectionFactorBatch(FactorBatch):
     """Batched 2D reprojection factor. Residual=2, States=[SE3(6), Point(3)].
 
-    The pose state is world_from_rig (the rig's pose in the world).
+    The pose state is world_from_rig (the rig's pose in the world); the camera is the
+    rig (identity camera_from_rig): P_cam = pose^-1 * P_world.
     Observations must be in normalized image coordinates (K^-1 applied).
     """
 

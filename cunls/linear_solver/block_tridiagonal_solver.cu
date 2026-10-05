@@ -410,6 +410,7 @@ bool BlockTridiagonalSolver::Initialize(cudaStream_t stream, const Problem &prob
   stage_sizes_ = dvector<int>(stage_sizes);
   blocks_.resize(2 * c_offset);
   vectors_.resize(static_cast<size_t>(P) * K * m);
+  num_singular_.resize(1);  // here, not in Solve: Solve may run under CUDA-graph capture
   LogMessage("BlockTridiagonalSolver: {} subproblems, {} stages, stage blocks of {}", P, K, m);
   return true;
 }
@@ -425,7 +426,6 @@ bool BlockTridiagonalSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &s
   const size_t c_offset = blocks_.size() / 2;
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(blocks_.data(), 0, blocks_.size() * sizeof(float), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(vectors_.data(), 0, vectors_.size() * sizeof(float), stream));
-  if (num_singular_.size() < 1) num_singular_.resize(1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(num_singular_.data(), 0, sizeof(int), stream));
   scatter_matrix_kernel<<<Blocks(nnz), kThreads, 0, stream>>>(
       spd_matrix.values.data(), entry_slot_.data(), nnz, blocks_.data());

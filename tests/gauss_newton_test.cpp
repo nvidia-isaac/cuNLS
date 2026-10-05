@@ -573,4 +573,33 @@ TEST(LevenbergMarquardt, LinearProblemShrinksDamping) {
   }
 }
 
+// An initial damping of 0 is valid (Gauss-Newton steps), and a rejected step
+// still escalates from lambda_min: from x = 0 the undamped step lands where
+// the cost is NaN, so lambda must grow (to >= 1.5) before a step is taken.
+// lambda_min itself must be positive.
+TEST(LevenbergMarquardt, ZeroInitialLambdaEscalatesFromLambdaMin) {
+  for (bool partitioned : {false, true}) {
+    CudaStream stream;
+    dvector<float> x(std::vector<float>{0.f});
+    VectorStateBatch<1> states(x.data(), 1);
+    states.SetNumActiveStates(1);
+    NanBeyondTwoFactor factor;
+    factor.SetNumActiveFactors(1);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&factor, std::vector<float *>{states.StateDevicePtr(0)});
+    dvector<int> ids(std::vector<int>{0});
+    if (partitioned) problem.SetProblemPartition(2, {ids.data()});
+    LevenbergMarquardtMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+    options.initial_lambda = 0.f;
+    const MinimizerSummary summary =
+        LevenbergMarquardtMinimizer(options).Minimize(stream.GetStream(), problem);
+    EXPECT_LT(summary.final_cost, summary.initial_cost) << "partitioned " << partitioned;
+  }
+  LevenbergMarquardtMinimizerOptions bad;
+  bad.lambda_min = 0.f;
+  EXPECT_THROW(LevenbergMarquardtMinimizer{bad}, std::invalid_argument);
+}
+
 }  // namespace cunls

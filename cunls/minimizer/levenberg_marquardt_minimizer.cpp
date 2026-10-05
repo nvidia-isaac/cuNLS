@@ -152,7 +152,10 @@ bool LevenbergMarquardtMinimizer::RejectStep(float step_quality) {
     LogMessage("Reject step");
     // Increase lambda to make next step more conservative, faster at each
     // consecutive rejection.
-    lambda_ *= options_.lambda_upscale * std::ldexp(1.f, std::min(consecutive_rejects_, 30));
+    // Floored at lambda_min first: an initial lambda of 0 is valid (pure
+    // Gauss-Newton steps) but would never grow.
+    lambda_ = std::max(lambda_, options_.lambda_min) * options_.lambda_upscale *
+              std::ldexp(1.f, std::min(consecutive_rejects_, 30));
     lambda_ = std::min(lambda_, options_.lambda_max);
     ++consecutive_rejects_;
     return true;

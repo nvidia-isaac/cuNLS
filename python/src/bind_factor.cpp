@@ -259,8 +259,8 @@ void bind_factor(nb::module_ &m) {
   nb::class_<cunls::ReprojectionFactorBatch, cunls::FactorBatch>(
       m, "ReprojectionFactorBatch",
       "Batched 2D reprojection factor. Residual=2, States=[SE3(6), Point(3)].\n"
-      "The pose state is world_from_rig (the rig's pose in the world); the camera sees\n"
-      "P_cam = camera_from_rig * pose^-1 * P_world.\n"
+      "The pose state is world_from_rig (the rig's pose in the world). This binding uses an\n"
+      "identity camera_from_rig (camera = rig): P_cam = pose^-1 * P_world.\n"
       "Observations must be in normalized image coordinates (K^-1 applied).")
       .def(
           "__init__",
