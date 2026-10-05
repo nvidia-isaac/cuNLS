@@ -17,11 +17,15 @@
 
 // Minimize() wall time on representative problems, Gauss-Newton and
 // Levenberg-Marquardt: a single small pose (PnP), a single small and a large
-// pose graph, a batch of small pose graphs (one subproblem each) and
+// pose graph, a batch of small pose graphs (one subproblem each), bounded
+// scalar chains (projected Gauss-Newton through the augmented Lagrangian) and
 // real-time augmented Lagrangian MPC calls. Disabled by default; run with
 //   nls_tests --gtest_also_run_disabled_tests --gtest_filter='*MinimizerBenchmark*'
 // Every case prints one line:
 //   BENCH <case> <minimizer> median_ms=... min_ms=... iterations=... final_cost=...
+// and the bounded cases also a checksum of the final states (the assembly sums
+// with atomics, so expect the last digits to vary from run to run):
+//   CHECK <case> <minimizer> sum=... abs_sum=...
 
 #include <gtest/gtest.h>
 
@@ -32,6 +36,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -43,6 +48,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se2_between_factor_batch.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/between/vector_between_factor_batch.h"
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/dynamics/se2_differential_drive_factor_batch.h"
 #include "cunls/factor/pnp_factor_batch.h"
@@ -324,6 +330,100 @@ TEST(MinimizerBenchmark, DISABLED_SE3LoopClosurePGO) {
     THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_d.data(), init_f.size() * sizeof(float),
                                    cudaMemcpyDeviceToDevice));
   });
+}
+
+/**
+ * Chains of n scalars pulled to random targets, smoothed, inside [-1, 1] (two
+ * components one-sided), the first state of every chain constant and outside
+ * the box; solved by the augmented Lagrangian (no constraint rows: one
+ * projected Gauss-Newton / Levenberg-Marquardt solve).
+ */
+void BoundedChains(const std::string &name, int chains, int n, SparseLinearSolverType solver,
+                   int reps) {
+  const int total = chains * n;
+  constexpr float kInf = std::numeric_limits<float>::infinity();
+  std::mt19937 rng(7);
+  std::normal_distribution<float> normal(0.f, 2.5f);
+  std::vector<float> t(total), lo(total, -1.f), hi(total, 1.f), x0(total, 0.f);
+  for (float &v : t) v = normal(rng);
+  lo[3] = -kInf;
+  hi[5] = kInf;
+  x0[2] = 5.f;
+  std::vector<int> const_ids;
+  for (int c = 0; c < chains; ++c) {
+    const_ids.push_back(c * n);
+    x0[c * n] = 3.f;
+  }
+  dvector<float> x(x0), init(x0), d_t(t), d_lo(lo), d_hi(hi);
+  dvector<float> zeros(std::vector<float>(total, 0.f));
+  dvector<int> d_const(const_ids);
+  VectorStateBatch<1> states(x.data(), total, d_const.data(), const_ids.size());
+  states.SetNumActiveStates(total, const_ids.size());
+  states.SetBounds(d_lo.data(), d_hi.data());
+  PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(d_t.data()), total);
+  prior.SetNumActiveFactors(total);
+  const int edges = chains * (n - 1);
+  WeightedFactorBatch<VectorBetweenFactorBatch<1>> smooth(
+      2.f, reinterpret_cast<const Vector<1> *>(zeros.data()), static_cast<size_t>(edges));
+  smooth.SetNumActiveFactors(edges);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  std::vector<float *> prior_ptrs, edge_ptrs;
+  for (int i = 0; i < total; ++i) prior_ptrs.push_back(states.StateDevicePtr(i));
+  for (int c = 0; c < chains; ++c) {
+    for (int k = 0; k + 1 < n; ++k) {
+      edge_ptrs.push_back(states.StateDevicePtr(c * n + k));
+      edge_ptrs.push_back(states.StateDevicePtr(c * n + k + 1));
+    }
+  }
+  problem.AddFactorBatch(&prior, prior_ptrs);
+  problem.AddFactorBatch(&smooth, edge_ptrs);
+  std::vector<int> ids(total);
+  for (int i = 0; i < total; ++i) ids[i] = i / n;
+  dvector<int> d_ids(ids);
+  if (chains > 1) problem.SetProblemPartition(chains, {d_ids.data()});
+
+  CudaStream stream;
+  auto run = [&](Minimizer &inner, const char *label) {
+    AugmentedLagrangianMinimizer solver_al(inner);
+    auto reset = [&] {
+      THROW_ON_CUDA_ERROR(
+          cudaMemcpy(x.data(), init.data(), total * sizeof(float), cudaMemcpyDeviceToDevice));
+    };
+    Print(name, label, Time(reps, reset, [&] {
+            const auto s = solver_al.Minimize(stream.GetStream(), problem);
+            MinimizerSummary out;
+            out.num_iterations = s.inner_iterations;
+            out.final_cost = s.final_cost;
+            return out;
+          }));
+    std::vector<float> h(total);
+    x.CopyToHost(h.data(), total);
+    double sum = 0, abs_sum = 0;
+    for (float v : h) {
+      sum += v;
+      abs_sum += std::fabs(v);
+    }
+    std::printf("CHECK %-28s %-3s sum=%.9g abs_sum=%.9g\n", name.c_str(), label, sum, abs_sum);
+  };
+  MinimizerOptions o = Options(solver, 50);
+  o.max_line_search_steps = 0;
+  {
+    GaussNewtonMinimizer gn(o);
+    run(gn, "GN");
+  }
+  {
+    LevenbergMarquardtMinimizerOptions lm;
+    lm.base_options = o;
+    lm.relative_reduction_tolerance = 1e-10f;
+    LevenbergMarquardtMinimizer minimizer(lm);
+    run(minimizer, "LM");
+  }
+}
+
+TEST(MinimizerBenchmark, DISABLED_BoundedChains) {
+  BoundedChains("bounded_chain_1x64", 1, 64, SparseLinearSolverType::DenseLDLT, 200);
+  BoundedChains("bounded_chains_4096x16", 4096, 16, SparseLinearSolverType::cuDSS, 30);
 }
 
 /** Real-time AL calls on B SE(2) differential-drive trajectories of N stages (as real_time_test).
