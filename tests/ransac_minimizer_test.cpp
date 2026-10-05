@@ -755,7 +755,7 @@ TEST_P(RansacPnPTest, RejectsOutliersAndMatchesInlierOnlySolution) {
 
   PnPSetup setup(scene, init);
   RansacSummary summary;
-  std::unique_ptr<RansacGaussNewtonMinimizer> ransac;
+  std::unique_ptr<RansacMinimizer> ransac;
   if (c.levenberg_marquardt) {
     RansacLevenbergMarquardtMinimizerOptions lm;
     lm.base_options = PnPOptions();
@@ -1321,7 +1321,7 @@ RunResult RunPnP(const PnPScene &scene, const SE3Transform &init, RansacMinimize
     problem = &syncing_problem;
   }
   RunResult out;
-  std::unique_ptr<RansacGaussNewtonMinimizer> r;
+  std::unique_ptr<RansacMinimizer> r;
   if (lm) {
     RansacLevenbergMarquardtMinimizerOptions lo;
     lo.base_options = o;

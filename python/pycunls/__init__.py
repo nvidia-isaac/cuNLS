@@ -83,6 +83,7 @@ from pycunls._pycunls_core import (
     RansacMinimizerOptions,
     RansacLevenbergMarquardtMinimizerOptions,
     RansacSummary,
+    RansacMinimizer,
     RansacGaussNewtonMinimizer,
     RansacLevenbergMarquardtMinimizer,
     # --- Problem ---
@@ -226,6 +227,7 @@ __all__ = [
     "RansacMinimizerOptions",
     "RansacLevenbergMarquardtMinimizerOptions",
     "RansacSummary",
+    "RansacMinimizer",
     "RansacGaussNewtonMinimizer",
     "RansacLevenbergMarquardtMinimizer",
     "Problem",

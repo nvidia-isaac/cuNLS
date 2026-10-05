@@ -27,19 +27,24 @@
 
 #include <vector>
 
+#include "cunls/common/pinned_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/minimizer/ransac/hypothesis_scorer.h"
 #include "cunls/minimizer/ransac/ransac_layout.h"
 #include "cunls/minimizer/ransac/slot_set.h"
-#include "cunls/minimizer/ransac_minimizer.h"
 
 namespace cunls {
+
+struct RansacMinimizerOptions;
+struct RansacSummary;
+
 namespace ransac_internal {
 
 /**
- * @brief State of a RANSAC minimizer between and during Minimize() calls.
+ * @brief State of a RANSAC minimizer between and during Minimize() calls
+ * (data only; RunRansac() is the behaviour).
  *
- * Minimize():
+ * RunRansac():
  *  1. Prepare: validate, derive the layout, size every buffer.
  *  2. Rounds: sample K minimal sets, iterate them into hypotheses, score them
  *     and keep the best so far. Stop adaptively.
@@ -48,51 +53,33 @@ namespace ransac_internal {
  * The device keeps the best-so-far estimate and statistics; the host reads
  * them once per round and once at the end.
  */
-class RansacContext {
- public:
-  RansacContext(const RansacMinimizerOptions &options, const SolverSettings &settings);
-  ~RansacContext();
-  RansacContext(const RansacContext &) = delete;
-  RansacContext &operator=(const RansacContext &) = delete;
-
-  RansacSummary Minimize(cudaStream_t stream, Problem &problem);
-  const uint8_t *InlierMask(size_t residual_batch_index) const;
-  /** Factor count of a residual batch as recorded by the last Prepare(); 0 if no mask. */
-  size_t InlierMaskSize(size_t residual_batch_index) const;
-
- private:
-  void Prepare(cudaStream_t stream, const Problem &problem);
-  float InitialCost(cudaStream_t stream);
-
-  void RunRounds(cudaStream_t stream, RansacSummary &summary);
-  void GenerateHypotheses(cudaStream_t stream, uint64_t round);
-  void SelectHypotheses(cudaStream_t stream, uint64_t round);
-  bool EnoughHypotheses(size_t drawn) const;
-  /** Whether per-iteration convergence checks (one sync each) pay off for this size. */
-  bool WorthCheckingConvergence() const;
-
-  void Refine(cudaStream_t stream, RansacSummary &summary);
-  void RevertRefinementIfWorse(cudaStream_t stream, RansacSummary &summary);
-  void ReadRefinement(cudaStream_t stream, RansacSummary &summary);
-  void ReadStats(cudaStream_t stream);
-
-  const RansacMinimizerOptions options_;
-  const SolverSettings settings_;
-  RansacLayout layout_;
-  HypothesisScorer scorer_;
-  SlotSet hypotheses_;
-  SlotSet refinement_;  ///< Final refinement (one slot).
-  SlotSet best_;        ///< Best-so-far estimate (one slot, states only).
-  dvector<DeviceStats> stats_;
-  DeviceStats *host_stats_ = nullptr;
-  dvector<int> selected_;  ///< Best hypothesis of the last round (device).
-  dvector<float> cost_history_;
-  dvector<float> initial_res_;        ///< Scratch of InitialCost().
-  dvector<float> initial_cost_;       ///< Scratch of InitialCost().
-  dvector<float> initial_workspace_;  ///< Scratch of InitialCost().
-  dvector<float> initial_sums_;       ///< Per-batch sums, then reduction partials.
-  bool has_run_ = false;
+struct RansacContext {
+  RansacLayout layout;                      ///< Batches, tangent layout, sample size.
+  HypothesisScorer scorer;                  ///< Scores hypotheses against the sampled factors.
+  SlotSet hypotheses;                       ///< One slot per hypothesis of a round.
+  SlotSet refinement;                       ///< Final refinement (one slot).
+  SlotSet best;                             ///< Best-so-far estimate (one slot, states only).
+  dvector<DeviceStats> stats;               ///< Round statistics on the device.
+  PinnedVector<DeviceStats> host_stats{1};  ///< Host mirror of stats.
+  dvector<int> selected;                    ///< Best hypothesis of the last round (device).
+  dvector<float> cost_history;              ///< Refinement cost per iteration.
+  dvector<float> initial_res;               ///< Scratch of the initial cost.
+  dvector<float> initial_cost;              ///< Scratch of the initial cost.
+  dvector<float> initial_workspace;         ///< Scratch of the initial cost.
+  dvector<float> initial_sums;              ///< Per-batch sums, then reduction partials.
+  bool has_run = false;                     ///< A run completed (the inlier masks are valid).
 };
+
+/** @brief One RANSAC minimization (see RansacMinimizer::Minimize). */
+RansacSummary RunRansac(cudaStream_t stream, Problem &problem,
+                        const RansacMinimizerOptions &options, const SolverSettings &settings,
+                        RansacContext &context);
+
+/** @brief See RansacMinimizer::InlierMask. */
+const uint8_t *InlierMask(const RansacContext &context, size_t residual_batch_index);
+
+/** @brief See RansacMinimizer::InlierMaskSize. */
+size_t InlierMaskSize(const RansacContext &context, size_t residual_batch_index);
 
 }  // namespace ransac_internal
 }  // namespace cunls

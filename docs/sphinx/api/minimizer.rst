@@ -428,7 +428,8 @@ and defaults: **hypotheses_per_round** (``int``, 256), **max_rounds**
 **num_hypotheses**, **num_valid_hypotheses**, **num_inliers**,
 **inlier_ratio**, **best_score**, **refinement_reverted**.
 
-**pycunls.RansacGaussNewtonMinimizer(options=RansacMinimizerOptions())**
+**pycunls.RansacMinimizer** — common base of the two RANSAC minimizers below;
+not constructible, use it to accept either.
 
 - ``minimize(stream: CudaStream, problem: Problem) -> RansacSummary`` — runs
   RANSAC; the estimate is written into the problem's state batches. Releases
@@ -439,9 +440,15 @@ and defaults: **hypotheses_per_round** (``int``, 256), **max_rounds**
   passed to the last ``minimize``, one entry per factor as that batch had in
   that run. Raises ``RuntimeError`` for an out-of-range index, an
   ``always_on`` batch, or before any run.
+- ``options`` (``RansacMinimizerOptions``, read-only copy) — the options
+  common to all RANSAC minimizers, as constructed.
+
+**pycunls.RansacGaussNewtonMinimizer(options=RansacMinimizerOptions())** — a
+``RansacMinimizer`` whose hypotheses and refinement take Gauss-Newton steps.
 
 **pycunls.RansacLevenbergMarquardtMinimizer(options=RansacLevenbergMarquardtMinimizerOptions())**
-— same methods; hypotheses and refinement use LM.
+— a ``RansacMinimizer`` whose hypotheses and refinement take
+Levenberg-Marquardt steps, each hypothesis with its own damping.
 
 **Example**
 
@@ -805,7 +812,7 @@ not count, whatever their number.
   norm, in the batch's residual units; a factor is an inlier iff
   :math:`\|r\|^2 \le \tau^2`. Ignored for ``kAlwaysOn`` batches. Default: 1.0.
 
-:code:`RansacMinimizerOptions` — options shared by both RANSAC minimizers:
+:code:`RansacMinimizerOptions` — options common to all RANSAC minimizers:
 
 - **hypotheses_per_round** [in]: Hypotheses :math:`K` generated and scored
   together (in parallel) in one round. Default: 256.
@@ -993,17 +1000,21 @@ More robust than Gauss-Newton when the initial guess is far from the solution.
 .. _ransac-classes-label:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:code:`RansacGaussNewtonMinimizer` / :code:`RansacLevenbergMarquardtMinimizer`
+:code:`RansacMinimizer` and its subclasses
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Purpose:** RANSAC over an ordinary :cpp:class:`Problem`. Minimal samples of
+**Purpose:** RANSAC over an ordinary :cpp:class:`Problem`.
+:code:`RansacMinimizer` is the common base (not instantiable; use a
+:code:`RansacMinimizer&` to accept either); :code:`RansacGaussNewtonMinimizer`
+and :code:`RansacLevenbergMarquardtMinimizer` decide how a hypothesis
+iterates. Minimal samples of
 ``kSampled`` factors are turned into hypotheses by a few GN (or LM) iterations
 from the current state values; every hypothesis is scored against all
 ``kSampled`` factors; the best one is refined on its inliers and written back
-into the problem's state batches. :cpp:func:`RansacGaussNewtonMinimizer::InlierMask` then exposes the
+into the problem's state batches. :cpp:func:`RansacMinimizer::InlierMask` then exposes the
 classification. See :doc:`../ransac`.
 
-The problem is built exactly as for :code:`GaussNewtonMinimizer`. The only
+The problem is built exactly as for :code:`Minimizer`. The only
 restriction is the free tangent dimension (``kMaxRansacTangentDim``); any
 number of state batches of any supported types, and any number of factor
 batches and factors, are allowed. Every factor and state batch must honor the
@@ -1020,10 +1031,10 @@ parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
 
   :param ``options``: [in] Shared RANSAC options (``base_options``) plus the
     per-hypothesis damping policy. Hypotheses and refinement use LM; otherwise
-    identical to :code:`RansacGaussNewtonMinimizer` (it derives from it).
+    identical to :code:`RansacGaussNewtonMinimizer`.
   :returns: [out] Constructor has no return value.
 
-.. cpp:function:: RansacSummary RansacGaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem& problem)
+.. cpp:function:: RansacSummary RansacMinimizer::Minimize(cudaStream_t stream, Problem& problem)
 
   Runs RANSAC and writes the refined estimate into the problem's state batches.
 
@@ -1045,7 +1056,7 @@ parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
   **Note:** The minimizer keeps its device buffers between calls and reuses
   them when the problem size is unchanged.
 
-.. cpp:function:: const uint8_t* RansacGaussNewtonMinimizer::InlierMask(size_t residual_batch_index) const
+.. cpp:function:: const uint8_t* RansacMinimizer::InlierMask(size_t residual_batch_index) const
 
   :param ``residual_batch_index``: [in] Index into
     :cpp:func:`Problem::GetResidualBatches`.
@@ -1054,13 +1065,17 @@ parameter of :cpp:func:`StateBatch::Plus`; all built-in batches do, and
     the next :cpp:func:`Minimize` or destruction; ``nullptr`` for ``kAlwaysOn``
     batches, an out-of-range index, or before any run.
 
-.. cpp:function:: size_t RansacGaussNewtonMinimizer::InlierMaskSize(size_t residual_batch_index) const
+.. cpp:function:: size_t RansacMinimizer::InlierMaskSize(size_t residual_batch_index) const
 
   :param ``residual_batch_index``: [in] Index into
     :cpp:func:`Problem::GetResidualBatches`.
-  :returns: [out] Number of bytes of :cpp:func:`RansacGaussNewtonMinimizer::InlierMask`:
+  :returns: [out] Number of bytes of :cpp:func:`RansacMinimizer::InlierMask`:
     the factor count the batch had in the last :cpp:func:`Minimize`; ``0``
     whenever ``InlierMask`` returns ``nullptr``.
+
+.. cpp:function:: const RansacMinimizerOptions& RansacMinimizer::Options() const
+
+  :returns: [out] The options common to all RANSAC minimizers, as constructed.
 
 **Example**
 

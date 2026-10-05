@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "cunls/minimizer/ransac_minimizer.h"
+
 namespace cunls {
 namespace ransac_internal {
 

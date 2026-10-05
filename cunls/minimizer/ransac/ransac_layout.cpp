@@ -26,6 +26,7 @@
 #include "cunls/common/log.h"
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/minimizer/ransac/ransac_kernels.h"
+#include "cunls/minimizer/ransac_minimizer.h"
 
 namespace cunls {
 namespace ransac_internal {

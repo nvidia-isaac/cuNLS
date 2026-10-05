@@ -3,8 +3,8 @@ Robust Estimation with RANSAC
 ###############################################################################
 
 cuNLS ships two RANSAC minimizers, ``RansacGaussNewtonMinimizer`` and
-``RansacLevenbergMarquardtMinimizer`` (Python ``pycunls``; C++ header
-:code:`cunls/minimizer/ransac_minimizer.h`). They solve the
+``RansacLevenbergMarquardtMinimizer``, with the common base ``RansacMinimizer``
+(Python ``pycunls``; C++ header :code:`cunls/minimizer/ransac_minimizer.h`). They solve the
 same :cpp:class:`Problem` as the regular minimizers, but they assume that some
 measurements are **gross outliers**: wrong data association, not just noise.
 They find the estimate that most measurements agree with, refine it on those
@@ -435,7 +435,9 @@ Roles in practice
 Gauss-Newton or Levenberg-Marquardt?
 -------------------------------------------------------------------------------
 
-Both variants share every option and step. ``RansacGaussNewtonMinimizer``
+Both variants share every option and step (they are the two
+``RansacMinimizer`` subclasses; a ``RansacMinimizer&`` accepts either).
+``RansacGaussNewtonMinimizer``
 takes full Gauss-Newton steps and is the fastest. ``RansacLevenbergMarquardt
 Minimizer`` damps each hypothesis's steps with its own :math:`\lambda`, which
 widens the convergence basin when the initial guess is far off or the problem

@@ -20,11 +20,11 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
-#include <memory>
 #include <vector>
 
-#include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/minimizer/ransac/ransac_context.h"
 
 namespace cunls {
 
@@ -84,7 +84,7 @@ struct RansacFactorBatchOptions {
   float inlier_threshold = 1.0f;
 };
 
-/** @brief Options shared by both RANSAC minimizers. */
+/** @brief Options common to RansacGaussNewtonMinimizer and RansacLevenbergMarquardtMinimizer. */
 struct RansacMinimizerOptions {
   /** @brief Hypotheses generated and scored together in one round. */
   size_t hypotheses_per_round = 256;
@@ -178,7 +178,7 @@ struct RansacMinimizerOptions {
 
 /** @brief Options of RansacLevenbergMarquardtMinimizer. */
 struct RansacLevenbergMarquardtMinimizerOptions {
-  /** @brief Options shared with RansacGaussNewtonMinimizer. */
+  /** @brief Options common to all RANSAC minimizers. */
   RansacMinimizerOptions base_options;
 
   /** @brief Damping each hypothesis starts from. */
@@ -230,52 +230,51 @@ struct RansacSummary : MinimizerSummary {
   bool refinement_reverted = false;
 };
 
-namespace ransac_internal {
-class RansacContext;
-}
-
 /**
- * @brief RANSAC over an ordinary Problem, with Gauss-Newton hypotheses and
- * refinement.
+ * @brief Common base of RansacGaussNewtonMinimizer and
+ * RansacLevenbergMarquardtMinimizer: RANSAC over an ordinary Problem.
  *
- * The problem is built exactly as for GaussNewtonMinimizer. Every factor and
- * state batch must honor the item parameters of FactorBatch::Evaluate
- * (factor_ids, num_factor_ids) and the num_replicas parameter of
- * StateBatch::Plus; all built-in batches do. The one restriction is
- * the total free tangent dimension (see kMaxRansacTangentDim); any number of
- * state batches of any supported types, and any number of factor batches and
- * factors, are allowed.
+ * The problem is built exactly as for Minimizer. Every factor and state batch
+ * must honor the item parameters of FactorBatch::Evaluate (factor_ids,
+ * num_factor_ids) and the num_replicas parameter of StateBatch::Plus; all
+ * built-in batches do. The one restriction is the total free tangent
+ * dimension (see kMaxRansacTangentDim); any number of state batches of any
+ * supported types, and any number of factor batches and factors, are allowed.
  *
  * Minimize() samples minimal sets of kSampled factors, turns each into a
- * hypothesis by a few iterations from the current state values, scores every
- * hypothesis against all kSampled factors, refines the best one on its
- * inliers and writes it back into the problem's state batches. InlierMask()
- * then exposes the classification. See docs/sphinx/ransac.rst.
+ * hypothesis by a few iterations (hypothesis_iterations) from the current
+ * state values, scores every hypothesis against all kSampled factors, refines
+ * the best one on its inliers (final_iterations) and writes it back into the
+ * problem's state batches. InlierMask() then exposes the classification. The
+ * subclass decides how a hypothesis iterates: Gauss-Newton or
+ * Levenberg-Marquardt steps. See docs/sphinx/ransac.rst.
  *
- * Invalid configurations (D > kMaxRansacTangentDim, D == 0, no kSampled
- * factors, fewer sampled factors than the sample size, numeric Jacobians,
- * mismatched role vector) throw std::invalid_argument.
+ * Not instantiable on its own: construct a RansacGaussNewtonMinimizer or a
+ * RansacLevenbergMarquardtMinimizer, and use a `RansacMinimizer &` to accept
+ * either.
  */
-class RansacGaussNewtonMinimizer {
+class RansacMinimizer {
  public:
-  explicit RansacGaussNewtonMinimizer(
-      const RansacMinimizerOptions &options = RansacMinimizerOptions());
-  virtual ~RansacGaussNewtonMinimizer();
-
-  RansacGaussNewtonMinimizer(const RansacGaussNewtonMinimizer &) = delete;
-  RansacGaussNewtonMinimizer &operator=(const RansacGaussNewtonMinimizer &) = delete;
-  RansacGaussNewtonMinimizer(RansacGaussNewtonMinimizer &&) = delete;
-  RansacGaussNewtonMinimizer &operator=(RansacGaussNewtonMinimizer &&) = delete;
+  virtual ~RansacMinimizer() = default;
+  RansacMinimizer(const RansacMinimizer &) = delete;
+  RansacMinimizer &operator=(const RansacMinimizer &) = delete;
+  RansacMinimizer(RansacMinimizer &&) = delete;
+  RansacMinimizer &operator=(RansacMinimizer &&) = delete;
 
   /**
    * @brief Runs RANSAC and writes the refined estimate into the problem's
    * state batches.
    *
+   * Enqueues work on `stream` and synchronizes it before returning.
+   *
    * @param stream CUDA stream for all work.
    * @param problem The problem; its current state values are the initial guess.
-   * @return Summary of the run.
-   * @throws std::invalid_argument for invalid configurations, including active
-   *         sizes that are not set properly (see Problem::CheckSizes).
+   * @return Rounds, hypotheses, inliers, score and the refinement's costs.
+   * @throws std::invalid_argument for invalid configurations (free tangent
+   *         dimension 0 or above kMaxRansacTangentDim, no kSampled factors,
+   *         fewer sampled factors than the sample size, numeric Jacobians, a
+   *         mismatched factor_batches vector), including active sizes that are
+   *         not set properly (see Problem::CheckSizes).
    */
   RansacSummary Minimize(cudaStream_t stream, Problem &problem);
 
@@ -297,32 +296,54 @@ class RansacGaussNewtonMinimizer {
    */
   size_t InlierMaskSize(size_t residual_batch_index) const;
 
- protected:
-  /** @brief Device-side step policy shared by both variants. */
-  struct StepPolicy {
-    bool levenberg_marquardt = false;
-    float initial_lambda = 0.f;
-    float lambda_upscale = 1.f;
-    float lambda_downscale = 1.f;
-    float lambda_max = 0.f;
-    float lambda_min = 0.f;
-    float step_accept_threshold = 0.f;
-    float lambda_downscale_threshold = 0.f;
-  };
+  /** @brief Options common to all RANSAC minimizers, as constructed. */
+  const RansacMinimizerOptions &Options() const { return options_; }
 
-  RansacGaussNewtonMinimizer(const RansacMinimizerOptions &options, const StepPolicy &policy);
+ protected:
+  /**
+   * @brief For subclasses: stores the options and how hypotheses iterate.
+   * @param options Options common to all RANSAC minimizers.
+   * @param settings The subclass's per-hypothesis step rule and dense solver
+   *        (internal; see ransac/slot_set.h).
+   */
+  RansacMinimizer(const RansacMinimizerOptions &options,
+                  const ransac_internal::SolverSettings &settings);
 
  private:
-  std::unique_ptr<ransac_internal::RansacContext> context_;
+  // Implementation state; the behaviour lives in ransac/ransac_context.cpp.
+  const RansacMinimizerOptions options_;
+  const ransac_internal::SolverSettings settings_;  ///< Step rule and dense solver.
+  ransac_internal::RansacContext context_;          ///< Layout, slots, scorer, statistics.
+};
+
+/**
+ * @brief RANSAC with Gauss-Newton hypotheses and refinement.
+ *
+ * Per hypothesis: a step is taken if it lowers the cost; the hypothesis stops
+ * at the first step that does not, or when the relative cost decrease is at
+ * most cost_tolerance or ‖δ‖² at most state_tolerance. See RansacMinimizer.
+ */
+class RansacGaussNewtonMinimizer : public RansacMinimizer {
+ public:
+  /** @brief Constructs the minimizer; see RansacMinimizerOptions. */
+  explicit RansacGaussNewtonMinimizer(
+      const RansacMinimizerOptions &options = RansacMinimizerOptions());
 };
 
 /**
  * @brief RANSAC with Levenberg-Marquardt hypotheses and refinement; each
- * hypothesis carries its own damping. Otherwise identical to
- * RansacGaussNewtonMinimizer.
+ * hypothesis carries its own damping λ.
+ *
+ * Per hypothesis, ρ = actual / predicted cost reduction: ρ ≥
+ * step_accept_threshold takes the step (and multiplies λ by lambda_downscale
+ * when ρ > lambda_downscale_threshold, floored at lambda_min); otherwise λ is
+ * multiplied by lambda_upscale and the hypothesis stops once λ exceeds
+ * lambda_max. Convergence as in RansacGaussNewtonMinimizer. See
+ * RansacMinimizer.
  */
-class RansacLevenbergMarquardtMinimizer : public RansacGaussNewtonMinimizer {
+class RansacLevenbergMarquardtMinimizer : public RansacMinimizer {
  public:
+  /** @brief Constructs the minimizer; see RansacLevenbergMarquardtMinimizerOptions. */
   explicit RansacLevenbergMarquardtMinimizer(
       const RansacLevenbergMarquardtMinimizerOptions &options =
           RansacLevenbergMarquardtMinimizerOptions());

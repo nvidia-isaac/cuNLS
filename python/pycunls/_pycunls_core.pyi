@@ -1868,10 +1868,12 @@ class RansacSummary(MinimizerSummary):
     @property
     def refinement_reverted(self) -> bool: ...
 
-class RansacGaussNewtonMinimizer:
-    """RANSAC with Gauss-Newton hypotheses and refinement (free tangent dim <= 64)."""
+class RansacMinimizer:
+    """Common base of the RANSAC minimizers (free tangent dim <= 64).
 
-    def __init__(self, options: RansacMinimizerOptions = ...) -> None: ...
+    Not constructible; use it to accept either RANSAC minimizer.
+    """
+
     def minimize(self, stream: CudaStream, problem: Problem) -> RansacSummary:
         """Run RANSAC; the estimate is written into the problem's state batches."""
         ...
@@ -1880,8 +1882,17 @@ class RansacGaussNewtonMinimizer:
         problem of the last minimize(). Raises RuntimeError for an out-of-range
         index, an always_on batch, or before any run."""
         ...
+    @property
+    def options(self) -> RansacMinimizerOptions:
+        """Options common to all RANSAC minimizers, as constructed (a copy)."""
+        ...
 
-class RansacLevenbergMarquardtMinimizer(RansacGaussNewtonMinimizer):
+class RansacGaussNewtonMinimizer(RansacMinimizer):
+    """RANSAC with Gauss-Newton hypotheses and refinement."""
+
+    def __init__(self, options: RansacMinimizerOptions = ...) -> None: ...
+
+class RansacLevenbergMarquardtMinimizer(RansacMinimizer):
     """RANSAC with Levenberg-Marquardt hypotheses and refinement."""
 
     def __init__(self, options: RansacLevenbergMarquardtMinimizerOptions = ...) -> None: ...

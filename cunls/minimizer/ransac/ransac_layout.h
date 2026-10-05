@@ -30,9 +30,11 @@
 
 #include "cunls/common/types.h"
 #include "cunls/minimizer/problem.h"
-#include "cunls/minimizer/ransac_minimizer.h"
 
 namespace cunls {
+
+struct RansacFactorBatchOptions;
+struct RansacMinimizerOptions;
 namespace ransac_internal {
 
 /** @brief One state batch. */

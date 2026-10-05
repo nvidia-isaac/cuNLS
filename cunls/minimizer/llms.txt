@@ -38,12 +38,14 @@ optimization.
 - `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
 - `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
 - `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
-- `ransac_minimizer.h`: `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
+- `ransac_minimizer.h`: `RansacMinimizer` (common base, holds the state by
+  value), `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
   `RansacMinimizerOptions`, `RansacSummary` (RANSAC over an ordinary `Problem`
   whose total free tangent dimension is <= `kMaxRansacTangentDim` = 64)
 - `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout` (problem
   description), `SlotSet` (slots with state replicas, solved in lockstep),
-  `HypothesisScorer`, `RansacContext` (rounds, refinement), and kernels
+  `HypothesisScorer`, `RansacContext` (data) + `RunRansac` (rounds,
+  refinement), and kernels
   (`ransac_kernels.h` declares all launchers)
 
 ## Solver flow

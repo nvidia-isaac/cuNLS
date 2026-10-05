@@ -20,6 +20,7 @@
 #include <algorithm>
 
 #include "cunls/common/helper.h"
+#include "cunls/minimizer/ransac_minimizer.h"
 #include "cunls/minimizer/residual_batch.h"
 
 namespace cunls {

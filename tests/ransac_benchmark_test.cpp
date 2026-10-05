@@ -230,7 +230,7 @@ RansacMinimizerOptions RansacOptions(int cameras, size_t hypotheses, size_t max_
 struct Runner {
   Method method;
   std::unique_ptr<Minimizer> regular;
-  std::unique_ptr<RansacGaussNewtonMinimizer> ransac;
+  std::unique_ptr<RansacMinimizer> ransac;
   RansacSummary last;
 
   Runner(Method m, int cameras, size_t hypotheses = 256, size_t max_rounds = 8,
