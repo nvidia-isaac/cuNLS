@@ -600,6 +600,12 @@ TEST(LevenbergMarquardt, ZeroInitialLambdaEscalatesFromLambdaMin) {
   LevenbergMarquardtMinimizerOptions bad;
   bad.lambda_min = 0.f;
   EXPECT_THROW(LevenbergMarquardtMinimizer{bad}, std::invalid_argument);
+  LevenbergMarquardtMinimizerOptions inverted;
+  inverted.lambda_min = 1.f;
+  inverted.lambda_max = 0.5f;
+  EXPECT_THROW(LevenbergMarquardtMinimizer{inverted}, std::invalid_argument);
+  inverted.lambda_max = 1.f;  // equal bounds: a fixed damping
+  EXPECT_NO_THROW(LevenbergMarquardtMinimizer{inverted});
 }
 
 }  // namespace cunls

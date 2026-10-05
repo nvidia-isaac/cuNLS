@@ -75,7 +75,7 @@ struct LevenbergMarquardtMinimizerOptions {
   float lambda_downscale = 0.5f;
 
   /**
-   * @brief Maximum allowed value for lambda.
+   * @brief Maximum allowed value for lambda; must be >= lambda_min.
    *
    * Prevents lambda from growing too large, which would make the algorithm
    * too conservative.
@@ -139,6 +139,9 @@ class LevenbergMarquardtMinimizer : public GaussNewtonMinimizer {
       : GaussNewtonMinimizer(options.base_options), options_(options) {
     if (!(options_.lambda_min > 0.f)) {
       throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_min must be positive");
+    }
+    if (!(options_.lambda_max >= options_.lambda_min)) {
+      throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_max must be >= lambda_min");
     }
   }
 
