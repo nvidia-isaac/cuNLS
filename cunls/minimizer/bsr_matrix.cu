@@ -456,11 +456,4 @@ void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
   }
 }
 
-void ComputeWeightedSquaredStepAsync(cudaStream_t stream, const BSRSparseMatrix &matrix,
-                                     const dvector<float> &step, dvector<float> &scratch,
-                                     float *d_out, float *d_partials) {
-  MultiplyBSRByDenseVector(stream, matrix, step, scratch);
-  DotProductToDevice(stream, step.data(), scratch.data(), step.size(), d_out, d_partials);
-}
-
 }  // namespace cunls

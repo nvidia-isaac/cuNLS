@@ -147,16 +147,21 @@ class SystemBuilder {
   const dvector<float> &Rhs() const { return system_.rhs; }
   const dvector<float> &Residuals() const { return system_.residuals; }
   const PerFactorJacobians &FactorJacobians() const { return system_.factor_jacobians; }
-  /** @brief step^T H step against the undamped Hessian, as LM computes it. */
+  /**
+   * @brief step^T H step against the undamped Hessian, the term
+   * Levenberg-Marquardt's predicted reduction uses (H step on the device, the
+   * dot product on the host).
+   */
   float WeightedSquaredStep(cudaStream_t stream, const dvector<float> &step) {
-    dvector<float> out_d(1), partials(ReducePartialCount(step.size()));
-    system_.normal_equations.WeightedSquaredStepAsync(stream, cusparse_handle_.GetHandle(stream),
-                                                      step, out_d.data(), partials.data(), buffer_);
-    float out = 0.f;
-    THROW_ON_CUDA_ERROR(
-        cudaMemcpyAsync(&out, out_d.data(), sizeof(float), cudaMemcpyDeviceToHost, stream));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    return out;
+    dvector<float> h_step;
+    system_.normal_equations.MultiplyHessian(stream, cusparse_handle_.GetHandle(stream), step,
+                                             h_step, buffer_);
+    std::vector<float> a(step.size()), b(step.size());
+    step.CopyToHost(a.data(), a.size());
+    h_step.CopyToHost(b.data(), b.size());
+    double out = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) out += static_cast<double>(a[i]) * b[i];
+    return static_cast<float>(out);
   }
   NormalEquations &Equations() { return system_.normal_equations; }
   bool UsesBlockStorage() const { return system_.normal_equations.UsesBlockStorage(); }
