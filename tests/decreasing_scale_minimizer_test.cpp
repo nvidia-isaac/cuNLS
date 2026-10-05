@@ -41,6 +41,7 @@
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 
@@ -248,7 +249,7 @@ class DecreasingScaleMinimizerTest : public ::testing::Test {
   const size_t max_num_points_ = 10000;
   const uint32_t fixed_seed_ = 54321;
 
-  // Ground truth data (generated for max_num_points_)
+  // Ground truth data (generated for max_num_points_); poses are camera_from_world.
   std::vector<SE3Transform> ground_truth_poses_;
   std::vector<Point3D> ground_truth_points_;
   std::vector<Observation2D> observations_;
@@ -299,8 +300,8 @@ TEST_F(DecreasingScaleMinimizerTest, SequentialDecreasingScale) {
     // Extract the observation subset for this point count.
     std::vector<Observation2D> obs_subset = ExtractObservations(num_points);
 
-    // Copy data to device.
-    dvector<SE3Transform> poses_device(ground_truth_poses_);
+    // Copy data to device; the pose states are world_from_rig (camera = rig).
+    dvector<SE3Transform> poses_device(test_utils::InverseSE3(ground_truth_poses_));
     dvector<Point3D> points_device(disturbed_points);
     dvector<Observation2D> observations_device(obs_subset);
 

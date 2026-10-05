@@ -61,7 +61,7 @@ std::array<double, 6> RandomTwist(std::mt19937 &rng, double rot, double trans);
 
 /** A camera observing 3D points; some observations replaced by gross outliers. */
 struct PnPScene {
-  SE3Transform world_to_cam;
+  SE3Transform world_from_cam;  ///< The camera's pose state (world_from_rig, camera = rig).
   std::vector<Vector<3>> points_world;
   std::vector<Vector<2>> observations;  ///< Normalized image coordinates.
   std::vector<uint8_t> is_outlier;
@@ -73,11 +73,11 @@ struct PnPScene {
  */
 PnPScene MakePnPScene(size_t num_points, double outlier_ratio, double noise_sigma,
                       double min_outlier_error, uint32_t seed,
-                      const SE3Transform *world_to_cam = nullptr);
+                      const SE3Transform *world_from_cam = nullptr);
 
 /**
  * Like MakePnPScene, but outliers are coherent: they are projections of their
- * points through a second pose world_to_cam * exp(outlier_twist) (plus the
+ * points through a second camera_from_world pose world_from_cam^-1 * exp(outlier_twist) (plus the
  * same noise), i.e. a competing, self-consistent wrong model. Outliers whose
  * error w.r.t. the true pose is below min_outlier_error are re-drawn.
  */

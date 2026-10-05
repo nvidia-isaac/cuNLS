@@ -24,6 +24,7 @@
 #include "cunls/minimizer/minimizer_state.h"
 #include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/minimizer/residual_batch.h"
 #include "cunls/state/state_batch.h"
 
 namespace cunls {
@@ -178,29 +179,26 @@ void NumericDiffJacobianBuilder::BuildPlan(const Problem &problem, size_t residu
     plan.col_offsets[b] = running;
     running += block_sizes[b];
   }
-  plan.owner_batch_index.assign(P, 0);
+  plan.owner_idx.assign(F * P, 0);
   plan.block_idx.assign(F * P, 0);
+  plan.owner_rank.assign(F * P, 0);
+  plan.position_owners.assign(P, {});
 
-  if (F > 0 && P > 0) {
+  for (size_t f = 0; f < F; ++f) {
     for (size_t b = 0; b < P; ++b) {
-      auto it = addr_to_block.find(host_ptrs[0 * P + b]);
+      auto it = addr_to_block.find(host_ptrs[f * P + b]);
       if (it == addr_to_block.end()) {
         throw std::runtime_error(
             "NumericDiffJacobianBuilder: factor state pointer is not owned by any registered "
             "StateBatch");
       }
-      plan.owner_batch_index[b] = it->second.first;
-    }
-    for (size_t f = 0; f < F; ++f) {
-      for (size_t b = 0; b < P; ++b) {
-        auto it = addr_to_block.find(host_ptrs[f * P + b]);
-        if (it == addr_to_block.end()) {
-          throw std::runtime_error(
-              "NumericDiffJacobianBuilder: factor state pointer is not owned by any registered "
-              "StateBatch");
-        }
-        plan.block_idx[f * P + b] = it->second.second;
-      }
+      const size_t owner = it->second.first;
+      std::vector<size_t> &owners = plan.position_owners[b];
+      const auto rank = std::find(owners.begin(), owners.end(), owner);
+      plan.owner_rank[f * P + b] = static_cast<size_t>(rank - owners.begin());
+      if (rank == owners.end()) owners.push_back(owner);
+      plan.owner_idx[f * P + b] = owner;
+      plan.block_idx[f * P + b] = it->second.second;
     }
   }
 
@@ -238,15 +236,32 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
 
   const bool central = (options.method == NumericDiffOptions::Method::kCentral);
 
-  std::vector<size_t> tangent_size(P), ambient_size(P), num_active_states(P);
+  // Sizes per position (all owners of a position must agree), and the
+  // distinct owners of the batch with their active counts.
+  std::vector<size_t> tangent_size(P), ambient_size(P);
+  std::vector<size_t> owners, num_active_states;
   size_t W = 0;
   for (size_t b = 0; b < P; ++b) {
-    StateBatch *owner = state_batches[plan.owner_batch_index[b]];
-    tangent_size[b] = owner->TangentSize();
-    ambient_size[b] = owner->AmbientSize();
-    num_active_states[b] = owner->NumActiveStates();
+    const std::vector<size_t> &position_owners = plan.position_owners[b];
+    tangent_size[b] = state_batches[position_owners[0]]->TangentSize();
+    ambient_size[b] = state_batches[position_owners[0]]->AmbientSize();
+    for (size_t o : position_owners) {
+      if (state_batches[o]->TangentSize() != tangent_size[b] ||
+          state_batches[o]->AmbientSize() != ambient_size[b]) {
+        throw std::runtime_error(
+            "NumericDiffJacobianBuilder: a factor state position reads state batches of "
+            "different sizes");
+      }
+      if (std::find(owners.begin(), owners.end(), o) == owners.end()) {
+        owners.push_back(o);
+        num_active_states.push_back(state_batches[o]->NumActiveStates());
+      }
+    }
     W += tangent_size[b];
   }
+  auto active_states = [&](size_t owner) {
+    return num_active_states[std::find(owners.begin(), owners.end(), owner) - owners.begin()];
+  };
   if (W == 0) {
     // No optimizable tangent dof referenced by this factor batch (all
     // referenced states are zero-dimensional or constant); nothing to
@@ -267,8 +282,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   // ---- depends only on structure + options + these addresses, never on
   // ---- the state *values* -- so the rebuild below can be skipped
   // ---- entirely. ----
-  std::vector<const float *> owner_data_ptr(P);
-  for (size_t b = 0; b < P; ++b) owner_data_ptr[b] = states[plan.owner_batch_index[b]].data();
+  std::vector<const float *> owner_data_ptr(owners.size());
+  for (size_t i = 0; i < owners.size(); ++i) owner_data_ptr[i] = states[owners[i]].data();
 
   bool needs_rebuild = !cache.uploaded || cache.central != central ||
                        cache.step_size != options.relative_step_size || cache.F != F ||
@@ -303,10 +318,11 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     // ---- Slot layout: one (position b, tangent dof k, sign) per slot. ----
     cache.slot_b.assign(S, 0);
     cache.slot_k.assign(S, 0);
-    cache.slot_owner.assign(S, 0);
     cache.slot_sign.assign(S, 0.0f);
-    cache.delta_offset.assign(S, 0);
-    cache.xpd_offset.assign(S, 0);
+    cache.region_begin.assign(S + 1, 0);
+    cache.region_owner.clear();
+    cache.region_delta_offset.clear();
+    cache.region_xpd_offset.clear();
     cache.col_idx_h.assign(W, 0);
     cache.plus_slot_h.assign(W, 0);
     cache.minus_slot_h.assign(W, central ? 0 : -1);
@@ -319,12 +335,16 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
           size_t s = slot++;
           cache.slot_b[s] = b;
           cache.slot_k[s] = k;
-          cache.slot_owner[s] = plan.owner_batch_index[b];
           cache.slot_sign[s] = sign;
-          cache.delta_offset[s] = delta_total;
-          delta_total += num_active_states[b] * tangent_size[b];
-          cache.xpd_offset[s] = xpd_total;
-          xpd_total += num_active_states[b] * ambient_size[b];
+          cache.region_begin[s] = cache.region_owner.size();
+          for (size_t o : plan.position_owners[b]) {
+            cache.region_owner.push_back(o);
+            cache.region_delta_offset.push_back(delta_total);
+            delta_total += active_states(o) * tangent_size[b];
+            cache.region_xpd_offset.push_back(xpd_total);
+            xpd_total += active_states(o) * ambient_size[b];
+          }
+          cache.region_begin[s + 1] = cache.region_owner.size();
           return s;
         };
 
@@ -355,8 +375,9 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     for (size_t s = 0; s < S; ++s) {
       const size_t b = cache.slot_b[s];
       const size_t k = cache.slot_k[s];
-      float *delta_block = delta_host + cache.delta_offset[s];
       for (size_t f = 0; f < F; ++f) {
+        const size_t region = cache.region_begin[s] + plan.owner_rank[f * P + b];
+        float *delta_block = delta_host + cache.region_delta_offset[region];
         const size_t blk = plan.block_idx[f * P + b];
         delta_block[blk * tangent_size[b] + k] = cache.slot_sign[s] * options.relative_step_size;
       }
@@ -368,24 +389,23 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
 
     // ---- Plus() calls, spread across a small stream pool so independent
     // ---- perturbations overlap instead of serializing on one stream.
-    // ---- IMPORTANT: several shipped StateBatch::Plus implementations (e.g.
-    // ---- SO3StateBatch, SE3StateBatch) reuse `mutable` internal scratch
-    // ---- buffers across calls and are therefore not safe to invoke
-    // ---- concurrently on the same owner from different streams. Slots are
+    // ---- IMPORTANT: a StateBatch::Plus may reuse `mutable` internal
+    // ---- scratch across calls (SL4StateBatch does, and custom batches
+    // ---- may), so it is not safe to invoke concurrently on the same owner
+    // ---- from different streams. Plus() calls (one per slot region) are
     // ---- assigned to pool streams by *owner batch index* (not by slot
     // ---- index), so every Plus() call against a given StateBatch lands on
     // ---- the same stream and is naturally serialized in issue order, while
     // ---- distinct owner batches can still overlap on different streams. ----
     constexpr size_t kStreamPoolSize = 8;
     EnsureStreamPool(kStreamPoolSize);
-    for (size_t s = 0; s < S; ++s) {
-      cudaStream_t ps = pool_streams_[cache.slot_owner[s] % pool_streams_.size()];
+    for (size_t r = 0; r < cache.region_owner.size(); ++r) {
+      const size_t o = cache.region_owner[r];
+      cudaStream_t ps = pool_streams_[o % pool_streams_.size()];
       THROW_ON_CUDA_ERROR(cudaStreamWaitEvent(ps, delta_ready_event_, 0));
-      StateBatch *owner = state_batches[cache.slot_owner[s]];
-      const float *x = states[cache.slot_owner[s]].data();
-      const float *delta = cache.delta_scratch.data() + cache.delta_offset[s];
-      float *xpd = cache.x_plus_delta_scratch.data() + cache.xpd_offset[s];
-      owner->Plus(x, delta, xpd, ps);
+      const float *delta = cache.delta_scratch.data() + cache.region_delta_offset[r];
+      float *xpd = cache.x_plus_delta_scratch.data() + cache.region_xpd_offset[r];
+      state_batches[o]->Plus(states[o].data(), delta, xpd, ps);
     }
     // Join: main stream waits for every pool stream before reading the
     // perturbed buffers they wrote (harmless no-op wait for pool streams
@@ -405,19 +425,21 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     std::vector<const float *> baseline_ptr(F * P);
     for (size_t f = 0; f < F; ++f) {
       for (size_t b = 0; b < P; ++b) {
-        const size_t owner_idx = plan.owner_batch_index[b];
         const size_t blk = plan.block_idx[f * P + b];
-        baseline_ptr[f * P + b] = states[owner_idx].data() + blk * ambient_size[b];
+        baseline_ptr[f * P + b] = states[plan.owner_idx[f * P + b]].data() + blk * ambient_size[b];
       }
     }
     const float **ptrs_host =
         EnsurePinnedHost(cache.pinned_ptrs_host, cache.pinned_ptrs_capacity, S * F * P);
     for (size_t s = 0; s < S; ++s) {
       const size_t b = cache.slot_b[s];
-      const float *xpd_base = cache.x_plus_delta_scratch.data() + cache.xpd_offset[s];
       for (size_t f = 0; f < F; ++f) {
         for (size_t bb = 0; bb < P; ++bb) {
           if (bb == b) {
+            // The perturbed copy of this factor's own owner of position b.
+            const size_t region = cache.region_begin[s] + plan.owner_rank[f * P + b];
+            const float *xpd_base =
+                cache.x_plus_delta_scratch.data() + cache.region_xpd_offset[region];
             const size_t blk = plan.block_idx[f * P + bb];
             ptrs_host[(s * F + f) * P + bb] = xpd_base + blk * ambient_size[b];
           } else {
@@ -473,12 +495,11 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     // ---- arrays are already correct on the device -- only the actual
     // ---- perturbed evaluations (which read the *current* state values)
     // ---- need to happen. No H2D copies, no stream-pool synchronization. ----
-    for (size_t s = 0; s < S; ++s) {
-      StateBatch *owner = state_batches[cache.slot_owner[s]];
-      const float *x = states[cache.slot_owner[s]].data();
-      const float *delta = cache.delta_scratch.data() + cache.delta_offset[s];
-      float *xpd = cache.x_plus_delta_scratch.data() + cache.xpd_offset[s];
-      owner->Plus(x, delta, xpd, stream);
+    for (size_t r = 0; r < cache.region_owner.size(); ++r) {
+      const size_t o = cache.region_owner[r];
+      const float *delta = cache.delta_scratch.data() + cache.region_delta_offset[r];
+      float *xpd = cache.x_plus_delta_scratch.data() + cache.region_xpd_offset[r];
+      state_batches[o]->Plus(states[o].data(), delta, xpd, stream);
     }
   }
 
@@ -489,7 +510,8 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   for (size_t s = 0; s < S; ++s) {
     float *residuals_out = cache.perturbed_residuals.data() + s * F * residual_size;
     const float *const *ptrs = cache.state_pointer_scratch.data() + s * F * P;
-    factor_batch->Evaluate(residuals_out, nullptr, ptrs, stream);
+    CheckEvaluate(factor_batch->Evaluate(residuals_out, nullptr, ptrs, stream),
+                  residual_batch_index);
   }
 
   // ---- Differencing kernel: one launch, fully data-parallel over

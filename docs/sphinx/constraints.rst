@@ -80,7 +80,7 @@ bound is held as well and the system solved again (an active-set refinement,
 rarely more than one extra solve); every trial step, line-search steps
 included, is clamped into the box. Constant states are never projected (a
 measured initial state outside its bounds stays as it is). The RANSAC
-minimizers ignore bounds.
+minimizers do not enforce bounds and reject a problem with bounded states.
 
 Compared with bounds as AL constraints (``BoundFactorBatch`` below), this is
 exact at every iteration, needs no outer iterations, and keeps the
@@ -115,8 +115,17 @@ Constraint batches
 
 Subclasses of ``ConstraintFactorBatchBase`` (C++) hold one multiplier per row
 and one penalty per factor (``multipliers_ptr`` / ``penalties_ptr`` in
-Python). Without ``AugmentedLagrangianMinimizer``, which updates both, a constraint
-batch is simply a quadratic penalty with :math:`\rho = 10`.
+Python). Only ``AugmentedLagrangianMinimizer`` updates them: the Gauss-Newton,
+Levenberg-Marquardt and RANSAC minimizers reject a problem with constraint
+batches (``ValueError``, C++ ``std::invalid_argument``), and so do
+``WeightedFactorBatch`` / ``InformationFactorBatch`` when asked to wrap one
+(scale a constraint with its own ``scale``).
+
+**Robust losses.** A robust loss on an *objective* factor works as with the
+plain minimizers (the inner solver applies it). A constraint takes no loss: it
+must hold exactly, and a loss would down-weight large violations and corrupt
+the multiplier update, so ``AugmentedLagrangianMinimizer`` rejects a constraint
+batch registered with a robust loss.
 
 ===============================================================================
 The method

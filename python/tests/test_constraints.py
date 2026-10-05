@@ -317,6 +317,11 @@ def test_constraint_wrapper_api(stream):
     assert c.multipliers_ptr != 0
     with pytest.raises(ValueError):
         pycunls.ConstraintFactorBatch(inner, pycunls.ConstraintKind.Equality, scale=0.0)
+    # Wrapping a constraint would hide it from the augmented Lagrangian.
+    with pytest.raises(ValueError, match="constraint"):
+        pycunls.WeightedFactorBatch(c, 2.0)
+    with pytest.raises(ValueError, match="constraint"):
+        pycunls.InformationFactorBatch(c, cp.zeros(4 * 9, dtype=cp.float32))
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     assert options.constraint_tolerance == pytest.approx(1e-4)
     assert options.inner_line_search_steps == 10

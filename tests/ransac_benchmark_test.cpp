@@ -145,7 +145,7 @@ struct RigProblem {
       if (coherent_twist != nullptr) {  // single camera: the scene draws its own pose
         scenes.push_back(ransac_test::MakeCoherentPnPScene(
             points_per_camera, outlier_ratio, noise, min_outlier, seed * 131 + c, *coherent_twist));
-        gt[c] = scenes.back().world_to_cam;
+        gt[c] = scenes.back().world_from_cam;
       } else {
         scenes.push_back(ransac_test::MakePnPScene(points_per_camera, outlier_ratio, noise,
                                                    min_outlier, seed * 131 + c, &gt[c]));
@@ -294,8 +294,8 @@ PoseErrors Errors(const RigProblem &rp) {
   PoseErrors e;
   const auto est = rp.Poses();
   for (size_t c = 0; c < est.size(); ++c) {
-    e.max_rot_deg = std::max(e.max_rot_deg, RotationErrorDeg(est[c], rp.scenes[c].world_to_cam));
-    e.max_trans = std::max(e.max_trans, TranslationError(est[c], rp.scenes[c].world_to_cam));
+    e.max_rot_deg = std::max(e.max_rot_deg, RotationErrorDeg(est[c], rp.scenes[c].world_from_cam));
+    e.max_trans = std::max(e.max_trans, TranslationError(est[c], rp.scenes[c].world_from_cam));
     if (!std::isfinite(e.max_rot_deg) || !std::isfinite(e.max_trans)) {
       e.max_rot_deg = e.max_trans = INFINITY;
     }
@@ -332,8 +332,9 @@ Detection Detect(const RigProblem &rp, const Runner &runner) {
                                      cudaMemcpyDeviceToHost));
     } else {
       for (size_t i = 0; i < mask.size(); ++i) {
-        const auto p = ransac_test::Transform(
-            est[c], {s.points_world[i][0], s.points_world[i][1], s.points_world[i][2]});
+        const auto p = ransac_test::Transform(  // est: world_from_camera states
+            ransac_test::Inverse(est[c]),
+            {s.points_world[i][0], s.points_world[i][1], s.points_world[i][2]});
         const double du = p[0] / p[2] - s.observations[i][0];
         const double dv = p[1] / p[2] - s.observations[i][1];
         mask[i] = p[2] > 1e-3 && std::hypot(du, dv) <= kTau;

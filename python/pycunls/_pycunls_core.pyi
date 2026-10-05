@@ -45,7 +45,7 @@ class CudaStream:
 # Logging
 # ===================================================================
 
-class Verbosity(enum.IntEnum):
+class Verbosity(enum.Enum):
     Silent = ...
     Error = ...
     Warning = ...
@@ -60,7 +60,7 @@ def set_log_verbosity(verbosity: Verbosity) -> None:
 # Enumerations
 # ===================================================================
 
-class SparseLinearSolverType(enum.IntEnum):
+class SparseLinearSolverType(enum.Enum):
     cuDSS = ...
     DenseLDLT = ...
     DenseCholesky = ...
@@ -68,13 +68,13 @@ class SparseLinearSolverType(enum.IntEnum):
     BlockSparsePCG = ...
     BlockTridiagonal = ...
 
-class ColumnScaling(enum.IntEnum):
+class ColumnScaling(enum.Enum):
     """Diagonal scaling mode for the GN/LM normal equations."""
 
     none = ...
     hessian_diagonal = ...
 
-class JacobianMode(enum.IntEnum):
+class JacobianMode(enum.Enum):
     """Selects how a factor batch's Jacobian is obtained: the factor's own
     analytic Evaluate() output, or finite differences on the manifold
     tangent space of each referenced state."""
@@ -82,7 +82,7 @@ class JacobianMode(enum.IntEnum):
     analytic = ...
     numeric = ...
 
-class NumericDiffMethod(enum.IntEnum):
+class NumericDiffMethod(enum.Enum):
     """Finite-difference scheme used when a factor batch resolves to
     JacobianMode.numeric."""
 
@@ -593,6 +593,7 @@ class CustomFactorBatch(FactorBatch):
 class ReprojectionFactorBatch(FactorBatch):
     """Batched 2D reprojection factor. Residual=2, States=[SE3(6), Point(3)].
 
+    The pose state is world_from_rig (the rig's pose in the world).
     Observations must be in normalized image coordinates (K^-1 applied).
     """
 
@@ -611,7 +612,7 @@ class ReprojectionFactorBatch(FactorBatch):
 class PnPFactorBatch(FactorBatch):
     """PnP reprojection: fixed 3D points (constructor), pose-only Jacobian.
 
-    Residual=2, single SE3 state per factor. Observations normalized (K^-1).
+    Residual=2, single SE3 state per factor (world_from_rig). Observations normalized (K^-1).
     """
 
     @overload
@@ -950,7 +951,7 @@ class PointToPointFactorBatch(FactorBatch):
     def state_sizes(self) -> list[int]: ...
 
 class PointToPlaneFactorBatch(FactorBatch):
-    """Batched point-to-plane factor: residual = Nq^T*(p - T*q). Residual=1, States=[SE3(6)]."""
+    """Point-to-plane factor: residual = Nq^T*(p - T*q), Nq in the target frame. States=[SE3(6)]."""
 
     def __init__(
         self,
@@ -1013,7 +1014,7 @@ class WeightedFactorBatch(FactorBatch):
 # Constraint factor batches (augmented Lagrangian)
 # ===================================================================
 
-class ConstraintKind(enum.IntEnum):
+class ConstraintKind(enum.Enum):
     """Kind of a constraint row."""
 
     Equality = 0
@@ -1305,7 +1306,7 @@ class ImuParameters:
     def __init__(self) -> None: ...
 
 class ImuFactorBatch(FactorBatch):
-    """IMU factor between keyframes (X_a, v_a, b_a, X_b, v_b, b_b), X = rig_from_world."""
+    """IMU factor between keyframes (T_a, v_a, b_a, T_b, v_b, b_b), T = world_from_rig."""
 
     def __init__(
         self,
@@ -1537,7 +1538,7 @@ class AugmentedLagrangianMinimizerOptions:
 
     def __init__(self) -> None: ...
 
-class AugmentedLagrangianMinimizerStatus(enum.IntEnum):
+class AugmentedLagrangianMinimizerStatus(enum.Enum):
     Converged = 0
     MaxOuterIterations = 1
     MaxPenalty = 2
@@ -1589,7 +1590,7 @@ class AugmentedLagrangianMinimizer:
 # RANSAC minimizers
 # ---------------------------------------------------------------------------
 
-class RansacRole(enum.IntEnum):
+class RansacRole(enum.Enum):
     """Role of a residual batch in RANSAC."""
 
     sampled = ...
@@ -1597,7 +1598,7 @@ class RansacRole(enum.IntEnum):
     always_on = ...
     """Trusted factors (priors): in every solve, never classified."""
 
-class RansacScoring(enum.IntEnum):
+class RansacScoring(enum.Enum):
     """Hypothesis scoring rule."""
 
     msac = ...
@@ -1605,7 +1606,7 @@ class RansacScoring(enum.IntEnum):
     inlier_count = ...
     """Number of inliers (ties broken by MSAC)."""
 
-class RansacLinearSolverType(enum.IntEnum):
+class RansacLinearSolverType(enum.Enum):
     """Dense per-hypothesis solver."""
 
     cholesky = ...

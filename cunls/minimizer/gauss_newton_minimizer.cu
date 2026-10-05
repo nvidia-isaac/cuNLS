@@ -25,6 +25,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -119,7 +120,7 @@ void GaussNewtonMinimizer::ComputeCostAsync(cudaStream_t stream, const Problem &
   for (size_t i = 0; i < residual_batches.size(); i++) {
     const auto &rb = residual_batches[i];
     auto ptrs = state_pointers[i].data();
-    rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, cost_ptr, nullptr);
+    CheckEvaluate(rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, cost_ptr, nullptr), i);
     const auto &factor_batch = rb.GetFactorBatch();
     cost_ptr += factor_batch->NumActiveFactors();
   }
@@ -194,13 +195,14 @@ void GaussNewtonMinimizer::ComputeResidualAndJacobian(cudaStream_t stream, const
 
     JacobianMode mode = problem.JacobianModeFor(i, options_.jacobian_mode);
     if (mode == JacobianMode::kAnalytic) {
-      rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, nullptr, jacobian_ptr);
+      CheckEvaluate(rb.Evaluate(stream, workspace_ptr, residuals_ptr, ptrs, nullptr, jacobian_ptr),
+                    i);
     } else {
       // Raw (pre-loss) residual + finite-difference Jacobian, then apply any
       // registered loss function to both in place -- exactly mirrors what
       // ResidualBatch::Evaluate would have done after an analytic
       // FactorBatch::Evaluate call.
-      factor_batch->Evaluate(residuals_ptr, nullptr, ptrs, stream);
+      CheckEvaluate(factor_batch->Evaluate(residuals_ptr, nullptr, ptrs, stream), i);
       numeric_diff_builder_.Compute(stream, problem, i, minimizer_state, residuals_ptr,
                                     jacobian_ptr, options_.numeric_diff_options);
       if (rb.GetLossFunction() != nullptr) {
@@ -503,6 +505,15 @@ MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &pr
 
 MinimizerSummary GaussNewtonMinimizer::Minimize(cudaStream_t stream, Problem &problem,
                                                 const MinimizeCallOptions &call) {
+  if (!call.constraints_managed) {
+    for (const auto &rb : problem.GetResidualBatches()) {
+      if (dynamic_cast<const ConstraintFactorBatchBase *>(rb.GetFactorBatch()) != nullptr) {
+        throw std::invalid_argument(
+            "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has constraint "
+            "factor batches; solve it with AugmentedLagrangianMinimizer");
+      }
+    }
+  }
   call_ = call;
   auto range = profiler_domain_.CreateDomainRange("Minimize");
   MinimizerSummary summary;

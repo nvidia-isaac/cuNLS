@@ -300,7 +300,7 @@ TEST(DynamicProblem, RansacWithDeviceIndexTable) {
     const auto scene = ransac_test::MakePnPScene(n, 0.4, 2e-3, 0.05, seed);
     obs.CopyFromHost(scene.observations.data(), n);
     pts.CopyFromHost(scene.points_world.data(), n);
-    pose.CopyFromHost(&scene.world_to_cam,
+    pose.CopyFromHost(&scene.world_from_cam,
                       1);  // start at the truth: robustness is tested elsewhere
     pnp.SetNumActiveFactors(n);
     const RansacSummary s = ransac.Minimize(stream.GetStream(), problem);

@@ -45,7 +45,7 @@ using cunls::Vector;
 // ---------------------------------------------------------------------------
 
 struct PnPScene {
-  SE3Transform gt_pose;       // world -> camera
+  SE3Transform gt_pose;       // world_from_camera (the pose state)
   SE3Transform initial_pose;  // perturbed gt_pose
   std::vector<Vector<3>> points_world;
   std::vector<Vector<2>> observations;  // normalized image coordinates
@@ -76,8 +76,8 @@ inline PnPScene MakePnPScene(const PnPSceneOptions &o) {
   twist[4] = trans(rng);
   twist[5] = 8.0f + trans(rng);
   std::vector<SE3Transform> gt;
-  TwistsToSE3({twist}, gt);
-  s.gt_pose = gt[0];
+  TwistsToSE3({twist}, gt);  // camera_from_world: the camera ~8 m from the origin, facing it
+  s.gt_pose = InverseSE3(gt[0]);
 
   std::uniform_real_distribution<float> coord(-3.0f, 3.0f), image(-0.5f, 0.5f), unit(0.f, 1.f);
   std::normal_distribution<float> noise(0.0f, o.pixel_noise);
@@ -107,7 +107,7 @@ inline PnPScene MakePnPScene(const PnPSceneOptions &o) {
 
   std::vector<SE3Transform> perturbation;
   GenerateRandomSE3(1, rng, perturbation, o.init_rotation, o.init_translation);
-  s.initial_pose = ComposeSE3(perturbation[0], s.gt_pose);
+  s.initial_pose = ComposeSE3(s.gt_pose, perturbation[0]);  // perturbed in the camera frame
   return s;
 }
 
@@ -116,7 +116,7 @@ inline PnPScene MakePnPScene(const PnPSceneOptions &o) {
 // ---------------------------------------------------------------------------
 
 struct BundleAdjustmentScene {
-  std::vector<SE3Transform> gt_poses, initial_poses;  // initial_poses[0] == gt_poses[0]
+  std::vector<SE3Transform> gt_poses, initial_poses;  // cameras 0 and 1 exact (gauge)
   std::vector<Vector<3>> gt_points, initial_points;
   std::vector<Vector<2>> observations;  // observation of point j by camera i at i * P + j
 };
@@ -136,7 +136,8 @@ inline BundleAdjustmentScene MakeBundleAdjustmentScene(size_t num_poses, size_t 
       t[4] = trans(rng);
       t[5] = 8.0f + trans(rng);
     }
-    TwistsToSE3(twists, s.gt_poses);
+    TwistsToSE3(twists, s.gt_poses);                        // camera_from_world
+    for (auto &pose : s.gt_poses) pose = InverseSE3(pose);  // world_from_camera states
   }
 
   std::mt19937 rng(5678);
@@ -169,12 +170,13 @@ inline BundleAdjustmentScene MakeBundleAdjustmentScene(size_t num_poses, size_t 
     }
   }
 
-  // Perturb every camera but the first (the gauge anchor).
+  // Perturb every camera but the first two: the gauge anchors (camera 0 fixes the frame,
+  // camera 1 the scale, which reprojections alone do not observe).
   std::vector<SE3Transform> perturbations;
-  GenerateRandomSE3(num_poses - 1, rng, perturbations, 0.02f, 0.1f);
+  GenerateRandomSE3(num_poses - 2, rng, perturbations, 0.02f, 0.1f);
   s.initial_poses = s.gt_poses;
-  for (size_t i = 1; i < num_poses; ++i) {
-    s.initial_poses[i] = ComposeSE3(perturbations[i - 1], s.gt_poses[i]);
+  for (size_t i = 2; i < num_poses; ++i) {
+    s.initial_poses[i] = ComposeSE3(s.gt_poses[i], perturbations[i - 2]);  // camera frame
   }
   return s;
 }

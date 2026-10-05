@@ -270,6 +270,8 @@ if(BUILD_TESTING)
     tests/quadruped_factor_batch_test.cpp
     tests/imu_factor_batch_test.cpp
     tests/clearance_factor_batch_test.cpp
+    tests/pose_prior_factor_batch_test.cpp
+    tests/reprojection_reference_test.cpp
     tests/augmented_lagrangian_nonlinear_test.cu
   )
 

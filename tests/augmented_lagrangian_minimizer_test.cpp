@@ -30,6 +30,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -45,6 +46,7 @@
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/robustifier/huber_loss_function_batch.h"
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 
@@ -440,6 +442,76 @@ TEST_P(AugmentedLagrangianMinimizerTest, RealTimeBudget) {
       const float expected = std::min(std::max(target[i], lower[i]), upper[i]);
       EXPECT_NEAR(result[i], expected, 1e-3f) << "call " << call << " component " << i;
     }
+  }
+}
+
+// Robust objective under constraints: min Σ ρ((x - t_i)²) s.t. x >= 0.5, with
+// t = {0, 0.1, -0.1, 0.05, 10} (one outlier). Without a loss the mean 2.01
+// satisfies the bound (inactive); with a Huber loss the outlier is
+// down-weighted, the robust estimate lies below 0.5, and the bound is active.
+TEST_P(AugmentedLagrangianMinimizerTest, RobustObjective) {
+  constexpr float kInf = std::numeric_limits<float>::infinity();
+  const std::vector<float> targets = {0.f, 0.1f, -0.1f, 0.05f, 10.f};
+  for (const bool robust : {false, true}) {
+    CudaStream stream;
+    dvector<float> x(std::vector<float>{3.f}), t(targets);
+    dvector<float> lo(std::vector<float>{0.5f}), hi(std::vector<float>{kInf});
+    VectorStateBatch<1> states(x.data(), 1);
+    states.SetNumActiveStates(1);
+    PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(t.data()), 5);
+    prior.SetNumActiveFactors(5);
+    HuberLossFunctionBatch huber(0.5f);
+    BoundFactorBatch<1> bound(lo.data(), hi.data(), 1);
+    bound.SetNumActiveFactors(1);
+    Problem problem;
+    problem.AddStateBatch(&states);
+    const std::vector<float *> ptrs(5, states.StateDevicePtr(0));
+    if (robust) {
+      problem.AddFactorBatch(&prior, &huber, ptrs);
+    } else {
+      problem.AddFactorBatch(&prior, ptrs);
+    }
+    problem.AddFactorBatch(&bound, {states.StateDevicePtr(0)});
+    auto inner = MakeMinimizer(GetParam());
+    AugmentedLagrangianMinimizer solver(*inner);
+    const auto summary = solver.Minimize(stream.GetStream(), problem);
+    EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged) << robust;
+    EXPECT_NEAR(Download(x)[0], robust ? 0.5f : 2.01f, 2e-3f) << "robust " << robust;
+  }
+}
+
+// Constraints are hard: a robust loss on a constraint batch is rejected, and
+// the plain minimizers reject constraint batches (only the augmented
+// Lagrangian manages their multipliers and penalties).
+TEST_P(AugmentedLagrangianMinimizerTest, RejectsMisusedConstraints) {
+  constexpr float kInf = std::numeric_limits<float>::infinity();
+  CudaStream stream;
+  dvector<float> x(std::vector<float>{3.f}), t(std::vector<float>{0.f});
+  dvector<float> lo(std::vector<float>{0.5f}), hi(std::vector<float>{kInf});
+  VectorStateBatch<1> states(x.data(), 1);
+  states.SetNumActiveStates(1);
+  PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(t.data()), 1);
+  prior.SetNumActiveFactors(1);
+  BoundFactorBatch<1> bound(lo.data(), hi.data(), 1);
+  bound.SetNumActiveFactors(1);
+  HuberLossFunctionBatch huber(0.5f);
+  const std::vector<float *> ptr = {states.StateDevicePtr(0)};
+  {
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, ptr);
+    problem.AddFactorBatch(&bound, &huber, ptr);
+    auto inner = MakeMinimizer(GetParam());
+    AugmentedLagrangianMinimizer solver(*inner);
+    EXPECT_THROW(solver.Minimize(stream.GetStream(), problem), std::invalid_argument);
+  }
+  {
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, ptr);
+    problem.AddFactorBatch(&bound, ptr);
+    auto plain = MakeMinimizer(GetParam());
+    EXPECT_THROW(plain->Minimize(stream.GetStream(), problem), std::invalid_argument);
   }
 }
 

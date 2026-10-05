@@ -18,7 +18,7 @@
 Keyframes of a synthetic trajectory are joined by IMU factors (the raw
 gyro / accelerometer samples between consecutive keyframes) and observe
 landmarks through ReprojectionFactorBatch. Both factor types read the same
-rig_from_world pose states. Velocities and IMU biases start at zero and are
+world_from_rig pose states (the rig's pose in the world). Velocities and IMU biases start at zero and are
 recovered from the solve; poses and landmarks start perturbed. The data are
 noiseless; the solve recovers the trajectory to about a millimeter.
 
@@ -78,26 +78,25 @@ def simulate(num_keyframes, samples_per_keyframe, gravity, rng):
     return keyframes, np.array(samples, dtype=np.float32)
 
 
-def rig_from_world(R, p):
-    """4x4 rig_from_world from the rig's world pose (R, p)."""
-    X = np.eye(4)
-    X[:3, :3], X[:3, 3] = R.T, -R.T @ p
-    return X
+def world_from_rig(R, p):
+    """4x4 world_from_rig pose state from the rig's rotation R and position p."""
+    T = np.eye(4)
+    T[:3, :3], T[:3, 3] = R, p
+    return T
 
 
 def landmarks_and_observations(poses, rng, per_keyframe=30):
     """Points in front of each keyframe's camera (camera = rig), observed by
     the keyframes within +-2 of it where they have positive depth."""
     points, obs, pairs = [], [], []
-    for anchor, X in enumerate(poses):
-        world_from_cam = np.linalg.inv(X)
+    for anchor, world_from_cam in enumerate(poses):
         for _ in range(per_keyframe):
             pc = np.array([rng.uniform(-2, 2), rng.uniform(-2, 2), rng.uniform(3, 6)])
             pw = world_from_cam[:3, :3] @ pc + world_from_cam[:3, 3]
             idx = len(points)
             points.append(pw)
             for k in range(max(0, anchor - 2), min(len(poses), anchor + 3)):
-                c = poses[k][:3, :3] @ pw + poses[k][:3, 3]
+                c = poses[k][:3, :3].T @ (pw - poses[k][:3, 3])  # in camera k
                 if c[2] > 0.5:
                     obs.append(c[:2] / c[2])
                     pairs.append((k, idx))
@@ -131,7 +130,7 @@ def main():
     gravity = np.array(params.gravity, dtype=np.float64)
 
     keyframes, samples = simulate(K, N, gravity, rng)
-    true_poses = [rig_from_world(R, p) for R, _, p in keyframes]
+    true_poses = [world_from_rig(R, p) for R, _, p in keyframes]
     true_points, observations, pairs = landmarks_and_observations(true_poses, rng)
     L = len(true_points)
 
@@ -192,7 +191,7 @@ def main():
     est_poses = cp.asnumpy(pose_buf).reshape(K, 4, 4)
     est_vels, est_bias = cp.asnumpy(vel_buf), cp.asnumpy(bias_buf)
     true_vels = np.array([v for _, v, _ in keyframes])
-    pos_err = max(np.linalg.norm(np.linalg.inv(est_poses[k])[:3, 3] - keyframes[k][2])
+    pos_err = max(np.linalg.norm(est_poses[k][:3, 3] - keyframes[k][2])
                   for k in range(K))
     print(f"{K} keyframes, {N} IMU samples each, {L} landmarks, {len(pairs)} observations")
     print(f"LM: {summary.num_iterations} iterations, cost {summary.initial_cost:.3g} -> "

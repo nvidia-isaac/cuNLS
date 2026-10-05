@@ -104,7 +104,9 @@ SE3Transform MakeIdentityPose() {
   return pose;
 }
 
-Vector<2> ProjectPoint(const SE3Transform &pose, const Vector<3> &point_world) {
+/** Projects a world point through the world_from_camera pose state. */
+Vector<2> ProjectPoint(const SE3Transform &world_from_cam, const Vector<3> &point_world) {
+  const SE3Transform pose = test_utils::InverseSE3(world_from_cam);  // camera_from_world
   const float x =
       pose[0] * point_world[0] + pose[1] * point_world[1] + pose[2] * point_world[2] + pose[3];
   const float y =

@@ -223,6 +223,8 @@ void bind_factor(nb::module_ &m) {
   nb::class_<cunls::ReprojectionFactorBatch, cunls::FactorBatch>(
       m, "ReprojectionFactorBatch",
       "Batched 2D reprojection factor. Residual=2, States=[SE3(6), Point(3)].\n"
+      "The pose state is world_from_rig (the rig's pose in the world); the camera sees\n"
+      "P_cam = camera_from_rig * pose^-1 * P_world.\n"
       "Observations must be in normalized image coordinates (K^-1 applied).")
       .def(
           "__init__",
@@ -240,7 +242,8 @@ void bind_factor(nb::module_ &m) {
   nb::class_<cunls::PnPFactorBatch, cunls::FactorBatch>(
       m, "PnPFactorBatch",
       "Batched PnP reprojection: fixed 3D points, pose-only Jacobian.\n"
-      "Residual=2, States=[SE3(6)]. Observations in normalized image coords.\n"
+      "Residual=2, States=[SE3(6)], the pose world_from_rig. Observations in normalized\n"
+      "image coords.\n"
       "3D points are passed at construction (device); not optimized.")
       .def(
           "__init__",
@@ -524,8 +527,8 @@ void bind_factor(nb::module_ &m) {
   // --- Point-to-Plane ---
   nb::class_<cunls::PointToPlaneFactorBatch, cunls::FactorBatch>(
       m, "PointToPlaneFactorBatch",
-      "Batched point-to-plane factor: residual = Nq^T*(p - T*q). Residual=1, "
-      "States=[SE3(6)].")
+      "Point-to-plane factor: residual = Nq^T*(p - T*q), the plane normal Nq given in the "
+      "target frame (not rotated by T). Residual=1, States=[SE3(6)].")
       .def(
           "__init__",
           [](cunls::PointToPlaneFactorBatch *self, nb::handle p_obs, nb::handle q_obs,
@@ -972,9 +975,9 @@ void bind_factor(nb::module_ &m) {
       m, "ImuFactorBatch",
       "IMU factor between two keyframes; the raw samples between them define a chain of Euler "
       "steps whose intermediate states are marginalized inside the factor (Schur complement, "
-      "recomputed every evaluation). States: X_a (SE3StateBatch, rig_from_world as in "
+      "recomputed every evaluation). States: T_a (SE3StateBatch, world_from_rig as in "
       "ReprojectionFactorBatch / PnPFactorBatch), v_a (VectorStateBatch3, world velocity of the "
-      "IMU), b_a = [b_g; b_a] (VectorStateBatch6), X_b, v_b, b_b. Residual (15): "
+      "IMU), b_a = [b_g; b_a] (VectorStateBatch6), T_b, v_b, b_b. Residual (15): "
       "the whitened defect of keyframe b against the prediction (9) and the bias random walk "
       "(6). Analytic Jacobians.\n\n"
       "Parameters\n"

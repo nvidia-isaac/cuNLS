@@ -42,6 +42,7 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/bound_factor_batch.h"
 #include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
@@ -686,12 +687,14 @@ struct PnPSetup {
 };
 
 /** 0.5 * sum |proj(pose * X) - obs|^2 in double over a scene's inliers. */
+/** Inlier cost of the world_from_camera pose state `pose`. */
 double HostInlierCost(const PnPScene &s, const SE3Transform &pose) {
+  const SE3Transform cam_from_world = ransac_test::Inverse(pose);
   double c = 0;
   for (size_t i = 0; i < s.observations.size(); ++i) {
     if (s.is_outlier[i]) continue;
     const auto p = ransac_test::Transform(
-        pose, {s.points_world[i][0], s.points_world[i][1], s.points_world[i][2]});
+        cam_from_world, {s.points_world[i][0], s.points_world[i][1], s.points_world[i][2]});
     const double du = p[0] / p[2] - s.observations[i][0];
     const double dv = p[1] / p[2] - s.observations[i][1];
     c += 0.5 * (du * du + dv * dv);
@@ -747,7 +750,7 @@ class RansacPnPTest : public ::testing::TestWithParam<OutlierCase> {};
 TEST_P(RansacPnPTest, RejectsOutliersAndMatchesInlierOnlySolution) {
   const OutlierCase c = GetParam();
   const PnPScene scene = ransac_test::MakePnPScene(600, c.outlier_ratio, kNoise, kMinOutlier, 21);
-  const SE3Transform init = Perturb(scene.world_to_cam, 3, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 3, 0.1, 0.3);
   CudaStream stream;
 
   PnPSetup setup(scene, init);
@@ -774,8 +777,8 @@ TEST_P(RansacPnPTest, RejectsOutliersAndMatchesInlierOnlySolution) {
   EXPECT_GE(cls.recall(), 0.995) << "outliers " << c.outlier_ratio;
   EXPECT_GE(cls.precision(), 0.999) << "outliers " << c.outlier_ratio;
   EXPECT_EQ(summary.num_inliers, cls.tp + cls.fp);
-  EXPECT_LT(RotationErrorDeg(est, scene.world_to_cam), 0.2);
-  EXPECT_LT(TranslationError(est, scene.world_to_cam), 0.02);
+  EXPECT_LT(RotationErrorDeg(est, scene.world_from_cam), 0.2);
+  EXPECT_LT(TranslationError(est, scene.world_from_cam), 0.02);
   // Same optimum as GN on the true inliers: poses agree to well below the
   // noise level, and the inlier cost (in double) is no worse than GN's. The
   // cost surface is flat in float near the optimum, so compare costs rather
@@ -797,37 +800,37 @@ INSTANTIATE_TEST_SUITE_P(OutlierRatios, RansacPnPTest,
 TEST(RansacMinimizer, PlainGaussNewtonFailsWhereRansacSucceeds) {
   // Sanity check of the test setup itself: outliers ruin the non-robust solve.
   const PnPScene scene = ransac_test::MakePnPScene(600, 0.4, kNoise, kMinOutlier, 22);
-  const SE3Transform init = Perturb(scene.world_to_cam, 4, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 4, 0.1, 0.3);
   CudaStream stream;
   PnPSetup plain(scene, init);
   GaussNewtonMinimizer gn;
   gn.Minimize(stream.GetStream(), plain.problem);
-  EXPECT_GT(RotationErrorDeg(plain.Pose(), scene.world_to_cam), 0.5);
+  EXPECT_GT(RotationErrorDeg(plain.Pose(), scene.world_from_cam), 0.5);
 
   PnPSetup robust(scene, init);
   RansacGaussNewtonMinimizer ransac(PnPOptions());
   ransac.Minimize(stream.GetStream(), robust.problem);
-  EXPECT_LT(RotationErrorDeg(robust.Pose(), scene.world_to_cam), 0.2);
+  EXPECT_LT(RotationErrorDeg(robust.Pose(), scene.world_from_cam), 0.2);
 }
 
 TEST(RansacMinimizer, AlwaysOnPriorIsHonoredAndNeverClassified) {
   const PnPScene scene = ransac_test::MakePnPScene(400, 0.5, kNoise, kMinOutlier, 23);
-  const SE3Transform init = Perturb(scene.world_to_cam, 5, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 5, 0.1, 0.3);
   CudaStream stream;
-  PnPSetup setup(scene, init, /*with_prior=*/true, &scene.world_to_cam);
+  PnPSetup setup(scene, init, /*with_prior=*/true, &scene.world_from_cam);
   RansacGaussNewtonMinimizer ransac(PnPOptions(1, /*prior=*/true));
   const RansacSummary s = ransac.Minimize(stream.GetStream(), setup.problem);
   EXPECT_EQ(ransac.InlierMask(1), nullptr);
   const Classification cls = Classify(ransac.InlierMask(0), scene.is_outlier);
   EXPECT_GE(cls.recall(), 0.995);
   EXPECT_GE(cls.precision(), 0.999);
-  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_to_cam), 0.2);
+  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2);
   EXPECT_EQ(s.num_inliers, cls.tp + cls.fp);
 }
 
 TEST(RansacMinimizer, LargeInitialErrorWithLevenbergMarquardt) {
   const PnPScene scene = ransac_test::MakePnPScene(500, 0.3, kNoise, kMinOutlier, 24);
-  const SE3Transform init = Perturb(scene.world_to_cam, 6, 0.35, 0.8);
+  const SE3Transform init = Perturb(scene.world_from_cam, 6, 0.35, 0.8);
   CudaStream stream;
   PnPSetup setup(scene, init);
   RansacLevenbergMarquardtMinimizerOptions lm;
@@ -835,8 +838,8 @@ TEST(RansacMinimizer, LargeInitialErrorWithLevenbergMarquardt) {
   lm.base_options.hypothesis_iterations = 10;
   RansacLevenbergMarquardtMinimizer ransac(lm);
   ransac.Minimize(stream.GetStream(), setup.problem);
-  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_to_cam), 0.2);
-  EXPECT_LT(TranslationError(setup.Pose(), scene.world_to_cam), 0.02);
+  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2);
+  EXPECT_LT(TranslationError(setup.Pose(), scene.world_from_cam), 0.02);
 }
 
 // ============================================================================
@@ -905,7 +908,7 @@ TEST(RansacMinimizer, ReprojectionWithConstantLandmarkBatch) {
   // Free SE3 pose + a fully constant Vector<3> landmark batch: the landmark
   // batch is shared (not replicated) and its states contribute no columns.
   const PnPScene scene = ransac_test::MakePnPScene(500, 0.5, kNoise, kMinOutlier, 41);
-  const SE3Transform init = Perturb(scene.world_to_cam, 7, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 7, 0.1, 0.3);
   dvector<SE3Transform> pose(1);
   pose.CopyFromHost(&init, 1);
   SE3StateBatch pose_state(reinterpret_cast<float *>(pose.data()), 1);
@@ -935,7 +938,7 @@ TEST(RansacMinimizer, ReprojectionWithConstantLandmarkBatch) {
   ransac.Minimize(stream.GetStream(), problem);
   SE3Transform est;
   pose.CopyToHost(&est, 1);
-  EXPECT_LT(RotationErrorDeg(est, scene.world_to_cam), 0.2);
+  EXPECT_LT(RotationErrorDeg(est, scene.world_from_cam), 0.2);
   const Classification cls = Classify(ransac.InlierMask(0), scene.is_outlier);
   EXPECT_GE(cls.recall(), 0.995);
   EXPECT_GE(cls.precision(), 0.999);
@@ -955,7 +958,7 @@ TEST(RansacMinimizer, CustomFocalFactorConvergesWithRegularMinimizer) {
     pixels[i][0] = scene.observations[i][0] * focal;
     pixels[i][1] = scene.observations[i][1] * focal;
   }
-  const SE3Transform init = Perturb(scene.world_to_cam, 8, 0.05, 0.15);
+  const SE3Transform init = Perturb(scene.world_from_cam, 8, 0.05, 0.15);
   dvector<SE3Transform> pose(1);
   pose.CopyFromHost(&init, 1);
   std::vector<float> f0 = {focal * 1.08f};
@@ -985,7 +988,7 @@ TEST(RansacMinimizer, CustomFocalFactorConvergesWithRegularMinimizer) {
   SE3Transform est;
   pose.CopyToHost(&est, 1);
   EXPECT_NEAR(ToHost(fdev)[0], focal, 2.0);
-  EXPECT_LT(RotationErrorDeg(est, scene.world_to_cam), 0.3);
+  EXPECT_LT(RotationErrorDeg(est, scene.world_from_cam), 0.3);
 }
 
 TEST(RansacMinimizer, CustomFactorMixedStateTypes) {
@@ -998,7 +1001,7 @@ TEST(RansacMinimizer, CustomFactorMixedStateTypes) {
     pixels[i][0] = scene.observations[i][0] * focal;
     pixels[i][1] = scene.observations[i][1] * focal;
   }
-  const SE3Transform init = Perturb(scene.world_to_cam, 8, 0.05, 0.15);
+  const SE3Transform init = Perturb(scene.world_from_cam, 8, 0.05, 0.15);
   dvector<SE3Transform> pose(1);
   pose.CopyFromHost(&init, 1);
   std::vector<float> f0 = {focal * 1.08f};
@@ -1033,7 +1036,7 @@ TEST(RansacMinimizer, CustomFactorMixedStateTypes) {
   pose.CopyToHost(&est, 1);
   const float f_est = ToHost(fdev)[0];
   EXPECT_NEAR(f_est, focal, 2.0);
-  EXPECT_LT(RotationErrorDeg(est, scene.world_to_cam), 0.3);
+  EXPECT_LT(RotationErrorDeg(est, scene.world_from_cam), 0.3);
   const Classification cls = Classify(ransac.InlierMask(0), scene.is_outlier);
   EXPECT_GE(cls.recall(), 0.99);
   EXPECT_GE(cls.precision(), 0.999);
@@ -1132,46 +1135,76 @@ TEST(RansacMinimizer, RejectsDimensionAboveLimit) {
   ExpectInvalid([&] { ransac.Minimize(stream.GetStream(), lp.problem); }, "D = 65");
 }
 
+// Features the RANSAC minimizers do not implement are rejected, not ignored.
+TEST(RansacMinimizer, RejectsUnsupportedFeatures) {
+  CudaStream stream;
+  RansacMinimizerOptions o;
+  o.default_inlier_threshold = 0.05f;
+  {
+    LinearProblem<2> lp(200, 0.0, 81);
+    dvector<float> lo(std::vector<float>{-1.f, -1.f}), hi(std::vector<float>{1.f, 1.f});
+    lp.state->SetBounds(lo.data(), hi.data());
+    RansacGaussNewtonMinimizer r(o);
+    ExpectInvalid([&] { r.Minimize(stream.GetStream(), lp.problem); }, "box bounds");
+  }
+  {
+    LinearProblem<2> lp(200, 0.0, 82);
+    dvector<float> lo(std::vector<float>{-1.f, -1.f}), hi(std::vector<float>{1.f, 1.f});
+    BoundFactorBatch<2> bound(lo.data(), hi.data(), 1);
+    bound.SetNumActiveFactors(1);
+    lp.problem.AddFactorBatch(&bound, {lp.state->StateDevicePtr(0)});
+    RansacGaussNewtonMinimizer r(o);
+    ExpectInvalid([&] { r.Minimize(stream.GetStream(), lp.problem); }, "constraint factor batch");
+  }
+  {
+    LinearProblem<2> lp(200, 0.0, 83);
+    dvector<int> stages(std::vector<int>{0});
+    lp.problem.SetStateStages({stages.data()});
+    RansacGaussNewtonMinimizer r(o);
+    ExpectInvalid([&] { r.Minimize(stream.GetStream(), lp.problem); }, "state stages");
+  }
+}
+
 TEST(RansacMinimizer, RejectsBadConfigurations) {
   const PnPScene scene = ransac_test::MakePnPScene(50, 0.0, kNoise, kMinOutlier, 72);
   CudaStream stream;
   {
-    PnPSetup s(scene, scene.world_to_cam);
+    PnPSetup s(scene, scene.world_from_cam);
     RansacMinimizerOptions o;
     o.factor_batches = {{RansacRole::kAlwaysOn, 0.f}};
     RansacGaussNewtonMinimizer r(o);
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "no kSampled");
   }
   {
-    PnPSetup s(scene, scene.world_to_cam);
+    PnPSetup s(scene, scene.world_from_cam);
     RansacMinimizerOptions o = PnPOptions();
     o.factor_batches.push_back({RansacRole::kSampled, 1.f});
     RansacGaussNewtonMinimizer r(o);
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "residual batches");
   }
   {
-    PnPSetup s(scene, scene.world_to_cam);
+    PnPSetup s(scene, scene.world_from_cam);
     RansacMinimizerOptions o = PnPOptions();
     o.sample_size = 51;
     RansacGaussNewtonMinimizer r(o);
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "sample size");
   }
   {
-    PnPSetup s(scene, scene.world_to_cam);
+    PnPSetup s(scene, scene.world_from_cam);
     RansacMinimizerOptions o = PnPOptions();
     o.max_rounds = 0;
     RansacGaussNewtonMinimizer r(o);
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "max_rounds");
   }
   {
-    PnPSetup s(scene, scene.world_to_cam);
+    PnPSetup s(scene, scene.world_from_cam);
     RansacMinimizerOptions o = PnPOptions();
     o.hypothesis_iterations = 0;
     RansacGaussNewtonMinimizer r(o);
     ExpectInvalid([&] { r.Minimize(stream.GetStream(), s.problem); }, "hypothesis_iterations");
   }
   {
-    PnPSetup s(scene, scene.world_to_cam);
+    PnPSetup s(scene, scene.world_from_cam);
     RansacMinimizerOptions o = PnPOptions();
     o.factor_batches[0].inlier_threshold = 0.f;
     RansacGaussNewtonMinimizer r(o);
@@ -1180,7 +1213,7 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
   {
     // Numeric Jacobians are not supported yet.
     dvector<SE3Transform> pose(1);
-    pose.CopyFromHost(&scene.world_to_cam, 1);
+    pose.CopyFromHost(&scene.world_from_cam, 1);
     SE3StateBatch st(reinterpret_cast<float *>(pose.data()), 1);
     st.SetNumActiveStates(st.Capacity(), st.ConstCapacity());
     auto obs = ToDevice(scene.observations);
@@ -1197,7 +1230,7 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
   {
     // All states constant: D = 0.
     dvector<SE3Transform> pose(1);
-    pose.CopyFromHost(&scene.world_to_cam, 1);
+    pose.CopyFromHost(&scene.world_from_cam, 1);
     std::vector<int> ids = {0};
     auto did = ToDevice(ids);
     SE3StateBatch st(reinterpret_cast<float *>(pose.data()), 1, did.data(), 1);
@@ -1222,7 +1255,7 @@ TEST(RansacMinimizer, InlierMaskIsNullBeforeAnyRun) {
 
 TEST(RansacMinimizer, InlierMaskSizeIsTheBatchSizeOfTheLastRun) {
   const PnPScene scene = ransac_test::MakePnPScene(300, 0.3, kNoise, kMinOutlier, 77);
-  PnPSetup s(scene, scene.world_to_cam);
+  PnPSetup s(scene, scene.world_from_cam);
   RansacGaussNewtonMinimizer r(PnPOptions());
   CudaStream stream;
   r.Minimize(stream.GetStream(), s.problem);
@@ -1317,10 +1350,10 @@ TEST(RansacMinimizer, CoherentOutliersFromACompetingPose) {
   const std::array<double, 6> twist = {0.1, -0.08, 0.06, 0.25, -0.2, 0.2};
   const PnPScene scene =
       ransac_test::MakeCoherentPnPScene(800, 0.4, kNoise, kMinOutlier, 25, twist);
-  const SE3Transform init = Perturb(scene.world_to_cam, 26, 0.05, 0.15);
+  const SE3Transform init = Perturb(scene.world_from_cam, 26, 0.05, 0.15);
   for (bool lm : {false, true}) {
     const RunResult r = RunPnP(scene, init, PnPOptions(), lm);
-    EXPECT_LT(RotationErrorDeg(r.pose, scene.world_to_cam), 0.2) << "lm " << lm;
+    EXPECT_LT(RotationErrorDeg(r.pose, scene.world_from_cam), 0.2) << "lm " << lm;
     size_t kept_outliers = 0, kept_inliers = 0;
     for (size_t i = 0; i < r.mask.size(); ++i) {
       (scene.is_outlier[i] ? kept_outliers : kept_inliers) += r.mask[i];
@@ -1334,13 +1367,13 @@ TEST(RansacMinimizer, LargeProblemTwoStageScoringAndEarlyExit) {
   // 150k factors: two-stage scoring (> 2 x 16384 sampled factors) and the
   // per-iteration convergence checks of the refinement are active.
   const PnPScene scene = ransac_test::MakePnPScene(150000, 0.5, kNoise, kMinOutlier, 88);
-  const SE3Transform init = Perturb(scene.world_to_cam, 16, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 16, 0.1, 0.3);
   RansacMinimizerOptions exhaustive = PnPOptions();
   exhaustive.scoring_subset_size = 0;
   const RunResult two_stage = RunPnP(scene, init, PnPOptions());
   const RunResult full = RunPnP(scene, init, exhaustive);
   for (const RunResult *r : {&two_stage, &full}) {
-    EXPECT_LT(RotationErrorDeg(r->pose, scene.world_to_cam), 0.05);
+    EXPECT_LT(RotationErrorDeg(r->pose, scene.world_from_cam), 0.05);
     size_t kept_outliers = 0, missed_inliers = 0;
     for (size_t i = 0; i < r->mask.size(); ++i) {
       kept_outliers += scene.is_outlier[i] && r->mask[i];
@@ -1360,7 +1393,7 @@ TEST(RansacMinimizer, TwoStageScoringWithWrappedCustomFactorIsIdentical) {
   // The two-stage subset evaluates items with explicit factor ids; a custom
   // wrapper that forwards them must reproduce the built-in factor exactly.
   const PnPScene scene = ransac_test::MakePnPScene(40000, 0.4, kNoise, kMinOutlier, 89);
-  const SE3Transform init = Perturb(scene.world_to_cam, 17, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 17, 0.1, 0.3);
   RansacMinimizerOptions two_stage = PnPOptions();
   two_stage.hypotheses_per_round = 64;
   two_stage.scoring_subset_size = 4096;
@@ -1371,7 +1404,7 @@ TEST(RansacMinimizer, TwoStageScoringWithWrappedCustomFactorIsIdentical) {
 
 TEST(RansacMinimizer, SameSeedIsBitwiseReproducible) {
   const PnPScene scene = ransac_test::MakePnPScene(700, 0.5, kNoise, kMinOutlier, 81);
-  const SE3Transform init = Perturb(scene.world_to_cam, 9, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 9, 0.1, 0.3);
   for (bool lm : {false, true}) {
     const RunResult a = RunPnP(scene, init, PnPOptions(), lm);
     const RunResult b = RunPnP(scene, init, PnPOptions(), lm);
@@ -1382,7 +1415,7 @@ TEST(RansacMinimizer, SameSeedIsBitwiseReproducible) {
 TEST(RansacMinimizer, CustomFactorThatSynchronizesGivesIdenticalResults) {
   // A custom factor may do anything inside Evaluate (here: synchronize).
   const PnPScene scene = ransac_test::MakePnPScene(300, 0.3, kNoise, kMinOutlier, 83);
-  const SE3Transform init = Perturb(scene.world_to_cam, 11, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 11, 0.1, 0.3);
   const RunResult direct = RunPnP(scene, init, PnPOptions());
   const RunResult syncing = RunPnP(scene, init, PnPOptions(), false, /*syncing_factor=*/true);
   ExpectIdentical(direct, syncing);
@@ -1390,7 +1423,7 @@ TEST(RansacMinimizer, CustomFactorThatSynchronizesGivesIdenticalResults) {
 
 TEST(RansacMinimizer, ScoringChunkSizeDoesNotChangeResults) {
   const PnPScene scene = ransac_test::MakePnPScene(500, 0.5, kNoise, kMinOutlier, 84);
-  const SE3Transform init = Perturb(scene.world_to_cam, 12, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 12, 0.1, 0.3);
   RansacMinimizerOptions tiny = PnPOptions();
   tiny.scoring_memory_budget_bytes = 1;  // one hypothesis per chunk
   ExpectIdentical(RunPnP(scene, init, PnPOptions()), RunPnP(scene, init, tiny));
@@ -1399,11 +1432,11 @@ TEST(RansacMinimizer, ScoringChunkSizeDoesNotChangeResults) {
 TEST(RansacMinimizer, MoreHypothesesThanFactors) {
   // 64 minimal samples of 3 out of 30 factors: samples overlap across slots.
   const PnPScene scene = ransac_test::MakePnPScene(30, 0.2, kNoise, kMinOutlier, 85);
-  const SE3Transform init = Perturb(scene.world_to_cam, 13, 0.05, 0.15);
+  const SE3Transform init = Perturb(scene.world_from_cam, 13, 0.05, 0.15);
   RansacMinimizerOptions o = PnPOptions();
   o.hypotheses_per_round = 64;
   const RunResult r = RunPnP(scene, init, o);
-  EXPECT_LT(RotationErrorDeg(r.pose, scene.world_to_cam), 0.5);
+  EXPECT_LT(RotationErrorDeg(r.pose, scene.world_from_cam), 0.5);
   size_t fp = 0, tp = 0;
   for (size_t i = 0; i < r.mask.size(); ++i) {
     (scene.is_outlier[i] ? fp : tp) += r.mask[i];
@@ -1414,12 +1447,12 @@ TEST(RansacMinimizer, MoreHypothesesThanFactors) {
 
 TEST(RansacMinimizer, InlierCountScoringAndCholesky) {
   const PnPScene scene = ransac_test::MakePnPScene(500, 0.4, kNoise, kMinOutlier, 86);
-  const SE3Transform init = Perturb(scene.world_to_cam, 14, 0.1, 0.3);
+  const SE3Transform init = Perturb(scene.world_from_cam, 14, 0.1, 0.3);
   RansacMinimizerOptions o = PnPOptions();
   o.scoring = RansacScoring::kInlierCount;
   o.linear_solver = RansacLinearSolverType::kCholesky;
   const RunResult r = RunPnP(scene, init, o);
-  EXPECT_LT(RotationErrorDeg(r.pose, scene.world_to_cam), 0.2);
+  EXPECT_LT(RotationErrorDeg(r.pose, scene.world_from_cam), 0.2);
 }
 
 TEST(RansacMinimizer, MinimizerIsReusableAcrossProblems) {
@@ -1428,9 +1461,9 @@ TEST(RansacMinimizer, MinimizerIsReusableAcrossProblems) {
   for (uint32_t seed : {91u, 92u, 93u}) {
     const PnPScene scene =
         ransac_test::MakePnPScene(200 + 150 * (seed - 90), 0.4, kNoise, kMinOutlier, seed);
-    PnPSetup setup(scene, Perturb(scene.world_to_cam, seed, 0.1, 0.3));
+    PnPSetup setup(scene, Perturb(scene.world_from_cam, seed, 0.1, 0.3));
     ransac.Minimize(stream.GetStream(), setup.problem);
-    EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_to_cam), 0.2) << seed;
+    EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2) << seed;
     const Classification cls = Classify(ransac.InlierMask(0), scene.is_outlier);
     EXPECT_GE(cls.recall(), 0.995);
     EXPECT_GE(cls.precision(), 0.999);

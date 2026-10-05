@@ -573,6 +573,10 @@ Limits and requirements
   belongs to no registered state batch;
 - a residual batch uses numeric Jacobians (``JacobianMode::kNumeric``), which
   RANSAC does not support yet;
+- a residual batch is a constraint (solved by ``AugmentedLagrangianMinimizer``),
+  a state batch has box bounds, or the problem has a subproblem partition or
+  state stages: RANSAC does not implement these and rejects them rather than
+  ignoring them;
 - ``Problem.check_consistency()`` (C++ ``Problem::CheckConsistency()``) fails, or an option is out of range
   (``hypotheses_per_round``, ``max_rounds`` or ``hypothesis_iterations`` of 0,
   ``confidence`` outside (0, 1)).

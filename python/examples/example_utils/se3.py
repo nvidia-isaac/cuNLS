@@ -87,15 +87,22 @@ def compose_se3(A, B):
     return (A @ B).astype(np.float32)
 
 
+def world_to_camera(T, point):
+    """A world point in the frame of the camera with pose state ``T``
+    (world_from_camera, the pose convention of cuNLS): ``R^T (p - t)``."""
+    return T[:3, :3].T @ (point - T[:3, 3])
+
+
 def project_normalized(T, point):
-    """Project a 3D world point into normalised image coordinates via pose ``T``.
+    """Project a 3D world point into normalised image coordinates through the
+    camera with pose ``T`` (world_from_camera).
 
     Returns a 2-vector ``[x/z, y/z]`` in the camera frame.
     """
-    p_cam = T[:3, :3] @ point + T[:3, 3]
+    p_cam = world_to_camera(T, point)
     return np.array([p_cam[0] / p_cam[2], p_cam[1] / p_cam[2]], dtype=np.float32)
 
 
 def compute_depth(T, point):
     """Return the z-coordinate (depth) of a 3D world point in camera frame."""
-    return (T[:3, :3] @ point + T[:3, 3])[2]
+    return world_to_camera(T, point)[2]

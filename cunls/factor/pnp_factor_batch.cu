@@ -25,17 +25,16 @@
 
 #include "cunls/factor/indexed_evaluation.cuh"
 #include "cunls/factor/pnp_factor_batch.h"
+#include "cunls/factor/projection.cuh"
 
 namespace cunls {
 
 constexpr size_t kPnPBlockSize = 256;
 
 /**
- * @brief Fused kernel: read pose from state_pointers, optionally apply
- *        camera-from-rig, compute PnP residual+Jacobian in one pass.
- *
- * Replaces: pnp_collect_poses_kernel + cuBLAS SGEMM (or memcpy) +
- * pnp_cost_kernel.
+ * @brief Fused kernel: read the world_from_rig pose from state_pointers,
+ *        optionally apply camera-from-rig, compute the PnP residual and
+ *        Jacobian in one pass (projection.cuh).
  */
 __global__ void pnp_fused_kernel(const Vector<2> *observations, const Vector<3> *points_world,
                                  float const *const *state_pointers,
@@ -49,104 +48,44 @@ __global__ void pnp_fused_kernel(const Vector<2> *observations, const Vector<3> 
   constexpr int kResidualDim = 2;
   constexpr int kJacobianCols = 6;
 
+  if (residuals == nullptr) return;
   const float *__restrict__ rig = state_pointers[tid];
-  const Vector<3> &P = points_world[m];
-
-  float pose[12];
-
-  if (poses_camera_from_rig != nullptr) {
-    const float *__restrict__ E = poses_camera_from_rig[m].data();
-
-    const float e00 = E[0], e01 = E[1], e02 = E[2], e03 = E[3];
-    const float e10 = E[4], e11 = E[5], e12 = E[6], e13 = E[7];
-    const float e20 = E[8], e21 = E[9], e22 = E[10], e23 = E[11];
-
-    const float r00 = rig[0], r01 = rig[1], r02 = rig[2], r03 = rig[3];
-    const float r10 = rig[4], r11 = rig[5], r12 = rig[6], r13 = rig[7];
-    const float r20 = rig[8], r21 = rig[9], r22 = rig[10], r23 = rig[11];
-
-    pose[0] = e00 * r00 + e01 * r10 + e02 * r20;
-    pose[1] = e00 * r01 + e01 * r11 + e02 * r21;
-    pose[2] = e00 * r02 + e01 * r12 + e02 * r22;
-    pose[3] = e00 * r03 + e01 * r13 + e02 * r23 + e03;
-    pose[4] = e10 * r00 + e11 * r10 + e12 * r20;
-    pose[5] = e10 * r01 + e11 * r11 + e12 * r21;
-    pose[6] = e10 * r02 + e11 * r12 + e12 * r22;
-    pose[7] = e10 * r03 + e11 * r13 + e12 * r23 + e13;
-    pose[8] = e20 * r00 + e21 * r10 + e22 * r20;
-    pose[9] = e20 * r01 + e21 * r11 + e22 * r21;
-    pose[10] = e20 * r02 + e21 * r12 + e22 * r22;
-    pose[11] = e20 * r03 + e21 * r13 + e22 * r23 + e23;
-  } else {
+  const Vector<3> &Pw = points_world[m];
+  const float P[3] = {Pw[0], Pw[1], Pw[2]};
+  float T[12];  // world_from_rig, rows 0..2
 #pragma unroll
-    for (int i = 0; i < 12; i++) pose[i] = rig[i];
-  }
+  for (int i = 0; i < 12; i++) T[i] = rig[i];
+  const float *E = poses_camera_from_rig != nullptr ? poses_camera_from_rig[m].data() : nullptr;
 
-  float point_cam[3];
+  float p_r[3], p_c[3];
+  projection::RigAndCameraPoint(T, E, P, p_r, p_c);
+  float *res_ptr = residuals + tid * kResidualDim;
+  const bool valid = p_c[2] >= z_threshold;
   float inv_z = 0.0f;
-
-  if (residuals != nullptr) {
-    point_cam[0] = pose[3] + pose[0] * P[0] + pose[1] * P[1] + pose[2] * P[2];
-    point_cam[1] = pose[7] + pose[4] * P[0] + pose[5] * P[1] + pose[6] * P[2];
-    point_cam[2] = pose[11] + pose[8] * P[0] + pose[9] * P[1] + pose[10] * P[2];
-
-    float *res_ptr = residuals + tid * kResidualDim;
-
-    if (point_cam[2] < z_threshold) {
-      res_ptr[0] = 0.0f;
-      res_ptr[1] = 0.0f;
-    } else {
-      inv_z = __frcp_rn(point_cam[2]);
-      const auto &obs = observations[m];
-      res_ptr[0] = point_cam[0] * inv_z - obs[0];
-      res_ptr[1] = point_cam[1] * inv_z - obs[1];
-    }
+  if (!valid) {
+    res_ptr[0] = 0.0f;
+    res_ptr[1] = 0.0f;
+  } else {
+    inv_z = __frcp_rn(p_c[2]);
+    const auto &obs = observations[m];
+    res_ptr[0] = p_c[0] * inv_z - obs[0];
+    res_ptr[1] = p_c[1] * inv_z - obs[1];
   }
 
-  if (residuals != nullptr && jacobians != nullptr) {
-    constexpr int kJacobianBlockSize = kResidualDim * kJacobianCols;
-    float *jac_ptr = jacobians + tid * kJacobianBlockSize;
-
-    if (point_cam[2] < z_threshold) {
+  if (jacobians == nullptr) return;
+  constexpr int kJacobianBlockSize = kResidualDim * kJacobianCols;
+  float *jac_ptr = jacobians + tid * kJacobianBlockSize;
+  if (!valid) {
 #pragma unroll
-      for (int i = 0; i < kJacobianBlockSize; i++) jac_ptr[i] = 0.0f;
-      return;
-    }
-
-    float Jp[2][3];
-    {
-      float inv_z_sq = inv_z * inv_z;
-      const float &x = point_cam[0];
-      const float &y = point_cam[1];
-
-      float a = pose[8] * inv_z_sq;
-      float b = pose[9] * inv_z_sq;
-      float c = pose[10] * inv_z_sq;
-
-      Jp[0][0] = pose[0] * inv_z - a * x;
-      Jp[0][1] = pose[1] * inv_z - b * x;
-      Jp[0][2] = pose[2] * inv_z - c * x;
-
-      Jp[1][0] = pose[4] * inv_z - a * y;
-      Jp[1][1] = pose[5] * inv_z - b * y;
-      Jp[1][2] = pose[6] * inv_z - c * y;
-    }
-
+    for (int i = 0; i < kJacobianBlockSize; i++) jac_ptr[i] = 0.0f;
+    return;
+  }
+  float J_pose[2][6];
+  projection::Jacobian(T, E, p_r, p_c, inv_z, J_pose, nullptr);
 #pragma unroll
-    for (int i = 0; i < kResidualDim; i++) {
+  for (int i = 0; i < kResidualDim; i++) {
 #pragma unroll
-      for (int j = 0; j < 3; j++) {
-        jac_ptr[i * kJacobianCols + 3 + j] = Jp[i][j];
-      }
-    }
-
-    jac_ptr[0 * kJacobianCols + 0] = P[1] * Jp[0][2] - Jp[0][1] * P[2];
-    jac_ptr[0 * kJacobianCols + 1] = P[2] * Jp[0][0] - Jp[0][2] * P[0];
-    jac_ptr[0 * kJacobianCols + 2] = P[0] * Jp[0][1] - Jp[0][0] * P[1];
-
-    jac_ptr[1 * kJacobianCols + 0] = P[1] * Jp[1][2] - Jp[1][1] * P[2];
-    jac_ptr[1 * kJacobianCols + 1] = P[2] * Jp[1][0] - Jp[1][2] * P[0];
-    jac_ptr[1 * kJacobianCols + 2] = P[0] * Jp[1][1] - Jp[1][0] * P[1];
+    for (int j = 0; j < 6; j++) jac_ptr[i * kJacobianCols + j] = J_pose[i][j];
   }
 }
 

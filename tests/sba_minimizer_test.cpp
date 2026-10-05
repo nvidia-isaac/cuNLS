@@ -90,7 +90,7 @@ struct SbaProblemHost {
   std::vector<int32_t> camera_ids;            ///< Camera index for each observation.
   std::vector<int32_t> point_ids;             ///< Point index for each observation.
   std::vector<int32_t> pose_ids;              ///< Pose index for each observation.
-  std::vector<SE3Transform> poses;            ///< Rig poses (world-to-rig), 16 floats each.
+  std::vector<SE3Transform> poses;  ///< Rig poses as stored (world-to-rig), 16 floats each.
   std::vector<Vector<3>> points;              ///< 3D points in world frame.
   std::vector<SE3Transform> camera_from_rig;  ///< Camera-in-rig transforms per camera.
 };
@@ -236,7 +236,8 @@ class SbaMinimizerTestFixture : public ::testing::Test {
       camera_from_rig_per_obs[i] = host.camera_from_rig[static_cast<size_t>(cam_id)];
     }
 
-    poses_device_ = dvector<SE3Transform>(host.poses);
+    // The file stores rig_from_world (world-to-rig) poses; the states are world_from_rig.
+    poses_device_ = dvector<SE3Transform>(test_utils::InverseSE3(host.poses));
     points_device_ = dvector<Vector<3>>(host.points);
     observations_device_ = dvector<Vector<2>>(observations);
     sqrt_information_device_ = dvector<Matrix<2>>(sqrt_info);

@@ -265,6 +265,15 @@ struct MinimizeCallOptions {
    * reuse_structure, the call is a fixed sequence of device work.
    */
   bool fixed_iterations = false;
+  /**
+   * @brief Set by AugmentedLagrangianMinimizer for its inner solves: the
+   * problem's constraint batches (ConstraintFactorBatchBase) then evaluate
+   * augmented-Lagrangian rows with multipliers and penalties it manages.
+   * Without it, Minimize rejects a problem with constraint batches: alone,
+   * Gauss-Newton / Levenberg-Marquardt would treat them as a fixed soft
+   * penalty.
+   */
+  bool constraints_managed = false;
 };
 
 class GaussNewtonMinimizer {

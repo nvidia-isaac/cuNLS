@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -470,6 +471,37 @@ class NanBeyondTwoFactor : public SizedFactorBatch<1, 1> {
 // A trial step to a non-finite cost is rejected (and the damping raised), by
 // both minimizers, with and without a subproblem partition; it was accepted
 // by Levenberg-Marquardt, whose test rho < threshold is false for NaN.
+// A factor whose Evaluate reports failure stops the solve with an exception
+// instead of optimizing on unwritten residuals.
+class FailingFactorBatch : public SizedFactorBatch<1, 1> {
+ public:
+  explicit FailingFactorBatch(size_t capacity) : SizedFactorBatch(capacity) {}
+  bool Evaluate(float *, float *, float const *const *, cudaStream_t, const int *,
+                size_t) const override {
+    return false;
+  }
+};
+
+TEST(FailingFactor, MinimizersThrow) {
+  CudaStream stream;
+  dvector<float> x(std::vector<float>{1.f});
+  VectorStateBatch<1> states(x.data(), 1);
+  states.SetNumActiveStates(1);
+  FailingFactorBatch failing(1);
+  failing.SetNumActiveFactors(1);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&failing, {states.StateDevicePtr(0)});
+  MinimizerOptions options;
+  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+  GaussNewtonMinimizer gn(options);
+  EXPECT_THROW(gn.Minimize(stream.GetStream(), problem), std::runtime_error);
+  LevenbergMarquardtMinimizerOptions lm_options;
+  lm_options.base_options = options;
+  LevenbergMarquardtMinimizer lm(lm_options);
+  EXPECT_THROW(lm.Minimize(stream.GetStream(), problem), std::runtime_error);
+}
+
 TEST(NonFiniteTrialStep, IsRejected) {
   for (int kind = 0; kind < 4; ++kind) {
     CudaStream stream;

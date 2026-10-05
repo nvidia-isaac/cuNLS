@@ -175,15 +175,13 @@ std::array<double, 6> RandomTwist(std::mt19937 &rng, double rot, double trans) {
 }
 
 PnPScene MakePnPScene(size_t num_points, double outlier_ratio, double noise_sigma,
-                      double min_outlier_error, uint32_t seed, const SE3Transform *world_to_cam) {
+                      double min_outlier_error, uint32_t seed, const SE3Transform *world_from_cam) {
   std::mt19937 rng(seed);
   PnPScene scene;
-  if (world_to_cam != nullptr) {
-    scene.world_to_cam = *world_to_cam;
-  } else {
-    scene.world_to_cam = ExpSE3(RandomTwist(rng, 0.6, 1.5));
-  }
-  const SE3Transform cam_to_world = Inverse(scene.world_to_cam);
+  const SE3Transform world_to_cam =
+      world_from_cam != nullptr ? Inverse(*world_from_cam) : ExpSE3(RandomTwist(rng, 0.6, 1.5));
+  const SE3Transform cam_to_world = Inverse(world_to_cam);
+  scene.world_from_cam = cam_to_world;
   std::uniform_real_distribution<double> fov(-0.6, 0.6);
   std::uniform_real_distribution<double> depth(2.0, 10.0);
   std::uniform_real_distribution<double> unit(0.0, 1.0);
@@ -210,7 +208,7 @@ PnPScene MakePnPScene(size_t num_points, double outlier_ratio, double noise_sigm
     // Project the float-rounded point so inliers are exact up to the noise.
     std::array<double, 3> pwf = {scene.points_world[i][0], scene.points_world[i][1],
                                  scene.points_world[i][2]};
-    const std::array<double, 3> p = Transform(scene.world_to_cam, pwf);
+    const std::array<double, 3> p = Transform(world_to_cam, pwf);
     const double u = p[0] / p[2];
     const double v = p[1] / p[2];
     double ou = u + noise(rng);
@@ -232,9 +230,10 @@ PnPScene MakeCoherentPnPScene(size_t num_points, double outlier_ratio, double no
                               const std::array<double, 6> &outlier_twist) {
   std::mt19937 rng(seed);
   PnPScene scene;
-  scene.world_to_cam = ExpSE3(RandomTwist(rng, 0.6, 1.5));
-  const SE3Transform wrong = Compose(scene.world_to_cam, ExpSE3(outlier_twist));
-  const SE3Transform cam_to_world = Inverse(scene.world_to_cam);
+  const SE3Transform world_to_cam = ExpSE3(RandomTwist(rng, 0.6, 1.5));
+  const SE3Transform wrong = Compose(world_to_cam, ExpSE3(outlier_twist));
+  const SE3Transform cam_to_world = Inverse(world_to_cam);
+  scene.world_from_cam = cam_to_world;
   std::uniform_real_distribution<double> fov(-0.6, 0.6);
   std::uniform_real_distribution<double> depth(2.0, 10.0);
   std::normal_distribution<double> noise(0.0, noise_sigma);
@@ -255,7 +254,7 @@ PnPScene MakeCoherentPnPScene(size_t num_points, double outlier_ratio, double no
       const double z = depth(rng);
       const std::array<double, 3> pw = Transform(cam_to_world, {fov(rng) * z, fov(rng) * z, z});
       for (int k = 0; k < 3; ++k) scene.points_world[i][k] = static_cast<float>(pw[k]);
-      const auto truth = project(scene.world_to_cam, scene.points_world[i]);
+      const auto truth = project(world_to_cam, scene.points_world[i]);
       const auto seen = scene.is_outlier[i] ? project(wrong, scene.points_world[i]) : truth;
       const double err = std::hypot(seen[0] - truth[0], seen[1] - truth[1]);
       if (!scene.is_outlier[i] || (seen[2] > 0.5 && err >= min_outlier_error) || attempt > 1000) {
@@ -353,12 +352,14 @@ __global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, in
     return;
   }
   const int m = MeasurementOf(i, factor_ids, num_factors);
+  // The pose state is world_from_camera T = (R, t): p = R^T (P - t).
   const float *pose = state_pointers[2 * i];
   const float f = state_pointers[2 * i + 1][0];
   const Vector<3> &P = points[m];
-  const float xc = pose[3] + pose[0] * P[0] + pose[1] * P[1] + pose[2] * P[2];
-  const float yc = pose[7] + pose[4] * P[0] + pose[5] * P[1] + pose[6] * P[2];
-  const float zc = pose[11] + pose[8] * P[0] + pose[9] * P[1] + pose[10] * P[2];
+  const float d[3] = {P[0] - pose[3], P[1] - pose[7], P[2] - pose[11]};
+  const float xc = pose[0] * d[0] + pose[4] * d[1] + pose[8] * d[2];
+  const float yc = pose[1] * d[0] + pose[5] * d[1] + pose[9] * d[2];
+  const float zc = pose[2] * d[0] + pose[6] * d[1] + pose[10] * d[2];
   float *r = residuals + 2 * i;
   if (zc < 1e-3f) {
     r[0] = 0.f;
@@ -378,22 +379,20 @@ __global__ void FocalPnPKernel(const Vector<2> *obs, const Vector<3> *points, in
   if (jacobians == nullptr) {
     return;
   }
-  // d(u, v)/d(world point), as in PnPFactorBatch; pose Jacobian for x (+) d = x exp(d).
-  const float iz2 = iz * iz;
-  float jp[2][3];
-  for (int j = 0; j < 3; ++j) {
-    jp[0][j] = pose[j] * iz - pose[8 + j] * iz2 * xc;
-    jp[1][j] = pose[4 + j] * iz - pose[8 + j] * iz2 * yc;
-  }
+  // Pose Jacobian for T (+) d = T exp(d) (camera frame): p <- p + [p]x phi - rho, so
+  // with a = f d(u, v)/d(p): d/d(phi) = a x p, d/d(rho) = -a.
+  const float a[2][3] = {{f * iz, 0.f, -f * u * iz}, {0.f, f * iz, -f * v * iz}};
+  const float p[3] = {xc, yc, zc};
   float *J = jacobians + 14 * i;  // row-major 2 x (6 + 1)
   for (int row = 0; row < 2; ++row) {
+    const float *ar = a[row];
     float *Jr = J + row * 7;
-    Jr[0] = f * (P[1] * jp[row][2] - jp[row][1] * P[2]);
-    Jr[1] = f * (P[2] * jp[row][0] - jp[row][2] * P[0]);
-    Jr[2] = f * (P[0] * jp[row][1] - jp[row][0] * P[1]);
-    Jr[3] = f * jp[row][0];
-    Jr[4] = f * jp[row][1];
-    Jr[5] = f * jp[row][2];
+    Jr[0] = ar[1] * p[2] - ar[2] * p[1];
+    Jr[1] = ar[2] * p[0] - ar[0] * p[2];
+    Jr[2] = ar[0] * p[1] - ar[1] * p[0];
+    Jr[3] = -ar[0];
+    Jr[4] = -ar[1];
+    Jr[5] = -ar[2];
     Jr[6] = row == 0 ? u : v;
   }
 }

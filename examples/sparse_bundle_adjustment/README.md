@@ -2,7 +2,7 @@
 
 This example demonstrates synthetic sparse bundle adjustment with:
 - `ReprojectionFactorBatch` for reprojection residuals
-- `SE3StateBatch` for camera poses (first pose fixed, rest optimized)
+- `SE3StateBatch` for camera poses (first two fixed, rest optimized)
 - `VectorStateBatch<3>` for 3D points (all optimized)
 - `LevenbergMarquardtMinimizer` for nonlinear optimization
 
@@ -10,7 +10,7 @@ The setup is intentionally compact but complete:
 1. Generate synthetic camera poses in SE(3).
 2. Generate random 3D points visible from every camera.
 3. Project points into each camera to produce normalized 2D observations.
-4. Perturb poses (except the first, which serves as the gauge anchor) and points.
+4. Perturb poses (except the first two, the gauge anchors) and points.
 5. Jointly optimize poses and points to recover the original geometry.
 
 ## Files
@@ -30,19 +30,23 @@ The setup is intentionally compact but complete:
 
 `examples::MakeBundleAdjustmentScene()` (`utils/datasets.h`) creates cameras
 looking at the origin, points visible from every camera, a perturbed initial
-guess (camera 0 kept exact as the gauge anchor), and the observations.
+guess (cameras 0 and 1 kept exact as the gauge anchors), and the observations.
 
 `examples::ProjectNormalized()` (from `utils/camera_utils.h`) computes
 observations in normalized camera coordinates:
-- transform `P_world` to camera frame with `T_cam_from_world`
+- transform `P_world` to camera frame with the inverse of the camera pose
+  state `T_world_from_cam`
 - divide by depth to get `(x/z, y/z)`
 
 `ReprojectionFactorBatch` expects these normalized coordinates.
 
 ### Problem construction
 
-- Poses are stored in `SE3StateBatch`. Only the first pose is marked constant
-  via `const_pose_ids` (gauge anchor); all other poses are optimized.
+- Poses are stored in `SE3StateBatch` as the cameras' world poses
+  (world_from_camera, the pose convention of cuNLS). The first two poses are
+  marked constant via `const_pose_ids`: camera 0 fixes the frame and camera 1
+  the scale, which reprojections alone do not observe; all other poses are
+  optimized.
 - Points are stored in `VectorStateBatch<3>` and are optimized.
 - State pointers are created with layout:
   `[pose_0, point_0, pose_0, point_1, ..., pose_M, point_N]`.

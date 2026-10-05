@@ -27,7 +27,9 @@ namespace cunls {
  * @brief Batched PnP reprojection factor (pose only, fixed 3D points).
  *
  * Residual per correspondence:
- *     P_cam = T_cam_from_world * P_world[i]
+ *     P_cam = E * T^{-1} * P_world[i]
+ * with the pose state T = world_from_rig (the pose convention of cuNLS),
+ * perturbed on the right in the rig frame, and the optional camera_from_rig E.
  *     r_i = [P_cam.x/P_cam.z - obs_i.x, P_cam.y/P_cam.z - obs_i.y]
  *
  * Jacobian: 2x6 (pose tangent only, no point derivatives).

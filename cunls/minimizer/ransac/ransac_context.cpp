@@ -106,8 +106,10 @@ float RansacContext::InitialCost(cudaStream_t stream) {
   for (size_t b = 0; b < residuals.size(); ++b) {
     const ResidualLayout &r = residuals[b];
     if (r.num_factors > 0) {
-      r.residual_batch->Evaluate(stream, initial_workspace_.data(), initial_res_.data(),
-                                 r.x0_table.data(), initial_cost_.data(), nullptr);
+      CheckEvaluate(
+          r.residual_batch->Evaluate(stream, initial_workspace_.data(), initial_res_.data(),
+                                     r.x0_table.data(), initial_cost_.data(), nullptr),
+          b);
       ReduceSumToDevice(stream, initial_cost_.data(), r.num_factors, initial_sums_.data() + b,
                         partials);
     }

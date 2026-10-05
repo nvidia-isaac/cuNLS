@@ -312,6 +312,74 @@ TEST(NumericDiffJacobianTest, SE3BetweenMatchesAnalytic) {
   ExpectJacobiansClose(jac_an_host, jac_num_host, kRelTol, kAbsTol);
 }
 
+// A factor slot may read from different state batches for different factors
+// (e.g. free and fixed poses kept in separate batches). Regression test: the
+// builder used to take each slot's owning batch from factor 0 only, so the
+// other factors were differenced at the wrong state (here also past the end of
+// factor 0's two-state batch).
+TEST(NumericDiffJacobianTest, SlotsReadingDifferentStateBatches) {
+  constexpr size_t kNumA = 2, kNumB = 5, kNumFactors = 5;
+
+  std::mt19937 rng(kSeed + 4);
+  std::uniform_real_distribution<float> rot_dist(-0.3f, 0.3f);
+  std::uniform_real_distribution<float> trans_dist(-2.0f, 2.0f);
+  CudaStream stream;
+
+  auto make_poses = [&](size_t n) {
+    hvector<Vector<6>> twists(n);
+    for (auto &t : twists) {
+      for (int i = 0; i < 3; ++i) t[i] = rot_dist(rng);
+      for (int i = 3; i < 6; ++i) t[i] = trans_dist(rng);
+    }
+    dvector<Vector<6>> twists_d(twists);
+    dvector<SE3Transform> poses(n);
+    ComputeExpSE3(stream.GetStream(), reinterpret_cast<const float *>(twists_d.data()), 6, 4, 16, n,
+                  reinterpret_cast<float *>(poses.data()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    return poses;
+  };
+  dvector<SE3Transform> states_a = make_poses(kNumA), states_b = make_poses(kNumB);
+  dvector<SE3Transform> deltas = make_poses(kNumFactors);
+
+  SE3StateBatch batch_a(reinterpret_cast<const float *>(states_a.data()), kNumA);
+  batch_a.SetNumActiveStates(kNumA);
+  SE3StateBatch batch_b(reinterpret_cast<const float *>(states_b.data()), kNumB);
+  batch_b.SetNumActiveStates(kNumB);
+  SE3BetweenFactorBatch factor_batch(deltas.data(), kNumFactors);
+  factor_batch.SetNumActiveFactors(kNumFactors);
+
+  // (left, right): both slots mix the two batches across factors.
+  float *a0 = batch_a.StateDevicePtr(0), *a1 = batch_a.StateDevicePtr(1);
+  auto b = [&](size_t i) { return batch_b.StateDevicePtr(i); };
+  const std::vector<float *> state_pointers = {a0, b(0), b(1), a1, b(4), b(2), a1, b(3), b(0), a0};
+
+  Problem problem;
+  problem.AddStateBatch(&batch_a);
+  problem.AddStateBatch(&batch_b);
+  problem.AddFactorBatch(&factor_batch, state_pointers);
+  ASSERT_TRUE(problem.CheckConsistency());
+
+  MinimizerState ms(stream.GetStream(), problem);
+  const size_t residual_size = factor_batch.ResidualsSize();
+  const size_t jac_floats = kNumFactors * residual_size * 12;
+
+  dvector<float> residuals(kNumFactors * residual_size), jacobian_analytic(jac_floats),
+      jacobian_numeric(jac_floats);
+  auto ptrs = ms.GetStatePointers()[0].data();
+  factor_batch.Evaluate(residuals.data(), jacobian_analytic.data(), ptrs, stream.GetStream());
+  factor_batch.Evaluate(residuals.data(), nullptr, ptrs, stream.GetStream());
+
+  NumericDiffJacobianBuilder builder;
+  builder.Compute(stream.GetStream(), problem, 0, ms, residuals.data(), jacobian_numeric.data(),
+                  NumericDiffOptions{});
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+
+  std::vector<float> jac_an_host(jac_floats), jac_num_host(jac_floats);
+  jacobian_analytic.CopyToHost(jac_an_host.data(), jac_floats);
+  jacobian_numeric.CopyToHost(jac_num_host.data(), jac_floats);
+  ExpectJacobiansClose(jac_an_host, jac_num_host, kRelTol, kAbsTol);
+}
+
 TEST(NumericDiffJacobianTest, ForwardDiffMatchesAnalytic) {
   // Sanity check for the forward-difference path (kForward), on the same
   // Euclidean between-factor setup as VectorBetweenMatchesAnalytic, with a

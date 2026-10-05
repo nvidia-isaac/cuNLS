@@ -28,10 +28,13 @@ namespace cunls {
 /**
  * @brief Batch factor for point-to-plane constraints.
  *
- * Computes the scalar residual measuring the signed distance between a target
- * point p and the plane defined by a source point q and its normal Nq, after
- * applying an SE(3) transformation T to q:
+ * Computes the signed distance of the transformed source point T q from the
+ * plane through the target point p with normal Nq, given in the target (p)
+ * frame (the standard point-to-plane ICP residual):
  *   residual = Nq^T * (p - T @ q) = Nq . (p - (R * q + t))
+ *
+ * Nq is NOT rotated by T: pass the target point's normal. A normal estimated
+ * at the source point must first be rotated into the target frame.
  *
  * where R is the 3x3 rotation matrix and t is the translation vector of T.
  *
@@ -65,9 +68,9 @@ class PointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
    * points. Must point to at least capacity * 3 floats of allocated memory.
    * @param q_observations_ptr Pointer to GPU device memory containing source
    * points. Must point to at least capacity * 3 floats of allocated memory.
-   * @param nq_observations_ptr Pointer to GPU device memory containing normal
-   * vectors at each source point (in the source/q frame). Must point to at
-   * least capacity * 3 floats of allocated memory.
+   * @param nq_observations_ptr Pointer to GPU device memory containing the
+   * plane normal of each correspondence, in the target (p) frame (not rotated
+   * by T). Must point to at least capacity * 3 floats of allocated memory.
    * @param capacity Number of factors the measurement buffers hold. The active
    *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
    */

@@ -42,15 +42,16 @@ Conventions
 
    * - Quantity
      - Convention
-   * - Pose state :math:`X`
-     - ``SE3StateBatch``, **rig_from_world** (the body or rig frame from the
-       world frame), the same state as ``ReprojectionFactorBatch`` and
-       ``PnPFactorBatch`` read. Perturbed on the right,
-       :math:`X\,\mathrm{Exp}(\xi)`, :math:`\xi = [\varphi;\ \rho]`.
+   * - Pose state :math:`T`
+     - ``SE3StateBatch``, **world_from_rig** (the pose of the body or rig in
+       the world), the same state as ``ReprojectionFactorBatch`` and
+       ``PnPFactorBatch`` read (:ref:`pose-convention`). Perturbed on the
+       right, :math:`T\,\mathrm{Exp}(\xi)`, :math:`\xi = [\varphi;\ \rho]` in
+       the rig frame.
    * - Extrinsic
      - ``ImuParameters.body_from_imu`` :math:`T_{bi}` (rig_from_imu, an
        ``SE3Transform``). The IMU's pose in the world is
-       :math:`T_{wi} = X^{-1} T_{bi}`. Identity when the IMU defines the rig
+       :math:`T_{wi} = T\,T_{bi}`. Identity when the IMU defines the rig
        frame.
    * - Velocity :math:`v`
      - ``VectorStateBatch3``: world-frame velocity **of the IMU origin** (the
@@ -167,7 +168,7 @@ Eliminating the chain
 -------------------------------------------------------------------------------
 
 Consider the chain as its own least-squares problem. The keyframe states
-:math:`(X_a, v_a, b_a, X_b, v_b, b_b)` *and* the :math:`N-1` intermediate states
+:math:`(T_a, v_a, b_a, T_b, v_b, b_b)` *and* the :math:`N-1` intermediate states
 are variables, and every step contributes :math:`\|d_k\|^2_{Q_k^{-1}}`. It is
 linearized at the states integrated forward from keyframe :math:`a`, where
 every interior defect is zero. In the Gauss-Newton system
@@ -254,16 +255,16 @@ constant when differentiating.
 Jacobians
 -------------------------------------------------------------------------------
 
-A state perturbation :math:`X\,\mathrm{Exp}([\varphi;\ \rho])` acts in the world
-frame, since :math:`X` maps from the world. It moves the IMU by
+A state perturbation :math:`T\,\mathrm{Exp}([\varphi;\ \rho])` acts in the rig
+frame. With :math:`T = (R, t)` and :math:`T_{bi} = (R_{bi}, t_{bi})` it moves
+the IMU by
 
 .. math::
 
-   \varphi_{\text{imu}} = -R_{wi}^\top \varphi, \qquad
-   \delta p_{\text{imu}} = [p_{wi}]_\times \varphi - \rho,
+   \varphi_{\text{imu}} = R_{bi}^\top \varphi, \qquad
+   \delta p_{\text{imu}} = -R\,[t_{bi}]_\times \varphi + R\,\rho.
 
-where :math:`(R_{wi}, p_{wi})` is the IMU's pose in the world. Before
-whitening, :math:`\partial e/\partial(\cdot)` has these blocks (rows:
+Before whitening, :math:`\partial e/\partial(\cdot)` has these blocks (rows:
 rotation; velocity; position):
 
 .. list-table::
@@ -272,29 +273,27 @@ rotation; velocity; position):
 
    * - State
      - Block
-   * - :math:`X_a`
-     - :math:`\big[\Psi_\varphi R_{bi}^\top R_{x,a} - [0;\ 0;\ [p_a]_\times]
-       \ \big|\ [0;\ 0;\ I]\big]`, where :math:`\Psi_\varphi =
+   * - :math:`T_a`
+     - :math:`\big[-\Psi_\varphi R_{bi}^\top + [0;\ 0;\ R_a[t_{bi}]_\times]
+       \ \big|\ [0;\ 0;\ -R_a]\big]`, where :math:`\Psi_\varphi =
        [\Delta R^\top;\ -R_0[\Delta v]_\times;\ -R_0[\Delta p]_\times]`
    * - :math:`v_a`
      - :math:`-[0;\ I;\ T\,I]`
    * - :math:`b_a`
      - :math:`-[G_g \mid G_a]`, the bias sensitivities of the prediction
-   * - :math:`X_b`
-     - :math:`\big[[-\hat R^\top;\ 0;\ [p_b]_\times]\ \big|\ [0;\ 0;\ -I]\big]`
+   * - :math:`T_b`
+     - :math:`\big[[\hat R^\top R_b;\ 0;\ -R_b[t_{bi}]_\times]\ \big|\ [0;\ 0;\ R_b]\big]`
    * - :math:`v_b`
      - :math:`[0;\ I;\ 0]`
    * - :math:`b_b`
      - 0 (in the bias rows only)
 
-Here :math:`R_{x,a}` is the rotation of :math:`X_a`, :math:`R_0` and
-:math:`p_a, p_b` are the IMU orientation at keyframe :math:`a` and the IMU
-positions, and :math:`(\Delta R, \Delta v, \Delta p)` are the integrated deltas
-in the frame of :math:`R_0` (without gravity). Because :math:`\varphi` rotates
-a keyframe about the **world origin**, the rotation columns contain lever arms
-:math:`|p|`. Small entries of a row are then differences of large terms, and
-their error is relative to the row: about :math:`3\cdot10^{-5}` of the row's
-largest entry, as for the reprojection factors.
+Here :math:`R_a, R_b` are the rotations of :math:`T_a, T_b`, :math:`R_0 = R_a
+R_{bi}` is the IMU orientation at keyframe :math:`a`, and :math:`(\Delta R,
+\Delta v, \Delta p)` are the integrated deltas in the frame of :math:`R_0`
+(without gravity). Because :math:`\varphi` rotates a keyframe about its own
+origin, the rotation columns contain only the extrinsic lever arm
+:math:`|t_{bi}|`, not the distance from the world origin.
 
 -------------------------------------------------------------------------------
 Comparison with preintegration
@@ -379,7 +378,7 @@ One factor per keyframe pair, ``SizedFactorBatch<15, 6, 3, 6, 6, 3, 6>``:
      - Tangent
      - Jacobian columns
    * - 0
-     - :math:`X_a`, ``SE3StateBatch`` (rig_from_world)
+     - :math:`T_a`, ``SE3StateBatch`` (world_from_rig)
      - 6, :math:`[\varphi; \rho]`
      - 0–5
    * - 1
@@ -391,7 +390,7 @@ One factor per keyframe pair, ``SizedFactorBatch<15, 6, 3, 6, 6, 3, 6>``:
      - 6
      - 9–14
    * - 3
-     - :math:`X_b`
+     - :math:`T_b`
      - 6
      - 15–20
    * - 4

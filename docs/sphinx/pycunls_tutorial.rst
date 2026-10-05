@@ -69,7 +69,7 @@ SBA problem statement
 This is a Python port of the C++ bundle adjustment example (see
 :ref:`tutorial:Sparse Bundle Adjustment` for the full mathematical
 formulation). Given :math:`M` cameras with poses
-:math:`T_1, \ldots, T_M \in \mathrm{SE}(3)` and :math:`N` 3D landmarks
+:math:`T_1, \ldots, T_M \in \mathrm{SE}(3)` (world_from_camera) and :math:`N` 3D landmarks
 :math:`\mathbf{p}_1, \ldots, \mathbf{p}_N \in \mathbb{R}^3`, we minimize
 the sum of squared reprojection errors across all :math:`K` observations:
 
@@ -79,7 +79,8 @@ the sum of squared reprojection errors across all :math:`K` observations:
      \frac{1}{2} \sum_{k=1}^{K}
        \left\| \pi(T_{i_k}, \mathbf{p}_{j_k}) - \mathbf{z}_k \right\|^2
 
-Pose :math:`T_0` is held constant as a gauge anchor.
+Poses :math:`T_0` and :math:`T_1` are held constant as gauge anchors (frame
+and scale).
 
 SBA API used
 ~~~~~~~~~~~~
@@ -91,8 +92,9 @@ SBA API used
    * - Class
      - Role
    * - :ref:`SE3StateBatch <py-lie-state-batches>`
-     - Stores camera poses on the SE(3) manifold. The first pose is marked
-       constant via ``const_ids``; the rest are optimized.
+     - Stores camera poses (world_from_camera) on the SE(3) manifold. The
+       first two poses are marked constant via ``const_state_ids`` (frame and
+       scale gauge); the rest are optimized.
    * - :ref:`VectorStateBatch3 <py-vector-state-batches>`
      - Stores 3D landmark coordinates in :math:`\mathbb{R}^3`. All points
        are optimization variables.
@@ -132,8 +134,8 @@ CuPy arrays hold the device data. Poses are row-major 4x4 matrices
    :dedent: 4
 
 **Step 3 — Build the state batches.**
-:ref:`SE3StateBatch <py-lie-state-batches>` with pose 0 constant (gauge
-anchor) and :ref:`VectorStateBatch3 <py-vector-state-batches>` for the points.
+:ref:`SE3StateBatch <py-lie-state-batches>` with poses 0 and 1 constant
+(gauge anchors) and :ref:`VectorStateBatch3 <py-vector-state-batches>` for the points.
 
 **Capacity and active count.** The count passed to a batch constructor is
 its *capacity*: how many states (state batches) or factors (factor batches)

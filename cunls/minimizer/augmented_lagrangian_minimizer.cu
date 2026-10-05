@@ -28,6 +28,7 @@
 #include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/problem_partition.h"
 #include "cunls/minimizer/residual_batch.h"
+#include "cunls/robustifier/trivial_loss_function_batch.h"
 #include "cunls/state/state_batch.h"
 
 namespace cunls {
@@ -213,7 +214,9 @@ float AugmentedLagrangianMinimizer::ComputeObjective(cudaStream_t stream, const 
     const FactorBatch *fb = rb.GetFactorBatch();
     if (dynamic_cast<const ConstraintFactorBatchBase *>(fb) != nullptr) continue;
     if (fb->NumActiveFactors() == 0) continue;
-    rb.Evaluate(stream, workspace, residuals, problem.DeviceStatePointers(i), cost, nullptr);
+    CheckEvaluate(
+        rb.Evaluate(stream, workspace, residuals, problem.DeviceStatePointers(i), cost, nullptr),
+        i);
     cost += fb->NumActiveFactors();
   }
   const size_t partials = ReducePartialCount(num_costs);
@@ -293,6 +296,18 @@ void AugmentedLagrangianMinimizer::FillStatus(const float *out,
 
 AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaStream_t stream,
                                                                            Problem &problem) {
+  // A robust loss on the objective is fine (the inner solver applies it); on a
+  // constraint it would down-weight large violations of a hard constraint and
+  // corrupt the multiplier update, so it is rejected.
+  for (const auto &rb : problem.GetResidualBatches()) {
+    const LossFunctionBatch *loss = rb.GetLossFunction();
+    if (loss != nullptr && dynamic_cast<const TrivialLossFunctionBatch *>(loss) == nullptr &&
+        dynamic_cast<const ConstraintFactorBatchBase *>(rb.GetFactorBatch()) != nullptr) {
+      throw std::invalid_argument(
+          "AugmentedLagrangianMinimizer: a constraint factor batch has a robust loss; "
+          "constraints are hard and take no loss (robust losses belong on objective factors)");
+    }
+  }
   // CUDA graph: a real-time call with an unchanged structure is a fixed
   // sequence of device work. The first such call runs eagerly (it sizes every
   // buffer), the second is captured, later calls replay the graph; the final
@@ -384,6 +399,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::MinimizeEager(
     call.max_line_search_steps = options_.inner_line_search_steps;
     call.reuse_structure = options_.reuse_structure;
     call.fixed_iterations = options_.real_time;
+    call.constraints_managed = true;
     if (options_.real_time) {
       call.max_num_iterations = options_.final_inner_iterations > 0
                                     ? options_.final_inner_iterations
@@ -475,6 +491,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::MinimizeEager(
     call.max_line_search_steps = options_.inner_line_search_steps;
     call.problem_at_cap = at_cap_.data();
     call.fixed_iterations = real_time;
+    call.constraints_managed = true;
     // Later outer iterations solve the same structure.
     call.reuse_structure = k > 0 || reuse;
     const MinimizerSummary inner = minimizer_.Minimize(stream, problem, call);
