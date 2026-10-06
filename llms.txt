@@ -13,10 +13,14 @@ cuNLS organizes optimization into:
 - `RansacGaussNewtonMinimizer` and `RansacLevenbergMarquardtMinimizer` for
   robust estimation with gross outliers (free tangent dimension <= 64);
   guide: `docs/sphinx/ransac.rst`, examples: `examples/ransac_pnp`,
-  `python/examples/ransac_pnp.py`.
+  `python/examples/ransac_pnp.py`, `python/examples/tartan_vio.py`.
 - `ImuFactorBatch` for visual-inertial estimation (raw IMU samples between
   keyframes, marginalized inside the factor); guide: `docs/sphinx/imu.rst`,
-  example: `python/examples/imu_bundle_adjustment.py`.
+  examples: `python/examples/imu_bundle_adjustment.py`,
+  `python/examples/tartan_vio.py` (RGB-D inertial odometry with RANSAC on TartanGround).
+- `pycunls.mpc` for model predictive control (dynamics factors, costs,
+  constraints, receding horizon); guide: `docs/sphinx/mpc.rst`, example:
+  `python/examples/supermarket_drones.py` (batched fleet with moving obstacles).
 - Sparse backends (`BlockSparsePCG` default, plus `cuDSS` direct and
   dense LDLT/Cholesky/QR fallbacks) and robust losses.
 

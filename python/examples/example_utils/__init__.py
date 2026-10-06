@@ -17,6 +17,8 @@
 
 The examples keep every pycunls call inline; these modules hold everything
 else: synthetic data (:mod:`datasets`), error metrics (:mod:`metrics`),
-printing and checks (:mod:`report`), small GPU glue (:mod:`gpu`) and SE(3)
-math (:mod:`se3`).
+printing and checks (:mod:`report`), small GPU glue (:mod:`gpu`), SE(3)
+math (:mod:`se3`), a point cloud fused from a TartanGround environment
+(:mod:`tartan_map`) and the Rerun visualizations of the TartanGround
+showcases (:mod:`tartan_vio_rerun`, :mod:`supermarket_drones_rerun`).
 """

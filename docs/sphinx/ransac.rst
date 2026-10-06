@@ -14,7 +14,9 @@ This page explains when to use them, the theory behind them, exactly what the
 implementation does, how to call it from Python and C++, and how to tune it.
 How to write custom factors and states that work with RANSAC is covered in
 :doc:`custom_factors_and_states`. Complete runnable programs are in
-``python/examples/ransac_pnp.py`` (Python) and ``examples/ransac_pnp`` (C++).
+``python/examples/ransac_pnp.py`` (Python) and ``examples/ransac_pnp`` (C++);
+``python/examples/tartan_vio.py`` combines RANSAC with an IMU factor and priors
+(always-on batches) in a visual-inertial odometry on real data.
 
 .. contents:: On this page
    :local:

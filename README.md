@@ -47,6 +47,27 @@ cuNLS refining two large estimation problems, one Gauss-Newton/LM iteration per 
   $\mathbb{R}^5$ state) and a jittered tangle of loops organizes into a crisp nested
   rosette of tilted ellipses.
 
+On real data from [TartanGround](https://tartanair.org/tartanground/), visualized with
+[Rerun](https://rerun.io):
+
+<p align="center">
+  <img src="python/examples/assets/tartan_vio.gif" alt="Visual-inertial odometry with RANSAC" width="46%">
+  &ensp;
+  <img src="python/examples/assets/supermarket_drones.gif" alt="Drone fleet MPC in a supermarket" width="46%">
+</p>
+
+- **Left — Visual-inertial odometry with RANSAC.** A legged robot walks 82 m through a town;
+  every frame an `ImuFactorBatch` and priors stay always on while
+  `RansacLevenbergMarquardtMinimizer` classifies the feature matches, of which up to 75% are
+  injected outliers. It drifts 0.9% of the path; visual-only RANSAC drifts 2.9% and a Huber
+  loss diverges.
+- **Right — A drone fleet in a supermarket.** Quadrotors fly deliveries through a store fused
+  from depth images, among walking shoppers. The whole fleet is one batched MPC problem
+  (`pycunls.mpc`), re-solved at every 25 ms control step of the simulation; each drone keeps
+  clear of the shelves, the shoppers' personal space and the other drones' plans.
+
+See [`python/examples`](python/examples/README.md) to run them.
+
 ## Features
 
 | Category | Details |
@@ -315,38 +336,8 @@ int main() {
 }
 ```
 
-**CMakeLists.txt**
-
-```cmake
-cmake_minimum_required(VERSION 3.22)
-project(cunls_quick_start LANGUAGES CXX CUDA)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-if(NOT DEFINED CUNLS_INSTALL_DIR)
-  message(FATAL_ERROR "Set CUNLS_INSTALL_DIR to cuNLS install prefix.")
-endif()
-
-find_package(CUDAToolkit REQUIRED)
-find_library(CUNLS_LIBRARY cunls PATHS "${CUNLS_INSTALL_DIR}/lib" REQUIRED NO_DEFAULT_PATH)
-
-add_executable(minimal main.cpp)
-target_include_directories(minimal PRIVATE "${CUNLS_INSTALL_DIR}/include")
-target_link_libraries(minimal PRIVATE "${CUNLS_LIBRARY}" CUDA::cudart)
-set_target_properties(minimal PROPERTIES
-  BUILD_RPATH "${CUNLS_INSTALL_DIR}/lib"
-  INSTALL_RPATH "${CUNLS_INSTALL_DIR}/lib"
-)
-```
-
-**Build and run:**
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCUNLS_INSTALL_DIR=/tmp/cunls_install
-cmake --build build -j
-./build/minimal
-```
+To build it against an installed cuNLS, link `libcunls` and `CUDA::cudart` as the
+[C++ examples](examples) do.
 
 ## Robust Estimation with RANSAC
 
@@ -384,45 +375,8 @@ for complete programs.
 
 ## Examples
 
-### Python examples
-
-The `python/examples/` directory contains end-to-end pipelines using `pycunls`:
-
-| Example | Description |
-|---|---|
-| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy |
-| `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
-| `custom_warp_factor.py` | Custom factor kernel using NVIDIA Warp |
-| `custom_warp_state.py` | Custom state batch (positive-scalar manifold) using NVIDIA Warp |
-| `ransac_pnp.py` | Robust PnP with 50% outliers using `RansacLevenbergMarquardtMinimizer` |
-
-### C++ examples
-
-The `examples/` directory contains complete working C++ pipelines:
-
-| Example | Description | Key API |
-|---|---|---|
-| **Sparse Bundle Adjustment** | Jointly optimize camera poses and 3D landmarks from multi-view reprojection error | `ReprojectionFactorBatch`, `SE3StateBatch`, `VectorStateBatch<3>` |
-| **Pose Graph Optimization** | Recover a chain of SE(3) poses from consecutive relative-transform measurements | `SE3BetweenFactorBatch`, `SE3StateBatch` |
-| **Custom Factor** | User-defined CUDA kernel for a 1-D difference chain | `SizedFactorBatch<1,1,1>`, `PriorVectorFactorBatch<1>` |
-| **Motion Prior** | Constant-velocity pose + velocity chain with a closed-form process-noise covariance | `ConstantVelocityInformationSE3FactorBatch`, `SE3StateBatch`, `VectorStateBatch<6>` |
-| **PnP** | Camera pose from 3D-2D correspondences, analytic vs. numeric Jacobians | `PnPFactorBatch`, `SE3StateBatch` |
-| **RANSAC PnP** | Camera pose from correspondences with 50% gross outliers; inlier mask | `RansacLevenbergMarquardtMinimizer`, `PnPFactorBatch` |
-
-Build all examples:
-
-```bash
-cmake -S examples -B build/examples/all \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCUNLS_INSTALL_DIR=/path/to/cunls_install
-cmake --build build/examples/all -j
-```
-
-Or build in Docker:
-
-```bash
-./examples/build_in_docker.sh Release ./artifacts/examples
-```
+- [Python examples](python/examples) (`pycunls`)
+- [C++ examples](examples)
 
 ## Testing
 

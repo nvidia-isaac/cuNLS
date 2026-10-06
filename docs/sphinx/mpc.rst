@@ -120,3 +120,24 @@ The solver is local: it finds the solution near the initial guess (the
 shifted previous plan). An obstacle almost centered on the reference path is
 close to a saddle (passing left or right is equally good); start such
 problems from a guess that already passes on one side.
+
+===============================================================================
+Example: a fleet in a supermarket
+===============================================================================
+
+``python/examples/supermarket_drones.py`` flies six delivery quadrotors through
+the TartanGround ``Supermarket``, fused from the depth images of its ten
+trajectories into a 3D map, while ten shoppers walk the dataset's robot paths.
+The whole fleet is one ``Horizon(batch=6)``, solved together every 25 ms,
+each drone its own subproblem. A grid planner (A*) gives each drone a route
+through the aisles; the MPC follows it and keeps clear, on every step of its
+horizon, of the map voxels nearest to its previous plan, of the shoppers
+(three spheres each, grown by a 0.6 m personal space, predicted at constant
+velocity) and of the other drones' previous plans (with a 0.5 m separation
+zone). All of it is rewritten in :attr:`Horizon.obstacles` every step. Over
+45 s on an RTX A6000: 15 deliveries, the drones at least 1.06 m apart (1.15
+kept), at least 0.90 m from a shopper's body (1.00 kept, the gap is
+prediction error), about 30 ms per fleet solve. The example solves to
+convergence: with real-time budgets of (1, 2) to (5, 3) iterations per step
+(tried with 0.4 m and 0.65 m clearances), the drones came within 0.3 m of
+each other.

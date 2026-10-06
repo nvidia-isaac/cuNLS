@@ -25,7 +25,8 @@ When to use it
   consecutive keyframes): estimate poses, velocities and IMU biases together
   with the structure. See :ref:`imu-example`.
 - **Inertial PnP / tracking**: two frames joined by an IMU factor, one of them
-  with prior information from the previous solve, landmarks fixed.
+  with prior information from the previous solve, landmarks fixed. See
+  :ref:`imu-inertial-pnp-example`.
 - **Inertial pose graphs and smoothing**: keyframes with IMU factors and other
   pose factors (priors, between factors, position priors).
 
@@ -562,6 +563,40 @@ problem:
    }
    problem.AddFactorBatch(&imu, imu_ptrs);
    // The reprojection factors read the same pose_states.
+
+.. _imu-inertial-pnp-example:
+
+===============================================================================
+Example: visual-inertial odometry with RANSAC
+===============================================================================
+
+``python/examples/tartan_vio.py`` is a small RGB-D inertial odometry on the
+TartanGround ``OldTownFall`` anymal sequence P2000 (82 m in 129 s, a camera
+at 10 Hz with depth, an IMU at 100 Hz). It tracks KLT features (OpenCV) and
+creates each track's landmark from the depth image at its first frame. Every
+frame solves one problem on a two-frame window: the pose, velocity and bias of
+the previous and the current frame (30 free tangent dimensions), one
+``ImuFactorBatch`` between them, priors on the previous frame from the last
+solve, and one ``PnPFactorBatch`` factor per tracked landmark.
+``RansacLevenbergMarquardtMinimizer`` samples the matches (two per hypothesis,
+since the IMU predicts the motion) and keeps the IMU factor and the priors
+always on. The buffers, the problem and the minimizers are created once;
+every frame rewrites the buffers, the active count and the connectivity
+(``Problem.set_state_pointers``).
+
+The example adds noise and biases to the dataset's ideal IMU and injects
+swapped matches, coherently shifted matches (repetitive texture), a camera
+blackout and 75% clutter into the 2D matches. Visual-only RANSAC PnP, the
+same window solved by Levenberg-Marquardt with a Huber loss, and IMU dead
+reckoning run on the same data. ``--rrd`` / ``--spawn`` log the run to Rerun.
+Output on an RTX A6000:
+
+.. code-block:: text
+
+   inertial RANSAC     : final position error   0.717 m (0.87% of the path)
+   visual RANSAC       : final position error   2.360 m (2.87% of the path)
+   inertial LM + Huber : final position error 4364.330 m (diverges in the clutter)
+   inertial RANSAC: kept 116905 of 197972 genuine matches, accepted 5 of 58106 injected outliers
 
 ===============================================================================
 Practical notes
