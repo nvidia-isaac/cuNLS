@@ -10,9 +10,11 @@ requires-python = ">=3.10"
 dependencies = ["cupy-cuda12x"]
 
 [project.optional-dependencies]
-warp = ["warp-lang"]
-test = ["pytest", "cupy-cuda12x", "warp-lang"]
-all = ["warp-lang"]
+# warp-lang 1.18 builds its PyPI wheels with CUDA 13.4 and needs an R580+ driver for CUDA;
+# older drivers (JetPack 6 on Jetson Orin) leave Warp CPU-only. Keep the CUDA 12 builds.
+warp = ["warp-lang<1.18"]
+test = ["pytest", "cupy-cuda12x", "warp-lang<1.18"]
+all = ["warp-lang<1.18"]
 
 [tool.scikit-build]
 cmake.source-dir = ".."
