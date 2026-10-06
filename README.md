@@ -51,20 +51,22 @@ On real data from [TartanGround](https://tartanair.org/tartanground/), visualize
 [Rerun](https://rerun.io):
 
 <p align="center">
-  <img src="python/examples/assets/tartan_vio.gif" alt="Visual-inertial odometry with RANSAC" width="46%">
-  &ensp;
-  <img src="python/examples/assets/supermarket_drones.gif" alt="Drone fleet MPC in a supermarket" width="46%">
+  <img src="python/examples/assets/tartan_vio.gif" alt="Visual-inertial odometry with RANSAC" width="85%">
 </p>
 
-- **Left — Visual-inertial odometry with RANSAC.** A legged robot walks 82 m through a town;
-  every frame an `ImuFactorBatch` and priors stay always on while
-  `RansacLevenbergMarquardtMinimizer` classifies the feature matches, of which up to 75% are
-  injected outliers. It drifts 0.9% of the path; visual-only RANSAC drifts 2.9% and a Huber
-  loss diverges.
-- **Right — A drone fleet in a supermarket.** Quadrotors fly deliveries through a store fused
-  from depth images, among walking shoppers. The whole fleet is one batched MPC problem
-  (`pycunls.mpc`), re-solved at every 25 ms control step of the simulation; each drone keeps
-  clear of the shelves, the shoppers' personal space and the other drones' plans.
+**Visual-inertial odometry with RANSAC.** A legged robot walks 82 m through a town; every
+frame an `ImuFactorBatch` and priors stay always on while `RansacLevenbergMarquardtMinimizer`
+classifies the feature matches, of which up to 75% are injected outliers. It drifts 0.9% of
+the path; visual-only RANSAC drifts 2.9% and a Huber loss diverges.
+
+<p align="center">
+  <img src="python/examples/assets/supermarket_drones.gif" alt="Drone fleet MPC in a supermarket" width="85%">
+</p>
+
+**A drone fleet in a supermarket.** Quadrotors fly deliveries through a store fused from
+depth images, among walking shoppers. The whole fleet is one batched MPC problem
+(`pycunls.mpc`), re-solved at every 25 ms control step of the simulation; each drone keeps
+clear of the shelves, the shoppers' personal space and the other drones' plans.
 
 See [`python/examples`](python/examples/README.md) to run them.
 
