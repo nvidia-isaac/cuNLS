@@ -22,15 +22,16 @@ RUN if [ -n "${UBUNTU_PORTS_MIRROR}" ]; then \
 # Use the distro CMake so Ubuntu 22.04 continuously validates the 3.22 minimum.
 RUN apt-get update && apt-get install -y --no-install-recommends \
        ca-certificates apt-utils g++ gcc git cmake ccache \
-       software-properties-common curl \
+       software-properties-common curl patchelf \
        python3 python3-pip python3-dev python3-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Python venv with build tools (for pycunls wheel builds)
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+COPY scripts/requirements-build.txt /tmp/cunls-build-requirements.txt
 RUN pip install --upgrade pip && \
-    pip install scikit-build-core nanobind build wheel pre-commit
+    pip install -r /tmp/cunls-build-requirements.txt
 
 # Sphinx docs dependencies
 COPY docs/sphinx/requirements.txt /tmp/cunls-docs-requirements.txt

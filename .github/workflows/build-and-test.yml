@@ -11,6 +11,10 @@ on:
           Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"}]
         type: string
         required: true
+      release_tag:
+        description: "Optional v<version> tag for a public wheel release"
+        type: string
+        default: ""
       artifact_retention_days:
         description: "Number of days to retain uploaded artifacts"
         type: number
@@ -40,6 +44,8 @@ jobs:
         config: ${{ fromJson(inputs.matrix_json) }}
     env:
       CONFIG_NAME: ${{ matrix.config.platform || 'x86_64' }}-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_COMMIT: ${{ github.sha }}
       CUDA_VERSION: ${{ matrix.config.cuda }}
       UBUNTU_VERSION: ${{ matrix.config.ubuntu }}
       BASE_IMAGE: ${{ matrix.config.base_image }}

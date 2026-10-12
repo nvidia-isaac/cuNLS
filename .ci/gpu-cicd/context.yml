@@ -1,0 +1,149 @@
+project:
+  name: cuNLS
+  archetype: external_first
+  build_system: cmake
+  secondary_build_systems:
+  - python
+  test_frameworks:
+  - googletest
+  - pytest
+  gpu_required_for_build: false
+  gpu_required_for_test: true
+  concerns:
+  - python_publishing
+docker:
+  base_image_pattern: nvidia/cuda:{cuda_version}-devel-ubuntu{ubuntu_version}
+  existing_dockerfile: scripts/Dockerfile
+  registry: ''
+  registry_login_secret: ''
+matrix:
+  cuda_versions:
+  - 12.8.1
+  - 13.2.0
+  os_versions:
+  - ubuntu22.04
+  - ubuntu24.04
+  python_versions:
+  - '3.10'
+  - '3.12'
+  architectures:
+  - x86_64
+runners:
+  platform: github_actions
+  gpu_tags:
+  - self-hosted
+  - gpu
+  cpu_tags:
+  - ubuntu-latest
+  gpu_job_timeout_minutes: 120
+  cpu_job_timeout_minutes: 15
+artifacts:
+  test_output_format: junit_xml
+  release_type: github_release
+  publish_wheels: true
+  wheel_destination: pypi
+secrets:
+- name: KITMAKER_TOKEN
+  description: Kitmaker service token scoped to the protected pypi environment
+  required: true
+publishing:
+  enabled: true
+  legal_approval:
+    answer: 'yes'
+    date: '2026-10-12'
+    source: User states public binary distribution is approved and repository licensing
+      is correct
+  canonical_repository: nvidia-isaac/cuNLS
+  asset_source: github-release
+  release_workflow: .github/workflows/release.yml
+  release_job: release
+  wheel_dir: pypi-wheels
+  kitmaker_projects:
+    pycunls-cu12: 6865
+    pycunls-cu13: 6866
+  pic: hguillen@nvidia.com
+  owner_response_field: owner_email
+  platform: manylinux_*_x86_64
+  provenance_path: pycunls/_build_provenance.json
+  provenance_source: python/pycunls/_build_provenance.json
+  package_root: python
+  environment: pypi
+  approvers:
+  - hguillen
+  publish_runner: gpu
+  publish_cells:
+  - cuda: 12.8.1
+    ubuntu: '22.04'
+    python: '3.10'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda12.8.1-ubuntu22.04
+  - cuda: 13.2.0
+    ubuntu: '22.04'
+    python: '3.10'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda13.2.0-ubuntu22.04
+  - cuda: 12.8.1
+    ubuntu: '24.04'
+    python: '3.12'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda12.8.1-ubuntu24.04
+  - cuda: 13.2.0
+    ubuntu: '24.04'
+    python: '3.12'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda13.2.0-ubuntu24.04
+  expanded_release_cells:
+  - cuda: 12.8.1
+    ubuntu: '22.04'
+    python: '3.10'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda12.8.1-ubuntu22.04
+  - cuda: 13.2.0
+    ubuntu: '22.04'
+    python: '3.10'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda13.2.0-ubuntu22.04
+  - cuda: 12.8.1
+    ubuntu: '24.04'
+    python: '3.12'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda12.8.1-ubuntu24.04
+  - cuda: 13.2.0
+    ubuntu: '24.04'
+    python: '3.12'
+    arch: x86_64
+    artifact_dir: pycunls-x86_64-cuda13.2.0-ubuntu24.04
+  matrix_source: .github/workflows/release.yml
+  matrix_source_sha256: c3dbe99aea21b42345716efe9afcd8655fe9c4731badebdcc2d8ea608ba40432
+  first_version: 0.2.0
+  version_source:
+    path: python/pyproject.toml
+    current: 0.2.0
+  dry_run_only: true
+  per_release_plc: true
+  accepted_warnings: []
+  setup_status: Input discovery passed; environment protection requires reconciliation
+    in the deployment playbook before activation.
+discovery:
+  commit: fa591a6b3d606dc0fdef837b0ad23c0913a1ed89
+  status: Read-only check-inputs passes with zero failures and warnings; implementation
+    authorized
+  cuda13_name: User corrected Portal distribution to pycunls-cu13 on 2026-10-12
+  reviewer_setup: Owner explicitly requests manual reviewer configuration, starting
+    with hguillen; alexkorovko is an additional intended reviewer. Both accounts resolve.
+    This overrides the two-reviewer preparation default.
+  remote_verified: '2026-10-12: tools/projects fetch cuNLS succeeded; HEAD and origin/main
+    both fa591a6b3d606dc0fdef837b0ad23c0913a1ed89'
+  publish_runner_assumption: Reuse existing self-hosted,gpu runner selection; Kitmaker
+    reachability and CA trust remain for the first protected dry run.
+  per_release_plc_assumption: The pipeline includes the PLC checkbox conservatively;
+    owner has not specified per-release PLC requirements.
+  input_check_log: Read-only input gate passed on 2026-10-12 using the canonical template
+    before project edits.
+  environment_protection: '2026-10-12: pypi environment has no protection_rules and
+    no deployment_branch_policy; manual setup required.'
+  environment_secret: '2026-10-12: environment-scoped KITMAKER_TOKEN exists.'
+  actions_allowlist: '2026-10-12: github_owned_allowed=true; workflow uses only GitHub-owned
+    actions.'
+  repository_variables: '2026-10-12: no repository variables are configured; deployment
+    playbook sets publisher selection, enable switch, dry-run mode and PLC checklist.'

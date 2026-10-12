@@ -1,0 +1,9 @@
+scikit-build-core>=0.10
+nanobind>=2.4
+build
+wheel
+pre-commit
+auditwheel
+packaging
+actionlint-py
+shellcheck-py

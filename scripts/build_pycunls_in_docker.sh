@@ -11,6 +11,17 @@ LOCAL_OUTPUT_DIR=$(realpath -m "$LOCAL_OUTPUT_DIR")
 
 mkdir -p "$LOCAL_OUTPUT_DIR"
 
+CHECKOUT_COMMIT=$(git rev-parse HEAD)
+RELEASE_COMMIT=${RELEASE_COMMIT:-$CHECKOUT_COMMIT}
+if [ "$RELEASE_COMMIT" != "$CHECKOUT_COMMIT" ]; then
+  echo "RELEASE_COMMIT differs from the checked-out source; build the release checkout." >&2
+  exit 1
+fi
+if [ -n "${RELEASE_TAG:-}" ] && ! git diff --quiet HEAD --; then
+  echo "Release wheels require committed source; commit the changes before building a release tag." >&2
+  exit 1
+fi
+
 DOCKERFILE=$(dirname "$(realpath "$0")")/Dockerfile
 DOCKER_BUILD_ARGS=""
 [ -n "${CUDA_VERSION:-}" ] && DOCKER_BUILD_ARGS="$DOCKER_BUILD_ARGS --build-arg CUDA_VERSION=$CUDA_VERSION"
@@ -30,6 +41,10 @@ docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
   -v "$LOCAL_OUTPUT_DIR:/cunls_install" \
   -e OUTPUT_DIR=/cunls_install \
+  -e RELEASE_COMMIT="$RELEASE_COMMIT" \
+  -e RELEASE_TAG="${RELEASE_TAG:-}" \
+  -e CUDA_VERSION="${CUDA_VERSION:-}" \
+  -e CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-}" \
   cunls:local bash /cunls/scripts/build_pycunls.sh
 
 echo ""
