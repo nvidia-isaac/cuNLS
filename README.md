@@ -454,30 +454,3 @@ find . -iname '*.h' -o -iname '*.cpp' | xargs clang-format -i
 ## License
 
 cuNLS is licensed under the [Apache License 2.0](LICENSE). Third-party license notices are in `NOTICE` and `third_party/LICENSES/`.
-
-## Versioned Python releases
-
-`release.yml` builds and tests x86_64 wheels for CUDA 12.8.1 and 13.2.0 on
-Ubuntu 22.04 (Python 3.10) and 24.04 (Python 3.12). Docker builds name the
-distributions `pycunls-cu12` and `pycunls-cu13`; the import remains `pycunls`.
-Each wheel declares the matching CuPy dependency, carries the source commit and
-CUDA version, and is repaired with auditwheel while leaving CUDA libraries external.
-A matching CUDA toolkit and compatible NVIDIA driver are required at runtime.
-
-Before tagging `v<version>`, update both `python/pyproject.toml` and
-`python/pycunls/__init__.py` to the same public version. The build refuses a
-tag/version mismatch. Local reproduction uses the existing four build/test
-commands documented above; set `CUDA_VERSION`, `UBUNTU_VERSION`, and
-`RELEASE_TAG` to reproduce one release cell. Use a separate output directory per cell.
-
-The release job attaches wheels with their original filenames. `pypi-prepare`
-independently validates the selected artifacts and writes `pypi-manifest.json`.
-The protected `pypi-publish` job waits for both jobs, downloads the manifest,
-checks the public release bytes, and submits Kitmaker requests for both indexes.
-Publication records survive failure; cancellation and automatic submission retries
-are disabled. Publication failure does not roll back uploaded files.
-
-The [publishing guide](docs/pypi-publishing.md) documents GitHub configuration
-and release commands. `PYPI_PUBLISH_ENABLED=true` enables the publisher;
-`PYPI_DRY_RUN_ONLY` defaults to `1`. Review the protected dry run before live
-publication. Publisher retries use the same tag, commit and manifest.

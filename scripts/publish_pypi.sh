@@ -12,8 +12,9 @@ for dependency in curl jq unzip sha256sum; do
     command -v "$dependency" >/dev/null || fail "$0" "$dependency missing" 'curl jq unzip sha256sum' "install $dependency on the runner host"
 done
 mode=${1:-}
-case "$mode" in check-inputs|prepare|publish) ;; *) fail "$0" "$mode" 'check-inputs | prepare | publish' 'select one command' ;; esac
+case "$mode" in prepare|publish) ;; *) fail "$0" "$mode" 'prepare | publish' 'select one command' ;; esac
 PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-}
+KITMAKER_PIC=${KITMAKER_PIC:-}
 if [ -z "$PYPI_ASSET_SOURCE" ]; then
     if [ -n "${GITHUB_REPOSITORY:-}" ]; then PYPI_ASSET_SOURCE=github-release
     elif [ -n "${CI_PROJECT_PATH:-}" ]; then PYPI_ASSET_SOURCE=artifactory; fi
@@ -22,17 +23,14 @@ RELEASE_TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-${CI_COMMIT_TAG:-}}}
 RELEASE_COMMIT=${RELEASE_COMMIT:-${GITHUB_SHA:-${CI_COMMIT_SHA:-}}}
 PYPI_PLATFORM=${PYPI_PLATFORM:-manylinux_*_x86_64}
 PYPI_DRY_RUN_ONLY=${PYPI_DRY_RUN_ONLY:-0}
-PYPI_ENVIRONMENT=${PYPI_ENVIRONMENT:-pypi}
 PYPI_PER_RELEASE_PLC=${PYPI_PER_RELEASE_PLC:-no}
 PYPI_POLL_SECONDS=${PYPI_POLL_SECONDS:-10}
 PYPI_TIMEOUT_SECONDS=${PYPI_TIMEOUT_SECONDS:-1800}
 PYPI_INDEX_TIMEOUT_SECONDS=${PYPI_INDEX_TIMEOUT_SECONDS:-600}
-PYPI_PACKAGE_ROOT=${PYPI_PACKAGE_ROOT:-.}
-KITMAKER_OWNER_FIELD=${KITMAKER_OWNER_FIELD:-}
 KITMAKER_API=https://kitmaker-portal.nvidia.com/api/v0
 manifest=pypi-manifest.json
 # Enumerating known nonsecret inputs avoids dumping ambient credentials.
-for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS KITMAKER_PIC PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_PROVENANCE_SOURCE PYPI_DRY_RUN_ONLY ARTIFACTORY_BASE_URL PYPI_ENVIRONMENT PYPI_PER_RELEASE_PLC PYPI_POLL_SECONDS PYPI_TIMEOUT_SECONDS PYPI_INDEX_TIMEOUT_SECONDS PYPI_RELEASE_WORKFLOW PYPI_RELEASE_JOB PYPI_CI_SECRET_NAMES PYPI_APPROVERS PYPI_PUBLISH_RUNNER PYPI_PUBLISH_CELLS PYPI_RELEASE_CELLS PYPI_MATRIX_PATH PYPI_MATRIX_SHA256 PYPI_FIRST_VERSION PYPI_VERSION_FILE PYPI_CURRENT_VERSION PYPI_PACKAGE_ROOT KITMAKER_OWNER_FIELD; do
+for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS KITMAKER_PIC PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_DRY_RUN_ONLY ARTIFACTORY_BASE_URL PYPI_PER_RELEASE_PLC PYPI_POLL_SECONDS PYPI_TIMEOUT_SECONDS PYPI_INDEX_TIMEOUT_SECONDS PYPI_PUBLISH_CELLS; do
     eval 'input_value=${'"$input_name"':-}'
     printf '%s=%s\n' "$input_name" "$input_value"
 done
@@ -169,164 +167,6 @@ prepare() {
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$scratch/summary" >> "$GITHUB_STEP_SUMMARY"; fi
 }
 
-check_inputs() {
-    failures=0
-    result() {
-        printf '%s %s: %s\n' "$1" "$2" "$3"
-        [ "$1" != FAIL ] || failures=$((failures + 1))
-    }
-    case "$PYPI_ASSET_SOURCE" in
-        github-release) cli=gh ;; artifactory) cli=glab ;; *) result FAIL PYPI_ASSET_SOURCE 'expected github-release or artifactory'; exit 1 ;;
-    esac
-    for dependency in "$cli" git; do
-        if command -v "$dependency" >/dev/null; then result PASS "$dependency" 'installed'; else result FAIL "$dependency" 'missing; install before checking inputs'; fi
-    done
-    [ "$failures" -eq 0 ] || exit 1
-    for input_name in PYPI_PUBLISH_REPOSITORY KITMAKER_PROJECTS KITMAKER_PIC KITMAKER_TOKEN PYPI_PROVENANCE_PATH PYPI_RELEASE_WORKFLOW PYPI_RELEASE_JOB PYPI_CI_SECRET_NAMES PYPI_APPROVERS PYPI_PUBLISH_RUNNER PYPI_PUBLISH_CELLS PYPI_RELEASE_CELLS PYPI_MATRIX_PATH PYPI_MATRIX_SHA256 PYPI_FIRST_VERSION PYPI_VERSION_FILE PYPI_CURRENT_VERSION; do
-        eval 'input_value=${'"$input_name"':-}'
-        [ -n "$input_value" ] || result FAIL "$input_name" 'missing'
-    done
-    if [ "$cli" = glab ]; then
-        for input_name in ARTIFACTORY_BASE_URL ARTIFACTORY_TOKEN; do
-            eval 'input_value=${'"$input_name"':-}'
-            [ -n "$input_value" ] || result FAIL "$input_name" 'missing'
-        done
-    fi
-    if [ "${PYPI_RELEASE_JOB:-}" = new ]; then
-        if [ -n "${PYPI_RELEASE_WORKFLOW:-}" ] && [ ! -e "$PYPI_RELEASE_WORKFLOW" ]; then result PASS release_workflow "$PYPI_RELEASE_WORKFLOW is free for a new release job"; else result FAIL release_workflow 'new workflow path exists or is missing'; fi
-    elif [ -f "${PYPI_RELEASE_WORKFLOW:-}" ] && awk -v job="${PYPI_RELEASE_JOB:-}" '$0 ~ "^[ ]*" job ":[ ]*($|#)" {found=1} END {exit !found}' "$PYPI_RELEASE_WORKFLOW"; then result PASS release_workflow "$PYPI_RELEASE_WORKFLOW contains $PYPI_RELEASE_JOB"
-    else result FAIL release_workflow 'workflow file or exact job ID missing'; fi
-    if [ -f "${PYPI_MATRIX_PATH:-}" ]; then
-        matrix_sha=$(sha256sum "$PYPI_MATRIX_PATH"); matrix_sha=${matrix_sha%% *}
-        if [ "$matrix_sha" = "${PYPI_MATRIX_SHA256:-}" ]; then result PASS matrix_source "$PYPI_MATRIX_PATH sha256=$matrix_sha"; else result FAIL matrix_source 'discovery snapshot is stale; rediscover the expanded release matrix'; fi
-    else result FAIL matrix_source 'matrix source file missing'; fi
-    if valid_cell_directories "${PYPI_PUBLISH_CELLS:-null}" && printf '%s' "${PYPI_PUBLISH_CELLS:-null}" | jq -e --argjson available "${PYPI_RELEASE_CELLS:-null}" '
-        type == "array" and length > 0 and ($available | type == "array") and
-        all(.[]; . as $cell | (.cuda | type == "string") and (.ubuntu | type == "string") and (.python | type == "string") and .arch == "x86_64" and (.artifact_dir | type == "string" and length > 0) and ($available | index($cell)) != null) and
-        (group_by([(.cuda | split(".")[0]),.ubuntu,.python,.arch]) | all(.[]; length == 1))' >/dev/null; then result PASS publish_cells "$PYPI_PUBLISH_CELLS"
-    else result FAIL publish_cells 'select existing x86_64 cells, unique by CUDA major, Ubuntu/Python and architecture, with safe distinct artifact directories'; fi
-    if public_version "${PYPI_FIRST_VERSION:-}"; then
-        tags=$(git tag --list "v$PYPI_FIRST_VERSION")
-        if [ -z "$tags" ]; then result PASS first_version "$PYPI_FIRST_VERSION; tag absent in synced clone"; else result FAIL first_version "tag $tags already exists"; fi
-    else result FAIL first_version 'expected normalized public PEP 440 version'; fi
-    if [ -f "${PYPI_VERSION_FILE:-}" ] && [ -w "$PYPI_VERSION_FILE" ] && [ -n "${PYPI_CURRENT_VERSION:-}" ] && grep -F "$PYPI_CURRENT_VERSION" "$PYPI_VERSION_FILE" >/dev/null; then result PASS version_source "$PYPI_VERSION_FILE contains $PYPI_CURRENT_VERSION and is writable"; else result FAIL version_source 'version source or current value missing/unwritable'; fi
-    source_path=${PYPI_PROVENANCE_SOURCE:-$PYPI_PACKAGE_ROOT/${PYPI_PROVENANCE_PATH:-}}
-    if [ -n "${PYPI_PROVENANCE_PATH:-}" ] && [ -f "$(dirname "$source_path")/__init__.py" ] && [ -z "$(git ls-files -- "$source_path")" ]; then result PASS provenance "$source_path has import package and is untracked"; else result FAIL provenance 'expected untracked provenance inside a package with __init__.py'; fi
-    case "$PYPI_PER_RELEASE_PLC" in yes|no) result PASS per_release_plc "$PYPI_PER_RELEASE_PLC (owner decision; no smoke test)" ;; *) result FAIL per_release_plc 'expected yes or no' ;; esac
-    if [ "$cli" = gh ]; then
-        if gh repo view --json nameWithOwner,visibility > "$scratch/repo"; then
-            slug=$(jq -r .nameWithOwner "$scratch/repo"); visibility=$(jq -r .visibility "$scratch/repo")
-            if [ "$visibility" = PUBLIC ]; then result PASS platform "GitHub $visibility"; else result FAIL platform "GitHub $visibility; public assets required"; fi
-        else slug=; result FAIL platform 'gh repo view failed'; fi
-    else
-        if glab repo view --output json > "$scratch/repo"; then slug=$(jq -r .path_with_namespace "$scratch/repo"); result PASS platform "GitLab $slug"; else slug=; result FAIL platform 'glab repo view failed'; fi
-    fi
-    if [ -n "$slug" ] && [ "$slug" = "${PYPI_PUBLISH_REPOSITORY:-}" ]; then result PASS canonical_repository "$slug"; else result FAIL canonical_repository "clone=$slug canonical=${PYPI_PUBLISH_REPOSITORY:-}; private copies don't publish"; fi
-    if [ "$slug" != "${PYPI_PUBLISH_REPOSITORY:-}" ] || [ -z "$slug" ]; then result FAIL remote_checks 'canonical repository check failed; remaining remote inputs not tested'; exit 1; fi
-    repo_encoded=$(printf '%s' "$slug" | jq -sRr @uri)
-    if project_map; then
-        jq -r '.[] | [.name,.id] | @tsv' "$scratch/map.json" > "$scratch/mappings"
-        while IFS="$(printf '\t')" read -r name id; do
-            major=$(printf '%s' "$name" | sed -n 's/.*-cu\([0-9][0-9]*\)$/\1/p')
-            if [ -n "$major" ] && printf '%s' "${PYPI_PUBLISH_CELLS:-null}" | jq -e --arg major "$major" 'any(.[]; (.cuda | split(".")[0]) == $major)' >/dev/null; then result PASS "distribution/$name" "CUDA major $major"; else result FAIL "distribution/$name" 'expected -cuNN matching a publish-cell CUDA major'; fi
-            http "https://pypi.org/pypi/$name/json"
-            case "$http_status" in 404) result PASS "pypi.org/$name" 'HTTP 404; unclaimed name' ;; 200) result WARN "pypi.org/$name" 'HTTP 200; explicitly confirm NVIDIA ownership' ;; *) cat "$scratch/response"; result FAIL "pypi.org/$name" "HTTP $http_status curl=$http_rc" ;; esac
-            http "https://pypi.nvidia.com/$name/"
-            case "$http_status" in 404) result PASS "pypi.nvidia.com/$name" 'HTTP 404; no project listing' ;; 200) result WARN "pypi.nvidia.com/$name" 'HTTP 200; explicitly confirm NVIDIA ownership' ;; *) cat "$scratch/response"; result FAIL "pypi.nvidia.com/$name" "HTTP $http_status curl=$http_rc" ;; esac
-            http "https://pypi.org/pypi/$name/${PYPI_FIRST_VERSION:-}/json"
-            if [ "$http_status" = 404 ]; then result PASS "first_version/$name" 'HTTP 404'; else result FAIL "first_version/$name" "HTTP $http_status; require unused version"; fi
-        done < "$scratch/mappings"
-        if ! printf '%s' "${PYPI_PUBLISH_CELLS:-null}" | jq -e --slurpfile mapping "$scratch/map.json" 'all(.[]; (.cuda | split(".")[0]) as $major | any($mapping[0][]; .name | endswith("-cu" + $major)))' >/dev/null; then result FAIL distributions 'each publish-cell CUDA major needs a project mapping'; fi
-        if [ -n "${KITMAKER_TOKEN:-}" ]; then
-            http --header "Authorization: Bearer $KITMAKER_TOKEN" "$KITMAKER_API/projects"
-            cat "$scratch/response"; printf '\n'
-            if [ "$http_status" = 200 ] && [ "$http_rc" -eq 0 ] && jq -e 'if type == "array" then . elif (.projects | type) == "array" then .projects else error("unknown projects response shape") end' "$scratch/response" > "$scratch/portal-projects"; then
-                result PASS kitmaker_token 'HTTP 200'
-                while IFS="$(printf '\t')" read -r name id; do
-                    if jq -e --arg id "$id" --arg name "$name" '.[] | select((.id | tostring) == $id and .name == $name)' "$scratch/portal-projects" > "$scratch/project"; then
-                        result PASS "kitmaker_project/$name" "id=$id, name=$name"
-                        if [ -n "$KITMAKER_OWNER_FIELD" ]; then
-                            owner=$(jq -r --arg path "$KITMAKER_OWNER_FIELD" 'getpath($path | split(".")) // empty' "$scratch/project")
-                            if [ -n "$owner" ] && [ "$owner" = "${KITMAKER_PIC:-}" ]; then result PASS "pic/$name" "$owner"; else result FAIL "pic/$name" "owner=$owner, pic=${KITMAKER_PIC:-}; correct owner or confirmed response field"; fi
-                        else result WARN "pic/$name" 'owner email field unverified; inspect response and confirm Portal owner or set KITMAKER_OWNER_FIELD'; fi
-                    else result FAIL "kitmaker_project/$name" "id=$id missing or project name differs"; fi
-                done < "$scratch/mappings"
-            else result FAIL kitmaker_token "HTTP $http_status curl=$http_rc; 401=token, 000=network/CA, or unsupported response schema"; fi
-        fi
-    else result FAIL kitmaker_projects 'invalid name=id map'; fi
-    if printf '%s' "${KITMAKER_PIC:-}" | jq -eRs 'test("^[A-Za-z0-9._%+-]+@nvidia\\.com$")' >/dev/null; then result PASS pic_format "$KITMAKER_PIC"; else result FAIL pic_format 'expected owner@nvidia.com'; fi
-    : > "$scratch/secrets"
-    if [ "$cli" = gh ]; then
-        if gh secret list --repo "$slug" --json name > "$scratch/repo-secrets" && gh api "repos/$slug/environments" --paginate > "$scratch/environments"; then
-            jq -r '.[].name' "$scratch/repo-secrets" > "$scratch/secrets"
-            if jq -e --arg env "$PYPI_ENVIRONMENT" '.environments[] | select(.name == $env)' "$scratch/environments" >/dev/null; then
-                result PASS environment "$PYPI_ENVIRONMENT exists"
-                if gh secret list --repo "$slug" --env "$PYPI_ENVIRONMENT" --json name > "$scratch/env-secrets"; then jq -r '.[].name' "$scratch/env-secrets" >> "$scratch/secrets"; else result FAIL ci_secrets 'environment secret listing failed'; fi
-            else result WARN environment "$PYPI_ENVIRONMENT missing; playbook creates it"; fi
-        else result FAIL ci_secrets 'secret/environment API failed'; fi
-    else
-        # JSON contains variable values; filter before displaying anything.
-        page=1
-        while :; do
-            if glab variable list --repo "$slug" --output json --per-page 100 --page "$page" > "$scratch/variables"; then
-                jq -r '.[].key' "$scratch/variables" >> "$scratch/secrets"
-                [ "$(jq length "$scratch/variables")" -eq 100 ] || break
-                page=$((page + 1))
-            else result FAIL ci_secrets 'variable list failed'; break; fi
-        done
-        if glab api "projects/$repo_encoded/environments?per_page=100" > "$scratch/environments"; then
-            if jq -e --arg env "$PYPI_ENVIRONMENT" '.[] | select(.name == $env)' "$scratch/environments" >/dev/null; then result PASS environment "$PYPI_ENVIRONMENT exists"; else result WARN environment "$PYPI_ENVIRONMENT missing; playbook creates it"; fi
-        else result FAIL environment 'environment API failed'; fi
-    fi
-    for secret_name in ${PYPI_CI_SECRET_NAMES:-}; do
-        if grep -Fx "$secret_name" "$scratch/secrets" >/dev/null; then result PASS "ci_secret/$secret_name" 'name present; verify required environment scope in playbook'; else result WARN "ci_secret/$secret_name" 'name missing; playbook creates it'; fi
-    done
-    printf '%s\n' "${PYPI_APPROVERS:-}" | tr '[:space:]' '\n' | LC_ALL=C sort -u > "$scratch/approvers"
-    count=$(awk 'NF {n++} END {print n+0}' "$scratch/approvers")
-    [ "$count" -ge 2 ] || result FAIL approvers 'at least two distinct accounts required'
-    while IFS= read -r account; do
-        [ -n "$account" ] || continue
-        if [ "$cli" = gh ]; then
-            if gh api "users/$account" --jq .login > "$scratch/account"; then result PASS "approver/$account" "$(cat "$scratch/account")"; else result FAIL "approver/$account" 'account lookup failed'; fi
-        else
-            if glab api "users?username=$account" > "$scratch/account" && jq -e --arg account "$account" 'any(.[]; .username == $account)' "$scratch/account" >/dev/null; then result PASS "approver/$account" 'account exists'; else result FAIL "approver/$account" 'account lookup failed'; fi
-        fi
-    done < "$scratch/approvers"
-    : > "$scratch/workflows"
-    if [ -d .github/workflows ]; then find .github/workflows -type f >> "$scratch/workflows"; fi
-    if [ -f .gitlab-ci.yml ]; then printf '%s\n' .gitlab-ci.yml >> "$scratch/workflows"; fi
-    : > "$scratch/runner-labels"
-    while IFS= read -r workflow; do
-        awk '/^[ ]*(runs-on|tags):/ {active=1; match($0,/[^ ]/); indent=RSTART; print; next} active {match($0,/[^ ]/); if (RSTART > indent) print; else active=0}' "$workflow" >> "$scratch/runner-labels"
-    done < "$scratch/workflows"
-    if [ -n "${PYPI_PUBLISH_RUNNER:-}" ] && grep -F -- "$PYPI_PUBLISH_RUNNER" "$scratch/runner-labels" > "$scratch/matched-runner"; then
-        result PASS publish_runner "$(cat "$scratch/matched-runner")"
-    elif [ "$cli" = gh ]; then
-        if gh api "repos/$slug/actions/runners" --paginate > "$scratch/runners" && jq -e --arg label "${PYPI_PUBLISH_RUNNER:-}" 'any(.runners[].labels[]; .name == $label)' "$scratch/runners" >/dev/null; then result PASS publish_runner 'label in runners API'; else result FAIL publish_runner 'label not verified in workflow or readable runner API'; fi
-    else
-        runner_found=0
-        if glab api "projects/$repo_encoded/runners?per_page=100" --paginate > "$scratch/runners"; then
-            jq -r '.[].id' "$scratch/runners" > "$scratch/runner-ids"
-            while IFS= read -r runner_id; do
-                if glab api "runners/$runner_id" > "$scratch/runner" && jq -e --arg tag "${PYPI_PUBLISH_RUNNER:-}" '.tag_list | index($tag) != null' "$scratch/runner" >/dev/null; then runner_found=1; fi
-            done < "$scratch/runner-ids"
-        fi
-        if [ "$runner_found" -eq 1 ]; then result PASS publish_runner 'tag in readable runners API'; else result FAIL publish_runner 'tag not verified in workflow or readable runner API'; fi
-    fi
-    if [ "$cli" = glab ] && [ -n "${ARTIFACTORY_BASE_URL:-}" ] && [ -n "${ARTIFACTORY_TOKEN:-}" ]; then
-        case "$ARTIFACTORY_BASE_URL" in
-            https://artifactory.nvidia.com/artifactory/*)
-                storage_url="https://artifactory.nvidia.com/artifactory/api/storage/${ARTIFACTORY_BASE_URL#https://artifactory.nvidia.com/artifactory/}"
-                http --header "Authorization: Bearer $ARTIFACTORY_TOKEN" "$storage_url"
-                cat "$scratch/response"; printf '\n'
-                if [ "$http_status" = 200 ] && [ "$http_rc" -eq 0 ]; then result PASS artifactory 'storage API HTTP 200; write permission remains for first dry run'; else result FAIL artifactory "HTTP $http_status curl=$http_rc"; fi ;;
-            *) result FAIL artifactory 'expected https://artifactory.nvidia.com/artifactory/<repo>/<existing-path>' ;;
-        esac
-    fi
-    printf 'Input checks: %s failure(s); every WARN requires explicit recorded acceptance.\n' "$failures"
-    [ "$failures" -eq 0 ]
-}
-
 poll_release() {
     deadline=$(($(date +%s) + PYPI_TIMEOUT_SECONDS))
     while :; do
@@ -424,4 +264,4 @@ publish() {
     submit_projects
     verify_indexes
 }
-case "$mode" in check-inputs) check_inputs ;; prepare) prepare ;; publish) publish ;; esac
+case "$mode" in prepare) prepare ;; publish) publish ;; esac
