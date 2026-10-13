@@ -475,10 +475,9 @@ independently validates the selected artifacts and writes `pypi-manifest.json`.
 The protected `pypi-publish` job waits for both jobs, downloads the manifest,
 checks the public release bytes, and submits Kitmaker requests for both indexes.
 Publication records survive failure; cancellation and automatic submission retries
-are disabled. A failed batch can already be partly public.
+are disabled. Publication failure does not roll back uploaded files.
 
-Configure GitHub with [the deployment playbook](docs/pypi-publishing.md).
-Publishing is disabled until `PYPI_PUBLISH_ENABLED=true`;
-`PYPI_DRY_RUN_ONLY` defaults to `1`. The first approved run must remain a dry run.
-After review, retry only the publisher for live publication with the same tag,
-commit and manifest. Do not recreate a release to retry publication.
+The [publishing guide](docs/pypi-publishing.md) documents GitHub configuration
+and release commands. `PYPI_PUBLISH_ENABLED=true` enables the publisher;
+`PYPI_DRY_RUN_ONLY` defaults to `1`. Review the protected dry run before live
+publication. Publisher retries use the same tag, commit and manifest.

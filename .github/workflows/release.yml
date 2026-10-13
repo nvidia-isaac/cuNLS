@@ -23,7 +23,6 @@ env:
   KITMAKER_PIC: hguillen@nvidia.com
   PYPI_PLATFORM: manylinux_*_x86_64
   PYPI_PROVENANCE_PATH: pycunls/_build_provenance.json
-  # Keep the approval checkbox until the owner confirms the per-release policy.
   PYPI_PER_RELEASE_PLC: ${{ vars.PYPI_PER_RELEASE_PLC || 'yes' }}
   PYPI_PUBLISH_CELLS: >-
     [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04"},
@@ -92,7 +91,6 @@ jobs:
           retention-days: 30
 
   pypi-publish:
-    # An operator enables the job only after configuring pypi protection.
     if: >-
       github.repository == 'nvidia-isaac/cuNLS' &&
       startsWith(github.ref, 'refs/tags/v') &&
