@@ -24,4 +24,4 @@ repos:
         name: Validate Python release scripts
         entry: shellcheck
         language: system
-        files: ^scripts/(publish_pypi|release_pycunls|build_pycunls|test_pycunls)\.sh$
+        files: ^scripts/((build|test)_pycunls(_in_docker)?|publish_pypi|release_pycunls)\.sh$

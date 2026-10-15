@@ -119,6 +119,13 @@ a container with the source mounted read-only. Intermediate build directories
 live inside the container and are discarded; only the final `.whl` file is
 written to the host output directory.
 
+Docker wheels use the distribution name `pycunls-cu12` or `pycunls-cu13` and the
+matching CuPy dependency; both use `import pycunls`. With `RELEASE_TAG=v<version>`,
+the Docker build uses the committed checkout, excluding local changes and generated
+files. The tag version must match `python/pyproject.toml` and
+`python/pycunls/__init__.py`. Wheels include the source commit and measured CUDA
+toolkit version and are repaired with auditwheel while keeping CUDA libraries external.
+
 #### Build the wheel locally
 
 ```bash

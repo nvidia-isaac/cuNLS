@@ -10,16 +10,16 @@ import re
 import subprocess
 from pathlib import Path
 
-path = Path('/usr/local/cuda/version.json')
-if path.exists():
-    actual = json.loads(path.read_text())['cuda']['version']
-else:
-    match = re.search(r'release (\d+\.\d+)', subprocess.check_output(['nvcc', '--version'], text=True))
-    if not match:
-        raise SystemExit('Cannot identify the installed CUDA toolkit; use a CUDA development image')
-    actual = match.group(1)
+cuda = Path('/usr/local/cuda')
+match = re.search(r'release (\d+\.\d+)', subprocess.check_output([str(cuda / 'bin/nvcc'), '--version'], text=True))
+if not match:
+    raise SystemExit('Cannot identify the installed CUDA toolkit; use a CUDA development image')
+path = cuda / 'version.json'
+actual = json.loads(path.read_text())['cuda']['version'] if path.exists() else match[1]
+if actual.split('.')[:2] != match[1].split('.'):
+    raise SystemExit(f'CUDA version.json {actual} disagrees with nvcc {match[1]}')
 requested = os.environ.get('CUDA_VERSION')
-if requested and requested.split('.')[:2] != actual.split('.')[:2]:
+if requested and not (actual == requested or actual.startswith(requested + '.')):
     raise SystemExit(f'Requested CUDA {requested}, but the build image contains {actual}; correct CUDA_VERSION or BASE_IMAGE')
 print(actual)
 PY
