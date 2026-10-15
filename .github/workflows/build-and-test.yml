@@ -113,10 +113,10 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Python wheel
-        if: ${{ always() && inputs.upload_binaries }}
+        if: inputs.upload_binaries
         uses: actions/upload-artifact@v6
         with:
           name: pycunls-${{ env.CONFIG_NAME }}
           path: output/wheel/*.whl
           retention-days: ${{ inputs.artifact_retention_days }}
-          if-no-files-found: warn
+          if-no-files-found: error

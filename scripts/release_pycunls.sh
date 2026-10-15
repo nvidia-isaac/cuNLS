@@ -5,12 +5,14 @@ set -euo pipefail
 : "${RELEASE_TAG:?Expected v<version>}"
 : "${RELEASE_COMMIT:?Expected the built checkout SHA}"
 : "${GH_REPO:?Expected nvidia-isaac/cuNLS}"
+: "${PYPI_PUBLISH_CELLS:?Expected the release matrix}"
 [ "$GH_REPO" = nvidia-isaac/cuNLS ] || { echo "Only the canonical repository releases wheels." >&2; exit 1; }
 [[ "$RELEASE_TAG" = v* ]] || { echo "Expected a v<version> tag." >&2; exit 1; }
 
 shopt -s nullglob
 wheels=(pypi-wheels/*/*.whl)
-[ "${#wheels[@]}" -eq 4 ] || { echo "Expected four release wheels; check matrix artifacts." >&2; exit 1; }
+expected=$(printf '%s' "$PYPI_PUBLISH_CELLS" | jq -er 'length | select(. > 0)')
+[ "${#wheels[@]}" -eq "$expected" ] || { echo "Expected $expected release wheels; check matrix artifacts." >&2; exit 1; }
 declare -A seen
 for wheel in "${wheels[@]}"; do
   name=${wheel##*/}

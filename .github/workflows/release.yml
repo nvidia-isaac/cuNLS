@@ -24,11 +24,11 @@ env:
   PYPI_PLATFORM: manylinux_*_x86_64
   PYPI_PROVENANCE_PATH: pycunls/_build_provenance.json
   PYPI_PER_RELEASE_PLC: ${{ vars.PYPI_PER_RELEASE_PLC || 'yes' }}
-  PYPI_PUBLISH_CELLS: >-
-    [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04"},
-     {"cuda":"12.8.1","ubuntu":"24.04","python":"3.12","arch":"x86_64","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu24.04"},
-     {"cuda":"13.2.0","ubuntu":"24.04","python":"3.12","arch":"x86_64","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu24.04"}]
+  PYPI_PUBLISH_CELLS: &release_cells >-
+    [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04"},
+     {"cuda":"12.8.1","ubuntu":"24.04","python":"3.12","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu24.04"},
+     {"cuda":"13.2.0","ubuntu":"24.04","python":"3.12","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu24.04"}]
   RELEASE_TAG: ${{ github.ref_name }}
   RELEASE_COMMIT: ${{ github.sha }}
 
@@ -37,13 +37,7 @@ jobs:
     if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/build-and-test.yml
     with:
-      matrix_json: |
-        [
-          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"},
-          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75;80;86;89;100"},
-          {"ubuntu":"24.04","cuda":"12.8.1","archs":"75;80;86;89"},
-          {"ubuntu":"24.04","cuda":"13.2.0","archs":"75;80;86;89;100"}
-        ]
+      matrix_json: *release_cells
       release_tag: ${{ github.ref_name }}
       artifact_retention_days: 30
       upload_binaries: true
@@ -117,7 +111,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: pypi-publication-record-${{ github.run_attempt }}
+          name: pypi-publication-record-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             pypi-manifest.json
             pypi-release-uuids.txt
