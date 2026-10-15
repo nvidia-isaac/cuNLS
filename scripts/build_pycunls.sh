@@ -19,7 +19,8 @@ actual = json.loads(path.read_text())['cuda']['version'] if path.exists() else m
 if actual.split('.')[:2] != match[1].split('.'):
     raise SystemExit(f'CUDA version.json {actual} disagrees with nvcc {match[1]}')
 requested = os.environ.get('CUDA_VERSION')
-if requested and not (actual == requested or actual.startswith(requested + '.')):
+# nvcc exposes major.minor when version.json has no toolkit patch version.
+if requested and not (actual == requested or actual.startswith(requested + '.') or requested.startswith(actual + '.')):
     raise SystemExit(f'Requested CUDA {requested}, but the build image contains {actual}; correct CUDA_VERSION or BASE_IMAGE')
 print(actual)
 PY
