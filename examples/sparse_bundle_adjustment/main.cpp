@@ -105,6 +105,8 @@ int main() {
 
     // 6. Solve with Levenberg-Marquardt; the result is written into poses / points.
     cunls::LevenbergMarquardtMinimizerOptions options;
+    // Schur automatically eliminates independent states (typically landmarks in SBA).
+    options.base_options.sparse_linear_solver_type = cunls::SparseLinearSolverType::GeneralizedSchur;
     options.base_options.max_num_iterations = 80;
     options.base_options.state_tolerance = 1e-8f;
     options.base_options.cost_tolerance = 1e-8f;

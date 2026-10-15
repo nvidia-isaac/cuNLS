@@ -50,6 +50,7 @@ Guides
    imu
    mpc
    custom_factors_and_states
+   generalized_schur
    numeric_jacobians
 
 ===============================================================================

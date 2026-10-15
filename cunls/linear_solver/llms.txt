@@ -60,3 +60,29 @@ Sparse linear system abstraction and implementation used by minimizers.
 
 - `SlowInitFastSolve`: expensive setup, fast repeated solves.
 - `FastInitSlowSolve`: faster setup, slower repeated solves.
+
+## Generalized Schur complement
+
+- `generalized_schur_solver.h` / `.cu`: backend selected by
+  `SparseLinearSolverType::GeneralizedSchur`; no extra public options.
+- GPU independent-set selection across all free logical state blocks, four
+  deterministic rounds. Single elimination level, automatic dense explicit
+  Schur matrix when affordable; otherwise implicit operator. No backend fallback.
+- FP64 local Cholesky/inverses, cross-block transforms, Schur accumulation;
+  FP32 Krylov vectors. Internal direct terminal solve for <=64 retained rows,
+  otherwise internal reduced block-Jacobi CG. Full-system residual validation
+  at relative tolerance 1e-3, with at most three refinement corrections.
+- Exactly zero-information rows choose zero motion; general singular or
+  indefinite systems are not supported. Symbolic plan must be rebuilt for
+  changed connectivity/constant IDs via the existing reuse_structure contract.
+- Tests: generalized_schur_solver_test.cpp; SolverTypeFromEnv accepts
+  CUNLS_SOLVER=GeneralizedSchur in existing SBA/PGO tests.
+- Reproducible SBA timing: scripts/benchmark_schur_in_docker.sh; user guide
+  and algorithm details in docs/sphinx/generalized_schur.rst.
+
+- No Thrust: stable block prefixes and dimension buckets in one host pass,
+  scalar row maps expanded by a coalesced CUDA kernel. Numeric FP64 cross
+  blocks packed only for eliminated rows; shared-memory three-dimensional
+  clique updates accumulate the upper triangle, then mirror it. Long residual
+  rows use a CTA, short rows a warp. SM 86 and SM 87 compilation verified;
+  runtime performance on Jetson remains unmeasured.

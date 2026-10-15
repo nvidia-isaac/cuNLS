@@ -55,6 +55,40 @@ def _make_prior_problem():
     return problem, states_gpu, target
 
 
+@pytest.mark.parametrize("scaled", [False, True])
+def test_generalized_schur_enum_and_solve(stream, scaled):
+    problem, states_gpu, target = _make_prior_problem()
+    opts = pycunls.MinimizerOptions()
+    opts.sparse_linear_solver_type = pycunls.SparseLinearSolverType.GeneralizedSchur
+    if scaled:
+        opts.column_scaling = pycunls.ColumnScaling.hessian_diagonal
+    summary = pycunls.GaussNewtonMinimizer(opts).minimize(stream, problem)
+    cp.cuda.runtime.streamSynchronize(stream.get_stream())
+    assert summary.final_cost < 1e-6
+    np.testing.assert_allclose(cp.asnumpy(states_gpu), target, atol=1e-4)
+
+
+def test_generalized_schur_projected_bounds(stream):
+    x = cp.asarray([-3.0, 4.0, -1.0], dtype=cp.float32)
+    target = cp.asarray([1.0, 2.0, 3.0], dtype=cp.float32)
+    states = pycunls.VectorStateBatch3(x, 1)
+    states.set_num_active_states(1)
+    states.set_bounds(cp.asarray([0., 0., 0.], dtype=cp.float32),
+                      cp.asarray([0.5, 3., 5.], dtype=cp.float32))
+    factor = pycunls.PriorVectorFactorBatch3(target, 1)
+    factor.set_num_active_factors(1)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    problem.add_factor_batch(factor, [states.state_device_ptr(0)])
+    opts = pycunls.MinimizerOptions()
+    opts.sparse_linear_solver_type = pycunls.SparseLinearSolverType.GeneralizedSchur
+    opts.jacobian_mode = pycunls.JacobianMode.numeric
+    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.GaussNewtonMinimizer(opts))
+    solver.minimize(stream, problem)
+    cp.cuda.runtime.streamSynchronize(stream.get_stream())
+    np.testing.assert_allclose(cp.asnumpy(x), [0.5, 2.0, 3.0], atol=1e-4)
+
+
 class TestGaussNewtonMinimizer:
     """Gauss-Newton convergence on the simple prior problem."""
     def test_converges(self, stream):

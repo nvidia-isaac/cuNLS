@@ -26,7 +26,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <random>
 #include <string>
@@ -249,6 +251,9 @@ class SyntheticSbaTest : public ::testing::TestWithParam<SyntheticSbaParams> {
  *        fixture.
  */
 TEST_P(SyntheticSbaTest, Optimize) {
+  if (std::getenv("CUNLS_BENCHMARK")) {
+    SetLoggerOptions(Verbosity::Message);
+  }
   auto params = GetParam();
   SCOPED_TRACE(std::string("SyntheticSbaTest: ") + params.label);
 
@@ -261,6 +266,10 @@ TEST_P(SyntheticSbaTest, Optimize) {
 
   const size_t n_obs = observations.size();
   ASSERT_GT(n_obs, 0u);
+  if (std::getenv("CUNLS_BENCHMARK")) {
+    std::printf("SBA_SHAPE scale=%s poses=%zu landmarks=%zu observations=%zu\n", params.label,
+                init_poses.size(), init_points.size(), n_obs);
+  }
 
   // Identity 2x2 sqrt information per observation.
   std::vector<Matrix<2>> sqrt_info(n_obs);
@@ -320,6 +329,17 @@ TEST_P(SyntheticSbaTest, Optimize) {
   options.state_tolerance = 1e-10f;
   options.cost_tolerance = 1e-6f;
   options.disable_safety_checks = true;
+  if (std::getenv("CUNLS_BENCHMARK")) {
+    options.reuse_structure = true;
+    int device;
+    cudaDeviceProp properties{};
+    THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
+    THROW_ON_CUDA_ERROR(cudaGetDeviceProperties(&properties, device));
+    std::string name(properties.name);
+    std::replace(name.begin(), name.end(), ' ', '_');
+    std::printf("SBA_DEVICE name=%s sm=%d%d pci_bus=%d pci_device=%d\n", name.c_str(),
+                properties.major, properties.minor, properties.pciBusID, properties.pciDeviceID);
+  }
   options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
   options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
       test_utils::PCGBlockSizeFromEnv(6);
@@ -330,13 +350,121 @@ TEST_P(SyntheticSbaTest, Optimize) {
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
+  if (const char *repeat_env = std::getenv("CUNLS_BENCHMARK_REPEATS")) {
+    int repeats = std::max(1, std::atoi(repeat_env));
+    internal::MinimizerSystem system;
+    internal::MinimizerScratch scratch;
+    StateBatchOps state_ops;
+    system.solver = CreateSparseLinearSolver(options.sparse_linear_solver_type,
+                                             options.sparse_linear_solver_config);
+    internal::SetUpStructure(stream.GetStream(), problem, options, state_ops, system);
+    MinimizerState state(stream.GetStream(), problem);
+    internal::BuildSystem(stream.GetStream(), problem, state, options, system, scratch);
+    dvector<float> diagonal;
+    system.normal_equations.ExtractHessianDiagonal(stream.GetStream(), diagonal);
+    system.normal_equations.AddScaledDiagonalToLhs(stream.GetStream(), 1e-3f, diagonal);
+    system.step.resize(system.rhs.size());
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    size_t free_before, total_memory;
+    THROW_ON_CUDA_ERROR(cudaMemGetInfo(&free_before, &total_memory));
+    auto init_start = std::chrono::steady_clock::now();
+    ASSERT_TRUE(system.normal_equations.InitializeSolver(stream.GetStream(), *system.solver,
+                                                         problem, system.rhs, system.step));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    double init_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - init_start)
+            .count();
+    std::printf("SBA_SYMBOLIC scale=%s solver=%s ms=%.6f\n", params.label,
+                std::getenv("CUNLS_SOLVER"), init_ms);
+    SetLoggerOptions(Verbosity::Error);
+    for (int repeat = -1; repeat < repeats; ++repeat) {
+      auto start = std::chrono::steady_clock::now();
+      ASSERT_TRUE(system.normal_equations.Solve(stream.GetStream(), *system.solver, system.rhs,
+                                                system.step));
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+      double ms =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+              .count();
+      if (repeat >= 0) {
+        std::printf("SBA_LINEAR scale=%s solver=%s repeat=%d ms=%.6f\n", params.label,
+                    std::getenv("CUNLS_SOLVER"), repeat, ms);
+      }
+    }
+    size_t free_after;
+    THROW_ON_CUDA_ERROR(cudaMemGetInfo(&free_after, &total_memory));
+    std::printf("SBA_MEMORY scale=%s solver=%s additional_mib=%.3f\n", params.label,
+                std::getenv("CUNLS_SOLVER"),
+                double(free_before > free_after ? free_before - free_after : 0) / (1024 * 1024));
+    // Read the original working matrix, not Schur's recursive residual, and
+    // evaluate b-Ax independently in float64 outside the timed region.
+    const auto &working_matrix = system.normal_equations.LhsBSR();
+    ASSERT_TRUE(system.normal_equations.UsesBlockStorage());
+    int tile_size = working_matrix.block_size, num_rows = working_matrix.NumRows();
+    std::vector<int> row_offsets(working_matrix.row_offsets.size()),
+        column_ids(working_matrix.col_ids.size());
+    std::vector<float> values(working_matrix.values.size()), rhs(num_rows), step(num_rows);
+    working_matrix.row_offsets.CopyToHost(row_offsets.data(), row_offsets.size());
+    working_matrix.col_ids.CopyToHost(column_ids.data(), column_ids.size());
+    working_matrix.values.CopyToHost(values.data(), values.size());
+    system.rhs.CopyToHost(rhs.data(), num_rows);
+    system.step.CopyToHost(step.data(), num_rows);
+    double residual_squared_norm = 0, rhs_squared_norm = 0;
+    for (int row = 0; row < num_rows; ++row) {
+      double residual = rhs[row];
+      for (int entry = row_offsets[row / tile_size]; entry < row_offsets[row / tile_size + 1];
+           ++entry) {
+        for (int tile_column = 0; tile_column < tile_size; ++tile_column) {
+          residual -= double(values[size_t(entry) * tile_size * tile_size +
+                                    (row % tile_size) * tile_size + tile_column]) *
+                      step[column_ids[entry] * tile_size + tile_column];
+        }
+      }
+      residual_squared_norm += residual * residual;
+      rhs_squared_norm += double(rhs[row]) * rhs[row];
+    }
+    std::printf("SBA_RESIDUAL scale=%s solver=%s relative=%.9g\n", params.label,
+                std::getenv("CUNLS_SOLVER"), std::sqrt(residual_squared_norm / rhs_squared_norm));
+    EXPECT_LE(std::sqrt(residual_squared_norm / rhs_squared_norm), 1.05e-3);
+  }
   LevenbergMarquardtMinimizer minimizer(lm_options);
 
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto solve_start = std::chrono::steady_clock::now();
   MinimizerSummary summary;
   {
     auto range = profiler_domain_.CreateDomainRange("Minimize");
     summary = minimizer.Minimize(stream.GetStream(), problem);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  }
+
+  const double solve_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - solve_start)
+          .count();
+  if (std::getenv("CUNLS_BENCHMARK")) {
+    std::printf("SBA_BENCH scale=%s solver=%s ms=%.6f iterations=%zu initial=%.9g final=%.9g\n",
+                params.label,
+                std::getenv("CUNLS_SOLVER") ? std::getenv("CUNLS_SOLVER") : "BlockSparsePCG",
+                solve_ms, summary.num_iterations, summary.initial_cost, summary.final_cost);
+  }
+
+  if (const char *repeat_env = std::getenv("CUNLS_BENCHMARK_REPEATS")) {
+    int repeats = std::max(1, std::atoi(repeat_env));
+    SetLoggerOptions(Verbosity::Error);
+    for (int repeat = 0; repeat < repeats; ++repeat) {
+      poses_d.CopyFromHost(init_poses.data(), init_poses.size());
+      points_d.CopyFromHost(init_points.data(), init_points.size());
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+      auto start = std::chrono::steady_clock::now();
+      summary = minimizer.Minimize(stream.GetStream(), problem);
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+      double ms =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+              .count();
+      std::printf(
+          "SBA_WARM scale=%s solver=%s repeat=%d ms=%.6f iterations=%zu initial=%.9g final=%.9g\n",
+          params.label, std::getenv("CUNLS_SOLVER"), repeat, ms, summary.num_iterations,
+          summary.initial_cost, summary.final_cost);
+    }
   }
 
   EXPECT_TRUE(std::isfinite(summary.initial_cost));
@@ -348,9 +476,11 @@ TEST_P(SyntheticSbaTest, Optimize) {
   std::vector<SE3Transform> final_poses(params.n_poses);
   poses_d.CopyToHost(final_poses.data(), final_poses.size());
   float max_err = 0.f;
-  for (int i = 0; i < params.n_poses; ++i)
-    for (int k : {3, 7, 11})
+  for (int i = 0; i < params.n_poses; ++i) {
+    for (int k : {3, 7, 11}) {
       max_err = std::max(max_err, std::fabs(final_poses[i][k] - gt_poses[i][k]));
+    }
+  }
   EXPECT_LT(max_err, 0.05f);  // ~1.5 cm after the 10 iterations
 }
 

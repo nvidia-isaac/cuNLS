@@ -54,6 +54,7 @@ enum class SparseLinearSolverType {
                      ///< in time (trajectories, MPC): needs the states'
                      ///< stages (Problem::SetStateStages). One warp per
                      ///< subproblem, no host synchronization.
+  GeneralizedSchur,  ///< Automatic block elimination with an internal reduced-system solve.
 };
 
 /**

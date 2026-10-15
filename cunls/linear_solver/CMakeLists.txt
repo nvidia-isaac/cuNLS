@@ -1,4 +1,5 @@
 add_library(cunls_linear_solver OBJECT
+  generalized_schur_solver.cu
   block_sparse_pcg_solver.cu
   block_tridiagonal_solver.cu
   dense_cholesky_solver.cu

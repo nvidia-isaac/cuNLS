@@ -95,3 +95,9 @@ cmake --build build/examples/all -j
 
 Output binary:
 - `./artifacts/examples/sparse_bundle_adjustment_example`
+
+The example selects `SparseLinearSolverType::GeneralizedSchur`. It automatically
+eliminates independent state blocks (typically landmarks), solves the retained
+system, and recovers the complete update. See the
+[Schur solver guide](../../docs/sphinx/generalized_schur.rst) for the algorithm
+and numerical and performance tradeoffs.

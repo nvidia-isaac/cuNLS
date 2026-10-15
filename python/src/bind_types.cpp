@@ -94,6 +94,7 @@ void bind_types(nb::module_ &m) {
       .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky)
       .value("DenseQR", cunls::SparseLinearSolverType::DenseQR)
       .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG)
+      .value("GeneralizedSchur", cunls::SparseLinearSolverType::GeneralizedSchur)
       .value("BlockTridiagonal", cunls::SparseLinearSolverType::BlockTridiagonal);
 
   nb::enum_<cunls::ColumnScaling>(m, "ColumnScaling")

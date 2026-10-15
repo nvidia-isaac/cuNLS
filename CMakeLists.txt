@@ -214,6 +214,7 @@ if(BUILD_TESTING)
     tests/motion_prior_perf_test.cpp
     tests/factor_manifold_facade_test.cpp
     tests/dense_linear_solver_test.cpp
+    tests/generalized_schur_solver_test.cpp
     tests/dense_cholesky_solver_test.cpp
     tests/dense_qr_solver_test.cpp
     tests/gauss_newton_test.cpp

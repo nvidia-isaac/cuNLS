@@ -183,6 +183,8 @@ def main():
     problem.add_factor_batch(reproj, reproj_ptrs)
 
     options = pycunls.LevenbergMarquardtMinimizerOptions()
+    # Schur automatically eliminates independent states (typically landmarks in SBA).
+    options.base_options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.GeneralizedSchur
     options.base_options.max_num_iterations = 30
     stream = pycunls.CudaStream()
     summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)

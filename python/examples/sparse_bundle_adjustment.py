@@ -82,6 +82,8 @@ def main():
 
     # 6. Solve with Levenberg-Marquardt.
     options = pycunls.LevenbergMarquardtMinimizerOptions()
+    # Schur automatically eliminates independent states (typically landmarks in SBA).
+    options.base_options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.GeneralizedSchur
     options.base_options.max_num_iterations = 80
     options.base_options.state_tolerance = 1e-8
     options.base_options.cost_tolerance = 1e-8

@@ -336,6 +336,9 @@ class SbaMinimizerTestFixture : public ::testing::Test {
  * about 0.08 (it was 0.12 to 0.15 when LM gave up after a few rejected steps).
  */
 TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
+  if (std::getenv("CUNLS_BENCHMARK")) {
+    SetLoggerOptions(Verbosity::Message);
+  }
   std::string path = std::string(kTestDataDir) + "/filtered_ba_problems.bin";
   std::ifstream in(path, std::ios::binary);
   if (!in.is_open()) {
@@ -390,6 +393,9 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
     }
 
     SCOPED_TRACE("Problem index " + std::to_string(current_index));
+    if (std::getenv("CUNLS_BENCHMARK")) {
+      std::printf("RECORDED_SBA index=%d\n", current_index);
+    }
 
     Problem problem;
     BuildProblemFromHost(host, &problem);

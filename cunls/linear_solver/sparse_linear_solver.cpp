@@ -20,6 +20,7 @@
 #include <stdexcept>
 
 #include "cunls/common/cudss_helper.h"
+#include "cunls/linear_solver/generalized_schur_solver.h"
 
 namespace cunls {
 
@@ -48,6 +49,8 @@ SparseLinearSolverPtr CreateSparseLinearSolver(SparseLinearSolverType type,
       return std::make_unique<DenseQRSolver>();
     case SparseLinearSolverType::BlockSparsePCG:
       return std::make_unique<BlockSparsePCGSolver>(config.block_sparse_pcg_options);
+    case SparseLinearSolverType::GeneralizedSchur:
+      return std::make_unique<GeneralizedSchurSolver>();
     case SparseLinearSolverType::BlockTridiagonal:
       return std::make_unique<BlockTridiagonalSolver>();
     default:

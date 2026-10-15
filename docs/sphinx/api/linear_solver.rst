@@ -23,6 +23,10 @@ Enum in `cunls/linear_solver/sparse_linear_solver.h`:
   gradient solver.  Default backend for Gauss-Newton and
   Levenberg-Marquardt: outperforms ``cuDSS`` on most SBA / PGO
   workloads (see ``profile/PCG_RESULTS.md``).
+- `GeneralizedSchur` — automatically eliminates independent state blocks,
+  solves the reduced system internally, and recovers all updates. Accepts
+  heterogeneous state dimensions and CSR/BSR; no additional configuration
+  and no fallback to another solver backend. See :doc:`../generalized_schur`.
 - `cuDSS` — NVIDIA cuDSS sparse direct solver.  Pick when each Solve
   sees a tiny system and PCG's per-iter kernel-launch overhead
   dominates.
@@ -42,7 +46,7 @@ chosen ``SparseLinearSolverType`` is used:
   ignored when a different backend is selected.
 - `cudss_solver_options` - [in] cuDSS-specific options; ignored when a
   different backend is selected.
-- Dense backends take no extra configuration.
+- GeneralizedSchur and dense backends take no extra configuration.
 
 SparseLinearSolver
 ---------------------
@@ -359,6 +363,23 @@ Works for any non-singular square matrix (not limited to SPD).
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
   :returns: ``true`` on success; ``false`` if a dimension mismatch is detected.
+
+GeneralizedSchurSolver
+----------------------
+
+Declared in ``cunls/linear_solver/generalized_schur_solver.h`` with its CUDA
+implementation in ``generalized_schur_solver.cu``. The class implements both
+CSR and BSR overloads of ``SparseLinearSolver::Initialize`` and ``Solve``.
+Prefer selecting ``SparseLinearSolverType::GeneralizedSchur`` through the
+existing factory or minimizer options; no additional configuration is required.
+
+``Initialize`` derives the free tangent-state partition and allocates the
+symbolic plan. ``Solve`` refreshes numeric factors, solves the Schur system,
+recovers eliminated updates, and checks the residual against the original
+matrix. Changed state layout or sparsity requires reinitialization. Invalid
+pivots or failure to reach the residual tolerance return ``false``.
+The complete algorithm, GPU implementation, numerical limits, and benchmarks
+are documented in :doc:`../generalized_schur`.
 
 Factory
 -------
