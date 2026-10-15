@@ -1,5 +1,5 @@
 #!/bin/sh
-# TEMPLATE_VERSION=1.8.0
+# TEMPLATE_VERSION=1.9.0
 set -eu
 set -f
 
@@ -13,27 +13,18 @@ for dependency in curl jq unzip sha256sum; do
 done
 mode=${1:-}
 case "$mode" in prepare|publish) ;; *) fail "$0" "$mode" 'prepare | publish' 'select one command' ;; esac
-PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-}
+PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-github-release}
 KITMAKER_PIC=${KITMAKER_PIC:-}
-if [ -z "$PYPI_ASSET_SOURCE" ]; then
-    if [ -n "${GITHUB_REPOSITORY:-}" ]; then PYPI_ASSET_SOURCE=github-release
-    elif [ -n "${CI_PROJECT_PATH:-}" ]; then PYPI_ASSET_SOURCE=artifactory; fi
-fi
-RELEASE_TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-${CI_COMMIT_TAG:-}}}
-RELEASE_COMMIT=${RELEASE_COMMIT:-${GITHUB_SHA:-${CI_COMMIT_SHA:-}}}
+RELEASE_TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-}}
+RELEASE_COMMIT=${RELEASE_COMMIT:-${GITHUB_SHA:-}}
 PYPI_PLATFORM=${PYPI_PLATFORM:-manylinux_*_x86_64}
-PYPI_DRY_RUN_ONLY=${PYPI_DRY_RUN_ONLY:-0}
+PYPI_DRY_RUN_ONLY=${PYPI_DRY_RUN_ONLY:-1}
 PYPI_PER_RELEASE_PLC=${PYPI_PER_RELEASE_PLC:-no}
 PYPI_POLL_SECONDS=${PYPI_POLL_SECONDS:-10}
 PYPI_TIMEOUT_SECONDS=${PYPI_TIMEOUT_SECONDS:-1800}
 PYPI_INDEX_TIMEOUT_SECONDS=${PYPI_INDEX_TIMEOUT_SECONDS:-600}
 KITMAKER_API=https://kitmaker-portal.nvidia.com/api/v0
 manifest=pypi-manifest.json
-# Enumerating known nonsecret inputs avoids dumping ambient credentials.
-for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS KITMAKER_PIC PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_DRY_RUN_ONLY ARTIFACTORY_BASE_URL PYPI_PER_RELEASE_PLC PYPI_POLL_SECONDS PYPI_TIMEOUT_SECONDS PYPI_INDEX_TIMEOUT_SECONDS PYPI_PUBLISH_CELLS; do
-    eval 'input_value=${'"$input_name"':-}'
-    printf '%s=%s\n' "$input_name" "$input_value"
-done
 umask 077
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
@@ -47,11 +38,8 @@ required() {
     [ -z "$missing" ] || fail "$0" "missing:$missing" 'all required inputs set' 'export the listed names from the confirmed context'
 }
 repository_guard() {
-    case "$PYPI_ASSET_SOURCE" in
-        github-release) actual_repository=${GITHUB_REPOSITORY:-} ;;
-        artifactory) actual_repository=${CI_PROJECT_PATH:-} ;;
-        *) fail "$0" "$PYPI_ASSET_SOURCE" 'github-release or artifactory' 'set PYPI_ASSET_SOURCE' ;;
-    esac
+    [ "$PYPI_ASSET_SOURCE" = github-release ] || fail "$0" "$PYPI_ASSET_SOURCE" 'github-release' 'only public GitHub release assets are supported'
+    actual_repository=${GITHUB_REPOSITORY:-}
     [ "$actual_repository" = "$PYPI_PUBLISH_REPOSITORY" ] || fail "$0" "$actual_repository" "$PYPI_PUBLISH_REPOSITORY" "private copies don't publish; run in the canonical repository"
 }
 public_version() {
@@ -72,7 +60,7 @@ valid_cell_directories() {
       (length == 1 or all(.[]; .artifact_dir != ".")) and
       (map(.artifact_dir) | unique | length) == length' >/dev/null
 }
-# Preserve error bodies and never retry a POST or PUT automatically.
+# Preserve error bodies and never retry a POST automatically.
 http() {
     http_status=000
     http_rc=0
@@ -156,7 +144,7 @@ prepare() {
         [ "$cell_count" -eq 1 ] || fail "$cell_prefix" "$cell_count selected CUDA $cell_cuda wheels" 'exactly one finished wheel per selected matrix cell' 'restore the missing cell artifact or separate extra build outputs'
     done < "$scratch/expected-cells"
     jq -es --slurpfile cells "$scratch/cells" --arg root "${WHEEL_DIR%/}/" 'length == ($cells[0] | length) and all(.[]; . as $wheel | any($cells[0][]; (if .artifact_dir == "." then $root else $root + .artifact_dir + "/" end) as $prefix | $wheel.path | startswith($prefix)))' "$scratch/entries" >/dev/null || fail "$WHEEL_DIR" 'extra wheel or wheel outside selected cell directories' 'only the confirmed publish cells' 'narrow the artifact download selection'
-    jq -s --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" --arg plc "$PYPI_PER_RELEASE_PLC" '{template_version:"1.8.0",tag:$tag,commit:$commit,repository:$repository,asset_source:$source,per_release_plc:$plc,wheels:.}' "$scratch/entries" > "$manifest"
+    jq -s --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" --arg plc "$PYPI_PER_RELEASE_PLC" '{template_version:"1.9.0",tag:$tag,commit:$commit,repository:$repository,asset_source:$source,per_release_plc:$plc,wheels:.}' "$scratch/entries" > "$manifest"
     {
         printf '| Wheel | Bytes | SHA256 |\n|---|---:|---|\n'
         jq -r '.wheels[] | "| \(.filename) | \(.bytes) | \(.sha256) |"' "$manifest"
@@ -225,34 +213,19 @@ publish() {
     case "$PYPI_DRY_RUN_ONLY" in 0|1) ;; *) fail "$0" "$PYPI_DRY_RUN_ONLY" '0 or 1' 'set the dry-run switch explicitly' ;; esac
     [ -f "$manifest" ] || fail "$manifest" 'missing' 'manifest from successful prepare' 'download the prepare artifact'
     jq -e --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" '
-        .template_version == "1.8.0" and .tag == $tag and .commit == $commit and .repository == $repository and .asset_source == $source and
+        .template_version == "1.9.0" and .tag == $tag and .commit == $commit and .repository == $repository and .asset_source == $source and
         (.wheels | type == "array" and length > 0 and all(.[]; (.filename | test("^[A-Za-z0-9_.!+-]+\\.whl$")) and (.sha256 | test("^[a-f0-9]{64}$")) and (.project_id | test("^[1-9][0-9]*$"))))' "$manifest" >/dev/null || fail "$manifest" 'invalid manifest or tag/commit/repository/source mismatch' "$RELEASE_TAG $RELEASE_COMMIT $PYPI_PUBLISH_REPOSITORY $PYPI_ASSET_SOURCE" 'use the manifest from this release and template version'
     jq -r '.wheels[] | [.distribution,.version,.filename,.sha256] | @tsv' "$manifest" > "$scratch/expected"
     jq -r '.wheels[] | [.path,.filename,.sha256] | @tsv' "$manifest" > "$scratch/to-publish"
     : > "$scratch/urls"
-    if [ "$PYPI_ASSET_SOURCE" = artifactory ]; then
-        required ARTIFACTORY_BASE_URL ARTIFACTORY_TOKEN
-        case "$ARTIFACTORY_BASE_URL" in https://artifactory.nvidia.com/artifactory/*) ;; *) fail "$0" "$ARTIFACTORY_BASE_URL" 'direct Artifactory base URL' 'use an approved repo and path' ;; esac
-    fi
     while IFS="$(printf '\t')" read -r wheel filename checksum; do
-        if [ "$PYPI_ASSET_SOURCE" = github-release ]; then
-            tag_uri=$(printf '%s' "$RELEASE_TAG" | jq -sRr @uri)
-            file_uri=$(printf '%s' "$filename" | jq -sRr @uri)
-            url="https://github.com/$PYPI_PUBLISH_REPOSITORY/releases/download/$tag_uri/$file_uri"
-            http "$url"
-            if [ "$http_status" = 404 ]; then fail "$filename" 'HTTP 404' 'public GitHub release asset' "a draft release isn't readable; publish the draft before approval"; fi
-            [ "$http_rc" -eq 0 ] || fail "$filename" "HTTP $http_status curl=$http_rc" 'anonymous asset download' 'fix release asset visibility or URL'
-            actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
-        else
-            [ -f "$wheel" ] || fail "$wheel" 'missing' 'original wheel artifact' 'download build artifacts with the same directory layout as prepare'
-            actual=$(sha256sum "$wheel"); actual=${actual%% *}
-            [ "$actual" = "$checksum" ] || fail "$wheel" "$actual" "$checksum" 'restore the approved artifact'
-            url="${ARTIFACTORY_BASE_URL%/}/$RELEASE_TAG/$RELEASE_COMMIT/$filename"
-            http --request PUT --header "Authorization: Bearer $ARTIFACTORY_TOKEN" --header "X-Checksum-Sha256: $checksum" --upload-file "$wheel" "$url"
-            cat "$scratch/response"; printf '\n'
-            [ "$http_rc" -eq 0 ] || fail "$wheel" "HTTP $http_status curl=$http_rc" 'successful Artifactory deployment' 'inspect deploy permissions and response; do not blindly overwrite'
-            actual=$(jq -er '.checksums.sha256' "$scratch/response") || fail "$wheel" 'no checksums.sha256 in PUT response' "$checksum" 'verify deployed Artifactory API contract before proceeding'
-        fi
+        tag_uri=$(printf '%s' "$RELEASE_TAG" | jq -sRr @uri)
+        file_uri=$(printf '%s' "$filename" | jq -sRr @uri)
+        url="https://github.com/$PYPI_PUBLISH_REPOSITORY/releases/download/$tag_uri/$file_uri"
+        http "$url"
+        if [ "$http_status" = 404 ]; then fail "$filename" 'HTTP 404' 'public GitHub release asset' "a draft release isn't readable; publish the draft before approval"; fi
+        [ "$http_rc" -eq 0 ] || fail "$filename" "HTTP $http_status curl=$http_rc" 'anonymous asset download' 'fix release asset visibility or URL'
+        actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
         [ "$actual" = "$checksum" ] || fail "$filename" "$actual" "$checksum" 'restore the exact immutable artifact; regenerate approval after any change'
         jq -n --arg filename "$filename" --arg url "$url" '{filename:$filename,url:$url}' >> "$scratch/urls"
     done < "$scratch/to-publish"
