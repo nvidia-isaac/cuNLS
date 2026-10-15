@@ -1,0 +1,120 @@
+name: Release Python wheels
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYPI_PUBLISH_REPOSITORY: nvidia-isaac/cuNLS
+  PYPI_ASSET_SOURCE: github-release
+  WHEEL_DIR: pypi-wheels
+  KITMAKER_PROJECTS: |
+    pycunls-cu12=6865
+    pycunls-cu13=6866
+  KITMAKER_PIC: hguillen@nvidia.com
+  PYPI_PLATFORM: manylinux_*_x86_64
+  PYPI_PROVENANCE_PATH: pycunls/_build_provenance.json
+  PYPI_PER_RELEASE_PLC: ${{ vars.PYPI_PER_RELEASE_PLC || 'yes' }}
+  PYPI_PUBLISH_CELLS: &release_cells >-
+    [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04"},
+     {"cuda":"12.8.1","ubuntu":"24.04","python":"3.12","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu24.04"},
+     {"cuda":"13.2.0","ubuntu":"24.04","python":"3.12","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu24.04"}]
+  RELEASE_TAG: ${{ github.ref_name }}
+  RELEASE_COMMIT: ${{ github.sha }}
+
+jobs:
+  build-matrix:
+    if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      matrix_json: *release_cells
+      release_tag: ${{ github.ref_name }}
+      artifact_retention_days: 30
+      upload_binaries: true
+      timeout_minutes: 120
+
+  release:
+    if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
+    needs: build-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pycunls-x86_64-*
+          path: pypi-wheels
+      - run: bash scripts/release_pycunls.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: nvidia-isaac/cuNLS
+
+  pypi-prepare:
+    if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
+    needs: build-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pycunls-x86_64-*
+          path: pypi-wheels
+      - run: sh scripts/publish_pypi.sh prepare
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pypi-manifest
+          path: pypi-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+  pypi-publish:
+    if: >-
+      github.repository == 'nvidia-isaac/cuNLS' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      vars.PYPI_PUBLISH_ENABLED == 'true'
+    needs: [release, pypi-prepare]
+    runs-on: ${{ fromJson(vars.PYPI_PUBLISH_RUNNER || '["self-hosted","gpu"]') }}
+    timeout-minutes: 180
+    environment: pypi
+    concurrency:
+      group: pypi-${{ github.repository }}-${{ github.ref_name }}
+      cancel-in-progress: false
+    env:
+      KITMAKER_TOKEN: ${{ secrets.KITMAKER_TOKEN }}
+      PYPI_DRY_RUN_ONLY: ${{ vars.PYPI_DRY_RUN_ONLY || '1' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: pypi-manifest
+          path: .
+      - run: sh scripts/publish_pypi.sh publish
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pypi-publication-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            pypi-manifest.json
+            pypi-release-uuids.txt
+            pypi-status-*.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,11 @@
+scikit-build-core>=0.10
+nanobind>=2.4
+build
+wheel
+pre-commit
+auditwheel
+# Ubuntu 22.04's patchelf 0.14.3 is below auditwheel's repair minimum.
+patchelf>=0.14.5
+packaging
+actionlint-py
+shellcheck-py
