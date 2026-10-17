@@ -47,10 +47,10 @@ class GaussNewtonMinimizer : public Minimizer {
 
  private:
   /** @brief Leaves the Gauss-Newton system unchanged. */
-  void UpdateSystem(cudaStream_t, size_t, NormalEquations &, const ProblemPartition &) override {}
+  void UpdateSystem(cudaStream_t, size_t, LinearSystem &, const ProblemPartition &) override {}
 
   /** @brief Rejects steps that do not lower the cost; see the class comment. */
-  void ClassifySteps(cudaStream_t stream, const NormalEquations &system, const dvector<float> &step,
+  void ClassifySteps(cudaStream_t stream, LinearSystem &system, const dvector<float> &step,
                      ProblemPartition &partition) override;
 };
 

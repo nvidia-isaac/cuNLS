@@ -378,18 +378,34 @@ std::vector<Vector<Dim>> CopyStateToHost(const VectorStateBatch<Dim> &state_batc
 
 /**
  * @brief Reads CUNLS_SOLVER from the environment and returns the matching
- *        solver type.  Defaults to BlockSparsePCG — the sweep on SBA and
- *        loop-closure PGO shows it dominates cuDSS at every nontrivial
- *        problem size (see profile/PCG_RESULTS.md).  Set
- *        CUNLS_SOLVER=cuDSS to opt back into the sparse-direct path.
- *        Recognised values: "BlockSparsePCG", "cuDSS".
+ *        solver type.  Defaults to BlockSparseCholesky, the library default
+ *        (MinimizerOptions::sparse_linear_solver_type).
+ *        Recognised values: "BlockSparseCholesky", "BlockSparsePCG", "cuDSS".
  */
 inline SparseLinearSolverType SolverTypeFromEnv() {
   const char *s = std::getenv("CUNLS_SOLVER");
   if (s != nullptr && std::strcmp(s, "cuDSS") == 0) {
     return SparseLinearSolverType::cuDSS;
   }
-  return SparseLinearSolverType::BlockSparsePCG;
+  if (s != nullptr && std::strcmp(s, "BlockSparsePCG") == 0) {
+    return SparseLinearSolverType::BlockSparsePCG;
+  }
+  return SparseLinearSolverType::BlockSparseCholesky;
+}
+
+/**
+ * @brief Applies CUNLS_LINEAR_SYSTEM: with "SchurComplement", sets the Schur
+ *        complement linear system (reduced system solved by
+ *        BlockSparseCholesky); the
+ *        caller then declares the landmarks
+ *        (Problem::SetEliminatedStateBatches). Otherwise leaves `options`.
+ * @return Whether the Schur complement is used.
+ */
+inline bool UseSchurComplementFromEnv(MinimizerOptions &options) {
+  const char *s = std::getenv("CUNLS_LINEAR_SYSTEM");
+  if (s == nullptr || std::strcmp(s, "SchurComplement") != 0) return false;
+  options.linear_system = LinearSystemType::SchurComplement;
+  return true;
 }
 
 /** @brief True when cunls was built with CUNLS_ENABLE_CUDSS=ON. */
@@ -416,17 +432,23 @@ inline std::vector<SparseLinearSolverType> AvailableSolverTypes(
  * @brief Solver ids of the typed minimizer tests.
  *
  * Ids 0 and 1 are the cuDSSLinearSolverMode values (cuDSS backend);
- * kBlockSparsePCGSolverId selects BlockSparsePCG, which needs no cuDSS.
+ * kBlockSparsePCGSolverId and kBlockSparseCholeskySolverId select
+ * BlockSparsePCG and BlockSparseCholesky, which need no cuDSS.
  */
 inline constexpr int kBlockSparsePCGSolverId = 2;
+inline constexpr int kBlockSparseCholeskySolverId = 3;
 
-/** @brief Solver id for tests that need a working sparse solver of any kind. */
-inline constexpr int kDefaultTestSolverId = kCuDSSEnabled ? 0 : kBlockSparsePCGSolverId;
+/** @brief Solver id for tests that need a working sparse solver of any kind (the default). */
+inline constexpr int kDefaultTestSolverId = kBlockSparseCholeskySolverId;
 
 /** @brief Points @p options at the solver selected by @p solver_id. */
 inline void ConfigureTestSolver(int solver_id, MinimizerOptions &options) {
   if (solver_id == kBlockSparsePCGSolverId) {
     options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;
+    return;
+  }
+  if (solver_id == kBlockSparseCholeskySolverId) {
+    options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparseCholesky;
     return;
   }
   options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;

@@ -6,6 +6,7 @@ add_library(cunls_minimizer OBJECT
   device_reduction.cu
   gauss_newton_minimizer.cu
   levenberg_marquardt_minimizer.cu
+  linear_system.cu
   minimizer.cu
   minimizer_state.cu
   normal_equations.cu
@@ -23,5 +24,6 @@ add_library(cunls_minimizer OBJECT
   ransac/slot_kernels.cu
   ransac/slot_set.cpp
   residual_batch.cu
+  schur_system.cu
   sparse_matrix.cu
 )

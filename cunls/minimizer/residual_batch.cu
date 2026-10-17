@@ -25,7 +25,6 @@
 namespace cunls {
 
 constexpr int kBlockSize = 256;
-constexpr int kWarpSize = 32;
 
 namespace {
 
@@ -127,54 +126,34 @@ __global__ void scale_residuals_thread_kernel(float *__restrict__ residuals,
 }
 
 // ============================================================================
-// Kernel 4: Scale Jacobians (optimized)
+// Kernel 4: Scale Jacobians
 // ============================================================================
 // S*J_col = sqrt_rho1*(J_col - alpha*(r'*J_col)*r)
 //
-// Old kernel: 32x32 block per factor (1024 threads). For 2x9 Jacobian only
-// 18 values to process, so 99.8% of thread-cycles were wasted.
-//
-// New design: one warp per factor. Lane 0 computes alpha and sqrt_rho1.
-// Lanes cooperatively process columns in a stride pattern. For residual_dim
-// <= 32 (covers all practical NLS problems), the dot product r'*J_col is
-// computed via warp shuffle reduction, eliminating shared memory entirely.
-
-__global__ void scale_jacobians_warp_kernel(const float *__restrict__ residuals,
-                                            float *__restrict__ jacobians,
-                                            const float *__restrict__ squared_error,
-                                            const float3 *__restrict__ rho_coeffs,
-                                            int num_residuals, int residual_dim, int num_cols) {
-  const int warp_id = (threadIdx.x + blockIdx.x * blockDim.x) / kWarpSize;
-  const int lane = threadIdx.x % kWarpSize;
-  if (warp_id >= num_residuals) return;
-
-  const int row_offset = warp_id * residual_dim;
-  const float *res_base = residuals + row_offset;
-
-  float sqrt_rho1, alpha;
-  {
-    float sq = squared_error[warp_id];
-    float3 rh = rho_coeffs[warp_id];
-    sqrt_rho1 = sqrtf(rh.y);
-    alpha = jacobian_scaling_alpha(sq, rh);
-  }
-
-  // For each Jacobian column, compute dot = r'*J_col, then apply scaling.
-  // Each lane handles different columns in a stride pattern.
-  for (int col = lane; col < num_cols; col += kWarpSize) {
-    // Compute dot product r' * J_col
-    float dot = 0.0f;
-    for (int row = 0; row < residual_dim; ++row) {
-      dot += res_base[row] * jacobians[num_cols * (row_offset + row) + col];
-    }
-
-    float scale = sqrt_rho1 * alpha * dot;
-
-    // Apply: J_col = sqrt_rho1 * J_col - scale * r
-    for (int row = 0; row < residual_dim; ++row) {
-      int idx = num_cols * (row_offset + row) + col;
-      jacobians[idx] = sqrt_rho1 * jacobians[idx] - scale * res_base[row];
-    }
+// One thread per (factor, Jacobian column). The columns of a factor are
+// consecutive threads, so each Jacobian row is read and written coalesced and
+// every lane is busy (a warp per factor left 23 of 32 lanes idle on a 2x9
+// reprojection Jacobian). The residual and the loss coefficients of a factor
+// are shared by its columns' threads (cache hits).
+__global__ void scale_jacobians_kernel(const float *__restrict__ residuals,
+                                       float *__restrict__ jacobians,
+                                       const float *__restrict__ squared_error,
+                                       const float3 *__restrict__ rho_coeffs, int num_residuals,
+                                       int residual_dim, int num_cols) {
+  const long long i = blockIdx.x * static_cast<long long>(blockDim.x) + threadIdx.x;
+  if (i >= static_cast<long long>(num_residuals) * num_cols) return;
+  const int factor = static_cast<int>(i / num_cols);
+  const int col = static_cast<int>(i - static_cast<long long>(factor) * num_cols);
+  const float3 rh = rho_coeffs[factor];
+  const float sqrt_rho1 = sqrtf(rh.y);
+  const float alpha = jacobian_scaling_alpha(squared_error[factor], rh);
+  const float *r = residuals + static_cast<long long>(factor) * residual_dim;
+  float *J = jacobians + static_cast<long long>(factor) * residual_dim * num_cols + col;
+  float dot = 0.0f;
+  for (int row = 0; row < residual_dim; ++row) dot += r[row] * J[row * num_cols];
+  const float scale = sqrt_rho1 * alpha * dot;
+  for (int row = 0; row < residual_dim; ++row) {
+    J[row * num_cols] = sqrt_rho1 * J[row * num_cols] - scale * r[row];
   }
 }
 
@@ -262,11 +241,12 @@ bool ResidualBatch::ApplyLossToItems(cudaStream_t stream, float *workspace, floa
     int num_cols = 0;
     for (const auto &d : factor_batch_->StateSizes()) num_cols += d;
 
-    int warps_per_block = kBlockSize / kWarpSize;
-    int jac_blocks = (num_residuals + warps_per_block - 1) / warps_per_block;
-
-    scale_jacobians_warp_kernel<<<jac_blocks, kBlockSize, 0, stream>>>(
-        residuals, jacobians, sq_err_ptr, rho_ptr, num_residuals, residual_dim, num_cols);
+    const long long num_threads = static_cast<long long>(num_residuals) * num_cols;
+    const int jac_blocks = static_cast<int>((num_threads + kBlockSize - 1) / kBlockSize);
+    if (jac_blocks > 0) {
+      scale_jacobians_kernel<<<jac_blocks, kBlockSize, 0, stream>>>(
+          residuals, jacobians, sq_err_ptr, rho_ptr, num_residuals, residual_dim, num_cols);
+    }
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 

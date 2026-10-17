@@ -19,7 +19,6 @@
 
 #include <cuda_runtime.h>
 
-#include "cunls/common/cusparse_helper.h"
 #include "cunls/minimizer/minimizer.h"
 
 namespace cunls {
@@ -94,6 +93,19 @@ struct LevenbergMarquardtMinimizerOptions {
   float lambda_min = 1e-6;
 
   /**
+   * @brief Floor of the diagonal the damping scales: λ max(diag(H)_i,
+   * min_diagonal) (the diagonal of the column-scaled system when column
+   * scaling is on).
+   *
+   * An unobservable unknown (a zero Jacobian column, e.g. a pose whose
+   * observations are all invalid) has a zero diagonal, which no λ diag(H)
+   * damping fixes: the system stays singular and every step fails. With the
+   * floor it gets a positive pivot and, its right-hand side being zero, a
+   * zero step. Ceres' min_lm_diagonal. Default: 1e-6
+   */
+  float min_diagonal = 1e-6f;
+
+  /**
    * @brief Threshold for step acceptance based on rho (step quality).
    *
    * A step is accepted if rho >= step_accept_threshold. The rho value
@@ -144,7 +156,8 @@ class LevenbergMarquardtMinimizer : public Minimizer {
    * lambda_max.
    *
    * @throws std::invalid_argument unless 0 < lambda_min <= lambda_max,
-   *         initial_lambda <= lambda_max and lambda_upscale > 1.
+   *         initial_lambda <= lambda_max, lambda_upscale > 1 and
+   *         min_diagonal >= 0.
    */
   explicit LevenbergMarquardtMinimizer(
       const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions());
@@ -155,11 +168,14 @@ class LevenbergMarquardtMinimizer : public Minimizer {
    * otherwise updates it from the outcome of the previous step (see the class
    * comment); then adds λ_p diag(H) to the rows of subproblem p.
    */
-  void UpdateSystem(cudaStream_t stream, size_t iteration, NormalEquations &system,
+  void UpdateSystem(cudaStream_t stream, size_t iteration, LinearSystem &system,
                     const ProblemPartition &partition) override;
 
+  /** @brief A failed solve is a rejected step: λ grows until the system factors. */
+  bool RejectsFailedSolves() const override { return true; }
+
   /** @brief Computes ρ per subproblem and applies the rules of the class comment. */
-  void ClassifySteps(cudaStream_t stream, const NormalEquations &system, const dvector<float> &step,
+  void ClassifySteps(cudaStream_t stream, LinearSystem &system, const dvector<float> &step,
                      ProblemPartition &partition) override;
 
   const LevenbergMarquardtMinimizerOptions options_;  ///< As constructed (not widened).
@@ -169,12 +185,9 @@ class LevenbergMarquardtMinimizer : public Minimizer {
   dvector<float> quality_;           ///< Per subproblem: ρ of the last step (for the λ update).
   dvector<float> diag_weight_;       ///< Per subproblem: δᵀ diag(H) δ.
   dvector<float> matrix_weight_;     ///< Per subproblem: δᵀ H δ.
-  dvector<float> diagonal_;          ///< Per row: diag of the working left-hand side (S H S).
+  dvector<float> diagonal_;          ///< Per row: diag of the scaled system (S H S).
   dvector<float> hessian_diagonal_;  ///< Per row: diag(H) unscaled (with column scaling).
-  dvector<float> damping_;           ///< Per row: λ diag(H).
-  dvector<float> hessian_step_;      ///< Per row: H δ.
-  cuSPARSEHandle cusparse_handle_;   ///< For H δ in CSR storage.
-  dvector<uint8_t> buffer_;          ///< cuSPARSE scratch of H δ.
+  dvector<float> damping_;           ///< Per row: λ diag(S H S), declared to the system.
 };
 
 }  // namespace cunls

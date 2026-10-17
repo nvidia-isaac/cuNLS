@@ -56,6 +56,7 @@ from pycunls._pycunls_core import (
     Verbosity,
     set_log_verbosity,
     # --- Enumerations ---
+    LinearSystemType,
     SparseLinearSolverType,
     ColumnScaling,
     JacobianMode,
@@ -204,6 +205,7 @@ __all__ = [
     "CudaStream",
     "Verbosity",
     "set_log_verbosity",
+    "LinearSystemType",
     "SparseLinearSolverType",
     "ColumnScaling",
     "JacobianMode",

@@ -19,13 +19,17 @@ SparseLinearSolverType
 
 Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 
+- `BlockSparseCholesky` — supernodal sparse Cholesky on the GPU without
+  external dependencies.  Default backend for Gauss-Newton and
+  Levenberg-Marquardt, and the solver of the reduced system of
+  ``LinearSystemType::SchurComplement``: exact steps, faster than
+  ``BlockSparsePCG`` and ``cuDSS`` on pose graphs, bundle adjustment and
+  visual-inertial problems.  Requires an SPD system.
 - `BlockSparsePCG` — iterative block-Jacobi preconditioned conjugate
-  gradient solver.  Default backend for Gauss-Newton and
-  Levenberg-Marquardt: outperforms ``cuDSS`` on most SBA / PGO
-  workloads (see ``profile/PCG_RESULTS.md``).
-- `cuDSS` — NVIDIA cuDSS sparse direct solver.  Pick when each Solve
-  sees a tiny system and PCG's per-iter kernel-launch overhead
-  dominates.
+  gradient solver (inexact steps).  Prefer it when the graph has no small
+  separators (many long-range random edges, where a direct factor fills
+  in) and for very large well-conditioned systems of small blocks.
+- `cuDSS` — NVIDIA cuDSS sparse direct solver (optional dependency).
 - `DenseLDLT` — densifies the coefficient matrix and solves with a custom
   CUDA pivoted LDLT kernel.
 - `DenseCholesky` — densifies the coefficient matrix and solves with

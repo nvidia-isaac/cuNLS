@@ -6,12 +6,12 @@ visualization).
 
 | Example | What it shows |
 |---|---|
-| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy |
+| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy, landmarks eliminated by a Schur complement |
 | `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
 | `custom_warp_factor.py` | A custom factor kernel written with NVIDIA Warp |
 | `custom_warp_state.py` | A custom state batch (positive-scalar manifold) written with NVIDIA Warp |
 | `ransac_pnp.py` | Robust PnP with 50% outliers using `RansacLevenbergMarquardtMinimizer` |
-| `imu_bundle_adjustment.py` | Visual-inertial bundle adjustment with `ImuFactorBatch` |
+| `imu_bundle_adjustment.py` | Visual-inertial bundle adjustment with `ImuFactorBatch`, landmarks eliminated by a Schur complement |
 | [`tartan_vio.py`](#visual-inertial-odometry-with-ransac-on-tartanground) | RGB-D inertial odometry on TartanGround with injected outliers: IMU factor + RANSAC |
 | [`supermarket_drones.py`](#a-drone-fleet-in-a-supermarket-batched-mpc) | A fleet of quadrotors in a real store with walking shoppers: batched MPC |
 

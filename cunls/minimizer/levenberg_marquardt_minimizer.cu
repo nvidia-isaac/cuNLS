@@ -64,6 +64,9 @@ MinimizerOptions BaseOptions(const LevenbergMarquardtMinimizerOptions &o) {
   if (!(o.lambda_upscale > 1.f)) {
     throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_upscale must be > 1");
   }
+  if (!(o.min_diagonal >= 0.f)) {
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: min_diagonal must be >= 0");
+  }
   MinimizerOptions base = o.base_options;
   if (base.max_consecutive_rejected_steps > 0) {
     base.max_consecutive_rejected_steps += RejectionsToMaxDamping(o);
@@ -74,7 +77,7 @@ MinimizerOptions BaseOptions(const LevenbergMarquardtMinimizerOptions &o) {
 /** The damping options the λ update reads (kernel arguments must be trivially copyable). */
 struct DampingRule {
   float initial_lambda, lambda_min, lambda_max, lambda_upscale, lambda_downscale,
-      lambda_downscale_threshold;
+      lambda_downscale_threshold, min_diagonal;
 };
 
 /** λ of a subproblem after its previous step's outcome (see the class comment). */
@@ -100,7 +103,7 @@ __device__ float UpdatedLambda(const DampingRule &o, bool first, float lambda, i
 /**
  * One thread per row and per subproblem (whichever is more): thread p < P
  * writes subproblem p's updated λ to lambda_out; thread r < rows writes
- * λ'_{problem(r)} diag(H)_r to damping (recomputing λ', so no thread reads
+ * λ'_{problem(r)} max(diag(H)_r, min_diagonal) to damping (recomputing λ', so no thread reads
  * what another writes).
  */
 __global__ void damping_kernel(size_t num_rows, size_t num_problems, const int *row_problem,
@@ -116,7 +119,7 @@ __global__ void damping_kernel(size_t num_rows, size_t num_problems, const int *
     const int p = row_problem != nullptr ? row_problem[i] : 0;
     const float lambda = UpdatedLambda(o, first, first ? 0.f : lambda_in[p], first ? 0 : outcome[p],
                                        first ? 0 : rejected[p], first ? 0.f : quality[p]);
-    damping[i] = lambda * diagonal[i];
+    damping[i] = lambda * fmaxf(diagonal[i], o.min_diagonal);
   }
 }
 
@@ -148,7 +151,7 @@ LevenbergMarquardtMinimizer::LevenbergMarquardtMinimizer(
     : Minimizer(BaseOptions(options)), options_(options) {}
 
 void LevenbergMarquardtMinimizer::UpdateSystem(cudaStream_t stream, size_t iteration,
-                                               NormalEquations &system,
+                                               LinearSystem &system,
                                                const ProblemPartition &partition) {
   const size_t num_problems = partition.NumProblems();
   const bool first = iteration == 0;
@@ -158,22 +161,22 @@ void LevenbergMarquardtMinimizer::UpdateSystem(cudaStream_t stream, size_t itera
     quality_.resize(num_problems);
   }
   // (H + λ_p diag(H)) on the rows of subproblem p, with λ updated in the same pass.
-  system.ExtractLhsDiagonal(stream, diagonal_);
+  system.ExtractScaledHessianDiagonal(stream, diagonal_);
   damping_.resize(diagonal_.size());
   const size_t n = std::max(diagonal_.size(), num_problems);
   damping_kernel<<<Blocks(n), kThreads, 0, stream>>>(
       diagonal_.size(), num_problems, partition.RowProblem(),
       DampingRule{options_.initial_lambda, options_.lambda_min, options_.lambda_max,
                   options_.lambda_upscale, options_.lambda_downscale,
-                  options_.lambda_downscale_threshold},
+                  options_.lambda_downscale_threshold, options_.min_diagonal},
       first, partition.Outcome(), partition.Rejected(), quality_.data(), lambda_.data(),
       next_lambda_.data(), diagonal_.data(), damping_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   std::swap(lambda_, next_lambda_);
-  system.AddScaledDiagonalToLhs(stream, 1.f, damping_);
+  system.SetDamping(&damping_);
 }
 
-void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, const NormalEquations &system,
+void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, LinearSystem &system,
                                                 const dvector<float> &step,
                                                 ProblemPartition &partition) {
   const size_t n = partition.NumProblems();
@@ -189,9 +192,7 @@ void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, const Norma
     hessian_diagonal = &hessian_diagonal_;
   }
   partition.SumRows(stream, step.data(), nullptr, hessian_diagonal->data(), diag_weight_.data());
-  hessian_step_.resize(step.size());
-  system.MultiplyHessian(stream, cusparse_handle_.GetHandle(stream), step, hessian_step_, buffer_);
-  partition.SumRows(stream, step.data(), hessian_step_.data(), nullptr, matrix_weight_.data());
+  system.StepCurvature(stream, step, partition, matrix_weight_.data());
   const MinimizerOptions &base = Options();
   classify_kernel<<<Blocks(n), kThreads, 0, stream>>>(
       n, partition.Cost(), partition.NewCost(), partition.StepSquared(), diag_weight_.data(),

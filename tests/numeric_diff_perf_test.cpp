@@ -108,8 +108,7 @@ const char *ToString(JacobianMode m) {
 class SystemBuilder {
  public:
   explicit SystemBuilder(const MinimizerOptions &options) : options_(options) {
-    system_.solver = CreateSparseLinearSolver(options.sparse_linear_solver_type,
-                                              options.sparse_linear_solver_config);
+    system_.linear_system = internal::CreateLinearSystem(options);
   }
 
   void Prepare(cudaStream_t stream, Problem &problem) {

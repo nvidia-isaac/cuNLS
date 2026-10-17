@@ -396,6 +396,13 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 
+void HessianStructureBuilder::ResolveColumns(cudaStream_t stream, const Problem &problem,
+                                             int num_cols) {
+  BuildLayout(problem);
+  dvector<int> tangent_at_col;
+  ResolveFactorColumns(stream, problem, num_cols, tangent_at_col);
+}
+
 int HessianStructureBuilder::DiscoverBlockPairs(cudaStream_t stream, const Problem &problem,
                                                 int num_cols, dvector<int> &pair_fields,
                                                 dvector<int> &pair_order, dvector<int> &pair_group,

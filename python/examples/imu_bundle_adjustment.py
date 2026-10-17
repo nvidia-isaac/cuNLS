@@ -20,7 +20,9 @@ gyro / accelerometer samples between consecutive keyframes) and observe
 landmarks through ReprojectionFactorBatch. Both factor types read the same
 world_from_rig pose states (the rig's pose in the world). Velocities and IMU biases start at zero and are
 recovered from the solve; poses and landmarks start perturbed. The data are
-noiseless; the solve recovers the trajectory to about a millimeter.
+noiseless; the solve recovers the trajectory to about a millimeter. The
+landmarks are eliminated with a Schur complement, whose reduced system is
+solved with the built-in supernodal Cholesky.
 
 Usage::
 
@@ -182,8 +184,13 @@ def main():
     problem.add_factor_batch(imu, imu_ptrs)
     problem.add_factor_batch(reproj, reproj_ptrs)
 
+    # The landmarks are eliminated with a Schur complement: each iteration
+    # solves only the reduced system of the keyframe states (pose, velocity and
+    # bias, 15 unknowns per keyframe) and recovers every landmark from it.
+    problem.set_eliminated_state_batches([points])
     options = pycunls.LevenbergMarquardtMinimizerOptions()
     options.base_options.max_num_iterations = 30
+    options.base_options.linear_system = pycunls.LinearSystemType.SchurComplement
     stream = pycunls.CudaStream()
     summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
 

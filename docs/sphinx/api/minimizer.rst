@@ -156,10 +156,15 @@ then override individual fields.
   needs to escalate from ``lambda_min`` to ``lambda_max``, so the cap counts
   the rejections at full damping.  Set to ``0`` to disable this criterion.
 - **sparse_linear_solver_type** (``SparseLinearSolverType``, default
-  ``BlockSparsePCG``) — selects the linear-system backend.
-  ``BlockSparsePCG`` runs block-Jacobi preconditioned conjugate gradient
-  with the block layout derived automatically from the problem's state
-  batches.  ``cuDSS`` uses NVIDIA's sparse direct solver; ``DenseLDLT``
+  ``BlockSparseCholesky``) — selects the linear-system backend.
+  ``BlockSparseCholesky`` factors the system with the built-in supernodal
+  sparse Cholesky (exact steps, no external dependencies; requires an SPD
+  system, so Gauss-Newton needs every gauge fixed).  ``BlockSparsePCG`` runs
+  block-Jacobi preconditioned conjugate gradient with the block layout
+  derived automatically from the problem's state batches (inexact steps);
+  prefer it for graphs without small separators (many long-range random
+  edges) and for very large well-conditioned systems of small blocks.
+  ``cuDSS`` uses NVIDIA's sparse direct solver; ``DenseLDLT``
   converts to dense and factorizes with a custom pivoted LDLT kernel;
   ``DenseCholesky`` converts to dense and uses cuSOLVER Cholesky
   (requires SPD); ``DenseQR`` converts to dense and uses cuSOLVER QR
@@ -574,8 +579,11 @@ Creates an empty problem with no states or factors.
 
 Integer enum selecting the linear-system backend.
 
-- ``SparseLinearSolverType.BlockSparsePCG`` (default) — block-Jacobi
-  preconditioned conjugate gradient solver.  The block layout is derived
+- ``SparseLinearSolverType.BlockSparseCholesky`` (default) — supernodal
+  sparse Cholesky on the GPU, without external dependencies (exact steps;
+  requires an SPD system).
+- ``SparseLinearSolverType.BlockSparsePCG`` — block-Jacobi
+  preconditioned conjugate gradient solver (inexact steps).  The block layout is derived
   automatically from the problem's state batches at minimizer-initialize
   time.
 - ``SparseLinearSolverType.cuDSS`` — sparse direct solver via NVIDIA cuDSS.
@@ -666,14 +674,15 @@ criterion is applied per subproblem.
   (Levenberg-Marquardt: counted at full damping, after the rejections that
   escalate :math:`\lambda` to ``lambda_max``). Set to 0 to disable. Default: 5.
 - **sparse_linear_solver_type** [in]: Linear backend; options are
-  ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate gradient;
-  layout auto-derived from the problem's state batches), ``cuDSS`` (sparse
+  ``BlockSparseCholesky`` (built-in supernodal sparse Cholesky; requires an
+  SPD system), ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate
+  gradient; layout auto-derived from the problem's state batches), ``cuDSS`` (sparse
   direct solver via NVIDIA's cuDSS library), ``DenseLDLT`` (converts CSR
   to dense and solves with a custom CUDA pivoted LDLT factorization),
   ``DenseCholesky`` (converts CSR to dense and solves via cuSOLVER Cholesky;
   requires SPD matrix), and ``DenseQR`` (converts CSR to dense and solves
   via cuSOLVER QR factorization; works for any non-singular matrix).
-  Default: ``BlockSparsePCG``.
+  Default: ``BlockSparseCholesky``.
 - **sparse_linear_solver_config** [in]: Backend-specific options. For
   ``BlockSparsePCG`` contains :code:`block_sparse_pcg_options`
   (``block_size`` / ``block_layout``, ``max_iterations``,

@@ -36,7 +36,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
@@ -367,6 +369,7 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
       test_utils::PCGMaxIterFromEnv(400);
   options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
       test_utils::PCGTolFromEnv(1e-3f);
+  const bool schur = test_utils::UseSchurComplementFromEnv(options);
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -394,12 +397,22 @@ TEST_F(SbaMinimizerTestFixture, OptimizeAndCheckConvergence) {
     Problem problem;
     BuildProblemFromHost(host, &problem);
     ASSERT_TRUE(problem.CheckConsistency());
+    if (schur) problem.SetEliminatedStateBatches({problem.GetStateBatches()[1]});  // points
 
     MinimizerSummary summary;
     {
       auto minimize_range = profiler_domain_.CreateDomainRange("Minimize");
+      const auto start = std::chrono::steady_clock::now();
       summary = minimizer.Minimize(stream.GetStream(), problem);
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+      const double ms =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+              .count();
+      std::printf(
+          "[SBA problem %d] %d poses, %d points, %d observations: %zu iterations, "
+          "cost %.6g -> %.6g, %.1f ms\n",
+          current_index, host.Nposes, host.Npoints, host.N_obs, summary.num_iterations,
+          summary.initial_cost, summary.final_cost, ms);
     }
 
     EXPECT_TRUE(std::isfinite(summary.initial_cost)) << "Initial cost must be finite (no NaNs)";

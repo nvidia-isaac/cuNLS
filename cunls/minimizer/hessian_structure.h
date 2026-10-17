@@ -96,6 +96,17 @@ class HessianStructureBuilder {
   void Build(cudaStream_t stream, const Problem &problem, int num_cols, int block_size,
              BSRSparseMatrix &output, bool want_scatter_maps);
 
+  /**
+   * @brief Only the layout and the column of every (factor, state slot)
+   * (Layout(), FactorCols(), JacobianValuesSize()), without the pattern; for
+   * linear systems that build their own (SchurSystem).
+   *
+   * @param stream CUDA stream for GPU operations (synchronized on return).
+   * @param problem The optimization problem.
+   * @param num_cols Free tangent dimensions in the reduced system.
+   */
+  void ResolveColumns(cudaStream_t stream, const Problem &problem, int num_cols);
+
   /** @brief Per-residual-batch geometry, indexed as the problem's batches. */
   const std::vector<HessianBatchLayout> &Layout() const { return layout_; }
 

@@ -255,7 +255,7 @@ class AugmentedLagrangianMinimizer {
    * VectorStateBatch's bounded Plus, which clamps the moved components into
    * the box, the iterates stay feasible.
    */
-  bool HoldActiveBounds(cudaStream_t stream, const MinimizerState &state, NormalEquations &system,
+  bool HoldActiveBounds(cudaStream_t stream, const MinimizerState &state, LinearSystem &system,
                         dvector<float> &rhs, const dvector<float> *step);
 
   // Implementation state; the behaviour lives in augmented_lagrangian_minimizer.cu.

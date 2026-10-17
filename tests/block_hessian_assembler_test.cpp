@@ -130,15 +130,18 @@ class SystemBuilder {
     internal::SetUpStructure(stream, problem, options_, state_ops_, system_);
     state_.Recreate(stream, problem);
     internal::BuildSystem(stream, problem, state_, options_, system_, scratch_);
+    Equations().BuildWorkingLhs(stream);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 
+  /** @brief The working left-hand side (scaled, damped as declared), as CSR. */
   const CSRSparseMatrix &HessianAsCSR(cudaStream_t stream) {
-    if (!system_.normal_equations.UsesBlockStorage()) {
-      return system_.normal_equations.LhsCSR();
+    Equations().BuildWorkingLhs(stream);
+    if (!Equations().UsesBlockStorage()) {
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+      return Equations().LhsCSR();
     }
-    test_utils::ExpandBSRToCSR(stream, system_.normal_equations.LhsBSR(), csr_mirror_,
-                               expand_scratch_);
+    test_utils::ExpandBSRToCSR(stream, Equations().LhsBSR(), csr_mirror_, expand_scratch_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     return csr_mirror_;
   }
@@ -153,8 +156,7 @@ class SystemBuilder {
    */
   float WeightedSquaredStep(cudaStream_t stream, const dvector<float> &step) {
     dvector<float> h_step;
-    system_.normal_equations.MultiplyHessian(stream, cusparse_handle_.GetHandle(stream), step,
-                                             h_step, buffer_);
+    Equations().MultiplyHessian(stream, step, h_step);
     std::vector<float> a(step.size()), b(step.size());
     step.CopyToHost(a.data(), a.size());
     h_step.CopyToHost(b.data(), b.size());
@@ -162,12 +164,14 @@ class SystemBuilder {
     for (size_t i = 0; i < a.size(); ++i) out += static_cast<double>(a[i]) * b[i];
     return static_cast<float>(out);
   }
-  NormalEquations &Equations() { return system_.normal_equations; }
-  bool UsesBlockStorage() const { return system_.normal_equations.UsesBlockStorage(); }
+  NormalEquations &Equations() { return static_cast<NormalEquations &>(*system_.linear_system); }
+  bool UsesBlockStorage() const {
+    return static_cast<const NormalEquations &>(*system_.linear_system).UsesBlockStorage();
+  }
 
  private:
   SystemBuilder(const MinimizerOptions &options, SparseLinearSolverPtr solver) : options_(options) {
-    system_.solver = std::move(solver);
+    system_.linear_system = std::make_unique<NormalEquations>(std::move(solver));
   }
 
   static MinimizerOptions MakeOptions(SparseLinearSolverType solver) {
@@ -181,8 +185,6 @@ class SystemBuilder {
   internal::MinimizerSystem system_;
   internal::MinimizerScratch scratch_;
   MinimizerState state_;
-  cuSPARSEHandle cusparse_handle_;
-  dvector<uint8_t> buffer_;
   CSRSparseMatrix csr_mirror_;
   dvector<int> expand_scratch_;
 };
@@ -956,8 +958,8 @@ TEST(HessianStorageTest, BlockDiagonalOpsMatchScalar) {
   // 1. Diagonal extraction.
   dvector<float> csr_diag;
   dvector<float> bsr_diag;
-  scalar.Equations().ExtractLhsDiagonal(s, csr_diag);
-  block.Equations().ExtractLhsDiagonal(s, bsr_diag);
+  scalar.Equations().ExtractScaledHessianDiagonal(s, csr_diag);
+  block.Equations().ExtractScaledHessianDiagonal(s, bsr_diag);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   std::vector<float> expected_diag(csr_diag.size());
@@ -970,11 +972,13 @@ TEST(HessianStorageTest, BlockDiagonalOpsMatchScalar) {
     ASSERT_NEAR(expected_diag[i], actual_diag[i], diag_tol) << "diagonal mismatch at " << i;
   }
 
-  // 2. Damped update, in place, exactly as LM performs it.
+  // 2. Damped system, exactly as LM declares it.
   constexpr float kLambda = 0.017f;
-  scalar.Equations().AddScaledDiagonalToLhs(s, kLambda, csr_diag);
-  block.Equations().AddScaledDiagonalToLhs(s, kLambda, bsr_diag);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
+  for (float &v : expected_diag) v *= kLambda;
+  dvector<float> damping(expected_diag.size());
+  damping.CopyFromHost(expected_diag.data(), expected_diag.size());
+  scalar.Equations().SetDamping(&damping);
+  block.Equations().SetDamping(&damping);
 
   SystemSnapshot expected = Snapshot(scalar, s);
   SystemSnapshot actual = Snapshot(block, s);
@@ -1278,8 +1282,9 @@ void ExpectDenseBackendAgreesAcrossLayouts(SparseLinearSolver &solver, Problem &
   // and Cholesky rightly refuses it.  Damping is applied to the block LHS
   // before the scalar copy is expanded from it, so both layouts hold the same
   // matrix and the comparison stays about the scatter.
-  dvector<float> ones(1.f, n);
-  builder.Equations().AddScaledDiagonalToLhs(s, 1e-2f, ones);
+  dvector<float> damping(1e-2f, n);
+  builder.Equations().SetDamping(&damping);
+  builder.Equations().BuildWorkingLhs(s);
 
   const BSRSparseMatrix &bsr = builder.Equations().LhsBSR();
   CSRSparseMatrix csr;
@@ -1440,6 +1445,7 @@ TEST(BlockHessianAssemblerTest, MatchesReferenceWithColumnScaling) {
   CudaStream stream;
   MinimizerOptions block_options;
   block_options.column_scaling = ColumnScaling::HessianDiagonal;
+  block_options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;  // BSR backend
 
   // Column scaling reads the Hessian diagonal and rescales the LHS in place, and
   // both of those are implemented once per layout.  The reference therefore has

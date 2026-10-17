@@ -94,7 +94,19 @@ void bind_types(nb::module_ &m) {
       .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky)
       .value("DenseQR", cunls::SparseLinearSolverType::DenseQR)
       .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG)
-      .value("BlockTridiagonal", cunls::SparseLinearSolverType::BlockTridiagonal);
+      .value("BlockTridiagonal", cunls::SparseLinearSolverType::BlockTridiagonal)
+      .value("BlockSparseCholesky", cunls::SparseLinearSolverType::BlockSparseCholesky);
+
+  nb::enum_<cunls::LinearSystemType>(m, "LinearSystemType",
+                                     "How each iteration's linear system is formed "
+                                     "(MinimizerOptions.linear_system).")
+      .value("Assembled", cunls::LinearSystemType::Assembled,
+             "The full normal equations, solved with sparse_linear_solver_type.")
+      .value("SchurComplement", cunls::LinearSystemType::SchurComplement,
+             "Eliminate the state batches of Problem.set_eliminated_state_batches (the "
+             "landmarks of a bundle adjustment) and solve the reduced system with the "
+             "built-in supernodal Cholesky (BlockSparseCholesky; sparse_linear_solver_type "
+             "is not used).");
 
   nb::enum_<cunls::ColumnScaling>(m, "ColumnScaling")
       .value("none", cunls::ColumnScaling::None)
@@ -151,6 +163,9 @@ void bind_types(nb::module_ &m) {
               "calls skip the structure setup. A size change falls back to the full setup. "
               "Default: False.")
       .def_rw("sparse_linear_solver_type", &cunls::MinimizerOptions::sparse_linear_solver_type)
+      .def_rw("linear_system", &cunls::MinimizerOptions::linear_system,
+              "How each iteration's linear system is formed: LinearSystemType.Assembled "
+              "(default) or SchurComplement (needs Problem.set_eliminated_state_batches).")
       .def_rw("column_scaling", &cunls::MinimizerOptions::column_scaling)
       .def_rw("jacobian_mode", &cunls::MinimizerOptions::jacobian_mode,
               "Global default JacobianMode for every factor batch, unless "
@@ -196,6 +211,10 @@ void bind_types(nb::module_ &m) {
       .def_rw("lambda_downscale", &cunls::LevenbergMarquardtMinimizerOptions::lambda_downscale)
       .def_rw("lambda_max", &cunls::LevenbergMarquardtMinimizerOptions::lambda_max)
       .def_rw("lambda_min", &cunls::LevenbergMarquardtMinimizerOptions::lambda_min)
+      .def_rw("min_diagonal", &cunls::LevenbergMarquardtMinimizerOptions::min_diagonal,
+              "Floor of the diagonal the damping scales, lambda * max(diag(H), min_diagonal), "
+              "so unobservable unknowns (zero Jacobian columns) get a zero step instead of a "
+              "singular system. Default: 1e-6.")
       .def_rw("step_accept_threshold",
               &cunls::LevenbergMarquardtMinimizerOptions::step_accept_threshold)
       .def_rw("lambda_downscale_threshold",
