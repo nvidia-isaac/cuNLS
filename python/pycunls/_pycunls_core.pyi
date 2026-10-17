@@ -60,13 +60,26 @@ def set_log_verbosity(verbosity: Verbosity) -> None:
 # Enumerations
 # ===================================================================
 
+class LinearSystemType(enum.Enum):
+    """How each iteration's linear system is formed (MinimizerOptions.linear_system)."""
+
+    Assembled = ...
+    """The full normal equations, solved with sparse_linear_solver_type."""
+    SchurComplement = ...
+    """Eliminate the state batches of Problem.set_eliminated_state_batches (the landmarks of a
+    bundle adjustment) and solve the reduced system with BlockSparseCholesky."""
+
 class SparseLinearSolverType(enum.Enum):
+    """Solver of the assembled system (MinimizerOptions.sparse_linear_solver_type; not used with
+    LinearSystemType.SchurComplement). Default: BlockSparseCholesky."""
+
     cuDSS = ...
     DenseLDLT = ...
     DenseCholesky = ...
     DenseQR = ...
     BlockSparsePCG = ...
     BlockTridiagonal = ...
+    BlockSparseCholesky = ...
 
 class ColumnScaling(enum.Enum):
     """Diagonal scaling mode for the GN/LM normal equations."""
@@ -111,6 +124,7 @@ class MinimizerOptions:
     max_line_search_steps: int
     reuse_structure: bool
     sparse_linear_solver_type: SparseLinearSolverType
+    linear_system: LinearSystemType
     column_scaling: ColumnScaling
     jacobian_mode: JacobianMode
     numeric_diff_options: NumericDiffOptions
@@ -141,6 +155,7 @@ class LevenbergMarquardtMinimizerOptions:
     lambda_downscale: float
     lambda_max: float
     lambda_min: float
+    min_diagonal: float
     step_accept_threshold: float
     lambda_downscale_threshold: float
 
@@ -1688,6 +1703,12 @@ class Problem:
         (device int32 arrays, one per state batch). Factors may only connect
         states of the same or adjacent stages within a subproblem. An empty list
         clears the stages."""
+        ...
+    def set_eliminated_state_batches(self, state_batches: list[StateBatch]) -> None:
+        """Declare the state batches LinearSystemType.SchurComplement eliminates
+        (the landmarks of a bundle adjustment). Every factor may touch at most
+        one non-constant state of these batches; they must share one tangent
+        size of 1 to 3. An empty list clears the declaration."""
         ...
     @property
     def num_problems(self) -> int: ...

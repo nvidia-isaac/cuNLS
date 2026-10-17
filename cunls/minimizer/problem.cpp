@@ -353,6 +353,24 @@ void Problem::SetStateStages(const std::vector<const int *> &state_stages) {
   state_stages_ = state_stages;
 }
 
+void Problem::SetEliminatedStateBatches(const std::vector<const StateBatch *> &batches) {
+  for (size_t i = 0; i < batches.size(); ++i) {
+    const StateBatch *batch = batches[i];
+    if (batch == nullptr) {
+      throw std::invalid_argument("Problem::SetEliminatedStateBatches: null state batch");
+    }
+    if (std::find(state_batches_.begin(), state_batches_.end(), batch) == state_batches_.end()) {
+      throw std::invalid_argument(
+          "Problem::SetEliminatedStateBatches: the state batch is not part of this problem");
+    }
+    if (std::find(batches.begin(), batches.begin() + i, batch) != batches.begin() + i) {
+      throw std::invalid_argument(
+          "Problem::SetEliminatedStateBatches: a state batch is listed twice");
+    }
+  }
+  eliminated_state_batches_ = batches;
+}
+
 void Problem::CheckSizes() const {
   const std::string error = SizeError();
   if (!error.empty()) {

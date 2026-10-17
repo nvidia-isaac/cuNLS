@@ -21,8 +21,9 @@ cuNLS organizes optimization into:
 - `pycunls.mpc` for model predictive control (dynamics factors, costs,
   constraints, receding horizon); guide: `docs/sphinx/mpc.rst`, example:
   `python/examples/supermarket_drones.py` (batched fleet with moving obstacles).
-- Sparse backends (`BlockSparsePCG` default, plus `cuDSS` direct and
-  dense LDLT/Cholesky/QR fallbacks) and robust losses.
+- Sparse backends (`BlockSparseCholesky` default, plus `BlockSparsePCG`
+  iterative, optional `cuDSS` direct and dense LDLT/Cholesky/QR fallbacks)
+  and robust losses.
 
 ## Entry points
 

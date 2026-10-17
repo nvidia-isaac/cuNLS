@@ -20,6 +20,7 @@
 #include <cuda_runtime.h>
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "cunls/common/pinned_vector.h"
@@ -27,8 +28,8 @@
 #include "cunls/common/types.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/jacobian_mode.h"
+#include "cunls/minimizer/linear_system.h"
 #include "cunls/minimizer/minimizer_state.h"
-#include "cunls/minimizer/normal_equations.h"
 #include "cunls/minimizer/numeric_diff_jacobian.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/problem_partition.h"
@@ -120,22 +121,30 @@ struct MinimizerOptions {
    * @brief Type of sparse linear solver to use.
    *
    * Supported options:
-   *  - BlockSparsePCG (default): block-Jacobi preconditioned CG; derives
-   *    the per-state-batch block layout automatically.  Recommended for
-   *    most SBA and PGO workloads — see `profile/PCG_RESULTS.md` and
-   *    `profile/benchmark_a6000.png`.
-   *  - cuDSS: NVIDIA cuDSS sparse direct solver.  Preferred when many
-   *    near-identical small Hessians are solved back-to-back and the
-   *    per-iteration kernel-launch overhead of PCG dominates.
+   *  - BlockSparseCholesky (default): supernodal sparse Cholesky on the GPU
+   *    (no external dependencies); exact steps. The fastest choice for pose
+   *    graphs, bundle adjustment and visual-inertial problems, whose graphs
+   *    have local structure (small separators). Requires an SPD system:
+   *    Gauss-Newton needs every gauge fixed (Levenberg-Marquardt damps it).
+   *  - BlockSparsePCG: block-Jacobi preconditioned CG; derives the
+   *    per-state-batch block layout automatically. Inexact steps (stops at
+   *    a relative residual). Preferred when the graph has no small
+   *    separators, so that a direct factor fills in (many long-range
+   *    random edges), and for very large well-conditioned systems of small
+   *    blocks, where a few CG iterations beat a factorization.
+   *  - cuDSS: NVIDIA cuDSS sparse direct solver (optional dependency).
    *  - DenseLDLT: converts CSR to dense, solves with a custom pivoted
    *    LDLT kernel.  Suitable for small dense Hessians.
    *  - DenseCholesky / DenseQR: cuSOLVER-backed dense solves.
    *  - BlockTridiagonal: block-tridiagonal Cholesky for stage-ordered
    *    problems (Problem::SetStateStages).
    *
-   * Default: BlockSparsePCG.
+   * Not used with LinearSystemType::SchurComplement (always
+   * BlockSparseCholesky).
+   *
+   * Default: BlockSparseCholesky.
    */
-  SparseLinearSolverType sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;
+  SparseLinearSolverType sparse_linear_solver_type = SparseLinearSolverType::BlockSparseCholesky;
 
   /**
    * @brief Configuration for the sparse linear solver.
@@ -157,6 +166,12 @@ struct MinimizerOptions {
   SparseLinearSolverConfig sparse_linear_solver_config = {};
 
   /**
+   * @brief How each iteration's linear system is formed; see LinearSystemType.
+   * Default: Assembled.
+   */
+  LinearSystemType linear_system = LinearSystemType::Assembled;
+
+  /**
    * @brief Optional diagonal scaling of the normal equations.
    *
    * See ColumnScaling. Default: None.
@@ -169,6 +184,10 @@ struct MinimizerOptions {
    * When false, the minimizer enables all optional runtime validation
    * that can catch numerical problems early.  Currently this covers
    * post-factorization checks in the linear solver:
+   *  - BlockSparseCholesky: the read-back of the pivot-failure flag (a
+   *    clearly negative or non-finite pivot).
+   *  - SchurComplement: the read-back of the landmark-block failure flag (a
+   *    landmark block that cannot be factored even with a diagonal shift).
    *  - Cholesky: cuSOLVER devInfo after potrf and potrs (non-SPD or
    *    invalid-parameter detection).
    *  - QR: diagonal-of-R inspection for rank deficiency.
@@ -176,8 +195,9 @@ struct MinimizerOptions {
    *    and solve.
    *
    * On failure the solver's Solve() returns false and a diagnostic is
-   * emitted via LogError().  The minimizer treats a false return as a
-   * fatal error and throws std::runtime_error.
+   * emitted via LogError().  Levenberg-Marquardt treats a false return as
+   * a rejected step and raises its damping; Gauss-Newton throws
+   * std::runtime_error (see Minimizer::RejectsFailedSolves()).
    *
    * When true, every check listed above is skipped: no device-to-host
    * memcpy, no stream synchronization, and no in-kernel validation.
@@ -262,14 +282,14 @@ struct InnerSolve {
   /// and box-bounded states are kept in their bounds by its restrict_system
   /// (otherwise a problem with either is rejected).
   bool constraints_managed = false;
-  /// Removes unknowns from the linear system: zeroes their rows, columns and
-  /// right-hand side entries (keeping the diagonal), so their step is exactly
-  /// 0. Called every iteration once the normal equations are built (and
+  /// Removes unknowns from the linear system: declares the mask that holds
+  /// them (LinearSystem::SetMask) and zeroes their right-hand side entries,
+  /// so their step is exactly 0. Called every iteration once the system is built (and
   /// updated by the subclass) with `step` null, before the solve; then after
   /// each solve with the solved `step`: returning true asks for another solve
   /// (it removed more unknowns), false keeps the step. `state` holds the
   /// current states. Empty: nothing is removed.
-  std::function<bool(cudaStream_t stream, const MinimizerState &state, NormalEquations &system,
+  std::function<bool(cudaStream_t stream, const MinimizerState &state, LinearSystem &system,
                      dvector<float> &rhs, const dvector<float> *step)>
       restrict_system;
   /// Device array of Problem::NumProblems() ints, written: nonzero where a
@@ -294,22 +314,22 @@ struct MinimizerStructure {
 
 /** @brief The linearized problem and its solution. */
 struct MinimizerSystem {
-  SparseLinearSolverPtr solver;             ///< Linear solver of the normal equations.
-  NumericDiffJacobianBuilder numeric_diff;  ///< Jacobians of kNumeric residual batches.
-  dvector<float> residuals;                 ///< Residuals of every active factor.
-  PerFactorJacobians factor_jacobians;      ///< Dense Jacobian block of every factor.
-  NormalEquations normal_equations;         ///< H = JᵀJ and the working left-hand side.
-  dvector<float> rhs;                       ///< -Jᵀr (scaled and masked like the lhs).
-  dvector<float> column_scale;              ///< S of ColumnScaling::HessianDiagonal.
-  dvector<float> step;                      ///< The step δ, one entry per reduced row.
+  std::unique_ptr<LinearSystem> linear_system;  ///< H = JᵀJ, its modifications and solver.
+  NumericDiffJacobianBuilder numeric_diff;      ///< Jacobians of kNumeric residual batches.
+  dvector<float> residuals;                     ///< Residuals of every active factor.
+  PerFactorJacobians factor_jacobians;          ///< Dense Jacobian block of every factor.
+  dvector<float> rhs;                           ///< -Jᵀr (scaled and masked like the system).
+  dvector<float> column_scale;                  ///< S of ColumnScaling::HessianDiagonal.
+  dvector<float> step;                          ///< The step δ, one entry per free column.
 };
 
 /** @brief Scratch buffers and read-back slots. */
 struct MinimizerScratch {
-  dvector<uint8_t> buffer;        ///< Per-factor costs, residuals and workspaces.
-  dvector<float> d_scalars;       ///< Device scalars: totals and read-back slots.
-  PinnedVector<float> h_scalars;  ///< Host mirror of d_scalars.
-  dvector<float> d_partials;      ///< Reduction partials.
+  dvector<uint8_t> buffer;               ///< Per-factor costs, residuals and workspaces.
+  dvector<float> d_scalars;              ///< Device scalars: totals and read-back slots.
+  PinnedVector<float> h_scalars;         ///< Host mirror of d_scalars.
+  dvector<float> d_partials;             ///< Reduction partials.
+  dvector<float *> item_state_pointers;  ///< State pointers in LinearSystem::EvaluationOrder().
 };
 
 /**
@@ -320,6 +340,17 @@ struct MinimizerScratch {
  */
 void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOptions &options,
                     StateBatchOps &state_ops, MinimizerSystem &system);
+
+/**
+ * @brief The linear system MinimizerOptions::linear_system selects: the
+ * assembled normal equations with the solver of
+ * MinimizerOptions::sparse_linear_solver_type, or the Schur complement with
+ * BlockSparseCholesky (sparse_linear_solver_type ignored, with a warning when
+ * set to another solver).
+ *
+ * @throws std::invalid_argument for an unknown LinearSystemType.
+ */
+std::unique_ptr<LinearSystem> CreateLinearSystem(const MinimizerOptions &options);
 
 /**
  * @brief Step 1 of Minimize(): the Gauss-Newton system at `state`, H = JᵀJ and
@@ -337,8 +368,8 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
  * @brief Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer.
  *
  * Minimizes the problem's total cost, ½ Σ ρ(‖r‖²), by repeating:
- *   1. build the normal equations H δ = -g at the current states (with
- *      column scaling),
+ *   1. build the linear system H δ = -g at the current states (LinearSystem;
+ *      with column scaling),
  *   2. let the subclass update them (UpdateSystem),
  *   3. solve for the step δ,
  *   4. evaluate the cost at the trial states, shortening δ by line search
@@ -346,6 +377,11 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
  *   5. let the subclass classify each step (ClassifySteps),
  *   6. take or reject each step, and stop each subproblem that converged or
  *      hit the rejection cap (MinimizerOptions::max_consecutive_rejected_steps).
+ *
+ * When the only subproblem rejects its step, the states are unchanged and
+ * the linearization is kept: the next iteration redoes step 2 only (new
+ * damping), unless InnerSolve::restrict_system is set. With
+ * RejectsFailedSolves() a failed solve in step 3 counts as a rejected step.
  *
  * A problem made of independent subproblems (Problem::SetProblemPartition)
  * is solved in one linear system, but every decision in steps 4 to 6 is
@@ -381,7 +417,8 @@ class Minimizer {
    *         AugmentedLagrangianMinimizer), or its
    *         sizes, connectivity or partition are invalid (see
    *         Problem::CheckSizes).
-   * @throws std::runtime_error if the linear solver fails.
+   * @throws std::runtime_error if the linear solver fails and the method
+   *         cannot recover from it (see RejectsFailedSolves()).
    */
   MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 
@@ -394,26 +431,26 @@ class Minimizer {
 
  protected:
   /**
-   * @brief For subclasses: stores the options and creates the linear solver.
+   * @brief For subclasses: stores the options and creates the linear system.
    * @param options Options common to all minimizers.
    */
   explicit Minimizer(const MinimizerOptions &options);
 
  private:
   /**
-   * @brief Subclass step 2: modifies the normal equations before the solve.
+   * @brief Subclass step 2: modifies the linear system before the solve.
    *
    * Called once per iteration, after the Gauss-Newton system for the current
    * states has been assembled into `system`. Gauss-Newton leaves it as is;
-   * Levenberg-Marquardt adds its damping.
+   * Levenberg-Marquardt declares its damping (LinearSystem::SetDamping).
    *
    * @param stream CUDA stream; enqueue only, do not synchronize.
    * @param iteration 0 on the first iteration of this Minimize() call.
-   * @param system Normal equations; the working left-hand side may be modified.
+   * @param system The linear system; its damping may be declared.
    * @param partition Subproblems, with the outcome of the previous
    *        iteration's steps (ProblemPartition::Outcome); read only.
    */
-  virtual void UpdateSystem(cudaStream_t stream, size_t iteration, NormalEquations &system,
+  virtual void UpdateSystem(cudaStream_t stream, size_t iteration, LinearSystem &system,
                             const ProblemPartition &partition) = 0;
 
   /**
@@ -431,15 +468,22 @@ class Minimizer {
    * non-finite cost is always rejected.
    *
    * @param stream CUDA stream; enqueue only, do not synchronize.
-   * @param system Normal equations the step was solved from (the assembled
-   *        Hessian and the working left-hand side).
-   * @param step The (possibly shortened) step δ, one entry per reduced row.
+   * @param system The linear system the step was solved from.
+   * @param step The (possibly shortened) step δ, one entry per free column.
    * @param partition Subproblems with current cost (Cost), trial cost
    *        (NewCost) and ‖δ‖² (StepSquared); write Reject() and Converged()
    *        only.
    */
-  virtual void ClassifySteps(cudaStream_t stream, const NormalEquations &system,
+  virtual void ClassifySteps(cudaStream_t stream, const LinearSystem &system,
                              const dvector<float> &step, ProblemPartition &partition) = 0;
+
+  /**
+   * @brief Whether a failed linear solve (LinearSystem::Solve() returning
+   * false, e.g. a factorization that found the system not positive definite)
+   * counts as a rejected step, which this method answers with more damping.
+   * Otherwise Minimize() throws std::runtime_error. Default: false.
+   */
+  virtual bool RejectsFailedSolves() const { return false; }
 
   friend MinimizerSummary internal::InnerMinimize(Minimizer &minimizer, cudaStream_t stream,
                                                   Problem &problem,
@@ -448,7 +492,7 @@ class Minimizer {
   // Implementation state; the behaviour lives in minimizer.cu.
   const MinimizerOptions options_;
   internal::MinimizerStructure structure_;  ///< Cached setup of the last problem.
-  internal::MinimizerSystem system_;        ///< Linearization, normal equations, step.
+  internal::MinimizerSystem system_;        ///< Linearization, linear system, step.
   internal::MinimizerScratch scratch_;      ///< Buffers and read-back slots.
   StateBatchOps state_ops_;                 ///< Manifold plus and tangent layout.
   ProblemPartition partition_;              ///< Subproblems and their step bookkeeping.

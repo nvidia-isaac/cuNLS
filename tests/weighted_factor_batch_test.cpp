@@ -94,13 +94,15 @@ struct TestParam {
 };
 
 constexpr int kPCG = test_utils::kBlockSparsePCGSolverId;
+constexpr int kChol = test_utils::kBlockSparseCholeskySolverId;
 
 typedef ::testing::Types<
 #ifdef CUNLS_ENABLE_CUDSS
     TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>, TestParam<1, 1>,
     TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>,
 #endif
-    TestParam<1, kPCG>, TestParam<2, kPCG>, TestParam<3, kPCG>, TestParam<4, kPCG>>
+    TestParam<1, kPCG>, TestParam<2, kPCG>, TestParam<3, kPCG>, TestParam<4, kPCG>,
+    TestParam<1, kChol>, TestParam<2, kChol>, TestParam<3, kChol>, TestParam<4, kChol>>
     WeightedTestParams;
 TYPED_TEST_CASE(WeightedFactorBatchTest, WeightedTestParams);
 

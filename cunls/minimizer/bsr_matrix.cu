@@ -421,6 +421,13 @@ void ScaleSymmetric(cudaStream_t stream, BSRSparseMatrix &matrix, const dvector<
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
+void CopyBSRValues(cudaStream_t stream, const BSRSparseMatrix &input, BSRSparseMatrix &output) {
+  if (&input == &output || input.values.empty()) return;
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(output.values.data(), input.values.data(),
+                                      input.values.size() * sizeof(float), cudaMemcpyDeviceToDevice,
+                                      stream));
+}
+
 void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
                          BSRSparseMatrix &output) {
   if (&input == &output) {

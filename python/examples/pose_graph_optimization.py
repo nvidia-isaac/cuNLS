@@ -68,11 +68,16 @@ def main():
     problem.add_factor_batch(between, state_pointers)
     assert problem.check_consistency(), "Problem consistency check failed"
 
-    # 5. Solve with Levenberg-Marquardt.
+    # 5. Solve with Levenberg-Marquardt. Each step factors the pose graph's
+    #    normal equations with BlockSparseCholesky (the default; exact steps).
+    #    BlockSparsePCG is the iterative alternative for graphs with many
+    #    long-range loop closures.
     options = pycunls.LevenbergMarquardtMinimizerOptions()
     options.base_options.max_num_iterations = 60
     options.base_options.state_tolerance = 1e-8
     options.base_options.cost_tolerance = 1e-8
+    options.base_options.sparse_linear_solver_type = (
+        pycunls.SparseLinearSolverType.BlockSparseCholesky)
     options.initial_lambda = 1e-3
     stream = pycunls.CudaStream()
     summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)

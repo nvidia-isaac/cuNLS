@@ -20,6 +20,9 @@ Jointly refines N SE(3) camera poses and M 3D points from N x M reprojection
 factors (normalized image coordinates). Poses are the cameras' world poses
 (world_from_camera, the pose convention of cuNLS). Poses 0 and 1 are held
 constant to fix the gauge: the global rigid-body transform and the scale.
+
+The points are eliminated with a Schur complement, whose reduced system is
+solved with the built-in supernodal Cholesky.
 """
 
 import cupy as cp
@@ -80,11 +83,17 @@ def main():
     problem.add_factor_batch(reprojection, state_pointers)
     assert problem.check_consistency(), "Problem consistency check failed"
 
-    # 6. Solve with Levenberg-Marquardt.
+    # 6. Solve with Levenberg-Marquardt. The points are eliminated with a Schur
+    #    complement: each point only connects to poses, so its 3x3 block is
+    #    eliminated in closed form, the reduced camera system (6 unknowns per free
+    #    pose) is factored by BlockSparseCholesky, and every point is recovered
+    #    from it. The step is the exact solution of the full system, much cheaper.
+    problem.set_eliminated_state_batches([point_states])
     options = pycunls.LevenbergMarquardtMinimizerOptions()
     options.base_options.max_num_iterations = 80
     options.base_options.state_tolerance = 1e-8
     options.base_options.cost_tolerance = 1e-8
+    options.base_options.linear_system = pycunls.LinearSystemType.SchurComplement
     options.initial_lambda = 1e-3
     stream = pycunls.CudaStream()
     summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)

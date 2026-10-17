@@ -50,6 +50,8 @@ SparseLinearSolverPtr CreateSparseLinearSolver(SparseLinearSolverType type,
       return std::make_unique<BlockSparsePCGSolver>(config.block_sparse_pcg_options);
     case SparseLinearSolverType::BlockTridiagonal:
       return std::make_unique<BlockTridiagonalSolver>();
+    case SparseLinearSolverType::BlockSparseCholesky:
+      return std::make_unique<BlockSparseCholeskySolver>();
     default:
       throw std::invalid_argument("Invalid sparse linear solver type");
   }

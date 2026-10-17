@@ -92,6 +92,9 @@ void ScaleSymmetric(cudaStream_t stream, BSRSparseMatrix &matrix, const dvector<
 void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
                          BSRSparseMatrix &output);
 
+/** @brief Copies only the values of a BSR matrix with the same structure. */
+void CopyBSRValues(cudaStream_t stream, const BSRSparseMatrix &input, BSRSparseMatrix &output);
+
 /** @brief y = A * x for block storage (y is resized to the row count). */
 void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
                               const dvector<float> &x, dvector<float> &y);

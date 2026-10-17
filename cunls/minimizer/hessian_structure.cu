@@ -332,7 +332,7 @@ void HessianStructureBuilder::BuildLayout(const Problem &problem) {
 }
 
 void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Problem &problem,
-                                                   int num_cols, dvector<int> &tangent_at_col) {
+                                                   int num_cols, dvector<int> *tangent_at_col) {
   const auto &residual_batches = problem.GetResidualBatches();
 
   if (factor_cols_.empty()) {
@@ -341,10 +341,12 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
   THROW_ON_CUDA_ERROR(
       cudaMemsetAsync(factor_cols_.data(), 0xFF, factor_cols_.size() * sizeof(int), stream));
 
-  tangent_at_col.resize(static_cast<size_t>(num_cols));
-  if (num_cols > 0) {
-    THROW_ON_CUDA_ERROR(
-        cudaMemsetAsync(tangent_at_col.data(), 0, tangent_at_col.size() * sizeof(int), stream));
+  if (tangent_at_col != nullptr) {
+    tangent_at_col->resize(static_cast<size_t>(num_cols));
+    if (num_cols > 0) {
+      THROW_ON_CUDA_ERROR(
+          cudaMemsetAsync(tangent_at_col->data(), 0, tangent_at_col->size() * sizeof(int), stream));
+    }
   }
 
   // The state pointers are read from the problem's device tables
@@ -365,10 +367,10 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
     ComputeStateColumnOffsets(stream, last_col, state_batch, block_col_map);
 
     const size_t tangent_entries = state_batch->NumActiveStates() * state_batch->TangentSize();
-    if (tangent_entries > 0) {
+    if (tangent_at_col != nullptr && tangent_entries > 0) {
       FillTangentAtColKernel<<<GridFor(tangent_entries), kBlockSize, 0, stream>>>(
           static_cast<int>(tangent_entries), static_cast<int>(state_batch->TangentSize()),
-          block_col_map.data(), tangent_at_col.data());
+          block_col_map.data(), tangent_at_col->data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
 
@@ -396,18 +398,23 @@ void HessianStructureBuilder::ResolveFactorColumns(cudaStream_t stream, const Pr
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 
+void HessianStructureBuilder::ResolveColumns(cudaStream_t stream, const Problem &problem,
+                                             int num_cols, dvector<int> *tangent_at_col) {
+  BuildLayout(problem);
+  ResolveFactorColumns(stream, problem, num_cols, tangent_at_col);
+}
+
 int HessianStructureBuilder::DiscoverBlockPairs(cudaStream_t stream, const Problem &problem,
                                                 int num_cols, dvector<int> &pair_fields,
                                                 dvector<int> &pair_order, dvector<int> &pair_group,
                                                 size_t &num_valid) {
   auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
-  BuildLayout(problem);
   // Every buffer below is scratch for this call only.  Holding them as members
   // would keep ~20 bytes per candidate pair alive for the whole solve, which on
   // a large SBA problem is hundreds of MiB against no reuse benefit.
   dvector<int> tangent_at_col;
-  ResolveFactorColumns(stream, problem, num_cols, tangent_at_col);
+  ResolveColumns(stream, problem, num_cols, &tangent_at_col);
 
   num_valid = 0;
   if (total_pairs_ == 0 || num_cols == 0) {

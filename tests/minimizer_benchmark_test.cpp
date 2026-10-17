@@ -529,5 +529,264 @@ TEST(MinimizerBenchmark, DISABLED_RealTimeMpc) {
   }
 }
 
+// =============================================================================
+// Linear solver comparison: the same problem with each backend in BENCH_SOLVERS
+// (comma separated, default "pcg,chol,cudss"), Levenberg-Marquardt with the
+// default options apart from the solver. Every Minimize() repeats the solver's
+// setup (no reuse_structure); cold_ms is the first call of the process.
+//   BENCH <case> LM/<solver> median_ms=... cold_ms=... iterations=... final_cost=...
+// =============================================================================
+
+/** The backends named in BENCH_SOLVERS. */
+std::vector<std::pair<std::string, SparseLinearSolverType>> BenchSolvers() {
+  const char *env = std::getenv("BENCH_SOLVERS");
+  const std::string list = env != nullptr ? env : "pcg,chol,cudss";
+  std::vector<std::pair<std::string, SparseLinearSolverType>> out;
+  if (list.find("pcg") != std::string::npos) {
+    out.push_back({"pcg", SparseLinearSolverType::BlockSparsePCG});
+  }
+  if (list.find("chol") != std::string::npos) {
+    out.push_back({"chol", SparseLinearSolverType::BlockSparseCholesky});
+  }
+#ifdef CUNLS_ENABLE_CUDSS
+  if (list.find("cudss") != std::string::npos) {
+    out.push_back({"cudss", SparseLinearSolverType::cuDSS});
+  }
+#endif
+  return out;
+}
+
+/** Runs LM on the problem with every backend of BENCH_SOLVERS. */
+void CompareSolvers(const std::string &name, Problem &problem, int reps,
+                    const std::function<void()> &reset) {
+  CudaStream stream;
+  for (const auto &[label, solver] : BenchSolvers()) {
+    LevenbergMarquardtMinimizerOptions lm;
+    lm.base_options.sparse_linear_solver_type = solver;
+    LevenbergMarquardtMinimizer minimizer(lm);
+    auto solve = [&] { return minimizer.Minimize(stream.GetStream(), problem); };
+    reset();
+    THROW_ON_CUDA_ERROR(cudaDeviceSynchronize());
+    const auto t0 = std::chrono::steady_clock::now();
+    solve();
+    THROW_ON_CUDA_ERROR(cudaDeviceSynchronize());
+    const double cold =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    const Timing t = Time(reps, reset, solve);
+    std::printf(
+        "BENCH %-30s LM/%-5s median_ms=%9.3f cold_ms=%9.3f iterations=%3zu final_cost=%.6g\n",
+        name.c_str(), label.c_str(), t.median_ms, cold, t.iterations, t.final_cost);
+    std::fflush(stdout);
+  }
+}
+
+/** Edges i - i+1 along a chain of n poses plus i - i+ring for every pose (a ring x n/ring grid). */
+std::vector<std::pair<int, int>> GridEdges(int n, int ring) {
+  std::vector<std::pair<int, int>> edges;
+  for (int i = 0; i + 1 < n; ++i) edges.push_back({i, i + 1});
+  for (int i = 0; i + ring < n; ++i) edges.push_back({i, i + ring});
+  return edges;
+}
+
+/** A chain of n poses plus `closures` loop closures between random pose pairs. */
+std::vector<std::pair<int, int>> RandomEdges(int n, int closures, std::mt19937 &rng) {
+  std::vector<std::pair<int, int>> edges;
+  for (int i = 0; i + 1 < n; ++i) edges.push_back({i, i + 1});
+  std::uniform_int_distribution<int> pick(0, n - 1);
+  while (static_cast<int>(edges.size()) < n - 1 + closures) {
+    const int a = pick(rng), b = pick(rng);
+    if (std::abs(a - b) > 1) edges.push_back({a, b});
+  }
+  return edges;
+}
+
+/**
+ * SE(3) pose graph over a random walk of n poses with the given edges: noisy
+ * relative-pose measurements (Δ = T_b⁻¹ T_a for the edge (a, b), as
+ * SE3BetweenFactorBatch expects), every pose perturbed, the first one constant.
+ */
+void SE3Graph(const std::string &name, int n, const std::vector<std::pair<int, int>> &edges,
+              int reps) {
+  std::mt19937 rng(7);
+  std::uniform_real_distribution<double> r(-0.1, 0.1), t(-0.4, 0.4);
+  std::normal_distribution<double> normal(0.0, 1.0);
+  auto noise = [&](double s) {
+    return Pose3({s * normal(rng), s * normal(rng), s * normal(rng)},
+                 {s * normal(rng), s * normal(rng), s * normal(rng)});
+  };
+  std::vector<Mat4> gt(n), init(n);
+  gt[0] = Pose3({0, 0, 0}, {0, 0, 0});
+  for (int i = 1; i < n; ++i) {
+    gt[i] = Mul<16, 4>(gt[i - 1], Pose3({r(rng), r(rng), r(rng)}, {t(rng), t(rng), t(rng)}));
+  }
+  init[0] = gt[0];
+  for (int i = 1; i < n; ++i) init[i] = Mul<16, 4>(gt[i], noise(0.05));
+  std::vector<Mat4> deltas;
+  for (auto [a, b] : edges) {
+    deltas.push_back(Mul<16, 4>(Mul<16, 4>(Inv<16, 4>(gt[b]), gt[a]), noise(0.01)));
+  }
+  const std::vector<float> init_f = ToFloat(init);
+  dvector<float> init_d(init_f), poses(init_f), deltas_d(ToFloat(deltas));
+  dvector<int> const_ids(std::vector<int>{0});
+  SE3StateBatch states(poses.data(), n, const_ids.data(), 1);
+  states.SetNumActiveStates(n, 1);
+  SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(deltas_d.data()),
+                                edges.size());
+  between.SetNumActiveFactors(edges.size());
+  std::vector<float *> ptrs;
+  for (auto [a, b] : edges) {
+    ptrs.push_back(states.StateDevicePtr(a));
+    ptrs.push_back(states.StateDevicePtr(b));
+  }
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&between, ptrs);
+  CompareSolvers(name, problem, reps, [&] {
+    THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_d.data(), init_f.size() * sizeof(float),
+                                   cudaMemcpyDeviceToDevice));
+  });
+}
+
+/** SE(2) counterpart of SE3Graph, with a prior on the first pose instead of a constant one. */
+void SE2Graph(const std::string &name, int n, const std::vector<std::pair<int, int>> &edges,
+              int reps) {
+  std::mt19937 rng(3);
+  std::normal_distribution<double> normal(0.0, 1.0);
+  std::vector<Mat3> gt, init, deltas;
+  Mat3 t = Pose2(0, 0, 0);
+  for (int i = 0; i < n; ++i) {
+    gt.push_back(t);
+    t = Mul<9, 3>(t, Pose2(1.0 + 0.3 * normal(rng), 0.3 * normal(rng), 0.2 * normal(rng)));
+  }
+  for (int i = 0; i < n; ++i) {
+    init.push_back(
+        Mul<9, 3>(gt[i], Pose2(0.1 * normal(rng), 0.1 * normal(rng), 0.1 * normal(rng))));
+  }
+  for (auto [a, b] : edges) {
+    const Mat3 noise = Pose2(0.02 * normal(rng), 0.02 * normal(rng), 0.02 * normal(rng));
+    deltas.push_back(Mul<9, 3>(Mul<9, 3>(Inv<9, 3>(gt[b]), gt[a]), noise));
+  }
+  const std::vector<float> init_f = ToFloat(init);
+  dvector<float> init_d(init_f), poses(init_f);
+  dvector<float> deltas_d(ToFloat(deltas)), prior_d(ToFloat(std::vector<Mat3>{gt[0]}));
+  SE2StateBatch states(poses.data(), n);
+  states.SetNumActiveStates(n);
+  SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(prior_d.data()), 1);
+  prior.SetNumActiveFactors(1);
+  SE2BetweenFactorBatch between(reinterpret_cast<const SE2Transform *>(deltas_d.data()),
+                                edges.size());
+  between.SetNumActiveFactors(edges.size());
+  std::vector<float *> between_ptrs;
+  for (auto [a, b] : edges) {
+    between_ptrs.push_back(states.StateDevicePtr(a));
+    between_ptrs.push_back(states.StateDevicePtr(b));
+  }
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, std::vector<float *>{states.StateDevicePtr(0)});
+  problem.AddFactorBatch(&between, between_ptrs);
+  CompareSolvers(name, problem, reps, [&] {
+    THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_d.data(), init_f.size() * sizeof(float),
+                                   cudaMemcpyDeviceToDevice));
+  });
+}
+
+/**
+ * Dim-dimensional vectors on a w x w grid (a Gaussian Markov random field):
+ * a weak prior (weight 0.1) to random targets on every vector and a
+ * difference factor to random offsets between grid neighbours. Linear, so a
+ * direct solve converges in one step.
+ */
+template <int Dim>
+void VectorGrid(const std::string &name, int w, int reps) {
+  const int n = w * w;
+  std::mt19937 rng(11);
+  std::normal_distribution<float> normal(0.f, 1.f);
+  std::vector<float> targets(n * Dim), x0(n * Dim, 0.f), offsets;
+  for (float &v : targets) v = normal(rng);
+  std::vector<float *> prior_ptrs, edge_ptrs;
+  dvector<float> x(x0), init(x0);
+  VectorStateBatch<Dim> states(x.data(), n);
+  states.SetNumActiveStates(n);
+  for (int i = 0; i < n; ++i) prior_ptrs.push_back(states.StateDevicePtr(i));
+  for (int r = 0; r < w; ++r) {
+    for (int c = 0; c < w; ++c) {
+      const int i = r * w + c;
+      for (int j : {c + 1 < w ? i + 1 : -1, r + 1 < w ? i + w : -1}) {
+        if (j < 0) continue;
+        edge_ptrs.push_back(states.StateDevicePtr(i));
+        edge_ptrs.push_back(states.StateDevicePtr(j));
+        for (int k = 0; k < Dim; ++k) offsets.push_back(0.1f * normal(rng));
+      }
+    }
+  }
+  const size_t edges = edge_ptrs.size() / 2;
+  dvector<float> d_targets(targets), d_offsets(offsets);
+  WeightedFactorBatch<PriorVectorFactorBatch<Dim>> prior(
+      0.1f, reinterpret_cast<const Vector<Dim> *>(d_targets.data()), static_cast<size_t>(n));
+  prior.SetNumActiveFactors(n);
+  VectorBetweenFactorBatch<Dim> smooth(reinterpret_cast<const Vector<Dim> *>(d_offsets.data()),
+                                       edges);
+  smooth.SetNumActiveFactors(edges);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, prior_ptrs);
+  problem.AddFactorBatch(&smooth, edge_ptrs);
+  CompareSolvers(name, problem, reps, [&] {
+    THROW_ON_CUDA_ERROR(
+        cudaMemcpy(x.data(), init.data(), x0.size() * sizeof(float), cudaMemcpyDeviceToDevice));
+  });
+}
+
+TEST(SolverBenchmark, DISABLED_SE3PoseGraphs) {
+  // Grid-like loop closures (revisiting the previous row): sphere2500-like topology.
+  for (auto [rings, per_ring] :
+       std::vector<std::pair<int, int>>{{10, 10}, {50, 50}, {100, 100}, {200, 200}, {400, 250}}) {
+    const int n = rings * per_ring;
+    SE3Graph("se3_grid_" + std::to_string(n), n, GridEdges(n, per_ring), n > 20000 ? 5 : 10);
+  }
+  // Long-range loop closures between random poses: the worst case for fill-in.
+  for (auto [n, closures] :
+       std::vector<std::pair<int, int>>{{1000, 100}, {5000, 2000}, {20000, 1000}}) {
+    std::mt19937 rng(5);
+    SE3Graph("se3_random_" + std::to_string(n) + "_lc" + std::to_string(closures), n,
+             RandomEdges(n, closures, rng), 10);
+  }
+  // A plain odometry chain.
+  std::mt19937 rng(1);
+  SE3Graph("se3_chain_10000", 10000, RandomEdges(10000, 0, rng), 10);
+}
+
+TEST(SolverBenchmark, DISABLED_SE2PoseGraphs) {
+  for (auto [rows, per_row] : std::vector<std::pair<int, int>>{{35, 100}, {100, 100}, {300, 300}}) {
+    const int n = rows * per_row;
+    SE2Graph("se2_grid_" + std::to_string(n), n, GridEdges(n, per_row), 10);
+  }
+  for (auto [n, closures] : std::vector<std::pair<int, int>>{{5000, 1000}, {20000, 1000}}) {
+    std::mt19937 rng(5);
+    SE2Graph("se2_random_" + std::to_string(n) + "_lc" + std::to_string(closures), n,
+             RandomEdges(n, closures, rng), 10);
+  }
+}
+
+TEST(SolverBenchmark, DISABLED_VectorGrids) {
+  VectorGrid<1>("vec1_grid_300x300", 300, 10);
+  VectorGrid<2>("vec2_grid_200x200", 200, 10);
+  VectorGrid<3>("vec3_grid_100x100", 100, 10);
+  VectorGrid<3>("vec3_grid_300x300", 300, 10);
+  VectorGrid<4>("vec4_grid_100x100", 100, 10);
+  VectorGrid<6>("vec6_grid_100x100", 100, 10);
+  VectorGrid<9>("vec9_grid_100x100", 100, 10);
+  VectorGrid<12>("vec12_grid_100x100", 100, 10);
+  VectorGrid<16>("vec16_grid_64x64", 64, 10);
+}
+
+TEST(SolverBenchmark, DISABLED_BatchedGraphs) {
+  for (const auto &[label, solver] : BenchSolvers()) {
+    SE2Graphs("se2_graph_256x12/" + label, 256, 12, 2, solver, 50);
+    SE2Graphs("se2_graph_16x500/" + label, 16, 500, 100, solver, 20);
+  }
+}
+
 }  // namespace
 }  // namespace cunls

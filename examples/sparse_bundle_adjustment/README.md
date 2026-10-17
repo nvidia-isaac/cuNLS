@@ -4,7 +4,8 @@ This example demonstrates synthetic sparse bundle adjustment with:
 - `ReprojectionFactorBatch` for reprojection residuals
 - `SE3StateBatch` for camera poses (first two fixed, rest optimized)
 - `VectorStateBatch<3>` for 3D points (all optimized)
-- `LevenbergMarquardtMinimizer` for nonlinear optimization
+- `LevenbergMarquardtMinimizer` for nonlinear optimization, with the points
+  eliminated by a Schur complement (`LinearSystemType::SchurComplement`)
 
 The setup is intentionally compact but complete:
 1. Generate synthetic camera poses in SE(3).
@@ -67,6 +68,20 @@ active count equals its capacity.
 
 `LevenbergMarquardtMinimizer::Minimize` runs `Initialize`, which allocates
 minimizer working buffers and prepares state/factor batches for the solve.
+
+### Linear system: Schur complement
+
+Every LM iteration solves a linear system for the step of all poses and
+points. The points are declared eliminated with
+`problem.SetEliminatedStateBatches({&point_states})` and the minimizer is set
+to `LinearSystemType::SchurComplement`: each point only connects to poses,
+so its 3x3 block is eliminated in closed form, the reduced camera system (6
+unknowns per free pose) is solved with cuNLS's supernodal sparse Cholesky
+(`BlockSparseCholesky`; `sparse_linear_solver_type` is not used), and the
+points' steps are recovered from it. The step is the
+exact solution of the full system, at a fraction of the cost. Without the
+declaration (`LinearSystemType::Assembled`, the default) the full system is
+assembled and solved by `sparse_linear_solver_type` directly.
 
 ### Optimization and checks
 

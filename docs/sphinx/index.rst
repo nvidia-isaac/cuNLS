@@ -48,6 +48,7 @@ Guides
    constraints
    dynamics
    imu
+   linear_solvers
    mpc
    custom_factors_and_states
    numeric_jacobians

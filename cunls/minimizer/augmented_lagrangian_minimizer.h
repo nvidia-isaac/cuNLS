@@ -244,18 +244,19 @@ class AugmentedLagrangianMinimizer {
    * @brief Projected Gauss-Newton for the box-bounded states, run by every
    * inner solve as its InnerSolve::restrict_system, at the current `state`.
    *
-   * Before the solve (`step` null), once the normal equations are built (and,
+   * Before the solve (`step` null), once the linear system is built (and,
    * for Levenberg-Marquardt, damped): the components that sit at a bound
    * with the steepest-descent direction (the right-hand side) pointing
-   * outward leave the system (rows, columns and rhs entries zeroed, diagonal
-   * kept), so their step is exactly 0. After a solve (`step` given): a free
-   * component the step still pushes through its bound is held too and true
-   * asks for another solve (active-set refinement), at most
+   * outward are masked out of the system (LinearSystem::SetMask with
+   * bound_mask_; their rhs entries zeroed here), so their step is exactly 0.
+   * After a solve (`step` given): a free component the step still pushes
+   * through its bound is held too and true asks for another solve (active-set
+   * refinement), at most
    * max_bound_refinements times; false keeps the step. Together with
    * VectorStateBatch's bounded Plus, which clamps the moved components into
    * the box, the iterates stay feasible.
    */
-  bool HoldActiveBounds(cudaStream_t stream, const MinimizerState &state, NormalEquations &system,
+  bool HoldActiveBounds(cudaStream_t stream, const MinimizerState &state, LinearSystem &system,
                         dvector<float> &rhs, const dvector<float> *step);
 
   // Implementation state; the behaviour lives in augmented_lagrangian_minimizer.cu.
@@ -282,8 +283,9 @@ class AugmentedLagrangianMinimizer {
 
   std::vector<size_t> bounded_;  ///< Box-bounded state batches of the problem.
   std::vector<dvector<int>>
-      column_offsets_;              ///< Per state batch: column of each state (-1: constant).
-  dvector<float> bound_mask_;       ///< Per column: 0 where held at a bound.
+      column_offsets_;  ///< Per state batch: column of each state (-1: constant).
+  /// Per column: 0 where held at a bound; the LinearSystem's declared mask (by pointer).
+  dvector<float> bound_mask_;
   dvector<float> bound_step_mask_;  ///< Per column: 0 where the step leaves the box.
   dvector<float> bound_extra_;      ///< Per column: 0 where newly held by a refinement.
   dvector<int> bound_count_;        ///< Components newly held by the last refinement.

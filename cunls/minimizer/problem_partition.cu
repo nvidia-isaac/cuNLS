@@ -208,19 +208,22 @@ __global__ void line_search_kernel(size_t num_problems, const float *cost, const
  * minimizer's classification (reject, converged); see ProblemPartition::StepControl.
  */
 __global__ void step_control_kernel(StepControlParams params, size_t num_problems, float *cost,
-                                    const float *new_cost, const int *reject, const int *converged,
-                                    const int *shortened, int *active, int *rejected, int *accept,
-                                    int *outcome, float *out) {
+                                    const float *new_cost, const float *step_squared,
+                                    const int *reject, const int *converged, const int *shortened,
+                                    int *active, int *rejected, int *accept, int *outcome,
+                                    float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   int take = 0;
   int result = kStepInactive;
   if (active[p]) {
     const float current = cost[p], updated = new_cost[p];
-    // A step to a non-finite cost is rejected, never taken.
-    const bool finite = isfinite(updated);
+    // A non-finite step (a failed linear solve) or a step to a non-finite
+    // cost is rejected, never taken. The step is checked on its own: factors
+    // may give an invalid state (e.g. a NaN point) a finite, even zero, cost.
+    const bool finite = isfinite(updated) && isfinite(step_squared[p]);
     const bool is_rejected = reject[p] != 0 || !finite;
-    if (params.line_search && updated < current && (shortened[p] || is_rejected)) {
+    if (params.line_search && finite && updated < current && (shortened[p] || is_rejected)) {
       // Line search: a (possibly shortened) step that decreases the cost is
       // taken (see MinimizerOptions::max_line_search_steps).
       take = 1;
@@ -465,8 +468,9 @@ void ProblemPartition::StepControl(cudaStream_t stream, const StepControlParams 
                                    float *d_out) {
   if (num_problems_ > 1) THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   step_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
-      params, num_problems_, cost_.data(), new_cost_.data(), reject_.data(), converged_.data(),
-      shortened_.data(), active_.data(), rejected_.data(), accept_.data(), outcome_.data(), d_out);
+      params, num_problems_, cost_.data(), new_cost_.data(), step_squared_.data(), reject_.data(),
+      converged_.data(), shortened_.data(), active_.data(), rejected_.data(), accept_.data(),
+      outcome_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

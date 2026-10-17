@@ -187,5 +187,16 @@ void bind_problem(nb::module_ &m) {
           "s of state batch b belongs to stage state_stages[b][s] (device int32 arrays, one per "
           "state batch). Factors may only connect states of the same or adjacent stages within "
           "a subproblem. An empty list clears the stages.")
+      .def(
+          "set_eliminated_state_batches",
+          [](cunls::Problem &self, const std::vector<cunls::StateBatch *> &batches) {
+            self.SetEliminatedStateBatches(
+                std::vector<const cunls::StateBatch *>(batches.begin(), batches.end()));
+          },
+          nb::arg("state_batches"),
+          "Declare the state batches LinearSystemType.SchurComplement eliminates (the "
+          "landmarks of a bundle adjustment). Every factor may touch at most one non-constant "
+          "state of these batches; they must share one tangent size of 1 to 3. An empty list "
+          "clears the declaration.")
       .def_prop_ro("num_problems", &cunls::Problem::NumProblems);
 }
