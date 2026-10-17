@@ -26,7 +26,7 @@ Sparse linear system abstraction and implementation used by minimizers.
 - `dense_qr_solver.h`: `DenseQRSolver` — cuSOLVER geqrf/ormqr + cuBLAS trsm.
 - `cudss_sparse_linear_solver.h`:
   - `cuDSSLinearSolverOptions`
-  - `cuDSSLinearSolver` — the only backend that declines block storage.
+  - `cuDSSLinearSolver` — declines block storage (CSR only).
 - `block_sparse_pcg_solver.h`:
   - `BlockSparsePCGOptions` — `block_size` / `block_layout`,
     `max_iterations`, `relative_tolerance`, `absolute_tolerance`,
@@ -48,6 +48,19 @@ Sparse linear system abstraction and implementation used by minimizers.
   recursion, one warp per subproblem, registers + shuffles, cp.async
   prefetch of the next stage, kernel templated on the stage block size
   M <= 32 (dispatch table). No host synchronization (graph-capturable).
+- `block_sparse_cholesky_solver.h` / `block_sparse_cholesky_analysis.h`:
+  `BlockSparseCholeskySolver` — supernodal sparse Cholesky, no external
+  dependency; the default backend (`MinimizerOptions::sparse_linear_solver_type`)
+  and the reduced-system solver of `LinearSystemType::SchurComplement`. CSR
+  only (declines block storage). `Initialize` finds supervariables and their
+  graph on the GPU, picks approximate minimum degree (quotient graph) or
+  nested dissection (balanced BFS level-set separators) by a cost model
+  (`AnalyzeCholesky`, host),
+  amalgamates supernodes and cuts them into panels of <= 64 columns, and
+  builds the assembly map and the relative map of the updates on the GPU.
+  `Solve`: per level a factor kernel (one
+  CTA per panel and 64 rows; forward substitution folded in) and an update
+  kernel (64 x 64 tiles), then a level-scheduled backward substitution.
 
 ## Expected system form
 

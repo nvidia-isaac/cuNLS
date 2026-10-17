@@ -333,6 +333,31 @@ class Problem {
   /** @brief Per state batch: device stage ids (empty when not set). */
   const std::vector<const int *> &StateStages() const { return state_stages_; }
 
+  /**
+   * @brief Declares the state batches LinearSystemType::SchurComplement
+   * eliminates (the landmarks of a bundle adjustment).
+   *
+   * Every factor may touch at most one non-constant state of these batches;
+   * the batches must share one tangent size of 1 to 3, and the states that
+   * share factors with them one tangent size of 3, 6 or 9. Constant states of
+   * a listed batch are not eliminated (their factors act on the other states
+   * only). The requirements are checked when the minimizer sets up the
+   * structure (std::invalid_argument). Without the declaration
+   * SchurComplement throws; with LinearSystemType::Assembled the declaration
+   * has no effect.
+   *
+   * @param batches State batches already added to this problem; an empty
+   *        vector clears the declaration.
+   * @throws std::invalid_argument if a batch is null, not part of this
+   *         problem, or listed twice.
+   */
+  void SetEliminatedStateBatches(const std::vector<const StateBatch *> &batches);
+
+  /** @brief The batches of SetEliminatedStateBatches() (empty when not set). */
+  const std::vector<const StateBatch *> &EliminatedStateBatches() const {
+    return eliminated_state_batches_;
+  }
+
  private:
   /**
    * @brief Validates that all inputs are non-null and sizes are consistent.
@@ -380,9 +405,10 @@ class Problem {
   /// Host pointer lists returned by GetStatePointers(): the user's lists for
   /// host-list batches, downloads of the device tables otherwise.
   mutable std::vector<std::vector<float *>> state_pointers_;
-  size_t num_problems_ = 0;                     ///< SetProblemPartition().
-  std::vector<const int *> state_problem_ids_;  ///< SetProblemPartition().
-  std::vector<const int *> state_stages_;       ///< SetStateStages().
+  size_t num_problems_ = 0;                                   ///< SetProblemPartition().
+  std::vector<const int *> state_problem_ids_;                ///< SetProblemPartition().
+  std::vector<const int *> state_stages_;                     ///< SetStateStages().
+  std::vector<const StateBatch *> eliminated_state_batches_;  ///< SetEliminatedStateBatches().
   std::vector<std::optional<JacobianMode>>
       jacobian_mode_overrides_;  ///< Per-residual-batch JacobianMode
                                  ///< override, index-aligned with

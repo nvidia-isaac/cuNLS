@@ -215,6 +215,7 @@ if(BUILD_TESTING)
     tests/factor_manifold_facade_test.cpp
     tests/dense_linear_solver_test.cpp
     tests/dense_cholesky_solver_test.cpp
+    tests/block_sparse_cholesky_solver_test.cpp
     tests/dense_qr_solver_test.cpp
     tests/gauss_newton_test.cpp
     tests/so2_manifold_test.cpp
@@ -235,6 +236,9 @@ if(BUILD_TESTING)
     tests/decreasing_scale_minimizer_test.cpp
     tests/synthetic_pgo_test.cpp
     tests/synthetic_sba_test.cpp
+    tests/schur_system_test.cpp
+    tests/stereo_loop_ba_test.cpp
+    tests/triple_smooth_factor_batch.cu
     tests/dense_matrix_ops_test.cpp
     tests/utils_test.cpp
     tests/device_vector_test.cpp

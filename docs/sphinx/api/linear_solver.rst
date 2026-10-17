@@ -2,11 +2,13 @@
 Linear Solver API
 ################################################################################
 
-`cunls/linear_solver` hosts linear-system abstractions (block-Jacobi PCG,
-cuDSS integration, dense pivoted LDLT, dense Cholesky, and dense QR
-solvers) behind a common interface. Every backend accepts scalar CSR; all
-but cuDSS also accept block BSR directly, which is what
-:cpp:func:`SupportsBlockStorage` reports.
+`cunls/linear_solver` hosts the sparse linear solvers (supernodal sparse
+Cholesky, block-Jacobi PCG, cuDSS integration, block-tridiagonal Cholesky,
+dense pivoted LDLT, dense Cholesky and dense QR) behind a common interface.
+Every backend accepts scalar CSR; BlockSparsePCG and the dense backends also
+accept block BSR directly, which is what :cpp:func:`SupportsBlockStorage`
+reports. How to choose a backend, and how BlockSparseCholesky and the Schur
+complement work: :doc:`../linear_solvers`.
 
 This page documents the C++ API only: ``pycunls`` does not expose the linear
 solver classes. From Python, the backend is selected through the
@@ -19,13 +21,17 @@ SparseLinearSolverType
 
 Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 
+- `BlockSparseCholesky` — supernodal sparse Cholesky on the GPU without
+  external dependencies.  Default backend for Gauss-Newton and
+  Levenberg-Marquardt, and the solver of the reduced system of
+  ``LinearSystemType::SchurComplement``: exact steps, faster than
+  ``BlockSparsePCG`` and ``cuDSS`` on pose graphs, bundle adjustment and
+  visual-inertial problems.  Requires an SPD system.
 - `BlockSparsePCG` — iterative block-Jacobi preconditioned conjugate
-  gradient solver.  Default backend for Gauss-Newton and
-  Levenberg-Marquardt: outperforms ``cuDSS`` on most SBA / PGO
-  workloads (see ``profile/PCG_RESULTS.md``).
-- `cuDSS` — NVIDIA cuDSS sparse direct solver.  Pick when each Solve
-  sees a tiny system and PCG's per-iter kernel-launch overhead
-  dominates.
+  gradient solver (inexact steps).  Prefer it when the graph has no small
+  separators (many long-range random edges, where a direct factor fills
+  in) and for very large well-conditioned systems of small blocks.
+- `cuDSS` — NVIDIA cuDSS sparse direct solver (optional dependency).
 - `DenseLDLT` — densifies the coefficient matrix and solves with a custom
   CUDA pivoted LDLT kernel.
 - `DenseCholesky` — densifies the coefficient matrix and solves with
@@ -192,6 +198,49 @@ residual norm is copied to the host, and only once every
 
   :returns: Number of PCG iterations consumed by the most recent
     ``Solve`` call.  Useful for convergence diagnostics.
+
+BlockSparseCholeskySolver
+-------------------------
+
+Concrete implementation in `block_sparse_cholesky_solver.h`, the default
+backend (``SparseLinearSolverType::BlockSparseCholesky``) and the solver of the
+reduced system of ``LinearSystemType::SchurComplement``. A supernodal sparse
+Cholesky factorization ``P A Pᵀ = L Lᵀ`` on the GPU without external
+dependencies: ``Initialize`` analyzes the pattern once (fill-reducing
+ordering, supernodes cut into panels of at most 64 columns, a level
+schedule), every ``Solve`` factors the current values and solves, with no
+host synchronization unless safety checks are on. The design is described in
+:doc:`../linear_solvers`.
+
+A pivot within ``1e-5`` of its original diagonal entry (relative) is a rank
+deficiency, such as a free gauge under Gauss-Newton: its unknown is fixed at
+zero, which solves a consistent semidefinite system. A clearly negative or
+non-finite pivot is a failure.
+
+.. cpp:function:: BlockSparseCholeskySolver::BlockSparseCholeskySolver()
+
+.. cpp:function:: bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Symbolic analysis of the pattern of ``spd_matrix`` (both triangles; the
+  values are not read) and allocation of the factor. ``problem`` is not used.
+
+  :returns: ``false`` on a dimension mismatch.
+  :throws std::runtime_error: the factor or its update maps would exceed
+    :math:`2^{31}` entries.
+
+.. cpp:function:: bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+
+  Factors ``spd_matrix`` (the pattern of ``Initialize``) and solves for
+  ``rhs``.
+
+  :returns: ``false`` with safety checks on (the default) when a pivot is
+    clearly negative or non-finite; without them the result is non-finite
+    instead.
+
+.. cpp:function:: void BlockSparseCholeskySolver::DisableSafetyChecks()
+
+  Skips reading back the pivot-failure flag after each factorization (one
+  stream synchronization).
 
 cuDSSLinearSolverMode
 ---------------------

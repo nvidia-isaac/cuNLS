@@ -156,14 +156,29 @@ then override individual fields.
   needs to escalate from ``lambda_min`` to ``lambda_max``, so the cap counts
   the rejections at full damping.  Set to ``0`` to disable this criterion.
 - **sparse_linear_solver_type** (``SparseLinearSolverType``, default
-  ``BlockSparsePCG``) — selects the linear-system backend.
-  ``BlockSparsePCG`` runs block-Jacobi preconditioned conjugate gradient
-  with the block layout derived automatically from the problem's state
-  batches.  ``cuDSS`` uses NVIDIA's sparse direct solver; ``DenseLDLT``
+  ``BlockSparseCholesky``) — selects the linear-system backend.
+  ``BlockSparseCholesky`` factors the system with the built-in supernodal
+  sparse Cholesky (exact steps, no external dependencies; requires an SPD
+  system, so Gauss-Newton needs every gauge fixed).  ``BlockSparsePCG`` runs
+  block-Jacobi preconditioned conjugate gradient with the block layout
+  derived automatically from the problem's state batches (inexact steps);
+  prefer it for graphs without small separators (many long-range random
+  edges) and for very large well-conditioned systems of small blocks.
+  ``cuDSS`` uses NVIDIA's sparse direct solver; ``DenseLDLT``
   converts to dense and factorizes with a custom pivoted LDLT kernel;
   ``DenseCholesky`` converts to dense and uses cuSOLVER Cholesky
   (requires SPD); ``DenseQR`` converts to dense and uses cuSOLVER QR
-  factorization (works for any non-singular matrix).
+  factorization (works for any non-singular matrix). Not used with
+  ``LinearSystemType.SchurComplement``. How to choose: :doc:`../linear_solvers`.
+- **linear_system** (``LinearSystemType``, default ``Assembled``) — how each
+  iteration's linear system is formed. ``Assembled`` assembles the full normal
+  equations and solves them with ``sparse_linear_solver_type``.
+  ``SchurComplement`` eliminates the state batches declared with
+  ``Problem.set_eliminated_state_batches`` (the landmarks of a bundle
+  adjustment), factors the reduced system of the other states with
+  ``BlockSparseCholesky`` and recovers the eliminated states: the same step,
+  much cheaper when the eliminated states outnumber the others. See
+  :doc:`../linear_solvers`.
 - **reuse_structure** (``bool``, default ``False``) — the problem's structure
   is unchanged since this minimizer's previous ``minimize`` on it (same
   batches, connectivity, active and constant counts, partition; only state
@@ -285,6 +300,11 @@ parameters for Levenberg-Marquardt.
   quality above which :math:`\lambda` is decreased.  Steps with
   :math:`\rho \ge \text{threshold}` are considered "very successful" and
   the solver becomes more Gauss-Newton-like.
+- **min_diagonal** (``float``, default ``1e-6``) — floor of the diagonal the
+  damping scales: :math:`\lambda \max(\operatorname{diag}(H)_i,
+  \text{min\_diagonal})` (of the column-scaled system with column scaling).
+  An unobservable unknown (a zero Jacobian column) then gets a positive pivot
+  and a zero step instead of a singular system.
 
 **Example**
 
@@ -562,11 +582,33 @@ Creates an empty problem with no states or factors.
   batch in mind: ``DenseCholesky`` runs without failure checks by default
   (``disable_safety_checks``), and a factorization that breaks down on one
   ill-conditioned subproblem's block corrupts the step of every subproblem;
-  ``DenseLDLT`` / ``DenseQR`` (pivoted) and ``cuDSS`` keep the blocks
-  independent. ``BlockSparsePCG`` stops on the residual of the whole batch, so
+  ``DenseLDLT`` / ``DenseQR`` (pivoted), ``BlockSparseCholesky`` and ``cuDSS``
+  keep the blocks independent. ``BlockSparsePCG`` stops on the residual of the whole batch, so
   a subproblem with a large residual sets the accuracy the others get.
 
+- ``set_eliminated_state_batches(state_batches) -> None`` — declares the
+  state batches that ``LinearSystemType.SchurComplement`` eliminates (the
+  landmarks of a bundle adjustment). Every factor may touch at most one
+  non-constant state of these batches, and they must share one tangent size
+  of 1 to 3; the states that share factors with them must have one tangent
+  size of 3, 6 or 9 (checked at ``minimize``; ``ValueError`` otherwise).
+  Constant states of a listed batch are not eliminated. An empty list clears
+  the declaration. See :doc:`../linear_solvers`.
+
 .. _py-enums-label:
+
+--------------------------------------------------------------------------------
+``pycunls.LinearSystemType``
+--------------------------------------------------------------------------------
+
+Enum used by ``MinimizerOptions.linear_system``:
+
+- ``LinearSystemType.Assembled`` (default) — the full normal equations,
+  solved with ``sparse_linear_solver_type``. Works for every problem.
+- ``LinearSystemType.SchurComplement`` — eliminates the state batches of
+  ``Problem.set_eliminated_state_batches`` with a Schur complement and factors
+  the reduced system with ``BlockSparseCholesky`` (``sparse_linear_solver_type``
+  is not used).
 
 --------------------------------------------------------------------------------
 ``pycunls.SparseLinearSolverType``
@@ -574,8 +616,11 @@ Creates an empty problem with no states or factors.
 
 Integer enum selecting the linear-system backend.
 
-- ``SparseLinearSolverType.BlockSparsePCG`` (default) — block-Jacobi
-  preconditioned conjugate gradient solver.  The block layout is derived
+- ``SparseLinearSolverType.BlockSparseCholesky`` (default) — supernodal
+  sparse Cholesky on the GPU, without external dependencies (exact steps;
+  requires an SPD system).
+- ``SparseLinearSolverType.BlockSparsePCG`` — block-Jacobi
+  preconditioned conjugate gradient solver (inexact steps).  The block layout is derived
   automatically from the problem's state batches at minimizer-initialize
   time.
 - ``SparseLinearSolverType.cuDSS`` — sparse direct solver via NVIDIA cuDSS.
@@ -666,14 +711,22 @@ criterion is applied per subproblem.
   (Levenberg-Marquardt: counted at full damping, after the rejections that
   escalate :math:`\lambda` to ``lambda_max``). Set to 0 to disable. Default: 5.
 - **sparse_linear_solver_type** [in]: Linear backend; options are
-  ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate gradient;
-  layout auto-derived from the problem's state batches), ``cuDSS`` (sparse
+  ``BlockSparseCholesky`` (built-in supernodal sparse Cholesky; requires an
+  SPD system), ``BlockSparsePCG`` (block-Jacobi preconditioned conjugate
+  gradient; layout auto-derived from the problem's state batches), ``cuDSS`` (sparse
   direct solver via NVIDIA's cuDSS library), ``DenseLDLT`` (converts CSR
   to dense and solves with a custom CUDA pivoted LDLT factorization),
   ``DenseCholesky`` (converts CSR to dense and solves via cuSOLVER Cholesky;
   requires SPD matrix), and ``DenseQR`` (converts CSR to dense and solves
   via cuSOLVER QR factorization; works for any non-singular matrix).
-  Default: ``BlockSparsePCG``.
+  Default: ``BlockSparseCholesky``. Not used with
+  ``LinearSystemType::SchurComplement``. See :doc:`../linear_solvers`.
+- **linear_system** [in]: How each iteration's linear system is formed:
+  ``LinearSystemType::Assembled`` (the full normal equations, solved with
+  ``sparse_linear_solver_type``) or ``LinearSystemType::SchurComplement`` (the
+  states of :cpp:func:`Problem::SetEliminatedStateBatches` eliminated, the
+  reduced system factored with ``BlockSparseCholesky``). Default:
+  ``Assembled``.
 - **sparse_linear_solver_config** [in]: Backend-specific options. For
   ``BlockSparsePCG`` contains :code:`block_sparse_pcg_options`
   (``block_size`` / ``block_layout``, ``max_iterations``,
@@ -771,6 +824,9 @@ constructing a :code:`LevenbergMarquardtMinimizer`.
   cost reduction) to accept a step. Default: 0.25.
 - **lambda_downscale_threshold** [in]: Step quality above which :math:`\lambda`
   is decreased. Default: 0.75.
+- **min_diagonal** [in]: Floor of the diagonal the damping scales,
+  :math:`\lambda \max(\operatorname{diag}(H)_i, \text{min\_diagonal})`.
+  Default: 1e-6.
 
 .. _ransac-structures-label:
 
@@ -1199,6 +1255,25 @@ minimizers accept, damp and stop each one on its own (on the device; one
   :param ``num_problems``: [in] Number of subproblems; 0 or 1 clears the partition.
   :param ``state_problem_ids``: [in] One device array per state batch (not owned,
     read at every solve): the subproblem of each state.
+
+:code:`Problem::SetEliminatedStateBatches`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Purpose:** Declares the state batches that
+``LinearSystemType::SchurComplement`` eliminates (the landmarks of a bundle
+adjustment). See the Python ``set_eliminated_state_batches`` above for the
+requirements, and :doc:`../linear_solvers` for how the elimination works.
+
+.. cpp:function:: void SetEliminatedStateBatches(const std::vector<const StateBatch *> &batches)
+
+  :param ``batches``: [in] State batches already added to the problem; an
+    empty vector clears the declaration.
+  :throws std::invalid_argument: a batch is null, not part of the problem, or
+    listed twice.
+
+.. cpp:function:: const std::vector<const StateBatch *> &EliminatedStateBatches() const
+
+  :returns: [out] The declared batches (empty when not set).
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 :code:`Problem::SetStatePointers`

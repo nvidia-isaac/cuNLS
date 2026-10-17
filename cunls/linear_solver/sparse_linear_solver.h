@@ -21,6 +21,7 @@
 
 #include <memory>
 
+#include "cunls/linear_solver/block_sparse_cholesky_solver.h"
 #include "cunls/linear_solver/block_sparse_pcg_solver.h"
 #include "cunls/linear_solver/block_tridiagonal_solver.h"
 #include "cunls/linear_solver/cudss_sparse_linear_solver.h"
@@ -35,8 +36,8 @@ namespace cunls {
  * @brief Selects the linear solver backend for the Gauss-Newton system.
  */
 enum class SparseLinearSolverType {
-  cuDSS,             ///< Sparse direct solver using NVIDIA's cuDSS library.  The
-                     ///< only backend that cannot consume block storage.
+  cuDSS,             ///< Sparse direct solver using NVIDIA's cuDSS library
+                     ///< (optional dependency, loaded at run time).
   DenseLDLT,         ///< Densifies the coefficient matrix and solves with a custom
                      ///< CUDA pivoted LDLT kernel.
   DenseCholesky,     ///< Densifies the coefficient matrix and solves with cuSOLVER
@@ -54,6 +55,14 @@ enum class SparseLinearSolverType {
                      ///< in time (trajectories, MPC): needs the states'
                      ///< stages (Problem::SetStateStages). One warp per
                      ///< subproblem, no host synchronization.
+  /**
+   * Supernodal sparse Cholesky on the GPU without external dependencies
+   * (BlockSparseCholeskySolver): fill-reducing ordering, dense panels of at
+   * most 64 columns, level-scheduled kernels. Requires an SPD matrix. The
+   * default backend, and the solver of the reduced system of
+   * LinearSystemType::SchurComplement.
+   */
+  BlockSparseCholesky,
 };
 
 /**

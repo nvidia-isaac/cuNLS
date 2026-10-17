@@ -68,7 +68,7 @@ class HessianStructureBuilder {
    *
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
-   * @param num_cols Free tangent dimensions in the reduced system.
+   * @param num_cols Free (non-constant) tangent columns.
    * @param[out] output CSR matrix; row_offsets/col_ids filled, values sized.
    * @param want_scatter_maps When false, WriteOffsets() is left empty and the
    *        final scatter pass is skipped (the J^T J path does not need it).
@@ -95,6 +95,20 @@ class HessianStructureBuilder {
    */
   void Build(cudaStream_t stream, const Problem &problem, int num_cols, int block_size,
              BSRSparseMatrix &output, bool want_scatter_maps);
+
+  /**
+   * @brief Only the layout and the column of every (factor, state slot)
+   * (Layout(), FactorCols(), JacobianValuesSize()), without the pattern; for
+   * linear systems that build their own (SchurSystem).
+   *
+   * @param stream CUDA stream for GPU operations (synchronized on return).
+   * @param problem The optimization problem.
+   * @param num_cols Free (non-constant) tangent columns.
+   * @param[out] tangent_at_col If not null: the tangent size of the state
+   *             owning each column.
+   */
+  void ResolveColumns(cudaStream_t stream, const Problem &problem, int num_cols,
+                      dvector<int> *tangent_at_col = nullptr);
 
   /** @brief Per-residual-batch geometry, indexed as the problem's batches. */
   const std::vector<HessianBatchLayout> &Layout() const { return layout_; }
@@ -130,10 +144,11 @@ class HessianStructureBuilder {
   /**
    * @brief Resolves every (factor, state slot) to a global column.
    *
-   * @param[out] tangent_at_col Tangent size of the state owning each column.
+   * @param[out] tangent_at_col If not null: the tangent size of the state
+   *             owning each column.
    */
   void ResolveFactorColumns(cudaStream_t stream, const Problem &problem, int num_cols,
-                            dvector<int> &tangent_at_col);
+                            dvector<int> *tangent_at_col);
 
   std::vector<HessianBatchLayout> layout_;
   dvector<int> factor_cols_;

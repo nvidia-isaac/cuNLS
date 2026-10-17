@@ -26,7 +26,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <random>
 #include <string>
@@ -327,6 +329,9 @@ TEST_P(SyntheticSbaTest, Optimize) {
       test_utils::PCGMaxIterFromEnv(200);
   options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
       test_utils::PCGTolFromEnv(1e-3f);
+  if (test_utils::UseSchurComplementFromEnv(options)) {
+    problem.SetEliminatedStateBatches({&point_batch});
+  }
   LevenbergMarquardtMinimizerOptions lm_options;
   lm_options.base_options = options;
   lm_options.initial_lambda = 1e-3f;
@@ -335,8 +340,14 @@ TEST_P(SyntheticSbaTest, Optimize) {
   MinimizerSummary summary;
   {
     auto range = profiler_domain_.CreateDomainRange("Minimize");
+    const auto start = std::chrono::steady_clock::now();
     summary = minimizer.Minimize(stream.GetStream(), problem);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    const double ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    std::printf(
+        "[synthetic SBA] %s: %zu observations, %zu iterations, cost %.6g -> %.6g, %.1f ms\n",
+        params.label, n_obs, summary.num_iterations, summary.initial_cost, summary.final_cost, ms);
   }
 
   EXPECT_TRUE(std::isfinite(summary.initial_cost));

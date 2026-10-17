@@ -401,7 +401,8 @@ INSTANTIATE_TEST_SUITE_P(AllSolvers, PnPSolverTest,
                          ::testing::ValuesIn(test_utils::AvailableSolverTypes(
                              {SparseLinearSolverType::cuDSS, SparseLinearSolverType::DenseLDLT,
                               SparseLinearSolverType::DenseCholesky,
-                              SparseLinearSolverType::DenseQR})),
+                              SparseLinearSolverType::DenseQR,
+                              SparseLinearSolverType::BlockSparseCholesky})),
                          [](const ::testing::TestParamInfo<SparseLinearSolverType> &info) {
                            switch (info.param) {
                              case SparseLinearSolverType::cuDSS:
@@ -412,6 +413,8 @@ INSTANTIATE_TEST_SUITE_P(AllSolvers, PnPSolverTest,
                                return std::string("DenseCholesky");
                              case SparseLinearSolverType::DenseQR:
                                return std::string("DenseQR");
+                             case SparseLinearSolverType::BlockSparseCholesky:
+                               return std::string("BlockSparseCholesky");
                              default:
                                return std::string("Unknown");
                            }

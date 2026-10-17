@@ -19,30 +19,34 @@
 
 #include <cuda_runtime.h>
 
+#include "cunls/common/cusparse_helper.h"
 #include "cunls/common/types.h"
-#include "cunls/linear_solver/sparse_linear_solver_base.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/block_hessian_assembler.h"
 #include "cunls/minimizer/bsr_matrix.h"
+#include "cunls/minimizer/linear_system.h"
 
 namespace cunls {
 
 class Problem;
+class ProblemPartition;
 
 /**
- * @brief The assembled normal equations, and the storage they live in.
+ * @brief The assembled normal equations (LinearSystemType::Assembled).
  *
- * Holds two matrices: the Hessian `H` as assembled, and a working copy the
- * minimizer is free to damp and scale before handing it to the solver. Both
- * are stored in one of two layouts, chosen once at Initialize():
+ * Holds two matrices: the Hessian `H` as assembled, and the working
+ * left-hand side handed to the solver, rebuilt from `H` before every solver
+ * call (PrepareSolver(), Solve()) with the declared column scale, damping and
+ * mask. Both are stored in one of two
+ * layouts, chosen once at Initialize():
  *
  * - **Block (BSR)** when the state tangent dimensions share a common factor and
  *   the solver can read tiles. One column index per dense tile instead of one
  *   per scalar entry, which is bandwidth the solver's SpMV no longer moves.
  * - **Scalar (CSR)** otherwise.
  *
- * Which layout is live is an implementation detail. Callers work in terms of
- * "the Hessian" and "the working left-hand side"; every operation dispatches
- * internally, so no branch on storage leaks into the minimizers.
+ * Which layout is live is an implementation detail; every operation
+ * dispatches internally.
  *
  * A BSR matrix with `block_size == 1` is byte-for-byte the same layout as CSR,
  * so the scalar case could in principle be expressed as block storage too. It
@@ -52,67 +56,55 @@ class Problem;
  * one-tile-per-entry BSR kernel cannot beat. Block storage is a win only when
  * the tiles are real.
  */
-class NormalEquations {
+class NormalEquations : public LinearSystem {
  public:
+  /** @brief Takes ownership of the solver of the working left-hand side (not null). */
+  explicit NormalEquations(SparseLinearSolverPtr solver);
+
   /**
-   * @brief Derives the sparsity pattern and picks the storage layout.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param problem The optimization problem.
-   * @param num_cols Number of free tangent dimensions in the reduced system.
-   * @param solver_supports_block_storage Whether the active solver can consume
-   *        block storage; see SparseLinearSolver::SupportsBlockStorage.
+   * @brief Derives the sparsity pattern of H and picks the storage layout:
+   * block storage when the tangent sizes share a factor and the solver
+   * accepts it (SparseLinearSolver::SupportsBlockStorage()), scalar CSR
+   * otherwise. Every batch is evaluated in its natural order (`reorderable`
+   * is not used).
    */
   void Initialize(cudaStream_t stream, const Problem &problem, int num_cols,
-                  bool solver_supports_block_storage);
+                  const std::vector<bool> &reorderable) override;
 
-  /** @brief Floats needed for the per-factor Jacobian buffer Assemble() reads. */
-  size_t JacobianValuesSize() const { return assembler_.JacobianValuesSize(); }
+  /** @copydoc LinearSystem::JacobianValuesSize */
+  size_t JacobianValuesSize() const override { return assembler_.JacobianValuesSize(); }
 
-  /**
-   * @brief Assembles `H` and `rhs`, then refreshes the working left-hand side.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param problem The optimization problem (must match Initialize).
-   * @param jacobians Per-factor dense Jacobian blocks.
-   * @param residuals Residual vector.
-   * @param[out] rhs Right-hand side `-J^T r`.
-   */
+  /** @brief Assembles `H` and `rhs` = -Jᵀr. */
   void Assemble(cudaStream_t stream, const Problem &problem, const float *jacobians,
-                const float *residuals, dvector<float> &rhs);
+                const float *residuals, dvector<float> &rhs) override;
 
-  /** @brief Diagonal of the assembled (undamped) Hessian. */
-  void ExtractHessianDiagonal(cudaStream_t stream, dvector<float> &diagonal) const;
+  /** @copydoc LinearSystem::ExtractHessianDiagonal */
+  void ExtractHessianDiagonal(cudaStream_t stream, dvector<float> &diagonal) const override;
 
-  /** @brief Diagonal of the working left-hand side. */
-  void ExtractLhsDiagonal(cudaStream_t stream, dvector<float> &diagonal) const;
+  /** @brief Builds the working left-hand side and runs the solver's symbolic setup. */
+  bool PrepareSolver(cudaStream_t stream, const Problem &problem, const dvector<float> &rhs,
+                     dvector<float> &step) override;
 
-  /** @brief Adds `scale * diag(diagonal)` to the working left-hand side. */
-  void AddScaledDiagonalToLhs(cudaStream_t stream, float scale, const dvector<float> &diagonal);
+  /** @brief Builds the working left-hand side and solves with it. */
+  bool Solve(cudaStream_t stream, const dvector<float> &rhs, dvector<float> &step) override;
 
-  /** @brief Applies `A_ij *= scale[i] * scale[j]` to the working left-hand side. */
-  void ScaleLhsSymmetric(cudaStream_t stream, const dvector<float> &scale);
+  /** @brief δᵀHδ per subproblem, from H δ (SpMV) in either layout. */
+  void StepCurvature(cudaStream_t stream, const dvector<float> &step, ProblemPartition &partition,
+                     float *out) const override;
 
-  /**
-   * @brief Zeroes the rows and columns i with mask[i] == 0 of the working
-   * left-hand side, keeping a positive diagonal (see ZeroMaskedRowsColumns).
-   */
-  void ZeroMaskedLhsRowsColumns(cudaStream_t stream, const dvector<float> &mask);
+  // Test hooks: the matrices and products the layouts produce.
 
-  /** @brief y = (assembled, undamped Hessian) * x, in either storage layout. */
-  void MultiplyHessian(cudaStream_t stream, void *cusparse_handle, const dvector<float> &x,
-                       dvector<float> &y, dvector<uint8_t> &buffer) const;
-
-  /** @brief Hands the working left-hand side to the solver for symbolic setup. */
-  bool InitializeSolver(cudaStream_t stream, SparseLinearSolver &solver, const Problem &problem,
-                        const dvector<float> &rhs, dvector<float> &step);
-
-  /** @brief Solves with the working left-hand side. */
-  bool Solve(cudaStream_t stream, SparseLinearSolver &solver, const dvector<float> &rhs,
-             dvector<float> &step);
+  /** @brief y = H x with the assembled, undamped Hessian, in either layout. */
+  void MultiplyHessian(cudaStream_t stream, const dvector<float> &x, dvector<float> &y) const;
 
   /** @brief True when the block layout is live for the current problem. */
   bool UsesBlockStorage() const { return block_size_ > 1; }
+
+  /**
+   * @brief Rebuilds the working left-hand side from H with the declared scale,
+   * damping and mask (PrepareSolver() and Solve() do this first).
+   */
+  void BuildWorkingLhs(cudaStream_t stream);
 
   /** @brief Working left-hand side in scalar storage; empty under block storage. */
   const CSRSparseMatrix &LhsCSR() const { return csr_lhs_; }
@@ -121,20 +113,22 @@ class NormalEquations {
   const BSRSparseMatrix &LhsBSR() const { return bsr_lhs_; }
 
  private:
-  BlockHessianAssembler assembler_;
+  SparseLinearSolverPtr solver_;     ///< Solver of the working left-hand side.
+  BlockHessianAssembler assembler_;  ///< Pattern and assembly of H from the factors.
+  int block_size_ = 1;               ///< Tile size of the block layout; 1: scalar layout.
 
-  // Exactly one pair is populated, decided by block_size_.
-  CSRSparseMatrix csr_hessian_;
-  CSRSparseMatrix csr_lhs_;
-  BSRSparseMatrix bsr_hessian_;
-  BSRSparseMatrix bsr_lhs_;
+  // Exactly one layout is populated, decided by block_size_.
+  CSRSparseMatrix csr_hessian_;    ///< Scalar layout: H as assembled.
+  CSRSparseMatrix csr_lhs_;        ///< Scalar layout: the working left-hand side (H's pattern).
+  dvector<int> csr_diagonal_;      ///< Scalar layout: position of each diagonal entry.
+  BSRSparseMatrix bsr_hessian_;    ///< Block layout: H as assembled.
+  BSRSparseMatrix bsr_lhs_;        ///< Block layout: the working left-hand side.
+  dvector<int> tile_row_scratch_;  ///< Block layout: tile -> block row (column scaling).
 
-  CSRMatrixDimensions csr_dims_;        ///< Cached dims for the scalar SpMV.
-  dvector<int> tile_row_scratch_;       ///< Tile-to-block-row map for scaling.
-  dvector<int> csr_diagonal_;           ///< Scalar layout: position of each diagonal entry.
-  bool csr_lhs_pattern_ready_ = false;  ///< csr_lhs_ holds the pattern; copy values only.
-
-  int block_size_ = 1;
+  // Scratch of MultiplyHessian() / StepCurvature().
+  mutable cuSPARSEHandle cusparse_handle_;  ///< Scalar-layout SpMV.
+  mutable dvector<uint8_t> spmv_buffer_;    ///< cuSPARSE workspace of the SpMV.
+  mutable dvector<float> hessian_step_;     ///< H δ.
 };
 
 }  // namespace cunls

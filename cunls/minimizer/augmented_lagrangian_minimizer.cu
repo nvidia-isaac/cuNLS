@@ -319,7 +319,7 @@ void AugmentedLagrangianMinimizer::SetOptions(const AugmentedLagrangianMinimizer
 
 bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
                                                     const MinimizerState &state,
-                                                    NormalEquations &system, dvector<float> &rhs,
+                                                    LinearSystem &system, dvector<float> &rhs,
                                                     const dvector<float> *step) {
   if (rhs.empty()) return false;
   // mask[column] = 0 for the components at a bound that `direction` pushes outward.
@@ -342,7 +342,7 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
     // Before the solve: hold where the steepest-descent direction points outward.
     refinements_ = 0;
     mark(rhs.data(), bound_mask_);
-    system.ZeroMaskedLhsRowsColumns(stream, bound_mask_);
+    system.SetMask(&bound_mask_);
     ElementwiseMultiplyInPlace(stream, rhs.data(), bound_mask_.data(), rhs.size());
     return false;
   }
@@ -369,8 +369,10 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
     if (count == 0) return false;
     LogMessage("Bounds: {} more components held", count);
   }
-  system.ZeroMaskedLhsRowsColumns(stream, bound_extra_);
+  // hold_outward_kernel added the newly held components to bound_mask_: the
+  // next solve holds them too.
   ElementwiseMultiplyInPlace(stream, rhs.data(), bound_extra_.data(), rhs.size());
+  system.SetMask(&bound_mask_);
   return true;
 }
 
@@ -440,9 +442,8 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
   }
-  auto restrict_system = [this](cudaStream_t s, const MinimizerState &state,
-                                NormalEquations &system, dvector<float> &rhs,
-                                const dvector<float> *step) {
+  auto restrict_system = [this](cudaStream_t s, const MinimizerState &state, LinearSystem &system,
+                                dvector<float> &rhs, const dvector<float> *step) {
     return HoldActiveBounds(s, state, system, rhs, step);
   };
   signature_ = signature;

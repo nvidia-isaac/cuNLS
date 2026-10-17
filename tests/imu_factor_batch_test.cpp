@@ -40,6 +40,7 @@
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "dynamics_test_support.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
@@ -892,14 +893,16 @@ int EnvInt(const char *name, int fallback) {
  * read the same world_from_rig pose states (camera = rig = IMU); truth is
  * consistent, the initial values are perturbed. Sizes: CUNLS_IMU_PROFILE_KEYFRAMES (101),
  * CUNLS_IMU_PROFILE_SAMPLES (200), CUNLS_IMU_PROFILE_LANDMARKS (10 K);
- * CUNLS_IMU_PROFILE_SOLVER=cudss selects
- * cuDSS instead of the default PCG. Run with --gtest_also_run_disabled_tests.
+ * CUNLS_IMU_PROFILE_SOLVER=cudss or pcg selects cuDSS or BlockSparsePCG
+ * instead of the default BlockSparseCholesky. Run with
+ * --gtest_also_run_disabled_tests.
  */
 TEST(ImuFactorBatch, DISABLED_VioProfile) {
   const int K = EnvInt("CUNLS_IMU_PROFILE_KEYFRAMES", 101);
   const int N = EnvInt("CUNLS_IMU_PROFILE_SAMPLES", 200);
   const char *solver_env = std::getenv("CUNLS_IMU_PROFILE_SOLVER");
   const bool cudss = solver_env != nullptr && std::string(solver_env) == "cudss";
+  const bool pcg = solver_env != nullptr && std::string(solver_env) == "pcg";
   const int L = EnvInt("CUNLS_IMU_PROFILE_LANDMARKS", 10 * K);
   // Moderate noise so that the float32 solve converges (see ImuParameters);
   // the kernels' cost does not depend on the values.
@@ -1008,6 +1011,13 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
   LevenbergMarquardtMinimizerOptions options;
   options.base_options.max_num_iterations = 20;
   if (cudss) options.base_options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
+  if (pcg) options.base_options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;
+  options.base_options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+      test_utils::PCGMaxIterFromEnv(200);
+  options.base_options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+      test_utils::PCGTolFromEnv(1e-3f);
+  const bool schur = test_utils::UseSchurComplementFromEnv(options.base_options);
+  if (schur) problem.SetEliminatedStateBatches({&point_states});
   LevenbergMarquardtMinimizer minimizer(options);
   CudaStream stream;
   // Solve twice from the same initial values: the first call includes the
@@ -1025,11 +1035,12 @@ TEST(ImuFactorBatch, DISABLED_VioProfile) {
     ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     std::printf("  %s solve: %.2f ms\n", run == 0 ? "cold" : "warm", ms);
   }
+  const char *label = schur ? "Schur" : cudss ? "cuDSS" : pcg ? "PCG" : "BlockSparseCholesky";
   std::printf(
       "VIO profile: %d keyframes, %d samples per pair, %d landmarks, %d observations, %s\n"
       "  %zu iterations, cost %g -> %g, %.2f ms (%.3f ms per iteration)\n",
-      K, N, L, num_obs, cudss ? "cuDSS" : "PCG", summary.num_iterations, summary.initial_cost,
-      summary.final_cost, ms, ms / std::max<size_t>(1, summary.num_iterations));
+      K, N, L, num_obs, label, summary.num_iterations, summary.initial_cost, summary.final_cost, ms,
+      ms / std::max<size_t>(1, summary.num_iterations));
 }
 
 // Throughput: run with --gtest_also_run_disabled_tests.

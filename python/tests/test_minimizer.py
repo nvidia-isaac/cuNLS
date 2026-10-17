@@ -170,7 +170,7 @@ class TestMinimizerOptions:
         assert opts.state_tolerance == pytest.approx(1e-6)
         assert opts.cost_tolerance == pytest.approx(1e-6)
         assert (opts.sparse_linear_solver_type
-                == pycunls.SparseLinearSolverType.BlockSparsePCG)
+                == pycunls.SparseLinearSolverType.BlockSparseCholesky)
         assert opts.column_scaling == pycunls.ColumnScaling.none
         assert opts.jacobian_mode == pycunls.JacobianMode.analytic
         assert opts.numeric_diff_options.method == pycunls.NumericDiffMethod.central
@@ -240,3 +240,79 @@ class TestJacobianMode:
         assert summary.final_cost < 1e-3
         result = cp.asnumpy(states_gpu)
         np.testing.assert_allclose(result, target, atol=1e-2)
+
+
+# ---------------------------------------------------------------------------
+# Schur complement linear system
+# ---------------------------------------------------------------------------
+
+def _bundle(num_poses=6, num_points=200, seed=0):
+    """Cameras along x looking down +z (world_from_camera, 4x4 row-major) at a
+    point cloud, one reprojection factor per (pose, point); poses 0 and 1 are
+    constant (gauge). Returns the problem, its point batch and the buffers."""
+    rng = np.random.default_rng(seed)
+    poses = np.tile(np.eye(4, dtype=np.float32), (num_poses, 1, 1))
+    poses[:, 0, 3] = np.linspace(-1.0, 1.0, num_poses)
+    points = np.column_stack([rng.uniform(-2, 2, num_points), rng.uniform(-2, 2, num_points),
+                              rng.uniform(4, 8, num_points)]).astype(np.float32)
+    observations = []
+    for k in range(num_poses):
+        cam = points - poses[k, :3, 3]
+        observations.append(cam[:, :2] / cam[:, 2:3])
+    observations = np.concatenate(observations).astype(np.float32)
+    initial_poses = poses.copy()
+    initial_poses[2:, :3, 3] += rng.normal(0, 0.05, (num_poses - 2, 3)).astype(np.float32)
+    initial_points = points + rng.normal(0, 0.1, points.shape).astype(np.float32)
+
+    buffers = {
+        "poses": cp.asarray(initial_poses.reshape(-1)),
+        "points": cp.asarray(initial_points.reshape(-1)),
+        "observations": cp.asarray(observations.reshape(-1)),
+        "const_ids": cp.array([0, 1], dtype=cp.int32),
+    }
+    pose_states = pycunls.SE3StateBatch(buffers["poses"], num_poses, buffers["const_ids"], 2)
+    pose_states.set_num_active_states(num_poses, 2)
+    point_states = pycunls.VectorStateBatch3(buffers["points"], num_points)
+    point_states.set_num_active_states(num_points)
+    reprojection = pycunls.ReprojectionFactorBatch(buffers["observations"],
+                                                   num_poses * num_points, 1e-3)
+    reprojection.set_num_active_factors(num_poses * num_points)
+    pointers = []
+    for k in range(num_poses):
+        for i in range(num_points):
+            pointers += [pose_states.state_device_ptr(k), point_states.state_device_ptr(i)]
+    problem = pycunls.Problem()
+    problem.add_state_batch(pose_states)
+    problem.add_state_batch(point_states)
+    problem.add_factor_batch(reprojection, pointers)
+    buffers["batches"] = (pose_states, point_states, reprojection)
+    return problem, point_states, buffers
+
+
+class TestSchurComplement:
+    """LinearSystemType.SchurComplement reaches the assembled system's minimum."""
+
+    def test_matches_assembled(self, stream):
+        costs = []
+        for system in (pycunls.LinearSystemType.Assembled,
+                       pycunls.LinearSystemType.SchurComplement):
+            problem, points, _buffers = _bundle()
+            problem.set_eliminated_state_batches([points])
+            options = pycunls.LevenbergMarquardtMinimizerOptions()
+            options.base_options.max_num_iterations = 30
+            options.base_options.linear_system = system
+            # The exact reference for Assembled; SchurComplement has its own solver.
+            options.base_options.sparse_linear_solver_type = (
+                pycunls.SparseLinearSolverType.DenseCholesky)
+            summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
+            cp.cuda.runtime.streamSynchronize(stream.get_stream())
+            assert summary.final_cost < 1e-3 * summary.initial_cost
+            costs.append(summary.final_cost)
+        assert costs[1] == pytest.approx(costs[0], rel=1e-2, abs=1e-6)
+
+    def test_requires_eliminated_batches(self, stream):
+        problem, _points, _buffers = _bundle()
+        options = pycunls.LevenbergMarquardtMinimizerOptions()
+        options.base_options.linear_system = pycunls.LinearSystemType.SchurComplement
+        with pytest.raises(ValueError, match="SetEliminatedStateBatches"):
+            pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)

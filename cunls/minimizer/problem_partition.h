@@ -122,7 +122,8 @@ class ProblemPartition {
 
   /**
    * @brief Takes or rejects the step of every active subproblem from
-   * NewCost(), Reject() and Converged() (see StepOutcome): a step to a
+   * NewCost(), Reject() and Converged() (see StepOutcome): a non-finite step
+   * (StepSquared(), e.g. after a failed linear solve) or a step to a
    * non-finite cost is rejected; with line search, a shortened or rejected
    * step that lowers the cost is taken; a converged subproblem stops, taking
    * its step if the cost did not rise; a rejection counts towards the cap.
