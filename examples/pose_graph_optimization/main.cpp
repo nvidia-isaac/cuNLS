@@ -92,10 +92,15 @@ int main() {
     }
 
     // 6. Solve with Levenberg-Marquardt; the result is written into poses.
+    //    Each step factors the pose graph's normal equations with
+    //    BlockSparseCholesky (the default; exact steps). BlockSparsePCG is the
+    //    iterative alternative for graphs with many long-range loop closures.
     cunls::LevenbergMarquardtMinimizerOptions options;
     options.base_options.max_num_iterations = 60;
     options.base_options.state_tolerance = 1e-8f;
     options.base_options.cost_tolerance = 1e-8f;
+    options.base_options.sparse_linear_solver_type =
+        cunls::SparseLinearSolverType::BlockSparseCholesky;
     options.initial_lambda = 1e-3f;
     cunls::LevenbergMarquardtMinimizer minimizer(options);
     cunls::CudaStream stream;

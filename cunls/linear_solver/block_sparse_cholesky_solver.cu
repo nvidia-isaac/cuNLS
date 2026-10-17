@@ -42,6 +42,11 @@ constexpr int kPad = kW + 1;  // shared-memory row stride: conflict-free column 
  */
 constexpr float kZeroPivot = 1e-5f;
 
+using Panel = internal::CholeskyPlan::Panel;
+using Run = internal::CholeskyPlan::Run;
+using FactorItem = internal::CholeskyPlan::FactorItem;
+using UpdateItem = internal::CholeskyPlan::UpdateItem;
+
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
 /** factor[dst[e]] = values[e] for the nonzeros with dst[e] >= 0 (the lower triangle of PAPᵀ). */
@@ -108,9 +113,8 @@ __global__ void AdjacencyKernel(int nb, const int *first_row, const int *row_off
  * binary search in its below rows. diagonal_index[i'] = the nonzero (i, i).
  */
 __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_ids,
-                                  const int *iperm, const int *col_panel, const int4 *info,
-                                  const int64_t *offset, const int *below_rows, int *dst,
-                                  int *diagonal_index) {
+                                  const int *iperm, const int *col_panel, const Panel *panels,
+                                  const int *below_rows, int *dst, int *diagonal_index) {
   const int i = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x % 32;
   if (i >= n) return;
   const int ip = iperm[i];
@@ -119,13 +123,13 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
     int d = -1;
     if (ip >= jp) {
       const int p = col_panel[jp];
-      const int4 panel = info[p];  // col, width, height, rows offset
+      const Panel panel = panels[p];
       int pos;
-      if (ip < panel.x + panel.y) {
-        pos = ip - panel.x;
+      if (ip < panel.col + panel.width) {
+        pos = ip - panel.col;
       } else {
-        const int *rows = below_rows + panel.w;
-        int lo = 0, hi = panel.z - panel.y;
+        const int *rows = below_rows + panel.rows_offset;
+        int lo = 0, hi = panel.height - panel.width;
         while (lo < hi) {
           const int mid = (lo + hi) / 2;
           if (rows[mid] < ip) {
@@ -134,9 +138,10 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
             hi = mid;
           }
         }
-        pos = panel.y + lo;
+        pos = panel.width + lo;
       }
-      d = static_cast<int>(offset[p] + static_cast<int64_t>(jp - panel.x) * panel.z + pos);
+      d = static_cast<int>(panel.offset + static_cast<int64_t>(jp - panel.col) * panel.height +
+                           pos);
       if (ip == jp) diagonal_index[ip] = e;
     }
     dst[e] = d;
@@ -148,19 +153,19 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
  * of the source's below rows from the run on (the target's own columns by
  * arithmetic, its below rows by binary search).
  */
-__global__ void RelmapKernel(int num_runs, const int4 *runs, const int *sources, const int4 *info,
+__global__ void RelmapKernel(int num_runs, const Run *runs, const Panel *panels,
                              const int *below_rows, int *relmap) {
   const int r = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x % 32;
   if (r >= num_runs) return;
-  const int4 run = runs[r];  // target, begin, end, relmap offset
-  const int4 source = info[sources[r]], target = info[run.x];
-  const int *rows = below_rows + source.w, *target_rows = below_rows + target.w;
-  const int count = source.z - source.y, target_count = target.z - target.y;
-  for (int i = run.y + lane; i < count; i += 32) {
+  const Run run = runs[r];
+  const Panel source = panels[run.source], target = panels[run.target];
+  const int *rows = below_rows + source.rows_offset, *target_rows = below_rows + target.rows_offset;
+  const int count = source.height - source.width, target_count = target.height - target.width;
+  for (int i = run.begin + lane; i < count; i += 32) {
     const int row = rows[i];
     int pos;
-    if (row < target.x + target.y) {
-      pos = row - target.x;
+    if (row < target.col + target.width) {
+      pos = row - target.col;
     } else {
       int lo = 0, hi = target_count;
       while (lo < hi) {
@@ -171,9 +176,9 @@ __global__ void RelmapKernel(int num_runs, const int4 *runs, const int *sources,
           hi = mid;
         }
       }
-      pos = target.y + lo;
+      pos = target.width + lo;
     }
-    relmap[run.w + i - run.y] = pos;
+    relmap[run.relmap_offset + i - run.begin] = pos;
   }
 }
 
@@ -208,34 +213,35 @@ __global__ void UnpermuteKernel(int n, const int *perm, const float *in, float *
  * each stores its rows of B L_D^{-T} in place. y_p is final: the panels
  * below finished in earlier levels.
  *
- * Blocked by 16 columns: one warp factors the 16 x 16 diagonal block with
- * shuffles (a lane per row), a thread per row solves the rows below it, and
+ * Blocked by 16 columns: one warp factors the 16 x 16 diagonal block in
+ * groups of 4 columns (a lane per row), a thread per row solves the rows below it, and
  * the trailing columns take the rank-16 update, 3 x 7 outputs per thread
  * with the 16 multipliers of its columns in registers. The upper triangle of
  * D takes garbage that is never read.
  */
 __global__ void __launch_bounds__(kThreads)
-    FactorKernel(const int2 *items, const int4 *info, const int64_t *offset,
-                 const int64_t *diagonal_offset, const int *below_rows, const float *original,
-                 float *factor, float *diagonal, float *y, float *z, int *failure) {
+    FactorKernel(const FactorItem *items, const Panel *panels, const int *below_rows,
+                 const float *original, float *factor, float *diagonal, float *y, float *z,
+                 int *failure) {
   constexpr int kRows = kW + kR;  // stacked rows, plus y_pᵀ
   constexpr int kB = 16;          // column block
   __shared__ float tile[kRows + 1][kPad];
-  __shared__ float reciprocal[kW];                // 1 / L_D(k, k)
-  __shared__ __align__(16) float column[kB + 4];  // current column; [kB]: next diagonal entry
-  __shared__ __align__(16) float limit[kW];       // zero-pivot limits (kZeroPivot)
+  __shared__ float reciprocal[kW];              // 1 / L_D(k, k)
+  __shared__ __align__(16) float corner[4][4];  // the 4 x 4 diagonal block of a column group
+  __shared__ __align__(16) float group[4][kB];  // the 4 columns of a column group
+  __shared__ __align__(16) float limit[kW];     // zero-pivot limits (kZeroPivot)
   __shared__ float partial[kThreads / kR][kR];
-  const int2 item = items[blockIdx.x];
-  const int4 panel_info = info[item.x];
-  const int col = panel_info.x, w = panel_info.y, h = panel_info.z;
-  const int below = max(0, min(kR, h - w - item.y));
+  const FactorItem item = items[blockIdx.x];
+  const Panel panel_info = panels[item.panel];
+  const int col = panel_info.col, w = panel_info.width, h = panel_info.height;
+  const int below = max(0, min(kR, h - w - item.row_begin));
   const int rows = w + below + 1;  // y_pᵀ last
-  float *panel = factor + offset[item.x];
+  float *panel = factor + panel_info.offset;
   const int t = threadIdx.x, lane = t % 32;
   {
     // Lanes along rows (coalesced), all loads in flight before the stores.
     const int i = t % kRows, j0 = t / kRows;
-    const float *src = panel + (i < w ? i : item.y + i);
+    const float *src = panel + (i < w ? i : item.row_begin + i);
     float v[kW / 2];
 #pragma unroll
     for (int m = 0; m < kW / 2; ++m) {
@@ -257,11 +263,6 @@ __global__ void __launch_bounds__(kThreads)
       float r[kB];
 #pragma unroll
       for (int c = 0; c < kB; ++c) r[c] = lane < bw && c <= lane ? tile[kb + lane][kb + c] : 0.f;
-      // Column c is published through shared memory and read back as
-      // broadcast vector loads (a shuffle per element serializes on its
-      // latency); with it, the not yet updated next diagonal entry, so every
-      // lane computes the next pivot itself.
-      float pivot = __shfl_sync(0xffffffffu, r[0], 0);
       float lim[kB];
 #pragma unroll
       for (int q = 0; q < kB / 4; ++q) {
@@ -271,38 +272,85 @@ __global__ void __launch_bounds__(kThreads)
         lim[4 * q + 2] = v.z;
         lim[4 * q + 3] = v.w;
       }
+      // Groups of 4 columns, two warp round trips each: the owner lanes
+      // publish the group's 4 x 4 diagonal block, every lane factors it in
+      // registers and solves its own row against it, then the 4 columns are
+      // published and every row takes the rank-4 update. Lane c keeps the
+      // reciprocal and the failure of column c (written after the loop).
+      float own_scale = 0.f;
+      bool own_failure = false;
 #pragma unroll
-      for (int c = 0; c < kB; ++c) {
-        if (c < bw) {
-          // A vanishing pivot (rank deficiency) fixes its unknown: zero column, zero reciprocal.
-          const bool zero = fabsf(pivot) <= lim[c];
-          float scale;
-          asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(scale) : "f"(pivot));
-          if (zero) scale = 0.f;
-          const float l = lane >= c ? r[c] * scale : 0.f;
-          if (lane < kB) column[lane] = l;
-          if (c + 1 < kB && lane == c + 1) column[kB] = r[c + 1];
-          __syncwarp();
-          float lc[kB];
+      for (int c0 = 0; c0 < kB; c0 += 4) {
+        if (c0 < bw) {
+          if (lane >= c0 && lane < c0 + 4) {
 #pragma unroll
-          for (int q = 0; q < kB / 4; ++q) {
-            const float4 v = reinterpret_cast<const float4 *>(column)[q];
-            lc[4 * q] = v.x;
-            lc[4 * q + 1] = v.y;
-            lc[4 * q + 2] = v.z;
-            lc[4 * q + 3] = v.w;
+            for (int b = 0; b < 4; ++b) corner[lane - c0][b] = r[c0 + b];
           }
-#pragma unroll
-          for (int j = c + 1; j < kB; ++j) r[j] -= l * lc[j];  // zero above the diagonal
-          if (lane >= c) r[c] = l;
-          if (lane == c) {
-            reciprocal[kb + c] = scale;
-            if (!zero && (!(pivot > 0.f) || !isfinite(pivot))) *failure = 1;
-          }
-          if (c + 1 < kB) pivot = column[kB] - lc[c + 1] * lc[c + 1];
           __syncwarp();
+          float a[4][4];
+#pragma unroll
+          for (int x = 0; x < 4; ++x) {
+            const float4 v = reinterpret_cast<const float4 *>(corner[x])[0];
+            a[x][0] = v.x;
+            a[x][1] = v.y;
+            a[x][2] = v.z;
+            a[x][3] = v.w;
+          }
+          // The group's block: L (lower), scales 1 / L(b, b); a vanishing
+          // pivot (rank deficiency) fixes its unknown: zero scale.
+          float lg[4][4], scale[4];
+#pragma unroll
+          for (int b = 0; b < 4; ++b) {
+            float pivot = a[b][b];
+#pragma unroll
+            for (int q = 0; q < b; ++q) pivot -= lg[b][q] * lg[b][q];
+            const bool zero = fabsf(pivot) <= lim[c0 + b];
+            asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(scale[b]) : "f"(pivot));
+            if (zero) scale[b] = 0.f;
+            const bool own = lane == c0 + b;
+            own_scale = own ? scale[b] : own_scale;
+            own_failure |= own && !zero && (!(pivot > 0.f) || !isfinite(pivot));
+#pragma unroll
+            for (int x = b + 1; x < 4; ++x) {
+              float v = a[x][b];
+#pragma unroll
+              for (int q = 0; q < b; ++q) v -= lg[x][q] * lg[b][q];
+              lg[x][b] = v * scale[b];
+            }
+          }
+          // The lane's own row of the group's columns (zero above the diagonal).
+          float xv[4];
+#pragma unroll
+          for (int b = 0; b < 4; ++b) {
+            float v = r[c0 + b];
+#pragma unroll
+            for (int q = 0; q < b; ++q) v -= xv[q] * lg[b][q];
+            xv[b] = lane >= c0 + b ? v * scale[b] : 0.f;
+          }
+          if (lane < kB) {
+#pragma unroll
+            for (int b = 0; b < 4; ++b) group[b][lane] = xv[b];
+          }
+          __syncwarp();
+#pragma unroll
+          for (int b = 0; b < 4; ++b) {
+            float lc[kB];
+#pragma unroll
+            for (int q = c0 / 4 + 1; q < kB / 4; ++q) {
+              const float4 v = reinterpret_cast<const float4 *>(group[b])[q];
+              lc[4 * q] = v.x;
+              lc[4 * q + 1] = v.y;
+              lc[4 * q + 2] = v.z;
+              lc[4 * q + 3] = v.w;
+            }
+#pragma unroll
+            for (int j = c0 + 4; j < kB; ++j) r[j] -= xv[b] * lc[j];
+            if (lane >= c0 + b) r[c0 + b] = xv[b];
+          }
         }
       }
+      if (lane < bw) reciprocal[kb + lane] = own_scale;
+      if (own_failure) *failure = 1;
       if (lane < bw) {
 #pragma unroll
         for (int c = 0; c < kB; ++c) {
@@ -363,9 +411,9 @@ __global__ void __launch_bounds__(kThreads)
     __syncthreads();
   }
   const float *zp = tile[rows - 1];
-  if (item.y == 0) {
+  if (item.row_begin == 0) {
     if (t < w) z[col + t] = zp[t];
-    float *d = diagonal + diagonal_offset[item.x];
+    float *d = diagonal + panel_info.diagonal_offset;
     const int c = t % kW;
 #pragma unroll 4
     for (int i = t / kW; i < w; i += kThreads / kW) {
@@ -374,7 +422,7 @@ __global__ void __launch_bounds__(kThreads)
   }
   if (below > 0) {
     const int r = t % kR, q = t / kR;
-    float *dst = panel + w + item.y + r;
+    float *dst = panel + w + item.row_begin + r;
     float acc = 0.f;
 #pragma unroll 4
     for (int c = q; c < w; c += kThreads / kR) {
@@ -390,7 +438,7 @@ __global__ void __launch_bounds__(kThreads)
       float sum = 0.f;
 #pragma unroll
       for (int s = 0; s < kThreads / kR; ++s) sum += partial[s][t];
-      atomicAdd(y + below_rows[panel_info.w + item.y + t], -sum);
+      atomicAdd(y + below_rows[panel_info.rows_offset + item.row_begin + t], -sum);
     }
   }
 }
@@ -449,16 +497,16 @@ __device__ void WarpTriangularSolve(const float (*ld)[kPad], int w, float *v) {
  */
 template <bool kAtomic>
 __global__ void __launch_bounds__(kThreads)
-    UpdateKernel(const int4 *items, const int4 *runs, const int *relmap, const int4 *info,
-                 const int64_t *offset, float *factor) {
+    UpdateKernel(const UpdateItem *items, const Run *runs, const int *relmap, const Panel *panels,
+                 float *factor) {
   __shared__ __align__(16) float as[kW][kR];
   __shared__ __align__(16) float bs[kW][kR];  // 32 KB in all: 3 CTAs per SM on sm_86
-  const int4 item = items[blockIdx.x];
-  const int4 panel_info = info[item.x];
-  const int w = panel_info.y, h = panel_info.z;
-  const int4 run = runs[item.y];
-  const int rows = min(kR, h - w - item.z), cols = run.z - run.y;
-  const float *src = factor + offset[item.x] + w;
+  const UpdateItem item = items[blockIdx.x];
+  const Panel source = panels[item.panel];
+  const int w = source.width, h = source.height;
+  const Run run = runs[item.run];
+  const int rows = min(kR, h - w - item.row_begin), cols = run.end - run.begin;
+  const float *src = factor + source.offset + w;
   const int t = threadIdx.x;
   {
     const int i = t % kR, k0 = t / kR;
@@ -466,8 +514,8 @@ __global__ void __launch_bounds__(kThreads)
 #pragma unroll
     for (int m = 0; m < kW * kR / kThreads; ++m) {
       const int k = k0 + m * (kThreads / kR);
-      va[m] = i < rows && k < w ? src[k * h + item.z + i] : 0.f;
-      vb[m] = i < cols && k < w ? src[k * h + run.y + i] : 0.f;
+      va[m] = i < rows && k < w ? src[k * h + item.row_begin + i] : 0.f;
+      vb[m] = i < cols && k < w ? src[k * h + run.begin + i] : 0.f;
     }
 #pragma unroll
     for (int m = 0; m < kW * kR / kThreads; ++m) {
@@ -496,10 +544,10 @@ __global__ void __launch_bounds__(kThreads)
         make_float4(acc[0][n], acc[1][n], acc[2][n], acc[3][n]);
   }
   __syncthreads();
-  const int4 target = info[run.x];
-  float *dst = factor + offset[run.x];
+  const Panel target = panels[run.target];
+  float *dst = factor + target.offset;
   const int lane = t % 32, warp = t / 32;
-  const int *rel = relmap + run.w + item.z - run.y;
+  const int *rel = relmap + run.relmap_offset + item.row_begin - run.begin;
   int row_pos[kR / 32];
 #pragma unroll
   for (int half = 0; half < kR / 32; ++half) {
@@ -507,8 +555,8 @@ __global__ void __launch_bounds__(kThreads)
     row_pos[half] = i < rows ? rel[i] : -1;
   }
   for (int j = warp; j < cols; j += kThreads / 32) {
-    const int col_pos = relmap[run.w + j];
-    float *column = dst + static_cast<int64_t>(col_pos) * target.z;
+    const int col_pos = relmap[run.relmap_offset + j];
+    float *column = dst + static_cast<int64_t>(col_pos) * target.height;
 #pragma unroll
     for (int half = 0; half < kR / 32; ++half) {
       if (row_pos[half] >= col_pos) {
@@ -530,22 +578,22 @@ __global__ void __launch_bounds__(kThreads)
  * x_p = L_D^{-T} (z_p - accumulator) and resets the accumulator and counter.
  */
 __global__ void __launch_bounds__(kThreads)
-    BackwardKernel(const int2 *items, const int4 *info, const int64_t *offset,
-                   const int64_t *diagonal_offset, const int *below_rows, const float *factor,
-                   const float *diagonal, float *x, float *accumulator, int *counter) {
+    BackwardKernel(const FactorItem *items, const Panel *panels, const int *below_rows,
+                   const float *factor, const float *diagonal, float *x, float *accumulator,
+                   int *counter) {
   __shared__ float ld[kW][kPad];
   __shared__ float v[kW];
   __shared__ bool last;
-  const int2 item = items[blockIdx.x];
-  const int4 panel_info = info[item.x];
-  const int col = panel_info.x, w = panel_info.y, h = panel_info.z;
+  const FactorItem item = items[blockIdx.x];
+  const Panel panel = panels[item.panel];
+  const int col = panel.col, w = panel.width, h = panel.height;
   const int t = threadIdx.x, lane = t % 32;
-  const int below = min(kR, h - w - item.y);
+  const int below = min(kR, h - w - item.row_begin);
   const int tiles = max(1, (h - w + kR - 1) / kR);
   if (below > 0) {
-    const float *l = factor + offset[item.x] + w + item.y;
+    const float *l = factor + panel.offset + w + item.row_begin;
     const int r = t % kR, q = t / kR;
-    const float xr = r < below ? x[below_rows[panel_info.w + item.y + r]] : 0.f;
+    const float xr = r < below ? x[below_rows[panel.rows_offset + item.row_begin + r]] : 0.f;
     constexpr int kPerThread = kW / (kThreads / kR);
     float v[kPerThread];
 #pragma unroll
@@ -565,23 +613,76 @@ __global__ void __launch_bounds__(kThreads)
   if (tiles > 1) {
     __threadfence();
     __syncthreads();
-    if (t == 0) last = atomicAdd(counter + item.x, 1) == tiles - 1;
+    if (t == 0) last = atomicAdd(counter + item.panel, 1) == tiles - 1;
     __syncthreads();
     if (!last) return;
     __threadfence();
   } else {
     __syncthreads();
   }
-  LoadDiagonal(diagonal + diagonal_offset[item.x], w, ld);
+  LoadDiagonal(diagonal + panel.diagonal_offset, w, ld);
   if (t < w) {
     v[t] = x[col + t] - __ldcg(accumulator + col + t);
     accumulator[col + t] = 0.f;
   }
-  if (t == 0) counter[item.x] = 0;
+  if (t == 0) counter[item.panel] = 0;
   __syncthreads();
   if (t < 32) WarpTriangularSolve<true>(ld, w, v);
   __syncthreads();
   if (t < w) x[col + t] = v[t];
+}
+
+/** The supervariables of a symmetric pattern and their adjacency (no self loops). */
+struct SupervariableGraph {
+  std::vector<int> start{0};              ///< Per supervariable: first row; plus n.
+  std::vector<int> adjacency_offsets{0};  ///< Per supervariable: its neighbors [offset, next).
+  std::vector<int> adjacency;             ///< Neighbor supervariables.
+};
+
+/**
+ * Finds the supervariables (consecutive rows with identical patterns) and
+ * their graph on the device; only the graph comes to the host.
+ */
+SupervariableGraph FindSupervariableGraph(cudaStream_t stream, const CSRSparseMatrix &matrix) {
+  SupervariableGraph graph;
+  const size_t n = matrix.NumRows();
+  if (n == 0) return graph;
+  const int *ro = matrix.row_offsets.data(), *ci = matrix.col_ids.data();
+  dvector<int> flag(n);
+  SupervariableKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(static_cast<int>(n), ro, ci,
+                                                               flag.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  std::vector<int> h_flag(n), h_supervariable(n);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  flag.CopyToHost(h_flag.data(), n);
+  for (size_t i = 0; i < n; ++i) {
+    if (i > 0 && h_flag[i]) graph.start.push_back(static_cast<int>(i));
+    h_supervariable[i] = static_cast<int>(graph.start.size()) - 1;
+  }
+  const int nb = static_cast<int>(graph.start.size());
+  graph.start.push_back(static_cast<int>(n));
+  dvector<int> supervariable(h_supervariable);
+  dvector<int> first_row(std::vector<int>(graph.start.begin(), graph.start.end() - 1)), count(nb);
+  AdjacencyKernel<<<Blocks(32 * static_cast<size_t>(nb)), kThreads, 0, stream>>>(
+      nb, first_row.data(), ro, ci, supervariable.data(), nullptr, count.data(), nullptr);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  std::vector<int> h_count(nb);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  count.CopyToHost(h_count.data(), nb);
+  for (int v = 0; v < nb; ++v) {
+    graph.adjacency_offsets.push_back(graph.adjacency_offsets.back() + h_count[v]);
+  }
+  graph.adjacency.resize(graph.adjacency_offsets.back());
+  if (!graph.adjacency.empty()) {
+    dvector<int> offsets(graph.adjacency_offsets), d_adjacency(graph.adjacency.size());
+    AdjacencyKernel<<<Blocks(32 * static_cast<size_t>(nb)), kThreads, 0, stream>>>(
+        nb, first_row.data(), ro, ci, supervariable.data(), offsets.data(), nullptr,
+        d_adjacency.data());
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    d_adjacency.CopyToHost(graph.adjacency.data(), graph.adjacency.size());
+  }
+  return graph;
 }
 
 }  // namespace
@@ -597,116 +698,49 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
              rhs.size(), result.size());
     return false;
   }
-  // Supervariables and their graph on the device; only the (small) graph comes to the host.
-  const int nnz = static_cast<int>(spd_matrix.col_ids.size());
-  std::vector<int> start{0}, adjacency_offsets{0}, adjacency;
-  dvector<int> supervariable(n);
-  if (n > 0) {
-    const int *ro = spd_matrix.row_offsets.data(), *ci = spd_matrix.col_ids.data();
-    dvector<int> flag(n);
-    SupervariableKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(static_cast<int>(n), ro, ci,
-                                                                 flag.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-    std::vector<int> h_flag(n), h_supervariable(n);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    flag.CopyToHost(h_flag.data(), n);
-    for (size_t i = 0; i < n; ++i) {
-      if (i > 0 && h_flag[i]) start.push_back(static_cast<int>(i));
-      h_supervariable[i] = static_cast<int>(start.size()) - 1;
-    }
-    const int nb = static_cast<int>(start.size());
-    start.push_back(static_cast<int>(n));
-    supervariable.CopyFromHost(h_supervariable.data(), n);
-    dvector<int> first_row(std::vector<int>(start.begin(), start.end() - 1)), count(nb);
-    AdjacencyKernel<<<Blocks(32 * static_cast<size_t>(nb)), kThreads, 0, stream>>>(
-        nb, first_row.data(), ro, ci, supervariable.data(), nullptr, count.data(), nullptr);
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-    std::vector<int> h_count(nb);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    count.CopyToHost(h_count.data(), nb);
-    for (int v = 0; v < nb; ++v) adjacency_offsets.push_back(adjacency_offsets.back() + h_count[v]);
-    adjacency.resize(adjacency_offsets.back());
-    if (!adjacency.empty()) {
-      dvector<int> offsets(adjacency_offsets), d_adjacency(adjacency.size());
-      AdjacencyKernel<<<Blocks(32 * static_cast<size_t>(nb)), kThreads, 0, stream>>>(
-          nb, first_row.data(), ro, ci, supervariable.data(), offsets.data(), nullptr,
-          d_adjacency.data());
-      THROW_ON_CUDA_ERROR(cudaGetLastError());
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-      d_adjacency.CopyToHost(adjacency.data(), adjacency.size());
-    }
-  }
-  plan_ = internal::AnalyzeCholesky(static_cast<int>(n), start, adjacency_offsets, adjacency);
+  const SupervariableGraph graph = FindSupervariableGraph(stream, spd_matrix);
+  plan_ = internal::AnalyzeCholesky(static_cast<int>(n), graph.start, graph.adjacency_offsets,
+                                    graph.adjacency);
   const auto &plan = plan_;
   const size_t np = plan.panels.size();
-  std::vector<int4> info(np);
-  std::vector<int64_t> offset(np), diagonal_offset(np);
-  for (size_t p = 0; p < np; ++p) {
-    const auto &panel = plan.panels[p];
-    info[p] = make_int4(panel.col, panel.width, panel.height, panel.rows_offset);
-    offset[p] = panel.offset;
-    diagonal_offset[p] = panel.diagonal_offset;
-  }
-  std::vector<int4> runs(plan.runs.size());
-  for (size_t i = 0; i < runs.size(); ++i) {
-    const auto &run = plan.runs[i];
-    runs[i] = make_int4(run.target, run.begin, run.end, run.relmap_offset);
-  }
-  std::vector<int2> factor_items(plan.factor_items.size());
-  for (size_t i = 0; i < factor_items.size(); ++i) {
-    factor_items[i] = make_int2(plan.factor_items[i].panel, plan.factor_items[i].row_begin);
-  }
-  std::vector<int4> update_items(plan.update_items.size());
-  for (size_t i = 0; i < update_items.size(); ++i) {
-    const auto &item = plan.update_items[i];
-    update_items[i] = make_int4(item.panel, item.run, item.row_begin, 0);
-  }
-  auto upload = [](auto &device, const auto &host) {
-    device.resize(host.size());
-    if (!host.empty()) device.CopyFromHost(host.data(), host.size());
-  };
-  upload(perm_, plan.perm);
-  upload(panel_info_, info);
-  upload(panel_offset_, offset);
-  upload(diagonal_offset_, diagonal_offset);
-  upload(below_rows_, plan.below_rows);
-  upload(runs_, runs);
-  upload(factor_items_, factor_items);
-  upload(update_items_, update_items);
-  // The assembly map: where each nonzero of A goes in the factor.
-  assembly_dst_.resize(nnz);
+  perm_ = dvector<int>(plan.perm);
+  panels_ = dvector<Panel>(plan.panels);
+  below_rows_ = dvector<int>(plan.below_rows);
+  runs_ = dvector<Run>(plan.runs);
+  factor_items_ = dvector<FactorItem>(plan.factor_items);
+  update_items_ = dvector<UpdateItem>(plan.update_items);
+
+  // Where each nonzero of A goes in the factor, and the target positions of the updates.
+  assembly_dst_.resize(spd_matrix.col_ids.size());
   diagonal_index_.resize(n);
-  original_.resize(n);
   if (n > 0) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(diagonal_index_.data(), 0xFF, n * sizeof(int), stream));
     std::vector<int> iperm(n), col_panel(n);
     for (size_t c = 0; c < n; ++c) iperm[plan.perm[c]] = static_cast<int>(c);
     for (size_t p = 0; p < np; ++p) {
-      std::fill(col_panel.begin() + plan.panels[p].col,
-                col_panel.begin() + plan.panels[p].col + plan.panels[p].width, static_cast<int>(p));
+      const auto &panel = plan.panels[p];
+      std::fill(col_panel.begin() + panel.col, col_panel.begin() + panel.col + panel.width,
+                static_cast<int>(p));
     }
     dvector<int> d_iperm(iperm), d_col_panel(col_panel);
     AssemblyMapKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(
         static_cast<int>(n), spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
-        d_iperm.data(), d_col_panel.data(), panel_info_.data(), panel_offset_.data(),
-        below_rows_.data(), assembly_dst_.data(), diagonal_index_.data());
+        d_iperm.data(), d_col_panel.data(), panels_.data(), below_rows_.data(),
+        assembly_dst_.data(), diagonal_index_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));  // before the temporaries go
   }
-  // The relative map of the updates.
   relmap_.resize(plan.relmap_size);
   if (!plan.runs.empty()) {
-    std::vector<int> sources(plan.runs.size());
-    for (size_t i = 0; i < sources.size(); ++i) sources[i] = plan.runs[i].source;
-    dvector<int> d_sources(sources);
     RelmapKernel<<<Blocks(32 * plan.runs.size()), kThreads, 0, stream>>>(
-        static_cast<int>(plan.runs.size()), runs_.data(), d_sources.data(), panel_info_.data(),
-        below_rows_.data(), relmap_.data());
+        static_cast<int>(plan.runs.size()), runs_.data(), panels_.data(), below_rows_.data(),
+        relmap_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));  // before the temporaries go
   }
+
   factor_.resize(plan.factor_size);
   diagonal_.resize(plan.diagonal_size);
+  original_.resize(n);
   work_.resize(n);
   solution_.resize(n);
   accumulator_.resize(n);
@@ -731,6 +765,7 @@ bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix
   if (safety_checks_) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(failure_.data(), 0, sizeof(int), stream));
   }
+  // Assembly of PAPᵀ into the panels, and the permuted right-hand side.
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_.data(), 0, factor_.size() * sizeof(float), stream));
   const int nnz = static_cast<int>(assembly_dst_.size());
   AssembleKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, assembly_dst_.data(),
@@ -738,31 +773,31 @@ bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix
   PermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), rhs.data(), work_.data(),
                                                     diagonal_index_.data(),
                                                     spd_matrix.values.data(), original_.data());
+  // Factorization and forward substitution, level by level.
   for (int l = 0; l < plan.num_levels; ++l) {
     const int f0 = plan.factor_offsets[l], f1 = plan.factor_offsets[l + 1];
     FactorKernel<<<f1 - f0, kThreads, 0, stream>>>(
-        factor_items_.data() + f0, panel_info_.data(), panel_offset_.data(),
-        diagonal_offset_.data(), below_rows_.data(), original_.data(), factor_.data(),
-        diagonal_.data(), work_.data(), solution_.data(), failure_.data());
+        factor_items_.data() + f0, panels_.data(), below_rows_.data(), original_.data(),
+        factor_.data(), diagonal_.data(), work_.data(), solution_.data(), failure_.data());
     const int u0 = plan.update_offsets[l], u1 = plan.update_offsets[l + 1];
     if (u1 > u0) {
       if (plan.update_exclusive[l]) {
-        UpdateKernel<false><<<u1 - u0, kThreads, 0, stream>>>(
-            update_items_.data() + u0, runs_.data(), relmap_.data(), panel_info_.data(),
-            panel_offset_.data(), factor_.data());
+        UpdateKernel<false><<<u1 - u0, kThreads, 0, stream>>>(update_items_.data() + u0,
+                                                              runs_.data(), relmap_.data(),
+                                                              panels_.data(), factor_.data());
       } else {
-        UpdateKernel<true><<<u1 - u0, kThreads, 0, stream>>>(
-            update_items_.data() + u0, runs_.data(), relmap_.data(), panel_info_.data(),
-            panel_offset_.data(), factor_.data());
+        UpdateKernel<true><<<u1 - u0, kThreads, 0, stream>>>(update_items_.data() + u0,
+                                                             runs_.data(), relmap_.data(),
+                                                             panels_.data(), factor_.data());
       }
     }
   }
+  // Backward substitution, levels in reverse.
   for (int l = plan.num_levels - 1; l >= 0; --l) {
     const int f0 = plan.factor_offsets[l], f1 = plan.factor_offsets[l + 1];
     BackwardKernel<<<f1 - f0, kThreads, 0, stream>>>(
-        factor_items_.data() + f0, panel_info_.data(), panel_offset_.data(),
-        diagonal_offset_.data(), below_rows_.data(), factor_.data(), diagonal_.data(),
-        solution_.data(), accumulator_.data(), counter_.data());
+        factor_items_.data() + f0, panels_.data(), below_rows_.data(), factor_.data(),
+        diagonal_.data(), solution_.data(), accumulator_.data(), counter_.data());
   }
   UnpermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), solution_.data(),
                                                       result.data());

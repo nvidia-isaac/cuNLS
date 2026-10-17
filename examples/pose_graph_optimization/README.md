@@ -62,6 +62,17 @@ active count equals its capacity.
 `LevenbergMarquardtMinimizer` allocates its working buffers during
 initialization before the first linearized solve.
 
+### Linear solver
+
+Each LM step solves the normal equations of the pose graph (6 unknowns per
+free pose). The example sets `sparse_linear_solver_type` to
+`BlockSparseCholesky`, the default: cuNLS's supernodal sparse Cholesky, which
+orders the graph to keep the factor sparse (a chain with local loop closures
+stays almost banded) and gives the exact step. `BlockSparsePCG` (block-Jacobi
+preconditioned conjugate gradient) is the iterative alternative, preferable
+when many loop closures connect distant poses at random, which makes any
+factor dense.
+
 ## Validation
 
 After optimization, the example prints:

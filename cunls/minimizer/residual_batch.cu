@@ -241,13 +241,13 @@ bool ResidualBatch::ApplyLossToItems(cudaStream_t stream, float *workspace, floa
     int num_cols = 0;
     for (const auto &d : factor_batch_->StateSizes()) num_cols += d;
 
-    const long long num_threads = static_cast<long long>(num_residuals) * num_cols;
-    const int jac_blocks = static_cast<int>((num_threads + kBlockSize - 1) / kBlockSize);
-    if (jac_blocks > 0) {
-      scale_jacobians_kernel<<<jac_blocks, kBlockSize, 0, stream>>>(
-          residuals, jacobians, sq_err_ptr, rho_ptr, num_residuals, residual_dim, num_cols);
+    const size_t num_threads = static_cast<size_t>(num_residuals) * num_cols;
+    if (num_threads > 0) {
+      scale_jacobians_kernel<<<static_cast<unsigned>((num_threads + kBlockSize - 1) / kBlockSize),
+                               kBlockSize, 0, stream>>>(residuals, jacobians, sq_err_ptr, rho_ptr,
+                                                        num_residuals, residual_dim, num_cols);
+      THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
   // Scale residuals

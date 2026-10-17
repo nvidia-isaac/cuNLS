@@ -185,8 +185,9 @@ def main():
     problem.add_factor_batch(reproj, reproj_ptrs)
 
     # The landmarks are eliminated with a Schur complement: each iteration
-    # solves only the reduced system of the keyframe states (pose, velocity and
-    # bias, 15 unknowns per keyframe) and recovers every landmark from it.
+    # factors only the reduced system of the keyframe states (pose, velocity and
+    # bias, 15 unknowns per keyframe; banded along the trajectory) with
+    # BlockSparseCholesky and recovers every landmark from it.
     problem.set_eliminated_state_batches([points])
     options = pycunls.LevenbergMarquardtMinimizerOptions()
     options.base_options.max_num_iterations = 30

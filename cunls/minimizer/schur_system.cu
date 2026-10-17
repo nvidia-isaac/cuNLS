@@ -35,8 +35,8 @@
 namespace cunls {
 namespace {
 
-using schur::BatchGeometry;
-using schur::ColumnRange;
+using internal::schur::BatchGeometry;
+using internal::schur::ColumnRange;
 
 constexpr int kThreads = 256;
 constexpr unsigned kFullMask = 0xffffffffu;
@@ -145,7 +145,7 @@ void Iota(cudaStream_t stream, dvector<int> &out, int n) {
 // Symbolic phase
 // ---------------------------------------------------------------------------
 
-/** Error flags of the setup checks (SchurSystem::error_[0]). */
+/** Error flags of the setup checks (SchurSystem::scratch.error[0]). */
 enum SetupError : int { kTwoLandmarks = 1 };
 
 /**
@@ -508,15 +508,12 @@ __global__ void ColumnMapsKernel(int num_blocks, const int *block_dim, const int
   }
 }
 
-/** Per pose-major position: the pair's landmark, state and entry count. */
-__global__ void PoseMajorPairsKernel(int num_pairs, const int *pm_pair, const int *pair_landmark,
-                                     const int *pair_block, const int *pair_entry_offsets,
-                                     int *pm_landmark, int *pm_block, int *pm_entry_count) {
+/** Per pose-major position: the pair's entry count. */
+__global__ void PoseMajorPairsKernel(int num_pairs, const int *pm_pair,
+                                     const int *pair_entry_offsets, int *pm_entry_count) {
   const int t = blockIdx.x * blockDim.x + threadIdx.x;
   if (t >= num_pairs) return;
   const int pair = pm_pair[t];
-  pm_landmark[t] = pair_landmark[pair];
-  pm_block[t] = pair_block[pair];
   pm_entry_count[t] = pair_entry_offsets[pair + 1] - pair_entry_offsets[pair];
 }
 
@@ -706,8 +703,9 @@ __global__ void __launch_bounds__(kThreads)
     AssemblePairsKernel(int num_pairs, const int *__restrict__ pm_entry_offsets,
                         const long long *__restrict__ entry_jacobian,
                         const long long *__restrict__ entry_residual,
-                        const int *__restrict__ entry_meta, const int *__restrict__ pm_block,
-                        const float *__restrict__ jacobians, const float *__restrict__ residuals,
+                        const int *__restrict__ entry_meta, const int *__restrict__ pm_pair,
+                        const int *__restrict__ pair_block, const float *__restrict__ jacobians,
+                        const float *__restrict__ residuals,
                         const int *__restrict__ block_natural_col, float *rhs, float *diagonal) {
   const int t = blockIdx.x * blockDim.x + threadIdx.x;
   float gradient[DP], norm[DP];
@@ -715,7 +713,7 @@ __global__ void __launch_bounds__(kThreads)
   for (int c = 0; c < DP; ++c) gradient[c] = norm[c] = 0.f;
   int p = -1 - static_cast<int>(threadIdx.x & 31);
   if (t < num_pairs) {
-    p = pm_block[t];
+    p = pair_block[pm_pair[t]];
     for (int e = pm_entry_offsets[t]; e < pm_entry_offsets[t + 1]; ++e) {
       const int meta = entry_meta[e];
       const int m = (meta >> 16) & 0xff, n = meta >> 24;
@@ -947,8 +945,9 @@ template <int DE, int DP>
 __global__ void __launch_bounds__(kThreads)
     EliminatePairsKernel(int num_pairs, const int *__restrict__ pm_entry_offsets,
                          const long long *__restrict__ entry_jacobian,
-                         const int *__restrict__ entry_meta, const int *__restrict__ pm_landmark,
-                         const int *__restrict__ pm_block, const float *__restrict__ jacobians,
+                         const int *__restrict__ entry_meta, const int *__restrict__ pm_pair,
+                         const int *__restrict__ pair_landmark, const int *__restrict__ pair_block,
+                         const float *__restrict__ jacobians,
                          const float *__restrict__ landmark_hessian, int num_landmarks,
                          const int *__restrict__ landmark_natural_col,
                          const int *__restrict__ block_natural_col,
@@ -967,8 +966,9 @@ __global__ void __launch_bounds__(kThreads)
   for (int i = 0; i < DP; ++i) gp[i] = 0.f;
   int p = -1 - lane;  // inactive lanes: distinct, negative keys (WarpSegments)
   if (t < num_pairs) {
-    p = pm_block[t];
-    const int l = pm_landmark[t];
+    const int pair = pm_pair[t];
+    p = pair_block[pair];
+    const int l = pair_landmark[pair];
     float W[DP][DE];
 #pragma unroll
     for (int r = 0; r < DP; ++r) {
@@ -1071,8 +1071,7 @@ __global__ void __launch_bounds__(kThreads)
  */
 template <int DE, int DP>
 __global__ void __launch_bounds__(kThreads)
-    OffDiagonalRowsKernel(const int *__restrict__ chunk_row, const int *__restrict__ chunk_begin,
-                          const int *__restrict__ chunk_end,
+    OffDiagonalRowsKernel(const int3 *__restrict__ chunks,
                           const int *__restrict__ upper_row_offsets, const int *__restrict__ s_col,
                           const int *__restrict__ s_value_offsets, const int *__restrict__ pm_pair,
                           const int *__restrict__ pair_landmark, const int *__restrict__ pair_block,
@@ -1086,11 +1085,11 @@ __global__ void __launch_bounds__(kThreads)
   // Per product: first value of its block of S, pose-major position of (q, i).
   __shared__ int2 product[kWarps][32];
   __shared__ __align__(16) float vp[kWarps][kVFloats];  // V_pi
-  const int chunk = blockIdx.x;
-  const int p = chunk_row[chunk];
+  const int3 chunk = chunks[blockIdx.x];  // retained state, pose-major pairs [begin, end)
+  const int p = chunk.x;
   const int first_block = upper_row_offsets[p], end_block = upper_row_offsets[p + 1];
   const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
-  for (int t = chunk_begin[chunk] + warp; t < chunk_end[chunk]; t += kWarps) {
+  for (int t = chunk.y + warp; t < chunk.z; t += kWarps) {
     const int pair = pm_pair[t];
     const int later = landmark_pair_offsets[pair_landmark[pair] + 1] - pair - 1;
     if (later <= 0) continue;
@@ -1281,6 +1280,38 @@ bool SupportedDims(int de, int dp) {
 SchurSystem::SchurSystem(SparseLinearSolverPtr solver, bool check_failures)
     : solver_(std::move(solver)), check_failures_(check_failures), failure_(0, 1) {}
 
+/** Setup temporaries passed between the phases of SchurSystem::Initialize(). */
+struct SchurSystem::SetupScratch {
+  dvector<uint8_t> temp;                ///< CUB temporary storage.
+  int block_bits = 0;                   ///< Key bits of a retained state.
+  int landmark_bits = 0;                ///< Key bits of a landmark.
+  dvector<int> entry_offsets;           ///< Per factor: its first entry.
+  dvector<int> rr_offsets;              ///< Per factor: its first C^R item.
+  dvector<int> batch_has_landmarks;     ///< Per residual batch: has landmark factors.
+  dvector<unsigned long long> rr_keys;  ///< Per C^R item: the key of its block of S.
+  dvector<int> entry_factor;            ///< Per entry (landmark-major): its factor.
+  dvector<int> entry_slot;              ///< Per entry (landmark-major): its retained slot.
+  dvector<int> pair_entry_offsets;      ///< Per pair: its entries [offset, next).
+  // The full (both triangles) block rows of S.
+  dvector<int> full_row_offsets;  ///< Per retained state: its full blocks [offset, next).
+  dvector<int> full_row;          ///< Per full block: its block row.
+  dvector<int> full_col;          ///< Per full block: its block column.
+  dvector<int> full_src;          ///< Per full block: its upper block (transposed if lower).
+  dvector<int> width_pos;         ///< Per full block: first column within its row.
+  int num_s_blocks = 0;           ///< Blocks of S (upper triangle).
+  int num_full = 0;               ///< Full blocks.
+  int num_values = 0;             ///< Values of S (upper block triangle).
+  int num_nonzeros = 0;           ///< Nonzeros of the scalar CSR of S.
+  // Geometry and counts.
+  dvector<ColumnRange> ranges;        ///< Per state batch with free columns.
+  dvector<int> block_dim;             ///< Per retained state: tangent size.
+  dvector<int> error;                 ///< Setup error flags (see ClassifyFactorsKernel).
+  int num_entries = 0;                ///< (landmark factor, retained slot) entries.
+  int num_rr = 0;                     ///< (factor, retained slot, retained slot) items of C^R.
+  dvector<long long> clique_offsets;  ///< Per landmark: start of its clique products.
+  long long num_cliques = 0;          ///< Σ_i k_i (k_i - 1) / 2 off-diagonal clique products.
+};
+
 void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int num_cols,
                              const std::vector<bool> &reorderable) {
   const auto &eliminated = problem.EliminatedStateBatches();
@@ -1291,13 +1322,26 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
   }
   num_cols_ = num_cols;
   structure_.ResolveColumns(stream, problem, num_cols);
+  SetupScratch scratch;
+  SetUpGeometry(stream, problem, scratch);
+  ClassifyFactors(stream, scratch);
+  BuildPairs(stream, scratch);
+  BuildEvaluationOrder(stream, reorderable, scratch);
+  BuildReducedPattern(stream, scratch);
+  BuildReducedCsr(stream, scratch);
+  AllocateNumericBuffers(stream, scratch);
+}
 
-  // Residual batch geometry and slot tables.
+/** Residual batch geometry and slot tables; the landmarks and the retained states, numbered in
+ * column order. */
+void SchurSystem::SetUpGeometry(cudaStream_t stream, const Problem &problem,
+                                SetupScratch &scratch) {
+  const auto &eliminated = problem.EliminatedStateBatches();
   const auto &residual_batches = problem.GetResidualBatches();
   const auto &layout = structure_.Layout();
   std::vector<BatchGeometry> batches;
   std::vector<int> slot_sizes, slot_offsets;
-  batch_offsets_.clear();
+  factors_.batch_offsets.clear();
   int factor_cursor = 0;
   for (size_t b = 0; b < residual_batches.size(); ++b) {
     const HessianBatchLayout &lb = layout[b];
@@ -1317,14 +1361,14 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
       offset += static_cast<int>(size);
     }
     batches.push_back(geometry);
-    batch_offsets_.push_back(factor_cursor);
+    factors_.batch_offsets.push_back(factor_cursor);
     factor_cursor += lb.num_factors;
   }
-  num_factors_ = factor_cursor;
-  num_batches_ = static_cast<int>(batches.size());
-  batches_ = dvector<BatchGeometry>(batches);
-  slot_sizes_ = dvector<int>(slot_sizes);
-  slot_offsets_ = dvector<int>(slot_offsets);
+  factors_.landmark.resize(factor_cursor);
+  factors_.landmark_slot.resize(factor_cursor);
+  factors_.batches = dvector<BatchGeometry>(batches);
+  factors_.slot_sizes = dvector<int>(slot_sizes);
+  factors_.slot_offsets = dvector<int>(slot_offsets);
 
   // Column ranges: landmarks and retained blocks, numbered in column order.
   std::vector<ColumnRange> ranges;
@@ -1357,95 +1401,111 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
     throw std::invalid_argument(
         "LinearSystemType::SchurComplement: eliminated states must have tangent size 1 to 3");
   }
-  num_landmarks_ = landmarks;
-  num_blocks_ = blocks;
-  num_ranges_ = static_cast<int>(ranges.size());
-  ranges_ = dvector<ColumnRange>(ranges);
-  block_dim_.resize(num_blocks_);
-  block_col_.resize(num_blocks_);
-  block_natural_col_.resize(num_blocks_);
-  landmark_natural_col_.resize(num_landmarks_);
+
+  scratch.ranges = dvector<ColumnRange>(ranges);
+  scratch.block_dim.resize(blocks);
+  pattern_.state_col.resize(blocks);
+  pattern_.state_natural_col.resize(blocks);
+  pattern_.landmark_natural_col.resize(landmarks);
   for (const ColumnRange &range : ranges) {
     const int num_states = (range.end_col - range.first_col) / range.tangent;
     if (range.eliminated) {
       LandmarkColumnsKernel<<<Blocks(num_states), kThreads, 0, stream>>>(
-          num_states, range.tangent, range.first_id, range.first_col, landmark_natural_col_.data());
+          num_states, range.tangent, range.first_id, range.first_col,
+          pattern_.landmark_natural_col.data());
     } else {
       RetainedBlocksKernel<<<Blocks(num_states), kThreads, 0, stream>>>(
           num_states, range.tangent, range.first_id, range.first_col, reduced_col,
-          block_dim_.data(), block_col_.data(), block_natural_col_.data());
+          scratch.block_dim.data(), pattern_.state_col.data(), pattern_.state_natural_col.data());
       reduced_col += num_states * range.tangent;
     }
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   num_retained_cols_ = reduced_col;
-  if (num_landmarks_ == 0) {
+  if (NumLandmarks() == 0) {
     LogWarning(
         "LinearSystemType::SchurComplement: no free state to eliminate; solving the full "
         "system densely through the reduced system");
   }
+}
 
-  // Classify the factors; count entries and C^R items.
-  dvector<uint8_t> temp;
-  const int F = num_factors_;
+/** Classifies the factors (landmark, entries, C^R items) and checks the requirements of the class
+ * comment. */
+void SchurSystem::ClassifyFactors(cudaStream_t stream, SetupScratch &scratch) {
+  dvector<uint8_t> &temp = scratch.temp;
+  const int F = NumFactors();
   const int *factor_cols = structure_.FactorCols().data();
   std::vector<int> error_init = {0, INT_MAX, 0};
-  error_ = dvector<int>(error_init);
-  factor_landmark_.resize(F);
-  factor_eslot_.resize(F);
-  dvector<int> entry_count(F + 1), rr_count(F + 1), entry_offsets(F + 1), rr_offsets(F + 1);
-  dvector<int> batch_has_landmarks(0, std::max(num_batches_, 1));
+  scratch.error = dvector<int>(error_init);
+  dvector<int> entry_count(F + 1), rr_count(F + 1);
+  dvector<int> &entry_offsets = scratch.entry_offsets, &rr_offsets = scratch.rr_offsets;
+  entry_offsets.resize(F + 1);
+  rr_offsets.resize(F + 1);
+  dvector<int> &batch_has_landmarks = scratch.batch_has_landmarks;
+  batch_has_landmarks = dvector<int>(0, std::max(NumBatches(), 1));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(entry_count.data(), 0, (F + 1) * sizeof(int), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(rr_count.data(), 0, (F + 1) * sizeof(int), stream));
   if (F > 0) {
     ClassifyFactorsKernel<<<Blocks(F), kThreads, 0, stream>>>(
-        F, batches_.data(), num_batches_, slot_sizes_.data(), factor_cols, ranges_.data(),
-        num_ranges_, factor_landmark_.data(), factor_eslot_.data(), entry_count.data(),
-        rr_count.data(), batch_has_landmarks.data(), error_.data());
+        F, factors_.batches.data(), NumBatches(), factors_.slot_sizes.data(), factor_cols,
+        scratch.ranges.data(), static_cast<int>(scratch.ranges.size()), factors_.landmark.data(),
+        factors_.landmark_slot.data(), entry_count.data(), rr_count.data(),
+        batch_has_landmarks.data(), scratch.error.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   ExclusiveSum(stream, temp, entry_count.data(), entry_offsets.data(), F + 1);
   ExclusiveSum(stream, temp, rr_count.data(), rr_offsets.data(), F + 1);
   std::vector<int> errors(3);
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(errors.data(), error_.data(), 3 * sizeof(int),
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(errors.data(), scratch.error.data(), 3 * sizeof(int),
                                       cudaMemcpyDeviceToHost, stream));
-  num_entries_ = ReadBack(stream, entry_offsets.data() + F);
-  num_rr_ = ReadBack(stream, rr_offsets.data() + F);
+  scratch.num_entries = ReadBack(stream, entry_offsets.data() + F);
+  scratch.num_rr = ReadBack(stream, rr_offsets.data() + F);
   if (errors[0] & kTwoLandmarks) {
     throw std::invalid_argument(
         "LinearSystemType::SchurComplement: a factor touches two states of the eliminated state "
         "batches; keep such states retained");
   }
-  pair_block_dim_ = num_entries_ > 0 ? errors[2] : 6;
-  if (num_entries_ > 0 && errors[1] != errors[2]) {
+  pair_block_dim_ = scratch.num_entries > 0 ? errors[2] : 6;
+  if (scratch.num_entries > 0 && errors[1] != errors[2]) {
     throw std::invalid_argument(
         "LinearSystemType::SchurComplement: the states that share factors with landmarks must all "
         "have one tangent size");
   }
-  if (num_landmarks_ > 0 && !SupportedDims(landmark_dim_, pair_block_dim_)) {
+  if (NumLandmarks() > 0 && !SupportedDims(landmark_dim_, pair_block_dim_)) {
     throw std::invalid_argument(
         "LinearSystemType::SchurComplement: unsupported tangent sizes (landmarks " +
         std::to_string(landmark_dim_) + ", states observing them " +
         std::to_string(pair_block_dim_) + "); supported: 1-3 with 6, and 3 with 3 or 9");
   }
-  const int block_bits = BitsFor(std::max(num_blocks_, 2));
-  const int landmark_bits = BitsFor(std::max(num_landmarks_, 2));
-  if (2 * block_bits > 64 || landmark_bits + block_bits > 64) {
+  scratch.block_bits = BitsFor(std::max(NumRetainedStates(), 2));
+  scratch.landmark_bits = BitsFor(std::max(NumLandmarks(), 2));
+  if (2 * scratch.block_bits > 64 || scratch.landmark_bits + scratch.block_bits > 64) {
     throw std::invalid_argument("LinearSystemType::SchurComplement: problem too large");
   }
+}
 
+/** The (retained state, landmark) pairs, landmark-major, and their pose-major order cut into chunks
+ * for the off-diagonal pass. */
+void SchurSystem::BuildPairs(cudaStream_t stream, SetupScratch &scratch) {
   // Entries, sorted by (landmark, retained state); stable, so by factor within.
-  const int E = num_entries_, R = num_rr_;
+  dvector<uint8_t> &temp = scratch.temp;
+  const int F = NumFactors();
+  const int *factor_cols = structure_.FactorCols().data();
+  const int block_bits = scratch.block_bits, landmark_bits = scratch.landmark_bits;
+  const dvector<int> &entry_offsets = scratch.entry_offsets, &rr_offsets = scratch.rr_offsets;
+  const int E = scratch.num_entries, R = scratch.num_rr;
   dvector<unsigned long long> entry_keys(E), entry_keys_sorted(E);
   dvector<int2> entry_values(E), entry_values_sorted(E);
-  rr_factor_.resize(R);
-  rr_slots_.resize(R);
-  dvector<unsigned long long> rr_keys(R);
+  pattern_.rr_factor.resize(R);
+  pattern_.rr_slots.resize(R);
+  dvector<unsigned long long> &rr_keys = scratch.rr_keys;
+  rr_keys.resize(R);
   if (F > 0) {
     EmitItemsKernel<<<Blocks(F), kThreads, 0, stream>>>(
-        F, batches_.data(), num_batches_, factor_cols, ranges_.data(), num_ranges_,
-        factor_landmark_.data(), factor_eslot_.data(), entry_offsets.data(), rr_offsets.data(),
-        block_bits, entry_keys.data(), entry_values.data(), rr_factor_.data(), rr_slots_.data(),
+        F, factors_.batches.data(), NumBatches(), factor_cols, scratch.ranges.data(),
+        static_cast<int>(scratch.ranges.size()), factors_.landmark.data(),
+        factors_.landmark_slot.data(), entry_offsets.data(), rr_offsets.data(), block_bits,
+        entry_keys.data(), entry_values.data(), pattern_.rr_factor.data(), pattern_.rr_slots.data(),
         rr_keys.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
@@ -1453,31 +1513,33 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
             entry_values_sorted.data(), E, landmark_bits + block_bits);
 
   // Pairs: runs of equal keys.
-  dvector<int> entry_factor(E), entry_slot(E);
+  dvector<int> &entry_factor = scratch.entry_factor, &entry_slot = scratch.entry_slot;
+  entry_factor.resize(E);
+  entry_slot.resize(E);
   dvector<int> head(E), pair_id(E);
-  num_pairs_ = 0;
+  int P = 0;
   if (E > 0) {
     UnpackEntriesKernel<<<Blocks(E), kThreads, 0, stream>>>(
         E, entry_keys_sorted.data(), entry_values_sorted.data(), entry_factor.data(),
         entry_slot.data(), head.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     InclusiveSum(stream, temp, head.data(), pair_id.data(), E);
-    num_pairs_ = ReadBack(stream, pair_id.data() + E - 1);
+    P = ReadBack(stream, pair_id.data() + E - 1);
   }
-  const int P = num_pairs_;
-  pair_landmark_.resize(P);
-  pair_block_.resize(P);
-  dvector<int> pair_entry_offsets(P + 1);
-  landmark_pair_offsets_.resize(num_landmarks_ + 1);
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(landmark_pair_offsets_.data(), 0,
-                                      (num_landmarks_ + 1) * sizeof(int), stream));
+  pairs_.landmark.resize(P);
+  pairs_.state.resize(P);
+  dvector<int> &pair_entry_offsets = scratch.pair_entry_offsets;
+  pair_entry_offsets.resize(P + 1);
+  pairs_.landmark_offsets.resize(NumLandmarks() + 1);
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(pairs_.landmark_offsets.data(), 0,
+                                      (NumLandmarks() + 1) * sizeof(int), stream));
   if (E > 0) {
     BuildPairsKernel<<<Blocks(E), kThreads, 0, stream>>>(
-        E, entry_keys_sorted.data(), head.data(), pair_id.data(), block_bits, pair_landmark_.data(),
-        pair_block_.data(), pair_entry_offsets.data());
+        E, entry_keys_sorted.data(), head.data(), pair_id.data(), block_bits,
+        pairs_.landmark.data(), pairs_.state.data(), pair_entry_offsets.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     LandmarkOffsetsKernel<<<Blocks(P + 1), kThreads, 0, stream>>>(
-        P, num_landmarks_, pair_landmark_.data(), landmark_pair_offsets_.data());
+        P, NumLandmarks(), pairs_.landmark.data(), pairs_.landmark_offsets.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
@@ -1485,51 +1547,53 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
   dvector<int> pair_iota;
   Iota(stream, pair_iota, P);
   dvector<unsigned> pm_keys(P);
-  pm_pair_.resize(P);
-  pair_pm_.resize(P);
-  SortPairs(stream, temp, reinterpret_cast<const unsigned *>(pair_block_.data()), pm_keys.data(),
-            pair_iota.data(), pm_pair_.data(), P, block_bits);
+  pairs_.pose_major.resize(P);
+  pairs_.pose_major_position.resize(P);
+  SortPairs(stream, temp, reinterpret_cast<const unsigned *>(pairs_.state.data()), pm_keys.data(),
+            pair_iota.data(), pairs_.pose_major.data(), P, block_bits);
   if (P > 0) {
-    InvertPermutationKernel<<<Blocks(P), kThreads, 0, stream>>>(P, pm_pair_.data(),
-                                                                pair_pm_.data());
+    InvertPermutationKernel<<<Blocks(P), kThreads, 0, stream>>>(P, pairs_.pose_major.data(),
+                                                                pairs_.pose_major_position.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
   // Pose-major runs of the retained states, cut into chunks for the
   // off-diagonal pass.
   {
-    dvector<int> pm_row_offsets(num_blocks_ + 1);
+    dvector<int> pm_row_offsets(NumRetainedStates() + 1);
     THROW_ON_CUDA_ERROR(
-        cudaMemsetAsync(pm_row_offsets.data(), 0, (num_blocks_ + 1) * sizeof(int), stream));
+        cudaMemsetAsync(pm_row_offsets.data(), 0, (NumRetainedStates() + 1) * sizeof(int), stream));
     if (P > 0) {
       LandmarkOffsetsKernel<<<Blocks(P + 1), kThreads, 0, stream>>>(
-          P, num_blocks_, reinterpret_cast<const int *>(pm_keys.data()), pm_row_offsets.data());
+          P, NumRetainedStates(), reinterpret_cast<const int *>(pm_keys.data()),
+          pm_row_offsets.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
-    std::vector<int> offsets(num_blocks_ + 1);
+    std::vector<int> offsets(NumRetainedStates() + 1);
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(offsets.data(), pm_row_offsets.data(),
                                         offsets.size() * sizeof(int), cudaMemcpyDeviceToHost,
                                         stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    std::vector<int> rows, begins, ends;
-    for (int b = 0; b < num_blocks_; ++b) {
+    std::vector<int3> chunks;
+    for (int b = 0; b < NumRetainedStates(); ++b) {
       for (int t = offsets[b]; t < offsets[b + 1]; t += kChunkPairs) {
-        rows.push_back(b);
-        begins.push_back(t);
-        ends.push_back(std::min(t + kChunkPairs, offsets[b + 1]));
+        chunks.push_back(make_int3(b, t, std::min(t + kChunkPairs, offsets[b + 1])));
       }
     }
-    num_chunks_ = static_cast<int>(rows.size());
-    chunk_row_ = dvector<int>(rows);
-    chunk_begin_ = dvector<int>(begins);
-    chunk_end_ = dvector<int>(ends);
+    pairs_.chunks = dvector<int3>(chunks);
   }
+}
 
-  // Pose-major entries, and the evaluation order that lays their Jacobians
-  // out in that order.
-  pm_landmark_.resize(P);
-  pm_block_.resize(P);
-  pm_entry_offsets_.resize(P + 1);
+/** The pose-major entries and the evaluation order that lays their Jacobians out in that order. */
+void SchurSystem::BuildEvaluationOrder(cudaStream_t stream, const std::vector<bool> &reorderable,
+                                       SetupScratch &scratch) {
+  dvector<uint8_t> &temp = scratch.temp;
+  const int F = NumFactors(), E = scratch.num_entries, P = NumPairs();
+  const int *factor_cols = structure_.FactorCols().data();
+  const dvector<int> &pair_entry_offsets = scratch.pair_entry_offsets;
+  const dvector<int> &entry_factor = scratch.entry_factor, &entry_slot = scratch.entry_slot;
+  const dvector<int> &batch_has_landmarks = scratch.batch_has_landmarks;
+  pairs_.entry_offsets.resize(P + 1);
   {
     dvector<int> pm_entry_count(P + 1);
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(pm_entry_count.data(), 0, (P + 1) * sizeof(int), stream));
@@ -1540,71 +1604,77 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
     }
     if (P > 0) {
       PoseMajorPairsKernel<<<Blocks(P), kThreads, 0, stream>>>(
-          P, pm_pair_.data(), pair_landmark_.data(), pair_block_.data(), pair_entry_offsets.data(),
-          pm_landmark_.data(), pm_block_.data(), pm_entry_count.data());
+          P, pairs_.pose_major.data(), pair_entry_offsets.data(), pm_entry_count.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
-    ExclusiveSum(stream, temp, pm_entry_count.data(), pm_entry_offsets_.data(), P + 1);
+    ExclusiveSum(stream, temp, pm_entry_count.data(), pairs_.entry_offsets.data(), P + 1);
     if (P > 0) {
       PoseMajorEntriesKernel<<<Blocks(P), kThreads, 0, stream>>>(
-          P, pm_pair_.data(), pair_entry_offsets.data(), pm_entry_offsets_.data(),
+          P, pairs_.pose_major.data(), pair_entry_offsets.data(), pairs_.entry_offsets.data(),
           entry_factor.data(), entry_slot.data(), pm_entry_factor.data(), pm_entry_slot.data(),
           factor_key.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
-    std::vector<int> has_landmarks(num_batches_);
+    std::vector<int> has_landmarks(NumBatches());
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(has_landmarks.data(), batch_has_landmarks.data(),
-                                        num_batches_ * sizeof(int), cudaMemcpyDeviceToHost,
+                                        NumBatches() * sizeof(int), cudaMemcpyDeviceToHost,
                                         stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    batch_reordered_.assign(num_batches_, false);
-    std::vector<int> reordered(num_batches_);
-    for (int b = 0; b < num_batches_; ++b) {
-      batch_reordered_[b] =
+    factors_.reordered.assign(NumBatches(), false);
+    std::vector<int> reordered(NumBatches());
+    for (int b = 0; b < NumBatches(); ++b) {
+      factors_.reordered[b] =
           has_landmarks[b] != 0 && b < static_cast<int>(reorderable.size()) && reorderable[b];
-      reordered[b] = batch_reordered_[b] ? 1 : 0;
+      reordered[b] = factors_.reordered[b] ? 1 : 0;
     }
     dvector<int> reordered_device(reordered);
     dvector<unsigned long long> order_keys(F), order_keys_sorted(F);
     dvector<int> order_values(F), order_values_sorted(F);
-    factor_item_.resize(F);
-    evaluation_order_.resize(F);
-    item_cols_.resize(structure_.FactorCols().size());
+    factors_.item.resize(F);
+    factors_.evaluation_order.resize(F);
+    factors_.item_cols.resize(structure_.FactorCols().size());
     if (F > 0) {
       OrderKeysKernel<<<Blocks(F), kThreads, 0, stream>>>(
-          F, batches_.data(), num_batches_, reordered_device.data(), factor_key.data(),
+          F, factors_.batches.data(), NumBatches(), reordered_device.data(), factor_key.data(),
           order_keys.data(), order_values.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
       SortPairs(stream, temp, order_keys.data(), order_keys_sorted.data(), order_values.data(),
-                order_values_sorted.data(), F, 32 + BitsFor(std::max(num_batches_, 2)));
+                order_values_sorted.data(), F, 32 + BitsFor(std::max(NumBatches(), 2)));
       ItemsKernel<<<Blocks(F), kThreads, 0, stream>>>(
-          F, batches_.data(), num_batches_, order_values_sorted.data(), factor_cols,
-          factor_item_.data(), evaluation_order_.data(), item_cols_.data());
+          F, factors_.batches.data(), NumBatches(), order_values_sorted.data(), factor_cols,
+          factors_.item.data(), factors_.evaluation_order.data(), factors_.item_cols.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
-    entry_jacobian_.resize(E);
-    entry_residual_.resize(E);
-    entry_meta_.resize(E);
+    pairs_.entry_jacobian.resize(E);
+    pairs_.entry_residual.resize(E);
+    pairs_.entry_meta.resize(E);
     if (E > 0) {
       EntryLocationsKernel<<<Blocks(E), kThreads, 0, stream>>>(
-          E, pm_entry_factor.data(), pm_entry_slot.data(), batches_.data(), num_batches_,
-          slot_offsets_.data(), factor_eslot_.data(), factor_item_.data(), entry_jacobian_.data(),
-          entry_residual_.data(), entry_meta_.data());
+          E, pm_entry_factor.data(), pm_entry_slot.data(), factors_.batches.data(), NumBatches(),
+          factors_.slot_offsets.data(), factors_.landmark_slot.data(), factors_.item.data(),
+          pairs_.entry_jacobian.data(), pairs_.entry_residual.data(), pairs_.entry_meta.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
+}
 
-  // Clique products and the pattern of S.
-  const int L = num_landmarks_;
+/** The block pattern of S: clique products, C^R items and the diagonal; value offsets and the full
+ * block rows. */
+void SchurSystem::BuildReducedPattern(cudaStream_t stream, SetupScratch &scratch) {
+  dvector<uint8_t> &temp = scratch.temp;
+  const int P = NumPairs(), R = scratch.num_rr, block_bits = scratch.block_bits;
+  const dvector<unsigned long long> &rr_keys = scratch.rr_keys;
+  // Clique products and the block pattern of S (upper triangle).
+  const int L = NumLandmarks();
   dvector<long long> clique_counts(L + 1);
-  clique_offsets_.resize(L + 1);
-  CliqueCountsKernel<<<Blocks(L + 1), kThreads, 0, stream>>>(L, landmark_pair_offsets_.data(),
+  scratch.clique_offsets.resize(L + 1);
+  CliqueCountsKernel<<<Blocks(L + 1), kThreads, 0, stream>>>(L, pairs_.landmark_offsets.data(),
                                                              clique_counts.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-  ExclusiveSum(stream, temp, clique_counts.data(), clique_offsets_.data(), L + 1);
-  num_cliques_ = ReadBack(stream, clique_offsets_.data() + L);
-  const long long K = num_cliques_ + num_blocks_ + R;
+  ExclusiveSum(stream, temp, clique_counts.data(), scratch.clique_offsets.data(), L + 1);
+  scratch.num_cliques = ReadBack(stream, scratch.clique_offsets.data() + L);
+  const long long K = scratch.num_cliques + NumRetainedStates() + R;
   if (K >= INT_MAX) {
     throw std::invalid_argument(
         "LinearSystemType::SchurComplement: too many landmark observation pairs");
@@ -1614,19 +1684,20 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
   dvector<int> values(Ki), values_sorted(Ki);
   if (P > 0) {
     CliqueKeysKernel<<<Blocks(P), kThreads, 0, stream>>>(
-        P, pair_landmark_.data(), pair_block_.data(), landmark_pair_offsets_.data(),
-        clique_offsets_.data(), block_bits, keys.data(), values.data());
+        P, pairs_.landmark.data(), pairs_.state.data(), pairs_.landmark_offsets.data(),
+        scratch.clique_offsets.data(), block_bits, keys.data(), values.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-  if (num_blocks_ + R > 0) {
-    OtherKeysKernel<<<Blocks(num_blocks_ + R), kThreads, 0, stream>>>(
-        num_blocks_, R, num_cliques_, rr_keys.data(), block_bits, keys.data(), values.data());
+  if (NumRetainedStates() + R > 0) {
+    OtherKeysKernel<<<Blocks(NumRetainedStates() + R), kThreads, 0, stream>>>(
+        NumRetainedStates(), R, scratch.num_cliques, rr_keys.data(), block_bits, keys.data(),
+        values.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   SortPairs(stream, temp, keys.data(), keys_sorted.data(), values.data(), values_sorted.data(), Ki,
             2 * block_bits);
   dvector<int> key_head(Ki), block_id(Ki);
-  int num_s_blocks = 0;
+  int &num_s_blocks = scratch.num_s_blocks;
   if (Ki > 0) {
     HeadFlagsKernel<<<Blocks(Ki), kThreads, 0, stream>>>(Ki, keys_sorted.data(), key_head.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -1634,15 +1705,15 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
     num_s_blocks = ReadBack(stream, block_id.data() + Ki - 1);
   }
   dvector<int> s_row(num_s_blocks);
-  s_col_.resize(num_s_blocks);
-  dvector<int> &s_col = s_col_;
-  diag_block_.resize(num_blocks_);
-  rr_block_.resize(R);
+  pattern_.upper_col.resize(num_s_blocks);
+  dvector<int> &s_col = pattern_.upper_col;
+  pattern_.state_diagonal.resize(NumRetainedStates());
+  pattern_.rr_block.resize(R);
   if (Ki > 0) {
     AssignBlocksKernel<<<Blocks(Ki), kThreads, 0, stream>>>(
         Ki, keys_sorted.data(), values_sorted.data(), key_head.data(), block_id.data(), block_bits,
-        num_cliques_, num_blocks_, s_row.data(), s_col.data(), diag_block_.data(),
-        rr_block_.data());
+        scratch.num_cliques, NumRetainedStates(), s_row.data(), s_col.data(),
+        pattern_.state_diagonal.data(), pattern_.rr_block.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   // The key arrays are the largest setup buffers; release them early.
@@ -1654,9 +1725,9 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
   block_id = {};
 
   // Value offsets of the S blocks; full (both triangles) block rows.
-  const int NB = num_blocks_;
+  const int NB = NumRetainedStates();
   dvector<int> value_counts(num_s_blocks + 1), upper_count(NB + 1), lower_count(NB + 1);
-  s_value_offsets_.resize(num_s_blocks + 1);
+  pattern_.value_offsets.resize(num_s_blocks + 1);
   THROW_ON_CUDA_ERROR(
       cudaMemsetAsync(value_counts.data(), 0, (num_s_blocks + 1) * sizeof(int), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(upper_count.data(), 0, (NB + 1) * sizeof(int), stream));
@@ -1666,7 +1737,7 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
   dvector<int> lower_values(num_s_blocks), lower_values_sorted(num_s_blocks);
   if (num_s_blocks > 0) {
     BlockSizesKernel<<<Blocks(num_s_blocks), kThreads, 0, stream>>>(
-        num_s_blocks, s_row.data(), s_col.data(), block_dim_.data(), value_counts.data(),
+        num_s_blocks, s_row.data(), s_col.data(), scratch.block_dim.data(), value_counts.data(),
         upper_count.data(), lower_count.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     LowerKeysKernel<<<Blocks(num_s_blocks), kThreads, 0, stream>>>(
@@ -1674,22 +1745,29 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
         lower_values.data(), num_lower_device.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-  ExclusiveSum(stream, temp, value_counts.data(), s_value_offsets_.data(), num_s_blocks + 1);
+  ExclusiveSum(stream, temp, value_counts.data(), pattern_.value_offsets.data(), num_s_blocks + 1);
   const int num_lower = ReadBack(stream, num_lower_device.data());
-  const int num_values = ReadBack(stream, s_value_offsets_.data() + num_s_blocks);
+  scratch.num_values = ReadBack(stream, pattern_.value_offsets.data() + num_s_blocks);
   SortPairs(stream, temp, lower_keys.data(), lower_keys_sorted.data(), lower_values.data(),
             lower_values_sorted.data(), num_lower, 2 * block_bits);
-  upper_row_offsets_.resize(NB + 1);
-  dvector<int> &upper_row_offsets = upper_row_offsets_;
-  dvector<int> lower_row_offsets(NB + 1), full_row_offsets(NB + 1);
+  pattern_.upper_row_offsets.resize(NB + 1);
+  dvector<int> &upper_row_offsets = pattern_.upper_row_offsets;
+  dvector<int> lower_row_offsets(NB + 1);
+  dvector<int> &full_row_offsets = scratch.full_row_offsets;
+  full_row_offsets.resize(NB + 1);
   ExclusiveSum(stream, temp, upper_count.data(), upper_row_offsets.data(), NB + 1);
   ExclusiveSum(stream, temp, lower_count.data(), lower_row_offsets.data(), NB + 1);
   FullRowOffsetsKernel<<<Blocks(NB + 1), kThreads, 0, stream>>>(
       NB, upper_row_offsets.data(), lower_row_offsets.data(), full_row_offsets.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-  const int num_full = num_s_blocks + num_lower;
-  dvector<int> full_row(num_full), full_col(num_full), full_src(num_full);
-  dvector<int> widths(num_full + 1), width_pos(num_full + 1);
+  const int num_full = scratch.num_full = num_s_blocks + num_lower;
+  dvector<int> &full_row = scratch.full_row, &full_col = scratch.full_col;
+  dvector<int> &full_src = scratch.full_src, &width_pos = scratch.width_pos;
+  full_row.resize(num_full);
+  full_col.resize(num_full);
+  full_src.resize(num_full);
+  width_pos.resize(num_full + 1);
+  dvector<int> widths(num_full + 1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(widths.data(), 0, (num_full + 1) * sizeof(int), stream));
   if (num_full > 0) {
     PlaceFullBlocksKernel<<<Blocks(num_full), kThreads, 0, stream>>>(
@@ -1697,54 +1775,66 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
         lower_values_sorted.data(), upper_row_offsets.data(), lower_row_offsets.data(), block_bits,
         full_row.data(), full_col.data(), full_src.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
-    FullWidthsKernel<<<Blocks(num_full), kThreads, 0, stream>>>(num_full, full_col.data(),
-                                                                block_dim_.data(), widths.data());
+    FullWidthsKernel<<<Blocks(num_full), kThreads, 0, stream>>>(
+        num_full, full_col.data(), scratch.block_dim.data(), widths.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   ExclusiveSum(stream, temp, widths.data(), width_pos.data(), num_full + 1);
+}
 
-  // Scalar CSR of S.
+/** The scalar CSR of S (both triangles) and the column maps. */
+void SchurSystem::BuildReducedCsr(cudaStream_t stream, SetupScratch &scratch) {
+  dvector<uint8_t> &temp = scratch.temp;
+  const int NB = NumRetainedStates(), num_full = scratch.num_full;
+  const dvector<int> &full_row_offsets = scratch.full_row_offsets;
+  const dvector<int> &full_row = scratch.full_row, &full_col = scratch.full_col;
+  const dvector<int> &full_src = scratch.full_src, &width_pos = scratch.width_pos;
   dvector<int> row_length(NB), row_nonzeros(NB + 1), row_base(NB + 1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(row_nonzeros.data(), 0, (NB + 1) * sizeof(int), stream));
   if (NB > 0) {
-    RowLengthsKernel<<<Blocks(NB), kThreads, 0, stream>>>(NB, full_row_offsets.data(),
-                                                          width_pos.data(), block_dim_.data(),
-                                                          row_length.data(), row_nonzeros.data());
+    RowLengthsKernel<<<Blocks(NB), kThreads, 0, stream>>>(
+        NB, full_row_offsets.data(), width_pos.data(), scratch.block_dim.data(), row_length.data(),
+        row_nonzeros.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   ExclusiveSum(stream, temp, row_nonzeros.data(), row_base.data(), NB + 1);
-  const int num_nonzeros = ReadBack(stream, row_base.data() + NB);
+  const int num_nonzeros = scratch.num_nonzeros = ReadBack(stream, row_base.data() + NB);
   reduced_.row_offsets.resize(num_retained_cols_ + 1);
   reduced_.col_ids.resize(num_nonzeros);
   reduced_.values.resize(num_nonzeros);
-  csr_src_.resize(num_nonzeros);
+  pattern_.csr_source.resize(num_nonzeros);
   if (NB > 0) {
     CsrRowOffsetsKernel<<<Blocks(NB), kThreads, 0, stream>>>(
-        NB, block_dim_.data(), block_col_.data(), row_base.data(), row_length.data(), num_nonzeros,
-        num_retained_cols_, reduced_.row_offsets.data());
+        NB, scratch.block_dim.data(), pattern_.state_col.data(), row_base.data(), row_length.data(),
+        num_nonzeros, num_retained_cols_, reduced_.row_offsets.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   if (num_full > 0) {
     CsrFillKernel<<<Blocks(num_full), kThreads, 0, stream>>>(
         num_full, full_row.data(), full_col.data(), full_src.data(), full_row_offsets.data(),
-        width_pos.data(), block_dim_.data(), block_col_.data(), row_base.data(), row_length.data(),
-        s_value_offsets_.data(), reduced_.col_ids.data(), csr_src_.data());
+        width_pos.data(), scratch.block_dim.data(), pattern_.state_col.data(), row_base.data(),
+        row_length.data(), pattern_.value_offsets.data(), reduced_.col_ids.data(),
+        pattern_.csr_source.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-  col_natural_.resize(num_retained_cols_);
-  col_diag_value_.resize(num_retained_cols_);
+  pattern_.col_natural.resize(num_retained_cols_);
+  pattern_.col_diagonal.resize(num_retained_cols_);
   if (NB > 0) {
     ColumnMapsKernel<<<Blocks(NB), kThreads, 0, stream>>>(
-        NB, block_dim_.data(), block_col_.data(), block_natural_col_.data(), diag_block_.data(),
-        s_value_offsets_.data(), col_natural_.data(), col_diag_value_.data());
+        NB, scratch.block_dim.data(), pattern_.state_col.data(), pattern_.state_natural_col.data(),
+        pattern_.state_diagonal.data(), pattern_.value_offsets.data(), pattern_.col_natural.data(),
+        pattern_.col_diagonal.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
+}
 
-  // Numeric buffers.
+/** The per-solve buffers. */
+void SchurSystem::AllocateNumericBuffers(cudaStream_t stream, const SetupScratch &scratch) {
+  const int L = NumLandmarks(), P = NumPairs(), F = NumFactors();
   const int tri = landmark_dim_ * (landmark_dim_ + 1) / 2;
   hessian_diagonal_.resize(num_cols_);
   landmark_hessian_.resize(static_cast<size_t>(tri) * L);
-  s_values_.resize(num_values);
+  s_values_.resize(scratch.num_values);
   pair_v_.resize(static_cast<size_t>(P) * pair_block_dim_ *
                  (landmark_dim_ == 3 ? 4 : landmark_dim_));
   reduced_rhs_.resize(num_retained_cols_);
@@ -1754,8 +1844,8 @@ void SchurSystem::Initialize(cudaStream_t stream, const Problem &problem, int nu
   LogMessage(
       "Schur complement: {} landmarks (dim {}), {} retained states ({} columns, dim {} with "
       "landmarks), {} pairs, {} clique products, S: {} blocks, {} nonzeros",
-      L, landmark_dim_, NB, num_retained_cols_, pair_block_dim_, P, num_cliques_, num_s_blocks,
-      num_nonzeros);
+      L, landmark_dim_, NumRetainedStates(), num_retained_cols_, pair_block_dim_, P,
+      scratch.num_cliques, scratch.num_s_blocks, scratch.num_nonzeros);
 }
 
 void SchurSystem::Assemble(cudaStream_t stream, const Problem &, const float *jacobians,
@@ -1767,19 +1857,20 @@ void SchurSystem::Assemble(cudaStream_t stream, const Problem &, const float *ja
                                       hessian_diagonal_.size() * sizeof(float), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(landmark_hessian_.data(), 0,
                                       landmark_hessian_.size() * sizeof(float), stream));
-  if (num_factors_ == 0) return;
-  AssembleFactorsKernel<<<Blocks(num_factors_), kThreads, 0, stream>>>(
-      num_factors_, batches_.data(), num_batches_, slot_sizes_.data(), slot_offsets_.data(),
-      item_cols_.data(), factor_landmark_.data(), factor_eslot_.data(), evaluation_order_.data(),
-      landmark_dim_, jacobians, residuals, rhs.data(), hessian_diagonal_.data(),
-      landmark_hessian_.data());
+  if (NumFactors() == 0) return;
+  AssembleFactorsKernel<<<Blocks(NumFactors()), kThreads, 0, stream>>>(
+      NumFactors(), factors_.batches.data(), NumBatches(), factors_.slot_sizes.data(),
+      factors_.slot_offsets.data(), factors_.item_cols.data(), factors_.landmark.data(),
+      factors_.landmark_slot.data(), factors_.evaluation_order.data(), landmark_dim_, jacobians,
+      residuals, rhs.data(), hessian_diagonal_.data(), landmark_hessian_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-  if (num_pairs_ == 0) return;
+  if (NumPairs() == 0) return;
   SCHUR_DISPATCH_DIMS(landmark_dim_, pair_block_dim_, {
-    AssemblePairsKernel<DP><<<Blocks(num_pairs_), kThreads, 0, stream>>>(
-        num_pairs_, pm_entry_offsets_.data(), entry_jacobian_.data(), entry_residual_.data(),
-        entry_meta_.data(), pm_block_.data(), jacobians, residuals, block_natural_col_.data(),
-        rhs.data(), hessian_diagonal_.data());
+    AssemblePairsKernel<DP><<<Blocks(NumPairs()), kThreads, 0, stream>>>(
+        NumPairs(), pairs_.entry_offsets.data(), pairs_.entry_jacobian.data(),
+        pairs_.entry_residual.data(), pairs_.entry_meta.data(), pairs_.pose_major.data(),
+        pairs_.state.data(), jacobians, residuals, pattern_.state_natural_col.data(), rhs.data(),
+        hessian_diagonal_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   });
 }
@@ -1799,43 +1890,48 @@ void SchurSystem::FormReducedSystem(cudaStream_t stream, const dvector<float> &r
       cudaMemsetAsync(s_values_.data(), 0, s_values_.size() * sizeof(float), stream));
   if (num_retained_cols_ > 0) {
     GatherRhsKernel<<<Blocks(num_retained_cols_), kThreads, 0, stream>>>(
-        num_retained_cols_, col_natural_.data(), rhs.data(), reduced_rhs_.data());
+        num_retained_cols_, pattern_.col_natural.data(), rhs.data(), reduced_rhs_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   const int *factor_cols = structure_.FactorCols().data();
-  if (num_rr_ > 0) {
-    RetainedProductsKernel<<<Blocks(num_rr_), kThreads, 0, stream>>>(
-        num_rr_, rr_factor_.data(), rr_slots_.data(), rr_block_.data(), batches_.data(),
-        num_batches_, slot_sizes_.data(), slot_offsets_.data(), factor_cols, factor_item_.data(),
-        jacobians_, s_value_offsets_.data(), mod, s_values_.data());
+  const int num_rr = static_cast<int>(pattern_.rr_factor.size());
+  if (num_rr > 0) {
+    RetainedProductsKernel<<<Blocks(num_rr), kThreads, 0, stream>>>(
+        num_rr, pattern_.rr_factor.data(), pattern_.rr_slots.data(), pattern_.rr_block.data(),
+        factors_.batches.data(), NumBatches(), factors_.slot_sizes.data(),
+        factors_.slot_offsets.data(), factor_cols, factors_.item.data(), jacobians_,
+        pattern_.value_offsets.data(), mod, s_values_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-  if (num_pairs_ > 0) {
+  if (NumPairs() > 0) {
     SCHUR_DISPATCH_DIMS(landmark_dim_, pair_block_dim_, {
-      EliminatePairsKernel<DE, DP><<<Blocks(num_pairs_), kThreads, 0, stream>>>(
-          num_pairs_, pm_entry_offsets_.data(), entry_jacobian_.data(), entry_meta_.data(),
-          pm_landmark_.data(), pm_block_.data(), jacobians_, landmark_hessian_.data(),
-          num_landmarks_, landmark_natural_col_.data(), block_natural_col_.data(),
-          block_col_.data(), diag_block_.data(), s_value_offsets_.data(), rhs.data(), mod,
-          pair_v_.data(), s_values_.data(), reduced_rhs_.data(), failure_.data());
+      EliminatePairsKernel<DE, DP><<<Blocks(NumPairs()), kThreads, 0, stream>>>(
+          NumPairs(), pairs_.entry_offsets.data(), pairs_.entry_jacobian.data(),
+          pairs_.entry_meta.data(), pairs_.pose_major.data(), pairs_.landmark.data(),
+          pairs_.state.data(), jacobians_, landmark_hessian_.data(), NumLandmarks(),
+          pattern_.landmark_natural_col.data(), pattern_.state_natural_col.data(),
+          pattern_.state_col.data(), pattern_.state_diagonal.data(), pattern_.value_offsets.data(),
+          rhs.data(), mod, pair_v_.data(), s_values_.data(), reduced_rhs_.data(), failure_.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
-      OffDiagonalRowsKernel<DE, DP><<<num_chunks_, kThreads, 0, stream>>>(
-          chunk_row_.data(), chunk_begin_.data(), chunk_end_.data(), upper_row_offsets_.data(),
-          s_col_.data(), s_value_offsets_.data(), pm_pair_.data(), pair_landmark_.data(),
-          pair_block_.data(), pair_pm_.data(), landmark_pair_offsets_.data(), pair_v_.data(),
-          s_values_.data());
+      OffDiagonalRowsKernel<DE, DP>
+          <<<static_cast<unsigned>(pairs_.chunks.size()), kThreads, 0, stream>>>(
+              pairs_.chunks.data(), pattern_.upper_row_offsets.data(), pattern_.upper_col.data(),
+              pattern_.value_offsets.data(), pairs_.pose_major.data(), pairs_.landmark.data(),
+              pairs_.state.data(), pairs_.pose_major_position.data(),
+              pairs_.landmark_offsets.data(), pair_v_.data(), s_values_.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     });
   }
   if (num_retained_cols_ > 0) {
     FinalizeDiagonalKernel<<<Blocks(num_retained_cols_), kThreads, 0, stream>>>(
-        num_retained_cols_, col_natural_.data(), col_diag_value_.data(), mod, s_values_.data());
+        num_retained_cols_, pattern_.col_natural.data(), pattern_.col_diagonal.data(), mod,
+        s_values_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-  const int nnz = static_cast<int>(csr_src_.size());
+  const int nnz = static_cast<int>(pattern_.csr_source.size());
   if (nnz > 0) {
-    ExpandKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, csr_src_.data(), s_values_.data(),
-                                                       reduced_.values.data());
+    ExpandKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, pattern_.csr_source.data(),
+                                                       s_values_.data(), reduced_.values.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 }
@@ -1855,18 +1951,18 @@ bool SchurSystem::Solve(cudaStream_t stream, const dvector<float> &rhs, dvector<
   step.resize(num_cols_);
   if (num_retained_cols_ > 0) {
     ScatterRetainedKernel<<<Blocks(num_retained_cols_), kThreads, 0, stream>>>(
-        num_retained_cols_, col_natural_.data(), reduced_step_.data(), step.data());
+        num_retained_cols_, pattern_.col_natural.data(), reduced_step_.data(), step.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
-  if (num_landmarks_ > 0) {
+  if (NumLandmarks() > 0) {
     const Modifiers mod{ColumnScale() ? ColumnScale()->data() : nullptr,
                         Mask() ? Mask()->data() : nullptr, Damping() ? Damping()->data() : nullptr};
     SCHUR_DISPATCH_DIMS(landmark_dim_, pair_block_dim_, {
-      BackSubstituteKernel<DE, DP><<<Blocks(num_landmarks_), kThreads, 0, stream>>>(
-          num_landmarks_, num_pairs_, landmark_pair_offsets_.data(), pair_block_.data(),
-          pair_pm_.data(), landmark_hessian_.data(), landmark_natural_col_.data(),
-          block_col_.data(), pair_v_.data(), reduced_step_.data(), rhs.data(), mod, step.data(),
-          failure_.data());
+      BackSubstituteKernel<DE, DP><<<Blocks(NumLandmarks()), kThreads, 0, stream>>>(
+          NumLandmarks(), NumPairs(), pairs_.landmark_offsets.data(), pairs_.state.data(),
+          pairs_.pose_major_position.data(), landmark_hessian_.data(),
+          pattern_.landmark_natural_col.data(), pattern_.state_col.data(), pair_v_.data(),
+          reduced_step_.data(), rhs.data(), mod, step.data(), failure_.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     });
   }
@@ -1878,20 +1974,20 @@ bool SchurSystem::Solve(cudaStream_t stream, const dvector<float> &rhs, dvector<
 }
 
 void SchurSystem::StepCurvature(cudaStream_t stream, const dvector<float> &step,
-                                ProblemPartition &partition, float *out) {
-  if (num_factors_ > 0) {
-    FactorCurvatureKernel<<<Blocks(num_factors_), kThreads, 0, stream>>>(
-        num_factors_, batches_.data(), num_batches_, slot_sizes_.data(), slot_offsets_.data(),
-        item_cols_.data(), evaluation_order_.data(), jacobians_, step.data(),
-        factor_curvature_.data());
+                                ProblemPartition &partition, float *out) const {
+  if (NumFactors() > 0) {
+    FactorCurvatureKernel<<<Blocks(NumFactors()), kThreads, 0, stream>>>(
+        NumFactors(), factors_.batches.data(), NumBatches(), factors_.slot_sizes.data(),
+        factors_.slot_offsets.data(), factors_.item_cols.data(), factors_.evaluation_order.data(),
+        jacobians_, step.data(), factor_curvature_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
   partition.SumFactorCosts(stream, factor_curvature_.data(), out);
 }
 
 const int *SchurSystem::EvaluationOrder(size_t batch) const {
-  if (batch >= batch_reordered_.size() || !batch_reordered_[batch]) return nullptr;
-  return evaluation_order_.data() + batch_offsets_[batch];
+  if (batch >= factors_.reordered.size() || !factors_.reordered[batch]) return nullptr;
+  return factors_.evaluation_order.data() + factors_.batch_offsets[batch];
 }
 
 }  // namespace cunls

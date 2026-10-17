@@ -61,10 +61,18 @@ def set_log_verbosity(verbosity: Verbosity) -> None:
 # ===================================================================
 
 class LinearSystemType(enum.Enum):
+    """How each iteration's linear system is formed (MinimizerOptions.linear_system)."""
+
     Assembled = ...
+    """The full normal equations, solved with sparse_linear_solver_type."""
     SchurComplement = ...
+    """Eliminate the state batches of Problem.set_eliminated_state_batches (the landmarks of a
+    bundle adjustment) and solve the reduced system with BlockSparseCholesky."""
 
 class SparseLinearSolverType(enum.Enum):
+    """Solver of the assembled system (MinimizerOptions.sparse_linear_solver_type; not used with
+    LinearSystemType.SchurComplement). Default: BlockSparseCholesky."""
+
     cuDSS = ...
     DenseLDLT = ...
     DenseCholesky = ...

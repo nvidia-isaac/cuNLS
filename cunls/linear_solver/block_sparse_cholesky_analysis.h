@@ -38,7 +38,8 @@ constexpr int kCholeskyTileRows = 64;
  * columns (in the permuted order) with identical structure below their
  * diagonal block. Panel p is a dense column-major height_p x width_p block
  * whose first width_p rows are its own columns (the diagonal block, lower
- * triangle used) and whose remaining rows are `BelowRows(p)`. The numeric
+ * triangle used) and whose remaining rows are its below rows (`below_rows`
+ * from `rows_offset`, ascending, all after the panel's columns). The numeric
  * phase processes the panels level by level: a panel's level is one more than
  * the highest level among the panels that update it, so the panels of a level
  * are independent.
@@ -51,7 +52,8 @@ struct CholeskyPlan {
     int height;       ///< Rows: width plus the rows below the diagonal block.
     int rows_offset;  ///< Offset of its below rows in below_rows.
     int64_t offset;   ///< Offset of its column-major values in the factor storage.
-    /// Offset of its factored diagonal block L_D (row-major width x width).
+    /// Offset of its factored diagonal block L_D (row-major width x width, the
+    /// reciprocals of its diagonal on the diagonal).
     int64_t diagonal_offset;
   };
 
@@ -91,7 +93,7 @@ struct CholeskyPlan {
   std::vector<Run> runs;        ///< Update runs of all panels.
   int relmap_size = 0;          ///< Entries of the relative map (see Run).
 
-  int num_levels = 0;
+  int num_levels = 0;                    ///< Levels of the schedule.
   std::vector<FactorItem> factor_items;  ///< Factor CTAs by level.
   std::vector<int> factor_offsets;       ///< num_levels + 1 offsets into factor_items.
   std::vector<UpdateItem> update_items;  ///< Update CTAs by level.
@@ -111,12 +113,18 @@ struct CholeskyPlan {
  * supervariables (groups of consecutive columns with identical patterns: a
  * state's tangent block, or several states) and their graph.
  *
- * Two fill-reducing orderings of the supervariable graph are built, minimum
- * degree and nested dissection with minimum-degree leaves, and the one with
- * the lower estimated factorization time kept (minimum degree has the least
- * fill; nested dissection keeps the level schedule short on chains such as
- * visual-inertial trajectories). Supernodes are amalgamated where that saves
- * a panel step at a bounded number of explicit zeros.
+ * Two fill-reducing orderings of the supervariable graph are built and the
+ * one with the lower estimated factorization time kept (a fixed latency per
+ * sequential panel step plus the flops):
+ *   - approximate minimum degree on the quotient graph (least fill on
+ *     irregular graphs: covisibility, bundle adjustment, random loop
+ *     closures);
+ *   - nested dissection with balanced breadth-first level-set separators and
+ *     minimum-degree leaves (short level schedules and less fill on chains
+ *     and grids: trajectories, visual-inertial windows, pose graphs with
+ *     local loop closures).
+ * Fundamental supernodes are amalgamated with their parents where that saves
+ * a panel step at no more than 50% explicit zeros, then cut into panels.
  *
  * @param n Matrix size.
  * @param supervariable_start First column of every supervariable, then n.

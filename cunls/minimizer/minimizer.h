@@ -167,10 +167,6 @@ struct MinimizerOptions {
 
   /**
    * @brief How each iteration's linear system is formed; see LinearSystemType.
-   *
-   * `SchurComplement` eliminates the state batches the problem declares with
-   * Problem::SetEliminatedStateBatches (landmarks) and solves the reduced
-   * system with BlockSparseCholeskySolver (no external dependency).
    * Default: Assembled.
    */
   LinearSystemType linear_system = LinearSystemType::Assembled;
@@ -188,6 +184,10 @@ struct MinimizerOptions {
    * When false, the minimizer enables all optional runtime validation
    * that can catch numerical problems early.  Currently this covers
    * post-factorization checks in the linear solver:
+   *  - BlockSparseCholesky: the read-back of the pivot-failure flag (a
+   *    clearly negative or non-finite pivot).
+   *  - SchurComplement: the read-back of the landmark-block failure flag (a
+   *    landmark block that cannot be factored even with a diagonal shift).
    *  - Cholesky: cuSOLVER devInfo after potrf and potrs (non-SPD or
    *    invalid-parameter detection).
    *  - QR: diagonal-of-R inspection for rank deficiency.
@@ -318,18 +318,18 @@ struct MinimizerSystem {
   NumericDiffJacobianBuilder numeric_diff;      ///< Jacobians of kNumeric residual batches.
   dvector<float> residuals;                     ///< Residuals of every active factor.
   PerFactorJacobians factor_jacobians;          ///< Dense Jacobian block of every factor.
-  dvector<float *> item_state_pointers;  ///< State pointers in LinearSystem::EvaluationOrder().
-  dvector<float> rhs;                    ///< -Jᵀr (scaled and masked like the system).
-  dvector<float> column_scale;           ///< S of ColumnScaling::HessianDiagonal.
-  dvector<float> step;                   ///< The step δ, one entry per reduced row.
+  dvector<float> rhs;                           ///< -Jᵀr (scaled and masked like the system).
+  dvector<float> column_scale;                  ///< S of ColumnScaling::HessianDiagonal.
+  dvector<float> step;                          ///< The step δ, one entry per free column.
 };
 
 /** @brief Scratch buffers and read-back slots. */
 struct MinimizerScratch {
-  dvector<uint8_t> buffer;        ///< Per-factor costs, residuals and workspaces.
-  dvector<float> d_scalars;       ///< Device scalars: totals and read-back slots.
-  PinnedVector<float> h_scalars;  ///< Host mirror of d_scalars.
-  dvector<float> d_partials;      ///< Reduction partials.
+  dvector<uint8_t> buffer;               ///< Per-factor costs, residuals and workspaces.
+  dvector<float> d_scalars;              ///< Device scalars: totals and read-back slots.
+  PinnedVector<float> h_scalars;         ///< Host mirror of d_scalars.
+  dvector<float> d_partials;             ///< Reduction partials.
+  dvector<float *> item_state_pointers;  ///< State pointers in LinearSystem::EvaluationOrder().
 };
 
 /**
@@ -342,10 +342,13 @@ void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOption
                     StateBatchOps &state_ops, MinimizerSystem &system);
 
 /**
- * @brief The linear system MinimizerOptions::linear_system selects, with the
- * solver of MinimizerOptions::sparse_linear_solver_type.
+ * @brief The linear system MinimizerOptions::linear_system selects: the
+ * assembled normal equations with the solver of
+ * MinimizerOptions::sparse_linear_solver_type, or the Schur complement with
+ * BlockSparseCholesky (sparse_linear_solver_type ignored, with a warning when
+ * set to another solver).
  *
- * @throws std::invalid_argument for an unsupported combination.
+ * @throws std::invalid_argument for an unknown LinearSystemType.
  */
 std::unique_ptr<LinearSystem> CreateLinearSystem(const MinimizerOptions &options);
 
@@ -365,8 +368,8 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
  * @brief Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer.
  *
  * Minimizes the problem's total cost, ½ Σ ρ(‖r‖²), by repeating:
- *   1. build the normal equations H δ = -g at the current states (with
- *      column scaling),
+ *   1. build the linear system H δ = -g at the current states (LinearSystem;
+ *      with column scaling),
  *   2. let the subclass update them (UpdateSystem),
  *   3. solve for the step δ,
  *   4. evaluate the cost at the trial states, shortening δ by line search
@@ -374,6 +377,11 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
  *   5. let the subclass classify each step (ClassifySteps),
  *   6. take or reject each step, and stop each subproblem that converged or
  *      hit the rejection cap (MinimizerOptions::max_consecutive_rejected_steps).
+ *
+ * When the only subproblem rejects its step, the states are unchanged and
+ * the linearization is kept: the next iteration redoes step 2 only (new
+ * damping), unless InnerSolve::restrict_system is set. With
+ * RejectsFailedSolves() a failed solve in step 3 counts as a rejected step.
  *
  * A problem made of independent subproblems (Problem::SetProblemPartition)
  * is solved in one linear system, but every decision in steps 4 to 6 is
@@ -461,13 +469,13 @@ class Minimizer {
    *
    * @param stream CUDA stream; enqueue only, do not synchronize.
    * @param system The linear system the step was solved from.
-   * @param step The (possibly shortened) step δ, one entry per reduced row.
+   * @param step The (possibly shortened) step δ, one entry per free column.
    * @param partition Subproblems with current cost (Cost), trial cost
    *        (NewCost) and ‖δ‖² (StepSquared); write Reject() and Converged()
    *        only.
    */
-  virtual void ClassifySteps(cudaStream_t stream, LinearSystem &system, const dvector<float> &step,
-                             ProblemPartition &partition) = 0;
+  virtual void ClassifySteps(cudaStream_t stream, const LinearSystem &system,
+                             const dvector<float> &step, ProblemPartition &partition) = 0;
 
   /**
    * @brief Whether a failed linear solve (LinearSystem::Solve() returning
@@ -484,7 +492,7 @@ class Minimizer {
   // Implementation state; the behaviour lives in minimizer.cu.
   const MinimizerOptions options_;
   internal::MinimizerStructure structure_;  ///< Cached setup of the last problem.
-  internal::MinimizerSystem system_;        ///< Linearization, normal equations, step.
+  internal::MinimizerSystem system_;        ///< Linearization, linear system, step.
   internal::MinimizerScratch scratch_;      ///< Buffers and read-back slots.
   StateBatchOps state_ops_;                 ///< Manifold plus and tangent layout.
   ProblemPartition partition_;              ///< Subproblems and their step bookkeeping.

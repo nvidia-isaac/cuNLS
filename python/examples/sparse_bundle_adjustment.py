@@ -84,9 +84,10 @@ def main():
     assert problem.check_consistency(), "Problem consistency check failed"
 
     # 6. Solve with Levenberg-Marquardt. The points are eliminated with a Schur
-    #    complement: each iteration solves only the reduced camera system (6
-    #    unknowns per free pose, sparse Cholesky) and recovers every point from it,
-    #    which is exact and much cheaper than solving for poses and points together.
+    #    complement: each point only connects to poses, so its 3x3 block is
+    #    eliminated in closed form, the reduced camera system (6 unknowns per free
+    #    pose) is factored by BlockSparseCholesky, and every point is recovered
+    #    from it. The step is the exact solution of the full system, much cheaper.
     problem.set_eliminated_state_batches([point_states])
     options = pycunls.LevenbergMarquardtMinimizerOptions()
     options.base_options.max_num_iterations = 80

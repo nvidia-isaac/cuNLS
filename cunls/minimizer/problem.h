@@ -338,9 +338,13 @@ class Problem {
    * eliminates (the landmarks of a bundle adjustment).
    *
    * Every factor may touch at most one non-constant state of these batches;
-   * the batches must share one tangent size of 1 to 3. Constant states of a
-   * listed batch are not eliminated (their factors act on the other states
-   * only). Checked when the minimizer sets up the structure.
+   * the batches must share one tangent size of 1 to 3, and the states that
+   * share factors with them one tangent size of 3, 6 or 9. Constant states of
+   * a listed batch are not eliminated (their factors act on the other states
+   * only). The requirements are checked when the minimizer sets up the
+   * structure (std::invalid_argument). Without the declaration
+   * SchurComplement throws; with LinearSystemType::Assembled the declaration
+   * has no effect.
    *
    * @param batches State batches already added to this problem; an empty
    *        vector clears the declaration.

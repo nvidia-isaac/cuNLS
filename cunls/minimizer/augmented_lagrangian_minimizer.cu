@@ -369,9 +369,10 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
     if (count == 0) return false;
     LogMessage("Bounds: {} more components held", count);
   }
-  // hold_outward_kernel added the newly held components to bound_mask_, which
-  // the system holds by pointer: the next solve holds them too.
+  // hold_outward_kernel added the newly held components to bound_mask_: the
+  // next solve holds them too.
   ElementwiseMultiplyInPlace(stream, rhs.data(), bound_extra_.data(), rhs.size());
+  system.SetMask(&bound_mask_);
   return true;
 }
 

@@ -84,17 +84,15 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   bool safety_checks_ = true;    ///< Read back the failure flag after each Solve().
 
   // Device copies of the plan.
-  dvector<int> perm_;                 ///< Permuted column -> original column.
-  dvector<int4> panel_info_;          ///< Per panel: col, width, height, rows offset.
-  dvector<int64_t> panel_offset_;     ///< Per panel: factor offset.
-  dvector<int64_t> diagonal_offset_;  ///< Per panel: offset of its L_D.
-  dvector<int> below_rows_;           ///< Below rows of all panels.
-  dvector<int4> runs_;                ///< Per run: target, begin, end, relmap offset.
-  dvector<int> relmap_;               ///< Target row positions of the runs (built on device).
-  dvector<int> assembly_dst_;         ///< Per nonzero of A: its factor offset, or -1 (upper).
-  dvector<int> diagonal_index_;       ///< Per permuted column: its diagonal nonzero of A, or -1.
-  dvector<int2> factor_items_;        ///< Factor CTAs by level.
-  dvector<int4> update_items_;        ///< Update CTAs by level.
+  dvector<int> perm_;                              ///< Permuted column -> original column.
+  dvector<internal::CholeskyPlan::Panel> panels_;  ///< The panels.
+  dvector<int> below_rows_;                        ///< Below rows of all panels.
+  dvector<internal::CholeskyPlan::Run> runs_;      ///< Update runs of all panels.
+  dvector<int> relmap_;  ///< Target row positions of the runs (built on the device).
+  dvector<internal::CholeskyPlan::FactorItem> factor_items_;  ///< Factor CTAs by level.
+  dvector<internal::CholeskyPlan::UpdateItem> update_items_;  ///< Update CTAs by level.
+  dvector<int> assembly_dst_;    ///< Per nonzero of A: its factor offset, or -1 (upper).
+  dvector<int> diagonal_index_;  ///< Per permuted column: its diagonal nonzero of A, or -1.
 
   // Numeric storage.
   dvector<float> factor_;    ///< Panels of L (column-major).

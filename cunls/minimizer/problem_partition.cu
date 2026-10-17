@@ -468,7 +468,7 @@ void ProblemPartition::StepControl(cudaStream_t stream, const StepControlParams 
                                    float *d_out) {
   if (num_problems_ > 1) THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   step_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
-      params, num_problems_, cost_.data(), new_cost_.data(), StepSquared(), reject_.data(),
+      params, num_problems_, cost_.data(), new_cost_.data(), step_squared_.data(), reject_.data(),
       converged_.data(), shortened_.data(), active_.data(), rejected_.data(), accept_.data(),
       outcome_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());

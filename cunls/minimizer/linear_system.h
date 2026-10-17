@@ -50,16 +50,22 @@ enum class LinearSystemType {
 };
 
 /**
- * @brief The linear system of one minimizer iteration (internal).
+ * @brief The linear system of one minimizer iteration.
+ *
+ * Created by the minimizer (MinimizerOptions::linear_system); subclasses of
+ * Minimizer and InnerSolve::restrict_system receive it to declare their
+ * modifications. Not meant to be implemented outside the library.
  *
  * The Gauss-Newton system H δ = b at the current states, with H = JᵀJ and
  * b = -Jᵀr from the per-factor Jacobians and residuals, as modified by the
  * minimizer: a column scaling s (solve S H S z = S b), a damping a added to
  * the diagonal of S H S, and a mask m whose zero entries hold their unknowns
  * at 0. The modifications are declared with SetColumnScale(), SetDamping()
- * and SetMask() and applied by Solve(); H itself is never modified, so the
- * damping can be changed and the system solved again without a new
- * Assemble().
+ * and SetMask() (by pointer: the vectors stay owned by the caller and must
+ * outlive the next Solve()) and applied by Solve(); H itself is never
+ * modified, so the damping can be changed and the system solved again
+ * without a new Assemble(). Each new linearization starts with
+ * ClearModifications().
  *
  * Implementations: NormalEquations (assembles H and hands it to a
  * SparseLinearSolver) and SchurSystem (eliminates the landmark states and
@@ -119,6 +125,10 @@ class LinearSystem {
    * with the system as currently modified. Called once per structure, after
    * the first Assemble() and before the first Solve().
    *
+   * @param stream CUDA stream.
+   * @param problem The problem of Initialize().
+   * @param rhs Right-hand side vector (sizes the solver's setup).
+   * @param step Solution vector (sizes the solver's setup; not written).
    * @return false if the solver rejects the system.
    */
   virtual bool PrepareSolver(cudaStream_t stream, const Problem &problem, const dvector<float> &rhs,
@@ -145,7 +155,7 @@ class LinearSystem {
    * @param[out] out Device array of partition.NumProblems() floats.
    */
   virtual void StepCurvature(cudaStream_t stream, const dvector<float> &step,
-                             ProblemPartition &partition, float *out) = 0;
+                             ProblemPartition &partition, float *out) const = 0;
 
   /**
    * @brief Column scale s, or nullptr for none. Not copied: the vector must
@@ -165,6 +175,13 @@ class LinearSystem {
    * their right-hand side). Not copied, as SetColumnScale().
    */
   void SetMask(const dvector<float> *mask) { mask_ = mask; }
+
+  /** @brief Clears the column scale, damping and mask (a new linearization). */
+  void ClearModifications() {
+    column_scale_ = nullptr;
+    damping_ = nullptr;
+    mask_ = nullptr;
+  }
 
   /** @brief diag(S H S): the diagonal of the scaled, undamped system. */
   void ExtractScaledHessianDiagonal(cudaStream_t stream, dvector<float> &diagonal) const;

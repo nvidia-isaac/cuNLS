@@ -104,10 +104,11 @@ int main() {
     }
 
     // 6. Solve with Levenberg-Marquardt; the result is written into poses / points.
-    //    The points are eliminated with a Schur complement: each iteration
-    //    solves only the reduced camera system (6 unknowns per free pose, by a
-    //    sparse Cholesky) and recovers every point from it, which is exact and much
-    //    cheaper than solving for poses and points together.
+    //    The points are eliminated with a Schur complement: each point only
+    //    connects to poses, so its 3x3 block is eliminated in closed form, the
+    //    reduced camera system (6 unknowns per free pose) is factored by
+    //    BlockSparseCholesky, and every point is recovered from it. The step is
+    //    the exact solution of the full system, much cheaper to compute.
     problem.SetEliminatedStateBatches({&point_states});
     cunls::LevenbergMarquardtMinimizerOptions options;
     options.base_options.max_num_iterations = 80;

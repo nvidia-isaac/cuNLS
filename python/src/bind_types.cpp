@@ -88,14 +88,25 @@ void bind_types(nb::module_ &m) {
 
   // --- Enumerations for solver/multiplier strategy selection ---
 
-  nb::enum_<cunls::SparseLinearSolverType>(m, "SparseLinearSolverType")
-      .value("cuDSS", cunls::SparseLinearSolverType::cuDSS)
-      .value("DenseLDLT", cunls::SparseLinearSolverType::DenseLDLT)
-      .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky)
-      .value("DenseQR", cunls::SparseLinearSolverType::DenseQR)
-      .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG)
-      .value("BlockTridiagonal", cunls::SparseLinearSolverType::BlockTridiagonal)
-      .value("BlockSparseCholesky", cunls::SparseLinearSolverType::BlockSparseCholesky);
+  nb::enum_<cunls::SparseLinearSolverType>(
+      m, "SparseLinearSolverType",
+      "Solver of the assembled system (MinimizerOptions.sparse_linear_solver_type; not used "
+      "with LinearSystemType.SchurComplement). Default: BlockSparseCholesky.")
+      .value("cuDSS", cunls::SparseLinearSolverType::cuDSS,
+             "NVIDIA cuDSS sparse direct solver (optional dependency, loaded at run time).")
+      .value("DenseLDLT", cunls::SparseLinearSolverType::DenseLDLT,
+             "Dense pivoted LDLT (small systems).")
+      .value("DenseCholesky", cunls::SparseLinearSolverType::DenseCholesky,
+             "Dense cuSOLVER Cholesky (small SPD systems).")
+      .value("DenseQR", cunls::SparseLinearSolverType::DenseQR,
+             "Dense cuSOLVER QR (small non-singular systems).")
+      .value("BlockSparsePCG", cunls::SparseLinearSolverType::BlockSparsePCG,
+             "Block-Jacobi preconditioned conjugate gradient (inexact steps); for graphs with "
+             "many long-range random edges.")
+      .value("BlockTridiagonal", cunls::SparseLinearSolverType::BlockTridiagonal,
+             "Block-tridiagonal Cholesky of stage-ordered problems (Problem.set_state_stages).")
+      .value("BlockSparseCholesky", cunls::SparseLinearSolverType::BlockSparseCholesky,
+             "Supernodal sparse Cholesky on the GPU (default; exact steps, no dependencies).");
 
   nb::enum_<cunls::LinearSystemType>(m, "LinearSystemType",
                                      "How each iteration's linear system is formed "

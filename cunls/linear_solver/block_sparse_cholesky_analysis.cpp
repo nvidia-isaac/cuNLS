@@ -528,15 +528,11 @@ double EstimatedMicroseconds(const Symbolic &s) {
 
 }  // namespace
 
-CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
-                             const std::vector<int> &adjacency_offsets,
-                             const std::vector<int> &adjacency) {
-  CholeskyPlan plan;
-  plan.n = n;
-  plan.num_levels = 0;
-  plan.factor_offsets = {0};
-  plan.update_offsets = {0};
-  if (n == 0) return plan;
+namespace {
+
+/** The supervariable graph from its CSR adjacency. */
+Graph MakeGraph(const std::vector<int> &supervariable_start,
+                const std::vector<int> &adjacency_offsets, const std::vector<int> &adjacency) {
   Graph g;
   g.start = supervariable_start;
   const int nb = static_cast<int>(g.start.size()) - 1;
@@ -547,51 +543,49 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
     g.adj[v].assign(adjacency.begin() + adjacency_offsets[v],
                     adjacency.begin() + adjacency_offsets[v + 1]);
   }
-  plan.num_supervariables = nb;
+  return g;
+}
 
-  // Candidate orderings. Minimum degree with explicit fill costs about
-  // Σ deg² per elimination round; skip it on (nearly) dense graphs, where any
-  // ordering gives a dense factor.
-  std::vector<Symbolic> candidates;
-  std::vector<const char *> names;
-  {
-    Dissection nd(g, kCholeskyPanelWidth);
-    candidates.push_back(Factorize(g, nd.Order()));
-    names.push_back("nested dissection");
-  }
-  if (static_cast<int64_t>(adjacency.size()) < static_cast<int64_t>(nb) * nb / 4) {
+/**
+ * The symbolic factorization of the cheaper of two orderings by
+ * EstimatedMicroseconds(): nested dissection, and minimum degree unless the
+ * graph is nearly complete (any ordering then gives a dense factor). Sets the
+ * ordering's name in `name`.
+ */
+Symbolic ChooseOrdering(const Graph &g, int64_t num_edges, const char **name) {
+  const int nb = g.Size();
+  Symbolic best = Factorize(g, Dissection(g, kCholeskyPanelWidth).Order());
+  *name = "nested dissection";
+  if (num_edges < static_cast<int64_t>(nb) * nb / 4) {
     std::vector<int> all(nb), local(nb, -1);
     for (int v = 0; v < nb; ++v) all[v] = v;
-    candidates.push_back(Factorize(g, MinimumDegree(g, all, local)));
-    names.push_back("minimum degree");
-  }
-  size_t best = 0;
-  for (size_t i = 1; i < candidates.size(); ++i) {
-    if (EstimatedMicroseconds(candidates[i]) < EstimatedMicroseconds(candidates[best])) best = i;
-  }
-  Symbolic &s = candidates[best];
-  plan.ordering = names[best];
-  plan.flops = s.flops;
-  plan.num_supernodes = static_cast<int>(s.supernodes.size());
-
-  // Scalar permutation: vertices in order, their columns consecutive.
-  std::vector<int> first(nb + 1, 0);
-  for (int k = 0; k < nb; ++k) first[k + 1] = first[k] + g.weight[s.order[k]];
-  plan.perm.resize(n);
-  std::vector<int> iperm(n);
-  for (int k = 0; k < nb; ++k) {
-    const int v = s.order[k];
-    for (int t = 0; t < g.weight[v]; ++t) {
-      plan.perm[first[k] + t] = g.start[v] + t;
-      iperm[g.start[v] + t] = first[k] + t;
+    Symbolic md = Factorize(g, MinimumDegree(g, all, local));
+    if (EstimatedMicroseconds(md) < EstimatedMicroseconds(best)) {
+      best = std::move(md);
+      *name = "minimum degree";
     }
   }
+  return best;
+}
 
-  // Panels: supernodes cut into kCholeskyPanelWidth-column pieces.
-  std::vector<int> col_panel(n);
+/**
+ * The scalar permutation (supervariables in order, their columns consecutive)
+ * and the panels: supernodes cut into kCholeskyPanelWidth-column pieces.
+ * Returns the panel of each (permuted) column.
+ */
+std::vector<int> BuildPanels(const Graph &g, const Symbolic &s, CholeskyPlan &plan) {
+  const int nb = g.Size();
+  std::vector<int> first(nb + 1, 0);  // per position: first permuted column
+  for (int k = 0; k < nb; ++k) first[k + 1] = first[k] + g.weight[s.order[k]];
+  plan.perm.resize(plan.n);
+  for (int k = 0; k < nb; ++k) {
+    const int v = s.order[k];
+    for (int t = 0; t < g.weight[v]; ++t) plan.perm[first[k] + t] = g.start[v] + t;
+  }
+  std::vector<int> col_panel(plan.n);
   for (const auto &[k0, k1] : s.supernodes) {
     const int c0 = first[k0], c1 = first[k1 + 1];
-    std::vector<int> below;
+    std::vector<int> below;  // the rows below the supernode
     for (int p : s.rows[k1]) {
       for (int c = first[p]; c < first[p + 1]; ++c) below.push_back(c);
     }
@@ -615,13 +609,21 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
   if (plan.factor_size > INT_MAX) {
     throw std::runtime_error("BlockSparseCholeskySolver: the factor exceeds 2^31 entries");
   }
+  return col_panel;
+}
+
+/**
+ * The level schedule: a panel's level is one more than the highest level of
+ * the panels that update it. Then per level the factor items, the runs of
+ * each panel's below rows by target panel with their update items, and
+ * whether no two panels of the level update the same target.
+ */
+void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
   const int np = static_cast<int>(plan.panels.size());
   auto below_of = [&](int p) {
     const auto &panel = plan.panels[p];
     return std::make_pair(plan.below_rows.data() + panel.rows_offset, panel.height - panel.width);
   };
-
-  // Levels: a panel after every panel that updates it.
   std::vector<int> level(np, 0);
   for (int p = 0; p < np; ++p) {
     const auto [rows, count] = below_of(p);
@@ -632,7 +634,6 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
   }
   plan.num_levels = np > 0 ? *std::max_element(level.begin(), level.end()) + 1 : 0;
 
-  // Runs, relative maps and the work items, by level.
   std::vector<std::vector<CholeskyPlan::FactorItem>> factor_by_level(plan.num_levels);
   std::vector<std::vector<CholeskyPlan::UpdateItem>> update_by_level(plan.num_levels);
   std::vector<std::tuple<int, int, int>> targets;  // (level, target, source)
@@ -677,6 +678,24 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
                              update_by_level[l].end());
     plan.update_offsets.push_back(static_cast<int>(plan.update_items.size()));
   }
+}
+
+}  // namespace
+
+CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
+                             const std::vector<int> &adjacency_offsets,
+                             const std::vector<int> &adjacency) {
+  CholeskyPlan plan;
+  plan.n = n;
+  plan.factor_offsets = {0};
+  plan.update_offsets = {0};
+  if (n == 0) return plan;
+  const Graph g = MakeGraph(supervariable_start, adjacency_offsets, adjacency);
+  plan.num_supervariables = g.Size();
+  const Symbolic s = ChooseOrdering(g, static_cast<int64_t>(adjacency.size()), &plan.ordering);
+  plan.flops = s.flops;
+  plan.num_supernodes = static_cast<int>(s.supernodes.size());
+  Schedule(BuildPanels(g, s, plan), plan);
   return plan;
 }
 

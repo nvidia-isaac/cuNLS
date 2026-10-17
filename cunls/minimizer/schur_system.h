@@ -29,9 +29,10 @@
 
 namespace cunls {
 
+namespace internal {
 namespace schur {
 
-/** @brief Per residual batch geometry, for kernels that walk all factors. */
+/** @brief Per residual batch geometry, for kernels that walk all factors (internal). */
 struct BatchGeometry {
   long long jacobian_offset;  ///< Start of the batch in the Jacobian buffer.
   long long residual_offset;  ///< Start of the batch in the residual buffer.
@@ -43,7 +44,7 @@ struct BatchGeometry {
   int col_offset;             ///< Start of the batch in HessianStructureBuilder::FactorCols().
 };
 
-/** @brief A state batch's range of free columns and its role in the elimination. */
+/** @brief A state batch's range of free columns and its role in the elimination (internal). */
 struct ColumnRange {
   int first_col;   ///< First free column of the batch.
   int end_col;     ///< One past its last free column.
@@ -53,10 +54,14 @@ struct ColumnRange {
 };
 
 }  // namespace schur
+}  // namespace internal
 
 /**
  * @brief The linear system with the landmark states eliminated
  * (LinearSystemType::SchurComplement).
+ *
+ * (Here S is the Schur complement; the column scale of LinearSystem is
+ * applied to the full system before the elimination.)
  *
  * Partitions the free columns into the eliminated landmarks e (the batches of
  * Problem::SetEliminatedStateBatches) and the retained states r. No factor
@@ -143,7 +148,7 @@ class SchurSystem : public LinearSystem {
 
   /** @brief δᵀHδ per subproblem as Σ over factors of ‖J_f δ_f‖². */
   void StepCurvature(cudaStream_t stream, const dvector<float> &step, ProblemPartition &partition,
-                     float *out) override;
+                     float *out) const override;
 
   /** @brief The reduced system S of the last Solve() (full scalar CSR, for tests). */
   const CSRSparseMatrix &ReducedMatrix() const { return reduced_; }
@@ -152,85 +157,109 @@ class SchurSystem : public LinearSystem {
   int NumRetainedColumns() const { return num_retained_cols_; }
 
  private:
+  /// Temporaries shared by the setup phases (defined in the implementation).
+  struct SetupScratch;
+
+  // Setup phases of Initialize(), in order.
+  /** @brief Batch geometry, slot tables, and the landmark and retained numbering. */
+  void SetUpGeometry(cudaStream_t stream, const Problem &problem, SetupScratch &scratch);
+  /** @brief Classifies the factors and checks the requirements of the class comment. */
+  void ClassifyFactors(cudaStream_t stream, SetupScratch &scratch);
+  /** @brief The (retained state, landmark) pairs and their pose-major order. */
+  void BuildPairs(cudaStream_t stream, SetupScratch &scratch);
+  /** @brief The pose-major entries and the Jacobian evaluation order. */
+  void BuildEvaluationOrder(cudaStream_t stream, const std::vector<bool> &reorderable,
+                            SetupScratch &scratch);
+  /** @brief The block pattern of S and the maps that write into it. */
+  void BuildReducedPattern(cudaStream_t stream, SetupScratch &scratch);
+  /** @brief The scalar CSR of S handed to the solver. */
+  void BuildReducedCsr(cudaStream_t stream, SetupScratch &scratch);
+  /** @brief The per-solve buffers. */
+  void AllocateNumericBuffers(cudaStream_t stream, const SetupScratch &scratch);
+
   /** @brief Builds S and g from the current Jacobians and declared modifications. */
   void FormReducedSystem(cudaStream_t stream, const dvector<float> &rhs);
 
-  SparseLinearSolverPtr solver_;  ///< Solver of the reduced system.
-  /// Layout and per-(factor, slot) columns of the problem.
-  HessianStructureBuilder structure_;
+  /** @brief Per residual batch and per factor: where its Jacobians, slots and landmark are. */
+  struct FactorTables {
+    dvector<internal::schur::BatchGeometry> batches;  ///< Per residual batch.
+    std::vector<int> batch_offsets;  ///< Per residual batch: its first factor (global index).
+    std::vector<bool> reordered;     ///< Per residual batch: evaluated in evaluation_order.
+    dvector<int> slot_sizes;         ///< Per (batch, slot): tangent size.
+    dvector<int> slot_offsets;       ///< Per (batch, slot): first Jacobian column of the slot.
+    dvector<int> landmark;           ///< Per factor: its landmark, or -1.
+    dvector<int> landmark_slot;      ///< Per factor: its landmark's slot, or -1.
+    dvector<int> item;               ///< Per factor: its item (position in its batch's evaluation).
+    dvector<int> evaluation_order;   ///< Per item, batches concatenated: its batch-local factor.
+    dvector<int> item_cols;          ///< HessianStructureBuilder::FactorCols() in item order.
+  };
 
-  // ---- Problem geometry ----
-  int num_cols_ = 0;        ///< Free columns of the full system.
-  int num_factors_ = 0;     ///< Active factors over all residual batches.
-  int num_batches_ = 0;     ///< Residual batches.
-  int num_ranges_ = 0;      ///< State batches with free columns.
-  int landmark_dim_ = 0;    ///< DE: tangent size of the landmarks.
-  int pair_block_dim_ = 0;  ///< DP: tangent size of the retained states paired with landmarks.
-  dvector<schur::BatchGeometry> batches_;  ///< Per residual batch.
-  dvector<int> slot_sizes_;                ///< Per (batch, slot): tangent size.
-  dvector<int> slot_offsets_;           ///< Per (batch, slot): first Jacobian column of the slot.
-  dvector<schur::ColumnRange> ranges_;  ///< Per state batch with free columns.
+  /**
+   * @brief The (retained state, landmark) pairs that share factors, numbered
+   * landmark-major, and their entries (one per landmark factor and retained
+   * slot) in pose-major order, the order of V and of the Jacobians.
+   */
+  struct PairTables {
+    dvector<int> landmark;              ///< Per pair: its landmark.
+    dvector<int> state;                 ///< Per pair: its retained state (block row of S).
+    dvector<int> landmark_offsets;      ///< Per landmark: its pairs [offset, next).
+    dvector<int> pose_major;            ///< Pose-major position -> pair.
+    dvector<int> pose_major_position;   ///< Pair -> pose-major position.
+    dvector<int> entry_offsets;         ///< Per pose-major pair: its entries [offset, next).
+    dvector<long long> entry_jacobian;  ///< Per entry: its factor's first Jacobian value.
+    dvector<long long> entry_residual;  ///< Per entry: its factor's first residual.
+    /// Per entry: retained slot column | landmark slot column << 8 | m << 16 | n << 24.
+    dvector<int> entry_meta;
+    /// Off-diagonal pass, one CTA each: retained state, pose-major pairs [begin, end).
+    dvector<int3> chunks;
+  };
 
-  // ---- Elimination plan ----
-  int num_landmarks_ = 0;              ///< L.
-  int num_blocks_ = 0;                 ///< Retained states (blocks of S).
-  int num_pairs_ = 0;                  ///< P: distinct (retained state, landmark) pairs.
-  int num_entries_ = 0;                ///< (landmark factor, retained slot) entries.
-  int num_rr_ = 0;                     ///< (factor, retained slot, retained slot) items of C^R.
-  long long num_cliques_ = 0;          ///< Σ_i k_i (k_i - 1) / 2 off-diagonal clique products.
-  int num_retained_cols_ = 0;          ///< Columns of S.
-  dvector<int> factor_landmark_;       ///< Per factor: its landmark, or -1.
-  dvector<int> factor_eslot_;          ///< Per factor: its landmark's slot, or -1.
-  dvector<int> pair_landmark_;         ///< Per pair (landmark-major): its landmark.
-  dvector<int> pair_block_;            ///< Per pair: its retained state (block of S).
-  dvector<int> pm_landmark_;           ///< Per pose-major pair: its landmark.
-  dvector<int> pm_block_;              ///< Per pose-major pair: its retained state.
-  dvector<int> pm_entry_offsets_;      ///< Per pose-major pair: its entries [offset, next).
-  dvector<long long> entry_jacobian_;  ///< Per pose-major entry: its factor's first Jacobian value.
-  dvector<long long> entry_residual_;  ///< Per pose-major entry: its factor's first residual.
-  /// Per pose-major entry: retained slot column | landmark slot column << 8 | m << 16 | n << 24.
-  dvector<int> entry_meta_;
-  dvector<int> factor_item_;        ///< Per factor: its item (position in its batch's evaluation).
-  dvector<int> evaluation_order_;   ///< Per item, batches concatenated: its batch-local factor.
-  dvector<int> item_cols_;          ///< HessianStructureBuilder::FactorCols() in item order.
-  std::vector<int> batch_offsets_;  ///< Per residual batch: its first factor (global index).
-  std::vector<bool> batch_reordered_;   ///< Per residual batch: evaluated in evaluation_order_.
-  dvector<int> landmark_pair_offsets_;  ///< Per landmark: its pairs [offset, next).
-  dvector<int> pm_pair_;                ///< Pose-major position -> pair.
-  dvector<int> pair_pm_;                ///< Pair -> pose-major position (V is stored pose-major).
-  dvector<long long> clique_offsets_;   ///< Per landmark: start of its clique products (setup).
-  int num_chunks_ = 0;                  ///< CTAs of the off-diagonal pass.
-  dvector<int> chunk_row_;              ///< Per chunk: its retained state (block row of S).
-  dvector<int> chunk_begin_;            ///< Per chunk: its pose-major pairs [begin, end).
-  dvector<int> chunk_end_;              ///< Per chunk: one past its last pose-major pair.
-  dvector<int> upper_row_offsets_;  ///< Per retained state: its upper blocks of S [offset, next).
-  dvector<int> s_col_;              ///< Per block of S (upper): its column block.
-  dvector<int> rr_factor_;          ///< Per C^R item: its factor.
-  dvector<int> rr_slots_;           ///< Per C^R item: slot a | slot b << 8 | transposed << 16.
-  dvector<int> rr_block_;           ///< Per C^R item: its block of S.
-  dvector<int> block_dim_;          ///< Per retained state: tangent size.
-  dvector<int> block_col_;          ///< Per retained state: first column of S.
-  dvector<int> block_natural_col_;  ///< Per retained state: first free column of the full system.
-  dvector<int> diag_block_;         ///< Per retained state: its diagonal block of S.
-  dvector<int> s_value_offsets_;    ///< Per block of S (upper): first value.
-  dvector<int> col_natural_;        ///< Per column of S: free column of the full system.
-  dvector<int> col_diag_value_;     ///< Per column of S: position of its diagonal in s_values_.
-  dvector<int> landmark_natural_col_;  ///< Per landmark: first free column of the full system.
-  dvector<int> csr_src_;               ///< Per nonzero of reduced_: position in s_values_.
+  /** @brief The pattern of S and the maps that write into it and expand it. */
+  struct ReducedPattern {
+    dvector<int> state_col;             ///< Per retained state: first column of S.
+    dvector<int> state_natural_col;     ///< Per retained state: first column of the full system.
+    dvector<int> state_diagonal;        ///< Per retained state: its diagonal block of S.
+    dvector<int> landmark_natural_col;  ///< Per landmark: first column of the full system.
+    dvector<int> upper_row_offsets;  ///< Per retained state: its upper blocks of S [offset, next).
+    dvector<int> upper_col;          ///< Per block of S (upper): its column block.
+    dvector<int> value_offsets;      ///< Per block of S (upper): its first value (row-major).
+    dvector<int> rr_factor;          ///< Per C^R item: its factor.
+    dvector<int> rr_slots;           ///< Per C^R item: slot a | slot b << 8 | transposed << 16.
+    dvector<int> rr_block;           ///< Per C^R item: its block of S.
+    dvector<int> col_natural;        ///< Per column of S: column of the full system.
+    dvector<int> col_diagonal;       ///< Per column of S: position of its diagonal value.
+    dvector<int> csr_source;         ///< Per nonzero of the scalar CSR: position in the values.
+  };
 
-  // ---- Numeric state ----
+  int NumFactors() const { return static_cast<int>(factors_.landmark.size()); }
+  int NumBatches() const { return static_cast<int>(factors_.batches.size()); }
+  int NumLandmarks() const { return static_cast<int>(pattern_.landmark_natural_col.size()); }
+  int NumRetainedStates() const { return static_cast<int>(pattern_.state_col.size()); }
+  int NumPairs() const { return static_cast<int>(pairs_.landmark.size()); }
+
+  SparseLinearSolverPtr solver_;       ///< Solver of the reduced system.
+  bool check_failures_ = false;        ///< See the constructor.
+  HessianStructureBuilder structure_;  ///< Layout and per-(factor, slot) columns.
+
+  int num_cols_ = 0;           ///< Free columns of the full system.
+  int num_retained_cols_ = 0;  ///< Columns of S.
+  int landmark_dim_ = 0;       ///< DE: tangent size of the landmarks.
+  int pair_block_dim_ = 0;     ///< DP: tangent size of the retained states paired with landmarks.
+  FactorTables factors_;
+  PairTables pairs_;
+  ReducedPattern pattern_;
+
+  // Numeric state.
   const float *jacobians_ = nullptr;  ///< Assemble(): per-factor Jacobians.
   dvector<float> hessian_diagonal_;   ///< diag(H), unscaled.
   dvector<float> landmark_hessian_;   ///< Per landmark: upper triangle of D_i, unscaled (SoA).
   dvector<float> s_values_;           ///< S, upper block triangle, row-major blocks.
   dvector<float> pair_v_;             ///< V per pair, pose-major SoA.
+  CSRSparseMatrix reduced_;           ///< S, full scalar CSR, for the solver.
   dvector<float> reduced_rhs_;        ///< g.
   dvector<float> reduced_step_;       ///< x_r.
-  dvector<float> factor_curvature_;   ///< Per factor ‖J_f δ_f‖² (StepCurvature()).
-  CSRSparseMatrix reduced_;           ///< S, full scalar CSR, for the backend.
-  dvector<int> error_;                ///< Setup error flags.
-  bool check_failures_ = false;       ///< See the constructor.
-  dvector<int> failure_;              ///< Nonzero: a landmark block failed to factor.
+  mutable dvector<float> factor_curvature_;  ///< Per factor ‖J_f δ_f‖² (StepCurvature()).
+  dvector<int> failure_;                     ///< Nonzero: a landmark block failed to factor.
 };
 
 }  // namespace cunls

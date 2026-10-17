@@ -160,23 +160,24 @@ void LevenbergMarquardtMinimizer::UpdateSystem(cudaStream_t stream, size_t itera
     next_lambda_.resize(num_problems);
     quality_.resize(num_problems);
   }
-  // (H + λ_p diag(H)) on the rows of subproblem p, with λ updated in the same pass.
-  system.ExtractScaledHessianDiagonal(stream, diagonal_);
-  damping_.resize(diagonal_.size());
-  const size_t n = std::max(diagonal_.size(), num_problems);
+  // The damping λ_p max(diag(S H S), min_diagonal) of the rows of subproblem
+  // p, with λ updated in the same pass.
+  system.ExtractScaledHessianDiagonal(stream, scaled_diagonal_);
+  damping_.resize(scaled_diagonal_.size());
+  const size_t n = std::max(scaled_diagonal_.size(), num_problems);
   damping_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-      diagonal_.size(), num_problems, partition.RowProblem(),
+      scaled_diagonal_.size(), num_problems, partition.RowProblem(),
       DampingRule{options_.initial_lambda, options_.lambda_min, options_.lambda_max,
                   options_.lambda_upscale, options_.lambda_downscale,
                   options_.lambda_downscale_threshold, options_.min_diagonal},
       first, partition.Outcome(), partition.Rejected(), quality_.data(), lambda_.data(),
-      next_lambda_.data(), diagonal_.data(), damping_.data());
+      next_lambda_.data(), scaled_diagonal_.data(), damping_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   std::swap(lambda_, next_lambda_);
   system.SetDamping(&damping_);
 }
 
-void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, LinearSystem &system,
+void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, const LinearSystem &system,
                                                 const dvector<float> &step,
                                                 ProblemPartition &partition) {
   const size_t n = partition.NumProblems();
@@ -185,11 +186,13 @@ void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, LinearSyste
   // The predicted reduction's terms δᵀDδ and δᵀHδ, per subproblem. The step
   // is in physical coordinates (dx = S z, see ColumnScaling), so the damping
   // term λ zᵀ diag(S H S) z is λ dxᵀ diag(H) dx with the unscaled Hessian;
-  // without column scaling that is the diagonal UpdateSystem extracted.
-  const dvector<float> *hessian_diagonal = &diagonal_;
+  // without column scaling that is the diagonal UpdateSystem extracted. The
+  // min_diagonal floor is left out: it only matters for unobservable unknowns,
+  // whose step is zero.
+  const dvector<float> *hessian_diagonal = &scaled_diagonal_;
   if (Options().column_scaling != ColumnScaling::None) {
-    system.ExtractHessianDiagonal(stream, hessian_diagonal_);
-    hessian_diagonal = &hessian_diagonal_;
+    system.ExtractHessianDiagonal(stream, unscaled_diagonal_);
+    hessian_diagonal = &unscaled_diagonal_;
   }
   partition.SumRows(stream, step.data(), nullptr, hessian_diagonal->data(), diag_weight_.data());
   system.StepCurvature(stream, step, partition, matrix_weight_.data());

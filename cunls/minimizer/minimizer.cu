@@ -119,6 +119,23 @@ __global__ void GatherStatePointersKernel(size_t num_items, int num_slots, const
 }
 
 /**
+ * The state pointers of residual batch items evaluated in `order` (item t
+ * evaluates factor order[t]), gathered into `buffer`.
+ */
+float const *const *GatherItemStatePointers(cudaStream_t stream, const int *order,
+                                            float *const *state_pointers, size_t num_factors,
+                                            int num_slots, dvector<float *> &buffer) {
+  constexpr int kThreads = 256;
+  const size_t count = num_factors * num_slots;
+  if (buffer.size() < count) buffer.resize(count);
+  GatherStatePointersKernel<<<static_cast<unsigned>((count + kThreads - 1) / kThreads), kThreads, 0,
+                              stream>>>(num_factors, num_slots, order, state_pointers,
+                                        buffer.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  return buffer.data();
+}
+
+/**
  * Residuals and per-factor Jacobian blocks at `state`. Per residual batch,
  * either the FactorBatch's analytic Jacobian (ResidualBatch::Evaluate, which
  * also applies any loss function), or a finite-difference Jacobian of the raw
@@ -153,13 +170,9 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
       const size_t num_factors = factor_batch->NumActiveFactors();
       float const *const *item_ptrs = ptrs;
       if (order != nullptr && num_factors > 0) {
-        const int num_slots = static_cast<int>(factor_batch->StateSizes().size());
-        const size_t count = num_factors * num_slots;
-        if (system.item_state_pointers.size() < count) system.item_state_pointers.resize(count);
-        GatherStatePointersKernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream>>>(
-            num_factors, num_slots, order, ptrs, system.item_state_pointers.data());
-        THROW_ON_CUDA_ERROR(cudaGetLastError());
-        item_ptrs = system.item_state_pointers.data();
+        item_ptrs = GatherItemStatePointers(stream, order, ptrs, num_factors,
+                                            static_cast<int>(factor_batch->StateSizes().size()),
+                                            scratch.item_state_pointers);
       }
       CheckEvaluate(rb.Evaluate(stream, workspace_ptr, residuals_ptr, item_ptrs, nullptr,
                                 jacobian_ptr, order, order != nullptr ? num_factors : 0),
@@ -284,8 +297,13 @@ std::unique_ptr<LinearSystem> CreateLinearSystem(const MinimizerOptions &options
     case LinearSystemType::Assembled:
       return std::make_unique<NormalEquations>(create_solver(options.sparse_linear_solver_type));
     case LinearSystemType::SchurComplement:
-      // The reduced system is sparse (dense covisibility, or banded for
-      // visual-inertial chains) and must be solved exactly.
+      // The reduced system has a sparse block pattern (dense covisibility
+      // blocks, banded for visual-inertial chains) and must be solved exactly.
+      if (options.sparse_linear_solver_type != SparseLinearSolverType::BlockSparseCholesky) {
+        LogWarning(
+            "LinearSystemType::SchurComplement solves the reduced system with "
+            "BlockSparseCholesky; MinimizerOptions::sparse_linear_solver_type is not used");
+      }
       return std::make_unique<SchurSystem>(
           create_solver(SparseLinearSolverType::BlockSparseCholesky),
           !options.disable_safety_checks);
@@ -300,9 +318,7 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
   LinearSystem &linear_system = *system.linear_system;
   linear_system.Assemble(stream, problem, system.factor_jacobians.data(), system.residuals.data(),
                          system.rhs);
-  linear_system.SetDamping(nullptr);
-  linear_system.SetMask(nullptr);
-  linear_system.SetColumnScale(nullptr);
+  linear_system.ClearModifications();
   if (options.column_scaling != ColumnScaling::None) {
     // H_jj = ||J_{:,j}||^2: scaling by the Hessian diagonal is scaling by the
     // Jacobian column norms.
@@ -494,13 +510,14 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     if (!swap_taken) partition.CopyAccepted(stream, problem, updated, current);
     summary.num_iterations++;
     // A rejected step leaves the states, so the linearization stands: only
-    // the update (new damping) is redone (not with a restriction, which is
-    // derived from the right-hand side it masked).
+    // the update (new damping) is redone. Not with restrict_system, which
+    // zeroed right-hand side entries in place: the system is rebuilt.
     bool relinearize = true;
     if (!fixed) {
       std::tie(cost, active) = read_back(swap_taken ? 3 : 2);
-      if (swap_taken && scratch.h_scalars[2] != 0.f) std::swap(current, updated);
-      relinearize = !swap_taken || scratch.h_scalars[2] != 0.f || inner.restrict_system;
+      const bool step_taken = swap_taken && scratch.h_scalars[2] != 0.f;
+      if (step_taken) std::swap(current, updated);
+      relinearize = !swap_taken || step_taken || inner.restrict_system;
       summary.final_cost = cost;
       LogMessage("Iteration #{}: cost = {}, {} subproblems active", summary.num_iterations, cost,
                  active);

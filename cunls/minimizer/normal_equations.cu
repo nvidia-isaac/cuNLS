@@ -29,8 +29,6 @@ NormalEquations::NormalEquations(SparseLinearSolverPtr solver) : solver_(std::mo
 
 void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, int num_cols,
                                  const std::vector<bool> &) {
-  csr_dims_.Invalidate();
-
   // Two independent conditions have to hold.  The tangent dimensions must share
   // a factor, or there are no tiles to form; and the solver must be able to read
   // tiles, since a CSR-only backend is better served by a natively assembled CSR
@@ -40,6 +38,7 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
 
   if (UsesBlockStorage()) {
     assembler_.Initialize(stream, problem, num_cols, block_size_, bsr_hessian_);
+    CopyBSRSparseMatrix(stream, bsr_hessian_, bsr_lhs_);  // the pattern, once
     LogMessage("Hessian storage: BSR with block size {}", block_size_);
     return;
   }
@@ -57,12 +56,9 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
   }
 
   assembler_.Initialize(stream, problem, num_cols, csr_hessian_);
-  int num_rows = 0, num_matrix_cols = 0, num_nonzeros = 0;
-  ExtractMatrixMetadata(stream, csr_hessian_, num_rows, num_matrix_cols, num_nonzeros);
-  csr_dims_.Set(num_rows, num_matrix_cols, num_nonzeros);
-  // The pattern is fixed from here on: locate the diagonal once.
+  // The pattern is fixed from here on: copy it and locate the diagonal once.
+  CopyCSRSparseMatrix(stream, csr_hessian_, csr_lhs_);
   FindDiagonalPositions(stream, csr_hessian_, csr_diagonal_);
-  csr_lhs_pattern_ready_ = false;
 }
 
 void NormalEquations::Assemble(cudaStream_t stream, const Problem &problem, const float *jacobians,
@@ -84,7 +80,7 @@ void NormalEquations::ExtractHessianDiagonal(cudaStream_t stream, dvector<float>
 
 void NormalEquations::BuildWorkingLhs(cudaStream_t stream) {
   if (UsesBlockStorage()) {
-    CopyBSRSparseMatrix(stream, bsr_hessian_, bsr_lhs_);
+    CopyBSRValues(stream, bsr_hessian_, bsr_lhs_);
     if (ColumnScale() != nullptr) {
       ScaleSymmetric(stream, bsr_lhs_, *ColumnScale(), tile_row_scratch_);
     }
@@ -92,30 +88,25 @@ void NormalEquations::BuildWorkingLhs(cudaStream_t stream) {
     if (Mask() != nullptr) ZeroMaskedRowsColumns(stream, bsr_lhs_, *Mask());
     return;
   }
-  if (csr_lhs_pattern_ready_) {
-    CopyCSRValues(stream, csr_hessian_, csr_lhs_);
-  } else {
-    CopyCSRSparseMatrix(stream, csr_hessian_, csr_lhs_);
-    csr_lhs_pattern_ready_ = true;
-  }
+  CopyCSRValues(stream, csr_hessian_, csr_lhs_);
   if (ColumnScale() != nullptr) ScaleSymmetricCSR(stream, csr_lhs_, *ColumnScale());
   if (Damping() != nullptr) AddScaledDiagonalAt(stream, 1.f, *Damping(), csr_diagonal_, csr_lhs_);
   if (Mask() != nullptr) ZeroMaskedRowsColumns(stream, csr_lhs_, *Mask());
 }
 
 void NormalEquations::MultiplyHessian(cudaStream_t stream, const dvector<float> &x,
-                                      dvector<float> &y) {
+                                      dvector<float> &y) const {
   if (UsesBlockStorage()) {
     MultiplyBSRByDenseVector(stream, bsr_hessian_, x, y);
     return;
   }
-  MultiplyCSRByDenseVector(stream, cusparse_handle_.GetHandle(stream), csr_hessian_,
-                           csr_dims_.num_rows, csr_dims_.num_cols, csr_dims_.num_nonzeros, x, y,
-                           spmv_buffer_);
+  const int n = static_cast<int>(csr_hessian_.NumRows());
+  MultiplyCSRByDenseVector(stream, cusparse_handle_.GetHandle(stream), csr_hessian_, n, n,
+                           static_cast<int>(csr_hessian_.NumNonZeros()), x, y, spmv_buffer_);
 }
 
 void NormalEquations::StepCurvature(cudaStream_t stream, const dvector<float> &step,
-                                    ProblemPartition &partition, float *out) {
+                                    ProblemPartition &partition, float *out) const {
   hessian_step_.resize(step.size());
   MultiplyHessian(stream, step, hessian_step_);
   partition.SumRows(stream, step.data(), hessian_step_.data(), nullptr, out);

@@ -40,7 +40,7 @@ __global__ void classify_kernel(size_t num_problems, const float *cost, const fl
 
 GaussNewtonMinimizer::GaussNewtonMinimizer(const MinimizerOptions &options) : Minimizer(options) {}
 
-void GaussNewtonMinimizer::ClassifySteps(cudaStream_t stream, LinearSystem &,
+void GaussNewtonMinimizer::ClassifySteps(cudaStream_t stream, const LinearSystem &,
                                          const dvector<float> &, ProblemPartition &partition) {
   const size_t n = partition.NumProblems();
   classify_kernel<<<static_cast<unsigned>((n + kThreads - 1) / kThreads), kThreads, 0, stream>>>(

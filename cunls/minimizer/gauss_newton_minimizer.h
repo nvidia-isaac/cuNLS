@@ -50,7 +50,7 @@ class GaussNewtonMinimizer : public Minimizer {
   void UpdateSystem(cudaStream_t, size_t, LinearSystem &, const ProblemPartition &) override {}
 
   /** @brief Rejects steps that do not lower the cost; see the class comment. */
-  void ClassifySteps(cudaStream_t stream, LinearSystem &system, const dvector<float> &step,
+  void ClassifySteps(cudaStream_t stream, const LinearSystem &system, const dvector<float> &step,
                      ProblemPartition &partition) override;
 };
 

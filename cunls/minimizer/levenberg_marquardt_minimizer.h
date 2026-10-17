@@ -127,10 +127,11 @@ struct LevenbergMarquardtMinimizerOptions {
 /**
  * @brief Levenberg-Marquardt: Gauss-Newton with adaptive damping.
  *
- * Solves (H + λ diag(H)) δ = -g with one λ per subproblem. A large λ gives
- * short, gradient-like steps; a small λ gives Gauss-Newton steps. More robust
- * than GaussNewtonMinimizer far from the solution and when H is close to
- * singular.
+ * Solves (H + λ D) δ = -g with one λ per subproblem, D = max(diag(H),
+ * min_diagonal) (of the column-scaled system with column scaling). A large λ
+ * gives short, gradient-like steps; a small λ gives Gauss-Newton steps. More
+ * robust than GaussNewtonMinimizer far from the solution and when H is close
+ * to singular.
  *
  * Per subproblem, ρ = actual cost reduction / reduction predicted by the
  * linear model, ½ δᵀHδ + λ δᵀ diag(H) δ:
@@ -166,7 +167,9 @@ class LevenbergMarquardtMinimizer : public Minimizer {
   /**
    * @brief Sets every subproblem's λ to initial_lambda on iteration 0, and
    * otherwise updates it from the outcome of the previous step (see the class
-   * comment); then adds λ_p diag(H) to the rows of subproblem p.
+   * comment); then declares the damping λ_p max(diag(S H S), min_diagonal)
+   * of the rows of subproblem p (LinearSystem::SetDamping; S the column
+   * scale).
    */
   void UpdateSystem(cudaStream_t stream, size_t iteration, LinearSystem &system,
                     const ProblemPartition &partition) override;
@@ -175,19 +178,22 @@ class LevenbergMarquardtMinimizer : public Minimizer {
   bool RejectsFailedSolves() const override { return true; }
 
   /** @brief Computes ρ per subproblem and applies the rules of the class comment. */
-  void ClassifySteps(cudaStream_t stream, LinearSystem &system, const dvector<float> &step,
+  void ClassifySteps(cudaStream_t stream, const LinearSystem &system, const dvector<float> &step,
                      ProblemPartition &partition) override;
 
   const LevenbergMarquardtMinimizerOptions options_;  ///< As constructed (not widened).
 
-  dvector<float> lambda_;            ///< Per subproblem: current damping λ.
-  dvector<float> next_lambda_;       ///< Per subproblem: λ being updated (swapped with lambda_).
-  dvector<float> quality_;           ///< Per subproblem: ρ of the last step (for the λ update).
-  dvector<float> diag_weight_;       ///< Per subproblem: δᵀ diag(H) δ.
-  dvector<float> matrix_weight_;     ///< Per subproblem: δᵀ H δ.
-  dvector<float> diagonal_;          ///< Per row: diag of the scaled system (S H S).
-  dvector<float> hessian_diagonal_;  ///< Per row: diag(H) unscaled (with column scaling).
-  dvector<float> damping_;           ///< Per row: λ diag(S H S), declared to the system.
+  dvector<float> lambda_;         ///< Per subproblem: current damping λ.
+  dvector<float> next_lambda_;    ///< Per subproblem: λ being updated (swapped with lambda_).
+  dvector<float> quality_;        ///< Per subproblem: ρ of the last step (for the λ update).
+  dvector<float> diag_weight_;    ///< Per subproblem: δᵀ diag(H) δ.
+  dvector<float> matrix_weight_;  ///< Per subproblem: δᵀ H δ.
+  /// Per row: diag(S H S) of the current linearization (UpdateSystem()).
+  dvector<float> scaled_diagonal_;
+  /// Per row: diag(H), unscaled; extracted by ClassifySteps() with column scaling only.
+  dvector<float> unscaled_diagonal_;
+  /// Per row: λ max(diag(S H S), min_diagonal), declared to the system by pointer.
+  dvector<float> damping_;
 };
 
 }  // namespace cunls
