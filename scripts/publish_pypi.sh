@@ -158,17 +158,26 @@ prepare() {
 poll_release() {
     deadline=$(($(date +%s) + PYPI_TIMEOUT_SECONDS))
     while :; do
-        kitmaker "$KITMAKER_API/status/$release_uuid"
-        cp "$scratch/response" "pypi-status-$release_uuid.json"
-        state=$(jq -er '.status' "$scratch/response") || fail "$release_uuid" 'missing status' 'status JSON' 'inspect the saved response'
-        case "$state" in
-            completed) return 0 ;;
-            failed)
-                printf 'Batch outcomes (unlisted wheels may be unstarted; inspect both indexes):\n'
-                jq -r '.jobs[]? | "\(.status) \(.wheel_url)"' "$scratch/response"
-                cat "$scratch/completed"
-                fail "$release_uuid" 'failed or partially published batch' 'all wheels completed' 'inspect every wheel on both indexes; retain UUID; do not resubmit the batch' ;;
-        esac
+        http --header "Authorization: Bearer $KITMAKER_TOKEN" "$KITMAKER_API/status/$release_uuid"
+        cat "$scratch/response"; printf '\n'
+        if [ "$http_rc" -eq 0 ]; then
+            cp "$scratch/response" "pypi-status-$release_uuid.json"
+            state=$(jq -er '.status | select(type == "string" and length > 0)' "$scratch/response") || fail "$release_uuid" 'missing or invalid status' 'status JSON' 'inspect the saved response'
+            case "$state" in
+                completed) return 0 ;;
+                failed)
+                    printf 'Batch outcomes (unlisted wheels may be unstarted; inspect both indexes):\n'
+                    jq -r '.jobs[]? | "\(.status) \(.wheel_url)"' "$scratch/response"
+                    cat "$scratch/completed"
+                    fail "$release_uuid" 'failed or partially published batch' 'all wheels completed' 'inspect every wheel on both indexes; retain UUID; do not resubmit the batch' ;;
+            esac
+        else
+            case "$http_rc:$http_status" in
+                5:*|6:*|7:*|18:*|28:*|52:*|55:*|56:*|22:408|22:429|22:5??)
+                    state="transient HTTP $http_status (curl=$http_rc)" ;;
+                *) fail "$release_uuid" "HTTP $http_status, curl $http_rc" 'successful status response' 'inspect the response; check token and NVIDIA CA; do not resubmit' ;;
+            esac
+        fi
         [ "$(date +%s)" -lt "$deadline" ] || fail "$release_uuid" "$state at polling deadline" 'terminal completed state' 'inspect saved status and both indexes; do not resubmit or infer cancellation'
         printf 'POLL %s: %s; waiting %s seconds\n' "$release_uuid" "$state" "$PYPI_POLL_SECONDS"
         sleep "$PYPI_POLL_SECONDS"
