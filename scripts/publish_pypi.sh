@@ -157,10 +157,14 @@ prepare() {
 
 poll_release() {
     deadline=$(($(date +%s) + PYPI_TIMEOUT_SECONDS))
+    retry_delay=$PYPI_POLL_SECONDS
+    max_retry_delay=60
     while :; do
+        poll_delay=$PYPI_POLL_SECONDS
         http --header "Authorization: Bearer $KITMAKER_TOKEN" "$KITMAKER_API/status/$release_uuid"
         cat "$scratch/response"; printf '\n'
         if [ "$http_rc" -eq 0 ]; then
+            retry_delay=$PYPI_POLL_SECONDS
             cp "$scratch/response" "pypi-status-$release_uuid.json"
             state=$(jq -er '.status | select(type == "string" and length > 0)' "$scratch/response") || fail "$release_uuid" 'missing or invalid status' 'status JSON' 'inspect the saved response'
             case "$state" in
@@ -174,13 +178,16 @@ poll_release() {
         else
             case "$http_rc:$http_status" in
                 5:*|6:*|7:*|18:*|28:*|52:*|55:*|56:*|22:408|22:429|22:5??)
+                    poll_delay=$retry_delay
+                    [ "$poll_delay" -le "$max_retry_delay" ] || poll_delay=$max_retry_delay
+                    retry_delay=$((poll_delay * 2))
                     state="transient HTTP $http_status (curl=$http_rc)" ;;
                 *) fail "$release_uuid" "HTTP $http_status, curl $http_rc" 'successful status response' 'inspect the response; check token and NVIDIA CA; do not resubmit' ;;
             esac
         fi
         [ "$(date +%s)" -lt "$deadline" ] || fail "$release_uuid" "$state at polling deadline" 'terminal completed state' 'inspect saved status and both indexes; do not resubmit or infer cancellation'
-        printf 'POLL %s: %s; waiting %s seconds\n' "$release_uuid" "$state" "$PYPI_POLL_SECONDS"
-        sleep "$PYPI_POLL_SECONDS"
+        printf 'POLL %s: %s; waiting %s seconds\n' "$release_uuid" "$state" "$poll_delay"
+        sleep "$poll_delay"
     done
 }
 submit_projects() {
