@@ -43,4 +43,5 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pycunls/ DESTINATION pycunls
   FILES_MATCHING
     PATTERN "*.py"
     PATTERN "*.pyi"
-    PATTERN "py.typed")
+    PATTERN "py.typed"
+    PATTERN "_build_provenance.json")

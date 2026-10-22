@@ -13,3 +13,11 @@ build_tests/
 
 # Design notes are kept locally, not in the repository
 docs/design/
+
+# Generated Python release evidence
+python/pycunls/_build_provenance.json
+pypi-manifest.json
+pypi-release-uuids.txt
+pypi-status-*.json
+pypi-wheels/
+pypi-publication-record*/
