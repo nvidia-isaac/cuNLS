@@ -142,6 +142,11 @@ Notes
     startup, so setting it from inside an already-running process (for
     example via ``os.environ[...]`` in a live Python interpreter, before
     constructing a ``cuDSSLinearSolver``) has no effect on ``dlopen()``.
+  - cuDSS 1.0 compiles its kernels at run time with NVRTC, so ``libnvrtc.so``
+    of your CUDA major version must also be loadable (the CUDA Toolkit
+    ``lib64`` directory on ``LD_LIBRARY_PATH``). Compiled kernels are cached;
+    set ``CUDSS_JIT_CACHE_DIR`` to choose the cache directory. The first
+    analysis in a process takes an extra ~15-100 ms.
   - Requesting the cuDSS solver without ``libcudss.so`` reachable raises a
     ``std::runtime_error`` (Python: ``RuntimeError``) describing how to fix
     it, rather than a linker error or crash.

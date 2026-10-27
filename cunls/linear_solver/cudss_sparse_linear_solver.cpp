@@ -19,13 +19,6 @@
 
 #include <cudss.h>
 
-// cuDSS 0.8 reworked the reordering algorithm enums; releases <= 0.7.x use the
-// legacy CUDSS_ALG_* values. Gate on the version reported by the cuDSS header so
-// both prebuilt 0.7.1 and 0.8 builds compile.
-#if CUDSS_VERSION_MAJOR > 0 || CUDSS_VERSION_MINOR >= 8
-#define CUDSS_NEW_API
-#endif
-
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -34,44 +27,13 @@
 #include "cunls/common/cudss_dynamic.h"
 #include "cunls/common/cudss_helper.h"
 #include "cunls/common/log.h"
+#include "cunls/common/profiler.h"
 
 namespace cunls {
 
-/**
- * @brief Maps cuDSSLinearSolverMode to cuDSS algorithm type.
- *
- * Converts the solver configuration enum to the corresponding cuDSS algorithm
- * constant used for factorization.
- *
- * @param mode Solver mode.
- * @return cuDSS algorithm type number (0 for CUDSS_ALG_DEFAULT or 1 for
- * CUDSS_ALG_1).
- */
-int GetOrderingType(cuDSSLinearSolverMode mode) {
-#ifdef CUDSS_NEW_API
-  switch (mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      return static_cast<int>(CUDSS_REORDERING_ALG_BTF_COLAMD);
-    default:
-      return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
-  }
-#else
-  switch (mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      return static_cast<int>(CUDSS_ALG_DEFAULT);
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      return static_cast<int>(CUDSS_ALG_1);
-    default:
-      return static_cast<int>(CUDSS_ALG_DEFAULT);
-  }
-#endif
-}
-
 /** @copydoc cuDSSLinearSolver::cuDSSLinearSolver */
 cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
-    : options_(options), cudss_config_(GetOrderingType(options.mode), options.nthreads) {}
+    : options_(options), cudss_config_(options.nthreads, options.pivoting) {}
 
 /** @copydoc cuDSSLinearSolver::Initialize */
 bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*problem*/,
@@ -97,7 +59,10 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
     THROW_ON_CUDSS_ERROR(
         GetCudssApi().SetThreadingLayer(dss_handle, options_.threading_lib_path.c_str()));
   }
-  SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
+  if (pool_generation_ != cudss_handle_.Generation()) {
+    SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
+    pool_generation_ = cudss_handle_.Generation();
+  }
 
   // Create cuDSS descriptors for the matrix and vectors
   cuDSSDescription m_desc(spd_matrix);
@@ -111,17 +76,10 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
   auto cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
 
   // Perform symbolic analysis phase
-  THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_ANALYSIS, cfg, cudss_data,
-                                             desc_m, desc_result, desc_rhs));
-
-  // For FastInitSlowSolve, also perform initial factorization during
-  // initialization
-  switch (options_.mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      break;
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg,
-                                                 cudss_data, desc_m, desc_result, desc_rhs));
+  {
+    profiler::ScopedRange range("cuDSS::analysis");
+    THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_ANALYSIS, cfg, cudss_data,
+                                               desc_m, desc_result, desc_rhs));
   }
 
   return true;
@@ -148,7 +106,10 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
 
   auto dss_handle = reinterpret_cast<cudssHandle_t>(cudss_handle_.GetHandle(stream));
   assert(dss_handle != nullptr && "Invalid cuDSS handle");
-  SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
+  if (pool_generation_ != cudss_handle_.Generation()) {
+    SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
+    pool_generation_ = cudss_handle_.Generation();
+  }
   auto cudss_data = reinterpret_cast<cudssData_t>(cudss_data_.GetData(dss_handle));
 
   // Create cuDSS descriptors for the matrix and vectors
@@ -160,26 +121,34 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
   auto desc_rhs = reinterpret_cast<cudssMatrix_t>(rhs_desc.GetDescription());
   auto desc_result = reinterpret_cast<cudssMatrix_t>(result_desc.GetDescription());
 
-  // Determine factorization phase based on solver configuration
-  cudssPhase_t phase = CUDSS_PHASE_FACTORIZATION;
-  switch (options_.mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      // Standard factorization
-      break;
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      // Use refactorization for improved numerical stability
-      phase = CUDSS_PHASE_REFACTORIZATION;
-      break;
-  }
-
   cudssConfig_t cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
 
-  // Perform factorization or refactorization
-  THROW_ON_CUDSS_ERROR(
-      GetCudssApi().Execute(dss_handle, phase, cfg, cudss_data, desc_m, desc_result, desc_rhs));
+  // Perform factorization
+  {
+    profiler::ScopedRange range("cuDSS::factorization");
+    THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg,
+                                               cudss_data, desc_m, desc_result, desc_rhs));
+  }
   // Solve the linear system
-  THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_SOLVE, cfg, cudss_data, desc_m,
-                                             desc_result, desc_rhs));
+  {
+    profiler::ScopedRange range("cuDSS::solve");
+    THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_SOLVE, cfg, cudss_data,
+                                               desc_m, desc_result, desc_rhs));
+  }
+
+  if (safety_checks_) {
+    // cuDSS reports a failed factorization (e.g. a zero pivot) only through INFO, so read it back
+    // rather than return a garbage solution.
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    int info = 0;
+    size_t written = 0;
+    THROW_ON_CUDSS_ERROR(GetCudssApi().DataGet(dss_handle, cudss_data, CUDSS_DATA_INFO, &info,
+                                               sizeof(info), &written));
+    if (info != 0) {
+      LogError("cuDSS factorization failed with INFO = {}", info);
+      return false;
+    }
+  }
 
   return true;
 }

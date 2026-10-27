@@ -44,10 +44,10 @@ if(CUNLS_ENABLE_CUDSS)
   # cuDSS is fetched as a prebuilt archive purely for its headers; cunls loads
   # libcudss.so at runtime via dlopen() (see cunls/common/cudss_dynamic.h), so
   # cuDSS is an OPTIONAL runtime dependency and its binaries are never linked
-  # into or bundled with cunls. Default to 0.8.0.10; 0.7.1.4 is still supported
-  # via -DCUDSS_VERSION=0.7.1.4. CUDSS_LIB_DIR (set by add_cudss) points at the
+  # into or bundled with cunls. Requires cuDSS >= 1.0 (default 1.0.0.35).
+  # CUDSS_LIB_DIR (set by add_cudss) points at the
   # downloaded libcudss.so/.a for packaging cuDSS as a standalone artifact.
-  set(CUDSS_VERSION "0.8.0.10" CACHE STRING "cuDSS version to download")
+  set(CUDSS_VERSION "1.0.0.35" CACHE STRING "cuDSS version to download")
   set(CUDSS_PLATFORM "auto" CACHE STRING "cuDSS redistribution platform")
   set_property(CACHE CUDSS_PLATFORM PROPERTY STRINGS auto linux-x86_64 linux-aarch64 linux-sbsa)
   add_cudss(VERSION "${CUDSS_VERSION}" PLATFORM "${CUDSS_PLATFORM}")

@@ -135,8 +135,8 @@ class SparseLinearSolver {
    * memcpy, a stream synchronization, and (for LDLT) in-kernel pivot checks,
    * which can be a significant fraction of the solve time for small systems.
    *
-   * Backends with no such phase — cuDSS, which reports through its own status,
-   * and the PCG solver, which has no factorization — ignore this.  It is a
+   * cuDSS reads back its factorization INFO the same way.  The PCG solver has
+   * no factorization and ignores this.  It is a
    * hint, not a contract; see DenseLinearSolverBase for the implementation.
    */
   virtual void DisableSafetyChecks() {}

@@ -20,6 +20,7 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <vector>
 
@@ -157,9 +158,18 @@ class cuDSSHandle {
    */
   void *GetHandle(cudaStream_t stream);
 
+  /**
+   * @brief Number of cuDSS handles created so far.
+   *
+   * Changes whenever GetHandle() replaces the handle, so callers can tell a
+   * new handle from the old one even if the allocator reuses its address.
+   */
+  uint64_t Generation() const { return generation_; }
+
  private:
   cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
   void *handle_ = nullptr;         ///< The cuDSS handle.
+  uint64_t generation_ = 0;        ///< Count of handles created.
 };
 
 /**
@@ -208,8 +218,13 @@ class cuDSSDescription {
  */
 class cuDSSConfig {
  public:
-  /** @brief Constructor that creates a cuDSS configuration object. */
-  cuDSSConfig(int reordering_algorithm = 0, int nthreads = 1);
+  /**
+   * @brief Constructor that creates a cuDSS configuration object.
+   *
+   * @param nthreads Number of host threads for cuDSS host-side stages.
+   * @param pivoting Diagonal pivoting when true, no pivoting when false.
+   */
+  cuDSSConfig(int nthreads = 1, bool pivoting = true);
 
   /** @brief Destructor that releases the cuDSS configuration object. */
   ~cuDSSConfig();

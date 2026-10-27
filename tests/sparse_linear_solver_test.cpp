@@ -178,7 +178,7 @@ TEST(SparseLinearSolverTest, Solve) {
   // Step 5: Solve the linear system Ax = b on GPU
   CudaStream stream;
   cuDSSLinearSolverOptions cudss_solver_options = {
-      cuDSSLinearSolverMode::SlowInitFastSolve,
+      true,
       1,
       "",
   };

@@ -68,6 +68,16 @@ factor of :math:`H` becomes nearly dense, while conjugate gradient only
 multiplies by :math:`H`. ``cuDSS`` (NVIDIA's sparse direct solver) is an
 optional dependency; ``BlockSparseCholesky`` is faster on the problems above.
 
+``cuDSS`` factorizes the matrix as symmetric indefinite (not SPD), because
+constant states can make the Hessian singular or ill-conditioned.
+``cuDSSLinearSolverOptions::pivoting`` selects the pivoting strategy: ``true``
+(default) is diagonal pivoting; ``false`` disables pivoting, which makes the
+factorization about 20-40% faster, but a near-singular or badly scaled system
+can then return a wrong solution without any error. The factorization status
+(``CUDSS_DATA_INFO``) is read back after every solve only when
+``MinimizerOptions::disable_safety_checks`` is ``false``, since reading it costs a
+stream synchronization.
+
 Measured end to end (Levenberg-Marquardt to convergence, RTX A6000, every call
 including the symbolic setup):
 
