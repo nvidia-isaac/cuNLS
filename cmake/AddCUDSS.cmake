@@ -1,7 +1,7 @@
 # Function to make the cuDSS headers available to the build
 #
 # Usage:
-#   add_cudss(VERSION "0.8.0.10" PLATFORM "auto")
+#   add_cudss(VERSION "1.0.0.35" PLATFORM "auto")
 #
 # This function downloads a prebuilt cuDSS archive (matching the CUDA Toolkit
 # target platform and CUDA major version) using FetchContent and creates an
@@ -21,13 +21,10 @@
 # platform-independent, but these libraries are not, so the archive must match
 # the target platform.
 #
-# Supported versions: 0.8.0.10 (default) and 0.7.1.4. The cuDSS API differs
-# between 0.7.x and 0.8.x; the C++ sources select the right API based on the
-# CUDSS_VERSION macro from the cuDSS header, so no extra compile definition is
-# needed here.
+# Requires cuDSS >= 1.0 (the sources #error on older headers).
 #
 # Parameters:
-#   VERSION  - cuDSS version to download (optional, defaults to 0.8.0.10)
+#   VERSION  - cuDSS version to download (optional, defaults to 1.0.0.35)
 #   PLATFORM - cuDSS redistribution platform: auto, linux-x86_64,
 #              linux-aarch64 (Jetson), or linux-sbsa (Arm servers and CUDA 13
 #              Jetson). auto (the default) uses the CUDA Toolkit target.
@@ -38,7 +35,7 @@ function(add_cudss)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   if(NOT ARG_VERSION)
-    set(ARG_VERSION "0.8.0.10")
+    set(ARG_VERSION "1.0.0.35")
   endif()
   if(NOT ARG_PLATFORM)
     set(ARG_PLATFORM "auto")

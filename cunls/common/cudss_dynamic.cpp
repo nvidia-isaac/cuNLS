@@ -26,7 +26,12 @@ namespace cunls {
 
 namespace {
 
-constexpr const char *kCudssSonameCandidates[] = {"libcudss.so.0", "libcudss.so"};
+// The SONAME major follows the cuDSS major (0.x -> libcudss.so.0, 1.x -> libcudss.so.1), so try
+// the one matching the headers cunls was built against before the unversioned symlink.
+#define CUNLS_STR_(x) #x
+#define CUNLS_STR(x) CUNLS_STR_(x)
+constexpr const char *kCudssSonameCandidates[] = {"libcudss.so." CUNLS_STR(CUDSS_VERSION_MAJOR),
+                                                  "libcudss.so"};
 
 constexpr const char *kCudssMissingMessage =
     "cuNLS: the cuDSS-based sparse linear solver (SparseLinearSolverType::cuDSS) "
@@ -140,6 +145,7 @@ CudssLoader LoadCudss() {
         LoadCudssSymbol<decltype(api.DataCreate)>(loader.library_handle, "cudssDataCreate");
     api.DataDestroy =
         LoadCudssSymbol<decltype(api.DataDestroy)>(loader.library_handle, "cudssDataDestroy");
+    api.DataGet = LoadCudssSymbol<decltype(api.DataGet)>(loader.library_handle, "cudssDataGet");
     api.MatrixCreateCsr = LoadCudssSymbol<decltype(api.MatrixCreateCsr)>(loader.library_handle,
                                                                          "cudssMatrixCreateCsr");
     api.MatrixCreateDn =

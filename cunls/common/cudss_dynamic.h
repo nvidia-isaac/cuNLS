@@ -33,9 +33,8 @@ namespace cunls {
 /**
  * @brief Table of cuDSS entry points resolved dynamically from libcudss.so.
  *
- * Member types mirror the declarations in the cuDSS header selected at
- * compile time, so this table automatically matches whichever cuDSS API
- * generation (<=0.7.x or >=0.8) cunls was built against.
+ * Member types mirror the declarations in the cuDSS header cunls was built
+ * against.
  */
 struct CudssApi {
   decltype(&::cudssGetProperty) GetProperty = nullptr;
@@ -49,6 +48,7 @@ struct CudssApi {
   decltype(&::cudssConfigSet) ConfigSet = nullptr;
   decltype(&::cudssDataCreate) DataCreate = nullptr;
   decltype(&::cudssDataDestroy) DataDestroy = nullptr;
+  decltype(&::cudssDataGet) DataGet = nullptr;
   decltype(&::cudssMatrixCreateCsr) MatrixCreateCsr = nullptr;
   decltype(&::cudssMatrixCreateDn) MatrixCreateDn = nullptr;
   decltype(&::cudssMatrixDestroy) MatrixDestroy = nullptr;

@@ -25,12 +25,8 @@
 #include "cunls/common/cudss_dynamic.h"
 #include "cunls/common/log.h"
 
-// cuDSS 0.8 reworked the matrix descriptor and config API (new reordering enums,
-// hybrid execute mode, separate offset/index/value types in cudssMatrixCreateCsr).
-// Releases <= 0.7.x still use the legacy API. Gate on the version reported by the
-// cuDSS header so both prebuilt 0.7.1 and 0.8 builds compile.
-#if CUDSS_VERSION_MAJOR > 0 || CUDSS_VERSION_MINOR >= 8
-#define CUDSS_NEW_API
+#if CUDSS_VERSION_MAJOR < 1
+#error "cuNLS requires cuDSS >= 1.0"
 #endif
 
 namespace cunls {
@@ -220,6 +216,7 @@ void *cuDSSHandle::GetHandle(cudaStream_t stream) {
   THROW_ON_CUDSS_ERROR(GetCudssApi().Create(&h));
   THROW_ON_CUDSS_ERROR(GetCudssApi().SetStream(h, stream_));
   handle_ = reinterpret_cast<void *>(h);
+  ++generation_;
   return handle_;
 }
 
@@ -245,16 +242,10 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   cudssMatrix_t mat = nullptr;
   // Create cuDSS CSR matrix descriptor
   // Parameters: symmetric matrix, full view, zero-based indexing
-#ifdef CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().MatrixCreateCsr(&mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL,
                                     cols_ptr, values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F,
                                     CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
-#else
-  THROW_ON_CUDSS_ERROR(GetCudssApi().MatrixCreateCsr(
-      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,
-      CUDA_R_32I, CUDA_R_32F, CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
-#endif
 
   matrix_ = reinterpret_cast<void *>(mat);
 }
@@ -277,13 +268,8 @@ cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
   // vector
 
   cudssMatrix_t mat = nullptr;
-#ifdef CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().MatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F, CUDSS_LAYOUT_COL_MAJOR));
-#else
-  THROW_ON_CUDSS_ERROR(
-      GetCudssApi().MatrixCreateDn(&mat, size, 1, size, ptr, CUDA_R_32F, CUDSS_LAYOUT_COL_MAJOR));
-#endif
   matrix_ = reinterpret_cast<void *>(mat);
 }
 
@@ -301,58 +287,23 @@ cuDSSDescription::~cuDSSDescription() {
 /**
  * @brief Constructor that creates a cuDSS configuration object.
  *
- * Creates a new cuDSS configuration and sets the reordering algorithm and
- * number of threads.
+ * Creates a new cuDSS configuration with the library's default reordering and
+ * sets the number of host threads and the pivoting strategy.
  *
- * @param reordering_algorithm The reordering algorithm to use (e.g.,
- *                             CUDSS_ALG_DEFAULT, CUDSS_ALG_1). Defaults to 0.
  * @param nthreads The number of threads to use. Defaults to 1.
+ * @param pivoting Diagonal pivoting when true (the cuDSS 0.8 default, which
+ *                 cuDSS 1.0's automatic choice is slower than); no pivoting when
+ *                 false.
  */
-cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
+cuDSSConfig::cuDSSConfig(int nthreads, bool pivoting) {
   cudssConfig_t cfg = nullptr;
-
-#ifdef CUDSS_NEW_API
-  // Validate algorithm is within expected range
-  if (reordering_algorithm < static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT) ||
-      reordering_algorithm > static_cast<int>(CUDSS_REORDERING_ALG_NONE)) {
-    throw std::invalid_argument("Invalid reordering algorithm value");
-  }
-
   THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigCreate(&cfg));
-
-  auto alg = (cudssReorderingAlg_t)reordering_algorithm;
-
-  THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg,
-                                               sizeof(cudssReorderingAlg_t)));
-#else
-  // Validate algorithm is within expected range
-  if (reordering_algorithm < static_cast<int>(CUDSS_ALG_DEFAULT) ||
-      reordering_algorithm > static_cast<int>(CUDSS_ALG_5)) {
-    throw std::invalid_argument("Invalid reordering algorithm value");
-  }
-
-  THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigCreate(&cfg));
-
-  auto alg = (cudssAlgType_t)reordering_algorithm;
-
-  THROW_ON_CUDSS_ERROR(
-      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(cudssAlgType_t)));
-#endif
-
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
-#ifdef CUDSS_NEW_API
-  // Hybrid execute mode is incompatible with the BTF_COLAMD/COLAMD reordering
-  // paths in cuDSS — those algorithms return CUDSS_STATUS_NOT_SUPPORTED during
-  // analysis when hybrid execution is on. Enable hybrid mode only for the
-  // remaining reordering algorithms.
-  if (alg != CUDSS_REORDERING_ALG_BTF_COLAMD && alg != CUDSS_REORDERING_ALG_COLAMD) {
-    int hybrid_execute_mode = 16;
-    THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE,
-                                                 &hybrid_execute_mode, sizeof(int)));
-  }
-#endif
+  cudssPivotType_t pivot_type = pivoting ? CUDSS_PIVOT_DIAGONAL : CUDSS_PIVOT_NONE;
+  THROW_ON_CUDSS_ERROR(
+      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_PIVOT_TYPE, &pivot_type, sizeof(pivot_type)));
 
   config_ = reinterpret_cast<void *>(cfg);
 }

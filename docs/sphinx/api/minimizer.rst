@@ -196,7 +196,8 @@ then override individual fields.
   covers post-factorization checks in the linear solver: Cholesky checks
   cuSOLVER ``devInfo`` after ``potrf`` / ``potrs``; QR inspects the diagonal
   of ``R`` for rank deficiency; LDLT performs in-kernel pivot and diagonal
-  checks.  Future versions may add further checks (e.g. NaN/Inf detection,
+  checks; cuDSS reads back its factorization ``INFO`` (one stream
+  synchronization).  Future versions may add further checks (e.g. NaN/Inf detection,
   cost-increase guards).  Failures cause ``Solve()`` to return ``False`` and
   the minimizer raises ``RuntimeError``.  When ``True``, every check listed
   above is skipped (no device-to-host memcpy, no stream synchronization, no
@@ -732,7 +733,7 @@ criterion is applied per subproblem.
   (``block_size`` / ``block_layout``, ``max_iterations``,
   ``relative_tolerance``, ``absolute_tolerance``, ``pivot_floor``,
   ``check_period``).  For ``cuDSS`` contains :code:`cudss_solver_options`
-  (mode, ``nthreads``, optional ``threading_lib_path`` for multi-threaded
+  (``pivoting``, ``nthreads``, optional ``threading_lib_path`` for multi-threaded
   cuDSS).  Dense backends take no extra configuration.
 - **column_scaling** [in]: Diagonal scaling of the normal equations; see the
   column-scaling note above. Values: ``None``, ``HessianDiagonal``.

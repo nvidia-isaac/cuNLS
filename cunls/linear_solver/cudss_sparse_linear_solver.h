@@ -27,27 +27,16 @@
 namespace cunls {
 
 /**
- * @brief Configuration modes for cuDSS linear solver.
- *
- * Controls the trade-off between initialization time and solve time.
- */
-enum class cuDSSLinearSolverMode {
-  SlowInitFastSolve,  ///< Slower initialization, faster subsequent solves.
-  FastInitSlowSolve,  ///< Faster initialization, slower subsequent solves (uses
-                      ///< refactorization).
-};
-
-/**
  * @brief Configuration options for the cuDSS-based sparse linear solver.
  *
- * Controls the solver mode, threading, and library path used during
- * factorization and solve phases.
+ * Controls pivoting, threading, and library path used during factorization and
+ * solve phases.
  */
 struct cuDSSLinearSolverOptions {
-  cuDSSLinearSolverMode mode =
-      cuDSSLinearSolverMode::SlowInitFastSolve;  ///< Solver mode controlling
-                                                 ///< the init/solve trade-off.
-  int nthreads = 1;                              ///< Number of threads for host-side operations.
+  bool pivoting = true;  ///< Diagonal pivoting (robust default). False disables pivoting: about
+                         ///< 20-40% faster factorization, but a near-singular or badly scaled
+                         ///< system can return a wrong solution without any error.
+  int nthreads = 1;      ///< Number of threads for host-side operations.
   std::string threading_lib_path =
       "";  ///< Path to the threading library (empty disables multi-threading).
 };
@@ -71,20 +60,16 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   /**
    * @brief Constructs a cuDSS linear solver.
    *
-   * Initializes the solver with the specified cuDSS algorithm configuration.
+   * Initializes the solver with the specified cuDSS configuration.
    *
-   * @param options Solver configuration controlling the initialization/solve
-   *                trade-off and threading settings.
+   * @param options Solver configuration controlling pivoting and threading.
    */
   cuDSSLinearSolver(cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions());
 
   /**
    * @brief Performs setup for the sparse linear system.
    *
-   * Always runs the cuDSS symbolic analysis phase. For SlowInitFastSolve mode,
-   * that is all; for FastInitSlowSolve mode, also performs an initial
-   * factorization so that subsequent Solve calls can use cheaper
-   * refactorization.
+   * Runs the cuDSS symbolic analysis phase; every Solve then factorizes anew.
    *
    * Both @p rhs and @p result must be pre-allocated with the same number of
    * elements as the number of rows in @p spd_matrix; the solver does not
@@ -104,9 +89,10 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
    *
-   * For SlowInitFastSolve mode, performs a full factorization followed by the
-   * solve phase. For FastInitSlowSolve mode, performs refactorization (reusing
-   * the symbolic analysis from Initialize) followed by the solve phase.
+   * Performs a full factorization (reusing the symbolic analysis from
+   * Initialize) followed by the solve phase. Unless DisableSafetyChecks() was
+   * called, it then synchronizes the stream and returns false if cuDSS reports
+   * a failed factorization (INFO != 0).
    *
    * @p rhs and @p result must already be allocated with the same number of
    * elements as the number of rows in @p spd_matrix. The solver does not
@@ -124,13 +110,20 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) final;
 
+  /** @brief Skips reading back the factorization INFO (a stream sync) after each Solve(). */
+  void DisableSafetyChecks() override { safety_checks_ = false; }
+
  private:
   cuDSSLinearSolverOptions options_;  ///< Solver configuration.
 
   cuDSSHandle cudss_handle_;            ///< Owns the cuDSS handle used for all solver phases.
   cuDSSDeviceMemPool device_mem_pool_;  ///< Reusable pool for cuDSS allocations.
+  uint64_t pool_generation_ = 0;        ///< cudss_handle_ generation the pool is installed on
+                                        ///< (cuDSS rejects changing the allocator after it has
+                                        ///< allocated).
   cuDSSData cudss_data_;                ///< cuDSS data object storing internal solver state.
 
-  cuDSSConfig cudss_config_;  ///< cuDSS configuration for solver parameters.
+  cuDSSConfig cudss_config_;   ///< cuDSS configuration for solver parameters.
+  bool safety_checks_ = true;  ///< Read back the factorization INFO after each Solve().
 };
 }  // namespace cunls
