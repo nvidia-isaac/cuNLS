@@ -8,10 +8,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ github.repository }}-${{ github.ref_name }}
-  cancel-in-progress: false
-
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PYPI_PUBLISH_REPOSITORY: nvidia-isaac/cuNLS
@@ -45,9 +41,12 @@ jobs:
 
   release:
     if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
-    needs: build-matrix
+    needs: [build-matrix, pypi-prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -58,6 +57,10 @@ jobs:
         with:
           pattern: pycunls-x86_64-*
           path: pypi-wheels
+      - uses: actions/download-artifact@v7
+        with:
+          name: pypi-manifest
+          path: .
       - run: bash scripts/release_pycunls.sh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,25 +83,17 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: pypi-manifest
-          path: pypi-manifest.json
+          path: |
+            pypi-manifest.json
+            pypi-manifest.sha256
           if-no-files-found: error
           retention-days: 30
 
-  pypi-publish:
-    if: >-
-      github.repository == 'nvidia-isaac/cuNLS' &&
-      startsWith(github.ref, 'refs/tags/v') &&
-      vars.PYPI_PUBLISH_ENABLED == 'true'
+  pypi-verify-assets:
+    if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
     needs: [release, pypi-prepare]
-    runs-on: ${{ fromJson(vars.PYPI_PUBLISH_RUNNER || '["self-hosted","gpu"]') }}
-    timeout-minutes: 180
-    environment: pypi
-    concurrency:
-      group: pypi-${{ github.repository }}-${{ github.ref_name }}
-      cancel-in-progress: false
-    env:
-      KITMAKER_TOKEN: ${{ secrets.KITMAKER_TOKEN }}
-      PYPI_DRY_RUN_ONLY: ${{ vars.PYPI_DRY_RUN_ONLY || '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -107,14 +102,25 @@ jobs:
         with:
           name: pypi-manifest
           path: .
-      - run: sh scripts/publish_pypi.sh publish
-      - uses: actions/upload-artifact@v6
-        if: always()
+      - run: sh scripts/publish_pypi.sh verify-assets
+
+  pypi-await-publication:
+    name: PyPI publication confirmed
+    if: >-
+      github.repository == 'nvidia-isaac/cuNLS' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      vars.PYPI_PUBLICATION_ACK_ENABLED == 'true'
+    needs: [pypi-prepare, pypi-verify-assets]
+    runs-on: ubuntu-latest
+    # Internal processing and approval may take >=24h; the native gate allows 30 days.
+    # Tighten the approval deadline only after measuring production behavior.
+    environment: kitmaker-publication
+    steps:
+      - uses: actions/checkout@v5
         with:
-          name: pypi-publication-record-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            pypi-manifest.json
-            pypi-release-uuids.txt
-            pypi-status-*.json
-          if-no-files-found: warn
-          retention-days: 30
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: pypi-manifest
+          path: .
+      - run: sh scripts/publish_pypi.sh verify-publication

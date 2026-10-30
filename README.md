@@ -126,6 +126,15 @@ files. The tag version must match `python/pyproject.toml` and
 `python/pycunls/__init__.py`. Wheels include the source commit and measured CUDA
 toolkit version and are repaired with auditwheel while keeping CUDA libraries external.
 
+The version-tag release pipeline builds and tests the selected wheels, then publishes
+their unchanged filenames with `pypi-manifest.json` and `pypi-manifest.sha256` in an
+immutable GitHub release. PyPI publication runs through a separate internal process.
+The optional `PyPI publication confirmed` job waits for that process and verifies
+every selected wheel on both public indexes after confirmation. Enable it with
+`PYPI_PUBLICATION_ACK_ENABLED=true` only after its protected environment and callback
+are configured. Its approval wait allows at least 24 hours without occupying a runner;
+other build, test and release jobs finish independently.
+
 #### Build the wheel locally
 
 ```bash
