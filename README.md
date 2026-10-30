@@ -135,6 +135,12 @@ every selected wheel on both public indexes after confirmation. Enable it with
 are configured. Its approval wait allows at least 24 hours without occupying a runner;
 other build, test and release jobs finish independently.
 
+Wheel verification allows 1800 seconds per download by default. Set the
+`PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS` repository variable to change it. The
+verification job budget follows the prepared manifest's wheel count and download
+limit, plus metadata requests and setup time; the current four-wheel default is
+136 minutes. This execution budget is separate from the approval wait.
+
 #### Build the wheel locally
 
 ```bash
