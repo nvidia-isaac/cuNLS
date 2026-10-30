@@ -1,5 +1,5 @@
 #!/bin/sh
-# TEMPLATE_VERSION=1.9.0
+# TEMPLATE_VERSION=2.0.0
 set -eu
 set -f
 
@@ -8,27 +8,30 @@ fail() {
     printf '\n' >&2
     exit 1
 }
+
+mode=${1:-}
+case "$mode" in prepare|verify-assets|verify-publication) ;; *) fail "$0" "$mode" 'prepare | verify-assets | verify-publication' 'run publication through the internal publisher' ;; esac
+PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-github-release}
+[ "$PYPI_ASSET_SOURCE" = github-release ] || fail "$0" "$PYPI_ASSET_SOURCE" 'github-release' 'use the public GitHub release assets'
 for dependency in curl jq unzip sha256sum; do
     command -v "$dependency" >/dev/null || fail "$0" "$dependency missing" 'curl jq unzip sha256sum' "install $dependency on the runner host"
 done
-mode=${1:-}
-case "$mode" in prepare|publish) ;; *) fail "$0" "$mode" 'prepare | publish' 'select one command' ;; esac
-PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-github-release}
-KITMAKER_PIC=${KITMAKER_PIC:-}
 RELEASE_TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-}}
 RELEASE_COMMIT=${RELEASE_COMMIT:-${GITHUB_SHA:-}}
 PYPI_PLATFORM=${PYPI_PLATFORM:-manylinux_*_x86_64}
-PYPI_DRY_RUN_ONLY=${PYPI_DRY_RUN_ONLY:-1}
 PYPI_PER_RELEASE_PLC=${PYPI_PER_RELEASE_PLC:-no}
 PYPI_POLL_SECONDS=${PYPI_POLL_SECONDS:-10}
-PYPI_TIMEOUT_SECONDS=${PYPI_TIMEOUT_SECONDS:-1800}
 PYPI_INDEX_TIMEOUT_SECONDS=${PYPI_INDEX_TIMEOUT_SECONDS:-600}
-KITMAKER_API=https://kitmaker-portal.nvidia.com/api/v0
 manifest=pypi-manifest.json
+for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS KITMAKER_PIC PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_PER_RELEASE_PLC PYPI_POLL_SECONDS PYPI_INDEX_TIMEOUT_SECONDS PYPI_PUBLISH_CELLS; do
+    eval 'input_value=${'"$input_name"':-}'
+    printf '%s=%s\n' "$input_name" "$input_value"
+done
 umask 077
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
 normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[-_.][-_\.]*/-/g'; }
+
 required() {
     missing=
     for input_name in "$@"; do
@@ -37,14 +40,26 @@ required() {
     done
     [ -z "$missing" ] || fail "$0" "missing:$missing" 'all required inputs set' 'export the listed names from the confirmed context'
 }
+
+positive_times() {
+    for number in "$@"; do
+        case "$number" in ''|*[!0-9]*) fail "$0" "$number" 'positive integer deadline/interval' 'correct polling configuration' ;; esac
+        [ "$number" -gt 0 ] || fail "$0" "$number" 'positive polling value' 'correct polling configuration'
+    done
+}
+
 repository_guard() {
-    [ "$PYPI_ASSET_SOURCE" = github-release ] || fail "$0" "$PYPI_ASSET_SOURCE" 'github-release' 'only public GitHub release assets are supported'
-    actual_repository=${GITHUB_REPOSITORY:-}
-    [ "$actual_repository" = "$PYPI_PUBLISH_REPOSITORY" ] || fail "$0" "$actual_repository" "$PYPI_PUBLISH_REPOSITORY" "private copies don't publish; run in the canonical repository"
+    [ "${GITHUB_REPOSITORY:-}" = "$PYPI_PUBLISH_REPOSITORY" ] || fail "$0" "${GITHUB_REPOSITORY:-}" "$PYPI_PUBLISH_REPOSITORY" "private copies don't publish; run in the canonical repository"
+}
+asset_url() {
+    tag_uri=$(printf '%s' "$RELEASE_TAG" | jq -sRr @uri)
+    file_uri=$(printf '%s' "$1" | jq -sRr @uri)
+    printf 'https://github.com/%s/releases/download/%s/%s' "$PYPI_PUBLISH_REPOSITORY" "$tag_uri" "$file_uri"
 }
 public_version() {
     printf '%s' "$1" | jq -eRs 'test("^([0-9]+!)?[0-9]+(\\.[0-9]+)*((a|b|rc)[0-9]+)?(\\.post[0-9]+)?(\\.dev[0-9]+)?$")' >/dev/null
 }
+
 project_map() {
     printf '%s\n' "${KITMAKER_PROJECTS:-}" | jq -Rsc '
       split("\n") | map(select(length > 0) | split("=")) |
@@ -54,25 +69,20 @@ project_map() {
       then error("duplicate name or project ID")
       else map({name:.[0], id:.[1]}) end' > "$scratch/map.json"
 }
+
 valid_cell_directories() {
     printf '%s' "$1" | jq -e 'type == "array" and length > 0 and all(.[];
       (.cuda | type == "string") and (.artifact_dir | type == "string" and (. == "." or (test("^[A-Za-z0-9_][A-Za-z0-9_./-]*$") and (split("/") | all(.[]; . != ".." and . != "." and . != "")))))) and
       (length == 1 or all(.[]; .artifact_dir != ".")) and
       (map(.artifact_dir) | unique | length) == length' >/dev/null
 }
-# Preserve error bodies and never retry a POST automatically.
+
 http() {
     http_status=000
     http_rc=0
     : > "$scratch/response"
     http_status=$(curl --fail-with-body --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 --output "$scratch/response" --write-out '%{http_code}' "$@") || http_rc=$?
     printf 'HTTP %s (curl=%s)\n' "$http_status" "$http_rc"
-}
-kitmaker() {
-    http --header "Authorization: Bearer $KITMAKER_TOKEN" --header 'Content-Type: application/json' "$@"
-    cat "$scratch/response"
-    printf '\n'
-    [ "$http_rc" -eq 0 ] || fail "$KITMAKER_API" "HTTP $http_status, curl $http_rc" 'successful response' 'inspect the response; check token, network and NVIDIA CA; never blindly resubmit'
 }
 
 prepare() {
@@ -134,7 +144,8 @@ prepare() {
         bytes=$(wc -c < "$wheel" | tr -d ' ')
         [ "$bytes" -le 1048576000 ] || fail "$wheel" "$bytes bytes" 'at most 1048576000 bytes (1000 MiB)' 'reduce the wheel size or arrange a different release strategy'
         checksum=$(sha256sum "$wheel"); checksum=${checksum%% *}
-        jq -n --arg filename "$filename" --arg path "$wheel" --arg distribution "$distribution" --arg project_id "$project_id" --arg version "$wheel_version" --arg sha256 "$checksum" --argjson bytes "$bytes" '{filename:$filename,path:$path,distribution:$distribution,project_id:$project_id,version:$version,sha256:$sha256,bytes:$bytes}' >> "$scratch/entries"
+        url=$(asset_url "$filename")
+        jq -n --arg filename "$filename" --arg path "$wheel" --arg distribution "$distribution" --arg project_id "$project_id" --arg version "$wheel_version" --arg sha256 "$checksum" --argjson bytes "$bytes" --arg url "$url" '{filename:$filename,path:$path,distribution:$distribution,project_id:$project_id,version:$version,sha256:$sha256,bytes:$bytes,url:$url}' >> "$scratch/entries"
     done < "$scratch/files"
     [ -s "$scratch/entries" ] || fail "$WHEEL_DIR" 'zero matching wheels' "$PYPI_PLATFORM" 'download the selected wheel artifacts and check the platform filter'
     jq -r '.[] | [.artifact_dir,(.cuda | split(".")[0])] | @tsv' "$scratch/cells" > "$scratch/expected-cells"
@@ -144,7 +155,8 @@ prepare() {
         [ "$cell_count" -eq 1 ] || fail "$cell_prefix" "$cell_count selected CUDA $cell_cuda wheels" 'exactly one finished wheel per selected matrix cell' 'restore the missing cell artifact or separate extra build outputs'
     done < "$scratch/expected-cells"
     jq -es --slurpfile cells "$scratch/cells" --arg root "${WHEEL_DIR%/}/" 'length == ($cells[0] | length) and all(.[]; . as $wheel | any($cells[0][]; (if .artifact_dir == "." then $root else $root + .artifact_dir + "/" end) as $prefix | $wheel.path | startswith($prefix)))' "$scratch/entries" >/dev/null || fail "$WHEEL_DIR" 'extra wheel or wheel outside selected cell directories' 'only the confirmed publish cells' 'narrow the artifact download selection'
-    jq -s --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" --arg plc "$PYPI_PER_RELEASE_PLC" '{template_version:"1.9.0",tag:$tag,commit:$commit,repository:$repository,asset_source:$source,per_release_plc:$plc,wheels:.}' "$scratch/entries" > "$manifest"
+    jq -s --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" --arg plc "$PYPI_PER_RELEASE_PLC" '{template_version:"2.0.0",tag:$tag,commit:$commit,repository:$repository,asset_source:$source,per_release_plc:$plc,wheels:.}' "$scratch/entries" > "$manifest"
+    sha256sum "$manifest" > pypi-manifest.sha256
     {
         printf '| Wheel | Bytes | SHA256 |\n|---|---:|---|\n'
         jq -r '.wheels[] | "| \(.filename) | \(.bytes) | \(.sha256) |"' "$manifest"
@@ -155,54 +167,6 @@ prepare() {
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$scratch/summary" >> "$GITHUB_STEP_SUMMARY"; fi
 }
 
-poll_release() {
-    deadline=$(($(date +%s) + PYPI_TIMEOUT_SECONDS))
-    retry_delay=$PYPI_POLL_SECONDS
-    max_retry_delay=60
-    while :; do
-        poll_delay=$PYPI_POLL_SECONDS
-        http --header "Authorization: Bearer $KITMAKER_TOKEN" "$KITMAKER_API/status/$release_uuid"
-        cat "$scratch/response"; printf '\n'
-        if [ "$http_rc" -eq 0 ]; then
-            retry_delay=$PYPI_POLL_SECONDS
-            cp "$scratch/response" "pypi-status-$release_uuid.json"
-            state=$(jq -er '.status | select(type == "string" and length > 0)' "$scratch/response") || fail "$release_uuid" 'missing or invalid status' 'status JSON' 'inspect the saved response'
-            case "$state" in
-                completed) return 0 ;;
-                failed)
-                    printf 'Batch outcomes (unlisted wheels may be unstarted; inspect both indexes):\n'
-                    jq -r '.jobs[]? | "\(.status) \(.wheel_url)"' "$scratch/response"
-                    cat "$scratch/completed"
-                    fail "$release_uuid" 'failed or partially published batch' 'all wheels completed' 'inspect every wheel on both indexes; retain UUID; do not resubmit the batch' ;;
-            esac
-        else
-            case "$http_rc:$http_status" in
-                5:*|6:*|7:*|18:*|28:*|52:*|55:*|56:*|22:408|22:429|22:5??)
-                    poll_delay=$retry_delay
-                    [ "$poll_delay" -le "$max_retry_delay" ] || poll_delay=$max_retry_delay
-                    retry_delay=$((poll_delay * 2))
-                    state="transient HTTP $http_status (curl=$http_rc)" ;;
-                *) fail "$release_uuid" "HTTP $http_status, curl $http_rc" 'successful status response' 'inspect the response; check token and NVIDIA CA; do not resubmit' ;;
-            esac
-        fi
-        [ "$(date +%s)" -lt "$deadline" ] || fail "$release_uuid" "$state at polling deadline" 'terminal completed state' 'inspect saved status and both indexes; do not resubmit or infer cancellation'
-        printf 'POLL %s: %s; waiting %s seconds\n' "$release_uuid" "$state" "$poll_delay"
-        sleep "$poll_delay"
-    done
-}
-submit_projects() {
-    jq -r '.wheels[].project_id' "$manifest" | LC_ALL=C sort -u > "$scratch/ids"
-    : > "$scratch/completed"
-    while IFS= read -r id; do
-        jq --arg id "$id" --arg pic "$KITMAKER_PIC" --argjson upload "$upload" '.wheels | map(select(.project_id == $id)) | {project_name:.[0].distribution,payload:map({pic:$pic,job_type:"wheel-release-job",url:.url,upload:$upload,mirroring_strategy:"upload-both"})}' "$scratch/publish-manifest" > "$scratch/request"
-        kitmaker --request POST --data-binary "@$scratch/request" "$KITMAKER_API/projects/$id/releases"
-        release_uuid=$(jq -er '.release_uuid | select(type == "string" and test("^[A-Za-z0-9-]+$"))' "$scratch/response") || fail "$id" 'missing release_uuid' 'release UUID' 'inspect response; do not resubmit an uncertain request'
-        printf '%s %s %s\n' "$id" "$upload" "$release_uuid" >> pypi-release-uuids.txt
-        poll_release
-        jq -r --arg id "$id" --arg upload "$upload" '.wheels[] | select(.project_id == $id) | "COMPLETED upload=\($upload) \(.filename)"' "$manifest" >> "$scratch/completed"
-        cat "$scratch/completed"
-    done < "$scratch/ids"
-}
 verify_indexes() {
     deadline=$(($(date +%s) + PYPI_INDEX_TIMEOUT_SECONDS))
     while :; do
@@ -218,39 +182,83 @@ verify_indexes() {
         sleep "$PYPI_POLL_SECONDS"
     done
 }
-publish() {
-    required PYPI_PUBLISH_REPOSITORY PYPI_ASSET_SOURCE RELEASE_TAG RELEASE_COMMIT
-    repository_guard
-    required KITMAKER_TOKEN KITMAKER_PIC
-    for number in "$PYPI_POLL_SECONDS" "$PYPI_TIMEOUT_SECONDS" "$PYPI_INDEX_TIMEOUT_SECONDS"; do
-        case "$number" in ''|*[!0-9]*) fail "$0" "$number" 'positive integer deadline/interval' 'correct polling configuration' ;; esac
-        [ "$number" -gt 0 ] || fail "$0" "$number" 'positive polling value' 'correct polling configuration'
-    done
-    case "$PYPI_DRY_RUN_ONLY" in 0|1) ;; *) fail "$0" "$PYPI_DRY_RUN_ONLY" '0 or 1' 'set the dry-run switch explicitly' ;; esac
-    [ -f "$manifest" ] || fail "$manifest" 'missing' 'manifest from successful prepare' 'download the prepare artifact'
-    jq -e --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" '
-        .template_version == "1.9.0" and .tag == $tag and .commit == $commit and .repository == $repository and .asset_source == $source and
-        (.wheels | type == "array" and length > 0 and all(.[]; (.filename | test("^[A-Za-z0-9_.!+-]+\\.whl$")) and (.sha256 | test("^[a-f0-9]{64}$")) and (.project_id | test("^[1-9][0-9]*$"))))' "$manifest" >/dev/null || fail "$manifest" 'invalid manifest or tag/commit/repository/source mismatch' "$RELEASE_TAG $RELEASE_COMMIT $PYPI_PUBLISH_REPOSITORY $PYPI_ASSET_SOURCE" 'use the manifest from this release and template version'
-    jq -r '.wheels[] | [.distribution,.version,.filename,.sha256] | @tsv' "$manifest" > "$scratch/expected"
-    jq -r '.wheels[] | [.path,.filename,.sha256] | @tsv' "$manifest" > "$scratch/to-publish"
-    : > "$scratch/urls"
-    while IFS="$(printf '\t')" read -r wheel filename checksum; do
-        tag_uri=$(printf '%s' "$RELEASE_TAG" | jq -sRr @uri)
-        file_uri=$(printf '%s' "$filename" | jq -sRr @uri)
-        url="https://github.com/$PYPI_PUBLISH_REPOSITORY/releases/download/$tag_uri/$file_uri"
-        http "$url"
-        if [ "$http_status" = 404 ]; then fail "$filename" 'HTTP 404' 'public GitHub release asset' "a draft release isn't readable; publish the draft before approval"; fi
-        [ "$http_rc" -eq 0 ] || fail "$filename" "HTTP $http_status curl=$http_rc" 'anonymous asset download' 'fix release asset visibility or URL'
-        actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
-        [ "$actual" = "$checksum" ] || fail "$filename" "$actual" "$checksum" 'restore the exact immutable artifact; regenerate approval after any change'
-        jq -n --arg filename "$filename" --arg url "$url" '{filename:$filename,url:$url}' >> "$scratch/urls"
-    done < "$scratch/to-publish"
-    jq --slurpfile urls "$scratch/urls" '.wheels |= map(. as $wheel | . + ($urls[] | select(.filename == $wheel.filename)))' "$manifest" > "$scratch/publish-manifest"
-    upload=false
-    submit_projects
-    if [ "$PYPI_DRY_RUN_ONLY" = 1 ]; then printf 'DRY RUN complete; no Kitmaker upload submitted.\n'; return 0; fi
-    upload=true
-    submit_projects
-    verify_indexes
+
+manifest_guard() {
+    required PYPI_PUBLISH_REPOSITORY PYPI_ASSET_SOURCE RELEASE_TAG RELEASE_COMMIT KITMAKER_PROJECTS PYPI_MANIFEST_SHA256
+    [ -f "$manifest" ] || fail "$manifest" 'missing' 'original public checksum manifest' 'fetch the approved release manifest'
+    actual=$(sha256sum "$manifest"); actual=${actual%% *}
+    [ "$actual" = "$PYPI_MANIFEST_SHA256" ] || fail "$manifest" "$actual" "$PYPI_MANIFEST_SHA256" 'use the original approved manifest bytes and digest'
+    project_map
+    jq -e --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" --slurpfile mapping "$scratch/map.json" '
+        .template_version == "2.0.0" and .tag == $tag and .commit == $commit and .repository == $repository and .asset_source == $source and
+        ($commit | test("^[a-fA-F0-9]{40}$")) and
+        (.wheels | type == "array" and length > 0 and (map(.filename) | unique | length) == length and all(.[];
+          . as $wheel | (.filename | test("^[A-Za-z0-9_.!+-]+\\.whl$")) and (.sha256 | test("^[a-f0-9]{64}$")) and
+          (.bytes | type == "number" and . > 0 and . <= 1048576000) and .version == ($tag | ltrimstr("v")) and
+          any($mapping[0][]; .name == $wheel.distribution and .id == $wheel.project_id) and
+          (.url | type == "string" and (test("[\\t\\r\\n]") | not))))' "$manifest" >/dev/null ||
+        fail "$manifest" 'invalid manifest or tag/commit/repository/source mismatch' "$RELEASE_TAG $RELEASE_COMMIT $PYPI_PUBLISH_REPOSITORY $PYPI_ASSET_SOURCE" 'use the manifest from this release and template version'
+    jq -r '.wheels[] | [.filename,.url] | @tsv' "$manifest" > "$scratch/asset-urls"
+    while IFS="$(printf '\t')" read -r filename url; do
+        expected_url=$(asset_url "$filename")
+        [ "$url" = "$expected_url" ] || fail "$filename" "$url" "$expected_url" 'preserve the approved direct asset URL; do not rewrite or mirror GitHub assets'
+    done < "$scratch/asset-urls"
 }
-case "$mode" in prepare) prepare ;; publish) publish ;; esac
+
+check_public_release() {
+    tag_uri=$(printf '%s' "$RELEASE_TAG" | jq -sRr @uri)
+    http "https://api.github.com/repos/$PYPI_PUBLISH_REPOSITORY/releases/tags/$tag_uri"
+    manifest_url=$(asset_url pypi-manifest.json)
+    sidecar_url=$(asset_url pypi-manifest.sha256)
+    if [ "$http_rc" -ne 0 ] || ! jq -e --arg tag "$RELEASE_TAG" --arg manifest_url "$manifest_url" --arg sidecar_url "$sidecar_url" --arg hash "$PYPI_MANIFEST_SHA256" --slurpfile manifest "$manifest" '
+      .draft == false and .immutable == true and .tag_name == $tag and
+      (.assets as $assets |
+        any($assets[]; .name == "pypi-manifest.json" and .browser_download_url == $manifest_url and (.digest == null or .digest == ("sha256:" + $hash))) and
+        any($assets[]; .name == "pypi-manifest.sha256" and .browser_download_url == $sidecar_url) and
+        all($manifest[0].wheels[]; . as $wheel | any($assets[];
+          .name == $wheel.filename and .browser_download_url == $wheel.url and
+          (.digest == null or .digest == ("sha256:" + $wheel.sha256)))))' "$scratch/response" >/dev/null; then
+        fail "$RELEASE_TAG" "HTTP $http_status; release absent, draft, mutable or assets differ" 'published immutable release with wheels, original manifest and sidecar' 'attach the manifest and sidecar before freezing the public release'
+    fi
+    http "https://api.github.com/repos/$PYPI_PUBLISH_REPOSITORY/commits/$tag_uri"
+    if [ "$http_rc" -ne 0 ] || ! jq -e --arg sha "$RELEASE_COMMIT" '.sha == $sha' "$scratch/response" >/dev/null; then
+        fail "$RELEASE_TAG" 'release tag commit differs or is unreadable' "$RELEASE_COMMIT" 'retain the tag and built source commit across the handoff'
+    fi
+}
+
+validate_assets() {
+    jq -r '.wheels[] | [.distribution,.version,.filename,.sha256] | @tsv' "$manifest" > "$scratch/expected"
+    jq -r '.wheels[] | [.path,.filename,.sha256,.url,.bytes] | @tsv' "$manifest" > "$scratch/to-publish"
+    check_public_release
+    while IFS="$(printf '\t')" read -r wheel filename checksum url bytes; do
+        # The submitted URL must serve the same bytes to an anonymous downloader.
+        http "$url"
+        [ "$http_rc" -eq 0 ] || fail "$filename" "HTTP $http_status curl=$http_rc" 'anonymous asset download' "a draft release isn't readable; inspect public asset visibility"
+        actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
+        [ "$actual" = "$checksum" ] || fail "$filename" "$actual" "$checksum" 'restore the exact immutable artifact; repeat validation and approval after any change'
+        actual_bytes=$(wc -c < "$scratch/response" | tr -d ' ')
+        [ "$actual_bytes" = "$bytes" ] || fail "$filename" "$actual_bytes bytes" "$bytes bytes" 'restore the approved artifact'
+    done < "$scratch/to-publish"
+    cp "$manifest" "$scratch/publish-manifest"
+}
+
+case "$mode" in
+    prepare) prepare ;;
+    verify-assets|verify-publication)
+        required PYPI_PUBLISH_REPOSITORY PYPI_ASSET_SOURCE RELEASE_TAG RELEASE_COMMIT
+        if [ "$mode" = verify-publication ]; then
+            positive_times "$PYPI_POLL_SECONDS" "$PYPI_INDEX_TIMEOUT_SECONDS"
+        fi
+        repository_guard
+        PYPI_MANIFEST_SHA256=$(sha256sum "$manifest"); PYPI_MANIFEST_SHA256=${PYPI_MANIFEST_SHA256%% *}
+        manifest_guard
+        validate_assets
+        http "$(asset_url pypi-manifest.json)"
+        [ "$http_rc" -eq 0 ] || fail "$manifest" 'public manifest unreadable' 'anonymous immutable manifest asset' 'attach the original manifest before freezing the release'
+        actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
+        [ "$actual" = "$PYPI_MANIFEST_SHA256" ] || fail "$manifest" "$actual" "$PYPI_MANIFEST_SHA256" 'preserve the original public manifest bytes'
+        if [ "$mode" = verify-publication ]; then
+            verify_indexes
+            printf 'PUBLICATION VERIFIED: every selected filename and SHA256 is present on both indexes.\n'
+        fi ;;
+esac
