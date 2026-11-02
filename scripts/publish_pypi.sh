@@ -212,6 +212,7 @@ manifest_guard() {
         expected_url=$(asset_url "$filename")
         [ "$url" = "$expected_url" ] || fail "$filename" "$url" "$expected_url" 'preserve the approved direct asset URL; do not rewrite or mirror GitHub assets'
     done < "$scratch/asset-urls"
+    jq -r '.wheels[] | [.distribution,.version,.filename,.sha256] | @tsv' "$manifest" > "$scratch/expected"
 }
 
 check_public_release() {
@@ -236,7 +237,6 @@ check_public_release() {
 }
 
 validate_assets() {
-    jq -r '.wheels[] | [.distribution,.version,.filename,.sha256] | @tsv' "$manifest" > "$scratch/expected"
     jq -r '.wheels[] | [.path,.filename,.sha256,.url,.bytes] | @tsv' "$manifest" > "$scratch/to-publish"
     check_public_release
     while IFS="$(printf '\t')" read -r wheel filename checksum url bytes; do
@@ -262,7 +262,11 @@ case "$mode" in
         repository_guard
         PYPI_MANIFEST_SHA256=$(sha256sum "$manifest"); PYPI_MANIFEST_SHA256=${PYPI_MANIFEST_SHA256%% *}
         manifest_guard
-        validate_assets
+        if [ "$mode" = verify-assets ]; then
+            validate_assets
+        else
+            check_public_release
+        fi
         http 120 "$(asset_url pypi-manifest.json)"
         [ "$http_rc" -eq 0 ] || fail "$manifest" 'public manifest unreadable' 'anonymous immutable manifest asset' 'attach the original manifest before freezing the release'
         actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
