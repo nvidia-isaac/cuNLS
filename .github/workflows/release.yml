@@ -17,7 +17,6 @@ env:
   KITMAKER_PROJECTS: |
     pycunls-cu12=6865
     pycunls-cu13=6866
-  KITMAKER_PIC: hguillen@nvidia.com
   PYPI_PLATFORM: manylinux_*_x86_64
   PYPI_PROVENANCE_PATH: pycunls/_build_provenance.json
   PYPI_PER_RELEASE_PLC: ${{ vars.PYPI_PER_RELEASE_PLC || 'yes' }}
