@@ -117,7 +117,9 @@ Requires Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/data
 The output directory defaults to `./dist`. The script builds the wheel inside
 a container with the source mounted read-only. Intermediate build directories
 live inside the container and are discarded; only the final `.whl` file is
-written to the host output directory.
+written to the host output directory. Set `EXTRA_CMAKE_ARGS` to pass CMake options
+such as `-DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;100`; CI uses it to build each wheel
+for its matrix cell's GPU architectures.
 
 Docker wheels use the distribution name `pycunls-cu12` or `pycunls-cu13` and the
 matching CuPy dependency; both use `import pycunls`. With `RELEASE_TAG=v<version>`,
