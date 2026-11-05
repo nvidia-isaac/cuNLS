@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <map>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -106,21 +108,61 @@ System MakeBundleAdjustmentSystem(int num_bodies, int num_points, int max_bodies
   return s;
 }
 
+/** Copies a host CSR system into BSR storage with square tiles of edge @p edge. */
+void ToBsr(const System &s, int edge, BSRSparseMatrix &m) {
+  const int num_block_rows = s.n / edge;
+  std::vector<int> row_offsets = {0};
+  std::vector<int> col_ids;
+  std::vector<float> values;
+  int max_tiles = 0;
+  for (int br = 0; br < num_block_rows; ++br) {
+    std::map<int, std::vector<float>> tiles;
+    for (int k = 0; k < edge; ++k) {
+      const int r = br * edge + k;
+      for (int e = s.row_ptr[r]; e < s.row_ptr[r + 1]; ++e) {
+        auto &tile = tiles[s.col_ids[e] / edge];
+        tile.resize(edge * edge);
+        tile[k * edge + s.col_ids[e] % edge] = s.values[e];
+      }
+    }
+    for (const auto &[bc, tile] : tiles) {
+      col_ids.push_back(bc);
+      values.insert(values.end(), tile.begin(), tile.end());
+    }
+    row_offsets.push_back(static_cast<int>(col_ids.size()));
+    max_tiles = std::max(max_tiles, static_cast<int>(tiles.size()));
+  }
+  m.row_offsets = dvector<int>(row_offsets);
+  m.col_ids = dvector<int>(col_ids);
+  m.values = dvector<float>(values);
+  m.block_size = edge;
+  m.max_tiles_per_row = max_tiles;
+  m.num_block_rows = num_block_rows;
+}
+
 /** Runs the solver once from x_0 = 0 and returns x and the iteration count. */
-std::pair<std::vector<float>, int> SolveOnce(const System &s, const std::vector<float> &b,
+template <typename Matrix>
+std::pair<std::vector<float>, int> SolveOnce(const Matrix &m, const std::vector<float> &b,
                                              const BlockSparsePCGOptions &options) {
-  CSRSparseMatrix m;
-  test_utils::CreateCSRSparseMatrix(s.row_ptr, s.col_ids, s.values, m);
+  const int n = static_cast<int>(b.size());
   dvector<float> rhs(b);
-  dvector<float> result(s.n);
+  dvector<float> result(n);
   CudaStream stream;
   BlockSparsePCGSolver solver(options);
   EXPECT_TRUE(solver.Initialize(stream.GetStream(), Problem(), m, rhs, result));
   EXPECT_TRUE(solver.Solve(stream.GetStream(), m, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  std::vector<float> x(s.n);
-  result.CopyToHost(x.data(), s.n);
+  std::vector<float> x(n);
+  result.CopyToHost(x.data(), n);
   return {x, solver.LastIterations()};
+}
+
+/** Runs the solver once on the CSR form of @p s; see the template above. */
+std::pair<std::vector<float>, int> SolveOnce(const System &s, const std::vector<float> &b,
+                                             const BlockSparsePCGOptions &options) {
+  CSRSparseMatrix m;
+  test_utils::CreateCSRSparseMatrix(s.row_ptr, s.col_ids, s.values, m);
+  return SolveOnce(m, b, options);
 }
 
 /** Jacobi-preconditioned CG in double from x_0 = 0 for a fixed number of iterations. */
@@ -178,6 +220,27 @@ TEST(BlockSparsePCGSolverTest, MatchesReferencePcgIteratesOnLargeSystem) {
     norm += ref[i] * ref[i];
   }
   EXPECT_LT(std::sqrt(err / norm), 1e-4);
+}
+
+// About 1.4 M rows in BSR storage: H p runs the in-repo BSR kernels, which add
+// in a fixed order, so the PCG dot products decide whether solves repeat.
+TEST(BlockSparsePCGSolverTest, RepeatedSolvesAreBitIdentical) {
+  const System s = MakeBundleAdjustmentSystem(40000, 400000, 1);
+  BSRSparseMatrix m;
+  ToBsr(s, 3, m);
+  std::vector<float> b;
+  test_utils::GenerateRandomVector(s.n, b);
+  BlockSparsePCGOptions options;
+  options.block_layout = {{40000, 6}, {400000, 3}};
+  options.relative_tolerance = 0.f;
+  options.absolute_tolerance = 0.f;
+  options.max_iterations = 50;
+  const auto [x0, iterations0] = SolveOnce(m, b, options);
+  for (int k = 0; k < 3; ++k) {
+    const auto [x, iterations] = SolveOnce(m, b, options);
+    EXPECT_EQ(iterations, iterations0);
+    EXPECT_EQ(std::memcmp(x.data(), x0.data(), x.size() * sizeof(float)), 0);
+  }
 }
 
 }  // namespace cunls
