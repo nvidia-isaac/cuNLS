@@ -899,27 +899,18 @@ __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
 }
 
 /**
- * @brief Fused: compute `β = rz_new / rz_old`, store `rz_old ← rz_new`,
- *        and update the search direction `p ← z + β p` in a single
- *        kernel.  Eliminates the separate `ComputeBetaKernel` launch
- *        and writes the new `rz_old` from the first CTA's thread 0
- *        (subsequent CTAs don't read the slot in this kernel).
+ * @brief Fused: compute `β = rz_new / rz_old` and update the search
+ *        direction `p ← z + β p` in a single kernel.  Every CTA reads
+ *        `rz_old`, so the caller advances it after this kernel.
  */
 __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
-                                   float *__restrict__ rz_old_ptr, const float *__restrict__ z,
-                                   float *__restrict__ p, int n) {
+                                   const float *__restrict__ rz_old_ptr,
+                                   const float *__restrict__ z, float *__restrict__ p, int n) {
   __shared__ float b;
   if (threadIdx.x == 0) {
     float num = rz_new_ptr[0];
     float denom = rz_old_ptr[0];
     b = (fabsf(denom) > 0.f) ? num / denom : 0.f;
-    // Only the first CTA's thread 0 writes rz_old; all other CTAs
-    // skip the write (the rz_old slot is read by the *next*
-    // iteration's PcgUpdate, which happens after this kernel
-    // completes, so any one writer is enough).
-    if (blockIdx.x == 0) {
-      rz_old_ptr[0] = num;
-    }
   }
   __syncthreads();
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -936,6 +927,9 @@ __device__ inline void ReduceAndAddToScalar(float local, float *dst) {
     local += __shfl_down_sync(0xffffffffu, local, off);
   }
   __shared__ float warp_sums[32];
+  // A second call in the same kernel must not overwrite warp_sums while
+  // warp 0 is still reading the sums of the first call.
+  __syncthreads();
   int lane = threadIdx.x & 31;
   int wid = threadIdx.x >> 5;
   if (lane == 0) {
@@ -1525,9 +1519,11 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, d_scratch_.data() + kRzNew,
                  d_scratch_.data() + kRnorm2);
 
-    // β = rz_new / rz_old; rz_old ← rz_new; p ← z + β p (fused).
+    // β = rz_new / rz_old; p ← z + β p (fused); then rz_old ← rz_new.
     PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
         d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(), p_.data(), n);
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_scratch_.data() + kRzOld, d_scratch_.data() + kRzNew,
+                                        sizeof(float), cudaMemcpyDeviceToDevice, stream));
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.
