@@ -103,6 +103,11 @@ namespace cunls {
 namespace {
 
 constexpr int kMaxBlockSize = 16;
+// Most CTAs a dot kernel launches; one partial sum per CTA.
+constexpr int kMaxDotBlocks = 1024;
+// d_scratch_: 7 PCG scalars, then from kDotWork the dot partial sums and tickets.
+constexpr int kDotWork = 8;
+constexpr size_t kScratchSize = kDotWork + 2 * kMaxDotBlocks + 2;
 
 // =============================================================================
 // Device kernels — preconditioner construction (`Factor`)
@@ -899,27 +904,18 @@ __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
 }
 
 /**
- * @brief Fused: compute `β = rz_new / rz_old`, store `rz_old ← rz_new`,
- *        and update the search direction `p ← z + β p` in a single
- *        kernel.  Eliminates the separate `ComputeBetaKernel` launch
- *        and writes the new `rz_old` from the first CTA's thread 0
- *        (subsequent CTAs don't read the slot in this kernel).
+ * @brief Fused: compute `β = rz_new / rz_old` and update the search
+ *        direction `p ← z + β p` in a single kernel.  Every CTA reads
+ *        `rz_old`, so the caller advances it after this kernel.
  */
 __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
-                                   float *__restrict__ rz_old_ptr, const float *__restrict__ z,
-                                   float *__restrict__ p, int n) {
+                                   const float *__restrict__ rz_old_ptr,
+                                   const float *__restrict__ z, float *__restrict__ p, int n) {
   __shared__ float b;
   if (threadIdx.x == 0) {
     float num = rz_new_ptr[0];
     float denom = rz_old_ptr[0];
     b = (fabsf(denom) > 0.f) ? num / denom : 0.f;
-    // Only the first CTA's thread 0 writes rz_old; all other CTAs
-    // skip the write (the rz_old slot is read by the *next*
-    // iteration's PcgUpdate, which happens after this kernel
-    // completes, so any one writer is enough).
-    if (blockIdx.x == 0) {
-      rz_old_ptr[0] = num;
-    }
   }
   __syncthreads();
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -929,13 +925,19 @@ __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
   p[i] = z[i] + b * p[i];
 }
 
-/** Performs `dst += local` on a single device scalar via a per-block warp
- *  reduction + atomicAdd.  Helper for fused dot kernels below. */
-__device__ inline void ReduceAndAddToScalar(float local, float *dst) {
+/** Writes `dst = sum of local over the grid` in a fixed order, so the
+ *  result is bit-identical for a given grid size.  Each CTA stores its
+ *  sum in `partials[blockIdx.x]`; the last CTA to take a ticket adds the
+ *  partials in index order and resets the ticket to 0. */
+__device__ inline void ReduceToScalar(float local, float *dst, float *partials, unsigned *ticket) {
   for (int off = warpSize / 2; off > 0; off >>= 1) {
     local += __shfl_down_sync(0xffffffffu, local, off);
   }
   __shared__ float warp_sums[32];
+  __shared__ bool last;
+  // A second call in the same kernel must not overwrite warp_sums while
+  // warp 0 is still reading the sums of the first call.
+  __syncthreads();
   int lane = threadIdx.x & 31;
   int wid = threadIdx.x >> 5;
   if (lane == 0) {
@@ -949,26 +951,44 @@ __device__ inline void ReduceAndAddToScalar(float local, float *dst) {
       s += __shfl_down_sync(0xffffffffu, s, off);
     }
     if (lane == 0) {
-      atomicAdd(dst, s);
+      __stcg(partials + blockIdx.x, s);
+      __threadfence();
+      last = atomicAdd(ticket, 1u) == gridDim.x - 1;
+      if (last) {
+        __threadfence();  // Order the partials reads below after the ticket.
+      }
+    }
+  }
+  __syncthreads();
+  if (last && wid == 0) {
+    float t = 0.f;
+    for (int i = lane; i < gridDim.x; i += 32) {
+      t += __ldcg(partials + i);
+    }
+    for (int off = warpSize / 2; off > 0; off >>= 1) {
+      t += __shfl_down_sync(0xffffffffu, t, off);
+    }
+    if (lane == 0) {
+      *dst = t;
+      *ticket = 0;
     }
   }
 }
 
 /**
- * @brief Block-stride dot product `out[0] += <a, b>` (atomic add).
+ * @brief Block-stride dot product `out[0] = <a, b>`.
  *
  * Each CTA does a register-level reduction over its slice, then a
- * single-warp reduction inside shared memory, then one atomicAdd into
- * the scalar slot.  Caller must zero `out[0]` first (see the
- * `cudaMemsetAsync` in the launch helper below).
+ * single-warp reduction inside shared memory; @ref ReduceToScalar adds
+ * the CTA sums in a fixed order.
  */
 __global__ void DotKernel(const float *__restrict__ a, const float *__restrict__ b, int n,
-                          float *__restrict__ out) {
+                          float *__restrict__ out, float *partials, unsigned *ticket) {
   float s = 0.f;
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += blockDim.x * gridDim.x) {
     s += a[i] * b[i];
   }
-  ReduceAndAddToScalar(s, out);
+  ReduceToScalar(s, out, partials, ticket);
 }
 
 /**
@@ -976,13 +996,13 @@ __global__ void DotKernel(const float *__restrict__ a, const float *__restrict__
  *        single pass over `a`.
  *
  * Halves the number of vector reads and saves one kernel launch per
- * PCG iteration (only one scalar-zeroing memset instead of two).
+ * PCG iteration.
  * Each thread accumulates two partial sums in registers and the
  * per-block reduction is identical to @ref DotKernel.
  */
 __global__ void DualDotKernel(const float *__restrict__ a, const float *__restrict__ b,
                               const float *__restrict__ c, int n, float *__restrict__ out_ab,
-                              float *__restrict__ out_ac) {
+                              float *__restrict__ out_ac, float *partials, unsigned *ticket) {
   float sab = 0.f;
   float sac = 0.f;
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += blockDim.x * gridDim.x) {
@@ -990,8 +1010,8 @@ __global__ void DualDotKernel(const float *__restrict__ a, const float *__restri
     sab += ai * b[i];
     sac += ai * c[i];
   }
-  ReduceAndAddToScalar(sab, out_ab);
-  ReduceAndAddToScalar(sac, out_ac);
+  ReduceToScalar(sab, out_ab, partials, ticket);
+  ReduceToScalar(sac, out_ac, partials + kMaxDotBlocks, ticket + 1);
 }
 
 // =============================================================================
@@ -1140,33 +1160,23 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start, int num_blo
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
-/** Enqueues `out[0] = <a, b>` (clear-then-reduce).
- *
- *  We use `cudaMemsetAsync` instead of a one-thread kernel because for
- *  a single-float clear the runtime can short-circuit it to a tiny
- *  memory operation, saving the per-kernel-launch dispatch overhead
- *  (~1 µs) that dominates on small-matrix workloads where PCG
- *  performs hundreds of dots per Solve. */
-void DotAsync(cudaStream_t stream, const float *a, const float *b, int n, float *out) {
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(out, 0, sizeof(float), stream));
+/** Enqueues `out[0] = <a, b>` for `n > 0`.  `work` holds
+ *  2 * kMaxDotBlocks partial sums and two tickets that are 0 on entry. */
+void DotAsync(cudaStream_t stream, const float *a, const float *b, int n, float *out, float *work) {
   int threads = 256;
-  int blocks = std::min(1024, (n + threads - 1) / threads);
-  DotKernel<<<blocks, threads, 0, stream>>>(a, b, n, out);
+  int blocks = std::min(kMaxDotBlocks, (n + threads - 1) / threads);
+  DotKernel<<<blocks, threads, 0, stream>>>(a, b, n, out, work,
+                                            reinterpret_cast<unsigned *>(work + 2 * kMaxDotBlocks));
 }
 
 /** Enqueues `out_ab = <a, b>` and `out_ac = <a, c>` in a single pass.
- *  Equivalent to two @ref DotAsync calls but with half the global reads
- *  AND a single 8-byte memset (vs two 4-byte memsets) — the two output
- *  slots are required to be adjacent in memory, which the caller
- *  guarantees by laying them out next to each other in @c d_scratch_. */
+ *  Equivalent to two @ref DotAsync calls but with half the global reads. */
 void DualDotAsync(cudaStream_t stream, const float *a, const float *b, const float *c, int n,
-                  float *out_ab, float *out_ac) {
-  // Verified adjacent at the call site (kRzNew, kRnorm2 in d_scratch_).
-  assert(out_ac == out_ab + 1);
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(out_ab, 0, 2 * sizeof(float), stream));
+                  float *out_ab, float *out_ac, float *work) {
   int threads = 256;
-  int blocks = std::min(1024, (n + threads - 1) / threads);
-  DualDotKernel<<<blocks, threads, 0, stream>>>(a, b, c, n, out_ab, out_ac);
+  int blocks = std::min(kMaxDotBlocks, (n + threads - 1) / threads);
+  DualDotKernel<<<blocks, threads, 0, stream>>>(
+      a, b, c, n, out_ab, out_ac, work, reinterpret_cast<unsigned *>(work + 2 * kMaxDotBlocks));
 }
 
 }  // namespace
@@ -1321,13 +1331,15 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
     p_.resize(n);
     Ap_.resize(n);
   }
-  if (d_scratch_.size() < 7) {
-    d_scratch_.resize(7);
+  if (d_scratch_.size() < kScratchSize) {
+    d_scratch_.resize(kScratchSize);
   }
 
   return true;
 }
 
+/** Creates the cuSPARSE SpMV plan for CSR input with the algorithm chosen by
+ *  @ref BlockSparsePCGOptions::deterministic_spmv. */
 bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
                                              const CSRSparseMatrix &spd_matrix) {
   const int n = static_cast<int>(spd_matrix.NumRows());
@@ -1345,16 +1357,18 @@ bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
 
   float alpha = 1.f;
   float beta = 0.f;
+  const cusparseSpMVAlg_t spmv_alg =
+      options_.deterministic_spmv ? CUSPARSE_SPMV_CSR_ALG2 : CUSPARSE_SPMV_ALG_DEFAULT;
   size_t buffer_size = 0;
   THROW_ON_CUSPARSE_ERROR(cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-                                                  matA, vecX, &beta, vecY, CUDA_R_32F,
-                                                  CUSPARSE_SPMV_ALG_DEFAULT, &buffer_size));
+                                                  matA, vecX, &beta, vecY, CUDA_R_32F, spmv_alg,
+                                                  &buffer_size));
   if (buffer_size > spmv_buffer_.size()) {
     spmv_buffer_.resize(buffer_size);
   }
   THROW_ON_CUSPARSE_ERROR(cusparseSpMV_preprocess(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-                                                  matA, vecX, &beta, vecY, CUDA_R_32F,
-                                                  CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+                                                  matA, vecX, &beta, vecY, CUDA_R_32F, spmv_alg,
+                                                  spmv_buffer_.data()));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecX));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecY));
   return true;
@@ -1461,8 +1475,12 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
   // [4] rz_new, [5] ||r||^2, [6] ||b||^2.
   enum : int { kAlpha = 0, kBeta = 1, kPAp = 2, kRzOld = 3, kRzNew = 4, kRnorm2 = 5, kBnorm2 = 6 };
 
-  DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzOld);
-  DotAsync(stream, rhs.data(), rhs.data(), n, d_scratch_.data() + kBnorm2);
+  float *dot_work = d_scratch_.data() + kDotWork;
+  // Clear the dot tickets on this stream; Initialize may have used another one.
+  THROW_ON_CUDA_ERROR(
+      cudaMemsetAsync(dot_work + 2 * kMaxDotBlocks, 0, 2 * sizeof(unsigned), stream));
+  DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzOld, dot_work);
+  DotAsync(stream, rhs.data(), rhs.data(), n, d_scratch_.data() + kBnorm2, dot_work);
 
   // Pull ||b||^2 once for the host-side convergence threshold.  This is
   // the ONLY guaranteed host sync; the rest of the loop polls residual
@@ -1503,13 +1521,15 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
                         bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
                         Ap_.data());
     } else {
-      THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
-                                           matA, vecX, &spmv_beta, vecY, CUDA_R_32F,
-                                           CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+      THROW_ON_CUSPARSE_ERROR(cusparseSpMV(
+          handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha, matA, vecX, &spmv_beta, vecY,
+          CUDA_R_32F,
+          options_.deterministic_spmv ? CUSPARSE_SPMV_CSR_ALG2 : CUSPARSE_SPMV_ALG_DEFAULT,
+          spmv_buffer_.data()));
     }
 
     // <p, Ap>.
-    DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp);
+    DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp, dot_work);
 
     // α = rz_old / <p, Ap>; x ← x + α p; r ← r − α Ap (fused kernel).
     PcgUpdateKernel<<<blocks, threads, 0, stream>>>(d_scratch_.data() + kRzOld,
@@ -1523,11 +1543,13 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     }
     // Fused: rz_new = <r, z>, ||r||^2 = <r, r>.  Single pass over r.
     DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, d_scratch_.data() + kRzNew,
-                 d_scratch_.data() + kRnorm2);
+                 d_scratch_.data() + kRnorm2, dot_work);
 
-    // β = rz_new / rz_old; rz_old ← rz_new; p ← z + β p (fused).
+    // β = rz_new / rz_old; p ← z + β p (fused); then rz_old ← rz_new.
     PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
         d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(), p_.data(), n);
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_scratch_.data() + kRzOld, d_scratch_.data() + kRzNew,
+                                        sizeof(float), cudaMemcpyDeviceToDevice, stream));
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.
