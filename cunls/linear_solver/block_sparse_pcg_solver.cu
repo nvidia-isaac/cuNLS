@@ -1260,6 +1260,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
   return InitializeCsrSpMV(stream, spd_matrix);
 }
 
+/** @brief Checks sizes and sets up the block layout, segment tables, BA product and scratch. */
 bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
                                             const dvector<float> &rhs, dvector<float> &result) {
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
@@ -1305,6 +1306,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
     return false;
   }
   matrix_size_ = n;
+  InitializeBaProduct(stream);
 
   if (precond_factors_.size() < total_factor_floats_) {
     precond_factors_.resize(total_factor_floats_);
@@ -1320,6 +1322,29 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
   }
 
   return true;
+}
+
+/** @brief Builds ba_product_ for the bundle-adjustment layout when selected; warns otherwise. */
+void BlockSparsePCGSolver::InitializeBaProduct(cudaStream_t stream) {
+  if (options_.hessian_product != BlockSparsePCGOptions::HessianProduct::kBundleAdjustment) {
+    return;
+  }
+  // Any other layout passes zero sizes, which Build rejects.
+  const bool ba_layout =
+      segments_.size() == 2 && segments_[0].block_size == 6 && segments_[1].block_size == 3;
+  const int num_cameras = ba_layout ? segments_[0].num_blocks : 0;
+  const int num_points = ba_layout ? segments_[1].num_blocks : 0;
+  const bool built =
+      bsr_view_ != nullptr
+          ? ba_product_.Build(stream, bsr_view_->row_offsets.data(), bsr_view_->col_ids.data(),
+                              bsr_view_->block_size, num_cameras, num_points)
+          : ba_product_.Build(stream, csr_view_->row_offsets.data(), csr_view_->col_ids.data(), 1,
+                              num_cameras, num_points);
+  if (!built) {
+    LogWarning(
+        "BlockSparsePCGSolver: matrix is not bundle-adjustment shaped or the GPU is older than "
+        "sm_80; using the generic H p");
+  }
 }
 
 bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
@@ -1492,7 +1517,9 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     // one per scalar entry, which is where the bandwidth saving comes from.
     float spmv_alpha = 1.f;
     float spmv_beta = 0.f;
-    if (block_storage) {
+    if (ba_product_.Ready()) {
+      ba_product_.Multiply(stream, row_off, col_idx, vals, p_.data(), Ap_.data());
+    } else if (block_storage) {
       LaunchBsrMultiply(stream, bsr_view_->num_block_rows, bsr_view_->block_size,
                         bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
                         Ap_.data());
