@@ -17,7 +17,5 @@ docs/design/
 # Generated Python release evidence
 python/pycunls/_build_provenance.json
 pypi-manifest.json
-pypi-release-uuids.txt
-pypi-status-*.json
+pypi-manifest.sha256
 pypi-wheels/
-pypi-publication-record*/
