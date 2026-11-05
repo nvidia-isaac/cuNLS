@@ -1338,6 +1338,8 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
   return true;
 }
 
+/** Creates the cuSPARSE SpMV plan for CSR input with the algorithm chosen by
+ *  @ref BlockSparsePCGOptions::deterministic_spmv. */
 bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
                                              const CSRSparseMatrix &spd_matrix) {
   const int n = static_cast<int>(spd_matrix.NumRows());
@@ -1355,16 +1357,18 @@ bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
 
   float alpha = 1.f;
   float beta = 0.f;
+  const cusparseSpMVAlg_t spmv_alg =
+      options_.deterministic_spmv ? CUSPARSE_SPMV_CSR_ALG2 : CUSPARSE_SPMV_ALG_DEFAULT;
   size_t buffer_size = 0;
   THROW_ON_CUSPARSE_ERROR(cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-                                                  matA, vecX, &beta, vecY, CUDA_R_32F,
-                                                  CUSPARSE_SPMV_ALG_DEFAULT, &buffer_size));
+                                                  matA, vecX, &beta, vecY, CUDA_R_32F, spmv_alg,
+                                                  &buffer_size));
   if (buffer_size > spmv_buffer_.size()) {
     spmv_buffer_.resize(buffer_size);
   }
   THROW_ON_CUSPARSE_ERROR(cusparseSpMV_preprocess(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-                                                  matA, vecX, &beta, vecY, CUDA_R_32F,
-                                                  CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+                                                  matA, vecX, &beta, vecY, CUDA_R_32F, spmv_alg,
+                                                  spmv_buffer_.data()));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecX));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecY));
   return true;
@@ -1517,9 +1521,11 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
                         bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
                         Ap_.data());
     } else {
-      THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
-                                           matA, vecX, &spmv_beta, vecY, CUDA_R_32F,
-                                           CUSPARSE_SPMV_ALG_DEFAULT, spmv_buffer_.data()));
+      THROW_ON_CUSPARSE_ERROR(cusparseSpMV(
+          handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha, matA, vecX, &spmv_beta, vecY,
+          CUDA_R_32F,
+          options_.deterministic_spmv ? CUSPARSE_SPMV_CSR_ALG2 : CUSPARSE_SPMV_ALG_DEFAULT,
+          spmv_buffer_.data()));
     }
 
     // <p, Ap>.

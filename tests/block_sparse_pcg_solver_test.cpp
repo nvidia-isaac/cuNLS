@@ -243,4 +243,24 @@ TEST(BlockSparsePCGSolverTest, RepeatedSolvesAreBitIdentical) {
   }
 }
 
+// About 1.2 M rows, with body rows of up to 27 k non-zeros, on which the
+// default cuSPARSE SpMV is not bit-reproducible.
+TEST(BlockSparsePCGSolverTest, DeterministicSpMVRepeatsSolvesWithLongRows) {
+  const System s = MakeBundleAdjustmentSystem(200, 400000, 8);
+  std::vector<float> b;
+  test_utils::GenerateRandomVector(s.n, b);
+  BlockSparsePCGOptions options;
+  options.block_layout = {{200, 6}, {400000, 3}};
+  options.relative_tolerance = 0.f;
+  options.absolute_tolerance = 0.f;
+  options.max_iterations = 50;
+  options.deterministic_spmv = true;
+  const auto [x0, iterations0] = SolveOnce(s, b, options);
+  for (int k = 0; k < 3; ++k) {
+    const auto [x, iterations] = SolveOnce(s, b, options);
+    EXPECT_EQ(iterations, iterations0);
+    EXPECT_EQ(std::memcmp(x.data(), x0.data(), x.size() * sizeof(float)), 0);
+  }
+}
+
 }  // namespace cunls

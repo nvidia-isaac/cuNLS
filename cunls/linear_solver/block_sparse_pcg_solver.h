@@ -111,6 +111,17 @@ struct BlockSparsePCGOptions {
    *        `check_period - 1` extra iterations after convergence.
    */
   int check_period = 4;
+
+  /**
+   * @brief Use the deterministic cuSPARSE algorithm (`CUSPARSE_SPMV_CSR_ALG2`)
+   *        for `H p` when @ref Solve is given a scalar CSR matrix.
+   *
+   * The default algorithm can return different bits from run to run on rows
+   * with many non-zeros, so repeated solves of the same system diverge.
+   * `CSR_ALG2` returns the same bits every time but can be slower on small
+   * systems.  Block (BSR) input does not use cuSPARSE and ignores this flag.
+   */
+  bool deterministic_spmv = false;
 };
 
 /**
