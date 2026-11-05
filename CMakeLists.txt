@@ -202,6 +202,7 @@ if(BUILD_TESTING)
     tests/sparse_matrix_test.cpp
     tests/block_hessian_assembler_test.cpp
     tests/sparse_linear_solver_test.cpp
+    tests/block_sparse_pcg_solver_test.cpp
     tests/constant_velocity_se3_factor_batch_test.cpp
     tests/constant_velocity_so3_factor_batch_test.cpp
     tests/constant_velocity_se2_factor_batch_test.cpp
