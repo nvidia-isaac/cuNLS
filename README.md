@@ -117,9 +117,7 @@ Requires Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/data
 The output directory defaults to `./dist`. The script builds the wheel inside
 a container with the source mounted read-only. Intermediate build directories
 live inside the container and are discarded; only the final `.whl` file is
-written to the host output directory. Set `EXTRA_CMAKE_ARGS` to pass CMake options
-such as `-DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;100`; CI uses it to build each wheel
-for its matrix cell's GPU architectures.
+written to the host output directory.
 
 Docker wheels use the distribution name `pycunls-cu12` or `pycunls-cu13` and the
 matching CuPy dependency; both use `import pycunls`. With `RELEASE_TAG=v<version>`,
@@ -127,21 +125,6 @@ the Docker build uses the committed checkout, excluding local changes and genera
 files. The tag version must match `python/pyproject.toml` and
 `python/pycunls/__init__.py`. Wheels include the source commit and measured CUDA
 toolkit version and are repaired with auditwheel while keeping CUDA libraries external.
-
-The version-tag release pipeline builds and tests the selected wheels, then publishes
-their unchanged filenames with `pypi-manifest.json` and `pypi-manifest.sha256` in an
-immutable GitHub release. PyPI publication runs through a separate internal process.
-The optional `PyPI publication confirmed` job waits for that process and verifies
-every selected wheel on both public indexes after confirmation. Enable it with
-`PYPI_PUBLICATION_ACK_ENABLED=true` only after its protected environment and callback
-are configured. Its approval wait allows at least 24 hours without occupying a runner;
-other build, test and release jobs finish independently.
-
-Wheel verification allows 1800 seconds per download by default. Set the
-`PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS` repository variable to change it. The
-verification job budget follows the prepared manifest's wheel count and download
-limit, plus metadata requests and setup time; the current four-wheel default is
-136 minutes. This execution budget is separate from the approval wait.
 
 #### Build the wheel locally
 
