@@ -73,6 +73,10 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs: [check-changes, build-matrix]
+    # Runs from different refs share the dated release tags.
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
     permissions:
       contents: write
       pages: write
