@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "cunls/common/cusparse_helper.h"
+#include "cunls/linear_solver/ba_hessian_vector_product.h"
 #include "cunls/linear_solver/sparse_linear_solver_base.h"
 
 namespace cunls {
@@ -111,6 +112,26 @@ struct BlockSparsePCGOptions {
    *        `check_period - 1` extra iterations after convergence.
    */
   int check_period = 4;
+
+  /** @brief How the PCG loop computes the Hessian-vector product `H p`. */
+  enum class HessianProduct {
+    kGeneric,           ///< Scalar CSR via cuSPARSE, block storage via the BSR SpMV.
+    kBundleAdjustment,  ///< @ref BaHessianProduct when `H` is bundle-adjustment shaped.
+  };
+
+  /**
+   * @brief Selects the `H p` kernel of the PCG loop.
+   *
+   * @c kBundleAdjustment applies when the layout is exactly
+   * `{{num_cameras, 6}, {num_points, 3}}` (cameras first), `H` is scalar CSR
+   * or 3x3 block storage with the bundle-adjustment pattern described on
+   * @ref BaHessianProduct, and the GPU is sm_80 or newer.  @ref Initialize
+   * validates this and otherwise logs a warning and keeps @c kGeneric.
+   * The product is deterministic.  It uses device-global state: solves of
+   * all solver instances in this mode must not overlap and must stay on one
+   * device.
+   */
+  HessianProduct hessian_product = HessianProduct::kGeneric;
 };
 
 /**
@@ -248,6 +269,12 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    */
   int LastIterations() const { return last_iterations_; }
 
+  /**
+   * @brief Whether @ref Solve uses the bundle-adjustment `H p` (see
+   *        @ref BlockSparsePCGOptions::hessian_product).
+   */
+  bool UsesBundleAdjustmentProduct() const { return ba_product_.Ready(); }
+
  private:
   // ------------------------------------------------------------------
   // Layout helpers
@@ -273,6 +300,9 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
 
   /** @brief Builds the generic-API SpMV plan used by the CSR path only. */
   bool InitializeCsrSpMV(cudaStream_t stream, const CSRSparseMatrix &spd_matrix);
+
+  /** @brief Builds @ref ba_product_ for the current view when the options ask for it. */
+  void InitializeBaProduct(cudaStream_t stream);
 
   /** @brief The CG recurrence, shared by both storage layouts. */
   bool SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs, dvector<float> &result);
@@ -332,6 +362,9 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    *  of the two is non-null and selects the storage layout. */
   const CSRSparseMatrix *csr_view_ = nullptr;
   const BSRSparseMatrix *bsr_view_ = nullptr;
+
+  /** Bundle-adjustment `H p`, ready only when selected and applicable. */
+  BaHessianProduct ba_product_;
 
   /** Iteration count reported by the last @ref Solve. */
   int last_iterations_ = 0;

@@ -142,6 +142,14 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   convergence polls.  Higher values reduce host syncs but may do up to
   ``check_period - 1`` extra iterations after convergence.  Default:
   ``4``.
+- ``hessian_product`` - [in] ``H p`` kernel of the PCG loop.
+  ``kGeneric`` (default): cuSPARSE for CSR, the block SpMV for block
+  storage.  ``kBundleAdjustment``: a deterministic kernel for
+  bundle-adjustment Hessians (layout ``{{num_cameras, 6}, {num_points,
+  3}}``, CSR or 3x3 block storage, sm_80 or newer) that reads each
+  camera-point block once; ``Initialize`` falls back to ``kGeneric``
+  when the matrix does not fit.  Solves in this mode must not overlap
+  and must stay on one device.
 
 BlockSparsePCGSolver
 --------------------

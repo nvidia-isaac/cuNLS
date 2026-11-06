@@ -899,27 +899,18 @@ __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
 }
 
 /**
- * @brief Fused: compute `β = rz_new / rz_old`, store `rz_old ← rz_new`,
- *        and update the search direction `p ← z + β p` in a single
- *        kernel.  Eliminates the separate `ComputeBetaKernel` launch
- *        and writes the new `rz_old` from the first CTA's thread 0
- *        (subsequent CTAs don't read the slot in this kernel).
+ * @brief Fused: compute `β = rz_new / rz_old` and update the search
+ *        direction `p ← z + β p` in a single kernel.  Every CTA reads
+ *        `rz_old`, so the caller advances it after this kernel.
  */
 __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
-                                   float *__restrict__ rz_old_ptr, const float *__restrict__ z,
-                                   float *__restrict__ p, int n) {
+                                   const float *__restrict__ rz_old_ptr,
+                                   const float *__restrict__ z, float *__restrict__ p, int n) {
   __shared__ float b;
   if (threadIdx.x == 0) {
     float num = rz_new_ptr[0];
     float denom = rz_old_ptr[0];
     b = (fabsf(denom) > 0.f) ? num / denom : 0.f;
-    // Only the first CTA's thread 0 writes rz_old; all other CTAs
-    // skip the write (the rz_old slot is read by the *next*
-    // iteration's PcgUpdate, which happens after this kernel
-    // completes, so any one writer is enough).
-    if (blockIdx.x == 0) {
-      rz_old_ptr[0] = num;
-    }
   }
   __syncthreads();
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -936,6 +927,9 @@ __device__ inline void ReduceAndAddToScalar(float local, float *dst) {
     local += __shfl_down_sync(0xffffffffu, local, off);
   }
   __shared__ float warp_sums[32];
+  // A second call in the same kernel must not overwrite warp_sums while
+  // warp 0 is still reading the sums of the first call.
+  __syncthreads();
   int lane = threadIdx.x & 31;
   int wid = threadIdx.x >> 5;
   if (lane == 0) {
@@ -1266,6 +1260,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
   return InitializeCsrSpMV(stream, spd_matrix);
 }
 
+/** @brief Checks sizes and sets up the block layout, segment tables, BA product and scratch. */
 bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
                                             const dvector<float> &rhs, dvector<float> &result) {
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
@@ -1311,6 +1306,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
     return false;
   }
   matrix_size_ = n;
+  InitializeBaProduct(stream);
 
   if (precond_factors_.size() < total_factor_floats_) {
     precond_factors_.resize(total_factor_floats_);
@@ -1326,6 +1322,29 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
   }
 
   return true;
+}
+
+/** @brief Builds ba_product_ for the bundle-adjustment layout when selected; warns otherwise. */
+void BlockSparsePCGSolver::InitializeBaProduct(cudaStream_t stream) {
+  if (options_.hessian_product != BlockSparsePCGOptions::HessianProduct::kBundleAdjustment) {
+    return;
+  }
+  // Any other layout passes zero sizes, which Build rejects.
+  const bool ba_layout =
+      segments_.size() == 2 && segments_[0].block_size == 6 && segments_[1].block_size == 3;
+  const int num_cameras = ba_layout ? segments_[0].num_blocks : 0;
+  const int num_points = ba_layout ? segments_[1].num_blocks : 0;
+  const bool built =
+      bsr_view_ != nullptr
+          ? ba_product_.Build(stream, bsr_view_->row_offsets.data(), bsr_view_->col_ids.data(),
+                              bsr_view_->block_size, num_cameras, num_points)
+          : ba_product_.Build(stream, csr_view_->row_offsets.data(), csr_view_->col_ids.data(), 1,
+                              num_cameras, num_points);
+  if (!built) {
+    LogWarning(
+        "BlockSparsePCGSolver: matrix is not bundle-adjustment shaped or the GPU is older than "
+        "sm_80; using the generic H p");
+  }
 }
 
 bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
@@ -1498,7 +1517,9 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     // one per scalar entry, which is where the bandwidth saving comes from.
     float spmv_alpha = 1.f;
     float spmv_beta = 0.f;
-    if (block_storage) {
+    if (ba_product_.Ready()) {
+      ba_product_.Multiply(stream, row_off, col_idx, vals, p_.data(), Ap_.data());
+    } else if (block_storage) {
       LaunchBsrMultiply(stream, bsr_view_->num_block_rows, bsr_view_->block_size,
                         bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
                         Ap_.data());
@@ -1525,9 +1546,11 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, d_scratch_.data() + kRzNew,
                  d_scratch_.data() + kRnorm2);
 
-    // β = rz_new / rz_old; rz_old ← rz_new; p ← z + β p (fused).
+    // β = rz_new / rz_old; p ← z + β p (fused); then rz_old ← rz_new.
     PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
         d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(), p_.data(), n);
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_scratch_.data() + kRzOld, d_scratch_.data() + kRzNew,
+                                        sizeof(float), cudaMemcpyDeviceToDevice, stream));
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.

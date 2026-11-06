@@ -1,4 +1,5 @@
 add_library(cunls_linear_solver OBJECT
+  ba_hessian_vector_product.cu
   block_sparse_cholesky_analysis.cpp
   block_sparse_cholesky_solver.cu
   block_sparse_pcg_solver.cu
