@@ -202,14 +202,40 @@ jobs:
         with:
           path: docs/sphinx/_build
 
+      # A published release cannot take new assets: a rerun for its commit
+      # skips the release, and another commit that day gets a run-numbered tag.
+      - name: Choose the release tag
+        id: release-tag
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_DATE: ${{ steps.release-notes.outputs.date }}
+        run: |
+          published_target() {
+            gh release view "$1" --json isDraft,targetCommitish \
+              --jq 'select(.isDraft | not) | .targetCommitish' || true
+          }
+          tag="nightly-$RELEASE_DATE"
+          target=$(published_target "$tag")
+          if [ -n "$target" ] && [ "$target" != "$GITHUB_SHA" ]; then
+            tag="$tag-$GITHUB_RUN_NUMBER"
+            target=$(published_target "$tag")
+          fi
+          {
+            echo "tag=$tag"
+            echo "name=Nightly ${tag#nightly-}"
+            if [ -n "$target" ]; then echo "published=true"; else echo "published=false"; fi
+          } >> "$GITHUB_OUTPUT"
+
       # Immutable releases reject assets after publication, so the prerelease
       # stays a draft until every asset is attached.
       - name: Create GitHub Release
-        if: steps.check.outputs.skip == 'false'
+        if: steps.check.outputs.skip == 'false' && steps.release-tag.outputs.published == 'false'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: nightly-${{ steps.release-notes.outputs.date }}
-          name: "Nightly ${{ steps.release-notes.outputs.date }}"
+          tag_name: ${{ steps.release-tag.outputs.tag }}
+          name: ${{ steps.release-tag.outputs.name }}
           target_commitish: ${{ github.sha }}
           body_path: release-notes.md
           prerelease: true
@@ -217,11 +243,11 @@ jobs:
           files: release-assets/*
 
       - name: Publish GitHub Release
-        if: steps.check.outputs.skip == 'false'
+        if: steps.check.outputs.skip == 'false' && steps.release-tag.outputs.published == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: nightly-${{ steps.release-notes.outputs.date }}
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Deploy to GitHub Pages
