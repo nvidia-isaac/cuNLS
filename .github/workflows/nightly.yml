@@ -209,6 +209,7 @@ jobs:
       - name: Choose the release tag
         id: release-tag
         if: steps.check.outputs.skip == 'false'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
