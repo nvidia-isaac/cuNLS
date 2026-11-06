@@ -177,7 +177,7 @@ Within a single job, steps share a host directory (e.g., `./output/`). Use GitHu
 
 ### 12. Every nightly produces a complete, dated release
 
-A nightly release tagged `nightly-YYYY-MM-DD` includes, per matrix entry: a single C++ tarball containing both shared (`.so`) and static (`.a`) libraries with their respective CMake configs, headers, a Python wheel, and JUnit test result XMLs. All attached as GitHub Release assets with filenames that include the CUDA version and Ubuntu version.
+A nightly release tagged `nightly-YYYY-MM-DD` (with the workflow run number appended when a different commit already has that day's release) includes, per matrix entry: a single C++ tarball containing both shared (`.so`) and static (`.a`) libraries with their respective CMake configs, headers, a Python wheel, and JUnit test result XMLs. All attached as GitHub Release assets with filenames that include the CUDA version and Ubuntu version.
 
 ---
 
