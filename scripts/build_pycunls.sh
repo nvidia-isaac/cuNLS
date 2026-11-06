@@ -76,7 +76,7 @@ Path('pycunls/_build_provenance.json').write_text(json.dumps({
 PY
 
 export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}
-CMAKE_ARGS="${EXTRA_CMAKE_ARGS:-}" pip wheel . --no-build-isolation --no-deps --wheel-dir "$WORK_DIR/raw"
+CMAKE_ARGS="${CMAKE_ARGS:-} ${EXTRA_CMAKE_ARGS:-}" pip wheel . --no-build-isolation --no-deps --wheel-dir "$WORK_DIR/raw"
 
 # The system CUDA toolkit supplies these linked runtime libraries. Match SONAME
 # families rather than assuming CUDA 12 and 13 use the same SONAME versions.
