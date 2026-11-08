@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import nvidia_sphinx_theme
+import nvidia_sphinx_theme  # noqa: F401  (fails early if the theme is not installed)
 
 project = "cuNLS"
 author = "NVIDIA CORPORATION & AFFILIATES"
@@ -35,6 +35,7 @@ html_theme_options = {
     "navigation_depth": 4,
 }
 html_show_sphinx = False
+html_favicon = "_static/cuNLS_icon.svg"
 
 default_role = "code"
 highlight_language = "c++"

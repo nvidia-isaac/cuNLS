@@ -2,8 +2,8 @@
 
    <div style="display:flex; justify-content:center; margin: 0.5rem 0 1.0rem 0;">
      <div style="max-width: 420px; width: 100%;">
-      <img class="only-light" src="_static/cuNLS_logo_light.png" alt="cuNLS logo" style="width:100%; height:auto;">
-      <img class="only-dark" src="_static/cuNLS_logo_dark.png" alt="cuNLS logo" style="width:100%; height:auto;">
+      <img class="only-light" src="_static/cuNLS_logo_light.svg" alt="cuNLS logo" style="width:100%; height:auto;">
+      <img class="only-dark" src="_static/cuNLS_logo_dark.svg" alt="cuNLS logo" style="width:100%; height:auto;">
      </div>
    </div>
 

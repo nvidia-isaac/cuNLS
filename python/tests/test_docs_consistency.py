@@ -31,8 +31,8 @@ if not (REPO / "docs" / "sphinx").is_dir():
 
 
 def _doc_files():
-    files = [REPO / "README.md", REPO / "AGENTS.md", REPO / "CONTRIBUTING.md",
-             REPO / "examples" / "README.md"]
+    files = [REPO / "README.md", REPO / "INSTALL.md", REPO / "AGENTS.md",
+             REPO / "CONTRIBUTING.md", REPO / "examples" / "README.md"]
     files += sorted(REPO.glob("cunls/**/AGENTS.md"))
     files += sorted(REPO.glob("python/**/*.md"))
     files += sorted(REPO.glob("docs/sphinx/**/*.rst"))
