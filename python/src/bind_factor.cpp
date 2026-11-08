@@ -323,8 +323,8 @@ void bind_factor(nb::module_ &m) {
           [](cunls::PnPFactorBatch *self, nb::handle observations, nb::handle poses_camera_from_rig,
              nb::handle points_world, size_t capacity, float z_threshold) {
             auto obs_ptr = device_items<cunls::Vector<2>>(observations, "observations", capacity);
-            auto rig_ptr = reinterpret_cast<const cunls::SE3Transform *>(
-                extract_device_ptr(poses_camera_from_rig, "float32", "poses_camera_from_rig"));
+            auto rig_ptr = device_items<cunls::SE3Transform>(poses_camera_from_rig,
+                                                             "poses_camera_from_rig", capacity);
             auto p_ptr = device_items<cunls::Vector<3>>(points_world, "points_world", capacity);
             new (self) cunls::PnPFactorBatch(obs_ptr, rig_ptr, p_ptr, capacity, z_threshold);
           },
@@ -590,7 +590,9 @@ void bind_factor(nb::module_ &m) {
             new (self) PyInformationFactorBatch(inner, ptr);
           },
           nb::arg("inner_factor"), nb::arg("sqrt_information_matrices"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>());
+          nb::keep_alive<1, 3>())
+      .def_prop_ro("inner_factor", &PyInformationFactorBatch::Inner, nb::rv_policy::reference,
+                   "The wrapped factor batch.");
 
   // --- WeightedFactorBatch (polymorphic wrapper) ---
   nb::class_<PyWeightedFactorBatch, cunls::FactorBatch>(
@@ -626,7 +628,9 @@ void bind_factor(nb::module_ &m) {
           // Keyword-only, so a positional number always selects the scalar `weight`
           // overload instead of being read as a device pointer.
           nb::arg("inner_factor"), nb::kw_only(), nb::arg("weights"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>());
+          nb::keep_alive<1, 3>())
+      .def_prop_ro("inner_factor", &PyWeightedFactorBatch::Inner, nb::rv_policy::reference,
+                   "The wrapped factor batch.");
 
   // --- Constraints (augmented Lagrangian; solved by AugmentedLagrangianMinimizer) ---
   nb::enum_<cunls::ConstraintKind>(m, "ConstraintKind", "Kind of a constraint row.")
@@ -682,7 +686,9 @@ void bind_factor(nb::module_ &m) {
       "    Positive row scale, so that the constraint tolerance means the same in meters,\n"
       "    radians or newtons.")
       .def(nb::init<cunls::FactorBatch *, cunls::ConstraintKind, float>(), nb::arg("inner_factor"),
-           nb::arg("kind"), nb::arg("scale") = 1.f, nb::keep_alive<1, 2>());
+           nb::arg("kind"), nb::arg("scale") = 1.f, nb::keep_alive<1, 2>())
+      .def_prop_ro("inner_factor", &cunls::ConstraintFactorBatch::Inner, nb::rv_policy::reference,
+                   "The wrapped factor batch whose residuals are the constraint rows.");
 
   bind_bound_factor<1>(m, "BoundFactorBatch1");
   bind_bound_factor<2>(m, "BoundFactorBatch2");

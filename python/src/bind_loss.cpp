@@ -59,8 +59,8 @@ void bind_loss(nb::module_ &m) {
 
   nb::class_<cunls::ArctanLossFunctionBatch, cunls::LossFunctionBatch>(
       m, "ArctanLossFunctionBatch",
-      "Arctan loss rho(s) = a atan(s / a), s = |r|^2 (b is the derivative's curvature "
-      "parameter, usually 1 / a^2): bounded by a pi / 2.")
+      "Arctan loss rho(s) = a atan(s / a), s = |r|^2, bounded by a pi / 2. b must be 1 / a^2: "
+      "the derivatives are computed as rho'(s) = 1 / (1 + b s^2), which match rho only then.")
       .def(nb::init<float, float>(), nb::arg("a"), nb::arg("b"));
 
   nb::class_<cunls::SoftLOneLossFunctionBatch, cunls::LossFunctionBatch>(

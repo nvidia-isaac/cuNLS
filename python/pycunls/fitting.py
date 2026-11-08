@@ -207,16 +207,18 @@ class _WarpModel:
 
     def _wp(self, a: cp.ndarray, dtype, requires_grad=False):
         return self.wp.array(ptr=a.data.ptr, dtype=dtype, shape=(a.shape[0],),
-                             device="cuda:0", copy=False, requires_grad=requires_grad)
+                             device=f"cuda:{a.device.id}", copy=False,
+                             requires_grad=requires_grad)
 
     def _predict(self, x: cp.ndarray, p: cp.ndarray) -> cp.ndarray:
         x = cp.ascontiguousarray(x, dtype=cp.float32)
         p = cp.ascontiguousarray(p, dtype=cp.float32)
         out = cp.empty((p.shape[0], self.m), cp.float32)
         cp.cuda.get_current_stream().synchronize()
+        device = f"cuda:{p.device.id}"
         self.wp.launch(self._kernel, dim=p.shape[0], inputs=[self._wp(x, self.x_type),
-                       self._wp(p, self.p_type), self._wp(out, self.y_type)])
-        self.wp.synchronize_device()
+                       self._wp(p, self.p_type), self._wp(out, self.y_type)], device=device)
+        self.wp.synchronize_device(device)
         return out
 
     def _autodiff(self, x: cp.ndarray, p: cp.ndarray):
@@ -226,25 +228,23 @@ class _WarpModel:
         n = p.shape[0]
         cp.cuda.get_current_stream().synchronize()
         xw = self._wp(x, self.x_type)
-        pw = wp.array(ptr=p.data.ptr, dtype=self.p_type, shape=(n,), device="cuda:0",
-                      copy=False, requires_grad=True)
+        pw = self._wp(p, self.p_type, requires_grad=True)
         out = cp.empty((n, self.m), cp.float32)
-        yw = wp.array(ptr=out.data.ptr, dtype=self.y_type, shape=(n,), device="cuda:0",
-                      copy=False, requires_grad=True)
+        yw = self._wp(out, self.y_type, requires_grad=True)
         jac = cp.empty((n, self.m, self.num_params), cp.float32)
         tape = wp.Tape()
+        device = f"cuda:{p.device.id}"
         with tape:
-            wp.launch(self._kernel, dim=n, inputs=[xw, pw, yw])
+            wp.launch(self._kernel, dim=n, inputs=[xw, pw, yw], device=device)
         for r in range(self.m):
             seed = cp.zeros((n, self.m), cp.float32)
             seed[:, r] = 1.0
             cp.cuda.get_current_stream().synchronize()
-            tape.backward(grads={yw: wp.array(ptr=seed.data.ptr, dtype=self.y_type, shape=(n,),
-                                              device="cuda:0", copy=False)})
-            wp.synchronize_device()
+            tape.backward(grads={yw: self._wp(seed, self.y_type)})
+            wp.synchronize_device(device)
             jac[:, r, :] = _device_view(pw.grad.ptr, (n, self.num_params))
             tape.zero()
-        wp.synchronize_device()
+        wp.synchronize_device(device)
         return out, jac
 
     def evaluate(self, x: cp.ndarray, p: cp.ndarray, want_jacobian: bool):
@@ -360,8 +360,10 @@ class FitResult:
         """JSON-ready dict (lists instead of arrays; residuals and covariance left out)."""
         def plain(v):
             if isinstance(v, np.ndarray):
-                return np.where(np.isfinite(v), v, np.nan).tolist() if v.dtype.kind == "f" \
-                    else v.tolist()
+                if v.dtype.kind != "f":
+                    return v.tolist()
+                # Strict JSON: NaN / inf become None.
+                return np.where(np.isfinite(v), v, None).tolist()
             if isinstance(v, (np.floating, float)):
                 return float(v) if math.isfinite(float(v)) else None
             if isinstance(v, np.generic):

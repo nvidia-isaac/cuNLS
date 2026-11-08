@@ -50,6 +50,7 @@ RESULTS="${OUT_DIR}/results.jsonl"
 for task in ${TASKS}; do
   for seed in ${SEEDS}; do
     run_dir="${OUT_DIR}/${task}-${seed}"
+    rm -rf "${run_dir}"  # a stale answer.json from an earlier run must not be scored
     "${PYTHON}" -m agent_tasks prepare "${task}" "${run_dir}" --seed "${seed}" > /dev/null
     start=$(date +%s)
     if [ "${AGENT_CMD}" = "reference" ]; then
@@ -63,6 +64,9 @@ for task in ${TASKS}; do
     seconds=$(( $(date +%s) - start ))
     result=$("${PYTHON}" -m agent_tasks check "${task}" "${run_dir}/answer.json" --seed "${seed}" \
              || true)
+    if [ -z "${result}" ]; then  # the checker crashed: record a failure, keep the table valid
+      result="{\"task\": \"${task}\", \"seed\": ${seed}, \"passed\": false, \"message\": \"checker crashed\"}"
+    fi
     echo "${result%\}}, \"seconds\": ${seconds}}" | tee -a "${RESULTS}"
   done
 done

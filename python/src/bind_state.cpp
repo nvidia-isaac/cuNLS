@@ -136,8 +136,16 @@ const float *StateData(nb::handle data, size_t capacity) {
   constexpr size_t ambient = AmbientOf(static_cast<const Class *>(nullptr));
   const std::string what = "capacity " + std::to_string(capacity) + " states x " +
                            std::to_string(ambient) + " float32 per state";
-  return reinterpret_cast<const float *>(
-      extract_device_ptr(data, "float32", "data", capacity * ambient, what.c_str()));
+  return reinterpret_cast<const float *>(extract_device_ptr(
+      data, "float32", "data", checked_size(capacity, ambient, "data"), what.c_str()));
+}
+
+// Checked data array of a CustomStateBatch: capacity x ambient_size float32 values.
+uintptr_t CustomStateData(nb::handle data, size_t ambient_size, size_t capacity) {
+  const std::string what = "capacity " + std::to_string(capacity) + " states x " +
+                           std::to_string(ambient_size) + " float32 per state";
+  return extract_device_ptr(data, "float32", "data", checked_size(capacity, ambient_size, "data"),
+                            what.c_str());
 }
 
 // Register a VectorStateBatch<Dim> with two constructor overloads:
@@ -346,7 +354,7 @@ void bind_state(nb::module_ &m) {
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
              size_t capacity) {
-            auto ptr = extract_device_ptr(data, "float32", "data");
+            auto ptr = CustomStateData(data, ambient_size, capacity);
             new (self) PyStateBatch(ptr, ambient_size, tangent_size, capacity, 0, 0);
           },
           nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("capacity"),
@@ -355,8 +363,9 @@ void bind_state(nb::module_ &m) {
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
              size_t capacity, nb::handle const_ids, size_t const_capacity) {
-            auto ptr = extract_device_ptr(data, "float32", "data");
-            auto cids = extract_device_ptr(const_ids, "int32", "const_ids");
+            auto ptr = CustomStateData(data, ambient_size, capacity);
+            auto cids = extract_device_ptr(const_ids, "int32", "const_ids", const_capacity,
+                                           "const_capacity ids");
             new (self)
                 PyStateBatch(ptr, ambient_size, tangent_size, capacity, cids, const_capacity);
           },

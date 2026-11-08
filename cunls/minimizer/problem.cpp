@@ -499,10 +499,10 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
     case 3:
       return "State batch " + batch + ": state " + entry +
              " is not constrained by any factor, so the linear system is singular. Fix: add a "
-             "factor on it, make it constant, or lower NumActiveStates.";
+             "factor on it or lower NumActiveStates (constant states need a factor too).";
     case 4:
       return "State batch " + batch + ": constant id #" + entry +
-             " is not below NumActiveStates(). Fix: correct the constant ids or their count.";
+             " is outside [0, NumActiveStates()). Fix: correct the constant ids or their count.";
     default:
       return "Problem validation failed (code " + std::to_string(result.code) + ").";
   }

@@ -61,3 +61,28 @@ def test_valid_arrays_and_raw_pointers_still_work():
     data = cp.zeros((3, 4, 4), cp.float32)
     pycunls.SE3StateBatch(data, 3)
     pycunls.SE3StateBatch(data.data.ptr, 3)  # an int pointer is not checked
+
+
+def test_too_small_pnp_rig_pose_array():
+    obs = cp.zeros((4, 2), cp.float32)
+    points = cp.zeros((4, 3), cp.float32)
+    rig = cp.zeros((2, 4, 4), cp.float32)  # one rig pose per factor is needed
+    with pytest.raises(ValueError, match="poses_camera_from_rig has 32 float32 values, but 64"):
+        pycunls.PnPFactorBatch(obs, rig, points, 4)
+
+
+def test_too_small_custom_state_arrays():
+    class Vec2(pycunls.CustomStateBatch):
+        def plus(self, *args):
+            pass
+
+    with pytest.raises(ValueError, match="data has 6 float32 values, but 8 are needed"):
+        Vec2(cp.zeros(6, cp.float32), 2, 2, 4)
+    with pytest.raises(ValueError, match="const_ids has 1 int32 values, but 2 are needed"):
+        Vec2(cp.zeros(8, cp.float32), 2, 2, 4, cp.zeros(1, cp.int32), 2)
+
+
+def test_capacity_overflow_is_rejected():
+    huge = 2**64 // 16 + 1  # x 16 floats per state wraps size_t to a small number
+    with pytest.raises(ValueError, match="overflows"):
+        pycunls.SE3StateBatch(cp.zeros((1, 4, 4), cp.float32), huge)

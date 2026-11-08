@@ -79,6 +79,6 @@ def test_stub_lists_every_native_name():
         stub = pathlib.Path(__file__).resolve().parents[1] / "pycunls" / "_pycunls_core.pyi"
     text = stub.read_text()
     names = [n for n in dir(core) if not n.startswith("_")]
-    missing = [n for n in names if not re.search(rf"^(class|def) {n}\b", text, re.M)]
+    missing = [n for n in names if not re.search(rf"^(class|def) {re.escape(n)}\b", text, re.M)]
     assert not missing, (f"{stub.name} is stale (missing {missing}): run python "
                          "scripts/generate_pycunls_stubs.py")

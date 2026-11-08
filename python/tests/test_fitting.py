@@ -163,8 +163,18 @@ def test_report_and_to_dict():
     res = pycunls.fit(decay, x, y, p0=[1, 1, 0], sigma=0.02)
     assert res.report().startswith("FitResult: converged")
     d = res.to_dict()
-    json.dumps(d)
+    json.dumps(d, allow_nan=False)
     assert d["converged"] is True and len(d["params"]) == 3
+
+
+def test_to_dict_is_strict_json_when_errors_are_undetermined():
+    # As many samples as parameters: no degrees of freedom, so the errors are NaN.
+    x = np.array([0.0, 1.0])
+    res = pycunls.fit(lambda x, p: p[:, 0] * x + p[:, 1], x, 2 * x + 1, p0=[0, 0])
+    assert np.isnan(res.reduced_chi2)
+    d = res.to_dict()
+    json.dumps(d, allow_nan=False)
+    assert d["reduced_chi2"] is None
 
 
 def test_errors_explain_the_mistake():

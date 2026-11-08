@@ -25,7 +25,7 @@ from numpy.typing import ArrayLike
 
 class ArctanLossFunctionBatch(LossFunctionBatch):
     """
-    Arctan loss rho(s) = a atan(s / a), s = |r|^2 (b is the derivative's curvature parameter, usually 1 / a^2): bounded by a pi / 2.
+    Arctan loss rho(s) = a atan(s / a), s = |r|^2, bounded by a pi / 2. b must be 1 / a^2: the derivatives are computed as rho'(s) = 1 / (1 + b s^2), which match rho only then.
     """
 
     def __init__(self, a: float, b: float) -> None: ...
@@ -744,6 +744,10 @@ class ConstraintFactorBatch(ConstraintFactorBatchBase):
 
     def __init__(self, inner_factor: FactorBatch, kind: ConstraintKind, scale: float = 1.0) -> None: ...
 
+    @property
+    def inner_factor(self) -> FactorBatch:
+        """The wrapped factor batch whose residuals are the constraint rows."""
+
 class ConstraintFactorBatchBase(FactorBatch):
     """
     A factor batch whose rows are constraints. Evaluates the augmented Lagrangian residuals of its multipliers (one per row) and penalties (one per factor); AugmentedLagrangianMinimizer updates both.
@@ -1092,6 +1096,10 @@ class InformationFactorBatch(FactorBatch):
     """
 
     def __init__(self, inner_factor: FactorBatch, sqrt_information_matrices: object) -> None: ...
+
+    @property
+    def inner_factor(self) -> FactorBatch:
+        """The wrapped factor batch."""
 
 class JacobianMode(enum.Enum):
     """
@@ -3183,6 +3191,10 @@ class WeightedFactorBatch(FactorBatch):
 
     @overload
     def __init__(self, inner_factor: FactorBatch, *, weights: object) -> None: ...
+
+    @property
+    def inner_factor(self) -> FactorBatch:
+        """The wrapped factor batch."""
 
 def set_log_verbosity(verbosity: Verbosity) -> None:
     """

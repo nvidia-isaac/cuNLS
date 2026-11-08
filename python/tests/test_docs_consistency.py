@@ -36,7 +36,9 @@ def _doc_files():
     files += sorted(REPO.glob("cunls/**/AGENTS.md"))
     files += sorted(REPO.glob("python/**/*.md"))
     files += sorted(REPO.glob("docs/sphinx/**/*.rst"))
-    return [f for f in files if f.exists() and "_build" not in f.parts and "build" not in f.parts]
+    # Skip build outputs inside the checkout (not parent directories of the checkout).
+    return [f for f in files if f.exists()
+            and not {"_build", "build"} & set(f.relative_to(REPO).parts)]
 
 
 # A file path in backticks: at least one slash and a file extension (prose such as `factor/state`

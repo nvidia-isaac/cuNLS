@@ -367,11 +367,17 @@ def _naive_pose_graph(data):
 def _unconstrained_decay_fit(x, y, p):
     """Gauss-Newton for a*exp(-b*x) + c in float64 (to check the trap when making the data)."""
     p = np.array(p, dtype=np.float64)
-    for _ in range(50):
-        e = np.exp(-p[1] * x)
-        J = np.stack([e, -p[0] * x * e, np.ones_like(x)], 1)
-        step = np.linalg.lstsq(J, -(p[0] * e + p[2] - y), rcond=None)[0]
-        p += step
+    with np.errstate(all="ignore"):
+        for _ in range(50):
+            e = np.exp(-p[1] * x)
+            J = np.stack([e, -p[0] * x * e, np.ones_like(x)], 1)
+            if not np.all(np.isfinite(J)):
+                return np.full(3, np.nan)  # diverged
+            try:
+                step = np.linalg.lstsq(J, -(p[0] * e + p[2] - y), rcond=None)[0]
+            except np.linalg.LinAlgError:
+                return np.full(3, np.nan)
+            p += step
     return p
 
 
@@ -385,6 +391,9 @@ def _make_bounded(seed):
         free = _unconstrained_decay_fit(x.astype(np.float64), y, [1.0, 1.0, 0.1])
         if np.all(np.isfinite(free)) and free[2] < -0.03:
             break
+    else:
+        raise RuntimeError(f"bounded_fit: no noise draw for seed {seed} gives a negative "
+                           "unconstrained offset; the task would have no trap")
     return {"x": x, "y": y.astype(np.float32)}, {"params": p.tolist()}
 
 

@@ -368,7 +368,10 @@ def _gauge_issues(problem: Problem, state_batches) -> List[Issue]:
         fb = problem.factor_batch(i)
         if fb.num_active_factors == 0:
             continue
-        info = _factor_info(type(fb).__name__)
+        inner = fb
+        while getattr(inner, "inner_factor", None) is not None:  # Weighted/Information/Constraint
+            inner = inner.inner_factor
+        info = _factor_info(type(inner).__name__)
         relative = info is not None and info.relative
         slots = len(fb.state_sizes())
         where = _locate(_pointer_table(problem, i), state_batches).reshape(-1, slots, 2)

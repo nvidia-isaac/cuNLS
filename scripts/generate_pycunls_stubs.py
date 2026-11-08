@@ -70,8 +70,11 @@ def generate(stubgen) -> str:
     # The Python-side summary methods appear as an import; declare them as methods instead.
     text = re.sub(r"^from pycunls\._summary import .*\n", "", text, flags=re.M)
     for cls in ("MinimizerSummary", "AugmentedLagrangianMinimizerSummary"):
-        text = re.sub(rf'(class {cls}:\n    """(?:.|\n)*?"""\n)', lambda m: m.group(1) +
-                      SUMMARY_METHODS, text, count=1)
+        text, found = re.subn(rf'(class {cls}:\n    """(?:.|\n)*?"""\n)', lambda m: m.group(1) +
+                              SUMMARY_METHODS, text, count=1)
+        if found != 1:
+            raise RuntimeError(f"could not add to_dict/report to class {cls} in the stub: the "
+                               "stubgen output layout changed; update this script")
     return HEADER + text
 
 

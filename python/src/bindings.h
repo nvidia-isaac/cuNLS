@@ -24,6 +24,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include <cstdint>
 #include <string>
 
 namespace nb = nanobind;
@@ -58,6 +59,18 @@ struct DeviceArray {
 // TypeError explaining that GPU memory is needed. Errors name `name`.
 DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *name);
 
+// count * per_item, raising ValueError (naming `name`) when the product overflows size_t
+// (e.g. a huge capacity that would otherwise wrap to a small required size).
+inline size_t checked_size(size_t count, size_t per_item, const char *name) {
+  if (per_item != 0 && count > SIZE_MAX / per_item) {
+    throw nb::value_error((std::string(name) + ": capacity " + std::to_string(count) + " x " +
+                           std::to_string(per_item) +
+                           " values overflows size_t. Fix: pass the real capacity.")
+                              .c_str());
+  }
+  return count * per_item;
+}
+
 // Typed device array of `count` items of T (each sizeof(T) / 4 float32
 // values), checked like extract_device_ptr with a minimum size.
 template <typename T>
@@ -67,7 +80,7 @@ const T *device_items(nb::handle obj, const char *name, size_t count) {
   const std::string what =
       "capacity " + std::to_string(count) + " x " + std::to_string(per_item) + " float32 per item";
   return reinterpret_cast<const T *>(
-      extract_device_ptr(obj, "float32", name, count * per_item, what.c_str()));
+      extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
 }
 
 // --- Binding registration entry points (one per translation unit) ----------

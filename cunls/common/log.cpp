@@ -107,8 +107,14 @@ std::shared_ptr<LogCallback> log_callback;  ///< SetLogCallback(); null: spdlog 
 }  // namespace
 
 void SetLogCallback(LogCallback callback) {
-  std::lock_guard<std::mutex> lock(callback_mutex);
-  log_callback = callback ? std::make_shared<LogCallback>(std::move(callback)) : nullptr;
+  std::shared_ptr<LogCallback> replaced =
+      callback ? std::make_shared<LogCallback>(std::move(callback)) : nullptr;
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex);
+    log_callback.swap(replaced);
+  }
+  // The old callback is released here, outside the lock: its destructor may take other locks
+  // (e.g. the Python GIL) and must not do so while holding callback_mutex.
 }
 
 Verbosity ParseVerbosity(std::string_view name) {

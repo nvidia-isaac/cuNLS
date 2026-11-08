@@ -177,3 +177,23 @@ def test_states_are_unchanged_by_the_checks():
     pycunls.evaluate(problem)
     pycunls.check_jacobians(problem)
     assert cp.array_equal(before, keep[0])
+
+
+def test_diagnose_sees_through_wrapped_factors():
+    # A weighted between factor is still relative: the gauge warning must stay.
+    problem, (poses, deltas, ids, sb, fb) = _pose_graph()
+    weighted = pycunls.WeightedFactorBatch(fb, 2.0)
+    assert weighted.inner_factor is fb
+    wrapped = pycunls.Problem()
+    wrapped.add_state_batch(sb)
+    wrapped.add_factor_batch(weighted, [sb.state_device_ptr(i + k) for i in range(4)
+                                        for k in (0, 1)])
+    issues = pycunls.diagnose(wrapped)
+    assert len(issues) == 1 and "Gauge freedom" in issues[0].message
+
+    # A weighted prior still anchors.
+    target = cp.asarray(np.eye(4, dtype=np.float32)[None])
+    prior = pycunls.SE3PriorFactorBatch(target, 1)
+    prior.set_num_active_factors(1)
+    wrapped.add_factor_batch(pycunls.WeightedFactorBatch(prior, 1.0), [sb.state_device_ptr(0)])
+    assert pycunls.diagnose(wrapped) == []
