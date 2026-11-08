@@ -33,7 +33,15 @@ __global__ void classify_kernel(size_t num_problems, const float *cost, const fl
   // Written so that a NaN quality (non-finite cost) rejects.
   const bool lowered = quality < 1.f;
   reject[p] = !lowered;
-  converged[p] = step_squared[p] < state_tolerance || new_cost[p] < cost_tolerance || !lowered;
+  TerminationReason reason = TerminationReason::NotDetermined;
+  if (step_squared[p] < state_tolerance) {
+    reason = TerminationReason::StateTolerance;
+  } else if (new_cost[p] < cost_tolerance) {
+    reason = TerminationReason::CostTolerance;
+  } else if (!lowered) {
+    reason = TerminationReason::NoCostDecrease;
+  }
+  converged[p] = static_cast<int>(reason);
 }
 
 }  // namespace

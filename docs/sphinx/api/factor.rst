@@ -480,7 +480,7 @@ Reprojection error for bundle adjustment.  Observations must be in
 **State layout:** two states per factor — ``[SE3 pose, R^3 point]`` — from
 :ref:`SE3StateBatch <py-lie-state-batches>` and
 :ref:`VectorStateBatch3 <py-vector-state-batches>` respectively. The pose is
-world_from_rig, the rig's pose in the world (:ref:`pose-convention`). This
+world_from_rig, the rig's pose in the world (:ref:`pose convention <pose-convention>`). This
 binding has no ``camera_from_rig`` argument: the camera is the rig (identity
 extrinsic), :math:`P_{\mathrm{cam}} = T^{-1} P`.
 
@@ -493,7 +493,7 @@ extrinsic), :math:`P_{\mathrm{cam}} = T^{-1} P`.
 
 PnP-style reprojection: **fixed** 3-D points in the constructor, **one** SE(3)
 state per correspondence (typically the same camera pose pointer repeated),
-world_from_rig (:ref:`pose-convention`).
+world_from_rig (:ref:`pose convention <pose-convention>`).
 
 **Constructor (identity camera-from-rig)**
 
@@ -672,7 +672,7 @@ consecutive poses, for SE(3), SO(3), SE(2) and SO(2)
 
 **State layout:** CV ``[pose_k, pose_{k+1}, v_k, v_{k+1}]``, CA additionally
 ``a_k, a_{k+1}``: poses from the matching Lie state batch (world_from_body,
-see :ref:`pose-convention`), velocities and accelerations (body frame) from
+see :ref:`pose convention <pose-convention>`), velocities and accelerations (body frame) from
 ``VectorStateBatch6`` / ``VectorStateBatch3`` / ``VectorStateBatch1``.
 
 **C++ reference:** :ref:`cpp-motion-prior-factors`.
@@ -835,7 +835,7 @@ and Jacobian computation that is not available as a built-in factor.
 Jacobian. A custom factor that never writes to it — even when
 ``jacobians_ptr`` is non-zero — still satisfies the contract, and can be
 registered with ``jacobian_mode_override=pycunls.JacobianMode.numeric`` in
-:py:meth:`Problem.add_factor_batch` to have cuNLS differentiate it via
+``Problem.add_factor_batch`` to have cuNLS differentiate it via
 finite differences instead. See :doc:`../numeric_jacobians` for details and
 :ref:`pycunls_tutorial:Warp factor code walkthrough` for a worked
 Python example.
@@ -1992,7 +1992,7 @@ Reprojection error for bundle adjustment. Observations in **normalized** image c
      - SE(3) × :math:`\mathbb{R}^3`
 
 **Inputs:** Pose :math:`T = (R, t)` (state 1, world_from_rig, see
-:ref:`pose-convention`), 3D point :math:`P` (state 2). State:
+:ref:`pose convention <pose-convention>`), 3D point :math:`P` (state 2). State:
 :code:`SE3StateBatch` then :code:`VectorStateBatch<3>` (see :doc:`state`).
 Observations :math:`(x_n, y_n)` and the optional camera-from-rig
 :math:`T_{\mathrm{cr}}` (identity if omitted) from the constructor.
@@ -2048,7 +2048,7 @@ pose is optimized; the analytic Jacobian is therefore :math:`2 \times 6`.
 **Inputs:** Normalized observations :math:`(x_n,y_n)` and matching world points
 :math:`P_{\mathrm{world}}` from the constructor (one pair per factor). State: a
 single :code:`SE3StateBatch` state per factor (world_from_rig pose, the
-convention of every pose state; see :ref:`pose-convention`). Optional
+convention of every pose state; see :ref:`pose convention <pose-convention>`). Optional
 ``poses_camera_from_rig`` uses the same composition as
 `ReprojectionFactorBatch`.
 

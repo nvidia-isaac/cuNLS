@@ -85,14 +85,10 @@ void bind_prior_vector_factor(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::Vector<Dim> *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::Vector<Dim>>(observations, "observations", capacity);
             new (self) Class(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
-      .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_sizes", &Class::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }
 
 template <int Dim>
@@ -103,14 +99,10 @@ void bind_vector_between_factor(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::Vector<Dim> *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::Vector<Dim>>(deltas, "deltas", capacity);
             new (self) Class(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
-      .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_sizes", &Class::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }
 
 template <int Dim>
@@ -139,10 +131,7 @@ void bind_bound_factor(nb::module_ &m, const char *name) {
                 capacity, scale);
           },
           nb::arg("lower"), nb::arg("upper"), nb::arg("capacity"), nb::arg("scale") = 1.f,
-          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
-      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
-      .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_sizes", &Class::StateSizes);
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>());
 }
 
 template <int Dim>
@@ -169,10 +158,7 @@ void bind_halfspace_factor(nb::module_ &m, const char *name) {
                 capacity);
           },
           nb::arg("normals"), nb::arg("offsets"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>())
-      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
-      .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_sizes", &Class::StateSizes);
+          nb::keep_alive<1, 3>());
 }
 
 // Lie-group kinematics factors: (time_steps, capacity) constructors.
@@ -186,10 +172,7 @@ void bind_kinematics_factor(nb::module_ &m, const char *name, const char *doc) {
                                  extract_device_ptr(time_steps, "float32", "time_steps")),
                              capacity);
           },
-          nb::arg("time_steps"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
-      .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_sizes", &Class::StateSizes);
+          nb::arg("time_steps"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }
 
 // Motion priors weighted by their closed-form process-noise information:
@@ -217,10 +200,7 @@ void bind_motion_prior_information(nb::module_ &m, const char *name, const char 
           },
           nb::arg("stream"), nb::arg("num"),
           "Recompute the first num sqrt-information matrices after rewriting time_steps or "
-          "qc_diag in place (asynchronous on stream).")
-      .def_prop_ro("num_active_factors", &Class::NumActiveFactors)
-      .def_prop_ro("residuals_size", &Class::ResidualsSize)
-      .def("state_sizes", &Class::StateSizes);
+          "qc_diag in place (asynchronous on stream).");
 }
 
 }  // namespace
@@ -234,11 +214,57 @@ void bind_factor(nb::module_ &m) {
            "Sets the active factor count (the first num_active_factors measurements are used). "
            "Factor batches start with 0 active factors: call this before the first solve, and "
            "again whenever the size changes. Host-only; takes effect at the next minimize(). "
-           "Raises ValueError above the capacity.");
+           "Raises ValueError above the capacity.")
+      .def_prop_ro("num_active_factors", &cunls::FactorBatch::NumActiveFactors,
+                   "Active factor count (set_num_active_factors).")
+      .def_prop_ro("residuals_size", &cunls::FactorBatch::ResidualsSize,
+                   "Residual dimension of one factor.")
+      .def("state_sizes", &cunls::FactorBatch::StateSizes,
+           "Tangent size of each state slot the factor reads (one entry per connected state).")
+      .def(
+          "evaluate_batch",
+          [](const cunls::FactorBatch &self, nb::handle residuals, nb::handle jacobians,
+             nb::handle state_pointer_table, cunls::CudaStream &stream) {
+            const size_t n = self.NumActiveFactors();
+            const size_t m = self.ResidualsSize();
+            size_t cols = 0;
+            for (size_t t : self.StateSizes()) cols += t;
+            auto *r = reinterpret_cast<float *>(extract_device_ptr(
+                residuals, "float32", "residuals", n * m, "num_active_factors x residuals_size"));
+            float *j = nullptr;
+            if (!jacobians.is_none()) {
+              j = reinterpret_cast<float *>(
+                  extract_device_ptr(jacobians, "float32", "jacobians", n * m * cols,
+                                     "num_active_factors x residuals_size x sum(state_sizes)"));
+            }
+            auto *table = reinterpret_cast<float *const *>(extract_device_ptr(
+                state_pointer_table, "uint64", "state_pointer_table", n * self.StateSizes().size(),
+                "num_active_factors x number of state slots"));
+            bool ok;
+            {
+              nb::gil_scoped_release release;
+              ok = self.Evaluate(r, j, table, stream.GetStream());
+            }
+            return ok;
+          },
+          nb::arg("residuals"), nb::arg("jacobians").none(), nb::arg("state_pointer_table"),
+          nb::arg("stream"),
+          "Evaluates the active factors at the states the table points to (asynchronous on "
+          "stream). residuals: float32 device array of num_active_factors x residuals_size; "
+          "jacobians: None or float32 device array of num_active_factors x residuals_size x "
+          "sum(state_sizes()) (row-major per factor, the state slots side by side); "
+          "state_pointer_table: uint64 device array, entry f * B + b is the state slot b of "
+          "factor f (Problem.host_state_pointers gives the problem's). Returns False if the "
+          "batch reports a failure. Used by pycunls.evaluate and pycunls.check_jacobians.");
 
   // --- Custom factor trampoline ---
   nb::class_<PyFactorBatch, cunls::FactorBatch>(
-      m, "CustomFactorBatch", "Base class for user-defined factors. Override evaluate() in Python.")
+      m, "CustomFactorBatch",
+      "Base class for user-defined factors. Override evaluate() in Python. Constructor: "
+      "residual_size (residual dimension per factor), state_sizes (tangent size of each "
+      "connected state, in connection order), capacity (factors the measurement buffers "
+      "hold). For model fitting prefer pycunls.fit; for Warp kernels pycunls.warp."
+      "WarpFactorBatch.")
       .def(nb::init<size_t, std::vector<size_t>, size_t>(), nb::arg("residual_size"),
            nb::arg("state_sizes"), nb::arg("capacity"))
       .def(
@@ -250,10 +276,14 @@ void bind_factor(nb::module_ &m) {
                 "overridden in a subclass.");
           },
           nb::arg("residuals_ptr"), nb::arg("jacobians_ptr"), nb::arg("state_pointers_ptr"),
-          nb::arg("stream_handle"), nb::arg("factor_ids_ptr"), nb::arg("num_factor_ids"))
-      .def_prop_ro("num_active_factors", &PyFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &PyFactorBatch::ResidualsSize)
-      .def("state_sizes", &PyFactorBatch::StateSizes);
+          nb::arg("stream_handle"), nb::arg("factor_ids_ptr"), nb::arg("num_factor_ids"),
+          "Override in a subclass. Evaluate n = num_factor_ids items (or num_active_factors when "
+          "0): item t is factor factor_ids[t] (or t when factor_ids_ptr is 0) at the states "
+          "state_pointers[t * B + b] (B = len(state_sizes)). Write residuals[t * m + r] and, "
+          "when jacobians_ptr is not 0, jacobians[(t * m + r) * J + c] (J = sum(state_sizes), "
+          "derivative with respect to the tangent-space step). All pointers are ints; enqueue "
+          "on stream_handle and return True. For one-call model fitting use pycunls.fit; check "
+          "a custom Jacobian with pycunls.check_jacobians.");
 
   // --- Reprojection ---
   nb::class_<cunls::ReprojectionFactorBatch, cunls::FactorBatch>(
@@ -266,15 +296,11 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::ReprojectionFactorBatch *self, nb::handle observations, size_t capacity,
              float z_threshold) {
-            auto ptr = reinterpret_cast<const cunls::Vector<2> *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::Vector<2>>(observations, "observations", capacity);
             new (self) cunls::ReprojectionFactorBatch(ptr, capacity, z_threshold);
           },
           nb::arg("observations"), nb::arg("capacity"), nb::arg("z_threshold") = 1e-3f,
-          nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::ReprojectionFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::ReprojectionFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::ReprojectionFactorBatch::StateSizes);
+          nb::keep_alive<1, 2>());
 
   nb::class_<cunls::PnPFactorBatch, cunls::FactorBatch>(
       m, "PnPFactorBatch",
@@ -286,10 +312,8 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::PnPFactorBatch *self, nb::handle observations, nb::handle points_world,
              size_t capacity, float z_threshold) {
-            auto obs_ptr = reinterpret_cast<const cunls::Vector<2> *>(
-                extract_device_ptr(observations, "float32", "observations"));
-            auto p_ptr = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(points_world, "float32", "points_world"));
+            auto obs_ptr = device_items<cunls::Vector<2>>(observations, "observations", capacity);
+            auto p_ptr = device_items<cunls::Vector<3>>(points_world, "points_world", capacity);
             new (self) cunls::PnPFactorBatch(obs_ptr, p_ptr, capacity, z_threshold);
           },
           nb::arg("observations"), nb::arg("points_world"), nb::arg("capacity"),
@@ -298,20 +322,15 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::PnPFactorBatch *self, nb::handle observations, nb::handle poses_camera_from_rig,
              nb::handle points_world, size_t capacity, float z_threshold) {
-            auto obs_ptr = reinterpret_cast<const cunls::Vector<2> *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto obs_ptr = device_items<cunls::Vector<2>>(observations, "observations", capacity);
             auto rig_ptr = reinterpret_cast<const cunls::SE3Transform *>(
                 extract_device_ptr(poses_camera_from_rig, "float32", "poses_camera_from_rig"));
-            auto p_ptr = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(points_world, "float32", "points_world"));
+            auto p_ptr = device_items<cunls::Vector<3>>(points_world, "points_world", capacity);
             new (self) cunls::PnPFactorBatch(obs_ptr, rig_ptr, p_ptr, capacity, z_threshold);
           },
           nb::arg("observations"), nb::arg("poses_camera_from_rig"), nb::arg("points_world"),
           nb::arg("capacity"), nb::arg("z_threshold") = 1e-3f, nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>())
-      .def_prop_ro("num_active_factors", &cunls::PnPFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::PnPFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::PnPFactorBatch::StateSizes);
+          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>());
 
   // --- SE3 Between ---
   nb::class_<cunls::SE3BetweenFactorBatch, cunls::FactorBatch>(
@@ -320,14 +339,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SE3BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SE3Transform *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::SE3Transform>(deltas, "deltas", capacity);
             new (self) cunls::SE3BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE3BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE3BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE3BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SE2 Between ---
   nb::class_<cunls::SE2BetweenFactorBatch, cunls::FactorBatch>(
@@ -336,14 +351,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SE2BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SE2Transform *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::SE2Transform>(deltas, "deltas", capacity);
             new (self) cunls::SE2BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE2BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE2BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE2BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SO2 Between ---
   nb::class_<cunls::SO2BetweenFactorBatch, cunls::FactorBatch>(
@@ -352,14 +363,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO2BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SO2Rotation *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::SO2Rotation>(deltas, "deltas", capacity);
             new (self) cunls::SO2BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SO2BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SO2BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SO2BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SO3 Between ---
   nb::class_<cunls::SO3BetweenFactorBatch, cunls::FactorBatch>(
@@ -368,14 +375,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO3BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SO3Rotation *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::SO3Rotation>(deltas, "deltas", capacity);
             new (self) cunls::SO3BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SO3BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SO3BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SO3BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- Similarity2 Between ---
   nb::class_<cunls::Similarity2BetweenFactorBatch, cunls::FactorBatch>(
@@ -384,14 +387,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::Similarity2BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::Similarity2Transform *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::Similarity2Transform>(deltas, "deltas", capacity);
             new (self) cunls::Similarity2BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::Similarity2BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::Similarity2BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::Similarity2BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- Similarity3 Between ---
   nb::class_<cunls::Similarity3BetweenFactorBatch, cunls::FactorBatch>(
@@ -400,14 +399,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::Similarity3BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::Similarity3Transform *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::Similarity3Transform>(deltas, "deltas", capacity);
             new (self) cunls::Similarity3BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::Similarity3BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::Similarity3BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::Similarity3BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SL4 Between ---
   nb::class_<cunls::SL4BetweenFactorBatch, cunls::FactorBatch>(
@@ -416,14 +411,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SL4BetweenFactorBatch *self, nb::handle deltas, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SL4Transform *>(
-                extract_device_ptr(deltas, "float32", "deltas"));
+            auto ptr = device_items<cunls::SL4Transform>(deltas, "deltas", capacity);
             new (self) cunls::SL4BetweenFactorBatch(ptr, capacity);
           },
-          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SL4BetweenFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SL4BetweenFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SL4BetweenFactorBatch::StateSizes);
+          nb::arg("deltas"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SE3 Prior ---
   nb::class_<cunls::SE3PriorFactorBatch, cunls::FactorBatch>(
@@ -431,14 +422,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SE3PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SE3Transform *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::SE3Transform>(observations, "observations", capacity);
             new (self) cunls::SE3PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE3PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE3PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE3PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SL4 Prior ---
   nb::class_<cunls::SL4PriorFactorBatch, cunls::FactorBatch>(
@@ -446,14 +433,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SL4PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SL4Transform *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::SL4Transform>(observations, "observations", capacity);
             new (self) cunls::SL4PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SL4PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SL4PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SL4PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SO3 Prior ---
   nb::class_<cunls::SO3PriorFactorBatch, cunls::FactorBatch>(
@@ -461,14 +444,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO3PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SO3Rotation *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::SO3Rotation>(observations, "observations", capacity);
             new (self) cunls::SO3PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SO3PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SO3PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SO3PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SO2 Prior ---
   nb::class_<cunls::SO2PriorFactorBatch, cunls::FactorBatch>(
@@ -476,14 +455,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SO2PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SO2Rotation *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::SO2Rotation>(observations, "observations", capacity);
             new (self) cunls::SO2PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SO2PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SO2PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SO2PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- SE2 Prior ---
   nb::class_<cunls::SE2PriorFactorBatch, cunls::FactorBatch>(
@@ -491,14 +466,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::SE2PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::SE2Transform *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr = device_items<cunls::SE2Transform>(observations, "observations", capacity);
             new (self) cunls::SE2PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE2PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE2PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE2PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- Similarity2 Prior ---
   nb::class_<cunls::Similarity2PriorFactorBatch, cunls::FactorBatch>(
@@ -507,14 +478,11 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::Similarity2PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::Similarity2Transform *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr =
+                device_items<cunls::Similarity2Transform>(observations, "observations", capacity);
             new (self) cunls::Similarity2PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::Similarity2PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::Similarity2PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::Similarity2PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- Similarity3 Prior ---
   nb::class_<cunls::Similarity3PriorFactorBatch, cunls::FactorBatch>(
@@ -523,14 +491,11 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](cunls::Similarity3PriorFactorBatch *self, nb::handle observations, size_t capacity) {
-            auto ptr = reinterpret_cast<const cunls::Similarity3Transform *>(
-                extract_device_ptr(observations, "float32", "observations"));
+            auto ptr =
+                device_items<cunls::Similarity3Transform>(observations, "observations", capacity);
             new (self) cunls::Similarity3PriorFactorBatch(ptr, capacity);
           },
-          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::Similarity3PriorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::Similarity3PriorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::Similarity3PriorFactorBatch::StateSizes);
+          nb::arg("observations"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   // --- Prior Vector Factors ---
   bind_prior_vector_factor<1>(m, "PriorVectorFactorBatch1");
@@ -556,17 +521,12 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::PointToPointFactorBatch *self, nb::handle p_obs, nb::handle q_obs,
              size_t capacity) {
-            auto p = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(p_obs, "float32", "p_obs"));
-            auto q = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(q_obs, "float32", "q_obs"));
+            auto p = device_items<cunls::Vector<3>>(p_obs, "p_obs", capacity);
+            auto q = device_items<cunls::Vector<3>>(q_obs, "q_obs", capacity);
             new (self) cunls::PointToPointFactorBatch(p, q, capacity);
           },
           nb::arg("p_observations"), nb::arg("q_observations"), nb::arg("capacity"),
-          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
-      .def_prop_ro("num_active_factors", &cunls::PointToPointFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::PointToPointFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::PointToPointFactorBatch::StateSizes);
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>());
 
   // --- Point-to-Plane ---
   nb::class_<cunls::PointToPlaneFactorBatch, cunls::FactorBatch>(
@@ -577,20 +537,14 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::PointToPlaneFactorBatch *self, nb::handle p_obs, nb::handle q_obs,
              nb::handle nq_obs, size_t capacity) {
-            auto p = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(p_obs, "float32", "p_obs"));
-            auto q = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(q_obs, "float32", "q_obs"));
-            auto nq = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(nq_obs, "float32", "nq_obs"));
+            auto p = device_items<cunls::Vector<3>>(p_obs, "p_obs", capacity);
+            auto q = device_items<cunls::Vector<3>>(q_obs, "q_obs", capacity);
+            auto nq = device_items<cunls::Vector<3>>(nq_obs, "nq_obs", capacity);
             new (self) cunls::PointToPlaneFactorBatch(p, q, nq, capacity);
           },
           nb::arg("p_observations"), nb::arg("q_observations"), nb::arg("nq_observations"),
           nb::arg("capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
-          nb::keep_alive<1, 4>())
-      .def_prop_ro("num_active_factors", &cunls::PointToPlaneFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::PointToPlaneFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::PointToPlaneFactorBatch::StateSizes);
+          nb::keep_alive<1, 4>());
 
   // --- Symmetric Point-to-Plane ---
   nb::class_<cunls::SymmetricPointToPlaneFactorBatch, cunls::FactorBatch>(
@@ -600,22 +554,15 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::SymmetricPointToPlaneFactorBatch *self, nb::handle p_obs, nb::handle q_obs,
              nb::handle np_obs, nb::handle nq_obs, size_t capacity) {
-            auto p = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(p_obs, "float32", "p_obs"));
-            auto q = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(q_obs, "float32", "q_obs"));
-            auto np = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(np_obs, "float32", "np_obs"));
-            auto nq = reinterpret_cast<const cunls::Vector<3> *>(
-                extract_device_ptr(nq_obs, "float32", "nq_obs"));
+            auto p = device_items<cunls::Vector<3>>(p_obs, "p_obs", capacity);
+            auto q = device_items<cunls::Vector<3>>(q_obs, "q_obs", capacity);
+            auto np = device_items<cunls::Vector<3>>(np_obs, "np_obs", capacity);
+            auto nq = device_items<cunls::Vector<3>>(nq_obs, "nq_obs", capacity);
             new (self) cunls::SymmetricPointToPlaneFactorBatch(p, q, np, nq, capacity);
           },
           nb::arg("p_observations"), nb::arg("q_observations"), nb::arg("np_observations"),
           nb::arg("nq_observations"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>())
-      .def_prop_ro("num_active_factors", &cunls::SymmetricPointToPlaneFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SymmetricPointToPlaneFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SymmetricPointToPlaneFactorBatch::StateSizes);
+          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>());
 
   // --- InformationFactorBatch (polymorphic wrapper) ---
   nb::class_<PyInformationFactorBatch, cunls::FactorBatch>(
@@ -643,10 +590,7 @@ void bind_factor(nb::module_ &m) {
             new (self) PyInformationFactorBatch(inner, ptr);
           },
           nb::arg("inner_factor"), nb::arg("sqrt_information_matrices"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>())
-      .def_prop_ro("num_active_factors", &PyInformationFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &PyInformationFactorBatch::ResidualsSize)
-      .def("state_sizes", &PyInformationFactorBatch::StateSizes);
+          nb::keep_alive<1, 3>());
 
   // --- WeightedFactorBatch (polymorphic wrapper) ---
   nb::class_<PyWeightedFactorBatch, cunls::FactorBatch>(
@@ -682,10 +626,7 @@ void bind_factor(nb::module_ &m) {
           // Keyword-only, so a positional number always selects the scalar `weight`
           // overload instead of being read as a device pointer.
           nb::arg("inner_factor"), nb::kw_only(), nb::arg("weights"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>())
-      .def_prop_ro("num_active_factors", &PyWeightedFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &PyWeightedFactorBatch::ResidualsSize)
-      .def("state_sizes", &PyWeightedFactorBatch::StateSizes);
+          nb::keep_alive<1, 3>());
 
   // --- Constraints (augmented Lagrangian; solved by AugmentedLagrangianMinimizer) ---
   nb::enum_<cunls::ConstraintKind>(m, "ConstraintKind", "Kind of a constraint row.")
@@ -697,8 +638,10 @@ void bind_factor(nb::module_ &m) {
       "A factor batch whose rows are constraints. Evaluates the augmented Lagrangian "
       "residuals of its multipliers (one per row) and penalties (one per factor); "
       "AugmentedLagrangianMinimizer updates both.")
-      .def_prop_ro("kind", &cunls::ConstraintFactorBatchBase::Kind)
-      .def_prop_ro("scale", &cunls::ConstraintFactorBatchBase::Scale)
+      .def_prop_ro("kind", &cunls::ConstraintFactorBatchBase::Kind,
+                   "ConstraintKind of the rows: Equality (r = 0) or Inequality (r <= 0).")
+      .def_prop_ro("scale", &cunls::ConstraintFactorBatchBase::Scale,
+                   "Scale applied to the constraint rows.")
       .def_prop_ro(
           "multipliers_ptr",
           [](cunls::ConstraintFactorBatchBase &self) {
@@ -739,10 +682,7 @@ void bind_factor(nb::module_ &m) {
       "    Positive row scale, so that the constraint tolerance means the same in meters,\n"
       "    radians or newtons.")
       .def(nb::init<cunls::FactorBatch *, cunls::ConstraintKind, float>(), nb::arg("inner_factor"),
-           nb::arg("kind"), nb::arg("scale") = 1.f, nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::ConstraintFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::ConstraintFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::ConstraintFactorBatch::StateSizes);
+           nb::arg("kind"), nb::arg("scale") = 1.f, nb::keep_alive<1, 2>());
 
   bind_bound_factor<1>(m, "BoundFactorBatch1");
   bind_bound_factor<2>(m, "BoundFactorBatch2");
@@ -782,10 +722,7 @@ void bind_factor(nb::module_ &m) {
                 wheel_radius, track_width, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
-          nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE2DifferentialDriveFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE2DifferentialDriveFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE2DifferentialDriveFactorBatch::StateSizes);
+          nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   nb::class_<cunls::SE2KinematicBicycleFactorBatch, cunls::FactorBatch>(
       m, "SE2KinematicBicycleFactorBatch",
@@ -811,10 +748,7 @@ void bind_factor(nb::module_ &m) {
                     extract_device_ptr(time_steps, "float32", "time_steps")),
                 wheelbase, capacity);
           },
-          nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE2KinematicBicycleFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE2KinematicBicycleFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE2KinematicBicycleFactorBatch::StateSizes);
+          nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   nb::class_<cunls::SE3DifferentialDriveFactorBatch, cunls::FactorBatch>(
       m, "SE3DifferentialDriveFactorBatch",
@@ -840,10 +774,7 @@ void bind_factor(nb::module_ &m) {
                 wheel_radius, track_width, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
-          nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE3DifferentialDriveFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE3DifferentialDriveFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE3DifferentialDriveFactorBatch::StateSizes);
+          nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   nb::class_<cunls::SE3KinematicBicycleFactorBatch, cunls::FactorBatch>(
       m, "SE3KinematicBicycleFactorBatch",
@@ -868,10 +799,7 @@ void bind_factor(nb::module_ &m) {
                     extract_device_ptr(time_steps, "float32", "time_steps")),
                 wheelbase, capacity);
           },
-          nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE3KinematicBicycleFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE3KinematicBicycleFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE3KinematicBicycleFactorBatch::StateSizes);
+          nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   bind_kinematics_factor<cunls::SE2KinematicsFactorBatch>(
       m, "SE2KinematicsFactorBatch",
@@ -980,7 +908,7 @@ void bind_factor(nb::module_ &m) {
       "rotors 0, 1 spin counter-clockwise (yaw torque -k_m f_i), rotors 2, 3 clockwise "
       "(+k_m f_i).")
       .def(nb::init<>())
-      .def_rw("mass", &cunls::QuadrotorParameters::mass)
+      .def_rw("mass", &cunls::QuadrotorParameters::mass, "Mass m [kg].")
       .def_prop_rw(
           "inertia",
           [](const cunls::QuadrotorParameters &p) {
@@ -992,10 +920,14 @@ void bind_factor(nb::module_ &m) {
             for (int i = 0; i < 3; ++i) p.inertia[i] = j[i];
           },
           "Diagonal body inertia (J_x, J_y, J_z) [kg m^2].")
-      .def_rw("arm_length", &cunls::QuadrotorParameters::arm_length)
-      .def_rw("torque_coefficient", &cunls::QuadrotorParameters::torque_coefficient)
-      .def_rw("linear_drag", &cunls::QuadrotorParameters::linear_drag)
-      .def_rw("gravity", &cunls::QuadrotorParameters::gravity);
+      .def_rw("arm_length", &cunls::QuadrotorParameters::arm_length,
+              "Rotor distance from the center [m].")
+      .def_rw("torque_coefficient", &cunls::QuadrotorParameters::torque_coefficient,
+              "k_m: yaw reaction torque per unit thrust [m].")
+      .def_rw("linear_drag", &cunls::QuadrotorParameters::linear_drag,
+              "D: the velocity derivative gets -D v [1/s].")
+      .def_rw("gravity", &cunls::QuadrotorParameters::gravity,
+              "g [m/s^2], along -z of the world frame.");
 
   nb::class_<cunls::QuadrotorFactorBatch, cunls::FactorBatch>(
       m, "QuadrotorFactorBatch",
@@ -1019,15 +951,13 @@ void bind_factor(nb::module_ &m) {
                                                 time_steps, "float32", "time_steps")),
                                             parameters, capacity);
           },
-          nb::arg("time_steps"), nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::QuadrotorFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::QuadrotorFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::QuadrotorFactorBatch::StateSizes);
+          nb::arg("time_steps"), nb::arg("parameters"), nb::arg("capacity"),
+          nb::keep_alive<1, 2>());
 
   nb::class_<cunls::QuadrupedParameters>(m, "QuadrupedParameters",
                                          "Single-rigid-body quadruped: mass, inertia, gravity.")
       .def(nb::init<>())
-      .def_rw("mass", &cunls::QuadrupedParameters::mass)
+      .def_rw("mass", &cunls::QuadrupedParameters::mass, "Mass m [kg].")
       .def_prop_rw(
           "inertia",
           [](const cunls::QuadrupedParameters &p) {
@@ -1039,7 +969,8 @@ void bind_factor(nb::module_ &m) {
             for (int i = 0; i < 3; ++i) p.inertia[i] = j[i];
           },
           "Diagonal body inertia (J_x, J_y, J_z) [kg m^2].")
-      .def_rw("gravity", &cunls::QuadrupedParameters::gravity);
+      .def_rw("gravity", &cunls::QuadrupedParameters::gravity,
+              "g [m/s^2], along -z of the world frame.");
 
   nb::class_<cunls::QuadrupedFactorBatch, cunls::FactorBatch>(
       m, "QuadrupedFactorBatch",
@@ -1074,10 +1005,7 @@ void bind_factor(nb::module_ &m) {
           },
           nb::arg("time_steps"), nb::arg("contacts"), nb::arg("foot_positions"),
           nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>())
-      .def_prop_ro("num_active_factors", &cunls::QuadrupedFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::QuadrupedFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::QuadrupedFactorBatch::StateSizes);
+          nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>());
 
   // --- IMU (raw samples between keyframes marginalized inside the factor) ---
   nb::class_<cunls::ImuParameters>(
@@ -1097,11 +1025,19 @@ void bind_factor(nb::module_ &m) {
             for (int i = 0; i < 3; ++i) p.gravity[i] = g[i];
           },
           "World-frame gravity [m/s^2].")
-      .def_rw("gyro_noise_density", &cunls::ImuParameters::gyro_noise_density)
-      .def_rw("accel_noise_density", &cunls::ImuParameters::accel_noise_density)
-      .def_rw("integration_noise_density", &cunls::ImuParameters::integration_noise_density)
-      .def_rw("gyro_bias_random_walk", &cunls::ImuParameters::gyro_bias_random_walk)
-      .def_rw("accel_bias_random_walk", &cunls::ImuParameters::accel_bias_random_walk)
+      .def_rw("gyro_noise_density", &cunls::ImuParameters::gyro_noise_density,
+              "Gyroscope white noise sigma_g [rad/s/sqrt(Hz)].")
+      .def_rw("accel_noise_density", &cunls::ImuParameters::accel_noise_density,
+              "Accelerometer white noise sigma_a [m/s^2/sqrt(Hz)].")
+      .def_rw("integration_noise_density", &cunls::ImuParameters::integration_noise_density,
+              "Position noise of the Euler step sigma_i [m/sqrt(s)] (as GTSAM's integration "
+              "covariance); must be positive.")
+      .def_rw("gyro_bias_random_walk", &cunls::ImuParameters::gyro_bias_random_walk,
+              "Gyroscope bias random walk sigma_bg [rad/s^2/sqrt(Hz)]. Very small values make the "
+              "bias rows stiff; loosen (about 1e-2) if Levenberg-Marquardt stalls.")
+      .def_rw("accel_bias_random_walk", &cunls::ImuParameters::accel_bias_random_walk,
+              "Accelerometer bias random walk sigma_ba [m/s^3/sqrt(Hz)]. Loosen (about 1e-1) if "
+              "Levenberg-Marquardt stalls.")
       .def_prop_rw(
           "body_from_imu",
           [](const cunls::ImuParameters &p) {
@@ -1149,10 +1085,7 @@ void bind_factor(nb::module_ &m) {
           },
           nb::arg("imu_samples"), nb::arg("sample_offsets"), nb::arg("num_samples"),
           nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>())
-      .def_prop_ro("num_active_factors", &cunls::ImuFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::ImuFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::ImuFactorBatch::StateSizes);
+          nb::keep_alive<1, 3>());
 
   // --- Obstacle clearance (constraint functions; wrap as inequalities) ---
   nb::class_<cunls::SE2DiskClearanceFactorBatch, cunls::FactorBatch>(
@@ -1169,10 +1102,7 @@ void bind_factor(nb::module_ &m) {
                     extract_device_ptr(obstacles, "float32", "obstacles")),
                 margin, capacity);
           },
-          nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE2DiskClearanceFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE2DiskClearanceFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE2DiskClearanceFactorBatch::StateSizes);
+          nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
   nb::class_<cunls::SE3SphereClearanceFactorBatch, cunls::FactorBatch>(
       m, "SE3SphereClearanceFactorBatch",
@@ -1188,8 +1118,5 @@ void bind_factor(nb::module_ &m) {
                     extract_device_ptr(obstacles, "float32", "obstacles")),
                 margin, capacity);
           },
-          nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def_prop_ro("num_active_factors", &cunls::SE3SphereClearanceFactorBatch::NumActiveFactors)
-      .def_prop_ro("residuals_size", &cunls::SE3SphereClearanceFactorBatch::ResidualsSize)
-      .def("state_sizes", &cunls::SE3SphereClearanceFactorBatch::StateSizes);
+          nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }

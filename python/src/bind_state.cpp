@@ -30,13 +30,19 @@
 // state_device_ptr(), and read-only num/tangent/ambient properties).
 // The template helpers below factor out the repetitive nanobind boilerplate.
 
+#include <nanobind/ndarray.h>
+
 #include <stdexcept>
+#include <string>
 
 #include "bindings.h"
+#include "cunls/common/helper.h"
+#include "cunls/common/log.h"
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/similarity2_state_batch.h"
 #include "cunls/state/similarity3_state_batch.h"
+#include "cunls/state/sized_state_batch.h"
 #include "cunls/state/sl4_state_batch.h"
 #include "cunls/state/so2_state_batch.h"
 #include "cunls/state/so3_state_batch.h"
@@ -117,6 +123,23 @@ class PyStateBatch : public cunls::StateBatch {
   }
 };
 
+// Floats stored per state of a SizedStateBatch subclass.
+template <int A, int T>
+constexpr size_t AmbientOf(const cunls::SizedStateBatch<A, T> *) {
+  return static_cast<size_t>(A);
+}
+
+// The state array of a batch of `capacity` states, checked to hold
+// capacity x AmbientSize float32 values (e.g. 16 per SE3 state: a row-major 4x4).
+template <typename Class>
+const float *StateData(nb::handle data, size_t capacity) {
+  constexpr size_t ambient = AmbientOf(static_cast<const Class *>(nullptr));
+  const std::string what = "capacity " + std::to_string(capacity) + " states x " +
+                           std::to_string(ambient) + " float32 per state";
+  return reinterpret_cast<const float *>(
+      extract_device_ptr(data, "float32", "data", capacity * ambient, what.c_str()));
+}
+
 // Register a VectorStateBatch<Dim> with two constructor overloads:
 //   1. (data, capacity)                                  — all states are variable
 //   2. (data, capacity, const_state_ids, const_capacity) — some states are held constant
@@ -133,7 +156,7 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle data, size_t capacity) {
-            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
+            auto ptr = StateData<Class>(data, capacity);
             new (self) Class(ptr, capacity);
           },
           nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
@@ -141,19 +164,13 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
           "__init__",
           [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
              size_t const_capacity) {
-            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
-            auto cids =
-                reinterpret_cast<const int *>(extract_device_ptr(const_ids, "int32", "const_ids"));
+            auto ptr = StateData<Class>(data, capacity);
+            auto cids = reinterpret_cast<const int *>(extract_device_ptr(
+                const_ids, "int32", "const_ids", const_capacity, "const_capacity ids"));
             new (self) Class(ptr, capacity, cids, const_capacity);
           },
           nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
           nb::arg("const_capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
-      .def(
-          "state_device_ptr",
-          [](Class &self, size_t idx) -> uintptr_t {
-            return reinterpret_cast<uintptr_t>(self.StateDevicePtr(idx));
-          },
-          nb::arg("index"))
       .def(
           "set_bounds",
           [](Class &self, nb::handle lower, nb::handle upper) {
@@ -177,10 +194,7 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
       .def_prop_ro(
           "has_bounds", [](const Class &self) { return cunls::HasBoxBounds(&self); },
           "Whether the batch has box bounds (solve such a problem with "
-          "AugmentedLagrangianMinimizer).")
-      .def_prop_ro("num_active_states", &Class::NumActiveStates)
-      .def_prop_ro("tangent_size", &Class::TangentSize)
-      .def_prop_ro("ambient_size", &Class::AmbientSize);
+          "AugmentedLagrangianMinimizer).");
 }
 
 // Register a Lie-group state batch (SE3, SO3, ...).  Same two-overload
@@ -190,7 +204,7 @@ void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
   cls.def(
          "__init__",
          [](Class *self, nb::handle data, size_t capacity) {
-           auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
+           auto ptr = StateData<Class>(data, capacity);
            new (self) Class(ptr, capacity);
          },
          nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
@@ -198,25 +212,18 @@ void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
           "__init__",
           [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
              size_t const_capacity) {
-            auto ptr = reinterpret_cast<const float *>(extract_device_ptr(data, "float32", "data"));
-            auto cids =
-                reinterpret_cast<const int *>(extract_device_ptr(const_ids, "int32", "const_ids"));
+            auto ptr = StateData<Class>(data, capacity);
+            auto cids = reinterpret_cast<const int *>(extract_device_ptr(
+                const_ids, "int32", "const_ids", const_capacity, "const_capacity ids"));
             new (self) Class(ptr, capacity, cids, const_capacity);
           },
           nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
-          nb::arg("const_capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
-      .def(
-          "state_device_ptr",
-          [](Class &self, size_t idx) -> uintptr_t {
-            return reinterpret_cast<uintptr_t>(self.StateDevicePtr(idx));
-          },
-          nb::arg("index"))
-      .def_prop_ro("num_active_states", &Class::NumActiveStates)
-      .def_prop_ro("tangent_size", &Class::TangentSize)
-      .def_prop_ro("ambient_size", &Class::AmbientSize);
+          nb::arg("const_capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>());
 }
 
 }  // namespace
+
+using cunls::LogError;  // used by THROW_ON_CUDA_ERROR
 
 void bind_state(nb::module_ &m) {
   nb::class_<cunls::StateBatch>(m, "StateBatch",
@@ -233,7 +240,52 @@ void bind_state(nb::module_ &m) {
            "Sets the active state count (the first num_active_states states of the buffer) and "
            "the active constant-id count (num_const_states). Batches start with 0 active states: "
            "call this before the first solve, and again whenever the sizes change. Host-only; "
-           "takes effect at the next minimize(). Raises ValueError above the capacity.");
+           "takes effect at the next minimize(). Raises ValueError above the capacity.")
+      .def_prop_ro("num_active_states", &cunls::StateBatch::NumActiveStates,
+                   "Active state count (set_num_active_states).")
+      .def_prop_ro("tangent_size", &cunls::StateBatch::TangentSize,
+                   "Degrees of freedom of one state (size of its update).")
+      .def_prop_ro("ambient_size", &cunls::StateBatch::AmbientSize,
+                   "float32 values stored per state (e.g. 16 for SE3: a row-major 4x4).")
+      .def(
+          "state_device_ptr",
+          [](cunls::StateBatch &self, size_t idx) -> uintptr_t {
+            return reinterpret_cast<uintptr_t>(self.StateDevicePtr(idx));
+          },
+          nb::arg("index"), "Device address of state `index` (an int).")
+      .def(
+          "constant_state_ids",
+          [](const cunls::StateBatch &self) {
+            const size_t n = self.NumConstStates();
+            auto *host = new int[n > 0 ? n : 1];
+            nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<int *>(p); });
+            if (n > 0) {
+              THROW_ON_CUDA_ERROR(
+                  cudaMemcpy(host, self.ConstStateIds(), n * sizeof(int), cudaMemcpyDeviceToHost));
+            }
+            return nb::ndarray<nb::numpy, int, nb::ndim<1>>(host, {n}, owner);
+          },
+          "The active constant state ids (num_const_states entries) as a numpy int32 array.")
+      .def(
+          "apply_plus",
+          [](cunls::StateBatch &self, nb::handle x, nb::handle delta, nb::handle out,
+             cunls::CudaStream &stream) {
+            const size_t n = self.NumActiveStates();
+            auto *px = reinterpret_cast<const float *>(extract_device_ptr(
+                x, "float32", "x", n * self.AmbientSize(), "num_active_states x ambient_size"));
+            auto *pd = reinterpret_cast<const float *>(
+                extract_device_ptr(delta, "float32", "delta", n * self.TangentSize(),
+                                   "num_active_states x tangent_size"));
+            auto *po = reinterpret_cast<float *>(extract_device_ptr(
+                out, "float32", "out", n * self.AmbientSize(), "num_active_states x ambient_size"));
+            nb::gil_scoped_release release;
+            self.Plus(px, pd, po, stream.GetStream());
+          },
+          nb::arg("x"), nb::arg("delta"), nb::arg("out"), nb::arg("stream"),
+          "out = x (+) delta for the num_active_states states of the given arrays (the "
+          "manifold update the minimizers use; asynchronous on stream). x, out: float32 device "
+          "arrays of num_active_states x ambient_size; delta: num_active_states x tangent_size. "
+          "Used by pycunls.check_jacobians.");
 
   bind_vector_state_batch<1>(m, "VectorStateBatch1");
   bind_vector_state_batch<2>(m, "VectorStateBatch2");
@@ -285,7 +337,11 @@ void bind_state(nb::module_ &m) {
       "Python.\n\n"
       "The plus() method implements the manifold retraction:\n"
       "  x_plus_delta = x (+) delta\n"
-      "All pointers are passed as integer handles.")
+      "All pointers are passed as integer handles.\n\n"
+      "Constructor: data (float32 GPU array of capacity x ambient_size), ambient_size (floats "
+      "stored per state), tangent_size (degrees of freedom), capacity (states the array "
+      "holds), and optionally const_state_ids (int32 GPU array) with const_capacity (entries "
+      "it holds).")
       .def(
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
@@ -313,14 +369,8 @@ void bind_state(nb::module_ &m) {
             throw std::runtime_error("CustomStateBatch.plus() must be overridden in a subclass.");
           },
           nb::arg("x_ptr"), nb::arg("delta_ptr"), nb::arg("x_plus_delta_ptr"),
-          nb::arg("stream_handle"), nb::arg("num_replicas"))
-      .def(
-          "state_device_ptr",
-          [](PyStateBatch &self, size_t idx) -> uintptr_t {
-            return reinterpret_cast<uintptr_t>(self.StateDevicePtr(idx));
-          },
-          nb::arg("index"))
-      .def_prop_ro("num_active_states", &PyStateBatch::NumActiveStates)
-      .def_prop_ro("tangent_size", &PyStateBatch::TangentSize)
-      .def_prop_ro("ambient_size", &PyStateBatch::AmbientSize);
+          nb::arg("stream_handle"), nb::arg("num_replicas"),
+          "Override in a subclass: x_plus_delta = x (+) delta for num_replicas x "
+          "num_active_states states (int device pointers; enqueue on stream_handle). See "
+          "pycunls.warp.WarpStateBatch for a Warp-based base class.");
 }

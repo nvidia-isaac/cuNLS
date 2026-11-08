@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Array arguments are checked where the mistake is made, with the fix in the message."""
+
+import cupy as cp
+import numpy as np
+import pytest
+
+import pycunls
+
+
+def test_host_array_is_rejected_with_the_fix():
+    with pytest.raises(TypeError, match=r"host \(NumPy\) array.*cupy.asarray\(data\)"):
+        pycunls.VectorStateBatch3(np.zeros(9, np.float32), 3)
+
+
+def test_wrong_dtype_names_the_expected_one():
+    with pytest.raises(TypeError, match="must have dtype float32, got float64"):
+        pycunls.VectorStateBatch3(cp.zeros(9, cp.float64), 3)
+
+
+def test_too_small_state_array_counts_the_floats():
+    with pytest.raises(ValueError, match=r"has 36 float32 values, but 48 are needed.*16 float32"):
+        pycunls.SE3StateBatch(cp.zeros((3, 12), cp.float32), 3)
+
+
+def test_too_small_measurement_array():
+    with pytest.raises(ValueError, match="deltas has 32 float32 values, but 48 are needed"):
+        pycunls.SE3BetweenFactorBatch(cp.zeros((2, 4, 4), cp.float32), 3)
+
+
+def test_too_small_constant_id_array():
+    with pytest.raises(ValueError, match="const_ids has 1 int32 values, but 2 are needed"):
+        pycunls.VectorStateBatch2(cp.zeros(8, cp.float32), 4, cp.zeros(1, cp.int32), 2)
+
+
+def test_strided_view_is_rejected():
+    with pytest.raises(ValueError, match="C-contiguous"):
+        pycunls.VectorStateBatch3(cp.zeros((3, 6), cp.float32)[:, ::2], 3)
+
+
+def test_non_array_is_rejected():
+    with pytest.raises(TypeError, match="must be a GPU array"):
+        pycunls.VectorStateBatch3([1.0, 2.0, 3.0], 1)
+
+
+def test_valid_arrays_and_raw_pointers_still_work():
+    data = cp.zeros((3, 4, 4), cp.float32)
+    pycunls.SE3StateBatch(data, 3)
+    pycunls.SE3StateBatch(data.data.ptr, 3)  # an int pointer is not checked

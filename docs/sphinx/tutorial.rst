@@ -79,7 +79,7 @@ projects into an image and where it was observed.
 
 Given :math:`M` cameras with poses :math:`T_1, \ldots, T_M \in \mathrm{SE}(3)`
 (each camera's pose in the world, world_from_camera; see
-:ref:`pose-convention`) and :math:`N` 3D landmarks :math:`\mathbf{p}_1, \ldots, \mathbf{p}_N \in
+:ref:`pose convention <pose-convention>`) and :math:`N` 3D landmarks :math:`\mathbf{p}_1, \ldots, \mathbf{p}_N \in
 \mathbb{R}^3`, we form one residual per observation. The projection model
 transforms a world point :math:`\mathbf{p}` into camera :math:`i`'s frame and
 divides by depth to obtain **normalized image coordinates**:

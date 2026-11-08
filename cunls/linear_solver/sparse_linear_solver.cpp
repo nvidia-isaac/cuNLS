@@ -18,6 +18,7 @@
 #include "cunls/linear_solver/sparse_linear_solver.h"
 
 #include <stdexcept>
+#include <string>
 
 #include "cunls/common/cudss_helper.h"
 
@@ -53,7 +54,8 @@ SparseLinearSolverPtr CreateSparseLinearSolver(SparseLinearSolverType type,
     case SparseLinearSolverType::BlockSparseCholesky:
       return std::make_unique<BlockSparseCholeskySolver>();
     default:
-      throw std::invalid_argument("Invalid sparse linear solver type");
+      throw std::invalid_argument("Invalid sparse linear solver type " +
+                                  std::to_string(static_cast<int>(type)));
   }
 }
 

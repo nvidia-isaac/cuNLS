@@ -37,6 +37,7 @@
 //   with the state batch of each factor slot.
 
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
 
@@ -45,6 +46,7 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/problem.h"
+#include "cunls/robustifier/loss_function_batch.h"
 
 // cunls::Problem contains DeviceVector members which are move-only, but the
 // compiler-generated trait reports it as copy-constructible.  Explicitly tell
@@ -155,8 +157,70 @@ void bind_problem(nb::module_ &m) {
           nb::arg("stream"),
           "GPU check of every active connection (for connectivity rewritten on the device). "
           "Synchronizes the stream; logs the first failure.")
+      .def(
+          "find_structure_error",
+          [](const cunls::Problem &self, cunls::CudaStream &stream) {
+            return self.FindStructureError(stream.GetStream());
+          },
+          nb::arg("stream"),
+          "The checks of validate(), returning the first failure as a message that names the "
+          "batch and entry and says how to fix it; '' when the problem is well-formed. "
+          "pycunls.diagnose() runs it together with the numerical checks.")
       .def("check_consistency", &cunls::Problem::CheckConsistency,
-           "Validate that all state batches and factor batches are consistent.")
+           "Validate that all state batches and factor batches are consistent (logs the first "
+           "failure; see find_structure_error() for the message).")
+      .def_prop_ro(
+          "num_residual_batches",
+          [](const cunls::Problem &self) { return self.GetResidualBatches().size(); },
+          "Number of factor batches added (residual batches, in the order added).")
+      .def(
+          "factor_batch",
+          [](const cunls::Problem &self, size_t index) {
+            const auto &rbs = self.GetResidualBatches();
+            if (index >= rbs.size()) {
+              throw nb::index_error(("factor_batch: index " + std::to_string(index) +
+                                     " out of range; the problem has " +
+                                     std::to_string(rbs.size()) + " factor batches")
+                                        .c_str());
+            }
+            return rbs[index].GetFactorBatch();
+          },
+          nb::arg("index"), nb::rv_policy::reference_internal,
+          "The factor batch of residual batch `index` (as its concrete class).")
+      .def(
+          "loss_function",
+          [](const cunls::Problem &self, size_t index) -> cunls::LossFunctionBatch * {
+            const auto &rbs = self.GetResidualBatches();
+            if (index >= rbs.size()) throw nb::index_error("loss_function: index out of range");
+            return rbs[index].GetLossFunction();
+          },
+          nb::arg("index"), nb::rv_policy::reference_internal,
+          "The robust loss of residual batch `index`, or None (squared loss).")
+      .def(
+          "state_batches",
+          [](const cunls::Problem &self) {
+            nb::list out;
+            for (cunls::StateBatch *b : self.GetStateBatches()) {
+              out.append(nb::cast(b, nb::rv_policy::reference));
+            }
+            return out;
+          },
+          "The state batches, in the order added (the Python objects that were added).")
+      .def(
+          "host_state_pointers",
+          [](const cunls::Problem &self, size_t index) {
+            if (index >= self.GetResidualBatches().size()) {
+              throw nb::index_error("host_state_pointers: index out of range");
+            }
+            const auto &ptrs = self.HostStatePointers(index);
+            std::vector<uintptr_t> out(ptrs.size());
+            for (size_t i = 0; i < ptrs.size(); ++i) out[i] = reinterpret_cast<uintptr_t>(ptrs[i]);
+            return out;
+          },
+          nb::arg("index"),
+          "Active connectivity of residual batch `index` as int device pointers "
+          "(num_active_factors x number of state slots, factor-major). Device tables are "
+          "downloaded (synchronizes).")
       .def(
           "set_problem_partition",
           [](cunls::Problem &self, size_t num_problems, const std::vector<nb::handle> &ids) {
@@ -198,5 +262,6 @@ void bind_problem(nb::module_ &m) {
           "landmarks of a bundle adjustment). Every factor may touch at most one non-constant "
           "state of these batches; they must share one tangent size of 1 to 3. An empty list "
           "clears the declaration.")
-      .def_prop_ro("num_problems", &cunls::Problem::NumProblems);
+      .def_prop_ro("num_problems", &cunls::Problem::NumProblems,
+                   "Number of subproblems (set_problem_partition); 0 or 1 means one problem.");
 }

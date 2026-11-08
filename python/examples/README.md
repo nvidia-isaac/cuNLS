@@ -6,6 +6,7 @@ visualization).
 
 | Example | What it shows |
 |---|---|
+| `model_fitting.py` | `pycunls.fit` in six scenes: one curve with errors, 20,000 curves in one call, outliers, bounds, multiple starts, and the reduced chi-square model check |
 | `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy, landmarks eliminated by a Schur complement |
 | `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
 | `custom_warp_factor.py` | A custom factor kernel written with NVIDIA Warp |

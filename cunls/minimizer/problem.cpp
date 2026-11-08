@@ -222,14 +222,17 @@ std::string Problem::SizeError() const {
     }
     if (sb->NumActiveStates() > sb->Capacity()) {
       err << "State batch " << j << ": NumActiveStates() = " << sb->NumActiveStates()
-          << " exceeds Capacity() = " << sb->Capacity() << ".";
+          << " exceeds Capacity() = " << sb->Capacity()
+          << ". Fix: construct the batch with a larger capacity or activate fewer states.";
       return err.str();
     }
     if (sb->NumConstStates() > sb->ConstCapacity() ||
         sb->NumConstStates() > sb->NumActiveStates()) {
       err << "State batch " << j << ": " << sb->NumConstStates() << " constant states for "
           << sb->NumActiveStates() << " active states (constant-id "
-          << "capacity " << sb->ConstCapacity() << ").";
+          << "capacity " << sb->ConstCapacity()
+          << "). Fix: the constant count must not exceed the constant-id capacity or the active "
+             "count.";
       return err.str();
     }
   }
@@ -281,7 +284,8 @@ std::string Problem::SizeError() const {
           if (sb == nullptr ||
               std::find(state_batches_.begin(), state_batches_.end(), sb) == state_batches_.end()) {
             err << "Residual batch " << i << ": slot " << b
-                << " names a state batch that is not registered.";
+                << " names a state batch that is not registered. Fix: add it with "
+                   "AddStateBatch first.";
             return err.str();
           }
           if (sb->TangentSize() != sizes[b]) {
@@ -296,9 +300,8 @@ std::string Problem::SizeError() const {
   }
   if (!residual_batches_.empty() && active_factors == 0) {
     return "No residual batch has active factors: factor and state batches start with zero "
-           "active elements; call SetNumActiveFactors(n) and SetNumActiveStates(n, num_const) "
-           "before "
-           "solving.";
+           "active elements. Fix: call SetNumActiveFactors(n) and SetNumActiveStates(n, "
+           "num_const) before solving (Python: set_num_active_factors, set_num_active_states).";
   }
   return "";
 }
@@ -422,11 +425,12 @@ bool Problem::CheckGraphConnectivity() const {
   return true;
 }
 
-bool Problem::Validate(cudaStream_t stream) const {
+std::string Problem::FindStructureError(cudaStream_t stream) const {
   using problem_internal::StateRange;
   using problem_internal::ValidationError;
-  if (!CheckForValidInputs()) {
-    return false;
+  {
+    const std::string error = SizeError();
+    if (!error.empty()) return error;
   }
   // State batches must not overlap (checked on the host from their ranges).
   std::vector<StateRange> ranges(state_batches_.size());
@@ -443,8 +447,8 @@ bool Problem::Validate(cudaStream_t stream) const {
       const float *a0 = ranges[a].base, *a1 = a0 + ranges[a].num_blocks * ranges[a].ambient;
       const float *b0 = ranges[b].base, *b1 = b0 + ranges[b].num_blocks * ranges[b].ambient;
       if (ranges[a].num_blocks > 0 && ranges[b].num_blocks > 0 && a0 < b1 && b0 < a1) {
-        LogError("State batches {} and {} overlap.", a, b);
-        return false;
+        return "State batches " + std::to_string(a) + " and " + std::to_string(b) +
+               " overlap in memory. Fix: give every state batch its own array.";
       }
     }
   }
@@ -478,32 +482,36 @@ bool Problem::Validate(cudaStream_t stream) const {
   THROW_ON_CUDA_ERROR(
       cudaMemcpyAsync(&result, error.data(), sizeof(result), cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  const std::string batch = std::to_string(result.batch), entry = std::to_string(result.entry);
   switch (result.code) {
     case 0:
-      return true;
+      return "";
     case 1:
-      LogError(
-          "Residual batch {}: state pointer {} does not point at an active state of a "
-          "registered state batch.",
-          result.batch, result.entry);
-      break;
+      return "Residual batch " + batch + ": state pointer " + entry +
+             " does not point at an active state of a registered state batch. Fix: add the "
+             "state batch to the problem (add_state_batch), raise its NumActiveStates, or "
+             "correct the connectivity.";
     case 2:
-      LogError(
-          "Residual batch {}: state pointer {} points into a state batch whose tangent size "
-          "differs from the state slot's.",
-          result.batch, result.entry);
-      break;
+      return "Residual batch " + batch + ": state pointer " + entry +
+             " points into a state batch whose tangent size differs from the state slot's "
+             "(the factor expects another state type there). Fix: connect the slot to a state "
+             "of the type the factor expects.";
     case 3:
-      LogError("State batch {}: state {} is not constrained by any factor.", result.batch,
-               result.entry);
-      break;
+      return "State batch " + batch + ": state " + entry +
+             " is not constrained by any factor, so the linear system is singular. Fix: add a "
+             "factor on it, make it constant, or lower NumActiveStates.";
     case 4:
-      LogError("State batch {}: constant id #{} is not below NumActiveStates().", result.batch,
-               result.entry);
-      break;
+      return "State batch " + batch + ": constant id #" + entry +
+             " is not below NumActiveStates(). Fix: correct the constant ids or their count.";
     default:
-      LogError("Problem validation failed (code {}).", result.code);
+      return "Problem validation failed (code " + std::to_string(result.code) + ").";
   }
+}
+
+bool Problem::Validate(cudaStream_t stream) const {
+  const std::string error = FindStructureError(stream);
+  if (error.empty()) return true;
+  LogError("{}", error);
   return false;
 }
 

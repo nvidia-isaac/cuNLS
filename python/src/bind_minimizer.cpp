@@ -28,15 +28,20 @@
 // CustomFactorBatch whose evaluate() calls back into Python, the trampoline
 // in PyFactorBatch re-acquires the GIL for the duration of that callback.
 
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 
 #include "bindings.h"
 #include "cunls/common/cuda_stream.h"
+#include "cunls/common/helper.h"
+#include "cunls/common/log.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem.h"
+
+using cunls::LogError;  // used by THROW_ON_CUDA_ERROR
 
 void bind_minimizer(nb::module_ &m) {
   nb::class_<cunls::Minimizer>(
@@ -56,6 +61,22 @@ void bind_minimizer(nb::module_ &m) {
           nb::arg("stream"), nb::arg("problem"),
           "Minimize the problem's cost from its current states; the states are updated in "
           "place. Returns a MinimizerSummary.")
+      .def(
+          "subproblem_termination_reasons",
+          [](const cunls::Minimizer &self) {
+            const size_t n = self.NumSubproblems();
+            auto *host = new int[n > 0 ? n : 1];
+            nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<int *>(p); });
+            if (n > 0 && self.SubproblemTerminationReasons() != nullptr) {
+              THROW_ON_CUDA_ERROR(cudaMemcpy(host, self.SubproblemTerminationReasons(),
+                                             n * sizeof(int), cudaMemcpyDeviceToHost));
+            }
+            return nb::ndarray<nb::numpy, int, nb::ndim<1>>(host, {n}, owner);
+          },
+          "The last minimize() call's TerminationReason value of every subproblem "
+          "(Problem.set_problem_partition), as a numpy int array: e.g. "
+          "np.flatnonzero(r >= int(TerminationReason.MaxIterations)) lists the subproblems "
+          "that did not converge.")
       .def_prop_ro(
           "options", [](const cunls::Minimizer &self) { return self.Options(); },
           "Options the minimizer runs with (a copy; for Levenberg-Marquardt the base options "
@@ -64,13 +85,17 @@ void bind_minimizer(nb::module_ &m) {
   nb::class_<cunls::GaussNewtonMinimizer, cunls::Minimizer>(
       m, "GaussNewtonMinimizer",
       "Gauss-Newton: solves the undamped normal equations and takes every step that lowers "
-      "the cost.")
+      "the cost. Needs every gauge fixed (a singular system fails); prefer "
+      "LevenbergMarquardtMinimizer unless the problem is well constrained. Construct with "
+      "options: MinimizerOptions.")
       .def(nb::init<const cunls::MinimizerOptions &>(),
            nb::arg("options") = cunls::MinimizerOptions());
 
   nb::class_<cunls::LevenbergMarquardtMinimizer, cunls::Minimizer>(
       m, "LevenbergMarquardtMinimizer",
-      "Levenberg-Marquardt: Gauss-Newton with an adaptive damping per subproblem.")
+      "Levenberg-Marquardt: Gauss-Newton with an adaptive damping per subproblem; the robust "
+      "default. Construct with options: LevenbergMarquardtMinimizerOptions (its base_options "
+      "holds the common MinimizerOptions).")
       .def(nb::init<const cunls::LevenbergMarquardtMinimizerOptions &>(),
            nb::arg("options") = cunls::LevenbergMarquardtMinimizerOptions());
 
@@ -118,22 +143,43 @@ void bind_minimizer(nb::module_ &m) {
               "(the last final_inner_iterations if > 0). Costs in the summary are NaN. "
               "Default: False.");
 
-  nb::enum_<cunls::AugmentedLagrangianMinimizerStatus>(m, "AugmentedLagrangianMinimizerStatus")
-      .value("Converged", cunls::AugmentedLagrangianMinimizerStatus::kConverged)
-      .value("MaxOuterIterations", cunls::AugmentedLagrangianMinimizerStatus::kMaxOuterIterations)
-      .value("MaxPenalty", cunls::AugmentedLagrangianMinimizerStatus::kMaxPenalty);
+  nb::enum_<cunls::AugmentedLagrangianMinimizerStatus>(
+      m, "AugmentedLagrangianMinimizerStatus",
+      "Outcome of AugmentedLagrangianMinimizer.minimize(); the summary's message explains it.")
+      .value("Converged", cunls::AugmentedLagrangianMinimizerStatus::kConverged,
+             "Every subproblem is feasible and stationary.")
+      .value("MaxOuterIterations", cunls::AugmentedLagrangianMinimizerStatus::kMaxOuterIterations,
+             "Some subproblem ran out of outer iterations (raise max_outer_iterations).")
+      .value("MaxPenalty", cunls::AugmentedLagrangianMinimizerStatus::kMaxPenalty,
+             "Some subproblem cannot reduce its violation at max_penalty (likely infeasible).");
 
   nb::class_<cunls::AugmentedLagrangianMinimizerSummary>(
       m, "AugmentedLagrangianMinimizerSummary", "Summary of a constrained minimization run.")
-      .def_ro("status", &cunls::AugmentedLagrangianMinimizerSummary::status)
-      .def_ro("outer_iterations", &cunls::AugmentedLagrangianMinimizerSummary::outer_iterations)
-      .def_ro("inner_iterations", &cunls::AugmentedLagrangianMinimizerSummary::inner_iterations)
-      .def_ro("max_violation", &cunls::AugmentedLagrangianMinimizerSummary::max_violation)
-      .def_ro("initial_cost", &cunls::AugmentedLagrangianMinimizerSummary::initial_cost)
-      .def_ro("final_cost", &cunls::AugmentedLagrangianMinimizerSummary::final_cost)
-      .def_ro("num_problems", &cunls::AugmentedLagrangianMinimizerSummary::num_problems)
-      .def_ro("num_converged", &cunls::AugmentedLagrangianMinimizerSummary::num_converged)
-      .def_ro("num_max_penalty", &cunls::AugmentedLagrangianMinimizerSummary::num_max_penalty)
+      .def_ro("status", &cunls::AugmentedLagrangianMinimizerSummary::status,
+              "AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations or MaxPenalty.")
+      .def_ro("outer_iterations", &cunls::AugmentedLagrangianMinimizerSummary::outer_iterations,
+              "Outer (multiplier update) iterations performed.")
+      .def_ro("inner_iterations", &cunls::AugmentedLagrangianMinimizerSummary::inner_iterations,
+              "Inner minimizer iterations, summed over the outer iterations.")
+      .def_ro("max_violation", &cunls::AugmentedLagrangianMinimizerSummary::max_violation,
+              "Largest constraint violation over all rows and subproblems (compare with "
+              "constraint_tolerance).")
+      .def_ro("initial_cost", &cunls::AugmentedLagrangianMinimizerSummary::initial_cost,
+              "Objective (cost of the non-constraint factors) before the solve.")
+      .def_ro("final_cost", &cunls::AugmentedLagrangianMinimizerSummary::final_cost,
+              "Objective after the solve (NaN in real time).")
+      .def_ro("num_problems", &cunls::AugmentedLagrangianMinimizerSummary::num_problems,
+              "Number of subproblems (Problem.set_problem_partition; 1 without).")
+      .def_ro("num_converged", &cunls::AugmentedLagrangianMinimizerSummary::num_converged,
+              "Subproblems that are feasible and stationary.")
+      .def_ro("num_max_penalty", &cunls::AugmentedLagrangianMinimizerSummary::num_max_penalty,
+              "Subproblems stopped at the penalty cap (constraints likely infeasible).")
+      .def_ro("message", &cunls::AugmentedLagrangianMinimizerSummary::message,
+              "The outcome and, when not converged, the likely causes and what to try.")
+      .def_ro("solve_time_ms", &cunls::AugmentedLagrangianMinimizerSummary::solve_time_ms,
+              "Wall time of the minimize() call in milliseconds.")
+      .def("converged", &cunls::AugmentedLagrangianMinimizerSummary::Converged,
+           "status == AugmentedLagrangianMinimizerStatus.Converged.")
       .def("__repr__", [](const cunls::AugmentedLagrangianMinimizerSummary &s) {
         return "AugmentedLagrangianMinimizerSummary(outer_iterations=" +
                std::to_string(s.outer_iterations) +
@@ -148,7 +194,9 @@ void bind_minimizer(nb::module_ &m) {
       m, "AugmentedLagrangianMinimizer",
       "Augmented Lagrangian solver for problems with constraint factor batches "
       "(ConstraintFactorBatch, BoundFactorBatchN), around a Gauss-Newton or "
-      "Levenberg-Marquardt minimizer. Without constraint batches it is the wrapped "
+      "Levenberg-Marquardt minimizer (minimizer), with options: "
+      "AugmentedLagrangianMinimizerOptions. Also the solver for box-bounded states "
+      "(VectorStateBatch.set_bounds). Without constraints or bounds it is the wrapped "
       "minimizer.")
       .def(nb::init<cunls::Minimizer &, const cunls::AugmentedLagrangianMinimizerOptions &>(),
            nb::arg("minimizer"), nb::arg("options") = cunls::AugmentedLagrangianMinimizerOptions(),

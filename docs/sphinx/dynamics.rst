@@ -67,7 +67,15 @@ Factors
    :math:`J \dot\omega + \omega \times J\omega = R^\top \sum s_i (p_i - p) \times f_i`.
    The contact flags :math:`s_i` and foot positions :math:`p_i` are per-step
    inputs from the gait planner. Contact constraints (normal force, friction
-   cone, zero force in swing) are separate constraint factors.
+   cone, zero force in swing) are separate constraint factors. Mass, inertia and
+   gravity come from ``QuadrupedParameters``.
+
+``SE2DiskClearanceFactorBatch(obstacles, margin, capacity)`` / ``SE3SphereClearanceFactorBatch(obstacles, margin, capacity)``
+   Clearance :math:`c = (r + \text{margin}) - \|p - c_o\|` between a pose's
+   origin and a disk (3 floats per factor: center x, y, radius) or a sphere (4
+   floats: center x, y, z, radius); feasible when :math:`c \le 0`. Wrap in
+   ``ConstraintFactorBatch(..., ConstraintKind.Inequality)`` and solve with
+   ``AugmentedLagrangianMinimizer`` (``pycunls.mpc`` does this for obstacles).
 
 ``time_steps`` is a device buffer of one step duration per factor.
 

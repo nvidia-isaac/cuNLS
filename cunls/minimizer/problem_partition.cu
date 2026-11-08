@@ -20,6 +20,7 @@
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/device_reduction.h"
+#include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem_partition.h"
 #include "cunls/state/state_batch_ops.h"
 
@@ -175,13 +176,20 @@ __device__ void AddToTotals(size_t num_problems, float cost, int active, float *
 
 __global__ void init_control_kernel(const float *cost, size_t num_problems, float cost_tolerance,
                                     const int *frozen, int *active, int *rejected, int *accept,
-                                    int *outcome, float *out) {
+                                    int *outcome, int *termination, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   // A frozen subproblem (InnerSolve::problem_frozen) is never active: it takes
   // no step and keeps its states.
-  const int is_active = cost[p] >= cost_tolerance && (frozen == nullptr || frozen[p] == 0);
+  const bool is_frozen = frozen != nullptr && frozen[p] != 0;
+  const int is_active = cost[p] >= cost_tolerance && !is_frozen && isfinite(cost[p]);
   active[p] = is_active;
+  TerminationReason reason = TerminationReason::NotDetermined;
+  if (!is_active && !is_frozen) {
+    reason =
+        isfinite(cost[p]) ? TerminationReason::CostTolerance : TerminationReason::NonFiniteCost;
+  }
+  termination[p] = static_cast<int>(reason);
   rejected[p] = 0;
   accept[p] = 0;
   outcome[p] = kStepInactive;
@@ -211,7 +219,7 @@ __global__ void step_control_kernel(StepControlParams params, size_t num_problem
                                     const float *new_cost, const float *step_squared,
                                     const int *reject, const int *converged, const int *shortened,
                                     int *active, int *rejected, int *accept, int *outcome,
-                                    float *out) {
+                                    int *termination, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   int take = 0;
@@ -232,12 +240,15 @@ __global__ void step_control_kernel(StepControlParams params, size_t num_problem
     } else if (converged[p] != 0 && finite) {
       take = updated <= current;
       active[p] = 0;
+      termination[p] = converged[p];
       result = kStepConverged;
     } else if (is_rejected) {
       rejected[p] += 1;
       if (params.max_consecutive_rejected_steps > 0 &&
           rejected[p] >= params.max_consecutive_rejected_steps) {
         active[p] = 0;
+        termination[p] = static_cast<int>(finite ? TerminationReason::MaxRejectedSteps
+                                                 : TerminationReason::NonFiniteStep);
       }
       result = kStepRejected;
     } else {
@@ -251,6 +262,15 @@ __global__ void step_control_kernel(StepControlParams params, size_t num_problem
   outcome[p] = result;
   AddToTotals(num_problems, cost[p], active[p], out);
   if (num_problems == 1) out[2] = static_cast<float>(take);
+}
+
+/** Still-active subproblems hit the iteration cap; counts per reason. */
+__global__ void finish_termination_kernel(size_t num_problems, const int *active, int *termination,
+                                          unsigned int *counts) {
+  const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (p >= num_problems) return;
+  if (active[p]) termination[p] = static_cast<int>(TerminationReason::MaxIterations);
+  atomicAdd(counts + termination[p], 1u);
 }
 
 }  // namespace
@@ -304,7 +324,8 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
     num_factor_items_ += rb.GetFactorBatch()->NumActiveFactors();
   num_rows_ = num_rows;
   for (auto *v : {&cost_, &new_cost_, &step_squared_, &step_scale_}) v->resize(num_problems_);
-  for (auto *v : {&active_, &rejected_, &reject_, &converged_, &outcome_, &accept_, &shortened_}) {
+  for (auto *v : {&active_, &rejected_, &reject_, &converged_, &outcome_, &accept_, &shortened_,
+                  &termination_}) {
     v->resize(num_problems_);
   }
   // Without a partition (one subproblem) every state belongs to subproblem 0,
@@ -359,14 +380,20 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   if (error & kMixedFactor) {
     throw std::invalid_argument(
-        "Problem partition: a factor connects states of different subproblems");
+        "Problem partition: a factor connects states of different subproblems. Fix: every "
+        "factor must read states of one subproblem only; give the states it connects the same "
+        "subproblem id (or solve without a partition).");
   }
   if (error & kIdOutOfRange) {
     throw std::invalid_argument("Problem partition: a subproblem id is outside [0, " +
-                                std::to_string(num_problems_) + ")");
+                                std::to_string(num_problems_) +
+                                "). Fix: ids must be below the num_problems passed to "
+                                "SetProblemPartition.");
   }
   if (error & kUnknownPointer) {
-    throw std::invalid_argument("Problem partition: a factor references an unknown state");
+    throw std::invalid_argument(
+        "Problem partition: a factor references a state of no registered state batch. Fix: add "
+        "every state batch the factors read (AddStateBatch) before solving.");
   }
 }
 
@@ -460,7 +487,7 @@ void ProblemPartition::InitStepControl(cudaStream_t stream, float cost_tolerance
   if (num_problems_ > 1) THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_out, 0, 2 * sizeof(float), stream));
   init_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
       cost_.data(), num_problems_, cost_tolerance, frozen, active_.data(), rejected_.data(),
-      accept_.data(), outcome_.data(), d_out);
+      accept_.data(), outcome_.data(), termination_.data(), d_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -470,7 +497,15 @@ void ProblemPartition::StepControl(cudaStream_t stream, const StepControlParams 
   step_control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
       params, num_problems_, cost_.data(), new_cost_.data(), step_squared_.data(), reject_.data(),
       converged_.data(), shortened_.data(), active_.data(), rejected_.data(), accept_.data(),
-      outcome_.data(), d_out);
+      outcome_.data(), termination_.data(), d_out);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ProblemPartition::FinishTermination(cudaStream_t stream, unsigned int *d_counts) {
+  THROW_ON_CUDA_ERROR(
+      cudaMemsetAsync(d_counts, 0, kNumTerminationReasons * sizeof(unsigned int), stream));
+  finish_termination_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
+      num_problems_, active_.data(), termination_.data(), d_counts);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

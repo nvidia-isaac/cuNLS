@@ -46,7 +46,7 @@ Conventions
    * - Pose state :math:`T`
      - ``SE3StateBatch``, **world_from_rig** (the pose of the body or rig in
        the world), the same state as ``ReprojectionFactorBatch`` and
-       ``PnPFactorBatch`` read (:ref:`pose-convention`). Perturbed on the
+       ``PnPFactorBatch`` read (:ref:`pose convention <pose-convention>`). Perturbed on the
        right, :math:`T\,\mathrm{Exp}(\xi)`, :math:`\xi = [\varphi;\ \rho]` in
        the rig frame.
    * - Extrinsic

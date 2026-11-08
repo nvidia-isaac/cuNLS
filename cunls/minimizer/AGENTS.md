@@ -1,5 +1,8 @@
 # Module: minimizer
 
+> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
+> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
+
 ## Purpose
 
 Problem assembly, residual orchestration, sparse system building, and iterative
@@ -7,9 +10,14 @@ optimization.
 
 ## Key files and classes
 
-- `problem.h`: `Problem` (graph composition of states + factors)
+- `problem.h`: `Problem` (graph composition of states + factors;
+  `FindStructureError` returns the first structural problem as a message with
+  the fix, `Validate` logs it)
 - `residual_batch.h`: `ResidualBatch` (factor + loss wrapper)
-- `minimizer.h`: `MinimizerOptions`, `MinimizerSummary`, `Minimizer` (common
+- `minimizer.h`: `TerminationReason` (why a (sub)problem stopped, ordered by
+  severity; `ToString`, `IsConvergence`), `MinimizerOptions`,
+  `MinimizerSummary` (also `termination_reason`, `num_problems_by_reason`,
+  `message`, `solve_time_ms`, `Converged()`), `Minimizer` (common
   base: the one iteration loop, linear system, line search, structure
   reuse, per-subproblem bookkeeping; private pure virtual hooks
   `UpdateSystem` / `ClassifySteps` are the whole GN/LM difference; private
@@ -67,6 +75,11 @@ optimization.
 4. Apply manifold-aware state updates (`StateBatchOps`).
 5. Classify (subclass) and take/reject each subproblem's step on the device
    (`ProblemPartition::StepControl`); one 2-float read-back per iteration.
+   `ClassifySteps` writes the convergence `TerminationReason` value (not a
+   bool) into `ProblemPartition::Converged()`; the partition records every
+   subproblem's reason (`Termination()`), and `FinishTermination` counts them
+   with one small read-back folded into the final synchronization (none in real
+   time). The summary message is built on the host (`DescribeTermination`).
    A problem without a partition is one subproblem. With
    `MinimizerOptions::max_line_search_steps > 0`, a step that does not
    decrease the cost is halved along its direction, and any step that

@@ -36,7 +36,9 @@ namespace cunls {
 inline void CheckEvaluate(bool ok, size_t residual_batch_index) {
   if (!ok) {
     throw std::runtime_error("Evaluate failed for residual batch " +
-                             std::to_string(residual_batch_index));
+                             std::to_string(residual_batch_index) +
+                             ": its FactorBatch::Evaluate() returned false (for a custom Python "
+                             "factor: evaluate() returned False or raised).");
   }
 }
 

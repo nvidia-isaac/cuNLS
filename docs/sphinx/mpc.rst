@@ -5,8 +5,8 @@ Model Predictive Control
 ``pycunls.mpc`` builds batched receding-horizon optimal control problems from
 the dynamics factors (:doc:`dynamics`), the existing cost factors and the
 constraints (:doc:`constraints`), and runs them in closed loop. It is a thin
-builder: everything it creates is an ordinary :class:`pycunls.Problem` solved
-by :class:`pycunls.AugmentedLagrangianMinimizer`, so any factor can be added
+builder: everything it creates is an ordinary ``pycunls.Problem`` solved
+by ``pycunls.AugmentedLagrangianMinimizer``, so any factor can be added
 to it.
 
 ===============================================================================
@@ -76,7 +76,7 @@ Constraints
 
 ``build(minimizer=None, options=None, real_time=None)``
 assembles the problem. It declares the stages of the states (x_k and u_k in
-stage k, :meth:`pycunls.Problem.set_state_stages`), so the default inner
+stage k, ``pycunls.Problem.set_state_stages``), so the default inner
 minimizer, Levenberg-Marquardt, uses the block-tridiagonal linear solver
 (``SparseLinearSolverType.BlockTridiagonal``: the Riccati recursion, one warp
 per trajectory). The default AL options enable the warm start and the reuse of
@@ -90,7 +90,7 @@ Real-time mode
 
    ctrl = h.build(real_time=(1, 1))   # 1 AL iteration of 1 LM iteration per step
 
-The first :meth:`Controller.step` solves to convergence; every later step runs
+The first ``Controller.step`` solves to convergence; every later step runs
 a fixed budget of ``outer`` augmented-Lagrangian iterations of ``inner``
 Levenberg-Marquardt iterations with all control on the GPU and a single
 read-back. The warm start carries the plan and the multipliers
@@ -100,7 +100,7 @@ On an RTX PRO 5000 a step takes about 0.3 ms for a Carter with a 50-step
 horizon, 0.6 ms for a quadrotor (40 steps) and 2.3 ms for 1024 quadrupeds
 (20 steps); the closed-loop tests track as well as with converged steps.
 
-The underlying options are :attr:`pycunls.AugmentedLagrangianMinimizerOptions.real_time`
+The underlying options are ``pycunls.AugmentedLagrangianMinimizerOptions.real_time``
 and ``reuse_structure``, and the solver's ``options``
 property (assigning keeps the warm-start state).
 
@@ -114,7 +114,7 @@ repeats), writes the measured state into the first state of every trajectory,
 solves, and returns the first controls ``[B, nu]``. The first call fills the
 whole horizon with the measured state ("stay where you are"). ``solve``,
 ``shift`` and ``set_initial_state`` are the individual parts; ``summary`` is
-the last :class:`AugmentedLagrangianMinimizerSummary`.
+the last ``AugmentedLagrangianMinimizerSummary``.
 
 The solver is local: it finds the solution near the initial guess (the
 shifted previous plan). An obstacle almost centered on the reference path is
@@ -134,7 +134,7 @@ through the aisles; the MPC follows it and keeps clear, on every step of its
 horizon, of the map voxels nearest to its previous plan, of the shoppers
 (three spheres each, grown by a 0.6 m personal space, predicted at constant
 velocity) and of the other drones' previous plans (with a 0.5 m separation
-zone). All of it is rewritten in :attr:`Horizon.obstacles` every step. Over
+zone). All of it is rewritten in ``Horizon.obstacles`` every step. Over
 45 s on an RTX A6000: 15 deliveries, the drones at least 1.06 m apart (1.15
 kept), at least 0.90 m from a shopper's body (1.00 kept, the gap is
 prediction error), about 30 ms per fleet solve. The example solves to

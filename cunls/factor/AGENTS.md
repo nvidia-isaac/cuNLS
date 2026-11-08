@@ -1,5 +1,8 @@
 # Module: factor
 
+> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
+> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
+
 ## Purpose
 
 Defines residual/Jacobian models evaluated in GPU batches.
@@ -20,14 +23,16 @@ frame). Reprojection / PnP see a world point at E T^-1 P.
 Per-manifold implementations live in kind-named subfolders; each also has a
 manifold-generic, compile-time-deduced facade:
 
-- `between/`: relative-pose factors (`so2/so3/se2/se3/similarity2/similarity3/sl4/vector_between_factor_batch.h`)
+- `between/`: relative-pose factors (`<group>_between_factor_batch.h` for so2, so3, se2, se3,
+  similarity2, similarity3, sl4, vector)
   plus the facade `between/between_factor_batch.h` (`BetweenFactorBatch<Manifold>`,
   manifold deduced from the deltas pointer's type — no `<Manifold>` needed).
-- `prior/`: prior factors (`so2/so3/se2/se3/similarity2/similarity3/sl4/prior_vector_factor_batch.h`)
+- `prior/`: prior factors (`<group>_prior_factor_batch.h` for so2, so3, se2, se3,
+  similarity2, similarity3, sl4, and `prior_vector_factor_batch.h`)
   plus the facade `prior/prior_factor_batch.h` (`PriorFactorBatch<Manifold>`, same deduction).
 - `motion/`: constant-velocity/-acceleration motion-prior factors
-  (`constant_velocity_so2/so3/se2/se3_factor_batch.h`,
-  `constant_acceleration_so2/so3/se2/se3_factor_batch.h`) plus the facades
+  (`motion/constant_velocity_<group>_factor_batch.h`,
+  `motion/constant_acceleration_<group>_factor_batch.h` for so2, so3, se2, se3) plus the facades
   `motion/constant_velocity_factor_batch.h`/`constant_acceleration_factor_batch.h`
   (`ConstantVelocityFactorBatch<Manifold>`/`ConstantAccelerationFactorBatch<Manifold>` —
   manifold is an explicit template argument, not deduced).
@@ -58,8 +63,7 @@ manifold-generic, compile-time-deduced facade:
   are marginalized inside the factor every evaluation (covariance-form Riccati
   sweep; chains split over 1-32 lanes as composable summaries, sized from
   `num_samples / capacity`), residual 15 = whitened keyframe-b defect (9) +
-  bias random walk (6). Guide: `docs/sphinx/imu.rst`; design:
-  `docs/design/imu_schur_complement_factor.md`.
+  bias random walk (6). Guide: `docs/sphinx/imu.rst`.
 - Constraints (augmented Lagrangian, solved by `AugmentedLagrangianMinimizer`):
   `constraint_factor_batch.h` (`ConstraintKind`, `ConstraintFactorBatchBase`:
   multipliers per row and penalties per factor, AL residuals in `Evaluate`,

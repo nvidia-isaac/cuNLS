@@ -83,6 +83,8 @@ See [`python/examples`](python/examples/README.md) to run them.
 | **Custom factors and states** | CuPy / NVIDIA Warp kernels in Python, or user-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
 | **Numeric Jacobians** | Finite-difference Jacobians for any factor batch (manifold-aware, reuses each state's `Plus` retraction), selectable globally (`MinimizerOptions.jacobian_mode`) or per factor group (the `jacobian_mode_override` of `Problem.add_factor_batch`) — write a factor with only a residual and let cuNLS differentiate it; see [Numeric Jacobians](docs/sphinx/numeric_jacobians.rst) |
 | **Linear solver** | Supernodal block-sparse Cholesky (built in, default: exact steps; also solves the Schur complement of bundle adjustment), block-sparse PCG (variable block-Jacobi preconditioner), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [C++ Installation](docs/sphinx/installation.rst)), block-tridiagonal Cholesky, dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER). Guide: [Linear systems and solvers](docs/sphinx/linear_solvers.rst) |
+| **Model fitting** | `pycunls.fit(model, x, y, p0)`: NumPy-style or Warp models, thousands of independent fits in one solve, measurement errors, robust losses, bounds, multiple starts, standard errors and reduced chi-square per fit; see [Quick setup](docs/sphinx/simple_api.rst) |
+| **Self-explaining results** | Every summary has a `termination_reason` and a `message` with the fix; `pycunls.diagnose` / `evaluate` / `check_jacobians` check a problem before and after solving; argument errors name the expected shape and dtype; see [Troubleshooting](docs/sphinx/troubleshooting.rst) |
 | **Safety checks** | Optional runtime validation (linear-solver diagnostics and more), off by default for low-latency solves — enable with `MinimizerOptions::disable_safety_checks = false` when debugging |
 | **Execution model** | Fully asynchronous via CUDA streams |
 
@@ -246,6 +248,30 @@ All other solvers work as usual, and the C++ tests skip the cuDSS cases.
 > up to the capacity. It is a host-only setter, so a real-time application allocates once for its
 > largest problem and changes the active counts every frame. A solve with nothing active throws. See
 > [Capacity and active count](docs/sphinx/introduction.rst).
+
+### The shortest path (Python)
+
+```python
+import numpy as np, pycunls
+
+def decay(x, p):                       # y = a exp(-b x) + c; p holds one row per sample
+    return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
+
+res = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)   # y (n,) or (B, n): B fits
+print(res.report())                    # params ± errors, reduced chi2, convergence
+
+pb = pycunls.ProblemBuilder()          # graph problems from arrays (pose graph here)
+poses = pb.add_states(pycunls.SE3StateBatch, initial=T0, constant=[0])
+pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
+result = pb.solve()                    # checked first: diagnose() names mistakes and fixes
+```
+
+See [Quick setup](docs/sphinx/simple_api.rst), the tour `python/examples/model_fitting.py`, and
+[Diagnostics and troubleshooting](docs/sphinx/troubleshooting.rst). Using cuNLS from a coding
+agent: `python -m pycunls guide` prints the [agent guide](python/pycunls/AGENT_GUIDE.md) shipped
+in the package, and `python -m pycunls doctor` checks the installation.
+
+### The full API
 
 Both quick starts solve the same 1-D prior problem: a scalar variable $x$ pulled toward a
 target $o = 2$ by a prior factor with residual $r = x - o$, so the optimum is $x^* = 2$.

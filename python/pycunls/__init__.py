@@ -65,6 +65,7 @@ from pycunls._pycunls_core import (
     MinimizerOptions,
     NumericDiffOptions,
     MinimizerSummary,
+    TerminationReason,
     LevenbergMarquardtMinimizerOptions,
     # --- Minimizers ---
     Minimizer,
@@ -87,8 +88,11 @@ from pycunls._pycunls_core import (
     RansacMinimizer,
     RansacGaussNewtonMinimizer,
     RansacLevenbergMarquardtMinimizer,
-    # --- Problem ---
+    # --- Problem and the abstract batch bases ---
     Problem,
+    StateBatch,
+    FactorBatch,
+    LossFunctionBatch,
     # --- State batches (Euclidean) ---
     VectorStateBatch1,
     VectorStateBatch2,
@@ -199,12 +203,33 @@ from pycunls._pycunls_core import (
     ScaledLossFunctionBatch,
 )
 
+from pycunls import _pycunls_core
+from pycunls import _summary  # noqa: F401  (adds to_dict() / report() to the summaries)
+from pycunls._logging import log_to_python
+from pycunls.catalog import annotate_classes as _annotate_classes, catalog, describe
+from pycunls.diagnostics import check_jacobians, diagnose, evaluate
+from pycunls.fitting import FitResult, fit
+from pycunls.builder import ProblemBuilder, SolveResult, solve
+
+_annotate_classes(_pycunls_core)
+
 __version__ = "0.2.0"
 
 __all__ = [
     "CudaStream",
     "Verbosity",
     "set_log_verbosity",
+    "log_to_python",
+    "catalog",
+    "describe",
+    "diagnose",
+    "evaluate",
+    "check_jacobians",
+    "fit",
+    "FitResult",
+    "ProblemBuilder",
+    "SolveResult",
+    "solve",
     "LinearSystemType",
     "SparseLinearSolverType",
     "ColumnScaling",
@@ -213,6 +238,7 @@ __all__ = [
     "MinimizerOptions",
     "NumericDiffOptions",
     "MinimizerSummary",
+    "TerminationReason",
     "LevenbergMarquardtMinimizerOptions",
     "Minimizer",
     "GaussNewtonMinimizer",
@@ -233,6 +259,9 @@ __all__ = [
     "RansacGaussNewtonMinimizer",
     "RansacLevenbergMarquardtMinimizer",
     "Problem",
+    "StateBatch",
+    "FactorBatch",
+    "LossFunctionBatch",
     "VectorStateBatch1",
     "VectorStateBatch2",
     "VectorStateBatch3",

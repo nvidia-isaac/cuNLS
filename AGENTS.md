@@ -30,9 +30,14 @@ scripts/            # Build/test shell scripts + Dockerfile
   build_pycunls_in_docker.sh # Docker lifecycle for Python build
   test_cunls_in_docker.sh    # Docker lifecycle for C++ tests
   test_pycunls_in_docker.sh  # Docker lifecycle for Python tests
+  generate_pycunls_stubs.py  # regenerate python/pycunls/_pycunls_core.pyi
+  run_agent_eval.sh          # run an agent on python/agent_tasks and score it
 cmake/              # CMake modules (AddCUDSS, AddSpdlog, BundleStaticDeps)
 .github/workflows/  # CI workflows (nightly, static_docs)
 ```
+
+Each directory under `cunls/` has an `AGENTS.md` with its architecture notes (key classes, data
+flow, invariants); read it before changing that module.
 
 ### Build and test locally
 
@@ -51,6 +56,60 @@ cmake/              # CMake modules (AddCUDSS, AddSpdlog, BundleStaticDeps)
 ```
 
 CI runs the exact same 4 commands with `CUDA_VERSION` and `UBUNTU_VERSION` env vars for matrix parameterization.
+
+---
+
+## Library Architecture and Conventions
+
+### What the library is
+
+- `StateBatch` implementations hold manifold-aware variables (vectors, SO/SE(2/3), Sim(2/3),
+  SL(4)); `FactorBatch` implementations evaluate batched residuals and analytic Jacobians;
+  `Problem` composes them; `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer` solve,
+  `RansacGaussNewtonMinimizer` / `RansacLevenbergMarquardtMinimizer` add robust estimation,
+  `AugmentedLagrangianMinimizer` adds constraints and box bounds. Public umbrella include:
+  `cunls/cunls.h`.
+- Python (`python/pycunls`): the nanobind bindings plus pure-Python layers -- `fitting.py`
+  (`fit`), `builder.py` (`ProblemBuilder`, `solve`), `diagnostics.py` (`diagnose`,
+  `evaluate`, `check_jacobians`), `catalog.py` (`catalog`, `describe`, class docstrings),
+  `mpc.py`, `warp.py`. `AGENT_GUIDE.md` ships in the wheel (`python -m pycunls guide`).
+- Conventions users must get right are listed in `python/pycunls/AGENT_GUIDE.md` (section 4):
+  capacity vs. active count, `world_from_body` row-major poses, between factors measure
+  `T_right^-1 T_left`, gauge freedom, absolute tolerances.
+
+### How to write library code
+
+1. **Every public item explains itself.** Each class, method, member, hook and parameter in an
+   installed header gets a clear doc comment in the same commit: what it is for, when it runs,
+   what it reads and writes. Every Python binding gets a docstring (enforced by
+   `python/tests/test_api_docs.py`); regenerate the stub with
+   `python scripts/generate_pycunls_stubs.py` after changing bindings. Names state exactly what
+   a function does.
+2. **Errors say what, got, expected, and the fix**:
+   `<Class>::<Method>: <what is wrong> (got X, expected Y). Fix: <action>.` Python boundary
+   checks (dtype, host vs. device, size) live in the bindings (`python/src/bind_types.cpp`
+   `inspect_device_array`, `device_items`).
+3. **Results explain themselves.** A solver outcome is a `TerminationReason` plus a `message`
+   with the fix, not a bool; new failure modes get a reason or a message, never silence.
+4. **No cost in the hot path.** Diagnostics run on failure paths, at the end of a solve, or on
+   request; never add a host synchronization to the per-iteration loop. Real-time
+   (`fixed_iterations`) paths read nothing back.
+5. **Analytic Jacobians** for built-in factors (no autodiff); concrete classes like the between
+   factors; no templates or CUDA in public headers; coalesced kernels. Numeric (finite
+   difference) Jacobians are judged by accuracy, not speed.
+6. **Lean code.** No per-class virtual overrides just to enable a check (keep such metadata in
+   one table, as `pycunls/catalog.py`); no tiny shared `.cuh` headers for a few device helpers
+   (inline them into the `.cu`); a base class holds only what every subclass shares (no pimpl,
+   no optional feature slots).
+7. **No automatic backend switching.** The linear solver is an explicit choice; a message may
+   suggest another one.
+8. **Docs stay consistent.** `python/tests/test_docs_consistency.py` checks that file paths in
+   the docs and `AGENTS.md` files exist and that every `pycunls.X` the docs name exists; the
+   Sphinx build must stay free of warnings. `llms.txt` is generated into the docs site by
+   `docs/sphinx/conf.py`, not written by hand.
+9. **Measure agent-facing changes.** `python/agent_tasks` holds tasks with hidden truths;
+   `scripts/run_agent_eval.sh` runs an agent on them. A doc or API change aimed at agents should
+   not lower the pass rate.
 
 ---
 

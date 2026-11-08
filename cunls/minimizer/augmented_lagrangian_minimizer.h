@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include <string>
 #include <vector>
 
 #include "cunls/common/types.h"
@@ -152,6 +153,19 @@ struct AugmentedLagrangianMinimizerSummary {
   size_t num_problems = 1;
   size_t num_converged = 0;
   size_t num_max_penalty = 0;
+
+  /**
+   * @brief One or two sentences for a person or an agent: the outcome and,
+   * when not converged, the likely causes and what to try. Without
+   * constraint batches, the wrapped minimizer's MinimizerSummary::message.
+   */
+  std::string message;
+
+  /** @brief Wall time of the Minimize() call in milliseconds. */
+  double solve_time_ms = 0.0;
+
+  /** @brief status == kConverged. */
+  bool Converged() const { return status == AugmentedLagrangianMinimizerStatus::kConverged; }
 };
 
 namespace internal {

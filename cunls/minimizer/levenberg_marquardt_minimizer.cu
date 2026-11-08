@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "cunls/common/helper.h"
@@ -52,20 +53,26 @@ size_t RejectionsToMaxDamping(const LevenbergMarquardtMinimizerOptions &o) {
  */
 MinimizerOptions BaseOptions(const LevenbergMarquardtMinimizerOptions &o) {
   if (!(o.lambda_min > 0.f)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_min must be positive");
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_min must be positive, got " +
+                                std::to_string(o.lambda_min));
   }
   if (!(o.lambda_max >= o.lambda_min)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_max must be >= lambda_min");
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_max (" +
+                                std::to_string(o.lambda_max) + ") must be >= lambda_min (" +
+                                std::to_string(o.lambda_min) + ")");
   }
   if (!(o.initial_lambda <= o.lambda_max)) {
-    throw std::invalid_argument(
-        "LevenbergMarquardtMinimizer: initial_lambda must be <= lambda_max");
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: initial_lambda (" +
+                                std::to_string(o.initial_lambda) + ") must be <= lambda_max (" +
+                                std::to_string(o.lambda_max) + ")");
   }
   if (!(o.lambda_upscale > 1.f)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_upscale must be > 1");
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_upscale must be > 1, got " +
+                                std::to_string(o.lambda_upscale));
   }
   if (!(o.min_diagonal >= 0.f)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: min_diagonal must be >= 0");
+    throw std::invalid_argument("LevenbergMarquardtMinimizer: min_diagonal must be >= 0, got " +
+                                std::to_string(o.min_diagonal));
   }
   MinimizerOptions base = o.base_options;
   if (base.max_consecutive_rejected_steps > 0) {
@@ -140,8 +147,15 @@ __global__ void classify_kernel(size_t num_problems, const float *cost, const fl
   quality[p] = rho;
   // Written so that a NaN rho (non-finite cost) rejects.
   reject[p] = !(rho >= step_accept_threshold);
-  converged[p] = step_squared[p] < state_tolerance || predicted < relative_reduction_tolerance ||
-                 updated < cost_tolerance;
+  TerminationReason reason = TerminationReason::NotDetermined;
+  if (step_squared[p] < state_tolerance) {
+    reason = TerminationReason::StateTolerance;
+  } else if (predicted < relative_reduction_tolerance) {
+    reason = TerminationReason::RelativeReductionTolerance;
+  } else if (updated < cost_tolerance) {
+    reason = TerminationReason::CostTolerance;
+  }
+  converged[p] = static_cast<int>(reason);
 }
 
 }  // namespace

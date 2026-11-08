@@ -21,6 +21,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "cunls/common/pinned_vector.h"
@@ -56,6 +57,59 @@ enum class ColumnScaling {
 };
 
 /**
+ * @brief Why Minimizer::Minimize() stopped iterating a (sub)problem.
+ *
+ * The values are ordered by severity: a summary over several subproblems
+ * reports the highest value present (MinimizerSummary::termination_reason).
+ */
+enum class TerminationReason : int {
+  /** Not determined: real-time (fixed-iteration) solves do not read it back. */
+  NotDetermined = 0,
+  /** Nothing to optimize: every state is constant. */
+  NoFreeStates = 1,
+  /** Converged: the cost fell below MinimizerOptions::cost_tolerance. */
+  CostTolerance = 2,
+  /** Converged: the squared step norm fell below MinimizerOptions::state_tolerance. */
+  StateTolerance = 3,
+  /**
+   * Converged (Levenberg-Marquardt): the cost reduction the linear model
+   * predicts, relative to the cost, fell below
+   * LevenbergMarquardtMinimizerOptions::relative_reduction_tolerance.
+   */
+  RelativeReductionTolerance = 4,
+  /**
+   * Converged (Gauss-Newton): a full step did not lower the cost, so the
+   * method can make no more progress. Normal at a minimum (float32 noise);
+   * with a high final cost it points to a bad Jacobian or initial guess.
+   */
+  NoCostDecrease = 5,
+  /** Not converged: MinimizerOptions::max_num_iterations was reached. */
+  MaxIterations = 6,
+  /**
+   * Not converged: MinimizerOptions::max_consecutive_rejected_steps steps
+   * were rejected in a row (Levenberg-Marquardt: at full damping).
+   */
+  MaxRejectedSteps = 7,
+  /**
+   * Not converged: as MaxRejectedSteps, but the last trial step or its cost
+   * was not finite (a failed linear solve, or a factor that returns NaN at
+   * the trial states).
+   */
+  NonFiniteStep = 8,
+  /** Not started: the initial cost was NaN or infinite. */
+  NonFiniteCost = 9,
+};
+
+/** @brief Number of TerminationReason values. */
+constexpr int kNumTerminationReasons = 10;
+
+/** @brief The enumerator's name, e.g. "MaxIterations". */
+const char *ToString(TerminationReason reason);
+
+/** @brief True for the reasons that count as converged (CostTolerance to NoCostDecrease). */
+bool IsConvergence(TerminationReason reason);
+
+/**
  * @brief Result of one Minimizer::Minimize() call.
  *
  * Costs are totals over all subproblems (see Problem::SetProblemPartition).
@@ -72,6 +126,41 @@ struct MinimizerSummary {
 
   /** @brief Total cost at the start of each iteration. */
   std::vector<float> iteration_costs;
+
+  /**
+   * @brief Why the solve stopped. With several subproblems
+   * (Problem::SetProblemPartition), the most severe reason any subproblem
+   * stopped for (the highest TerminationReason value); the per-reason counts
+   * are in num_problems_by_reason. NotDetermined in real time
+   * (fixed iterations).
+   */
+  TerminationReason termination_reason = TerminationReason::NotDetermined;
+
+  /**
+   * @brief Number of subproblems that stopped for each reason, indexed by
+   * TerminationReason (kNumTerminationReasons entries); empty when not
+   * determined. Without a partition, a single 1 at termination_reason.
+   */
+  std::vector<size_t> num_problems_by_reason;
+
+  /**
+   * @brief One or two sentences for a person or an agent: why the solve
+   * stopped and, when it did not converge, the likely causes and what to try.
+   */
+  std::string message;
+
+  /** @brief Number of free (optimized) tangent-space parameters. */
+  size_t num_free_parameters = 0;
+
+  /** @brief Wall time of the Minimize() call in milliseconds. */
+  double solve_time_ms = 0.0;
+
+  /**
+   * @brief True when every subproblem stopped at a convergence criterion
+   * (IsConvergence()) or had nothing to optimize. False when the iteration
+   * cap was hit, steps kept being rejected, or a cost was not finite.
+   */
+  bool Converged() const;
 };
 
 /**
@@ -330,6 +419,8 @@ struct MinimizerScratch {
   PinnedVector<float> h_scalars;         ///< Host mirror of d_scalars.
   dvector<float> d_partials;             ///< Reduction partials.
   dvector<float *> item_state_pointers;  ///< State pointers in LinearSystem::EvaluationOrder().
+  dvector<unsigned int> d_termination_counts;       ///< Subproblems per TerminationReason.
+  PinnedVector<unsigned int> h_termination_counts;  ///< Host mirror of d_termination_counts.
 };
 
 /**
@@ -411,7 +502,8 @@ class Minimizer {
    *
    * @param stream CUDA stream for all device work.
    * @param problem Problem to solve; its states are updated in place.
-   * @return Iteration count and costs.
+   * @return Iteration count, costs, why it stopped (termination_reason,
+   *         message) and the wall time.
    * @throws std::invalid_argument if the problem has constraint factor
    *         batches or box-bounded states (solve those with
    *         AugmentedLagrangianMinimizer), or its
@@ -428,6 +520,18 @@ class Minimizer {
    * escalation room).
    */
   const MinimizerOptions &Options() const { return options_; }
+
+  /**
+   * @brief Device array of the last Minimize() call's subproblem count of
+   * ints (Problem::NumProblems()): the TerminationReason value of each
+   * subproblem. Valid until the next Minimize() call; NotDetermined entries
+   * after a real-time (fixed-iteration) solve. Use it to find which of many
+   * independent subproblems did not converge.
+   */
+  const int *SubproblemTerminationReasons() const { return partition_.Termination(); }
+
+  /** @brief Number of entries of SubproblemTerminationReasons(). */
+  size_t NumSubproblems() const { return partition_.NumProblems(); }
 
  protected:
   /**
@@ -460,8 +564,9 @@ class Minimizer {
    * known. For each active subproblem p, writes two flags:
    *   - ProblemPartition::Reject()[p]: the step is not good enough by this
    *     method's rule;
-   *   - ProblemPartition::Converged()[p]: the subproblem meets this method's
-   *     convergence test.
+   *   - ProblemPartition::Converged()[p]: 0, or the TerminationReason value
+   *     of the convergence test the subproblem meets (CostTolerance to
+   *     NoCostDecrease).
    * Only classifies; the base then decides. A rejected step is still taken
    * if the line search shortened it to a lower cost; a converged subproblem
    * stops, keeping its step only if the cost did not increase; a step to a

@@ -17,7 +17,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -281,6 +283,43 @@ void ScatterPenalties(cudaStream_t stream, const std::vector<ConstraintBatchStat
   }
 }
 
+/** AugmentedLagrangianMinimizerSummary::message for a solve with constraints. */
+std::string Describe(const AugmentedLagrangianMinimizerSummary &summary,
+                     const AugmentedLagrangianMinimizerOptions &options) {
+  std::ostringstream out;
+  out.precision(4);
+  const size_t not_converged = summary.num_problems - summary.num_converged;
+  if (options.real_time) {
+    out << "Real-time solve: " << summary.outer_iterations << " outer iterations, max violation "
+        << summary.max_violation << " (tolerance " << options.constraint_tolerance << ").";
+    return out.str();
+  }
+  switch (summary.status) {
+    case AugmentedLagrangianMinimizerStatus::kConverged:
+      out << "Converged: feasible (max violation " << summary.max_violation
+          << " <= constraint_tolerance " << options.constraint_tolerance
+          << ") and stationary; objective " << summary.initial_cost << " -> " << summary.final_cost
+          << " in " << summary.outer_iterations << " outer / " << summary.inner_iterations
+          << " inner iterations.";
+      break;
+    case AugmentedLagrangianMinimizerStatus::kMaxOuterIterations:
+      out << "Not converged: reached max_outer_iterations (" << options.max_outer_iterations
+          << ") with max violation " << summary.max_violation << " (constraint_tolerance "
+          << options.constraint_tolerance << "); " << not_converged << " of "
+          << summary.num_problems
+          << " subproblems still running. Fix: raise max_outer_iterations or initial_penalty, "
+             "and check that the constraints can be met together.";
+      break;
+    case AugmentedLagrangianMinimizerStatus::kMaxPenalty:
+      out << "Not converged: " << summary.num_max_penalty << " of " << summary.num_problems
+          << " subproblems cannot reduce their violation (max " << summary.max_violation
+          << ") at max_penalty: the constraints are likely infeasible or contradict each other "
+             "(check bounds and targets), or the objective outweighs them (raise max_penalty).";
+      break;
+  }
+  return out.str();
+}
+
 /** Fills the summary's violation and status from the control kernel's read-back slots. */
 void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) {
   summary.max_violation = out[kMaxViolation];
@@ -390,8 +429,13 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
           "constraints are hard and take no loss (robust losses belong on objective factors)");
     }
   }
+  const auto start = std::chrono::steady_clock::now();
   AugmentedLagrangianMinimizerSummary summary;
   summary.num_problems = problem.NumProblems();
+  auto elapsed_ms = [&]() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+        .count();
+  };
 
   // Constraint batches, and whether they are the ones of the last solve.
   const auto &residual_batches = problem.GetResidualBatches();
@@ -467,7 +511,23 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     summary.inner_iterations = inner.num_iterations;
     summary.initial_cost = inner.initial_cost;
     summary.final_cost = inner.final_cost;
+    // The wrapped minimizer's outcome (all converged when not determined).
     summary.num_converged = summary.num_problems;
+    if (!inner.num_problems_by_reason.empty()) {
+      summary.num_converged = 0;
+      for (int r = 0; r < kNumTerminationReasons; ++r) {
+        const auto reason = static_cast<TerminationReason>(r);
+        if (IsConvergence(reason) || reason == TerminationReason::NoFreeStates ||
+            reason == TerminationReason::NotDetermined) {
+          summary.num_converged += inner.num_problems_by_reason[r];
+        }
+      }
+    }
+    if (summary.num_converged < summary.num_problems) {
+      summary.status = AugmentedLagrangianMinimizerStatus::kMaxOuterIterations;
+    }
+    summary.message = inner.message;
+    summary.solve_time_ms = elapsed_ms();
     return summary;
   }
 
@@ -625,6 +685,9 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   if (!real_time) {
     summary.final_cost = ComputeObjective(stream, problem, scratch_, partials_, d_out_);
   }
+  summary.message = Describe(summary, options_);
+  summary.solve_time_ms = elapsed_ms();
+  if (!real_time) LogMessage("{}", summary.message);
   return summary;
 }
 

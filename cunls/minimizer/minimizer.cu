@@ -16,9 +16,12 @@
  */
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -207,11 +210,18 @@ void SolveStep(cudaStream_t stream, const MinimizerOptions &options, const Minim
   auto solve = [&]() {
     if (system.linear_system->Solve(stream, system.rhs, system.step)) return true;
     if (!reject_failed_solve) {
-      std::string str = "Failed to solve linear system";
+      std::string str =
+          "GaussNewtonMinimizer: failed to solve the linear system (the normal equations are "
+          "singular or not positive definite). Usual causes: a gauge freedom no constant state "
+          "fixes, or a state no factor constrains. Fix: make a state constant or add a prior "
+          "(in Python, pycunls.diagnose(problem) finds both), or use "
+          "LevenbergMarquardtMinimizer, whose damping handles singular systems.";
       LogError(str);
       throw std::runtime_error(str);
     }
-    LogWarning("Failed to solve the linear system; the step is rejected");
+    LogWarning(
+        "Failed to solve the linear system (singular or indefinite); the step is rejected and "
+        "the damping grows");
     THROW_ON_CUDA_ERROR(
         cudaMemsetAsync(system.step.data(), 0xff, system.step.size() * sizeof(float), stream));
     return false;
@@ -332,6 +342,146 @@ void BuildSystem(cudaStream_t stream, const Problem &problem, const MinimizerSta
 
 }  // namespace internal
 
+namespace {
+
+/** Relative cost decrease of the last iteration, or NaN without one. */
+float LastRelativeDecrease(const MinimizerSummary &summary) {
+  if (summary.iteration_costs.empty()) return std::numeric_limits<float>::quiet_NaN();
+  const float before = summary.iteration_costs.back();
+  return (before - summary.final_cost) / std::max(std::abs(before), 1e-30f);
+}
+
+/** The sentence of MinimizerSummary::message for one reason. */
+std::string DescribeReason(TerminationReason reason, const MinimizerSummary &summary,
+                           const MinimizerOptions &options) {
+  std::ostringstream out;
+  out.precision(4);
+  const auto costs = [&]() {
+    std::ostringstream c;
+    c.precision(4);
+    c << "cost " << summary.initial_cost << " -> " << summary.final_cost << " in "
+      << summary.num_iterations << " iterations";
+    return c.str();
+  };
+  switch (reason) {
+    case TerminationReason::NotDetermined:
+      out << "Real-time solve (fixed iterations): convergence was not checked.";
+      break;
+    case TerminationReason::NoFreeStates:
+      out << "Nothing to optimize: every state is constant. Fix: make fewer states constant.";
+      break;
+    case TerminationReason::CostTolerance:
+      out << "Converged: the cost fell below cost_tolerance (" << options.cost_tolerance << "); "
+          << costs() << ".";
+      break;
+    case TerminationReason::StateTolerance:
+      out << "Converged: the squared step norm fell below state_tolerance ("
+          << options.state_tolerance << "); " << costs() << ".";
+      break;
+    case TerminationReason::RelativeReductionTolerance:
+      out << "Converged: the predicted relative cost reduction fell below "
+             "relative_reduction_tolerance; "
+          << costs() << ".";
+      break;
+    case TerminationReason::NoCostDecrease:
+      out << "Converged: a Gauss-Newton step no longer lowered the cost; " << costs()
+          << ". Normal at a minimum; if the final cost is still high, check the Jacobian and "
+             "the initial guess, or use LevenbergMarquardtMinimizer.";
+      break;
+    case TerminationReason::MaxIterations:
+      out << "Not converged: reached max_num_iterations (" << options.max_num_iterations << "); "
+          << costs() << ", last relative decrease " << LastRelativeDecrease(summary)
+          << ". Fix: raise max_num_iterations, or improve the initial guess.";
+      break;
+    case TerminationReason::MaxRejectedSteps:
+      out << "Stopped: " << options.max_consecutive_rejected_steps
+          << " steps in a row were rejected; " << costs()
+          << ". At a minimum this is float32 round-off (the cost cannot decrease further); if "
+             "the final cost is still high, check the Jacobian (pycunls.check_jacobians), fix "
+             "gauge freedoms (make a state constant), or improve the initial guess.";
+      break;
+    case TerminationReason::NonFiniteStep:
+      out << "Stopped: the last trial steps were not finite; " << costs()
+          << ". The linear solve failed (a singular system: a gauge freedom no constant state "
+             "fixes, or a state no factor constrains) or a factor returned NaN at the trial "
+             "states. Fix: check Problem.validate() and the factor's domain.";
+      break;
+    case TerminationReason::NonFiniteCost:
+      out << "Not started: the initial cost is not finite (NaN or Inf). A factor returns NaN "
+             "or Inf at the initial states. Fix: check that measurements and states are "
+             "finite float32 in the layout the factor expects (pycunls.evaluate shows the "
+             "cost per factor batch).";
+      break;
+  }
+  return out.str();
+}
+
+/** MinimizerSummary::message from the reason counts. */
+std::string DescribeTermination(const MinimizerSummary &summary, const MinimizerOptions &options) {
+  size_t total = 0;
+  for (size_t c : summary.num_problems_by_reason) total += c;
+  std::string text = DescribeReason(summary.termination_reason, summary, options);
+  if (total <= 1) return text;
+  std::ostringstream out;
+  out.precision(4);
+  std::ostringstream counts;
+  const char *separator = "";
+  size_t converged = 0;
+  for (int r = 0; r < kNumTerminationReasons; ++r) {
+    const size_t count = summary.num_problems_by_reason[r];
+    if (count == 0) continue;
+    const auto reason = static_cast<TerminationReason>(r);
+    if (IsConvergence(reason) || reason == TerminationReason::NoFreeStates) converged += count;
+    counts << separator << count << " " << ToString(reason);
+    separator = ", ";
+  }
+  if (converged == total) {
+    out << "All " << total << " subproblems converged (" << counts.str() << "); total cost "
+        << summary.initial_cost << " -> " << summary.final_cost << " in " << summary.num_iterations
+        << " iterations.";
+  } else {
+    out << (total - converged) << " of " << total << " subproblems did not converge ("
+        << counts.str() << "). Most severe: " << text;
+  }
+  return out.str();
+}
+
+}  // namespace
+
+const char *ToString(TerminationReason reason) {
+  switch (reason) {
+    case TerminationReason::NotDetermined:
+      return "NotDetermined";
+    case TerminationReason::NoFreeStates:
+      return "NoFreeStates";
+    case TerminationReason::CostTolerance:
+      return "CostTolerance";
+    case TerminationReason::StateTolerance:
+      return "StateTolerance";
+    case TerminationReason::RelativeReductionTolerance:
+      return "RelativeReductionTolerance";
+    case TerminationReason::NoCostDecrease:
+      return "NoCostDecrease";
+    case TerminationReason::MaxIterations:
+      return "MaxIterations";
+    case TerminationReason::MaxRejectedSteps:
+      return "MaxRejectedSteps";
+    case TerminationReason::NonFiniteStep:
+      return "NonFiniteStep";
+    case TerminationReason::NonFiniteCost:
+      return "NonFiniteCost";
+  }
+  return "Unknown";
+}
+
+bool IsConvergence(TerminationReason reason) {
+  return reason >= TerminationReason::CostTolerance && reason <= TerminationReason::NoCostDecrease;
+}
+
+bool MinimizerSummary::Converged() const {
+  return termination_reason == TerminationReason::NoFreeStates || IsConvergence(termination_reason);
+}
+
 Minimizer::Minimizer(const MinimizerOptions &options) : options_(options) {
   system_.linear_system = internal::CreateLinearSystem(options_);
 }
@@ -376,7 +526,16 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   MinimizerState &current = m.current_state_;
   MinimizerState &updated = m.updated_state_;
   const bool fixed = inner.fixed_iterations;
+  const auto start = std::chrono::steady_clock::now();
   MinimizerSummary summary;
+  // Every return: the message and the wall time.
+  auto done = [&]() {
+    summary.message = DescribeTermination(summary, options);
+    summary.solve_time_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (!fixed) LogMessage("{}", summary.message);
+    return summary;
+  };
   if (inner.problem_at_cap != nullptr) {
     THROW_ON_CUDA_ERROR(
         cudaMemsetAsync(inner.problem_at_cap, 0, problem.NumProblems() * sizeof(int), stream));
@@ -396,12 +555,15 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   current.Recreate(stream, problem);
   updated.Recreate(stream, problem);
 
+  summary.num_free_parameters = m.state_ops_.NumReducedStates();
   // No optimizable states (all constant): nothing to solve.
   if (m.state_ops_.NumReducedStates() == 0) {
     summary.initial_cost = ComputeCost(stream, problem, current, scratch);
     summary.final_cost = summary.initial_cost;
-    LogMessage("No optimizable states; skipping solver.");
-    return summary;
+    summary.termination_reason = TerminationReason::NoFreeStates;
+    summary.num_problems_by_reason.assign(kNumTerminationReasons, 0);
+    summary.num_problems_by_reason[static_cast<int>(TerminationReason::NoFreeStates)] = 1;
+    return done();
   }
 
   if (!structure.partition_ready) {
@@ -419,6 +581,29 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
                                         cudaMemcpyDeviceToHost, stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     return std::make_pair(scratch.h_scalars[0], static_cast<size_t>(scratch.h_scalars[1]));
+  };
+  // Why each subproblem stopped: counts per reason, read back with the final
+  // synchronization (none in real time).
+  if (scratch.d_termination_counts.size() < kNumTerminationReasons) {
+    scratch.d_termination_counts.resize(kNumTerminationReasons);
+    scratch.h_termination_counts.resize(kNumTerminationReasons);
+  }
+  auto finish_termination = [&]() {
+    if (fixed) return;
+    partition.FinishTermination(stream, scratch.d_termination_counts.data());
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
+        scratch.h_termination_counts.data(), scratch.d_termination_counts.data(),
+        kNumTerminationReasons * sizeof(unsigned int), cudaMemcpyDeviceToHost, stream));
+  };
+  auto read_termination = [&]() {
+    if (fixed) return;
+    summary.num_problems_by_reason.assign(kNumTerminationReasons, 0);
+    for (int r = 0; r < kNumTerminationReasons; ++r) {
+      summary.num_problems_by_reason[r] = scratch.h_termination_counts[r];
+      if (scratch.h_termination_counts[r] != 0) {
+        summary.termination_reason = static_cast<TerminationReason>(r);
+      }
+    }
   };
   // ComputeCostAsync leaves the per-factor costs at the start of the buffer.
   auto factor_costs = [&]() { return reinterpret_cast<const float *>(scratch.buffer.data()); };
@@ -438,10 +623,13 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   }
   summary.initial_cost = cost;
   summary.final_cost = cost;
-  if (active == 0) {
+  if (active == 0 && !fixed) {
     structure.problem = &problem;
     structure.signature = std::move(signature);
-    return summary;
+    finish_termination();
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    read_termination();
+    return done();
   }
 
   // The subclass's update (damping) and the caller's restriction, on the
@@ -519,8 +707,9 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
       if (step_taken) std::swap(current, updated);
       relinearize = !swap_taken || step_taken || inner.restrict_system;
       summary.final_cost = cost;
-      LogMessage("Iteration #{}: cost = {}, {} subproblems active", summary.num_iterations, cost,
-                 active);
+      LogMessage("Iteration {}: cost {}, relative decrease {}, {} of {} subproblems active",
+                 summary.num_iterations, cost, LastRelativeDecrease(summary), active,
+                 partition.NumProblems());
       if (active == 0) break;
     }
     if (summary.num_iterations < inner.max_num_iterations) {
@@ -538,8 +727,10 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
                                         cudaMemcpyDeviceToDevice, stream));
   }
   Copy(stream, current, problem);
+  finish_termination();
   if (!fixed) THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  return summary;
+  read_termination();
+  return done();
 }
 
 }  // namespace cunls

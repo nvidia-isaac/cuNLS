@@ -24,6 +24,8 @@
 
 #include <nanobind/nanobind.h>
 
+#include <string>
+
 namespace nb = nanobind;
 
 // Extract a raw GPU device pointer from a Python object.
@@ -35,6 +37,38 @@ uintptr_t extract_device_ptr(nb::handle obj);
 // `dtype` (e.g. "float32"), raising TypeError naming `name` otherwise. Plain
 // ints (raw pointers) pass unchecked.
 uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name);
+
+// Same, and when the array's size is known (__cuda_array_interface__) checks
+// that it holds at least `min_elements` values, raising ValueError that names
+// `name` and explains the count with `what` (e.g. "capacity 4 x 16 floats").
+uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name,
+                             size_t min_elements, const char *what);
+
+// A device array as seen through __cuda_array_interface__ (or a raw int
+// pointer, whose size is unknown).
+struct DeviceArray {
+  uintptr_t ptr = 0;
+  size_t num_elements = 0;
+  bool size_known = false;
+};
+
+// Checks and reads a device array argument: an int pointer passes unchecked;
+// an object with __cuda_array_interface__ (CuPy, PyTorch, Numba, Warp) must
+// have dtype `dtype` (when not null) and be C-contiguous; a NumPy array raises
+// TypeError explaining that GPU memory is needed. Errors name `name`.
+DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *name);
+
+// Typed device array of `count` items of T (each sizeof(T) / 4 float32
+// values), checked like extract_device_ptr with a minimum size.
+template <typename T>
+const T *device_items(nb::handle obj, const char *name, size_t count) {
+  static_assert(sizeof(T) % sizeof(float) == 0, "T must be made of 32-bit values");
+  const size_t per_item = sizeof(T) / sizeof(float);
+  const std::string what =
+      "capacity " + std::to_string(count) + " x " + std::to_string(per_item) + " float32 per item";
+  return reinterpret_cast<const T *>(
+      extract_device_ptr(obj, "float32", name, count * per_item, what.c_str()));
+}
 
 // --- Binding registration entry points (one per translation unit) ----------
 
