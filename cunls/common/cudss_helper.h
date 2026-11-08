@@ -187,8 +187,10 @@ class cuDSSDescription {
    * sparse solvers.
    *
    * @param matrix The CSR sparse matrix to wrap.
+   * @param spd Declares the matrix symmetric positive definite (Cholesky
+   *            factorization) when true; symmetric indefinite (LDL^T) when false.
    */
-  cuDSSDescription(const CSRSparseMatrix &matrix);
+  cuDSSDescription(const CSRSparseMatrix &matrix, bool spd = false);
 
   /**
    * @brief Constructs a cuDSS vector descriptor from a dense vector.
@@ -221,10 +223,22 @@ class cuDSSConfig {
   /**
    * @brief Constructor that creates a cuDSS configuration object.
    *
+   * Besides the arguments, it disables matching (cuDSS 1.0 enables matching
+   * and scaling for symmetric matrices by default, which only costs time on
+   * normal equations) and enables hybrid host/device execution, except for the
+   * COLAMD reorderings, which do not support it.
+   *
+   * @param reordering_algorithm cudssReorderingAlg_t value (e.g.
+   *                             CUDSS_REORDERING_ALG_DEFAULT).
    * @param nthreads Number of host threads for cuDSS host-side stages.
-   * @param pivoting Diagonal pivoting when true, no pivoting when false.
+   * @param pivoting Pivoting when true (diagonal pivoting for the default and
+   *                 nested-dissection / AMD reorderings, the library's choice for
+   *                 the COLAMD ones); no pivoting when false.
+   * @param spd The matrix is declared SPD (see cuDSSDescription); the pivoting
+   *            setting is then left to the library.
    */
-  cuDSSConfig(int nthreads = 1, bool pivoting = true);
+  cuDSSConfig(int reordering_algorithm = 0, int nthreads = 1, bool pivoting = true,
+              bool spd = false);
 
   /** @brief Destructor that releases the cuDSS configuration object. */
   ~cuDSSConfig();

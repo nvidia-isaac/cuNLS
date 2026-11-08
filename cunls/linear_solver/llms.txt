@@ -69,11 +69,22 @@ Sparse linear system abstraction and implementation used by minimizers.
   assembled by `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`.  The
   layout is chosen in `NormalEquations`; no conversion runs on the solve path.
 
-## Pivoting
+## Performance modes
 
-- `cuDSSLinearSolverOptions::pivoting` (default `true`): diagonal pivoting.
-  `false` disables pivoting: ~20-40% faster factorization, but a near-singular
+- `SlowInitFastSolve`: expensive setup, fast repeated solves.
+- `FastInitSlowSolve`: faster setup, slower repeated solves.
+
+## cuDSS matrix type and pivoting
+
+- `cuDSSLinearSolverOptions::matrix_type` (default `cuDSSMatrixType::Symmetric`):
+  symmetric indefinite LDL^T, robust to singular Gauss-Newton systems.
+  `cuDSSMatrixType::SPD`: Cholesky, ~10-25% faster, only for SPD systems
+  (LM-damped or full-rank); a singular system gives a wrong step.
+- `cuDSSLinearSolverOptions::pivoting` (default `true`): pivoting for the
+  symmetric type. `false` disables it: slightly faster, but a near-singular
   or badly scaled system can return a wrong solution without any error.
+- cuNLS disables cuDSS matching (on by default since cuDSS 1.0) and enables
+  hybrid host/device execution (except for `FastInitSlowSolve`).
 - `Solve` factorizes on every call. Unless `DisableSafetyChecks()` was called,
   it syncs the stream and returns `false` if cuDSS reports a failed
   factorization (`CUDSS_DATA_INFO != 0`).

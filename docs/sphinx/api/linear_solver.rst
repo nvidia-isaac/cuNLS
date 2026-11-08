@@ -242,17 +242,53 @@ non-finite pivot is a failure.
   Skips reading back the pivot-failure flag after each factorization (one
   stream synchronization).
 
+cuDSSLinearSolverMode
+---------------------
+
+Enum in `cunls/linear_solver/cudss_sparse_linear_solver.h`:
+
+- `SlowInitFastSolve` — ``Initialize`` performs symbolic analysis only;
+  ``Solve`` performs a full factorization followed by the solve phase.
+  Best when the matrix values change frequently relative to its structure.
+- `FastInitSlowSolve` — ``Initialize`` performs symbolic analysis **and**
+  an initial factorization; ``Solve`` performs refactorization followed by
+  the solve phase. Best when the sparsity pattern is stable and fast
+  initialization is more important than per-solve speed.
+
+cuDSSMatrixType
+---------------
+
+Enum in `cunls/linear_solver/cudss_sparse_linear_solver.h`:
+
+- `Symmetric` (default) — symmetric indefinite :math:`LDL^T` factorization
+  with pivoting (see ``pivoting``). Robust to the singular or indefinite
+  normal equations of an undamped Gauss-Newton step (e.g. an unfixed gauge).
+- `SPD` — Cholesky factorization, roughly 10-25% faster on pose graphs and
+  grids. Use it only when the system is SPD, e.g. with
+  Levenberg-Marquardt damping or a full-rank problem: a singular system gives
+  a wrong step (with safety checks on, the solve fails instead).
+
 cuDSSLinearSolverOptions
 ------------------------
 
 Struct fields:
 
-- `pivoting` - [in] ``true`` (default): diagonal pivoting. ``false``: no
-  pivoting, about 20-40% faster factorization, but a near-singular or badly
-  scaled system can return a wrong solution without any error.
+- `mode` - [in] Trade-off between setup and repeated solve speed (see
+  ``cuDSSLinearSolverMode``).
 - `nthreads` - [in] Host thread count for cuDSS host-side stages.
 - `threading_lib_path` - [in] Optional threading runtime path for multi-threaded
   host processing. Empty string disables multi-threading.
+- `pivoting` - [in] For ``cuDSSMatrixType::Symmetric``: ``true`` (default)
+  pivots (diagonal pivoting for ``SlowInitFastSolve``); ``false`` disables
+  pivoting, slightly faster, but a near-singular or badly scaled system can
+  return a wrong solution without any error.
+- `matrix_type` - [in] ``cuDSSMatrixType::Symmetric`` (default) or
+  ``cuDSSMatrixType::SPD``.
+
+cuNLS always disables cuDSS matching (cuDSS 1.0 enables matching with scaling
+for symmetric matrices by default, which only costs time on normal equations)
+and enables hybrid host/device execution (except for ``FastInitSlowSolve``,
+whose reordering does not support it).
 
 cuDSSLinearSolver
 -----------------
@@ -261,13 +297,15 @@ Concrete implementation in `cudss_sparse_linear_solver.h`.
 
 .. cpp:function:: cuDSSLinearSolver(cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions())
 
-  :param ``options``: [in] cuDSS pivoting/threading configuration.
+  :param ``options``: [in] cuDSS mode/threading/pivoting/matrix-type configuration.
   :returns: Constructor has no return value.
 
 .. cpp:function:: bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
-  Runs the cuDSS symbolic analysis phase; every
-  :cpp:func:`cuDSSLinearSolver::Solve` then factorizes anew.
+  For ``SlowInitFastSolve``: runs the cuDSS symbolic analysis phase only.
+  For ``FastInitSlowSolve``: runs symbolic analysis followed by an initial
+  factorization so that subsequent :cpp:func:`cuDSSLinearSolver::Solve` calls
+  can use cheaper refactorization.
 
   Both ``rhs`` and ``result`` must be pre-allocated to the number of rows in
   ``spd_matrix``; the solver does **not** resize them. The internal cuDSS
@@ -380,8 +418,9 @@ Works for any non-singular square matrix (not limited to SPD).
 
 .. cpp:function:: bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
-  Performs a full factorization (reusing the symbolic analysis from
-  ``Initialize``) then solve. Unless ``DisableSafetyChecks()`` was called
+  For ``SlowInitFastSolve``: performs full factorization then solve. For
+  ``FastInitSlowSolve``: performs refactorization (reusing the symbolic
+  analysis from ``Initialize``) then solve. Unless ``DisableSafetyChecks()`` was called
   (the minimizer does so by default, see ``disable_safety_checks``), it then
   synchronizes the stream and returns ``false`` if cuDSS reports a failed
   factorization (``CUDSS_DATA_INFO != 0``).

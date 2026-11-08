@@ -31,9 +31,29 @@
 
 namespace cunls {
 
+/**
+ * @brief Maps cuDSSLinearSolverMode to the cuDSS reordering algorithm.
+ *
+ * @param mode Solver mode.
+ * @return cudssReorderingAlg_t value: CUDSS_REORDERING_ALG_DEFAULT for
+ *         SlowInitFastSolve, CUDSS_REORDERING_ALG_BTF_COLAMD (which supports
+ *         refactorization) for FastInitSlowSolve.
+ */
+int GetOrderingType(cuDSSLinearSolverMode mode) {
+  switch (mode) {
+    case cuDSSLinearSolverMode::FastInitSlowSolve:
+      return static_cast<int>(CUDSS_REORDERING_ALG_BTF_COLAMD);
+    case cuDSSLinearSolverMode::SlowInitFastSolve:
+    default:
+      return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
+  }
+}
+
 /** @copydoc cuDSSLinearSolver::cuDSSLinearSolver */
 cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
-    : options_(options), cudss_config_(options.nthreads, options.pivoting) {}
+    : options_(options),
+      cudss_config_(GetOrderingType(options.mode), options.nthreads, options.pivoting,
+                    options.matrix_type == cuDSSMatrixType::SPD) {}
 
 /** @copydoc cuDSSLinearSolver::Initialize */
 bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*problem*/,
@@ -65,7 +85,7 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
   }
 
   // Create cuDSS descriptors for the matrix and vectors
-  cuDSSDescription m_desc(spd_matrix);
+  cuDSSDescription m_desc(spd_matrix, options_.matrix_type == cuDSSMatrixType::SPD);
   cuDSSDescription rhs_desc(rhs);
   cuDSSDescription result_desc(result);
 
@@ -80,6 +100,14 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
     profiler::ScopedRange range("cuDSS::analysis");
     THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_ANALYSIS, cfg, cudss_data,
                                                desc_m, desc_result, desc_rhs));
+  }
+
+  // For FastInitSlowSolve, also perform the initial factorization so that Solve
+  // can refactorize.
+  if (options_.mode == cuDSSLinearSolverMode::FastInitSlowSolve) {
+    profiler::ScopedRange range("cuDSS::factorization");
+    THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg,
+                                               cudss_data, desc_m, desc_result, desc_rhs));
   }
 
   return true;
@@ -113,7 +141,7 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
   auto cudss_data = reinterpret_cast<cudssData_t>(cudss_data_.GetData(dss_handle));
 
   // Create cuDSS descriptors for the matrix and vectors
-  cuDSSDescription m_desc(spd_matrix);
+  cuDSSDescription m_desc(spd_matrix, options_.matrix_type == cuDSSMatrixType::SPD);
   cuDSSDescription rhs_desc(rhs);
   cuDSSDescription result_desc(result);
 
@@ -123,11 +151,15 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
 
   cudssConfig_t cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
 
-  // Perform factorization
+  // Factorization, or refactorization (reusing the factorization of Initialize)
+  // for FastInitSlowSolve
+  const cudssPhase_t phase = options_.mode == cuDSSLinearSolverMode::FastInitSlowSolve
+                                 ? CUDSS_PHASE_REFACTORIZATION
+                                 : CUDSS_PHASE_FACTORIZATION;
   {
     profiler::ScopedRange range("cuDSS::factorization");
-    THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg,
-                                               cudss_data, desc_m, desc_result, desc_rhs));
+    THROW_ON_CUDSS_ERROR(
+        GetCudssApi().Execute(dss_handle, phase, cfg, cudss_data, desc_m, desc_result, desc_rhs));
   }
   // Solve the linear system
   {

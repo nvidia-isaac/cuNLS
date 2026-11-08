@@ -27,18 +27,47 @@
 namespace cunls {
 
 /**
+ * @brief Configuration modes for cuDSS linear solver.
+ *
+ * Controls the trade-off between initialization time and solve time.
+ */
+enum class cuDSSLinearSolverMode {
+  SlowInitFastSolve,  ///< Slower initialization, faster subsequent solves.
+  FastInitSlowSolve,  ///< Faster initialization, slower subsequent solves (uses
+                      ///< refactorization).
+};
+
+/**
+ * @brief How cuDSS treats the matrix of the linear system.
+ */
+enum class cuDSSMatrixType {
+  Symmetric,  ///< Symmetric indefinite (LDL^T with pivoting, see
+              ///< cuDSSLinearSolverOptions::pivoting): robust to the singular or
+              ///< indefinite normal equations of an undamped (Gauss-Newton) step.
+  SPD,        ///< Symmetric positive definite (Cholesky): roughly 10-25% faster, but
+              ///< only for systems that are SPD, e.g. Levenberg-Marquardt-damped or
+              ///< full-rank ones; a singular system gives a wrong step (with
+              ///< safety checks on, the solve fails instead).
+};
+
+/**
  * @brief Configuration options for the cuDSS-based sparse linear solver.
  *
- * Controls pivoting, threading, and library path used during factorization and
- * solve phases.
+ * Controls the solver mode, threading, library path, pivoting and matrix type
+ * used during factorization and solve phases.
  */
 struct cuDSSLinearSolverOptions {
-  bool pivoting = true;  ///< Diagonal pivoting (robust default). False disables pivoting: about
-                         ///< 20-40% faster factorization, but a near-singular or badly scaled
-                         ///< system can return a wrong solution without any error.
-  int nthreads = 1;      ///< Number of threads for host-side operations.
+  cuDSSLinearSolverMode mode =
+      cuDSSLinearSolverMode::SlowInitFastSolve;  ///< Solver mode controlling
+                                                 ///< the init/solve trade-off.
+  int nthreads = 1;                              ///< Number of threads for host-side operations.
   std::string threading_lib_path =
-      "";  ///< Path to the threading library (empty disables multi-threading).
+      "";                ///< Path to the threading library (empty disables multi-threading).
+  bool pivoting = true;  ///< Pivoting for cuDSSMatrixType::Symmetric (robust default). False
+                         ///< disables it: slightly faster, but a near-singular or badly scaled
+                         ///< system can return a wrong solution without any error.
+  cuDSSMatrixType matrix_type = cuDSSMatrixType::Symmetric;  ///< Matrix type; see
+                                                             ///< cuDSSMatrixType.
 };
 
 /**
@@ -62,14 +91,18 @@ class cuDSSLinearSolver : public SparseLinearSolver {
    *
    * Initializes the solver with the specified cuDSS configuration.
    *
-   * @param options Solver configuration controlling pivoting and threading.
+   * @param options Solver configuration controlling the init/solve trade-off,
+   *                threading, pivoting and the matrix type.
    */
   cuDSSLinearSolver(cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions());
 
   /**
    * @brief Performs setup for the sparse linear system.
    *
-   * Runs the cuDSS symbolic analysis phase; every Solve then factorizes anew.
+   * Always runs the cuDSS symbolic analysis phase. For SlowInitFastSolve mode,
+   * that is all; for FastInitSlowSolve mode, also performs an initial
+   * factorization so that subsequent Solve calls can use cheaper
+   * refactorization.
    *
    * Both @p rhs and @p result must be pre-allocated with the same number of
    * elements as the number of rows in @p spd_matrix; the solver does not
@@ -89,10 +122,11 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
    *
-   * Performs a full factorization (reusing the symbolic analysis from
-   * Initialize) followed by the solve phase. Unless DisableSafetyChecks() was
-   * called, it then synchronizes the stream and returns false if cuDSS reports
-   * a failed factorization (INFO != 0).
+   * For SlowInitFastSolve mode, performs a full factorization followed by the
+   * solve phase. For FastInitSlowSolve mode, performs refactorization (reusing
+   * the symbolic analysis from Initialize) followed by the solve phase. Unless
+   * DisableSafetyChecks() was called, it then synchronizes the stream and
+   * returns false if cuDSS reports a failed factorization (INFO != 0).
    *
    * @p rhs and @p result must already be allocated with the same number of
    * elements as the number of rows in @p spd_matrix. The solver does not

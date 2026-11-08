@@ -203,8 +203,8 @@ Header: `cunls/common/cudss_helper.h`
 
 - ``cuDSSDeviceMemPool`` — ``Alloc(ptr, size, stream)``: ``ptr`` [out], ``size`` [in], ``stream`` [in]; ``Dealloc(ptr, size, stream)``: ``ptr`` [in], ``size`` [in], ``stream`` [in].
 - ``cuDSSHandle`` — ``void* GetHandle(cudaStream_t stream)``; ``stream`` [in]; returns [out] opaque cuDSS handle.
-- ``cuDSSDescription`` — constructors from ``CSRSparseMatrix`` or ``dvector<float>``; ``void* GetDescription()`` returns [out] matrix/vector descriptor.
-- ``cuDSSConfig`` — ``cuDSSConfig(nthreads, pivoting)``: ``nthreads`` [in], ``pivoting`` [in]; ``void* GetData() const`` returns [out] config pointer.
+- ``cuDSSDescription`` — constructors from ``CSRSparseMatrix`` (optional ``spd`` [in] flag selecting the SPD matrix type) or ``dvector<float>``; ``void* GetDescription()`` returns [out] matrix/vector descriptor.
+- ``cuDSSConfig`` — ``cuDSSConfig(reordering_algorithm, nthreads, pivoting, spd)``: ``reordering_algorithm`` [in], ``nthreads`` [in], ``pivoting`` [in], ``spd`` [in]; disables matching and enables hybrid execution (except for the COLAMD reorderings); ``void* GetData() const`` returns [out] config pointer.
 - ``cuDSSData`` — ``void* GetData(void* handle)``: ``handle`` [in]; returns [out] opaque cuDSS data pointer.
 
 Profiling utilities

@@ -733,7 +733,7 @@ criterion is applied per subproblem.
   (``block_size`` / ``block_layout``, ``max_iterations``,
   ``relative_tolerance``, ``absolute_tolerance``, ``pivot_floor``,
   ``check_period``).  For ``cuDSS`` contains :code:`cudss_solver_options`
-  (``pivoting``, ``nthreads``, optional ``threading_lib_path`` for multi-threaded
+  (mode, ``nthreads``, ``pivoting``, ``matrix_type``, optional ``threading_lib_path`` for multi-threaded
   cuDSS).  Dense backends take no extra configuration.
 - **column_scaling** [in]: Diagonal scaling of the normal equations; see the
   column-scaling note above. Values: ``None``, ``HessianDiagonal``.

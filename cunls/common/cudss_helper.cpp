@@ -21,6 +21,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <stdexcept>
 
 #include "cunls/common/cudss_dynamic.h"
 #include "cunls/common/log.h"
@@ -224,11 +225,13 @@ void *cuDSSHandle::GetHandle(cudaStream_t stream) {
  * @brief Constructs a cuDSS matrix descriptor from a CSR sparse matrix.
  *
  * Creates a symmetric CSR matrix descriptor suitable for use with cuDSS
- * sparse solvers. The matrix is assumed to be symmetric positive definite.
+ * sparse solvers.
  *
  * @param symmetric_matrix The CSR sparse matrix to wrap. Must be symmetric.
+ * @param spd Declares the matrix SPD (CUDSS_MTYPE_SPD) instead of symmetric
+ *            indefinite (CUDSS_MTYPE_SYMMETRIC).
  */
-cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
+cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix, bool spd) {
   // Extract matrix dimensions from CSR format
   size_t matrix_size = symmetric_matrix.NumRows();
   size_t num_nonzeros = symmetric_matrix.NumNonZeros();
@@ -241,11 +244,11 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
 
   cudssMatrix_t mat = nullptr;
   // Create cuDSS CSR matrix descriptor
-  // Parameters: symmetric matrix, full view, zero-based indexing
-  THROW_ON_CUDSS_ERROR(
-      GetCudssApi().MatrixCreateCsr(&mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL,
-                                    cols_ptr, values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F,
-                                    CUDSS_MTYPE_SYMMETRIC, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
+  // Parameters: symmetric (or SPD) matrix, full view, zero-based indexing
+  const cudssMatrixType_t mtype = spd ? CUDSS_MTYPE_SPD : CUDSS_MTYPE_SYMMETRIC;
+  THROW_ON_CUDSS_ERROR(GetCudssApi().MatrixCreateCsr(
+      &mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL, cols_ptr, values_ptr,
+      CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F, mtype, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
 
   matrix_ = reinterpret_cast<void *>(mat);
 }
@@ -287,23 +290,56 @@ cuDSSDescription::~cuDSSDescription() {
 /**
  * @brief Constructor that creates a cuDSS configuration object.
  *
- * Creates a new cuDSS configuration with the library's default reordering and
- * sets the number of host threads and the pivoting strategy.
+ * Sets the reordering algorithm, the number of host threads and the pivoting
+ * strategy, disables matching and enables hybrid host/device execution where
+ * the reordering supports it.
  *
+ * @param reordering_algorithm The reordering algorithm (cudssReorderingAlg_t
+ *                             value). Defaults to CUDSS_REORDERING_ALG_DEFAULT.
  * @param nthreads The number of threads to use. Defaults to 1.
- * @param pivoting Diagonal pivoting when true (the cuDSS 0.8 default, which
- *                 cuDSS 1.0's automatic choice is slower than); no pivoting when
- *                 false.
+ * @param pivoting Pivoting when true, none when false (ignored when @p spd).
+ * @param spd The matrix is declared SPD; the pivoting setting is left to cuDSS.
  */
-cuDSSConfig::cuDSSConfig(int nthreads, bool pivoting) {
+cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads, bool pivoting, bool spd) {
+  if (reordering_algorithm < static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT) ||
+      reordering_algorithm > static_cast<int>(CUDSS_REORDERING_ALG_NONE)) {
+    throw std::invalid_argument("Invalid reordering algorithm value");
+  }
+  const auto alg = static_cast<cudssReorderingAlg_t>(reordering_algorithm);
+  const bool colamd = alg == CUDSS_REORDERING_ALG_BTF_COLAMD || alg == CUDSS_REORDERING_ALG_COLAMD;
+
   cudssConfig_t cfg = nullptr;
   THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigCreate(&cfg));
   THROW_ON_CUDSS_ERROR(
+      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_REORDERING_ALG, &alg, sizeof(alg)));
+  THROW_ON_CUDSS_ERROR(
       GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
-  cudssPivotType_t pivot_type = pivoting ? CUDSS_PIVOT_DIAGONAL : CUDSS_PIVOT_NONE;
+  // cuDSS 1.0 enables matching with scaling for symmetric matrices by default
+  // (CUDSS_MATCHING_ALG_AUTO); on normal equations it only costs time.
+  cudssMatchingAlg_t matching = CUDSS_MATCHING_ALG_NONE;
   THROW_ON_CUDSS_ERROR(
-      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_PIVOT_TYPE, &pivot_type, sizeof(pivot_type)));
+      GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_MATCHING_ALG, &matching, sizeof(matching)));
+
+  // SPD matrices take the library's choice (Cholesky). Otherwise diagonal
+  // pivoting: CUDSS_PIVOT_AUTO would pick Bunch-Kaufman, which is slower and
+  // known to return wrong results together with hybrid execution in cuDSS 1.0.
+  // Diagonal pivoting applies to the nested-dissection / AMD reorderings only;
+  // the COLAMD ones keep the library's choice.
+  if (!spd && (!pivoting || !colamd)) {
+    cudssPivotType_t pivot_type = pivoting ? CUDSS_PIVOT_DIAGONAL : CUDSS_PIVOT_NONE;
+    THROW_ON_CUDSS_ERROR(
+        GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_PIVOT_TYPE, &pivot_type, sizeof(pivot_type)));
+  }
+
+  // Hybrid execution runs the small parts of the factorization on the host: up
+  // to 3x faster on small and SBA-like systems. The COLAMD reorderings return
+  // CUDSS_STATUS_NOT_SUPPORTED with it.
+  if (!colamd) {
+    int hybrid_execute_mode = 1;
+    THROW_ON_CUDSS_ERROR(GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HYBRID_EXECUTE_MODE,
+                                                 &hybrid_execute_mode, sizeof(int)));
+  }
 
   config_ = reinterpret_cast<void *>(cfg);
 }

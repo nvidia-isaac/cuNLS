@@ -147,7 +147,11 @@ void MultiplySymmetricCSRMatrixByVector(const std::vector<int> &row_ptr,
  * and verifies that the solution is correct by computing A * x and comparing
  * it with b. The test uses a tolerance of 1e-1 to account for numerical errors.
  */
-TEST(SparseLinearSolverTest, Solve) {
+/**
+ * Solves a random diagonally dominant (hence SPD) sparse system with the given
+ * cuDSS options, twice on the same solver, and checks the residual.
+ */
+void SolveRandomSystem(const cuDSSLinearSolverOptions &cudss_solver_options) {
   profiler::ScopedRange range("SolveTest");
   // Use fixed seed for reproducibility
   unsigned int fixed_seed = 0;
@@ -177,23 +181,18 @@ TEST(SparseLinearSolverTest, Solve) {
 
   // Step 5: Solve the linear system Ax = b on GPU
   CudaStream stream;
-  cuDSSLinearSolverOptions cudss_solver_options = {
-      true,
-      1,
-      "",
-  };
   {
     cuDSSLinearSolver solver(cudss_solver_options);
     {
       profiler::ScopedRange range("Warm up");
-      solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs, result);
-      solver.Solve(stream.GetStream(), input_matrix, rhs, result);
+      ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), input_matrix, rhs, result));
+      ASSERT_TRUE(solver.Solve(stream.GetStream(), input_matrix, rhs, result));
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
 
     {
       profiler::ScopedRange range("Solve");
-      solver.Solve(stream.GetStream(), input_matrix, rhs, result);
+      ASSERT_TRUE(solver.Solve(stream.GetStream(), input_matrix, rhs, result));
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     }
   }
@@ -215,6 +214,22 @@ TEST(SparseLinearSolverTest, Solve) {
   }
 
   ASSERT_NEAR(squared_error / matrix_size, 0, 1e-1);
+}
+
+TEST(SparseLinearSolverTest, Solve) {
+  SolveRandomSystem({cuDSSLinearSolverMode::SlowInitFastSolve, 1, ""});
+}
+
+TEST(SparseLinearSolverTest, SolveSpd) {
+  cuDSSLinearSolverOptions options;
+  options.matrix_type = cuDSSMatrixType::SPD;
+  SolveRandomSystem(options);
+}
+
+TEST(SparseLinearSolverTest, SolveWithoutPivoting) {
+  cuDSSLinearSolverOptions options;
+  options.pivoting = false;
+  SolveRandomSystem(options);
 }
 #endif  // CUNLS_ENABLE_CUDSS
 
