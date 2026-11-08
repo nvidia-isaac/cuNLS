@@ -24,6 +24,7 @@
 // Problem.add_factor_batch() alongside a FactorBatch.
 
 #include "bindings.h"
+#include "cunls/common/cuda_stream.h"
 #include "cunls/robustifier/arctan_loss_function_batch.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
@@ -36,7 +37,23 @@
 
 void bind_loss(nb::module_ &m) {
   nb::class_<cunls::LossFunctionBatch>(m, "LossFunctionBatch",
-                                       "Abstract base class for batched robust loss functions.");
+                                       "Abstract base class for batched robust loss functions.")
+      .def(
+          "evaluate",
+          [](const cunls::LossFunctionBatch &self, nb::handle s, nb::handle out, size_t count,
+             cunls::CudaStream &stream) {
+            auto s_ptr = reinterpret_cast<float *>(
+                extract_device_ptr(s, "float32", "s", count, "count squared norms"));
+            auto out_ptr = reinterpret_cast<float3 *>(extract_device_ptr(
+                out, "float32", "out", checked_size(count, 3, "out"), "count x 3 values"));
+            if (!self.Evaluate(s_ptr, out_ptr, static_cast<int>(count), stream.GetStream())) {
+              throw std::runtime_error("LossFunctionBatch.evaluate: the loss kernel failed");
+            }
+          },
+          nb::arg("s"), nb::arg("out"), nb::arg("count"), nb::arg("stream"),
+          "Evaluates the loss on `count` squared residual norms s (float32 GPU array; may be "
+          "overwritten) into out (float32 GPU array of count x 3: rho, rho', rho'' per entry), "
+          "asynchronously on `stream`. The cost of a factor is 0.5 * rho(|r|^2).");
 
   nb::class_<cunls::TrivialLossFunctionBatch, cunls::LossFunctionBatch>(
       m, "TrivialLossFunctionBatch",

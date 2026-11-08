@@ -30,6 +30,7 @@
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
+#include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -176,6 +177,42 @@ TEST(TerminationTest, RealTimeSolvesDoNotDetermineTheReason) {
   EXPECT_EQ(summary.termination_reason, TerminationReason::NotDetermined);
   EXPECT_TRUE(summary.num_problems_by_reason.empty());
   EXPECT_FALSE(summary.Converged());
+}
+
+TEST(TerminationTest, RealTimeAugmentedLagrangianWithoutConstraintsIsNotDetermined) {
+  CudaStream stream;
+  PriorProblem p({50.f, -30.f}, false);
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = Options();
+  lm.initial_lambda = 1e4f;  // one heavily damped step: far from the minimum
+  LevenbergMarquardtMinimizer inner(lm);
+  AugmentedLagrangianMinimizerOptions options;
+  options.real_time = true;
+  options.inner_iterations = 1;
+  AugmentedLagrangianMinimizer al(inner, options);
+  const AugmentedLagrangianMinimizerSummary summary = al.Minimize(stream.GetStream(), p.problem);
+  EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kNotDetermined) << summary.message;
+  EXPECT_FALSE(summary.Converged());
+  EXPECT_EQ(summary.num_converged, 0u);
+
+  // The same call without real_time establishes the outcome.
+  options.real_time = false;
+  al.SetOptions(options);
+  const AugmentedLagrangianMinimizerSummary full = al.Minimize(stream.GetStream(), p.problem);
+  EXPECT_TRUE(full.Converged()) << full.message;
+  EXPECT_EQ(full.num_converged, 1u);
+}
+
+TEST(TerminationTest, AllConstantStatesCountEverySubproblem) {
+  CudaStream stream;
+  PriorProblem p({5.f, -3.f, 1.f, 1.f, 0.f, 0.f}, true, /*all_constant=*/true);
+  GaussNewtonMinimizer minimizer(Options());
+  const MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), p.problem);
+  EXPECT_EQ(Count(summary, TerminationReason::NoFreeStates), 3u);
+  AugmentedLagrangianMinimizer al(minimizer);
+  const AugmentedLagrangianMinimizerSummary wrapped = al.Minimize(stream.GetStream(), p.problem);
+  EXPECT_TRUE(wrapped.Converged()) << wrapped.message;
+  EXPECT_EQ(wrapped.num_converged, 3u);
 }
 
 TEST(TerminationTest, EveryReasonHasAName) {

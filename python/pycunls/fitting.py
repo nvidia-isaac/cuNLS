@@ -49,6 +49,7 @@ See ``python/examples/model_fitting.py`` for a tour.
 """
 
 
+import collections
 import dataclasses
 import math
 import warnings
@@ -58,6 +59,7 @@ import cupy as cp
 import numpy as np
 
 from pycunls import _pycunls_core as _core
+from pycunls._summary import _plain
 
 _VECTOR_SIZES = (1, 2, 3, 4, 6, 12)
 _MAX_PARAMETERS = 12
@@ -323,8 +325,10 @@ class FitResult:
             given (as ``scipy.optimize.curve_fit``). NaN when the parameters are not determined.
         covariance: Parameter covariance, ``(P, P)`` or ``(B, P, P)``, same scaling.
         converged: Whether each fit stopped at a convergence criterion (bool or ``(B,)``).
-        reasons: :class:`pycunls.TerminationReason` name of each fit (str or ``(B,)``).
-        cost: ``0.5 * sum(r^2)`` of the weighted residuals (before a robust loss), per fit.
+        reasons: :class:`pycunls.TerminationReason` name of each fit (str or ``(B,)``), or
+            ``"NoObservations"`` for a fit whose samples are all NaN.
+        cost: ``0.5 * sum(r^2)`` of the weighted residuals (before a robust loss), per fit;
+            NaN when the model is not finite at the parameters.
         reduced_chi2: ``2 * cost / (num_samples * m - P)`` per fit. With the true ``sigma`` it is
             about 1 when the model explains the data; much larger means the model does not fit
             (or ``sigma`` is too small).
@@ -357,19 +361,9 @@ class FitResult:
         return bool(np.all(self.converged))
 
     def to_dict(self) -> Dict:
-        """JSON-ready dict (lists instead of arrays; residuals and covariance left out)."""
-        def plain(v):
-            if isinstance(v, np.ndarray):
-                if v.dtype.kind != "f":
-                    return v.tolist()
-                # Strict JSON: NaN / inf become None.
-                return np.where(np.isfinite(v), v, None).tolist()
-            if isinstance(v, (np.floating, float)):
-                return float(v) if math.isfinite(float(v)) else None
-            if isinstance(v, np.generic):
-                return v.item()
-            return v
-        return {k: plain(getattr(self, k)) for k in
+        """JSON-ready dict (lists instead of arrays, NaN as None; residuals and covariance left
+        out)."""
+        return {k: _plain(getattr(self, k)) for k in
                 ("params", "param_errors", "converged", "reasons", "cost", "reduced_chi2",
                  "num_samples", "message", "jacobian_mode", "start_index")}
 
@@ -439,14 +433,15 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
     * ``B`` fits: ``y`` is ``(B, n)`` (or ``(B, n, m)``); ``x`` is shared, ``(n, ...)``, or per
       fit, ``(B, n, ...)``; ``p0`` is ``(P,)`` (same start for all) or ``(B, P)``. All fits are
       one solve on the GPU, and each converges on its own. Fits with fewer samples: pad ``y``
-      with NaN (NaN samples are skipped).
+      with NaN (NaN samples are skipped; +-inf in ``y`` is an error).
 
     Args:
         model: ``model(x, p)`` (array function or Warp ``@wp.func``; see the module docs).
         x: Inputs (NumPy, CuPy or lists).
         y: Observations.
         p0: Initial parameters. A poor start can end in a local minimum: use ``starts``.
-        sigma: Measurement standard deviation: a scalar or an array broadcastable to ``y``.
+        sigma: Measurement standard deviation: a scalar or an array broadcastable to ``y``,
+            finite and positive for every observed sample.
             Residuals are ``(model - y) / sigma``; then ``reduced_chi2`` is about 1 for a model
             that explains the data, and ``param_errors`` are absolute.
         loss: Robust loss for outliers: ``"huber"``, ``"cauchy"``, ``"soft_l1"``, ``"tukey"`` or a
@@ -457,7 +452,8 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
             unbounded. Solved by the augmented Lagrangian (projected) minimizer.
         starts: Multiple starts against local minima: an int ``K`` draws ``K`` starts uniformly
             within finite ``bounds`` (the first is ``p0``), or an array ``(K, P)`` of starts. Every
-            start is solved (all in one solve) and the lowest cost wins per fit.
+            start is solved (all in one solve); per fit, the start with the lowest objective (the
+            robust one with ``loss``) wins; starts where the model is not finite never win.
         method: ``"lm"`` (Levenberg-Marquardt, default, robust) or ``"gn"`` (Gauss-Newton).
         max_iterations: Iteration cap of the solve.
         jacobian: Warp models: ``"auto"`` (autodiff, checked against finite differences at
@@ -494,13 +490,17 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
         p0_d = cp.broadcast_to(p0_d, (num_fits, num_params))
     elif p0_d.shape[0] != num_fits:
         raise ValueError(f"p0 has {p0_d.shape[0]} rows but there are {num_fits} fits")
+    if bool(cp.any(cp.isinf(y_d))):
+        raise ValueError("y contains +-inf; mark missing samples with NaN (they are skipped)")
     if sigma is None:
         sig_d = cp.ones_like(y_d)
     else:
         sig_d = cp.broadcast_to(_as_device(sigma, "sigma"), y_in.shape)
         sig_d = (sig_d if batched else sig_d[None]).reshape(y_d.shape)
-        if bool(cp.any(sig_d <= 0)):
-            raise ValueError("sigma must be positive")
+        observed = ~cp.isnan(y_d)
+        if bool(cp.any(observed & ~(cp.isfinite(sig_d) & (sig_d > 0)))):
+            raise ValueError("sigma must be finite and positive for every observed sample "
+                             "(NaN samples of y are skipped)")
 
     # ---- starts ------------------------------------------------------------------------------
     lower = upper = None
@@ -612,33 +612,51 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
     codes = np.asarray(minimizer.subproblem_termination_reasons())
     p_final = params[:, :num_params].astype(cp.float64)
     pred, jac = fitted.evaluate(x_s, cp.repeat(p_final, n, axis=0), True)
-    r = cp.where(valid, (pred - y_clean) * w, cp.nan).reshape(total, n, m)
-    jw = (jac * w[:, :, None]).reshape(total, n * m, num_params).astype(cp.float64)
-    rr = cp.nan_to_num(r).reshape(total, n * m).astype(cp.float64)
+    # Skipped (NaN) samples contribute nothing; a non-finite prediction for an observed sample
+    # stays non-finite, so a failed start can never look like a perfect fit.
+    r_obs = cp.where(valid, (pred - y_clean) * w, 0.0)
+    r = cp.where(valid, r_obs, cp.nan).reshape(total, n, m)
+    rr = r_obs.reshape(total, n * m).astype(cp.float64)
     cost = 0.5 * cp.sum(rr * rr, axis=1)
     counts = cp.sum(valid.reshape(total, n * m), axis=1)
     dof = counts - num_params
     chi2 = cp.where(dof > 0, 2.0 * cost / cp.maximum(dof, 1), cp.nan)
+    usable = cp.all(cp.isfinite(p_final), axis=1) & cp.isfinite(cost)
 
-    # Best start per fit.
+    # Best start per fit, by the objective that was minimized (the robust one with a loss);
+    # starts with non-finite parameters or cost cannot win.
     start_index = None
     if num_starts > 1:
-        c = cost.reshape(num_starts, num_fits)
-        c = cp.where(cp.isfinite(c), c, cp.inf)
+        score = _objective(loss_batch, rr.reshape(total, n, m), cost, stream)
+        c = cp.where(usable & cp.isfinite(score), score, cp.inf).reshape(num_starts, num_fits)
         best = cp.argmin(c, axis=0)
         pick = best * num_fits + cp.arange(num_fits)
         start_index = cp.asnumpy(best)
     else:
         pick = cp.arange(num_fits)
-    jtj = cp.einsum("bki,bkj->bij", jw[pick], jw[pick])
-    cov = _batched_pinv(jtj)
+    jw = (jac * w[:, :, None]).reshape(total, n * m, num_params)[pick].astype(cp.float64)
+    # Only finite Jacobians are inverted; the others get undefined (NaN) errors.
+    ok = usable[pick] & cp.all(cp.isfinite(jw.reshape(jw.shape[0], -1)), axis=1)
+    jw = cp.where(ok[:, None, None], jw, 0.0)
+    jtj = cp.einsum("bki,bkj->bij", jw, jw)
+    jtj = cp.where(ok[:, None, None], jtj, cp.eye(num_params)[None])
+    cov = cp.where(ok[:, None, None], _batched_pinv(jtj), cp.nan)
     if sigma is None:
         cov = cov * chi2[pick][:, None, None]
     errors = cp.sqrt(cp.clip(cp.diagonal(cov, axis1=1, axis2=2), 0, None))
 
     codes = codes[cp.asnumpy(pick)]
-    reason_names = np.array([_reason_name(c) for c in codes])
+    names = [_reason_name(c) for c in codes]
     converged = np.array([_converged(c) for c in codes])
+    # A fit without one observed sample determines nothing.
+    empty = cp.asnumpy(counts[pick] == 0)
+    for k in np.flatnonzero(empty):
+        names[k] = "NoObservations"
+    converged[empty | ~cp.asnumpy(usable[pick])] = False
+    reason_names = np.array(names)
+    message = summary.message
+    if num_starts > 1 or empty.any():
+        message = _fit_message(names, converged, num_starts)
     out = dict(
         params=cp.asnumpy(p_final[pick]), param_errors=cp.asnumpy(errors),
         covariance=cp.asnumpy(cov), converged=converged, reasons=reason_names,
@@ -658,10 +676,43 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
             start_index = int(start_index[0])
     elif m == 1:
         out["residuals"] = out["residuals"][..., 0]
-    return FitResult(message=summary.message, summary=summary,
+    return FitResult(message=message, summary=summary,
                      jacobian_mode=getattr(fitted, "mode", "numeric")
                      if not isinstance(fitted, _ArrayModel) else "numeric",
                      start_index=start_index, **out)
+
+
+def _fit_message(names, converged, num_starts: int) -> str:
+    """Outcome of the chosen start of each fit (the solver's message covers every start)."""
+    total = len(names)
+    starts = f" (best of {num_starts} starts each)" if num_starts > 1 else ""
+    if converged.all():
+        return f"All {total} fits converged{starts}."
+    bad = collections.Counter(n for n, c in zip(names, converged) if not c)
+    detail = ", ".join(f"{k}: {v}" for k, v in bad.most_common())
+    fixes = []
+    if "NoObservations" in bad:
+        fixes.append("NoObservations: every sample of the fit is NaN")
+    if "NonFiniteCost" in bad or "NonFiniteStep" in bad:
+        fixes.append("non-finite: the model returns NaN/inf at those parameters (check its "
+                     "domain, add bounds)")
+    if "MaxIterations" in bad:
+        fixes.append("MaxIterations: raise max_iterations or improve p0")
+    return (f"{int((~converged).sum())} of {total} fits did not converge{starts} ({detail})." +
+            (" " + "; ".join(fixes) + "." if fixes else ""))
+
+
+def _objective(loss_batch, rr: cp.ndarray, cost: cp.ndarray, stream) -> cp.ndarray:
+    """Per-fit objective that the solve minimized: ``cost`` without a loss, else the sum of
+    ``0.5 rho(|r_t|^2)`` over the samples (``rr`` is ``(fits, n, m)`` weighted residuals)."""
+    if loss_batch is None:
+        return cost
+    sq = cp.ascontiguousarray(cp.sum(rr * rr, axis=2).reshape(-1), dtype=cp.float32)
+    rho = cp.empty((sq.size, 3), cp.float32)
+    cp.cuda.get_current_stream().synchronize()
+    loss_batch.evaluate(sq, rho, sq.size, stream)
+    cp.cuda.runtime.streamSynchronize(stream.get_stream())
+    return 0.5 * cp.sum(rho[:, 0].reshape(rr.shape[:2]).astype(cp.float64), axis=1)
 
 
 def _layout(x: cp.ndarray, y: cp.ndarray, p0: cp.ndarray) -> Tuple[bool, int, int]:

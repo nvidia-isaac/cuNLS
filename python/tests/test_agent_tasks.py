@@ -73,3 +73,38 @@ def test_command_line_round_trip(tmp_path):
     out = subprocess.run(run + ["check", "decay_curve", str(tmp_path / "answer.json"), "--seed",
                                 "3"], env=env, capture_output=True, text=True, cwd=tmp_path)
     assert out.returncode == 0 and json.loads(out.stdout)["passed"]
+
+
+def _run_eval(tmp_path, agent_cmd, out_dir):
+    root = pathlib.Path(__file__).resolve().parents[2]
+    import pycunls
+    package_parent = os.path.dirname(os.path.dirname(os.path.abspath(pycunls.__file__)))
+    env = dict(os.environ, AGENT_CMD=agent_cmd, TASKS="decay_curve", SEEDS="0", TIMEOUT="300",
+               PYTHON=sys.executable, PYTHONPATH=package_parent)
+    proc = subprocess.run(["bash", str(root / "scripts" / "run_agent_eval.sh"), str(out_dir)],
+                          env=env, capture_output=True, text=True, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    rows = [json.loads(line, parse_constant=lambda c: pytest.fail(f"non-strict JSON {c}"))
+            for line in (out_dir / "results.jsonl").read_text().splitlines()]
+    return rows
+
+
+@pytest.mark.skipif(not (pathlib.Path(__file__).resolve().parents[2] / "scripts" /
+                         "run_agent_eval.sh").exists(), reason="source tree not available")
+def test_eval_runner_with_the_installed_package(tmp_path):
+    # Plumbing: the reference answers pass with the installed pycunls.
+    rows = _run_eval(tmp_path, "reference", tmp_path / "ref")
+    assert [r["passed"] for r in rows] == [True]
+
+    # An agent that answers nothing fails, even with a stale passing answer from an earlier run;
+    # it imports the installed pycunls but not the hidden task package.
+    stale = tmp_path / "ref" / "decay_curve-0" / "answer.json"
+    assert stale.exists()
+    stub = tmp_path / "stub_agent.py"
+    stub.write_text("import importlib.util, pathlib, pycunls\n"
+                    "pathlib.Path('seen.txt').write_text(str(pycunls._pycunls_core.__name__) + ' '"
+                    " + str(importlib.util.find_spec('agent_tasks') is None))\n")
+    rows = _run_eval(tmp_path, f"{sys.executable} {stub}", tmp_path / "ref")
+    assert [r["passed"] for r in rows] == [False]
+    assert (tmp_path / "ref" / "decay_curve-0" / "seen.txt").read_text() == \
+        "pycunls._pycunls_core True"

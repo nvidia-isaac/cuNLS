@@ -179,6 +179,11 @@ class AugmentedLagrangianMinimizerStatus(enum.Enum):
     Some subproblem cannot reduce its violation at max_penalty (likely infeasible).
     """
 
+    NotDetermined = 3
+    """
+    Convergence was not checked: a real-time call without constraint batches reads nothing back. converged() is False.
+    """
+
 class AugmentedLagrangianMinimizerSummary:
     """Summary of a constrained minimization run."""
 
@@ -191,7 +196,7 @@ class AugmentedLagrangianMinimizerSummary:
     @property
     def status(self) -> AugmentedLagrangianMinimizerStatus:
         """
-        AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations or MaxPenalty.
+        AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty or NotDetermined.
         """
 
     @property
@@ -1221,6 +1226,11 @@ class LinearSystemType(enum.Enum):
 
 class LossFunctionBatch:
     """Abstract base class for batched robust loss functions."""
+
+    def evaluate(self, s: object, out: object, count: int, stream: CudaStream) -> None:
+        r"""
+        Evaluates the loss on `count` squared residual norms s (float32 GPU array; may be overwritten) into out (float32 GPU array of count x 3: rho, rho', rho\'\' per entry), asynchronously on `stream`. The cost of a factor is 0.5 * rho(|r|^2).
+        """
 
 class Minimizer:
     """

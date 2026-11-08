@@ -36,7 +36,8 @@ from typing import Dict, List, Optional
 import cupy as cp
 import numpy as np
 
-from pycunls.catalog import factor_info as _factor_info
+from pycunls._summary import _plain
+from pycunls.catalog import effective_factor
 from pycunls._pycunls_core import CudaStream, Problem
 
 
@@ -138,9 +139,9 @@ class Evaluation:
         for b in self.batches:
             row = dataclasses.asdict(dataclasses.replace(b, residuals=None))
             row.pop("residuals")
-            rows.append({k: (None if isinstance(v, float) and not math.isfinite(v) else v)
-                         for k, v in row.items()})
-        return {"total_cost": self.total_cost, "all_finite": self.all_finite, "batches": rows}
+            rows.append(row)
+        return _plain({"total_cost": self.total_cost, "all_finite": self.all_finite,
+                       "batches": rows})
 
     def __str__(self) -> str:
         head = (f"{'batch':<40} {'factors':>8} {'cost':>11} {'rms':>10} {'max|r|':>10} "
@@ -368,18 +369,16 @@ def _gauge_issues(problem: Problem, state_batches) -> List[Issue]:
         fb = problem.factor_batch(i)
         if fb.num_active_factors == 0:
             continue
-        inner = fb
-        while getattr(inner, "inner_factor", None) is not None:  # Weighted/Information/Constraint
-            inner = inner.inner_factor
-        info = _factor_info(type(inner).__name__)
-        relative = info is not None and info.relative
+        _, _, role = effective_factor(fb)
+        if role == "inactive":
+            continue
         slots = len(fb.state_sizes())
         where = _locate(_pointer_table(problem, i), state_batches).reshape(-1, slots, 2)
         keys = [[(int(a), int(b)) for a, b in row] for row in where]
         for row in keys:
             for key in row[1:]:
                 parent[find(key)] = find(row[0])
-            if not relative:  # priors, measurements, custom factors: assume they anchor
+            if role != "relative":  # priors, measurements; custom factors are assumed to anchor
                 anchored.update(row)
     for j, sb in enumerate(state_batches):
         if sb.num_const_states:
@@ -412,7 +411,10 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     Checks, in order: the structure (``Problem.find_structure_error``: active counts,
     connectivity, unconstrained states), non-finite state values, non-finite residuals at the
     current states (per factor batch, with the first bad factor), and gauge freedoms (groups of
-    free states that only between-type factors connect, with no constant state or prior).
+    free states that only between-type factors connect, with no constant state or prior). The
+    gauge check is a heuristic, not a rank test: wrapped factors are judged by the factor they
+    wrap (``effective_factor`` in ``pycunls/catalog.py``), inequality constraints are ignored
+    (they may be inactive), and custom factors are assumed to fix their states.
 
     Args:
         problem: The problem, set up as for a solve.

@@ -23,6 +23,8 @@ multi-line text with the outcome first.
 import enum
 import math
 
+import numpy as np
+
 from pycunls._pycunls_core import (
     AugmentedLagrangianMinimizerSummary,
     MinimizerSummary,
@@ -43,14 +45,24 @@ _AL_FIELDS = ("status", "message", "outer_iterations", "inner_iterations", "max_
 
 
 def _plain(value):
-    """A JSON-ready value: enum -> name, NaN/Inf -> None, sequences -> lists."""
+    """A value that ``json.dumps(..., allow_nan=False)`` accepts, for every ``to_dict()``.
+
+    Enums become their names, non-finite numbers None, NumPy scalars Python numbers, arrays,
+    lists and tuples lists, dicts dicts (all nested).
+    """
     if isinstance(value, enum.Enum) or type(value).__name__ in ("TerminationReason",
                                                                  "AugmentedLagrangianMinimizerStatus"):
         return value.name
+    if isinstance(value, np.ndarray):
+        return _plain(value.tolist())
+    if isinstance(value, np.generic):
+        value = value.item()
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, (list, tuple)):
         return [_plain(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
     return value
 
 

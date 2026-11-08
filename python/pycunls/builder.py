@@ -186,7 +186,13 @@ class ProblemBuilder:
         self.state_handles: List[StateHandle] = []
         self.factor_handles: List[FactorHandle] = []
         self._solved_once = False
-        self._minimizer = None
+        # (options key, minimizer, augmented Lagrangian wrapper or None) of the last solve; kept
+        # while the structure is unchanged so that repeated solves reuse its setup.
+        self._solver = None
+
+    def _structure_changed(self) -> None:
+        self._solver = None
+        self._solved_once = False
 
     # -- states -----------------------------------------------------------------------------------
 
@@ -234,6 +240,7 @@ class ProblemBuilder:
             handle.bounds = (lo, hi)
         self.problem.add_state_batch(batch)
         self.state_handles.append(handle)
+        self._structure_changed()
         return handle
 
     # -- factors ----------------------------------------------------------------------------------
@@ -275,13 +282,10 @@ class ProblemBuilder:
         if len(sizes) != len(handles):
             raise ValueError(f"{cls.__name__} connects {len(sizes)} states per factor but connect "
                              f"gives {len(handles)} slots")
+        info = factor_info(cls.__name__)
         for slot, (size, handle) in enumerate(zip(sizes, handles)):
-            if handle.batch.tangent_size != size:
-                expected = factor_info(cls.__name__)
-                hint = f" (expects {expected.states[slot]})" if expected and expected.states else ""
-                raise ValueError(f"slot {slot} of {cls.__name__} needs a state with tangent size "
-                                 f"{size}{hint}; {type(handle.batch).__name__} has "
-                                 f"{handle.batch.tangent_size}")
+            _check_slot(cls.__name__, slot, size, handle,
+                        info.states[slot] if info is not None and info.states else None)
             col = columns[:, slot]
             if col.size and (int(col.min()) < 0 or int(col.max()) >= handle.count):
                 raise ValueError(f"connect: slot {slot} indices must be in [0, {handle.count}) "
@@ -291,6 +295,14 @@ class ProblemBuilder:
         self.problem.add_factor_batch(batch, [h.batch for h in handles], table, loss)
         handle = FactorHandle(batch, arrays, columns, len(self.factor_handles), loss)
         self.factor_handles.append(handle)
+        self._structure_changed()
+        return handle
+
+    def _own(self, handle: StateHandle) -> StateHandle:
+        if not (0 <= handle.index < len(self.state_handles)
+                and self.state_handles[handle.index] is handle):
+            raise ValueError("connect: a state handle from another ProblemBuilder; use the handle "
+                             "that this builder's add_states returned")
         return handle
 
     def _connectivity(self, connect) -> Tuple[List[StateHandle], cp.ndarray]:
@@ -300,11 +312,11 @@ class ProblemBuilder:
             idx = cp.asarray(idx, dtype=cp.int32)
             if idx.ndim == 1:
                 idx = idx[:, None]
-            return [handle] * idx.shape[1], cp.ascontiguousarray(idx)
+            return [self._own(handle)] * idx.shape[1], cp.ascontiguousarray(idx)
         if isinstance(connect, (list, tuple)) and all(
                 isinstance(c, tuple) and len(c) == 2 and isinstance(c[0], StateHandle)
                 for c in connect):
-            handles = [c[0] for c in connect]
+            handles = [self._own(c[0]) for c in connect]
             cols = [cp.asarray(c[1], dtype=cp.int32).reshape(-1) for c in connect]
             if len({c.size for c in cols}) != 1:
                 raise ValueError("connect: every slot needs one index per factor (equal lengths)")
@@ -313,6 +325,28 @@ class ProblemBuilder:
                         "(handle, indices[M]) pairs, one per state slot")
 
     # -- solve -------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _make_solver(method: str, constrained: bool, options: dict):
+        """(minimizer, augmented Lagrangian wrapper or None) for these options."""
+        base = _make_solver_options(options)
+        if method == "lm":
+            lm = _core.LevenbergMarquardtMinimizerOptions()
+            lm.base_options = base
+            for key in _LM_OPTIONS:
+                if key in options:
+                    setattr(lm, key, options[key])
+            minimizer = _core.LevenbergMarquardtMinimizer(lm)
+        else:
+            minimizer = _core.GaussNewtonMinimizer(base)
+        if not constrained:
+            return minimizer, None
+        al = _core.AugmentedLagrangianMinimizerOptions()
+        for key in _AL_OPTIONS:
+            if key in options:
+                setattr(al, key, options[key])
+        al.reuse_structure = True  # warm_start stays off: every solve starts from zero multipliers
+        return minimizer, _core.AugmentedLagrangianMinimizer(minimizer, al)
 
     def diagnose(self):
         """:func:`pycunls.diagnose` on the built problem."""
@@ -329,13 +363,17 @@ class ProblemBuilder:
             method: ``"lm"`` (Levenberg-Marquardt, default) or ``"gn"`` (Gauss-Newton). With box
                 bounds (``add_states(..., bounds=...)``) or constraint factor batches the method
                 runs inside the augmented Lagrangian minimizer.
-            validate: Run :func:`pycunls.diagnose` before the first solve: errors raise
+            validate: Run :func:`pycunls.diagnose` before the first solve (and again after
+                add_states / add_factors): errors raise
                 ``ValueError`` (with the fix), warnings (e.g. a gauge freedom) warn.
             **options: Solver options by name: ``max_num_iterations``, ``state_tolerance``,
                 ``cost_tolerance``, ``sparse_linear_solver_type``, ``linear_system``, ... (the
                 fields of :class:`pycunls.MinimizerOptions`), Levenberg-Marquardt fields
                 (``initial_lambda``, ...) and augmented Lagrangian fields
                 (``constraint_tolerance``, ...). An unknown name raises with the valid ones.
+                Repeated solves with the same method and options reuse the minimizer and its
+                structure setup (new measurements or initial values are fine; ``add_states`` /
+                ``add_factors`` start over); ``reuse_structure=False`` forces a fresh setup.
 
         Returns:
             :class:`SolveResult`.
@@ -354,41 +392,63 @@ class ProblemBuilder:
         unknown = sorted(set(options) - set(valid))
         if unknown:
             raise ValueError(f"unknown option(s) {unknown}; valid: {', '.join(valid)}")
-        base = _core.MinimizerOptions()
-        for key in _MINIMIZER_OPTIONS:
-            if key in options:
-                setattr(base, key, options[key])
-        if method == "lm":
-            lm = _core.LevenbergMarquardtMinimizerOptions()
-            lm.base_options = base
-            for key in _LM_OPTIONS:
-                if key in options:
-                    setattr(lm, key, options[key])
-            minimizer = _core.LevenbergMarquardtMinimizer(lm)
-        elif method == "gn":
-            if any(k in options for k in _LM_OPTIONS):
-                raise ValueError("Levenberg-Marquardt options given with method='gn'")
-            minimizer = _core.GaussNewtonMinimizer(base)
-        else:
+        if method not in ("lm", "gn"):
             raise ValueError(f"method must be 'lm' or 'gn', got {method!r}")
+        if method == "gn" and any(k in options for k in _LM_OPTIONS):
+            raise ValueError("Levenberg-Marquardt options given with method='gn'")
         constrained = any(h.bounds is not None for h in self.state_handles) or any(
             isinstance(f.batch, _core.ConstraintFactorBatchBase) for f in self.factor_handles)
-        self._minimizer = minimizer
-        if constrained:
-            al = _core.AugmentedLagrangianMinimizerOptions()
-            for key in _AL_OPTIONS:
-                if key in options:
-                    setattr(al, key, options[key])
-            summary = _core.AugmentedLagrangianMinimizer(minimizer, al).minimize(self.stream,
-                                                                                 self.problem)
+        if not constrained and any(k in options for k in _AL_OPTIONS):
+            raise ValueError("augmented Lagrangian options given for a problem without "
+                             "bounds or constraint factors")
+        reuse = options.pop("reuse_structure", None)
+        key = (method, constrained, tuple(sorted((k, repr(v)) for k, v in options.items())))
+        if self._solver is None or self._solver[0] != key or reuse is False:
+            self._solver = (key,) + self._make_solver(method, constrained, options)
+        _, minimizer, al = self._solver
+        if al is not None:
+            summary = al.minimize(self.stream, self.problem)
         else:
-            if any(k in options for k in _AL_OPTIONS):
-                raise ValueError("augmented Lagrangian options given for a problem without "
-                                 "bounds or constraint factors")
             summary = minimizer.minimize(self.stream, self.problem)
         cp.cuda.runtime.streamSynchronize(self.stream.get_stream())
         self._solved_once = True
         return SolveResult(summary, bool(summary.converged()), summary.message, self)
+
+
+def _make_solver_options(options):
+    base = _core.MinimizerOptions()
+    for key in _MINIMIZER_OPTIONS:
+        if key in options:
+            setattr(base, key, options[key])
+    # The builder sees every structural change (add_states / add_factors drop the solver), so a
+    # kept solver may always skip the setup; a new one runs it on its first call.
+    base.reuse_structure = True
+    return base
+
+
+def _check_slot(factor: str, slot: int, size: int, handle: StateHandle,
+                expected: Optional[str]) -> None:
+    """A state batch fits a factor slot: the catalog's state class for built-in factors (or a
+    subclass of it); a custom state batch needs the expected ambient and tangent sizes; for
+    custom factors only the tangent size can be checked."""
+    batch = handle.batch
+    got = type(batch).__name__
+    expected_cls = getattr(_core, expected, None) if expected else None
+    if expected_cls is not None and isinstance(batch, expected_cls):
+        return
+    if expected_cls is not None and state_info(got) is not None:
+        raise ValueError(f"slot {slot} of {factor} needs a {expected}, got a {got}: the factor "
+                         f"reads the state layout of {expected} ({state_info(expected).layout}). "
+                         f"Fix: add the states as pycunls.{expected}.")
+    if batch.tangent_size != size:
+        hint = f" (expects {expected})" if expected else ""
+        raise ValueError(f"slot {slot} of {factor} needs a state with tangent size {size}{hint}; "
+                         f"{got} has {batch.tangent_size}")
+    if expected_cls is not None:
+        ambient = state_info(expected).ambient
+        if batch.ambient_size != ambient:
+            raise ValueError(f"slot {slot} of {factor} needs the layout of {expected} ({ambient} "
+                             f"floats per state); the custom {got} stores {batch.ambient_size}")
 
 
 def solve(factor_class, *measurements, initial, connect, state_class=None,

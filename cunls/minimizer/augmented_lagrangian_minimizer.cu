@@ -511,20 +511,22 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     summary.inner_iterations = inner.num_iterations;
     summary.initial_cost = inner.initial_cost;
     summary.final_cost = inner.final_cost;
-    // The wrapped minimizer's outcome (all converged when not determined).
-    summary.num_converged = summary.num_problems;
-    if (!inner.num_problems_by_reason.empty()) {
-      summary.num_converged = 0;
-      for (int r = 0; r < kNumTerminationReasons; ++r) {
-        const auto reason = static_cast<TerminationReason>(r);
-        if (IsConvergence(reason) || reason == TerminationReason::NoFreeStates ||
-            reason == TerminationReason::NotDetermined) {
-          summary.num_converged += inner.num_problems_by_reason[r];
-        }
+    // The wrapped minimizer's outcome. Only established convergence counts: a
+    // real-time inner solve reads no reasons back (empty or NotDetermined).
+    summary.num_converged = 0;
+    size_t num_undetermined = inner.num_problems_by_reason.empty() ? summary.num_problems : 0;
+    for (size_t r = 0; r < inner.num_problems_by_reason.size(); ++r) {
+      const auto reason = static_cast<TerminationReason>(r);
+      if (IsConvergence(reason) || reason == TerminationReason::NoFreeStates) {
+        summary.num_converged += inner.num_problems_by_reason[r];
+      } else if (reason == TerminationReason::NotDetermined) {
+        num_undetermined += inner.num_problems_by_reason[r];
       }
     }
-    if (summary.num_converged < summary.num_problems) {
+    if (summary.num_converged + num_undetermined < summary.num_problems) {
       summary.status = AugmentedLagrangianMinimizerStatus::kMaxOuterIterations;
+    } else if (num_undetermined > 0) {
+      summary.status = AugmentedLagrangianMinimizerStatus::kNotDetermined;
     }
     summary.message = inner.message;
     summary.solve_time_ms = elapsed_ms();

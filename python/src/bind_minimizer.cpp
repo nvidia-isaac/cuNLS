@@ -151,12 +151,16 @@ void bind_minimizer(nb::module_ &m) {
       .value("MaxOuterIterations", cunls::AugmentedLagrangianMinimizerStatus::kMaxOuterIterations,
              "Some subproblem ran out of outer iterations (raise max_outer_iterations).")
       .value("MaxPenalty", cunls::AugmentedLagrangianMinimizerStatus::kMaxPenalty,
-             "Some subproblem cannot reduce its violation at max_penalty (likely infeasible).");
+             "Some subproblem cannot reduce its violation at max_penalty (likely infeasible).")
+      .value("NotDetermined", cunls::AugmentedLagrangianMinimizerStatus::kNotDetermined,
+             "Convergence was not checked: a real-time call without constraint batches reads "
+             "nothing back. converged() is False.");
 
   nb::class_<cunls::AugmentedLagrangianMinimizerSummary>(
       m, "AugmentedLagrangianMinimizerSummary", "Summary of a constrained minimization run.")
       .def_ro("status", &cunls::AugmentedLagrangianMinimizerSummary::status,
-              "AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations or MaxPenalty.")
+              "AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty or "
+              "NotDetermined.")
       .def_ro("outer_iterations", &cunls::AugmentedLagrangianMinimizerSummary::outer_iterations,
               "Outer (multiplier update) iterations performed.")
       .def_ro("inner_iterations", &cunls::AugmentedLagrangianMinimizerSummary::inner_iterations,

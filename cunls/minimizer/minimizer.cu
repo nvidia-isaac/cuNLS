@@ -562,7 +562,8 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     summary.final_cost = summary.initial_cost;
     summary.termination_reason = TerminationReason::NoFreeStates;
     summary.num_problems_by_reason.assign(kNumTerminationReasons, 0);
-    summary.num_problems_by_reason[static_cast<int>(TerminationReason::NoFreeStates)] = 1;
+    summary.num_problems_by_reason[static_cast<int>(TerminationReason::NoFreeStates)] =
+        problem.NumProblems();  // every subproblem
     return done();
   }
 

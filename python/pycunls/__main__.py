@@ -33,7 +33,12 @@ def _guide() -> str:
     return (pathlib.Path(__file__).with_name("AGENT_GUIDE.md")).read_text()
 
 
-def _check(name: str, fn: Callable[[], str], fix: str, required: bool = True):
+def _check(name: str, fn: Callable[[], str], fix: str, required: bool = True,
+           needs: Tuple[dict, ...] = ()):
+    failed = [n["check"] for n in needs if not n["ok"]]
+    if failed:  # a check that failed before explains this one
+        return {"check": name, "ok": False, "detail": f"skipped: needs {', '.join(failed)}",
+                "fix": f"fix {', '.join(failed)} first", "required": required}
     try:
         return {"check": name, "ok": True, "detail": fn(), "required": required}
     except Exception as exc:  # noqa: BLE001 -- report every failure
@@ -61,7 +66,7 @@ def doctor() -> Tuple[bool, List[dict]]:
 
     def native():
         import pycunls
-        from pycunls import _pycunls_core
+        from pycunls import _pycunls_core  # the original import error, if any
         return f"pycunls {pycunls.__version__} ({pathlib.Path(_pycunls_core.__file__).name})"
 
     def solve():
@@ -111,17 +116,21 @@ def doctor() -> Tuple[bool, List[dict]]:
         return "cuDSS solver available"
 
     results.append(_check("python", python_version, "use Python 3.10 or newer"))
-    results.append(_check("gpu", cupy_gpu, "install a CUDA driver and the CuPy build for your "
-                          "CUDA version (pip install cupy-cuda12x / cupy-cuda13x); check "
-                          "nvidia-smi and CUDA_VISIBLE_DEVICES"))
-    results.append(_check("native module", native, "reinstall the pycunls wheel built for your "
-                          "CUDA version"))
-    results.append(_check("solve", solve, "run with CUNLS_LOG_LEVEL=debug and report the output"))
-    results.append(_check("fit", fit, "check the solve result above"))
+    gpu = _check("gpu", cupy_gpu, "install a CUDA driver and the CuPy build for your CUDA "
+                 "version (pip install cupy-cuda12x / cupy-cuda13x); check nvidia-smi and "
+                 "CUDA_VISIBLE_DEVICES")
+    module = _check("native module", native, "reinstall the pycunls wheel built for your CUDA "
+                    "version (pip install pycunls-cu12 / pycunls-cu13)")
+    results += [gpu, module]
+    solved = _check("solve", solve, "run with CUNLS_LOG_LEVEL=debug and report the output",
+                    needs=(gpu, module))
+    results.append(solved)
+    results.append(_check("fit", fit, "check the solve result above", needs=(solved,)))
     results.append(_check("warp", warp, "pip install 'pycunls[warp]' (optional: custom Warp "
                           "factors)", required=False))
     results.append(_check("cudss", cudss, "optional: set the library path so libcudss.so is "
-                          "found (SparseLinearSolverType.cuDSS only)", required=False))
+                          "found (SparseLinearSolverType.cuDSS only)", required=False,
+                          needs=(gpu, module)))
     ok = all(r["ok"] for r in results if r["required"])
     return ok, results
 
@@ -142,16 +151,16 @@ def main(argv=None) -> int:
         print(_guide())
         return 0
     if args.command == "describe":
-        import pycunls
+        from pycunls.catalog import describe  # no GPU or native module needed
         try:
-            print(pycunls.describe(args.name))
+            print(describe(args.name))
         except KeyError as exc:
             print(exc.args[0], file=sys.stderr)
             return 1
         return 0
     if args.command == "catalog":
-        import pycunls
-        for entry in pycunls.catalog(query=args.query):
+        from pycunls.catalog import catalog
+        for entry in catalog(query=args.query):
             print(f"{entry['name']:<46} {entry['kind']:<7} {entry.get('use', entry.get('layout'))}")
         return 0
     ok, results = doctor()

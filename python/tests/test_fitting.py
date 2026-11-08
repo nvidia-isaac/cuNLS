@@ -17,6 +17,7 @@
 
 import json
 
+import cupy as cp
 import numpy as np
 import pytest
 import warp as wp
@@ -189,3 +190,84 @@ def test_errors_explain_the_mistake():
         pycunls.fit(decay, x, y, p0=[1, 1, 0], starts=4)
     with pytest.raises(ValueError, match="loss must be one of"):
         pycunls.fit(decay, x, y, p0=[1, 1, 0], loss="l1")
+
+
+# ---- failed models, start selection and input checks ---------------------------------------
+
+def _sqrt_model(x, p):
+    return np.sqrt(p[:, 0]) * x  # NaN for p < 0
+
+
+def test_a_start_where_the_model_fails_never_wins():
+    x = np.linspace(0.1, 2, 20)
+    res = pycunls.fit(_sqrt_model, x, 2 * x, p0=[1.0], starts=[[-1.0], [4.0]])
+    assert res.start_index == 1
+    assert res.converged and abs(res.params[0] - 4.0) < 1e-4
+    assert np.isfinite(res.cost) and "best of 2 starts" in res.message
+
+
+def test_a_model_that_always_fails_is_not_a_perfect_fit():
+    x = np.linspace(0.1, 2, 20)
+    res = pycunls.fit(lambda x, p: p[:, 0] * x * np.nan, x, 2 * x, p0=[1.0], starts=[[1.0], [2.0]])
+    assert not res.converged and np.isnan(res.cost) and res.cost != 0
+    assert np.all(np.isnan(res.param_errors))
+    d = res.to_dict()
+    json.dumps(d, allow_nan=False)
+    assert d["cost"] is None
+
+
+def test_a_failed_fit_does_not_spoil_the_others():
+    x = np.linspace(0.1, 2, 20)
+    y = np.stack([2 * x, 3 * x])
+    res = pycunls.fit(_sqrt_model, x, y, p0=[[-1.0], [4.0]])
+    assert list(res.converged) == [False, True]
+    assert res.reasons[0] == "NonFiniteCost" and np.isnan(res.cost[0])
+    assert abs(res.params[1, 0] - 9.0) < 1e-3 and np.isfinite(res.param_errors[1, 0])
+
+
+def test_nan_padding_matches_removing_the_samples():
+    x, y = _decay_data()
+    padded = np.concatenate([y[:30], np.full(y.size - 30, np.nan)])
+    a = pycunls.fit(decay, x, padded, p0=[1, 1, 0], sigma=0.02)
+    b = pycunls.fit(decay, x[:30], y[:30], p0=[1, 1, 0], sigma=0.02)
+    np.testing.assert_allclose(a.params, b.params, rtol=1e-5)  # float32 solves
+    assert a.num_samples == b.num_samples == 30
+    assert a.cost == pytest.approx(b.cost)
+
+
+def test_a_fit_without_observations_is_reported():
+    x = np.linspace(0, 1, 10)
+    y = np.stack([np.full(10, np.nan), 2 * x])
+    res = pycunls.fit(lambda x, p: p[:, 0] * x, x, y, p0=[1.0])
+    assert list(res.converged) == [False, True]
+    assert res.reasons[0] == "NoObservations" and res.num_samples[0] == 0
+    assert "NoObservations" in res.message
+
+
+def test_sigma_and_y_are_checked():
+    x, y = _decay_data()
+    with pytest.raises(ValueError, match="sigma must be finite and positive"):
+        pycunls.fit(decay, x, y, p0=[1, 1, 0], sigma=0.0)
+    bad = np.full(y.shape, 0.02)
+    bad[3] = np.nan
+    with pytest.raises(ValueError, match="sigma must be finite and positive"):
+        pycunls.fit(decay, x, y, p0=[1, 1, 0], sigma=bad)
+    y_missing = y.copy()
+    y_missing[3] = np.nan  # a NaN sigma on a skipped sample is fine
+    pycunls.fit(decay, x, y_missing, p0=[1, 1, 0], sigma=bad)
+    y_inf = y.copy()
+    y_inf[0] = np.inf
+    with pytest.raises(ValueError, match="inf"):
+        pycunls.fit(decay, x, y_inf, p0=[1, 1, 0])
+
+
+def test_starts_are_ranked_by_the_robust_objective():
+    from pycunls.fitting import _objective
+    k = 1.5
+    r = cp.asarray([[[0.5], [3.0]], [[2.0], [0.1]]], cp.float64)  # (fits, n, m)
+    cost = 0.5 * cp.sum(r.reshape(2, -1) ** 2, axis=1)
+    got = cp.asnumpy(_objective(pycunls.HuberLossFunctionBatch(k), r, cost, pycunls.CudaStream()))
+    a = np.abs(cp.asnumpy(r).reshape(2, -1))
+    rho = np.where(a <= k, a * a, 2 * k * a - k * k)
+    np.testing.assert_allclose(got, 0.5 * rho.sum(axis=1), rtol=1e-6)
+    assert cp.asnumpy(_objective(None, r, cost, None)) == pytest.approx(cp.asnumpy(cost))

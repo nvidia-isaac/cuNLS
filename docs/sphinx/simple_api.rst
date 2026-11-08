@@ -89,8 +89,9 @@ its own convergence, and ``res.reasons`` says why each one stopped.
   ``±inf`` for none), solved by the augmented Lagrangian (projected) minimizer.
 - ``starts`` — several initial guesses against local minima: an int ``K``
   draws ``K`` starts uniformly in finite ``bounds`` (the first is ``p0``), or a
-  ``(K, P)`` array lists them. All starts are solved together; the lowest cost
-  wins (``res.start_index``).
+  ``(K, P)`` array lists them. All starts are solved together; per fit the lowest
+  objective (the robust one with ``loss``) wins (``res.start_index``), and starts
+  where the model is not finite never win.
 - ``method`` (``"lm"`` default, ``"gn"``), ``max_iterations``, ``jacobian``
   (Warp models: ``"auto"``, ``"autodiff"``, ``"numeric"``).
 
@@ -138,7 +139,12 @@ Graph problems: ``pycunls.ProblemBuilder``
   ``AugmentedLagrangianMinimizerOptions``); an unknown name raises with the
   valid ones.
 - Repeated solves: ``handle.set(values)``, ``factor_handle.set_measurements(...)``,
-  then ``solve(reuse_structure=True)``.
+  then ``solve()`` again. The builder keeps its minimizer while the method,
+  the options and the structure stay the same, and then skips the structure
+  setup (index expansion, symbolic analysis). ``add_states`` / ``add_factors``
+  drop it (and ``diagnose`` runs again); ``solve(reuse_structure=False)``
+  forces a fresh setup. Multipliers of constrained problems are not
+  warm-started.
 - The underlying objects: ``pb.problem``, ``handle.batch``, ``handle.data``
   (the CuPy array the solve updates).
 - The result (``pycunls.SolveResult``): ``converged``, ``message``,

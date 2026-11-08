@@ -34,7 +34,7 @@ Conventions shared by every class:
 from __future__ import annotations
 
 import dataclasses
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 
 @dataclasses.dataclass(frozen=True)
@@ -259,6 +259,38 @@ def factor_info(name: str) -> Optional[FactorInfo]:
     """The :class:`FactorInfo` of a built-in factor batch class name, or None."""
     entry = _ENTRIES.get(name)
     return entry if isinstance(entry, FactorInfo) else None
+
+
+def effective_factor(batch) -> Tuple[object, Optional[FactorInfo], str]:
+    """What a factor batch in a problem does, seen through its wrappers.
+
+    Follows ``inner_factor`` of ``WeightedFactorBatch``, ``InformationFactorBatch`` and
+    ``ConstraintFactorBatch`` (nested too) to the wrapped batch.
+
+    Returns:
+        ``(inner batch, its FactorInfo or None, role)`` with role ``"relative"`` (constrains its
+        states only relative to each other: between, reprojection, motion factors),
+        ``"absolute"`` (a built-in prior or measurement that fixes its states), ``"inactive"``
+        (an inequality constraint, which may hold without pulling on its states, so it neither
+        connects nor fixes them) or ``"unknown"`` (a custom factor; diagnostics assume it fixes
+        its states).
+    """
+    inner, inequality = batch, False
+    while True:
+        kind = getattr(inner, "kind", None)
+        inequality |= getattr(kind, "name", None) == "Inequality"
+        nested = getattr(inner, "inner_factor", None)
+        if nested is None:
+            break
+        inner = nested
+    info = factor_info(type(inner).__name__)
+    if inequality:
+        role = "inactive"
+    elif info is None:
+        role = "unknown"
+    else:
+        role = "relative" if info.relative else "absolute"
+    return inner, info, role
 
 
 def catalog(kind: Optional[str] = None, query: Optional[str] = None) -> List[Dict]:

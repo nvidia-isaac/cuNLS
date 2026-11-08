@@ -70,7 +70,10 @@ subproblem, e.g. ``np.flatnonzero(r >= int(TerminationReason.MaxIterations))``
 lists those that did not converge. The reasons cost one small read-back at the
 end of a solve; real-time solves skip it. ``RansacSummary`` and
 ``AugmentedLagrangianMinimizerSummary`` carry a ``message`` and
-``converged()`` too.
+``converged()`` too; the latter reports ``status``
+(``AugmentedLagrangianMinimizerStatus``), which is ``NotDetermined`` for a
+real-time call without constraint batches (nothing is read back, so
+``converged()`` is False).
 
 ================================================================================
 Check a problem before solving: ``pycunls.diagnose``

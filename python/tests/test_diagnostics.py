@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 import pycunls
+from pycunls.catalog import effective_factor
 
 
 def _pose_graph(n=5, constant_first=False, nan_pose=None):
@@ -197,3 +198,52 @@ def test_diagnose_sees_through_wrapped_factors():
     prior.set_num_active_factors(1)
     wrapped.add_factor_batch(pycunls.WeightedFactorBatch(prior, 1.0), [sb.state_device_ptr(0)])
     assert pycunls.diagnose(wrapped) == []
+
+
+def _wrapped_chain(wrap):
+    """The 5-pose chain with its between factors wrapped by `wrap(fb)` (no anchor)."""
+    problem, (poses, deltas, ids, sb, fb) = _pose_graph()
+    wrapped = pycunls.Problem()
+    wrapped.add_state_batch(sb)
+    outer, keep = wrap(fb)
+    wrapped.add_factor_batch(outer, [sb.state_device_ptr(i + k) for i in range(4) for k in (0, 1)])
+    return wrapped, (problem, poses, deltas, sb, fb, outer, keep)
+
+
+def test_nested_wrappers_keep_the_gauge_warning():
+    def wrap(fb):
+        sqrt_info = cp.tile(cp.eye(6, dtype=cp.float32), (4, 1, 1))
+        info = pycunls.InformationFactorBatch(fb, sqrt_info)
+        return pycunls.WeightedFactorBatch(info, 3.0), (info, sqrt_info)
+
+    wrapped, keep = _wrapped_chain(wrap)
+    inner, info, role = effective_factor(keep[5])
+    assert inner is keep[4] and info.name == "SE3BetweenFactorBatch" and role == "relative"
+    issues = pycunls.diagnose(wrapped)
+    assert len(issues) == 1 and "Gauge freedom" in issues[0].message
+
+
+def _anchor_with(problem, sb, kind):
+    target = cp.asarray(np.eye(4, dtype=np.float32)[None])
+    prior = pycunls.SE3PriorFactorBatch(target, 1)
+    prior.set_num_active_factors(1)
+    constraint = pycunls.ConstraintFactorBatch(prior, kind)
+    problem.add_factor_batch(constraint, [sb.state_device_ptr(0)])
+    return target, prior, constraint
+
+
+def test_an_equality_constraint_anchors_but_an_inequality_does_not():
+    wrapped, keep = _wrapped_chain(lambda fb: (pycunls.WeightedFactorBatch(fb, 1.0), None))
+    sb = keep[3]
+    held = _anchor_with(wrapped, sb, pycunls.ConstraintKind.Inequality)
+    assert effective_factor(held[2])[2] == "inactive"
+    assert any("Gauge freedom" in i.message for i in pycunls.diagnose(wrapped))
+    held2 = _anchor_with(wrapped, sb, pycunls.ConstraintKind.Equality)
+    assert effective_factor(held2[2])[2] == "absolute"
+    assert pycunls.diagnose(wrapped) == []
+
+
+def test_custom_factors_are_assumed_to_anchor():
+    problem, keep = _custom_problem(1.0)
+    assert effective_factor(keep[3])[2] == "unknown"
+    assert pycunls.diagnose(problem) == []

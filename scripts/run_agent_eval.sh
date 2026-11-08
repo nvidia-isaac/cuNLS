@@ -22,6 +22,10 @@
 #   SEEDS      space-separated seeds (default: "0 1 2")
 #   TIMEOUT    seconds per run (default: 900)
 #   PYTHON     Python with pycunls installed (default: python3)
+#
+# pycunls comes from the installed wheel, never from this checkout. Only the coordinator (prepare,
+# reference, check) sees the task package, staged in a temporary directory; the agent runs with
+# the caller's environment and sees only its run directory (data.npz, PROMPT.md).
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,7 +33,15 @@ OUT_DIR="${1:-${REPO_DIR}/agent_eval_$(date +%Y%m%d_%H%M%S)}"
 PYTHON="${PYTHON:-python3}"
 SEEDS="${SEEDS:-0 1 2}"
 TIMEOUT="${TIMEOUT:-900}"
-export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${REPO_DIR}/python"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "${STAGE}"' EXIT
+cp -r "${REPO_DIR}/python/agent_tasks" "${STAGE}/"
+find "${STAGE}" -name __pycache__ -prune -exec rm -rf {} +
+
+# The coordinator: the installed pycunls plus the staged task package.
+coordinator() {
+  (cd "${STAGE}" && PYTHONPATH="${STAGE}${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON}" "$@")
+}
 
 if [ -z "${AGENT_CMD:-}" ]; then
   echo "Set AGENT_CMD to the agent command (it gets the prompt as its last argument), e.g." >&2
@@ -37,24 +49,25 @@ if [ -z "${AGENT_CMD:-}" ]; then
   echo "or AGENT_CMD=reference to check the plumbing with the reference solutions." >&2
   exit 2
 fi
-if ! "${PYTHON}" -c "import pycunls" 2>/dev/null; then
+if ! (cd "${STAGE}" && "${PYTHON}" -c "import pycunls._pycunls_core") 2>/dev/null; then
   echo "${PYTHON} cannot import pycunls. Build and install the wheel first:" >&2
   echo "  ./scripts/build_pycunls_in_docker.sh && pip install dist/pycunls-*.whl" >&2
   exit 2
 fi
-TASKS="${TASKS:-$("${PYTHON}" -c 'from agent_tasks import TASKS; print(" ".join(TASKS))')}"
+TASKS="${TASKS:-$(coordinator -c 'from agent_tasks import TASKS; print(" ".join(TASKS))')}"
 
 mkdir -p "${OUT_DIR}"
+OUT_DIR="$(cd "${OUT_DIR}" && pwd)"  # the coordinator runs in the staging directory
 RESULTS="${OUT_DIR}/results.jsonl"
 : > "${RESULTS}"
 for task in ${TASKS}; do
   for seed in ${SEEDS}; do
     run_dir="${OUT_DIR}/${task}-${seed}"
     rm -rf "${run_dir}"  # a stale answer.json from an earlier run must not be scored
-    "${PYTHON}" -m agent_tasks prepare "${task}" "${run_dir}" --seed "${seed}" > /dev/null
+    coordinator -m agent_tasks prepare "${task}" "${run_dir}" --seed "${seed}" > /dev/null
     start=$(date +%s)
     if [ "${AGENT_CMD}" = "reference" ]; then
-      "${PYTHON}" -m agent_tasks reference "${task}" "${run_dir}" --seed "${seed}" \
+      coordinator -m agent_tasks reference "${task}" "${run_dir}" --seed "${seed}" \
         > "${run_dir}/transcript.txt" 2>&1 || true
     else
       # shellcheck disable=SC2086  # AGENT_CMD is a command line, split on purpose
@@ -62,7 +75,7 @@ for task in ${TASKS}; do
         > "${run_dir}/transcript.txt" 2>&1 || true
     fi
     seconds=$(( $(date +%s) - start ))
-    result=$("${PYTHON}" -m agent_tasks check "${task}" "${run_dir}/answer.json" --seed "${seed}" \
+    result=$(coordinator -m agent_tasks check "${task}" "${run_dir}/answer.json" --seed "${seed}" \
              || true)
     if [ -z "${result}" ]; then  # the checker crashed: record a failure, keep the table valid
       result="{\"task\": \"${task}\", \"seed\": ${seed}, \"passed\": false, \"message\": \"checker crashed\"}"

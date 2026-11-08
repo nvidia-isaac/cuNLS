@@ -47,7 +47,8 @@ res.params, res.param_errors, res.converged, res.reduced_chi2
   model that explains the data, and clearly larger (say > 2) when it does not. Without `sigma`,
   `param_errors` are scaled by the residual scatter (as `scipy.optimize.curve_fit`).
 - `starts=K` needs finite `bounds` (starts are drawn in the box); `starts=[[...], ...]` gives
-  them explicitly. The lowest cost wins per fit (`res.start_index`).
+  them explicitly. The lowest objective wins per fit (`res.start_index`); starts where the
+  model returns NaN never win.
 - Up to 12 parameters per fit; beyond that build the problem with `ProblemBuilder`.
 - A model given by an ODE: use its closed-form solution when there is one; otherwise integrate
   inside the model with a fixed-step scheme (e.g. RK4 from 0 to each row's `x`, all rows at once

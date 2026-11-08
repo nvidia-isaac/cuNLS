@@ -93,7 +93,7 @@ def test_to_dict_is_json_ready_and_report_leads_with_the_outcome(stream):
     problem, _keep = _priors([np.nan, 0])
     summary = pycunls.GaussNewtonMinimizer().minimize(stream, problem)
     d = summary.to_dict()
-    json.dumps(d)  # NaN costs become None, enums names
+    json.dumps(d, allow_nan=False)  # NaN costs become None, enums names
     assert d["converged"] is False
     assert d["termination_reason"] == "NonFiniteCost"
     assert d["initial_cost"] is None
@@ -110,3 +110,39 @@ def test_augmented_lagrangian_summary_has_message_and_converged(stream):
     assert summary.message  # the wrapped minimizer's message without constraints
     assert summary.to_dict()["status"] == "Converged"
     assert summary.report().startswith("AugmentedLagrangianMinimizerSummary: converged")
+
+
+def test_real_time_augmented_lagrangian_without_constraints_is_not_determined(stream):
+    problem, (states, *_rest) = _priors([50, -30])
+    lm = pycunls.LevenbergMarquardtMinimizerOptions()
+    lm.initial_lambda = 1e4  # one heavily damped step: far from the minimum
+    options = pycunls.AugmentedLagrangianMinimizerOptions()
+    options.real_time = True
+    options.inner_iterations = 1
+    inner = pycunls.LevenbergMarquardtMinimizer(lm)
+    summary = pycunls.AugmentedLagrangianMinimizer(inner, options).minimize(stream, problem)
+    assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.NotDetermined
+    assert not summary.converged() and summary.num_converged == 0
+    d = summary.to_dict()
+    json.dumps(d, allow_nan=False)
+    assert d["status"] == "NotDetermined" and d["converged"] is False
+    assert "NOT CONVERGED" in summary.report().splitlines()[0]
+
+
+def test_json_helper_is_strict_for_nested_values():
+    from pycunls._summary import _plain
+    value = {"a": np.array([[1.0, np.nan], [np.inf, 2.0]]), "b": (np.float32(np.nan), 3),
+             "c": [np.int64(4), {"d": -np.inf}], "e": TerminationReason.MaxIterations}
+    out = _plain(value)
+    json.dumps(out, allow_nan=False)
+    assert out == {"a": [[1.0, None], [None, 2.0]], "b": [None, 3], "c": [4, {"d": None}],
+                   "e": "MaxIterations"}
+
+
+def test_evaluation_to_dict_is_strict_json(stream):
+    problem, _keep = _priors([np.nan, 0])
+    d = pycunls.evaluate(problem).to_dict()
+    json.dumps(d, allow_nan=False)
+    # The cost covers the finite residuals only; the NaN factor is counted instead.
+    assert d["total_cost"] == 0.0 and d["all_finite"] is False
+    assert d["batches"][0]["num_non_finite"] == 1
