@@ -52,7 +52,7 @@ on the torus3D pose graph it is 24–34× faster than Ceres, GTSAM and g2o.<sup>
 cuNLS is designed to be driven by coding agents (and to save humans the same debugging):
 
 - **Results explain themselves.** Every summary has `converged()`, a `termination_reason` (per
-  subproblem too) and a `message` with the fix; `summary.to_dict()` is strict JSON.
+  subproblem too) and a `message` with the fix; `summary.to_dict()` serializes to strict JSON.
 - **Mistakes are caught before solving.** `ProblemBuilder` checks shapes, index ranges and state
   types as factors are added, and `solve` runs `pycunls.diagnose` first (gauge freedom, NaN or
   Inf states and residuals, states no factor constrains). Errors name what was expected, what
@@ -190,12 +190,27 @@ reads the state layout of SE3StateBatch (4x4 matrix [R t; 0 1], row-major (16 fl
 Fix: add the states as pycunls.SE3StateBatch.
 ```
 
-For a pipeline, `result.summary.to_dict()` is strict JSON:
+For a pipeline, `result.summary.to_dict()` is a plain dict with no NaN or Inf (non-finite
+values become `null`), so it serializes to strict JSON:
+
+```python
+import json
+print(json.dumps(result.summary.to_dict(), allow_nan=False, indent=1))
+```
 
 ```json
-{"converged": true, "termination_reason": "CostTolerance",
- "message": "Converged: the cost fell below cost_tolerance (1e-06); cost 0.2329 -> 1.475e-09 in 2 iterations.",
- "num_iterations": 2, "initial_cost": 0.2329, "final_cost": 1.47e-09, "num_free_parameters": 96, ...}
+{
+ "converged": true,
+ "termination_reason": "CostTolerance",
+ "message": "Converged: the cost fell below cost_tolerance (1e-06); cost 0.2329 -> 1.659e-08 in 2 iterations.",
+ "num_iterations": 2,
+ "initial_cost": 0.23288413882255554,
+ "final_cost": 1.658583670405278e-08,
+ "num_free_parameters": 93,
+ "solve_time_ms": 1.40308,
+ "num_problems_by_reason": {"CostTolerance": 1},
+ "iteration_costs": [0.23288413882255554, 9.848973422776908e-05]
+}
 ```
 
 More in [Diagnostics and troubleshooting](docs/sphinx/troubleshooting.rst).

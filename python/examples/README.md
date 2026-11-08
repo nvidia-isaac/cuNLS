@@ -22,21 +22,21 @@ The C++ counterparts are in [`examples/`](../../examples) at the repository root
 
 ## Setup
 
-Install the `pycunls` wheel ([INSTALL.md](../../INSTALL.md)), then run the examples from this
-folder so that `example_utils` is importable:
+Build the `pycunls` wheel ([INSTALL.md](../../INSTALL.md)), then, from the repository root,
+install it and run the examples from this folder so that `example_utils` is importable:
 
 ```bash
-pip install ./dist/pycunls*.whl warp-lang     # the wheel brings the matching CuPy
-python -m pycunls doctor                       # GPU, native module, a test solve
+pip install ./dist/pycunls*.whl "warp-lang<1.18"   # the wheel brings the matching CuPy
+python -m pycunls doctor                            # GPU, native module, a test solve
 cd python/examples
 python model_fitting.py
 ```
 
 The small examples (the first seven) make their own synthetic data, run in a few seconds and print
-what happened; all but `imu_bundle_adjustment.py` exit with an error if the result is wrong. The
-test suite runs them
-(`python/tests/test_examples.py`). The two showcases need downloaded data and log to
-[Rerun](https://rerun.io) (`pip install rerun-sdk opencv-python scipy`).
+what happened; all but `model_fitting.py` and `imu_bundle_adjustment.py` exit with an error if
+the result is wrong. The test suite runs them (`python/tests/test_examples.py`). The two
+showcases need downloaded data and log to [Rerun](https://rerun.io)
+(`pip install tartanair rerun-sdk opencv-python scipy`).
 
 ## Model fitting (`model_fitting.py`)
 
@@ -53,7 +53,7 @@ a Warp `@wp.func` works too and gets autodiff Jacobians. Six scenes, one call ea
 6. the model check: reduced chi-square rejects one exponential and accepts two.
 
 ```bash
-python model_fitting.py            # --quick: a smaller batch
+python model_fitting.py            # or: python model_fitting.py --quick (a smaller batch)
 ```
 
 ```text
@@ -128,7 +128,8 @@ plain `LevenbergMarquardtMinimizer` on the same data is shown for comparison. Py
 [`examples/ransac_pnp`](../../examples/ransac_pnp).
 
 ```bash
-python ransac_pnp.py [--num-points 2000] [--outlier-ratio 0.5]
+python ransac_pnp.py                                   # defaults: 2000 points, 50% outliers
+python ransac_pnp.py --num-points 10000 --outlier-ratio 0.8
 ```
 
 ```text
@@ -151,7 +152,8 @@ pose states. Velocities and IMU biases start at zero and are recovered by the so
 landmarks start perturbed. Landmarks are eliminated with a Schur complement.
 
 ```bash
-python imu_bundle_adjustment.py [--keyframes 10] [--samples-per-keyframe 40]
+python imu_bundle_adjustment.py                        # defaults: 10 keyframes, 40 samples each
+python imu_bundle_adjustment.py --keyframes 20 --samples-per-keyframe 80
 ```
 
 ```text

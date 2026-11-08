@@ -52,12 +52,17 @@ external.
 ### Build the wheel locally
 
 ```bash
-cd python
 pip install scikit-build-core nanobind
-pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist
+(cd python && pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist)
 ```
 
+A local wheel declares the CUDA 12 CuPy (`cupy-cuda12x`, from `python/pyproject.toml`); only
+the Docker build switches it to `cupy-cuda13x` for CUDA 13. For a local CUDA 13 build, install
+`cupy-cuda13x` yourself, or build the wheel in Docker.
+
 ### Install the wheel
+
+From the repository root:
 
 ```bash
 pip install ./dist/pycunls*.whl
@@ -155,7 +160,8 @@ Jetson. Toolkits installed without a `targets/` directory (e.g. distro packages 
 back to `linux-x86_64` on x86_64 and require an explicit platform on aarch64. Set
 `-DCUDSS_PLATFORM` explicitly to override it.
 
-Pass `-DCUNLS_ENABLE_CUDSS=OFF` to build without the cuDSS backend: the cuDSS archive is not
+Pass `-DCUNLS_ENABLE_CUDSS=OFF` to a local or direct CMake build to build without the cuDSS
+backend (the Docker build always packages cuDSS): the cuDSS archive is not
 downloaded and `SparseLinearSolverType::cuDSS` throws `std::runtime_error` when a solver is
 created. All other solvers work as usual, and the C++ tests skip the cuDSS cases.
 
@@ -208,10 +214,11 @@ Or in Docker, against the output of `build_cunls_in_docker.sh`:
 ./scripts/test_cunls_in_docker.sh ./build_docker
 ```
 
-Coverage build:
+Coverage build (`build_cunls.sh` configures the source one level above the build directory, so
+use a top-level build directory):
 
 ```bash
-./scripts/build_cunls.sh build/coverage Coverage
+./scripts/build_cunls.sh build_coverage Coverage
 ```
 
 ## Building the documentation
