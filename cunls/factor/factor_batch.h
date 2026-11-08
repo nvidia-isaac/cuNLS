@@ -187,7 +187,8 @@ class FactorBatch {
   virtual void SetNumActiveFactors(size_t num_active_factors) {
     if (num_active_factors > Capacity()) {
       throw std::invalid_argument("SetNumActiveFactors(" + std::to_string(num_active_factors) +
-                                  ") exceeds the capacity of " + std::to_string(Capacity()));
+                                  ") exceeds the capacity of " + std::to_string(Capacity()) +
+                                  ". Fix: construct the batch with a larger capacity.");
     }
     num_active_factors_ = num_active_factors;
     if (NumActiveFactors() != num_active_factors) {

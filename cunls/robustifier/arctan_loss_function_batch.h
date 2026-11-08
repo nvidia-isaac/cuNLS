@@ -17,8 +17,9 @@
 
 #pragma once
 
-#include "cunls/robustifier/loss_function_batch.h"
 #include <cuda_runtime.h>
+
+#include "cunls/robustifier/loss_function_batch.h"
 
 namespace cunls {
 
@@ -31,14 +32,16 @@ namespace cunls {
  *   rho'(s) = 1 / sum
  *   rho''(s) = -2 * s * b / sum^2
  *
+ * rho' and rho'' are the derivatives of rho only when b = 1 / a^2; pass that value.
+ *
  * The Arctan loss grows sublinearly for large residuals and is smooth.
  */
 class ArctanLossFunctionBatch : public LossFunctionBatch {
-public:
+ public:
   /**
    * @brief Constructs an Arctan loss with the given parameters.
    * @param a Scale parameter (a > 0).
-   * @param b Scale parameter (b > 0).
+   * @param b Curvature of the derivatives; must be 1 / a^2 for them to match rho.
    */
   ArctanLossFunctionBatch(float a, float b);
 
@@ -46,12 +49,11 @@ public:
    * @brief Evaluates the Arctan loss for a batch of squared residuals.
    * @copydetails LossFunctionBatch::Evaluate
    */
-  bool Evaluate(float *s, float3 *out, int num_losses,
-                cudaStream_t stream) const override;
+  bool Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
 
-private:
+ private:
   float a_;
   float b_;
 };
 
-} // namespace cunls
+}  // namespace cunls

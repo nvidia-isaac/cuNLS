@@ -22,10 +22,11 @@ copyright = "2026, NVIDIA CORPORATION & AFFILIATES"
 extensions = [
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.mathjax",
+    "myst_parser",  # the agent guide is Markdown, shipped in the wheel
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "README.md"]
 
 html_theme = "nvidia_sphinx_theme"
 html_static_path = ["_static"]
@@ -40,3 +41,41 @@ highlight_language = "c++"
 primary_domain = "cpp"
 
 autosectionlabel_prefix_document = True
+
+
+# ---------------------------------------------------------------------------
+# llms.txt: an index of the documentation for LLM agents (https://llmstxt.org),
+# written into the HTML output at build time from the page titles, so it cannot
+# drift from the docs.
+# ---------------------------------------------------------------------------
+
+
+def _write_llms_txt(app, exception):
+    if exception is not None or app.builder.format != "html":
+        return
+    import pathlib
+
+    env = app.builder.env
+    head = [
+        "# cuNLS",
+        "",
+        "> GPU-accelerated nonlinear least squares (CUDA/C++, Python package pycunls): "
+        "model fitting, pose graphs, bundle adjustment, visual-inertial estimation, RANSAC, "
+        "constrained optimization and MPC.",
+        "",
+        "Start with the agent guide (also `python -m pycunls guide`). Check an install with "
+        "`python -m pycunls doctor`.",
+        "",
+        "## Pages",
+        "",
+    ]
+    pages = []
+    for doc in sorted(env.found_docs):
+        title = env.titles.get(doc)
+        text = title.astext() if title is not None else doc
+        pages.append(f"- [{text}]({app.builder.get_target_uri(doc)})")
+    (pathlib.Path(app.outdir) / "llms.txt").write_text("\n".join(head + pages) + "\n")
+
+
+def setup(app):
+    app.connect("build-finished", _write_llms_txt)

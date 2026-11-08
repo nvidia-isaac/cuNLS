@@ -203,7 +203,14 @@ struct RansacLevenbergMarquardtMinimizerOptions {
   float lambda_downscale_threshold = 0.75f;
 };
 
-/** @brief Result of a RANSAC minimization. */
+/**
+ * @brief Result of a RANSAC minimization (RansacMinimizer::Minimize()). The MinimizerSummary fields
+ * describe the final refinement: termination_reason is NoCostDecrease when
+ * it stopped on its own or its cost stopped changing, MaxIterations when it
+ * was still lowering the cost at final_iterations, NonFiniteStep when no hypothesis could be
+ * solved, and message summarizes rounds, inliers and refinement with hints when few inliers were
+ * found.
+ */
 struct RansacSummary : MinimizerSummary {
   /** @brief Rounds executed. */
   size_t num_rounds = 0;

@@ -1,5 +1,8 @@
 # Module: state
 
+> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
+> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
+
 ## Purpose
 
 Represents optimization variables in batched manifold form and provides `Plus`

@@ -225,7 +225,8 @@ class SizedStateBatch : public StateBatch {
       throw std::invalid_argument("SetNumActiveStates(" + std::to_string(num_active_states) + ", " +
                                   std::to_string(num_const_states) + ") exceeds the capacity (" +
                                   std::to_string(capacity_) + ", " +
-                                  std::to_string(const_capacity_) + ")");
+                                  std::to_string(const_capacity_) +
+                                  "). Fix: construct the batch with larger capacities.");
     }
     num_active_states_ = num_active_states;
     num_const_states_ = num_const_states;

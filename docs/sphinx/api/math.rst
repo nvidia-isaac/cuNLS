@@ -11,7 +11,9 @@ that Python wraps.
 
 Headers:
 
-- `cunls/math/lie_math.h`
+- `cunls/math/so_se_lie_math.h` (SO(2), SO(3), SE(2), SE(3))
+- `cunls/math/sim_lie_math.h` (Sim(2), Sim(3))
+- `cunls/math/sl_lie_math.h` (SL(4))
 - `cunls/math/dense_matrix_ops.h`
 
 Common parameter semantics
@@ -36,8 +38,8 @@ Returns
 
 - All functions in this module return `void`.
 
-Lie math API (`lie_math.h`)
----------------------------
+Lie math API (`so_se_lie_math.h`, `sim_lie_math.h`, `sl_lie_math.h`)
+---------------------------------------------------------------------
 
 SO(3) family
 ^^^^^^^^^^^^

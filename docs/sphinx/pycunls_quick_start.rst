@@ -12,6 +12,14 @@ Quick Start
 
 This section shows a minimal end-to-end Python setup with ``pycunls``.
 
+.. tip::
+
+   **The shortest path.** Fitting a model to data is one call,
+   ``pycunls.fit(model, x, y, p0)``; pose graphs and other problems with
+   built-in factors take a few lines with ``pycunls.ProblemBuilder``. Both build
+   everything below for you: see :doc:`simple_api`. Check an install with
+   ``python -m pycunls doctor``.
+
 .. note::
 
    **Using cuNLS from C++.** The same example written against the C++ API,

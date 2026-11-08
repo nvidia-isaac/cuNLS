@@ -18,7 +18,9 @@
 #include "cunls/minimizer/ransac/ransac_context.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <sstream>
 #include <vector>
 
 #include "cunls/common/helper.h"
@@ -226,6 +228,54 @@ void Refine(cudaStream_t stream, const RansacMinimizerOptions &options,
   ReadRefinement(stream, options, c, summary);
 }
 
+/**
+ * Whether the refinement's cost stopped changing over its last iterations (it
+ * can run to final_iterations at the minimum while its damping grows).
+ */
+bool Stalled(const RansacSummary &summary) {
+  const auto &costs = summary.iteration_costs;
+  if (costs.size() < 2) return false;
+  const float before = costs[costs.size() - 2], after = costs.back();
+  return std::isfinite(before) && std::isfinite(after) &&
+         before - after <= 1e-6f * std::max(std::fabs(before), 1e-30f);
+}
+
+/** RansacSummary::termination_reason and message (see RansacSummary). */
+void Describe(const RansacMinimizerOptions &options, size_t total_sampled, RansacSummary &summary) {
+  if (summary.num_valid_hypotheses == 0) {
+    summary.termination_reason = TerminationReason::NonFiniteStep;
+  } else if (!std::isfinite(summary.final_cost)) {
+    summary.termination_reason = TerminationReason::NonFiniteCost;
+  } else if (options.final_iterations > 0 && summary.num_iterations >= options.final_iterations &&
+             !Stalled(summary)) {
+    summary.termination_reason = TerminationReason::MaxIterations;
+  } else {
+    summary.termination_reason = TerminationReason::NoCostDecrease;
+  }
+  summary.num_problems_by_reason.assign(kNumTerminationReasons, 0);
+  summary.num_problems_by_reason[static_cast<int>(summary.termination_reason)] = 1;
+  std::ostringstream out;
+  out.precision(4);
+  out << "RANSAC: " << summary.num_rounds << " rounds, " << summary.num_hypotheses
+      << " hypotheses (" << summary.num_valid_hypotheses << " solvable); best estimate has "
+      << summary.num_inliers << " inliers of " << total_sampled << " sampled factors ("
+      << 100.f * summary.inlier_ratio << "%); refinement " << summary.num_iterations
+      << " iterations, cost " << summary.initial_cost << " -> " << summary.final_cost;
+  if (summary.refinement_reverted) out << " (refinement reverted: it worsened the score)";
+  out << ".";
+  if (summary.num_valid_hypotheses == 0) {
+    out << " No hypothesis could be solved: the minimal samples do not constrain the free "
+           "states (raise sample_size) or the factors return NaN at the initial states.";
+  } else if (summary.inlier_ratio < 0.2f) {
+    out << " Few inliers: check the inlier thresholds (default_inlier_threshold or the per "
+           "batch threshold, in residual units), the initial states, and that sample_size "
+           "factors determine the free states.";
+  } else if (summary.termination_reason == TerminationReason::MaxIterations) {
+    out << " The refinement hit final_iterations; raise it if the cost was still dropping.";
+  }
+  summary.message = out.str();
+}
+
 }  // namespace
 
 RansacSummary RunRansac(cudaStream_t stream, Problem &problem,
@@ -233,11 +283,17 @@ RansacSummary RunRansac(cudaStream_t stream, Problem &problem,
                         RansacContext &c) {
   if (c.stats.size() < 1) c.stats.resize(1);
   Prepare(stream, problem, options, c);
+  const auto start = std::chrono::steady_clock::now();
   RansacSummary summary;
   summary.initial_cost = InitialCost(stream, c);
   RunRounds(stream, options, settings, c, summary);
   Refine(stream, options, settings, c, summary);
   c.has_run = true;
+  summary.num_free_parameters = static_cast<size_t>(c.layout.dim());
+  Describe(options, static_cast<size_t>(c.layout.total_sampled()), summary);
+  summary.solve_time_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+  LogMessage("{}", summary.message);
   return summary;
 }
 

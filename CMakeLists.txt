@@ -195,6 +195,7 @@ if(BUILD_TESTING)
     tests/bsr_expansion.cu
     tests/factor_batch_test.cpp
     tests/problem_test.cpp
+    tests/termination_test.cpp
     tests/prior_vector_prior_factor_test.cpp
     tests/residual_batch_test.cpp
     tests/loss_function_test.cpp

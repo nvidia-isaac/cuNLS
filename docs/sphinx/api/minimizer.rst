@@ -239,21 +239,37 @@ column-scaling note in the theory section earlier on this page.
 
 Returned by ``Minimizer.minimize`` (``GaussNewtonMinimizer`` and
 ``LevenbergMarquardtMinimizer``).  All fields are read-only
-properties.
+properties. Check ``converged()`` first; ``message`` says why the solve stopped
+and what to try (see :doc:`../troubleshooting`).
 
 **Properties**
 
-- **num_iterations** (``int``) — total number of nonlinear iterations
-  executed (including rejected steps in LM).
-- **initial_cost** (``float``) — objective value :math:`S(x_0)` evaluated
-  before the first iteration.
+- **termination_reason** (``TerminationReason``) — why the solve stopped
+  (with a partition, the most severe reason of any subproblem).
+- **message** (``str``) — one or two sentences: the reason and, when not
+  converged, the likely causes and the fix.
+- **num_problems_by_reason** (``list[int]``) — subproblems per reason, indexed
+  by ``int(TerminationReason)``; empty for real-time solves.
+- **num_iterations** (``int``) — nonlinear iterations executed (each builds and
+  solves one linear system, including rejected steps in LM).
+- **initial_cost** (``float``) — objective value :math:`S(x_0)` before the
+  first iteration.
 - **final_cost** (``float``) — objective value at termination.
-- **iteration_costs** (``list[float]``) — per-iteration cost history.  The
-  list has ``num_iterations + 1`` entries: element 0 is ``initial_cost`` and
-  element *i* is the cost after iteration *i*.  Useful for convergence
-  plotting or debugging stalled solves.
+- **iteration_costs** (``list[float]``) — the cost at the start of each
+  iteration (``num_iterations`` entries; element 0 is ``initial_cost``).
+- **num_free_parameters** (``int``) — free tangent-space parameters.
+- **solve_time_ms** (``float``) — wall time of the call.
 
-``MinimizerSummary`` also supports ``repr()`` for quick inspection in a REPL.
+**Methods**
+
+- **converged()** — every subproblem stopped at a convergence criterion (or had
+  nothing to optimize).
+- **to_dict()** — JSON-ready dict (enums as names, NaN as ``None``).
+- **report()** — multi-line text, outcome first.
+
+``Minimizer.subproblem_termination_reasons()`` returns the reason of every
+subproblem of the last call as a NumPy int array. ``repr()`` gives a one-line
+summary.
 
 .. _py-lm-options-label:
 
@@ -678,16 +694,34 @@ Structures
 :code:`MinimizerSummary`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Returned by :cpp:func:`Minimizer::Minimize`. Holds solve statistics for
-inspecting iteration count and cost history. Costs are totals over all
-subproblems.
+Returned by :cpp:func:`Minimizer::Minimize`. Holds why the solve stopped and
+its statistics. Costs are totals over all subproblems.
 
+- **termination_reason** [out]: :code:`TerminationReason` — why the solve
+  stopped; with a partition the most severe (highest) reason of any
+  subproblem. :code:`NotDetermined` in real time.
+- **num_problems_by_reason** [out]: subproblems per reason (indexed by the
+  enumerator value; empty in real time).
+- **message** [out]: the reason and, when not converged, the likely causes and
+  the fix.
 - **num_iterations** [out]: Iterations performed (each builds and solves one
   linear system, including the last one that converged).
 - **initial_cost** [out]: Cost of the states passed in.
 - **final_cost** [out]: Cost of the states written back to the problem.
 - **iteration_costs** [out]: Cost at the start of each iteration (for plotting
   or debugging).
+- **num_free_parameters** [out]: free tangent-space parameters.
+- **solve_time_ms** [out]: wall time of the call.
+- **Converged()**: true when every subproblem stopped at a convergence
+  criterion (:code:`IsConvergence(reason)`) or had nothing to optimize.
+
+:code:`TerminationReason` (ordered by severity): :code:`NotDetermined`,
+:code:`NoFreeStates`, :code:`CostTolerance`, :code:`StateTolerance`,
+:code:`RelativeReductionTolerance`, :code:`NoCostDecrease` (the convergence
+reasons), :code:`MaxIterations`, :code:`MaxRejectedSteps`,
+:code:`NonFiniteStep`, :code:`NonFiniteCost`; :code:`ToString(reason)` names
+one. :code:`Minimizer::SubproblemTerminationReasons()` is a device array with
+the reason of every subproblem of the last call. See :doc:`../troubleshooting`.
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 :code:`MinimizerOptions`

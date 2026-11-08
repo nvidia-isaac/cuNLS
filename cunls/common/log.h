@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include <functional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -51,7 +52,34 @@ void SetLoggerOptions(Verbosity verbosity, Sink sink = Sink::Console,
                       const std::string &file_path = "");
 
 /**
+ * @brief Receives every log message that passes the verbosity level
+ * (SetLoggerOptions) instead of the console / file sinks.
+ *
+ * May be called from any thread that runs cuNLS work; must not throw.
+ */
+using LogCallback = std::function<void(Verbosity verbosity, std::string_view msg)>;
+
+/**
+ * @brief Sends log messages to `callback` instead of the spdlog sinks (e.g.
+ * to forward them to Python's logging module). An empty callback restores the
+ * sinks. The verbosity level still filters what reaches the callback.
+ */
+void SetLogCallback(LogCallback callback);
+
+/**
+ * @brief Parses a verbosity name ("silent", "error", "warning", "message",
+ * "debug"; case-insensitive, also "info" for message and "warn" for warning).
+ *
+ * @throws std::invalid_argument for any other name, listing the valid ones.
+ */
+Verbosity ParseVerbosity(std::string_view name);
+
+/**
  * @brief Logs a message at the given verbosity level.
+ *
+ * Until SetLoggerOptions() is called, the level comes from the environment
+ * variable CUNLS_LOG_LEVEL (a ParseVerbosity name), and is Silent without
+ * it.
  *
  * @param verbosity The severity level of this message.
  * @param msg       The message string to log.

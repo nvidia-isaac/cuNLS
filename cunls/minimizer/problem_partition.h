@@ -108,8 +108,9 @@ class ProblemPartition {
 
   /**
    * @brief Starts a Minimize() call: the costs in Cost() become the current
-   * costs; subproblems below `cost_tolerance` or with a nonzero `frozen` entry
-   * (may be null) are inactive. Writes [total cost, active count] to `d_out`.
+   * costs; subproblems below `cost_tolerance`, with a non-finite cost, or with
+   * a nonzero `frozen` entry (may be null) are inactive (Termination():
+   * CostTolerance, NonFiniteCost, NotDetermined). Writes [total cost, active count] to `d_out`.
    */
   void InitStepControl(cudaStream_t stream, float cost_tolerance, const int *frozen, float *d_out);
 
@@ -127,11 +128,21 @@ class ProblemPartition {
    * non-finite cost is rejected; with line search, a shortened or rejected
    * step that lowers the cost is taken; a converged subproblem stops, taking
    * its step if the cost did not rise; a rejection counts towards the cap.
+   * A subproblem that stops records its TerminationReason in Termination():
+   * the Converged() code, or MaxRejectedSteps / NonFiniteStep at the cap.
    * Writes Outcome(), the accepted costs into Cost(), and [total cost, active
    * count] into `d_out`; with one subproblem also d_out[2] = 1 if its step was
    * taken (`d_out` must then hold 3 floats).
    */
   void StepControl(cudaStream_t stream, const StepControlParams &params, float *d_out);
+
+  /**
+   * @brief Ends a Minimize() call: subproblems still active get
+   * MaxIterations in Termination(), and `d_counts` (kNumTerminationReasons
+   * unsigned ints, zeroed here) receives the number of subproblems per
+   * TerminationReason.
+   */
+  void FinishTermination(cudaStream_t stream, unsigned int *d_counts);
 
   /** @brief Clears the shortened flags of the line search (start of an iteration). */
   void ResetLineSearch(cudaStream_t stream);
@@ -147,14 +158,21 @@ class ProblemPartition {
   float *StepSquared() { return step_squared_.data(); }  ///< ‖δ‖² of the (shortened) step.
   const float *StepSquared() const { return step_squared_.data(); }
   const float *StepScale() const { return step_scale_.data(); }  ///< Line-search scale.
-  int *Reject() { return reject_.data(); }        ///< Written by Minimizer::ClassifySteps.
-  int *Converged() { return converged_.data(); }  ///< Written by Minimizer::ClassifySteps.
+  int *Reject() { return reject_.data(); }  ///< Written by Minimizer::ClassifySteps.
+  /// Written by Minimizer::ClassifySteps: 0 or a convergence TerminationReason value.
+  int *Converged() { return converged_.data(); }
   /** @brief Nonzero for subproblems still iterating. */
   const int *Active() const { return active_.data(); }
   /** @brief StepOutcome of the last StepControl. */
   const int *Outcome() const { return outcome_.data(); }
   /** @brief Consecutive rejections, including the last StepControl's. */
   const int *Rejected() const { return rejected_.data(); }
+  /**
+   * @brief TerminationReason value per subproblem: set when a subproblem
+   * stops (InitStepControl, StepControl), and MaxIterations for the ones
+   * still active after FinishTermination(); NotDetermined while active.
+   */
+  const int *Termination() const { return termination_.data(); }
   /** @} */
 
   /**
@@ -178,6 +196,7 @@ class ProblemPartition {
   dvector<float> partials_;      ///< Reduction partials (one subproblem).
   dvector<float> cost_, new_cost_, step_squared_, step_scale_;
   dvector<int> active_, rejected_, reject_, converged_, outcome_, accept_, shortened_;
+  dvector<int> termination_;  ///< TerminationReason per subproblem.
 };
 
 }  // namespace cunls

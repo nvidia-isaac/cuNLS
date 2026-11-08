@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include <string>
 #include <vector>
 
 #include "cunls/common/types.h"
@@ -129,6 +130,9 @@ enum class AugmentedLagrangianMinimizerStatus {
   kConverged = 0,           ///< Every subproblem is feasible and stationary.
   kMaxOuterIterations = 1,  ///< Some subproblem ran out of outer iterations.
   kMaxPenalty = 2,          ///< Some subproblem cannot reduce its violation at ρ_max.
+  /// Convergence was not checked: a real-time (fixed-iteration) call without
+  /// constraint batches reads nothing back, so nothing is known about it.
+  kNotDetermined = 3,
 };
 
 /** @brief Result of AugmentedLagrangianMinimizer::Minimize. */
@@ -148,10 +152,26 @@ struct AugmentedLagrangianMinimizerSummary {
   float initial_cost = 0.f;
   float final_cost = 0.f;
 
-  /** @brief Subproblems in total, converged and stopped at the penalty cap. */
+  /**
+   * @brief Subproblems in total, converged and stopped at the penalty cap.
+   * num_converged counts only established convergence (not kNotDetermined).
+   */
   size_t num_problems = 1;
   size_t num_converged = 0;
   size_t num_max_penalty = 0;
+
+  /**
+   * @brief One or two sentences for a person or an agent: the outcome and,
+   * when not converged, the likely causes and what to try. Without
+   * constraint batches, the wrapped minimizer's MinimizerSummary::message.
+   */
+  std::string message;
+
+  /** @brief Wall time of the Minimize() call in milliseconds. */
+  double solve_time_ms = 0.0;
+
+  /** @brief status == kConverged. */
+  bool Converged() const { return status == AugmentedLagrangianMinimizerStatus::kConverged; }
 };
 
 namespace internal {

@@ -1,12 +1,18 @@
 # Module: math
 
+> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
+> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
+
 ## Purpose
 
 Low-level math kernels and Lie-group utilities used by factors/states.
 
 ## Key files
 
-- `lie_math.h` / `lie_math.cu`: Lie operations for SO/SE/Sim groups.
+- `so_se_lie_math.h` / `.cu`: SO(2), SO(3), SE(2), SE(3) operations (exp, log,
+  adjoints, Jacobians); `sim_lie_math.h` / `.cu`: Sim(2), Sim(3);
+  `sl_lie_math.h` / `.cu`: SL(4); `lie_device.cuh`: device-side helpers shared by
+  the kernels.
 - `dense_matrix_ops.h` / `dense_matrix_ops.cu`: dense matrix helper kernels.
 
 ## Usage notes

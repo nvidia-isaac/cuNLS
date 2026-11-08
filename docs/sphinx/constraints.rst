@@ -60,6 +60,12 @@ Python example
    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
    summary = solver.minimize(pycunls.CudaStream(), problem)
    print(summary.status, summary.max_violation, summary.outer_iterations)
+   print(summary.message)   # the outcome and, when not converged, what to try
+
+``summary.status`` is an ``AugmentedLagrangianMinimizerStatus``: ``Converged``,
+``MaxOuterIterations`` (raise ``max_outer_iterations`` or ``initial_penalty``) or
+``MaxPenalty`` (the constraints are likely infeasible); ``summary.converged()``
+is ``status == Converged``.
 
 ``AugmentedLagrangianMinimizer`` works on any problem: without constraint batches it
 is the wrapped minimizer.

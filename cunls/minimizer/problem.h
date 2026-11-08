@@ -213,6 +213,15 @@ class Problem {
   bool Validate(cudaStream_t stream) const;
 
   /**
+   * @brief The checks of Validate(), returning the first failure as a message
+   * that names the batch and entry and says how to fix it; empty when the
+   * problem is well-formed. Also reports the size errors of CheckSizes().
+   *
+   * @param stream CUDA stream; synchronized before returning.
+   */
+  std::string FindStructureError(cudaStream_t stream) const;
+
+  /**
    * @brief Brings every residual batch's device pointer table up to date for
    * a solve: index tables are expanded into pointers (one kernel each, on
    * `stream`). Called by the minimizers at the start of every Minimize.

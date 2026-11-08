@@ -21,8 +21,14 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cstdlib>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
 namespace cunls {
 
 /// Tracks whether the global logger has been initialized.
@@ -95,19 +101,69 @@ void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string &path) {
   spdlog::set_default_logger(logger);
 }
 
+namespace {
+std::mutex callback_mutex;
+std::shared_ptr<LogCallback> log_callback;  ///< SetLogCallback(); null: spdlog sinks.
+}  // namespace
+
+void SetLogCallback(LogCallback callback) {
+  std::shared_ptr<LogCallback> replaced =
+      callback ? std::make_shared<LogCallback>(std::move(callback)) : nullptr;
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex);
+    log_callback.swap(replaced);
+  }
+  // The old callback is released here, outside the lock: its destructor may take other locks
+  // (e.g. the Python GIL) and must not do so while holding callback_mutex.
+}
+
+Verbosity ParseVerbosity(std::string_view name) {
+  std::string lower(name);
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (lower == "silent" || lower == "off") return Verbosity::Silent;
+  if (lower == "error") return Verbosity::Error;
+  if (lower == "warning" || lower == "warn") return Verbosity::Warning;
+  if (lower == "message" || lower == "info") return Verbosity::Message;
+  if (lower == "debug") return Verbosity::Debug;
+  throw std::invalid_argument("ParseVerbosity: unknown verbosity '" + std::string(name) +
+                              "'; expected one of silent, error, warning, message, debug");
+}
+
 /**
- * @brief Logs a message at the specified verbosity via spdlog.
+ * @brief Logs a message at the specified verbosity via spdlog (or the
+ * SetLogCallback() callback).
  *
- * Lazily initializes the logger with Silent verbosity if it hasn't been
- * configured yet via SetLoggerOptions.
+ * Lazily initializes the logger from CUNLS_LOG_LEVEL (Silent without it) if it
+ * hasn't been configured yet via SetLoggerOptions.
  */
 void Log(Verbosity verbosity, std::string_view msg) {
   if (!is_logger_initialized.load(std::memory_order_acquire)) {
-    SetLoggerOptions(Verbosity::Silent);
-    is_logger_initialized.store(true, std::memory_order_release);
+    Verbosity level = Verbosity::Silent;
+    if (const char *env = std::getenv("CUNLS_LOG_LEVEL")) {
+      try {
+        level = ParseVerbosity(env);
+      } catch (const std::invalid_argument &) {
+        level = Verbosity::Warning;
+        spdlog::warn(
+            "CUNLS_LOG_LEVEL='{}' is not a level (silent, error, warning, message, "
+            "debug); using warning",
+            env);
+      }
+    }
+    SetLoggerOptions(level);
   }
 
   spdlog::level::level_enum log_level = GetLogLevel(verbosity);
+  std::shared_ptr<LogCallback> callback;
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex);
+    callback = log_callback;
+  }
+  if (callback) {
+    if (spdlog::should_log(log_level)) (*callback)(verbosity, msg);
+    return;
+  }
   spdlog::log(log_level, msg);
 }
 

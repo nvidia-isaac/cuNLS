@@ -35,8 +35,8 @@ constexpr const char *kCudssMissingMessage =
     "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/ (or "
     "install your platform's cudss package), then add the directory containing "
     "libcudss.so to LD_LIBRARY_PATH before creating a cuDSS solver. Other cunls "
-    "solvers (DenseLDLT, DenseCholesky, DenseQR, BlockSparsePCG) do not require "
-    "cuDSS and are unaffected.";
+    "solvers (BlockSparseCholesky, the default, BlockSparsePCG and the dense ones) "
+    "do not require cuDSS and are unaffected.";
 
 /**
  * @brief Resolves a cuDSS symbol, throwing a descriptive error if missing.

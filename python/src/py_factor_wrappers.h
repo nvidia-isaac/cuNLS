@@ -62,6 +62,7 @@ class PyInformationFactorBatch : public cunls::FactorBatch {
   size_t Capacity() const override;                              // of the wrapped batch
   void SetNumActiveFactors(size_t num_active_factors) override;  // forwarded to the wrapped batch
   std::vector<size_t> StateSizes() const override;
+  cunls::FactorBatch *Inner() const { return inner_; }  // the wrapped batch (not owned)
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
@@ -85,6 +86,7 @@ class PyWeightedFactorBatch : public cunls::FactorBatch {
   size_t Capacity() const override;                              // of the wrapped batch
   void SetNumActiveFactors(size_t num_active_factors) override;  // forwarded to the wrapped batch
   std::vector<size_t> StateSizes() const override;
+  cunls::FactorBatch *Inner() const { return inner_; }  // the wrapped batch (not owned)
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,

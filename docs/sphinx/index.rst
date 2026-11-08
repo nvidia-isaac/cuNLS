@@ -35,7 +35,9 @@ Getting Started
    introduction
    pycunls_installation
    pycunls_quick_start
+   simple_api
    pycunls_tutorial
+   agent_guide
 
 ===============================================================================
 Guides
@@ -44,6 +46,7 @@ Guides
 .. toctree::
    :maxdepth: 2
 
+   troubleshooting
    ransac
    constraints
    dynamics

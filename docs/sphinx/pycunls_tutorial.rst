@@ -4,19 +4,30 @@ Tutorial
 
 .. important::
 
-   **Capacity vs. active count.** Factor and state batches are constructed with
-   their *capacity* (how many factors / states their buffers hold) and
-   start with **zero** active entries: call ``set_num_active_factors(n)`` /
-   ``set_num_active_states(n)`` before solving, and again whenever the problem
-   size changes. See :ref:`capacity-and-active-count`.
+   **Capacity vs. active count** (the custom Warp examples and the full API).
+   Factor and state batches are constructed with their *capacity* (how many
+   factors / states their buffers hold) and start with **zero** active
+   entries: call ``set_num_active_factors(n)`` / ``set_num_active_states(n)``
+   before solving, and again whenever the problem size changes. See
+   :ref:`capacity-and-active-count`. ``pycunls.ProblemBuilder`` (the first two
+   examples) does this for you.
 
 ===============================================================================
 Overview
 ===============================================================================
 
 This tutorial walks through four complete pycunls examples, each demonstrating
-a different optimization pattern. Every example follows the same high-level
-flow described in the :doc:`introduction`:
+a different optimization pattern. The first two build their problems with
+:doc:`pycunls.ProblemBuilder <simple_api>` from NumPy arrays:
+
+1. Add the states from their initial values (``add_states``).
+2. Add the factors from their measurements and the states each one connects
+   (``add_factors``).
+3. Solve (``solve``: checks the problem, then runs a minimizer) and read the
+   states back as NumPy.
+
+The two custom Warp examples use the full API, which the builder sets up
+underneath (the flow of the :doc:`introduction` and :doc:`pycunls_quick_start`):
 
 1. Allocate state data on the GPU (CuPy arrays).
 2. Wrap the GPU memory in one or more
@@ -67,7 +78,7 @@ Sparse Bundle Adjustment
 SBA problem statement
 ---------------------
 
-This is a Python port of the C++ bundle adjustment example (see
+This is the Python version of the C++ bundle adjustment example (see
 :ref:`tutorial:Sparse Bundle Adjustment` for the full mathematical
 formulation). Given :math:`M` cameras with poses
 :math:`T_1, \ldots, T_M \in \mathrm{SE}(3)` (world_from_camera) and :math:`N` 3D landmarks
@@ -92,21 +103,17 @@ SBA API used
 
    * - Class
      - Role
+   * - :doc:`ProblemBuilder <simple_api>`
+     - Builds the problem from NumPy arrays, checks it, solves it and returns
+       the states as NumPy.
    * - :ref:`SE3StateBatch <py-lie-state-batches>`
-     - Stores camera poses (world_from_camera) on the SE(3) manifold. The
-       first two poses are marked constant via ``const_state_ids`` (frame and
-       scale gauge); the rest are optimized.
+     - Camera poses (world_from_camera) on the SE(3) manifold; the first two
+       are constant (frame and scale gauge).
    * - :ref:`VectorStateBatch3 <py-vector-state-batches>`
-     - Stores 3D landmark coordinates in :math:`\mathbb{R}^3`. All points
-       are optimization variables.
+     - 3D landmark coordinates in :math:`\mathbb{R}^3`.
    * - :ref:`ReprojectionFactorBatch <py-reprojection-factor>`
-     - Computes normalized reprojection residuals and Jacobians for each
-       (pose, point) pair.
-   * - :ref:`Problem <py-problem-label>`
-     - Assembles the factor graph.
-   * - :ref:`LevenbergMarquardtMinimizer <py-lm-label>`
-     - Iteratively solves the nonlinear least-squares problem with adaptive
-       damping.
+     - Normalized reprojection residual and Jacobians of each (pose, point)
+       pair.
 
 SBA code walkthrough
 ~~~~~~~~~~~~~~~~~~~~
@@ -124,9 +131,10 @@ generators are ordinary NumPy code and are not part of the lesson.
    :end-before: # 2.
    :dedent: 4
 
-**Step 2 — Upload to the GPU.**
-CuPy arrays hold the device data. Poses are row-major 4x4 matrices
-(16 floats each). The solver updates ``poses_gpu`` and ``points_gpu`` in place.
+**Step 2 — Add the state batches.**
+``add_states`` takes the class and the initial values (``(N, 4, 4)`` row-major
+poses, ``(M, 3)`` points); ``constant`` lists the states held fixed. It returns
+a handle for connecting factors and reading the solution.
 
 .. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
    :language: python
@@ -134,19 +142,12 @@ CuPy arrays hold the device data. Poses are row-major 4x4 matrices
    :end-before: # 3.
    :dedent: 4
 
-**Step 3 — Build the state batches.**
-:ref:`SE3StateBatch <py-lie-state-batches>` with poses 0 and 1 constant
-(gauge anchors) and :ref:`VectorStateBatch3 <py-vector-state-batches>` for the points.
-
-**Capacity and active count.** The count passed to a batch constructor is
-its *capacity*: how many states (state batches) or factors (factor batches)
-the bound device buffers hold, fixed for the batch's lifetime. Right after
-construction nothing is active. ``set_num_active_states`` /
-``set_num_active_factors`` set the *active count*: how many of the first
-states or factors the next solve uses. They are host-only (no allocation) and may be
-called again between solves with any count up to the capacity, so one set of
-batches serves problems of changing size. In this example every slot is
-used, so active = capacity.
+**Step 3 — Add the reprojection factors.**
+``add_factors`` takes the class, its measurement arrays (``pycunls.describe``
+lists them) and ``connect``: which states each factor reads. A reprojection
+factor reads ``[pose, point]`` from two batches, so ``connect`` has one
+``(handle, indices)`` pair per slot. Shapes, state types and index ranges are
+checked here, with the fix in the message.
 
 .. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
    :language: python
@@ -154,10 +155,12 @@ used, so active = capacity.
    :end-before: # 4.
    :dedent: 4
 
-**Step 4 — Build the reprojection factor batch and its state pointers.**
-Each factor reads ``[pose, point]``: the state-pointer list is flattened in
-factor order, two device pointers per factor. The factor batch also starts
-with 0 active factors; ``set_num_active_factors`` activates them.
+**Step 4 — Solve on the Schur complement.**
+Options go by name (fields of ``MinimizerOptions`` and
+``LevenbergMarquardtMinimizerOptions``). Eliminating the points is a setting
+of the underlying ``Problem`` (``pb.problem``), the full API the builder
+created. ``solve`` runs ``pycunls.diagnose`` first and writes the solution into
+the state arrays.
 
 .. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
    :language: python
@@ -165,34 +168,15 @@ with 0 active factors; ``set_num_active_factors`` activates them.
    :end-before: # 5.
    :dedent: 4
 
-**Step 5 — Assemble the problem.**
-Register the state batches and the factor batch.
+**Step 5 — Read back and validate.**
+``result[points]`` is the solved ``(M, 3)`` NumPy array; ``result.converged``
+and ``result.message`` say how the solve ended.
 
 .. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
    :language: python
    :start-at: # 5.
-   :end-before: # 6.
-   :dedent: 4
-
-**Step 6 — Solve with Levenberg-Marquardt.**
-``minimize`` writes the solution into the state batches' memory.
-
-.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
-   :language: python
-   :start-at: # 6.
-   :end-before: # 7.
-   :dedent: 4
-
-**Step 7 — Read back and validate.**
-Copy the points back, compare with the ground truth, print and check.
-
-.. literalinclude:: ../../python/examples/sparse_bundle_adjustment.py
-   :language: python
-   :start-at: # 7.
    :end-before: if __name__
    :dedent: 4
-
-
 
 ===============================================================================
 Pose Graph Optimization
@@ -203,7 +187,7 @@ Pose Graph Optimization
 PGO problem statement
 ---------------------
 
-This is a Python port of the C++ pose graph example (see
+This is the Python version of the C++ pose graph example (see
 :ref:`tutorial:Pose Graph Optimization` for the full mathematical
 formulation). A chain of :math:`N` SE(3) poses is connected by
 :math:`N{-}1` between constraints. The residual for constraint :math:`i`
@@ -226,16 +210,12 @@ PGO API used
 
    * - Class
      - Role
+   * - :doc:`ProblemBuilder <simple_api>`
+     - Builds, checks and solves the problem from NumPy arrays.
    * - :ref:`SE3StateBatch <py-lie-state-batches>`
-     - A single instance stores the full pose chain. The first pose is
-       marked constant; the rest are optimized.
+     - The pose chain; the first pose is constant.
    * - :ref:`SE3BetweenFactorBatch <py-se3-between-factor>`
-     - Computes the relative-transform residual and its Jacobians w.r.t.
-       both poses.
-   * - :ref:`Problem <py-problem-label>`
-     - Assembles the factor graph.
-   * - :ref:`LevenbergMarquardtMinimizer <py-lm-label>`
-     - Solves the nonlinear system.
+     - Relative-transform residual and its Jacobians w.r.t. both poses.
 
 PGO code walkthrough
 ~~~~~~~~~~~~~~~~~~~~
@@ -252,9 +232,10 @@ generators are ordinary NumPy code and are not part of the lesson.
    :end-before: # 2.
    :dedent: 4
 
-**Step 2 — Upload to the GPU.**
-Poses and measurements as row-major 4x4 matrices; pose 0 is the gauge
-anchor.
+**Step 2 — Build the graph.**
+One state batch with pose 0 constant; factor :math:`i` connects
+``[T_i, T_{i+1}]`` through an ``(N-1, 2)`` edge array. Note the between
+convention: ``Delta_i = T_{i+1}^-1 T_i``.
 
 .. literalinclude:: ../../python/examples/pose_graph_optimization.py
    :language: python
@@ -262,11 +243,9 @@ anchor.
    :end-before: # 3.
    :dedent: 4
 
-**Step 3 — Build the state batch and the between factors.**
-One :ref:`SE3StateBatch <py-lie-state-batches>`; factor :math:`i` of the
-:ref:`SE3BetweenFactorBatch <py-se3-between-factor>` reads ``[T_i, T_{i+1}]``.
-Both are constructed with their capacity and activated with
-``set_num_active_states`` / ``set_num_active_factors``.
+**Step 3 — Solve with Levenberg-Marquardt.**
+The checks run first: without ``constant=[0]`` the builder would warn about
+the gauge freedom of the chain.
 
 .. literalinclude:: ../../python/examples/pose_graph_optimization.py
    :language: python
@@ -274,8 +253,9 @@ Both are constructed with their capacity and activated with
    :end-before: # 4.
    :dedent: 4
 
-**Step 4 — Assemble the problem.**
-Register the state batch and the factor batch.
+**Step 4 — Read back and check.**
+``result.evaluate()`` prints the residual statistics per factor batch (RMS,
+worst factor), the first thing to look at when a solve disappoints.
 
 .. literalinclude:: ../../python/examples/pose_graph_optimization.py
    :language: python
@@ -283,25 +263,16 @@ Register the state batch and the factor batch.
    :end-before: # 5.
    :dedent: 4
 
-**Step 5 — Solve with Levenberg-Marquardt.**
-Same solver as in the bundle adjustment example.
+**Step 5 — The full API underneath.**
+The builder's objects stay reachable for real-time use, where batches are
+allocated once and re-solved with changing active counts (see
+:doc:`pycunls_quick_start` and ``python/examples/tartan_vio.py``).
 
 .. literalinclude:: ../../python/examples/pose_graph_optimization.py
    :language: python
    :start-at: # 5.
-   :end-before: # 6.
-   :dedent: 4
-
-**Step 6 — Report and check.**
-Print the summary and check that the cost dropped.
-
-.. literalinclude:: ../../python/examples/pose_graph_optimization.py
-   :language: python
-   :start-at: # 6.
    :end-before: if __name__
    :dedent: 4
-
-
 
 ===============================================================================
 Custom Warp Factor

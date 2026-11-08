@@ -6,8 +6,9 @@ visualization).
 
 | Example | What it shows |
 |---|---|
-| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with CuPy, landmarks eliminated by a Schur complement |
-| `pose_graph_optimization.py` | SE(3) pose-graph optimization with CuPy |
+| `model_fitting.py` | `pycunls.fit` in six scenes: one curve with errors, 20,000 curves in one call, outliers, bounds, multiple starts, and the reduced chi-square model check |
+| `sparse_bundle_adjustment.py` | Joint camera-pose and landmark optimization with `pycunls.ProblemBuilder` (two state types, per-slot connectivity), landmarks eliminated by a Schur complement |
+| `pose_graph_optimization.py` | SE(3) pose-graph optimization with `pycunls.ProblemBuilder`: NumPy poses and an edge list in, solved poses out |
 | `custom_warp_factor.py` | A custom factor kernel written with NVIDIA Warp |
 | `custom_warp_state.py` | A custom state batch (positive-scalar manifold) written with NVIDIA Warp |
 | `ransac_pnp.py` | Robust PnP with 50% outliers using `RansacLevenbergMarquardtMinimizer` |
