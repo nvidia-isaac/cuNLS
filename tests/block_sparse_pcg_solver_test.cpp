@@ -414,8 +414,6 @@ constexpr int kBaMaxBodiesPerPoint = 24;
 
 }  // namespace
 
-// About 1.4 M rows: the PCG kernels launch more CTAs than fit on a GPU at once,
-// and every CTA of the direction update must use the same beta.
 // Options that cannot work are rejected at construction with the value and a fix
 // (check_period < 1 used to be clamped to 1 silently).
 TEST(BlockSparsePCGSolverTest, RejectsInvalidOptions) {
@@ -473,6 +471,8 @@ TEST(BlockSparsePCGSolverTest, DerivedLayoutDoesNotOverwriteTheOptions) {
   EXPECT_EQ(std::memcmp(x.data(), expected.data(), x.size() * sizeof(float)), 0);
 }
 
+// About 1.4 M rows: the PCG kernels launch more CTAs than fit on a GPU at once,
+// and every CTA of the direction update must use the same beta.
 TEST(BlockSparsePCGSolverTest, MatchesReferencePcgIteratesOnLargeSystem) {
   constexpr int kIterations = 8;
   const System s = MakeBundleAdjustmentSystem(40000, 400000, 1);

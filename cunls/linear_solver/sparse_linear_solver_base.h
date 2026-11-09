@@ -133,7 +133,10 @@ class SparseLinearSolver {
    * The dense backends, BlockSparseCholesky and BlockTridiagonal copy a
    * device-side status flag back to the host after factorization and
    * synchronize the stream to detect singular or non-positive-definite
-   * matrices.  Skipping that removes a device-to-host
+   * matrices.  Exception: BlockSparseCholesky treats a pivot within 1e-5 of
+   * zero (relative to its diagonal entry) as a rank deficiency and fixes that
+   * unknown at zero, even with the checks on, so a successful solve does not
+   * prove the system was fully constrained.  Skipping that removes a device-to-host
    * memcpy, a stream synchronization, and (for LDLT) in-kernel pivot checks,
    * which can be a significant fraction of the solve time for small systems.
    *

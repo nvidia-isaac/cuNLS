@@ -754,7 +754,11 @@ TEST_P(LoopClosurePGOTest, Optimize) {
   }
   EXPECT_TRUE(std::isfinite(summary.initial_cost));
   EXPECT_TRUE(std::isfinite(summary.final_cost));
-  EXPECT_LE(summary.final_cost, summary.initial_cost + 1e-3f);
+  // The loop closures are exact (from the ground truth): a working solve
+  // at least halves the initial cost; failed (non-finite) steps leave it.
+  EXPECT_NE(summary.termination_reason, TerminationReason::NonFiniteStep) << summary.message;
+  EXPECT_NE(summary.termination_reason, TerminationReason::NonFiniteCost) << summary.message;
+  EXPECT_LT(summary.final_cost, 0.5f * summary.initial_cost) << summary.message;
 }
 
 INSTANTIATE_TEST_SUITE_P(Sizes, LoopClosurePGOTest,
@@ -767,6 +771,7 @@ INSTANTIATE_TEST_SUITE_P(Sizes, LoopClosurePGOTest,
 // factor so much that BlockSparseCholesky's relative map has ~3.9e9 entries
 // (factor ~1e9), past the 32-bit offsets it used to have
 // ("the relative map exceeds 2^31 entries"). Run with
+// CUNLS_SOLVER=BlockSparseCholesky (the default) and
 // --gtest_also_run_disabled_tests --gtest_filter='DISABLED_HugeFill/*'.
 INSTANTIATE_TEST_SUITE_P(DISABLED_HugeFill, LoopClosurePGOTest,
                          ::testing::Values(LcPgoParams{20000, 40000, "P20k_LC40k"}));

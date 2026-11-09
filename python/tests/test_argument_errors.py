@@ -116,3 +116,8 @@ def test_too_small_bounds_are_rejected():
     states = pycunls.VectorStateBatch3(cp.zeros(9, cp.float32), 3)
     with pytest.raises(ValueError, match="upper has 6 float32 values, but 9 are needed"):
         states.set_bounds(cp.zeros(9, cp.float32), cp.zeros(6, cp.float32))
+
+
+def test_capacity_that_overflows_the_size_is_rejected():
+    with pytest.raises(ValueError, match="overflows size_t"):
+        pycunls.BoundFactorBatch3(cp.zeros(9, cp.float32), cp.zeros(9, cp.float32), 2**63)

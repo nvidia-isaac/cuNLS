@@ -651,7 +651,9 @@ Integer enum selecting the linear-system backend.
 - ``SparseLinearSolverType.BlockTridiagonal`` — block Cholesky of systems that
   are block tridiagonal in time (trajectory optimization, MPC): needs every
   state's stage (``Problem.set_state_stages``), stage blocks of at most 32
-  unknowns, one warp per subproblem and no host synchronization.
+  unknowns, one warp per subproblem. ``Initialize`` synchronizes; ``Solve``
+  is free of host synchronization (CUDA-graph capturable) only with safety
+  checks disabled.
 
 .. _py-minimizer-example-label:
 

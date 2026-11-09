@@ -41,7 +41,8 @@ Enum in `cunls/linear_solver/sparse_linear_solver.h`:
   block tridiagonal in time: trajectory optimization and MPC, one subproblem per
   trajectory.  Needs every state's stage (``Problem::SetStateStages``); factors may
   only couple the same or adjacent stages, stage blocks of at most 32 unknowns.
-  One warp per subproblem, no host synchronization (CUDA-graph capturable).
+  One warp per subproblem; ``Solve`` has no host synchronization (CUDA-graph
+  capturable) when safety checks are disabled.
   See `BlockTridiagonalSolver`_.
 
 SparseLinearSolverConfig
@@ -318,6 +319,7 @@ Concrete implementation in `cudss_sparse_linear_solver.h`.
 
   :param ``stream``: [in] CUDA stream for asynchronous GPU operations. Also
     used to lazily initialize the internal cuDSS handle on first call.
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] SPD matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -334,6 +336,7 @@ Concrete implementation in `dense_linear_solver.h`.
   pivoted LDLT pipeline.
 
   :param ``stream``: [in] CUDA stream (unused; buffers are allocated synchronously).
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] Symmetric matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -368,6 +371,7 @@ Concrete implementation in `dense_cholesky_solver.h`. Uses the cuSOLVER
   cuSOLVER workspace for the given matrix size.
 
   :param ``stream``: [in] CUDA stream used to query the cuSOLVER workspace size.
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] SPD matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -403,6 +407,7 @@ Works for any non-singular square matrix (not limited to SPD).
   tau vector, and the cuSOLVER workspace for the given matrix size.
 
   :param ``stream``: [in] CUDA stream used to query the cuSOLVER workspace size.
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] Matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
