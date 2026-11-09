@@ -288,69 +288,47 @@ TEST(MotionPriorInformationTest, InformationFactorBatchFusesWeightIntoResidualAn
   }
 }
 
-// Smoke test: every named alias constructs and evaluates without error, on
-// a single trivial (identity pose, zero velocity/acceleration) factor.
-TEST(MotionPriorInformationTest, AllConvenienceAliasesConstructAndEvaluate) {
+// Builds `Alias` for one factor at identity poses (row-major `kSide` x `kSide`)
+// and zero motion derivatives (`kDerivatives` of tangent size `kTangent`, two
+// time steps each) and evaluates it: the residual is zero and finite Jacobians
+// come out.
+template <class Alias, int kSide, int kTangent, int kDerivatives>
+void ExpectAliasEvaluatesAtRest() {
   CudaStream stream;
   dvector<float> dt_dev(std::vector<float>{0.1f});
+  dvector<float> qc_dev(std::vector<float>(kTangent, 1.f));
+  Alias fb(stream.GetStream(), dt_dev.data(), qc_dev.data(), 1);
+  fb.SetNumActiveFactors(fb.Capacity());
+  std::vector<float> identity(kSide * kSide, 0.f);
+  for (int i = 0; i < kSide; ++i) identity[i * kSide + i] = 1.f;
+  dvector<float> poses_dev(identity);
+  dvector<float> pose2_dev(identity);
+  dvector<float> zero_dev(std::vector<float>(2 * kDerivatives * kTangent, 0.f));
+  std::vector<const float *> ptrs = {poses_dev.data(), pose2_dev.data()};
+  for (int d = 0; d < 2 * kDerivatives; ++d) ptrs.push_back(zero_dev.data() + d * kTangent);
+  dvector<const float *> ptrs_dev(ptrs);
+  const size_t m = fb.ResidualsSize();
+  const size_t cols = 2 * (1 + kDerivatives) * kTangent;
+  dvector<float> res(m), jac(m * cols);
+  ASSERT_TRUE(fb.Evaluate(res.data(), jac.data(), ptrs_dev.data(), stream.GetStream()));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  std::vector<float> r(m), j(m * cols);
+  res.CopyToHost(r.data(), m);
+  jac.CopyToHost(j.data(), j.size());
+  for (float v : r) EXPECT_NEAR(v, 0.f, 1e-5f);
+  for (float v : j) EXPECT_TRUE(std::isfinite(v));
+}
 
-  {
-    std::vector<float> qc = {1, 1, 1, 1, 1, 1};
-    dvector<float> qc_dev(qc);
-    ConstantVelocityInformationSE3FactorBatch fb(stream.GetStream(), dt_dev.data(), qc_dev.data(),
-                                                 1);
-    fb.SetNumActiveFactors(fb.Capacity());
-    dvector<float> res(12), jac(12 * 24);
-    SE3Transform identity{};
-    identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
-    dvector<SE3Transform> pose_dev({identity, identity});
-    dvector<Vector<6>> vel_dev({Vector<6>{}, Vector<6>{}});
-    std::vector<const float *> ptrs = {reinterpret_cast<const float *>(pose_dev.data()),
-                                       reinterpret_cast<const float *>(pose_dev.data() + 1),
-                                       reinterpret_cast<const float *>(vel_dev.data()),
-                                       reinterpret_cast<const float *>(vel_dev.data() + 1)};
-    dvector<const float *> ptrs_dev(ptrs);
-    ASSERT_TRUE(fb.Evaluate(res.data(), jac.data(), ptrs_dev.data(), stream.GetStream()));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-  {
-    std::vector<float> qc = {1, 1, 1, 1, 1, 1};
-    dvector<float> qc_dev(qc);
-    ConstantAccelerationInformationSE3FactorBatch fb(stream.GetStream(), dt_dev.data(),
-                                                     qc_dev.data(), 1);
-    fb.SetNumActiveFactors(fb.Capacity());
-    dvector<float> res(18), jac(18 * 36);
-    SE3Transform identity{};
-    identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
-    dvector<SE3Transform> pose_dev({identity, identity});
-    dvector<Vector<6>> zero_dev({Vector<6>{}, Vector<6>{}, Vector<6>{}, Vector<6>{}});
-    std::vector<const float *> ptrs = {reinterpret_cast<const float *>(pose_dev.data()),
-                                       reinterpret_cast<const float *>(pose_dev.data() + 1),
-                                       reinterpret_cast<const float *>(zero_dev.data()),
-                                       reinterpret_cast<const float *>(zero_dev.data() + 1),
-                                       reinterpret_cast<const float *>(zero_dev.data() + 2),
-                                       reinterpret_cast<const float *>(zero_dev.data() + 3)};
-    dvector<const float *> ptrs_dev(ptrs);
-    ASSERT_TRUE(fb.Evaluate(res.data(), jac.data(), ptrs_dev.data(), stream.GetStream()));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-  {
-    std::vector<float> qc = {1};
-    dvector<float> qc_dev(qc);
-    ConstantVelocityInformationSO2FactorBatch fb(stream.GetStream(), dt_dev.data(), qc_dev.data(),
-                                                 1);
-    fb.SetNumActiveFactors(fb.Capacity());
-    dvector<float> res(2), jac(2 * 4);
-    Matrix<2> identity{1, 0, 0, 1};
-    dvector<Matrix<2>> pose_dev({identity, identity});
-    dvector<float> zero_dev(std::vector<float>{0.0f, 0.0f});
-    std::vector<const float *> ptrs = {reinterpret_cast<const float *>(pose_dev.data()),
-                                       reinterpret_cast<const float *>(pose_dev.data() + 1),
-                                       zero_dev.data(), zero_dev.data() + 1};
-    dvector<const float *> ptrs_dev(ptrs);
-    ASSERT_TRUE(fb.Evaluate(res.data(), jac.data(), ptrs_dev.data(), stream.GetStream()));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
+// Every named alias constructs and evaluates (zero residual at rest).
+TEST(MotionPriorInformationTest, AllConvenienceAliasesConstructAndEvaluate) {
+  ExpectAliasEvaluatesAtRest<ConstantVelocityInformationSE3FactorBatch, 4, 6, 1>();
+  ExpectAliasEvaluatesAtRest<ConstantVelocityInformationSO3FactorBatch, 3, 3, 1>();
+  ExpectAliasEvaluatesAtRest<ConstantVelocityInformationSE2FactorBatch, 3, 3, 1>();
+  ExpectAliasEvaluatesAtRest<ConstantVelocityInformationSO2FactorBatch, 2, 1, 1>();
+  ExpectAliasEvaluatesAtRest<ConstantAccelerationInformationSE3FactorBatch, 4, 6, 2>();
+  ExpectAliasEvaluatesAtRest<ConstantAccelerationInformationSO3FactorBatch, 3, 3, 2>();
+  ExpectAliasEvaluatesAtRest<ConstantAccelerationInformationSE2FactorBatch, 3, 3, 2>();
+  ExpectAliasEvaluatesAtRest<ConstantAccelerationInformationSO2FactorBatch, 2, 1, 2>();
 }
 
 }  // namespace

@@ -150,7 +150,7 @@ class ResidualBatchTest : public ::testing::Test {
 typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::Size<3>,
                          test_utils::Size<4>, test_utils::Size<50>>
     VectorSizes;
-TYPED_TEST_CASE(ResidualBatchTest, VectorSizes);
+TYPED_TEST_SUITE(ResidualBatchTest, VectorSizes);
 
 /** @brief Tests that robustified residuals match the expected Huber-scaled
  * values. */

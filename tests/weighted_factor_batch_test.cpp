@@ -104,7 +104,7 @@ typedef ::testing::Types<
     TestParam<1, kPCG>, TestParam<2, kPCG>, TestParam<3, kPCG>, TestParam<4, kPCG>,
     TestParam<1, kChol>, TestParam<2, kChol>, TestParam<3, kChol>, TestParam<4, kChol>>
     WeightedTestParams;
-TYPED_TEST_CASE(WeightedFactorBatchTest, WeightedTestParams);
+TYPED_TEST_SUITE(WeightedFactorBatchTest, WeightedTestParams);
 
 /**
  * @brief LM convergence with a uniform scalar weight.
