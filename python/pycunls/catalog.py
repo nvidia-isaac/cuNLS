@@ -216,7 +216,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
             {"lower": f"{d} floats per factor", "upper": f"{d} floats per factor"}, False,
             "Box bounds on a vector state; needs AugmentedLagrangianMinimizer.",
             "For plain parameter bounds prefer VectorStateBatch.set_bounds (projected)."))
-    for d in (1, 2, 3, 6):
+    for d in _VECTOR_DIMS:
         entries.append(FactorInfo(
             f"HalfspaceFactorBatch{d}", [f"VectorStateBatch{d}"], 1, "a^T x - b",
             {"normals": f"{d} floats per factor (a)", "offsets": "1 float per factor (b)"},

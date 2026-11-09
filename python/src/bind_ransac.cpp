@@ -89,8 +89,11 @@ void BindOptions(nb::module_ &m) {
 
   nb::enum_<cunls::RansacLinearSolverType>(m, "RansacLinearSolverType",
                                            "Dense per-hypothesis solver.")
-      .value("cholesky", cunls::RansacLinearSolverType::kCholesky)
-      .value("ldlt", cunls::RansacLinearSolverType::kLDLT);
+      .value("cholesky", cunls::RansacLinearSolverType::kCholesky,
+             "In-kernel Cholesky; a non-positive pivot marks the hypothesis invalid.")
+      .value("ldlt", cunls::RansacLinearSolverType::kLDLT,
+             "In-kernel LDL^T with diagonal pivoting: rank-deficient directions get a zero "
+             "step instead of failing (suits minimal samples). Default.");
 
   nb::class_<RansacFactorBatchOptions>(m, "RansacFactorBatchOptions",
                                        "RANSAC configuration of one residual batch: role "

@@ -902,6 +902,31 @@ class HalfspaceFactorBatch1(FactorBatch):
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
 
+class HalfspaceFactorBatch12(FactorBatch):
+    """
+    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
+
+    Parameters
+    ----------
+    normals : DevicePointer
+        Device buffer of capacity * Dim floats (a).
+    offsets : DevicePointer
+        Device buffer of capacity floats (b).
+    capacity : int
+        Number of factors the buffers hold.
+
+    HalfspaceFactorBatch12 (factor)
+      states: [VectorStateBatch12]
+      residual (1): a^T x - b
+      normals: 12 floats per factor (a)
+      offsets: 1 float per factor (b)
+      relative: no
+      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+    """
+
+    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
+
 class HalfspaceFactorBatch2(FactorBatch):
     """
     Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
@@ -944,6 +969,31 @@ class HalfspaceFactorBatch3(FactorBatch):
       states: [VectorStateBatch3]
       residual (1): a^T x - b
       normals: 3 floats per factor (a)
+      offsets: 1 float per factor (b)
+      relative: no
+      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+    """
+
+    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
+
+class HalfspaceFactorBatch4(FactorBatch):
+    """
+    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
+
+    Parameters
+    ----------
+    normals : DevicePointer
+        Device buffer of capacity * Dim floats (a).
+    offsets : DevicePointer
+        Device buffer of capacity floats (b).
+    capacity : int
+        Number of factors the buffers hold.
+
+    HalfspaceFactorBatch4 (factor)
+      states: [VectorStateBatch4]
+      residual (1): a^T x - b
+      normals: 4 floats per factor (a)
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
@@ -1112,8 +1162,10 @@ class JacobianMode(enum.Enum):
     """
 
     analytic = 0
+    """The factor's own hand-derived Jacobians from Evaluate() (default)."""
 
     numeric = 1
+    """Finite differences on the tangent space of each referenced state."""
 
 class LevenbergMarquardtMinimizer(Minimizer):
     """
@@ -1930,8 +1982,12 @@ class RansacLinearSolverType(enum.Enum):
     """Dense per-hypothesis solver."""
 
     cholesky = 0
+    """In-kernel Cholesky; a non-positive pivot marks the hypothesis invalid."""
 
     ldlt = 1
+    """
+    In-kernel LDL^T with diagonal pivoting: rank-deficient directions get a zero step instead of failing (suits minimal samples). Default.
+    """
 
 class RansacMinimizer:
     """
@@ -2109,7 +2165,9 @@ class RansacMinimizerOptions:
 
     @property
     def linear_solver(self) -> RansacLinearSolverType:
-        """Per-hypothesis dense solver (RansacLinearSolverType). Default: RansacLinearSolverType.ldlt."""
+        """
+        Per-hypothesis dense solver (RansacLinearSolverType). Default: RansacLinearSolverType.ldlt.
+        """
 
     @linear_solver.setter
     def linear_solver(self, arg: RansacLinearSolverType, /) -> None: ...

@@ -39,13 +39,11 @@
 #include "cunls/minimizer/jacobian_mode.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 
-// Convert a Python object to a raw device pointer (uintptr_t).
-//
-// Two conventions are supported so that callers can pass either:
-//   1. A plain Python int (already the numeric pointer value), or
-//   2. Any object with a .data.ptr attribute — the protocol used by
-//      cupy.ndarray, which exposes the GPU pointer through its memory
-//      descriptor.
+// Python arrays to raw device pointers. inspect_device_array accepts a plain
+// int (a device pointer, unchecked), an object with __cuda_array_interface__
+// (dtype and C-contiguity checked, element count recorded) or with .data.ptr;
+// it rejects host (NumPy) arrays. The extract_device_ptr overloads wrap it, the
+// five-argument one also checks the element count.
 namespace {
 
 /** numpy-style dtype name of a __cuda_array_interface__ typestr ("<f4" -> "float32"). */
@@ -261,8 +259,10 @@ void bind_types(nb::module_ &m) {
       "differences on the manifold tangent space of each referenced state "
       "block, via Problem.add_factor_batch's jacobian_mode_override or "
       "MinimizerOptions.jacobian_mode).")
-      .value("analytic", cunls::JacobianMode::kAnalytic)
-      .value("numeric", cunls::JacobianMode::kNumeric);
+      .value("analytic", cunls::JacobianMode::kAnalytic,
+             "The factor's own hand-derived Jacobians from Evaluate() (default).")
+      .value("numeric", cunls::JacobianMode::kNumeric,
+             "Finite differences on the tangent space of each referenced state.");
 
   nb::enum_<cunls::NumericDiffOptions::Method>(
       m, "NumericDiffMethod",

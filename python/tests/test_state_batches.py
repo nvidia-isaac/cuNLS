@@ -23,7 +23,6 @@ SO2, SE2, Similarity2, Similarity3).  Each test class verifies:
 """
 
 import cupy as cp
-import numpy as np
 import pytest
 
 import pycunls

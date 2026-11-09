@@ -700,7 +700,9 @@ void bind_factor(nb::module_ &m) {
   bind_halfspace_factor<1>(m, "HalfspaceFactorBatch1");
   bind_halfspace_factor<2>(m, "HalfspaceFactorBatch2");
   bind_halfspace_factor<3>(m, "HalfspaceFactorBatch3");
+  bind_halfspace_factor<4>(m, "HalfspaceFactorBatch4");
   bind_halfspace_factor<6>(m, "HalfspaceFactorBatch6");
+  bind_halfspace_factor<12>(m, "HalfspaceFactorBatch12");
 
   // --- Dynamics (between consecutive trajectory steps) ---
   nb::class_<cunls::SE2DifferentialDriveFactorBatch, cunls::FactorBatch>(
