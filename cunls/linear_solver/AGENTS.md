@@ -35,7 +35,8 @@ Sparse linear system abstraction and implementation used by minimizers.
     `max_iterations`, `relative_tolerance`, `absolute_tolerance`,
     `pivot_floor`, `check_period`, `deterministic_mode` (fixed-order dot
     products + `CUSPARSE_SPMV_CSR_ALG2`, so repeated solves return the same
-    bits; off by default).
+    bits; off by default), `hessian_product` (`kBundleAdjustment`:
+    deterministic bundle-adjustment `H p`, see `ba_hessian_vector_product.h`).
   - `BlockSparsePCGSolver` — iterative SPD solver: cuSPARSE CSR SpMV +
     block-Jacobi LDLT preconditioner (dense B x B diagonal tiles factored
     in shared memory).  Supports a uniform block size or a layout vector
@@ -43,6 +44,12 @@ Sparse linear system abstraction and implementation used by minimizers.
     structure (e.g. `{{N_poses, 6}, {N_points, 3}}` for SBA).  Inner loop
     computes alpha/beta on device; convergence is polled every K
     iterations to keep CPU launches ahead of the GPU.
+- `ba_hessian_vector_product.h`: `BaHessianProduct` — the
+  `kBundleAdjustment` `H p`: one cooperative launch that reads each
+  camera-point block once from the point rows and sums the pose rows in
+  fixed point (bit-identical run to run).  `Build` validates the pattern,
+  sizes and GPU and records `FailureReason()`; per-call counters live in
+  the instance's accumulator buffer, so instances are independent.
 
 - `block_tridiagonal_solver.h`: `BlockTridiagonalSolver` — direct solver for
   systems that are block tridiagonal in time (trajectories, MPC). Needs

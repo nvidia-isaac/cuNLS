@@ -149,6 +149,16 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   fixed-order either way.  When ``false``, the faster atomic dot products
   and default SpMV algorithm are used.  Covers only the PCG solve; the
   minimizer's Hessian assembly still uses atomics.  Default: ``false``.
+- ``hessian_product`` - [in] ``H p`` kernel of the PCG loop.
+  ``kGeneric`` (default): cuSPARSE for CSR, the block SpMV for block
+  storage.  ``kBundleAdjustment``: a deterministic kernel for
+  bundle-adjustment Hessians (layout ``{{num_cameras, 6}, {num_points,
+  3}}``, CSR or 3x3 block storage, sm_80 or newer) that reads each
+  camera-point block once; ``Initialize`` falls back to ``kGeneric``
+  when the matrix does not fit and logs the reason.  ``Solve`` re-checks
+  a matrix with other buffers, storage or entry count; a pattern
+  rewritten in place needs ``Initialize``.  Calls on one solver instance
+  are stream-ordered; instances are independent.
 
 BlockSparsePCGSolver
 --------------------

@@ -1349,6 +1349,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
   return InitializeCsrSpMV(stream, spd_matrix);
 }
 
+/** @brief Checks sizes and sets up the block layout, segment tables, BA product and scratch. */
 bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
                                             const dvector<float> &rhs, dvector<float> &result) {
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
@@ -1394,6 +1395,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
     return false;
   }
   matrix_size_ = n;
+  InitializeBaProduct(stream);
 
   if (precond_factors_.size() < total_factor_floats_) {
     precond_factors_.resize(total_factor_floats_);
@@ -1410,6 +1412,55 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
   }
 
   return true;
+}
+
+/** @brief Builds ba_product_ for the bundle-adjustment layout when selected; warns otherwise. */
+void BlockSparsePCGSolver::InitializeBaProduct(cudaStream_t stream) {
+  if (options_.hessian_product != BlockSparsePCGOptions::HessianProduct::kBundleAdjustment) {
+    return;
+  }
+  // Any other layout passes zero sizes, which Build rejects.
+  const bool ba_layout =
+      segments_.size() == 2 && segments_[0].block_size == 6 && segments_[1].block_size == 3;
+  const int num_cameras = ba_layout ? segments_[0].num_blocks : 0;
+  const int num_points = ba_layout ? segments_[1].num_blocks : 0;
+  // Recorded whether or not Build succeeds, so a matrix that does not fit is not re-checked on
+  // every Solve.
+  ba_pattern_ = bsr_view_ != nullptr
+                    ? std::make_tuple(bsr_view_->row_offsets.data(), bsr_view_->col_ids.data(),
+                                      bsr_view_->block_size, bsr_view_->col_ids.size())
+                    : std::make_tuple(csr_view_->row_offsets.data(), csr_view_->col_ids.data(), 1,
+                                      csr_view_->col_ids.size());
+  const bool built =
+      bsr_view_ != nullptr
+          ? ba_product_.Build(stream, bsr_view_->row_offsets.data(), bsr_view_->col_ids.data(),
+                              bsr_view_->block_size, num_cameras, num_points)
+          : ba_product_.Build(stream, csr_view_->row_offsets.data(), csr_view_->col_ids.data(), 1,
+                              num_cameras, num_points);
+  if (built) {
+    last_ba_warning_.clear();
+  } else {
+    WarnBaProductNotUsed();
+  }
+}
+
+/** @brief See the header: compares the matrix with @ref ba_pattern_. */
+bool BlockSparsePCGSolver::BaPatternChanged(const int *row_offsets, const int *col_ids,
+                                            int storage_block, size_t num_entries) const {
+  return options_.hessian_product == BlockSparsePCGOptions::HessianProduct::kBundleAdjustment &&
+         ba_pattern_ != std::make_tuple(row_offsets, col_ids, storage_block, num_entries);
+}
+
+/** @brief Logs ba_product_'s failure reason unless it was the last one logged. */
+void BlockSparsePCGSolver::WarnBaProductNotUsed() {
+  if (ba_product_.FailureReason() == last_ba_warning_) {
+    return;
+  }
+  last_ba_warning_ = ba_product_.FailureReason();
+  LogWarning(
+      "BlockSparsePCGSolver: hessian_product = kBundleAdjustment not used ({}); using the "
+      "generic H p",
+      last_ba_warning_);
 }
 
 /** Creates the cuSPARSE SpMV plan for CSR input with the algorithm chosen by
@@ -1460,7 +1511,9 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd
   }
   bsr_view_ = &spd_matrix;
   csr_view_ = nullptr;
-  if (n != matrix_size_) {
+  if (n != matrix_size_ ||
+      BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
+                       spd_matrix.block_size, spd_matrix.col_ids.size())) {
     Problem empty_problem;
     if (!InitializeCommon(stream, empty_problem, n, rhs, result)) {
       return false;
@@ -1482,8 +1535,11 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
   }
   csr_view_ = &spd_matrix;
   bsr_view_ = nullptr;
-  if (n != matrix_size_) {
-    // Recovery path: matrix dim changed since the last Initialize.  Use
+  if (n != matrix_size_ ||
+      BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), 1,
+                       spd_matrix.col_ids.size())) {
+    // Recovery path: matrix dim (or, with the bundle-adjustment product, the
+    // pattern) changed since the last Initialize.  Use
     // a default-constructed Problem; the cached options_.block_layout
     // (set by the prior Initialize) is reused if non-empty, otherwise
     // the uniform options_.block_size path takes over.
@@ -1592,7 +1648,17 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     // one per scalar entry, which is where the bandwidth saving comes from.
     float spmv_alpha = 1.f;
     float spmv_beta = 0.f;
-    if (block_storage) {
+    bool ba_done = false;
+    if (ba_product_.Ready()) {
+      // False when the cooperative launch does not fit: this and later products are generic.
+      ba_done = ba_product_.Multiply(stream, row_off, col_idx, vals, p_.data(), Ap_.data());
+      if (!ba_done) {
+        WarnBaProductNotUsed();
+      }
+    }
+    if (ba_done) {
+      // Ap_ holds H p.
+    } else if (block_storage) {
       LaunchBsrMultiply(stream, bsr_view_->num_block_rows, bsr_view_->block_size,
                         bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
                         Ap_.data());
