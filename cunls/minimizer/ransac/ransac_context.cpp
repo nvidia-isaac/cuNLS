@@ -63,6 +63,11 @@ void Prepare(cudaStream_t stream, const Problem &problem, const RansacMinimizerO
              RansacContext &c) {
   problem.CheckSizes();  // cheap host-only guard; see Problem::CheckSizes
   ValidateOptions(options);
+  // The structure check on this stream (Problem::Validate), with its fix.
+  const std::string structure_error = problem.FindStructureError(stream);
+  if (!structure_error.empty()) {
+    FailConfiguration("RANSAC: " + structure_error);
+  }
   c.has_run = false;
   c.layout.Build(problem, options);
   const int k = static_cast<int>(options.hypotheses_per_round);
