@@ -33,7 +33,9 @@ Sparse linear system abstraction and implementation used by minimizers.
 - `block_sparse_pcg_solver.h`:
   - `BlockSparsePCGOptions` — `block_size` / `block_layout`,
     `max_iterations`, `relative_tolerance`, `absolute_tolerance`,
-    `pivot_floor`.
+    `pivot_floor`, `check_period`, `deterministic_mode` (fixed-order dot
+    products + `CUSPARSE_SPMV_CSR_ALG2`, so repeated solves return the same
+    bits; off by default).
   - `BlockSparsePCGSolver` — iterative SPD solver: cuSPARSE CSR SpMV +
     block-Jacobi LDLT preconditioner (dense B x B diagonal tiles factored
     in shared memory).  Supports a uniform block size or a layout vector
