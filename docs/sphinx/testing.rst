@@ -43,11 +43,12 @@ Coverage mode
 ===============================================================================
 
 The repository supports a coverage build path through `scripts/build_cunls.sh`
-with `CMAKE_BUILD_TYPE=Coverage`.
+with `CMAKE_BUILD_TYPE=Coverage` (it enables `BUILD_TESTING`). The script configures the source
+one level above the build directory, so use a top-level build directory:
 
 .. code-block:: bash
 
-   ./scripts/build_cunls.sh build/coverage Coverage
+   ./scripts/build_cunls.sh build_coverage Coverage
 
-This triggers the `coverage` target and emits report assets under:
-`build/coverage/bin/coverage_report`.
+This runs the test suite under the `coverage` target and emits report assets under
+`build_coverage/bin/coverage_report`.

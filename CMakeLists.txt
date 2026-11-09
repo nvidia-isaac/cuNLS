@@ -21,7 +21,7 @@ project(cunls VERSION 0.2 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-option(BUILD_TESTING OFF)
+option(BUILD_TESTING "Build the GoogleTest suite (nls_tests)" OFF)
 option(BUILD_SHARED_LIBS "Build shared library (OFF for static)" ON)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -327,6 +327,10 @@ if(BUILD_PYTHON_BINDINGS)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+  if(NOT BUILD_TESTING)
+    message(FATAL_ERROR "CMAKE_BUILD_TYPE=Coverage measures the test suite, but BUILD_TESTING is OFF. "
+                        "Fix: configure with -DBUILD_TESTING=ON (scripts/build_cunls.sh does).")
+  endif()
   target_compile_options(cunls PRIVATE -fprofile-arcs -ftest-coverage)
   target_compile_options(nls_tests PRIVATE -fprofile-arcs -ftest-coverage)
   target_link_libraries(nls_tests PRIVATE gcov)
@@ -336,6 +340,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
   add_custom_target(coverage
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${REPORT_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${REPORT_DIR}
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
     COMMAND lcov -c -d . --base-directory ${CMAKE_SOURCE_DIR} --ignore-errors mismatch --ignore-errors source --output-file ${COVERAGE_FILE}
     COMMAND genhtml ${COVERAGE_FILE} -k --include=cunls --exclude=_deps --output-directory ${REPORT_DIR}
     DEPENDS nls_tests
