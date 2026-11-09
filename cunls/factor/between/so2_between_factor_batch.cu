@@ -91,9 +91,7 @@ __global__ void so2_between_jacobian_kernel(float *jacobians, size_t num_items) 
 SO2BetweenFactorBatch::SO2BetweenFactorBatch(const SO2Rotation *pose_deltas_ptr, size_t capacity)
     : SizedFactorBatch(capacity),
       pose_deltas_ptr_(pose_deltas_ptr),
-      poses_left_(capacity),
-      poses_right_(capacity),
-      poses_left_inverse_(capacity) {}
+      errors_(capacity) {}
 
 bool SO2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
@@ -103,17 +101,17 @@ bool SO2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
     return true;
   }
   const int num_factors = static_cast<int>(NumActiveFactors());
-  poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
+  errors_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
   // Fused: collect L/R + compute (L^T * R) * D in one kernel
   collect_and_compute_so2_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids,
       num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // Step 5: residual = Log(R_error)
-  ComputeLogSO2(stream, reinterpret_cast<const float *>(poses_left_inverse_.data()),
+  ComputeLogSO2(stream, reinterpret_cast<const float *>(errors_.data()),
                 kSO2RotationStride, kSO2AngleStride, num_items, residuals);
 
   // Step 6: Jacobian = [-1, 1]

@@ -37,9 +37,8 @@ class SO3BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
   SO3BetweenFactorBatch() = default;
 
   const Matrix<3> *pose_deltas_ptr_;
-  mutable DeviceVector<Matrix<3>> poses_left_;
-  mutable DeviceVector<Matrix<3>> poses_right_;
-  mutable DeviceVector<Matrix<3>> poses_left_inverse_;
+  /// Scratch: the per-factor error transform whose Log is the residual.
+  mutable DeviceVector<Matrix<3>> errors_;
 };
 
 }  // namespace cunls

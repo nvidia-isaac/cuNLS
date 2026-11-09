@@ -37,7 +37,6 @@ class Similarity2BetweenFactorBatch : public SizedFactorBatch<4, 4, 4> {
 
   const Matrix<3> *pose_deltas_ptr_;
   mutable DeviceVector<Matrix<3>> poses_left_;
-  mutable DeviceVector<Matrix<3>> poses_right_;
   mutable DeviceVector<Matrix<3>> poses_left_inverse_;
 };
 

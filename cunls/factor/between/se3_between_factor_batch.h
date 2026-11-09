@@ -88,7 +88,7 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
   const SE3Transform *pose_deltas_ptr_;
 
   /// Scratch buffer reused for error = Delta * T_left^{-1} * T_right
-  mutable DeviceVector<SE3Transform> poses_left_inverse_;
+  mutable DeviceVector<SE3Transform> errors_;
 };
 
 }  // namespace cunls

@@ -36,10 +36,8 @@ class Similarity3BetweenFactorBatch : public SizedFactorBatch<7, 7, 7> {
   Similarity3BetweenFactorBatch() = default;
 
   const Matrix<4> *pose_deltas_ptr_;
-  mutable DeviceVector<Matrix<4>> poses_left_;
-  mutable DeviceVector<Matrix<4>> poses_right_;
-  mutable DeviceVector<Matrix<4>> poses_left_inverse_;
-  mutable DeviceVector<float> jacobian_temp_;
+  /// Scratch: the per-factor error transform whose Log is the residual.
+  mutable DeviceVector<Matrix<4>> errors_;
 };
 
 }  // namespace cunls
