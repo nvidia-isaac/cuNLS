@@ -40,16 +40,17 @@ namespace cunls {
  * assembly onto scalar CSR (see NormalEquations::Initialize) — giving up the
  * block layout's smaller index array and the `BuildSystem` time that goes with
  * it.  A solver that discards the layout one kernel later has no reason to
- * impose that cost.  After this class, cuDSS is the only backend that does.
+ * impose that cost.  Of the other backends, BlockSparsePCG accepts block
+ * storage too; cuDSS, BlockSparseCholesky and BlockTridiagonal take scalar CSR.
  *
  * The dense buffer holds the matrix row-major.  cuSOLVER and cuBLAS want
  * column-major, but every matrix reaching these solvers is a Gauss-Newton
  * Hessian and therefore symmetric, so the two layouts coincide.  Do not reuse
  * this class for a non-symmetric operator without transposing.
  *
- * Subclasses supply three things: workspace sizing, the factorize-and-solve
- * body, and nothing else.  Dimension validation, the dense scatter and the
- * layout dispatch all live here.
+ * Subclasses supply two things: workspace sizing and the factorize-and-solve
+ * body.  Dimension validation, the dense scatter and the layout dispatch all
+ * live here.
  */
 class DenseLinearSolverBase : public SparseLinearSolver {
  public:

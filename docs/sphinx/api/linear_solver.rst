@@ -299,7 +299,7 @@ Concrete implementation in `cudss_sparse_linear_solver.h`.
   :param ``options``: [in] cuDSS mode/threading configuration.
   :returns: Constructor has no return value.
 
-.. cpp:function:: bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   For ``SlowInitFastSolve``: runs the cuDSS symbolic analysis phase only.
   For ``FastInitSlowSolve``: runs symbolic analysis followed by an initial
@@ -322,7 +322,7 @@ DenseLDLTSolver
 
 Concrete implementation in `dense_linear_solver.h`.
 
-.. cpp:function:: bool DenseLDLTSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool DenseLDLTSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Validates dimensions and allocates reusable dense buffers used by the dense
   pivoted LDLT pipeline.
@@ -356,7 +356,7 @@ Concrete implementation in `dense_cholesky_solver.h`. Uses the cuSOLVER
 ``cusolverDnSpotrf`` / ``cusolverDnSpotrs`` routines (Cholesky factorization
 ``A = L L^T``). Requires the input matrix to be symmetric positive-definite.
 
-.. cpp:function:: bool DenseCholeskySolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool DenseCholeskySolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Validates dimensions and pre-allocates internal dense buffers and the
   cuSOLVER workspace for the given matrix size.
@@ -391,7 +391,7 @@ Concrete implementation in `dense_qr_solver.h`. Uses the cuSOLVER
 (``A = Q R``) followed by a cuBLAS ``cublasStrsm`` upper-triangular solve.
 Works for any non-singular square matrix (not limited to SPD).
 
-.. cpp:function:: bool DenseQRSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool DenseQRSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Validates dimensions and pre-allocates internal dense buffers, Householder
   tau vector, and the cuSOLVER workspace for the given matrix size.

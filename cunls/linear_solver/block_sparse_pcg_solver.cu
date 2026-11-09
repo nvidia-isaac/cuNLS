@@ -74,9 +74,10 @@
  *
  * Each segment in @ref BlockSparsePCGOptions::block_layout gets its
  * own templated kernel launch (one per `Factor` and one per `Apply`).
- * Per-segment dispatch is a small host-side branch on the templated
- * block-size specialization (B ∈ {1, 2, 3, 4, 6, 7, 15}) and falls
- * back to a runtime-B generic kernel for any other value.  This keeps
+ * Per-segment dispatch is a small host-side branch on the block size:
+ * scalar Jacobi for B = 1, one tile per thread for B = 2..6, one CTA per
+ * tile with a templated kernel for B ∈ {7, 8, 15, 16}, and a runtime-B
+ * generic kernel for any other value.  This keeps
  * the hot kernels register-resident for the common cases (SE3 = 6,
  * Vector<3> = 3) while still supporting arbitrary user state batches.
  */
@@ -117,33 +118,6 @@ constexpr size_t kScratchSize = kDotWork + 2 * kMaxDotBlocks + 2;
 // =============================================================================
 // Device kernels — preconditioner construction (`Factor`)
 // =============================================================================
-
-/**
- * @brief Factors one segment of block-diagonal tiles, in place into the
- *        factor buffer.
- *
- * One CTA per tile.  Threads cooperatively:
- *   1. Gather the dense `B × B` tile from `H`'s CSR rows
- *      `[segment_row_start + b*B, segment_row_start + b*B + B)`,
- *      filtering column indices to the tile's column range.  Any
- *      entries outside are zero (the tile is dense in the
- *      preconditioner's view of H; CSR sparsity within the tile is
- *      irrelevant for Jacobi).
- *   2. Symmetrize numerically: `H_d := (H_d + H_d^T) / 2`.  Algebraically
- *      a no-op for `J^T J`, but cheap insurance against FP drift when
- *      LM damping or column scaling has been applied in place.
- *   3. Run a serial LDLT on thread 0:
- *      `for k in 0..B: D_{kk} = H_{kk}; L_{ik} = H_{ik}/D_{kk};
- *                     H_{ij} -= L_{ik} D_{kk} L_{jk}` for i, j > k.
- *      A pivot floor (sign-preserving) guards against singular tiles.
- *   4. Write the (lower-triangle L, diagonal D) result to the global
- *      factor buffer.
- *
- * The serial LDLT is fine for the sizes here (B ≤ 16, dominant cost is
- * the global I/O for the tile, not the O(B³) arithmetic).
- *
- * @tparam B Compile-time tile side length.
- */
 
 /**
  * @brief Gathers one row of a diagonal tile out of scalar CSR.
@@ -442,6 +416,32 @@ __device__ __forceinline__ void GatherTileRow(const int *__restrict__ row_off,
   }
 }
 
+/**
+ * @brief Factors one segment of block-diagonal tiles, in place into the
+ *        factor buffer.
+ *
+ * One CTA per tile.  Threads cooperatively:
+ *   1. Gather the dense `B × B` tile from `H`'s CSR rows
+ *      `[segment_row_start + b*B, segment_row_start + b*B + B)`,
+ *      filtering column indices to the tile's column range.  Any
+ *      entries outside are zero (the tile is dense in the
+ *      preconditioner's view of H; CSR sparsity within the tile is
+ *      irrelevant for Jacobi).
+ *   2. Symmetrize numerically: `H_d := (H_d + H_d^T) / 2`.  Algebraically
+ *      a no-op for `J^T J`, but cheap insurance against FP drift when
+ *      LM damping or column scaling has been applied in place.
+ *   3. Run a serial LDLT on thread 0:
+ *      `for k in 0..B: D_{kk} = H_{kk}; L_{ik} = H_{ik}/D_{kk};
+ *                     H_{ij} -= L_{ik} D_{kk} L_{jk}` for i, j > k.
+ *      A pivot floor (sign-preserving) guards against singular tiles.
+ *   4. Write the (lower-triangle L, diagonal D) result to the global
+ *      factor buffer.
+ *
+ * The serial LDLT is fine for the sizes here (B ≤ 16, dominant cost is
+ * the global I/O for the tile, not the O(B³) arithmetic).
+ *
+ * @tparam B Compile-time tile side length.
+ */
 template <int B>
 __global__ void ExtractAndFactorBlockDiagonalsKernel(
     const int *__restrict__ row_off, const int *__restrict__ col_idx,
@@ -650,7 +650,8 @@ __global__ void ExtractAndFactorPerThreadKernel(const int *__restrict__ row_off,
   }
 }
 
-/** Scalar-Jacobi extractor for B == 1: `M^{-1}[i] = 1 / H[i,i]`. */
+/** Scalar-Jacobi extractor for B == 1: stores `H[i,i]` (sign-preserving
+ *  pivot floor); ApplyScalarJacobi divides by it, i.e. `M^{-1}[i] = 1 / H[i,i]`. */
 __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
                                     const int *__restrict__ col_idx,
                                     const float *__restrict__ values, bool block_storage,
@@ -802,7 +803,7 @@ __global__ void ApplyScalarJacobi(const float *__restrict__ factors, int factor_
 }
 
 /**
- * @brief One-thread-per-block apply, optimized for small B (≤ 8).
+ * @brief One-thread-per-block apply, optimized for small B (2..6).
  *
  * The per-block work (3*B² FMAs ≈ 27 for B=3, 108 for B=6) fits in a
  * handful of registers — well below the per-thread state budget that
@@ -814,7 +815,7 @@ __global__ void ApplyScalarJacobi(const float *__restrict__ factors, int factor_
  * scheduling overhead.
  *
  * @tparam B Compile-time tile side length, must be small enough for the
- *           per-thread register file (we instantiate for {2, 3, 4, 6}).
+ *           per-thread register file (we instantiate for {2, 3, 4, 5, 6}).
  */
 template <int B>
 __global__ void ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factors,
@@ -885,10 +886,8 @@ __global__ void ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factor
  *        `x ← x + α p ; r ← r − α q` in a single kernel.
  *
  * Thread 0 reads the two scalar slots, computes α, stores it in
- * shared memory; all threads then perform the axpy on their slice.
- * This eliminates the separate `ComputeAlphaKernel` launch
- * (~1.2 µs / call × thousands of iters = several percent of total
- * runtime on the small-Minimize SBA fixture).
+ * shared memory; all threads then perform the axpy on their slice, so α
+ * needs no kernel launch of its own.
  */
 __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
                                 const float *__restrict__ pAp_ptr, const float *__restrict__ p,
