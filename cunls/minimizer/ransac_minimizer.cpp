@@ -17,6 +17,9 @@
 
 #include "cunls/minimizer/ransac_minimizer.h"
 
+#include <stdexcept>
+#include <string>
+
 #include "cunls/minimizer/ransac/ransac_context.h"
 
 namespace cunls {
@@ -38,9 +41,40 @@ ransac_internal::SolverSettings GaussNewtonSettings(const RansacMinimizerOptions
   return s;
 }
 
+/** Throws std::invalid_argument naming the damping option that cannot work. */
+void ValidateDamping(const RansacLevenbergMarquardtMinimizerOptions &o) {
+  auto fail = [](const std::string &what, float got, const std::string &expected,
+                 const std::string &fix) {
+    throw std::invalid_argument("RansacLevenbergMarquardtMinimizer::RansacLevenbergMarquardt"
+                                "Minimizer: " +
+                                what + " (got " + std::to_string(got) + ", expected " + expected +
+                                "). Fix: " + fix + ".");
+  };
+  if (!(o.lambda_min > 0.f)) {
+    fail("lambda_min must be positive", o.lambda_min, "> 0", "use a small positive floor, e.g. 1e-6");
+  }
+  if (!(o.lambda_max >= o.lambda_min)) {
+    fail("lambda_max is below lambda_min", o.lambda_max, ">= " + std::to_string(o.lambda_min),
+         "raise lambda_max");
+  }
+  if (!(o.initial_lambda >= 0.f && o.initial_lambda <= o.lambda_max)) {
+    fail("initial_lambda is outside [0, lambda_max]", o.initial_lambda,
+         "in [0, " + std::to_string(o.lambda_max) + "]", "use e.g. 1e-3");
+  }
+  if (!(o.lambda_upscale > 1.f)) {
+    fail("lambda_upscale must grow the damping on a rejected step", o.lambda_upscale, "> 1",
+         "use e.g. 2");
+  }
+  if (!(o.lambda_downscale > 0.f && o.lambda_downscale <= 1.f)) {
+    fail("lambda_downscale must shrink the damping on a good step", o.lambda_downscale,
+         "in (0, 1]", "use e.g. 0.5");
+  }
+}
+
 /** Levenberg-Marquardt hypotheses: the tolerances and the damping rule. */
 ransac_internal::SolverSettings LevenbergMarquardtSettings(
     const RansacLevenbergMarquardtMinimizerOptions &o) {
+  ValidateDamping(o);
   ransac_internal::SolverSettings s = GaussNewtonSettings(o.base_options);
   s.policy.levenberg_marquardt = 1;
   s.policy.lambda_upscale = o.lambda_upscale;
