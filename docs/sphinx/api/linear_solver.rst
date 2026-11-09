@@ -142,6 +142,13 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   convergence polls.  Higher values reduce host syncs but may do up to
   ``check_period - 1`` extra iterations after convergence.  Default:
   ``4``.
+- ``deterministic_mode`` - [in] When ``true``, repeated ``Solve`` calls on
+  the same ``H`` and ``b`` return the same bits (same GPU, build and sizes):
+  the dot products add their per-CTA sums in a fixed order, and scalar CSR
+  input uses ``CUSPARSE_SPMV_CSR_ALG2`` for ``H p``.  Block (BSR) ``H p`` is
+  fixed-order either way.  When ``false``, the faster atomic dot products
+  and default SpMV algorithm are used.  Covers only the PCG solve; the
+  minimizer's Hessian assembly still uses atomics.  Default: ``false``.
 
 BlockSparsePCGSolver
 --------------------

@@ -111,6 +111,23 @@ struct BlockSparsePCGOptions {
    *        `check_period - 1` extra iterations after convergence.
    */
   int check_period = 4;
+
+  /**
+   * @brief Make repeated @ref Solve calls on the same `H` and `b` return the
+   *        same bits (same GPU, build and sizes).
+   *
+   * When set, the PCG dot products add their per-CTA sums in a fixed order
+   * instead of with float atomics, and scalar CSR input uses the
+   * deterministic cuSPARSE algorithm `CUSPARSE_SPMV_CSR_ALG2` for `H p`.
+   * Block (BSR) `H p` is fixed-order either way.  Off (default), the solver
+   * uses atomic dot products and the default SpMV algorithm, which is faster
+   * on large systems: on SE2 pose graphs (A40), turning it on cost up to 4 %
+   * per solve with block (BSR) input and up to 22 % with CSR input.
+   *
+   * Covers only the PCG solve: the minimizer assembles the Hessian with
+   * atomics, so a full Levenberg-Marquardt run is not bit-reproducible.
+   */
+  bool deterministic_mode = false;
 };
 
 /**
