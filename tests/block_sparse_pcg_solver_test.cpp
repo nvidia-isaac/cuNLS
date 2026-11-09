@@ -46,6 +46,7 @@
 #include "cunls/minimizer/bsr_matrix.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
+#include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -436,6 +437,40 @@ TEST(BlockSparsePCGSolverTest, RejectsInvalidOptions) {
   o = BlockSparsePCGOptions();
   o.check_period = 0;
   expect_invalid(o, "check_period");
+}
+
+// The layout derived from a Problem's state batches must not replace the
+// user's block_layout: a solver initialized from a Problem and then reused on
+// a raw matrix (Problem without state batches) solves exactly like a fresh
+// solver with the same options.
+TEST(BlockSparsePCGSolverTest, DerivedLayoutDoesNotOverwriteTheOptions) {
+  const System s = MakeBundleAdjustmentSystem(200, 400, 3);  // 2400 rows
+  CSRSparseMatrix m;
+  ToCsr(s, m);
+  std::vector<float> b;
+  test_utils::GenerateRandomVector(s.n, b);
+  BlockSparsePCGOptions options;
+  options.block_layout = {{s.n / 3, 3}};
+  options.relative_tolerance = 0.f;
+  options.absolute_tolerance = 0.f;
+  options.max_iterations = 5;
+  options.deterministic_mode = true;
+  const auto [expected, expected_iterations] = SolveOnce(m, b, options);
+
+  CudaStream stream;
+  dvector<float> poses(s.n), rhs(b), result(s.n);
+  VectorStateBatch<6> states(poses.data(), s.n / 6);
+  states.SetNumActiveStates(s.n / 6);
+  Problem with_states;
+  with_states.AddStateBatch(&states);
+  BlockSparsePCGSolver solver(options);
+  ASSERT_TRUE(solver.Initialize(stream.GetStream(), with_states, m, rhs, result));  // {n/6, 6}
+  ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), m, rhs, result));    // {n/3, 3}
+  ASSERT_TRUE(solver.Solve(stream.GetStream(), m, rhs, result));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  std::vector<float> x(s.n);
+  result.CopyToHost(x.data(), s.n);
+  EXPECT_EQ(std::memcmp(x.data(), expected.data(), x.size() * sizeof(float)), 0);
 }
 
 TEST(BlockSparsePCGSolverTest, MatchesReferencePcgIteratesOnLargeSystem) {

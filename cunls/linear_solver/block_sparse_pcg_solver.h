@@ -70,9 +70,11 @@ struct BlockSparsePCGOptions {
    *
    * For a Gauss-Newton Hessian, the natural layout follows the order of
    * @ref Problem state batches with the tangent dimension of each batch
-   * as the segment block size.  @ref Minimizer derives this
-   * layout automatically from the problem when the active solver is a
-   * @ref BlockSparsePCGSolver.
+   * as the segment block size.  BlockSparsePCGSolver::Initialize derives
+   * that layout itself when its Problem has state batches (the minimizer
+   * always passes its Problem), and the derived layout takes precedence.
+   * This field applies when the solver is used directly on a matrix,
+   * with a Problem without state batches.
    */
   std::vector<std::pair<int, int>> block_layout;
 
@@ -236,17 +238,15 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    * segment with `size = TangentSize()` and
    * `count = NumActiveStates() - NumConstStates()`.  Consecutive
    * segments of equal size are merged so the dispatch loop only sees
-   * distinct-size groups.  An explicit layout previously set via
-   * @c options_.block_layout takes precedence; passing an empty problem
-   * (default-constructed) reverts to the uniform
-   * @ref BlockSparsePCGOptions::block_size.
+   * distinct-size groups.  The derived layout takes precedence over
+   * @ref BlockSparsePCGOptions::block_layout; a problem without state
+   * batches (default-constructed) uses @c block_layout, or the uniform
+   * @ref BlockSparsePCGOptions::block_size when that is empty.
    *
    * @param stream     CUDA stream used for all device work.
-   * @param problem    The originating optimization problem.  Used to
-   *                   derive the block-Jacobi preconditioner layout
-   *                   when @ref BlockSparsePCGOptions::block_layout is
-   *                   empty and the caller hasn't explicitly invoked
-   *                   @c options_.block_layout.
+   * @param problem    The originating optimization problem.  Its state
+   *                   batches, if any, give the block-Jacobi
+   *                   preconditioner layout.
    * @param spd_matrix Coefficient matrix `H` in CSR format.  Only its
    *                   sparsity pattern is examined here; values are read
    *                   on every @ref Solve.
@@ -326,8 +326,13 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    */
   bool BuildSegmentTables(int matrix_dim);
 
-  /** @brief Layout-independent part of Initialize (segments and scratch). */
-  bool InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
+  /**
+   * @brief Shared part of Initialize: layout, segments, BA product and scratch.
+   * @param problem The Initialize call's problem (its state batches set
+   *        @ref problem_layout_), or null when Solve re-initializes after a
+   *        size or pattern change (keeps @ref problem_layout_).
+   */
+  bool InitializeCommon(cudaStream_t stream, const Problem *problem, int n,
                         const dvector<float> &rhs, dvector<float> &result);
 
   /** @brief Builds the generic-API SpMV plan used by the CSR path only. */
@@ -351,9 +356,10 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
   bool SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs, dvector<float> &result);
 
   BlockSparsePCGOptions options_;
-  /** Cached host copy of `options_.block_layout`, normalized to a
-   *  single uniform segment when the user didn't supply one. */
-  std::vector<std::pair<int, int>> layout_;
+  /** Layout derived from the state batches of the last Initialize's
+   *  Problem (empty when it had none); takes precedence over
+   *  `options_.block_layout`, which is never modified. */
+  std::vector<std::pair<int, int>> problem_layout_;
 
   /** Total matrix dimension N (cached from the last @ref Initialize). */
   int matrix_size_ = 0;

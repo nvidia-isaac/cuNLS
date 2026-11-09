@@ -1292,12 +1292,19 @@ BlockSparsePCGSolver::~BlockSparsePCGSolver() = default;
 
 bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
   segments_.clear();
-  // Normalize the layout: use the user-supplied block_layout if it's
-  // non-empty; otherwise treat the whole matrix as a single segment of
-  // size `options_.block_size`.
-  layout_.clear();
-  if (!options_.block_layout.empty()) {
-    layout_ = options_.block_layout;
+  // The layout: the one derived from the last Initialize's state batches when
+  // it covers the matrix, else the user-supplied block_layout, else a single
+  // segment of size `options_.block_size`.
+  auto rows = [](const std::vector<std::pair<int, int>> &l) {
+    long long total = 0;
+    for (const auto &[count, size] : l) total += static_cast<long long>(count) * size;
+    return total;
+  };
+  std::vector<std::pair<int, int>> layout;
+  if (!problem_layout_.empty() && rows(problem_layout_) == matrix_dim) {
+    layout = problem_layout_;
+  } else if (!options_.block_layout.empty()) {
+    layout = options_.block_layout;
   } else {
     if (matrix_dim % options_.block_size != 0) {
       LogError(
@@ -1306,12 +1313,12 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
           matrix_dim, options_.block_size);
       return false;
     }
-    layout_.push_back({matrix_dim / options_.block_size, options_.block_size});
+    layout.push_back({matrix_dim / options_.block_size, options_.block_size});
   }
 
   int row_cursor = 0;
   size_t factor_cursor = 0;
-  for (const auto &[count, size] : layout_) {
+  for (const auto &[count, size] : layout) {
     if (count <= 0) {
       continue;
     }
@@ -1344,7 +1351,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
                                       dvector<float> &result) {
   bsr_view_ = &spd_matrix;
   csr_view_ = nullptr;
-  return InitializeCommon(stream, problem, spd_matrix.NumRows(), rhs, result);
+  return InitializeCommon(stream, &problem, spd_matrix.NumRows(), rhs, result);
 }
 
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
@@ -1352,53 +1359,47 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
                                       dvector<float> &result) {
   csr_view_ = &spd_matrix;
   bsr_view_ = nullptr;
-  if (!InitializeCommon(stream, problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
+  if (!InitializeCommon(stream, &problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
     return false;
   }
   return InitializeCsrSpMV(stream, spd_matrix);
 }
 
 /** @brief Checks sizes and sets up the block layout, segment tables, BA product and scratch. */
-bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
+bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem *problem, int n,
                                             const dvector<float> &rhs, dvector<float> &result) {
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
     LogError("BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n, rhs.size(),
              result.size());
     return false;
   }
-  // When @p problem carries state batches, the block-Jacobi layout is
-  // ALWAYS derived afresh from them — each non-empty batch contributes
-  // a segment with `size = TangentSize()` and
-  // `count = NumActiveStates() - NumConstStates()`.  Consecutive
-  // segments of equal size are merged so the dispatch loop has one
-  // entry per distinct-size group (typical: 1 entry for PGO, 2 for
-  // SBA).  Re-deriving on every Initialize is what makes the same
-  // solver instance work across a stream of differently-dimensioned
-  // problems (e.g. the binary SBA test fixture iterates over many
-  // such problems with one minimizer).
-  //
-  // Falls back to the user-supplied @c options_.block_layout (or the
-  // uniform @c options_.block_size) only when @p problem has no
-  // registered state batches — the path tests exercise when they call
-  // the solver directly on a raw matrix.
-  std::vector<std::pair<int, int>> derived_layout;
-  for (const auto *sb : problem.GetStateBatches()) {
-    if (sb == nullptr) {
-      continue;
+  // With @p problem, the layout follows its state batches (when it has any):
+  // each non-empty batch contributes a segment with `size = TangentSize()`
+  // and `count = NumActiveStates() - NumConstStates()`; consecutive segments
+  // of equal size are merged (typically 1 entry for PGO, 2 for SBA).
+  // Re-deriving on every Initialize lets one solver serve a stream of
+  // differently-sized problems. A problem without state batches (a raw
+  // matrix) uses options_.block_layout or the uniform block_size. Without
+  // @p problem (Solve re-initializing after a size or pattern change) the
+  // last derived layout is kept while it still covers the matrix.
+  // options_ is never modified.
+  if (problem != nullptr) {
+    problem_layout_.clear();
+    for (const auto *sb : problem->GetStateBatches()) {
+      if (sb == nullptr) {
+        continue;
+      }
+      int t = static_cast<int>(sb->TangentSize());
+      int count = static_cast<int>(sb->NumActiveStates() - sb->NumConstStates());
+      if (count == 0) {
+        continue;
+      }
+      if (!problem_layout_.empty() && problem_layout_.back().second == t) {
+        problem_layout_.back().first += count;
+      } else {
+        problem_layout_.emplace_back(count, t);
+      }
     }
-    int t = static_cast<int>(sb->TangentSize());
-    int count = static_cast<int>(sb->NumActiveStates() - sb->NumConstStates());
-    if (count == 0) {
-      continue;
-    }
-    if (!derived_layout.empty() && derived_layout.back().second == t) {
-      derived_layout.back().first += count;
-    } else {
-      derived_layout.emplace_back(count, t);
-    }
-  }
-  if (!derived_layout.empty()) {
-    options_.block_layout = std::move(derived_layout);
   }
   if (!BuildSegmentTables(n)) {
     return false;
@@ -1523,8 +1524,7 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd
   if (n != matrix_size_ ||
       BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
                        spd_matrix.block_size, spd_matrix.col_ids.size())) {
-    Problem empty_problem;
-    if (!InitializeCommon(stream, empty_problem, n, rhs, result)) {
+    if (!InitializeCommon(stream, nullptr, n, rhs, result)) {
       return false;
     }
   }
@@ -1548,12 +1548,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
       BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), 1,
                        spd_matrix.col_ids.size())) {
     // Recovery path: matrix dim (or, with the bundle-adjustment product, the
-    // pattern) changed since the last Initialize.  Use
-    // a default-constructed Problem; the cached options_.block_layout
-    // (set by the prior Initialize) is reused if non-empty, otherwise
-    // the uniform options_.block_size path takes over.
-    Problem empty_problem;
-    if (!Initialize(stream, empty_problem, spd_matrix, rhs, result)) {
+    // pattern) changed since the last Initialize. Keep the derived layout
+    // while it covers the matrix (see InitializeCommon).
+    if (!InitializeCommon(stream, nullptr, n, rhs, result) ||
+        !InitializeCsrSpMV(stream, spd_matrix)) {
       return false;
     }
   }

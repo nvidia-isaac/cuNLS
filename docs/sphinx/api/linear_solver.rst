@@ -131,11 +131,13 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
 - ``block_layout`` - [in] Optional ``std::vector<std::pair<int, int>>``
   describing a heterogeneous block-diagonal layout: each
   ``(count_i, size_i)`` element contributes ``count_i * size_i`` rows
-  with ``size_i``-square diagonal tiles.  When empty (default),
-  ``Initialize`` derives the layout automatically from the
-  ``Problem``'s state batches (segment per non-empty batch with
-  ``size = TangentSize()``, ``count = NumActiveStates() -
-  NumConstStates()``).
+  with ``size_i``-square diagonal tiles.  ``Initialize`` derives the
+  layout from the ``Problem``'s state batches whenever it has any
+  (segment per non-empty batch with ``size = TangentSize()``,
+  ``count = NumActiveStates() - NumConstStates()``, consecutive equal
+  sizes merged), and that layout takes precedence; ``block_layout``
+  applies when the solver runs on a matrix with a ``Problem`` without
+  state batches.  The solver never modifies its options.
 - ``max_iterations`` - [in] PCG iteration cap.  Default: ``200``.
 - ``relative_tolerance`` - [in] Stop when
   ``||r_k|| <= relative_tolerance * ||b||``.  Default: ``1e-3``.
@@ -195,13 +197,13 @@ residual norm is copied to the host, and only once every
 .. cpp:function:: bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Builds the cuSPARSE SpMV plan, allocates the PCG scratch vectors,
-  and (when ``options.block_layout`` is empty) derives the block-Jacobi
-  layout from ``problem.GetStateBatches()``.
+  and derives the block-Jacobi layout from ``problem.GetStateBatches()``
+  when the problem has state batches.
 
   :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
-  :param ``problem``: [in] Source of the block-Jacobi layout when
-    ``options.block_layout`` is empty.  Pass a default-constructed
-    ``Problem`` when calling on a raw matrix.
+  :param ``problem``: [in] Source of the block-Jacobi layout.  Pass a
+    default-constructed ``Problem`` when calling on a raw matrix (then
+    ``options.block_layout`` or ``options.block_size`` applies).
   :param ``spd_matrix``: [in] Coefficient matrix ``H`` in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b``.
   :param ``result``: [out] Solution vector ``x``.
