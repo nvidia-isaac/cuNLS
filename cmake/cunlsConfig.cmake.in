@@ -12,3 +12,14 @@ include(CMakeFindDependencyMacro)
 find_dependency(CUDAToolkit REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cunlsTargets.cmake")
+
+# The public headers include <cuda/std/...>. CUDA 13 ships those (CCCL) only
+# under include/cccl, which FindCUDAToolkit of CMake < 4.0 does not add to
+# CUDA::cudart, so add it here when the consumer's toolkit has it.
+foreach(_cunls_cuda_include_dir IN LISTS CUDAToolkit_INCLUDE_DIRS)
+  if(EXISTS "${_cunls_cuda_include_dir}/cccl")
+    set_property(TARGET cunls::cunls APPEND PROPERTY
+      INTERFACE_INCLUDE_DIRECTORIES "${_cunls_cuda_include_dir}/cccl")
+  endif()
+endforeach()
+unset(_cunls_cuda_include_dir)
