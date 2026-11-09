@@ -105,7 +105,12 @@ namespace {
 constexpr int kMaxBlockSize = 16;
 // Most CTAs a dot kernel launches; one partial sum per CTA.
 constexpr int kMaxDotBlocks = 1024;
-// d_scratch_: 7 PCG scalars, then from kDotWork the dot partial sums and tickets.
+// d_scratch_ slots of the PCG scalars. <r, z> alternates between kRzA and kRzB
+// (the previous iteration's value is rz_old) so no kernel overwrites a value
+// other CTAs still read. Each rz slot sits next to kRnorm2: DualDotAsync clears
+// rz_new and ||r||^2 with one 8-byte memset.
+enum : int { kPAp = 0, kRzA = 1, kRnorm2 = 2, kRzB = 3, kBnorm2 = 4, kNumPcgScalars = 5 };
+// From kDotWork: the dot partial sums and tickets (deterministic_mode only).
 constexpr int kDotWork = 8;
 constexpr size_t kScratchSize = kDotWork + 2 * kMaxDotBlocks + 2;
 
@@ -906,7 +911,8 @@ __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
 /**
  * @brief Fused: compute `β = rz_new / rz_old` and update the search
  *        direction `p ← z + β p` in a single kernel.  Every CTA reads
- *        `rz_old`, so the caller advances it after this kernel.
+ *        both scalars, so neither may be written by this kernel (the
+ *        caller alternates the rz slots instead).
  */
 __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
                                    const float *__restrict__ rz_old_ptr,
@@ -1234,9 +1240,9 @@ void DualDotAsync(cudaStream_t stream, const float *a, const float *b, const flo
   int threads = 256;
   int blocks = std::min(kMaxDotBlocks, (n + threads - 1) / threads);
   if (work == nullptr) {
-    // Verified adjacent at the call site (kRzNew, kRnorm2 in d_scratch_).
-    assert(out_ac == out_ab + 1);
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(out_ab, 0, 2 * sizeof(float), stream));
+    // Adjacent by the d_scratch_ layout (kRzA or kRzB next to kRnorm2).
+    assert(out_ac == out_ab + 1 || out_ab == out_ac + 1);
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(std::min(out_ab, out_ac), 0, 2 * sizeof(float), stream));
     DualDotKernel<false>
         <<<blocks, threads, 0, stream>>>(a, b, c, n, out_ab, out_ac, nullptr, nullptr);
   } else {
@@ -1297,7 +1303,6 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
   }
 
   int row_cursor = 0;
-  int block_cursor = 0;
   size_t factor_cursor = 0;
   for (const auto &[count, size] : layout_) {
     if (count <= 0) {
@@ -1312,11 +1317,9 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
     s.num_blocks = count;
     s.row_start = row_cursor;
     s.factor_offset = static_cast<int>(factor_cursor);
-    s.block_row_start = block_cursor;
     segments_.push_back(s);
 
     row_cursor += count * size;
-    block_cursor += count;
     factor_cursor +=
         static_cast<size_t>(count) * (size == 1 ? 1ull : static_cast<size_t>(size) * size);
   }
@@ -1325,7 +1328,6 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
              matrix_dim);
     return false;
   }
-  total_blocks_ = block_cursor;
   total_factor_floats_ = factor_cursor;
   return true;
 }
@@ -1406,7 +1408,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
     p_.resize(n);
     Ap_.resize(n);
   }
-  const size_t scratch_size = options_.deterministic_mode ? kScratchSize : 7;
+  const size_t scratch_size = options_.deterministic_mode ? kScratchSize : kNumPcgScalars;
   if (d_scratch_.size() < scratch_size) {
     d_scratch_.resize(scratch_size);
   }
@@ -1600,10 +1602,6 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
   // -----------------------------------------------------------------
   // 3. Compute initial inner products on device.
   // -----------------------------------------------------------------
-  // Scratch slots: [0] alpha, [1] beta, [2] <p, Ap>, [3] rz_old (= <r, z>),
-  // [4] rz_new, [5] ||r||^2, [6] ||b||^2.
-  enum : int { kAlpha = 0, kBeta = 1, kPAp = 2, kRzOld = 3, kRzNew = 4, kRnorm2 = 5, kBnorm2 = 6 };
-
   // Fixed-order dot products need the partial sums and tickets in d_scratch_.
   float *dot_work = options_.deterministic_mode ? d_scratch_.data() + kDotWork : nullptr;
   if (dot_work != nullptr) {
@@ -1611,7 +1609,7 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     THROW_ON_CUDA_ERROR(
         cudaMemsetAsync(dot_work + 2 * kMaxDotBlocks, 0, 2 * sizeof(unsigned), stream));
   }
-  DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzOld, dot_work);
+  DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzA, dot_work);
   DotAsync(stream, rhs.data(), rhs.data(), n, d_scratch_.data() + kBnorm2, dot_work);
 
   // Pull ||b||^2 once for the host-side convergence threshold.  This is
@@ -1644,6 +1642,8 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
 
   int it = 0;
   for (; it < options_.max_iterations; ++it) {
+    float *rz_old = d_scratch_.data() + ((it & 1) ? kRzB : kRzA);
+    float *rz_new = d_scratch_.data() + ((it & 1) ? kRzA : kRzB);
     // Ap = H * p.  Block storage carries one column index per tile instead of
     // one per scalar entry, which is where the bandwidth saving comes from.
     float spmv_alpha = 1.f;
@@ -1672,9 +1672,8 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp, dot_work);
 
     // α = rz_old / <p, Ap>; x ← x + α p; r ← r − α Ap (fused kernel).
-    PcgUpdateKernel<<<blocks, threads, 0, stream>>>(d_scratch_.data() + kRzOld,
-                                                    d_scratch_.data() + kPAp, p_.data(), Ap_.data(),
-                                                    result.data(), r_.data(), n);
+    PcgUpdateKernel<<<blocks, threads, 0, stream>>>(rz_old, d_scratch_.data() + kPAp, p_.data(),
+                                                    Ap_.data(), result.data(), r_.data(), n);
 
     // z = M^{-1} r.
     for (const auto &s : segments_) {
@@ -1682,14 +1681,11 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
                            precond_factors_.data(), r_.data(), z_.data());
     }
     // Fused: rz_new = <r, z>, ||r||^2 = <r, r>.  Single pass over r.
-    DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, d_scratch_.data() + kRzNew,
-                 d_scratch_.data() + kRnorm2, dot_work);
+    DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, rz_new, d_scratch_.data() + kRnorm2,
+                 dot_work);
 
-    // β = rz_new / rz_old; p ← z + β p (fused); then rz_old ← rz_new.
-    PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
-        d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(), p_.data(), n);
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_scratch_.data() + kRzOld, d_scratch_.data() + kRzNew,
-                                        sizeof(float), cudaMemcpyDeviceToDevice, stream));
+    // β = rz_new / rz_old; p ← z + β p (fused). rz_new is the next iteration's rz_old.
+    PcgDirectionKernel<<<blocks, threads, 0, stream>>>(rz_new, rz_old, z_.data(), p_.data(), n);
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.

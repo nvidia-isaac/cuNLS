@@ -353,18 +353,15 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
 
   /** Total matrix dimension N (cached from the last @ref Initialize). */
   int matrix_size_ = 0;
-  /** Total number of diagonal tiles across all segments. */
-  int total_blocks_ = 0;
   /** Total entries in @ref precond_factors_. */
   size_t total_factor_floats_ = 0;
 
   /** Per-segment data, kept on the host for the launch loop. */
   struct Segment {
-    int block_size;       ///< side length of each tile (rows = cols)
-    int num_blocks;       ///< number of tiles in this segment
-    int row_start;        ///< first matrix row covered by this segment
-    int factor_offset;    ///< first index in @ref precond_factors_
-    int block_row_start;  ///< first block index in the global tile order
+    int block_size;     ///< side length of each tile (rows = cols)
+    int num_blocks;     ///< number of tiles in this segment
+    int row_start;      ///< first matrix row covered by this segment
+    int factor_offset;  ///< first index in @ref precond_factors_
   };
   std::vector<Segment> segments_;
 
@@ -372,7 +369,7 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    * @brief LDLT factors of every diagonal tile, packed contiguously.
    *
    * Tile @c b of segment @c s lives at
-   * `precond_factors_[segment_factor_offset(s) + b * size_s * size_s ..]` in
+   * `precond_factors_[segments_[s].factor_offset + b * size_s * size_s ..]` in
    * row-major order.  Lower triangle holds `L` with unit diagonal (implicit);
    * the stored diagonal holds `D`; upper triangle is unused.
    */
@@ -386,8 +383,9 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
   dvector<float> p_;   ///< search direction `p_k`
   dvector<float> Ap_;  ///< `H p_k` (the SpMV output)
 
-  /** Device-resident scalar slots: alpha, beta, <p,Ap>, rz_old, rz_new,
-   *  ||r||^2, ||b||^2.  Layout is fixed in the .cu file. */
+  /** Device-resident scalars (<p,Ap>, the two alternating <r,z> slots,
+   *  ||r||^2, ||b||^2), followed in deterministic_mode by the dot partial
+   *  sums and tickets.  Layout is fixed in the .cu file (kPAp.., kDotWork). */
   dvector<float> d_scratch_;
 
   // ------------------------------------------------------------------
