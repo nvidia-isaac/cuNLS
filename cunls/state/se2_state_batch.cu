@@ -16,6 +16,7 @@
  */
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/state/se2_state_batch.h"
 
 namespace cunls {
@@ -30,23 +31,13 @@ __global__ void fused_se2_plus_kernel(const float *__restrict__ x, const float *
   if (tid >= n) {
     return;
   }
-  const float *d = delta + tid * 3;
-  float vx = d[0];
-  float vy = d[1];
-  float w = d[2];
-  float c = cosf(w);
-  float s = sinf(w);
-  float tx;
-  float ty;
-  if (fabsf(w) < 1e-3f) {
-    tx = vx;
-    ty = vy;
-  } else {
-    float sw = s / w;
-    float cw = (1.0f - c) / w;
-    tx = vx * sw - vy * cw;
-    ty = vx * cw + vy * sw;
-  }
+  // T = Exp(delta); result = x * T.
+  float T[9];
+  lie_device::ExpSE2(delta + tid * 3, T);
+  const float c = T[0];
+  const float s = T[3];
+  const float tx = T[2];
+  const float ty = T[5];
 
   const float *X = x + tid * 9;
   float *R = result + tid * 9;
