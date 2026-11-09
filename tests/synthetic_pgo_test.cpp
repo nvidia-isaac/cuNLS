@@ -763,4 +763,12 @@ INSTANTIATE_TEST_SUITE_P(Sizes, LoopClosurePGOTest,
                                            LcPgoParams{1000, 3000, "P1k_LC3k"},
                                            LcPgoParams{5000, 10000, "P5k_LC10k"}));
 
+// Opt-in (about 25 GB of GPU memory, ~10 s): random loop closures fill the
+// factor so much that BlockSparseCholesky's relative map has ~3.9e9 entries
+// (factor ~1e9), past the 32-bit offsets it used to have
+// ("the relative map exceeds 2^31 entries"). Run with
+// --gtest_also_run_disabled_tests --gtest_filter='DISABLED_HugeFill/*'.
+INSTANTIATE_TEST_SUITE_P(DISABLED_HugeFill, LoopClosurePGOTest,
+                         ::testing::Values(LcPgoParams{20000, 40000, "P20k_LC40k"}));
+
 }  // namespace cunls
