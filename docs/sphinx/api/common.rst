@@ -57,7 +57,11 @@ Defined in `cunls/common/types.h`:
 
 - `Vector<Dim>`: fixed-size float vector (`cuda::std::array`).
 - `Matrix<Dim>`: row-major square matrix.
-- `SE3Transform`: alias of `Matrix<4>`.
+- Group-element types, one per manifold, each a distinct struct deriving from the row-major
+  matrix of its size (so a factor or state takes exactly its own type): `SO2Rotation`
+  (`Matrix<2>`), `SO3Rotation` (`Matrix<3>`), `SE2Transform` (`Matrix<3>`), `SE3Transform`
+  (`Matrix<4>`), `Similarity2Transform` (`Matrix<3>`), `Similarity3Transform` (`Matrix<4>`),
+  `SL4Transform` (`Matrix<4>`).
 - `dvector<T>`: alias for `DeviceVector<T>`.
 - `hvector<T>`: alias for `std::vector<T>`.
 

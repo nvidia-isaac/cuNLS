@@ -37,6 +37,12 @@ Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 - `DenseCholesky` — densifies the coefficient matrix and solves with
   cuSOLVER Cholesky (requires SPD).
 - `DenseQR` — densifies the coefficient matrix and solves with cuSOLVER QR.
+- `BlockTridiagonal` — block Cholesky (Riccati recursion) of systems that are
+  block tridiagonal in time: trajectory optimization and MPC, one subproblem per
+  trajectory.  Needs every state's stage (``Problem::SetStateStages``); factors may
+  only couple the same or adjacent stages, stage blocks of at most 32 unknowns.
+  One warp per subproblem, no host synchronization (CUDA-graph capturable).
+  See `BlockTridiagonalSolver`_.
 
 SparseLinearSolverConfig
 ------------------------
@@ -436,3 +442,27 @@ Function in `sparse_linear_solver.h`:
   :param ``type``: [in] Backend type to instantiate.
   :param ``config``: [in] Backend-specific configuration blob.
   :returns: [out] Heap-allocated solver instance.
+
+BlockTridiagonalSolver
+----------------------
+
+Header: :code:`cunls/linear_solver/block_tridiagonal_solver.h`
+
+Direct solver selected by ``SparseLinearSolverType::BlockTridiagonal``.  The ordering
+comes from the problem: ``Problem::SetStateStages`` gives every state a stage (time
+index) and ``Problem::SetProblemPartition`` the subproblem.  Within a subproblem the
+unknowns of stage :math:`k` form one block; factors may only couple the same or
+adjacent stages, so each subproblem's matrix is block tridiagonal.  ``Initialize``
+checks this and fails (``false``, with a logged error) otherwise.
+
+``Solve`` runs the block Cholesky (the Riccati recursion of LQR) per subproblem, then
+forward and back substitution: one warp per subproblem, blocks in shared memory,
+:math:`O(K m^3)` work for :math:`K` stages of at most :math:`m \le 32` unknowns.  A
+non-positive pivot is counted on the device and replaced by a tiny positive one;
+with safety checks enabled ``Solve`` reads the count back and fails, otherwise the
+solve stays free of host synchronization.  BSR input is not supported.
+
+.. cpp:member:: static constexpr int BlockTridiagonalSolver::kMaxStageSize = 32
+
+  Largest stage block size supported (one warp per subproblem).
+

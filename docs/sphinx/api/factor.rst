@@ -1130,7 +1130,7 @@ Prior on a 2D rotation (e.g. heading). Penalizes deviation from a target rotatio
 
 **Inputs:** :math:`R` = current rotation (state). State: one state from :code:`SO2StateBatch` (see :doc:`state`).
 
-.. cpp:function:: SO2PriorFactorBatch(const Matrix<2>* observations_ptr, size_t capacity)
+.. cpp:function:: SO2PriorFactorBatch(const SO2Rotation* observations_ptr, size_t capacity)
 
   :param ``observations_ptr``: [in] Device pointer to SO(2) observations (2×2 row-major).
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
@@ -1162,7 +1162,7 @@ Prior on a 3D rotation. Penalizes deviation from a target orientation.
 
 **Inputs:** :math:`R` = current rotation (state). State: one state from :code:`SO3StateBatch` (see :doc:`state`).
 
-.. cpp:function:: SO3PriorFactorBatch(const Matrix<3>* observations_ptr, size_t capacity)
+.. cpp:function:: SO3PriorFactorBatch(const SO3Rotation* observations_ptr, size_t capacity)
 
   :param ``observations_ptr``: [in] Device pointer to SO(3) observations (3×3 row-major).
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
@@ -1268,6 +1268,9 @@ Prior on 3D similarity transform. State: one state from :code:`Similarity3StateB
 
 .. cpp:function:: ClassName(const ObsType* observations_ptr, size_t capacity)
 
+  ``ObsType`` is :code:`SE2Transform`, :code:`SE3Transform`, :code:`Similarity2Transform` or
+  :code:`Similarity3Transform` (see :doc:`common`), matching the class.
+
   :param ``observations_ptr``: [in] Device pointer to observation transforms.
   :param ``capacity``: [in] Number of factors the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
@@ -1366,7 +1369,7 @@ Constrains the relative transform between two SE(2) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two poses (states). State: two states from :code:`SE2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: SE2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t capacity)
+.. cpp:function:: SE2BetweenFactorBatch(const SE2Transform* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
@@ -1402,9 +1405,9 @@ Constrains the relative rotation between two SO(2) frames (zero at
 
 **Inputs:** :math:`R_{\mathrm{left}}`, :math:`R_{\mathrm{right}}` = two rotations (states). State: two states from :code:`SO2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative rotation (constructor).
 
-.. cpp:function:: SO2BetweenFactorBatch(const Matrix<2>* rotation_deltas_ptr, size_t capacity)
+.. cpp:function:: SO2BetweenFactorBatch(const SO2Rotation* pose_deltas_ptr, size_t capacity)
 
-  :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 2×2).
+  :param ``pose_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 2×2).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
@@ -1437,9 +1440,9 @@ Constrains the relative rotation between two SO(3) frames.
 
 **Inputs:** :math:`R_{\mathrm{left}}`, :math:`R_{\mathrm{right}}` = two rotations (states). State: two states from :code:`SO3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative rotation (constructor).
 
-.. cpp:function:: SO3BetweenFactorBatch(const Matrix<3>* rotation_deltas_ptr, size_t capacity)
+.. cpp:function:: SO3BetweenFactorBatch(const SO3Rotation* pose_deltas_ptr, size_t capacity)
 
-  :param ``rotation_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 3×3).
+  :param ``pose_deltas_ptr``: [in] Device pointer to measured relative rotations (row-major 3×3).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
   :returns: Constructor has no return value.
 
@@ -1472,7 +1475,7 @@ Constrains the relative transform between two Sim(2) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (states). State: two states from :code:`Similarity2StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: Similarity2BetweenFactorBatch(const Matrix<3>* pose_deltas_ptr, size_t capacity)
+.. cpp:function:: Similarity2BetweenFactorBatch(const Similarity2Transform* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 3×3).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
@@ -1507,7 +1510,7 @@ Constrains the relative transform between two Sim(3) frames.
 
 **Inputs:** :math:`T_{\mathrm{left}}`, :math:`T_{\mathrm{right}}` = two transforms (states). State: two states from :code:`Similarity3StateBatch` (see :doc:`state`). :math:`\Delta` = measured relative transform (constructor).
 
-.. cpp:function:: Similarity3BetweenFactorBatch(const Matrix<4>* pose_deltas_ptr, size_t capacity)
+.. cpp:function:: Similarity3BetweenFactorBatch(const Similarity3Transform* pose_deltas_ptr, size_t capacity)
 
   :param ``pose_deltas_ptr``: [in] Device pointer to measured relative transforms (row-major 4×4).
   :param ``capacity``: [in] Number of between constraints the buffers hold. 0 are active until ``SetNumActiveFactors``.
