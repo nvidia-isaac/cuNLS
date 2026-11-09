@@ -94,29 +94,5 @@ class Similarity2StateBatch : public SizedStateBatch<9, 4> {
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
 
- private:
-  mutable dvector<Matrix<3>> delta_transforms_;
-  mutable dvector<float> tangents_;
-
-  /**
-   * @brief Applies a Sim(2) update: result = x * Exp(delta) or
-   * result = x * Exp(-delta)
-   *
-   * Computes the right-multiplication update for Sim(2) transformations.
-   * First computes the update matrix Exp(delta) or Exp(-delta)
-   * using the Sim(2) exponential map, then performs batched matrix
-   * multiplication in a CUDA kernel.
-   *
-   * This is a helper function used by Plus (invert_delta=false).
-   *
-   * @param x Input transformation matrices (device pointer, row-major)
-   * @param delta Tangent space updates (4D vectors [u_x, u_y, theta, lambda],
-   * device pointer)
-   * @param result Output transformation matrices (device pointer, row-major)
-   * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
-                   cudaStream_t stream, size_t num_blocks);
 };
 }  // namespace cunls

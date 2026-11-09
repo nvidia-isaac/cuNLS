@@ -25,7 +25,7 @@ namespace {
 constexpr int kBlockSize = 256;
 
 __global__ void fused_se2_plus_kernel(const float *__restrict__ x, const float *__restrict__ delta,
-                                      float *__restrict__ result, int n, bool negate_delta) {
+                                      float *__restrict__ result, int n) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= n) {
     return;
@@ -34,11 +34,6 @@ __global__ void fused_se2_plus_kernel(const float *__restrict__ x, const float *
   float vx = d[0];
   float vy = d[1];
   float w = d[2];
-  if (negate_delta) {
-    vx = -vx;
-    vy = -vy;
-    w = -w;
-  }
   float c = cosf(w);
   float s = sinf(w);
   float tx;
@@ -77,35 +72,28 @@ __global__ void fused_se2_plus_kernel(const float *__restrict__ x, const float *
 }
 
 void LaunchFusedSe2Plus(cudaStream_t stream, const float *x, const float *delta, float *result,
-                        size_t num_blocks, bool negate_delta) {
+                        size_t num_blocks) {
   int n = static_cast<int>(num_blocks);
   if (n <= 0) {
     return;
   }
   int grid = (n + kBlockSize - 1) / kBlockSize;
-  fused_se2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n, negate_delta);
+  fused_se2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace
 
 SE2StateBatch::SE2StateBatch(const float *device_ptr, size_t capacity)
-    : Base(device_ptr, capacity), delta_transforms_(capacity), tangents_(capacity * 3) {}
+    : Base(device_ptr, capacity) {}
 
 SE2StateBatch::SE2StateBatch(const float *device_ptr, size_t capacity,
                              const int *device_constant_state_ids, size_t const_capacity)
-    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
-      delta_transforms_(capacity),
-      tangents_(capacity * 3) {}
-
-void SE2StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
-                                bool invert_delta, cudaStream_t stream) {
-  LaunchFusedSe2Plus(stream, x, delta, result, NumActiveStates(), invert_delta);
-}
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
 void SE2StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {
-  LaunchFusedSe2Plus(stream, x, delta, x_plus_delta, NumActiveStates() * num_replicas, false);
+  LaunchFusedSe2Plus(stream, x, delta, x_plus_delta, NumActiveStates() * num_replicas);
 }
 
 }  // namespace cunls

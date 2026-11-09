@@ -95,29 +95,5 @@ class SE2StateBatch : public SizedStateBatch<9, 3> {
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
 
- private:
-  mutable dvector<Matrix<3>> delta_transforms_;
-  mutable dvector<float> tangents_;
-
-  /**
-   * @brief Applies an SE(2) update: result = x * Exp(delta) or
-   * result = x * Exp(-delta)
-   *
-   * Computes the right-multiplication update for SE(2) transformations.
-   * First computes the update matrix Exp(delta) or Exp(-delta)
-   * using the SE(2) exponential map, then performs batched matrix
-   * multiplication in a CUDA kernel.
-   *
-   * This is a helper function used by Plus (invert_delta=false).
-   *
-   * @param x Input transformation matrices (device pointer, row-major)
-   * @param delta Tangent space updates (3D vectors [v_x, v_y, theta], device
-   * pointer)
-   * @param result Output transformation matrices (device pointer, row-major)
-   * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
-                   cudaStream_t stream);
 };
 }  // namespace cunls

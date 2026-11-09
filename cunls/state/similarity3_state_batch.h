@@ -90,21 +90,5 @@ class Similarity3StateBatch : public SizedStateBatch<16, 7> {
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
 
- private:
-  mutable dvector<Matrix<4>> delta_transforms_;
-  mutable dvector<float> tangents_;
-
-  /**
-   * @brief Applies a Sim(3) update: result = x * Exp(delta) or
-   * result = x * Exp(-delta)
-   *
-   * @param x Input transformation matrices (device pointer, row-major)
-   * @param delta Tangent space updates (7D vectors, device pointer)
-   * @param result Output transformation matrices (device pointer, row-major)
-   * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
-                   cudaStream_t stream, size_t num_blocks);
 };
 }  // namespace cunls
