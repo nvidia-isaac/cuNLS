@@ -163,7 +163,7 @@ struct BlockSparsePCGOptions {
 
 /**
  * @brief Block-Jacobi preconditioned conjugate gradient solver for
- *        symmetric positive (semi-)definite CSR systems.
+ *        symmetric positive (semi-)definite systems (scalar CSR or BSR).
  *
  * Solves `H x = b` with the standard PCG recurrence
  * (Saad, *Iterative Methods for Sparse Linear Systems*, 2nd ed., §9.2):
@@ -190,13 +190,16 @@ struct BlockSparsePCGOptions {
  * dominates many iterative solver implementations.
  *
  * Implementation notes (see the `.cu` file for derivations):
- *  - Scalar-CSR SpMV is delegated to cuSPARSE (`cusparseSpMV` with the default
- *    algorithm and an up-front `preprocess` pass) — the same matrix
- *    structure is reused across all PCG steps of one @ref Solve and
- *    typically across multiple @ref Solve calls inside a single
- *    Levenberg-Marquardt @ref Minimize.
- *  - All scalar quantities (`alpha`, `beta`, `<p, q>`, `<r, r>`,
- *    `<r, z>`) live on the device for the whole inner loop.  Only the
+ *  - `H p` takes one of three paths: block storage uses the in-house BSR
+ *    kernels; scalar CSR uses cuSPARSE (`cusparseSpMV` with the default
+ *    algorithm, or `CUSPARSE_SPMV_CSR_ALG2` under
+ *    BlockSparsePCGOptions::deterministic_mode, and an up-front `preprocess`
+ *    pass); BlockSparsePCGOptions::hessian_product = kBundleAdjustment uses
+ *    BaHessianProduct.  The matrix structure is reused across all PCG steps
+ *    of one @ref Solve and typically across the Solve calls of one Minimize.
+ *  - All scalar quantities (`<p, q>`, `<r, r>`, `<r, z>`; `alpha` and
+ *    `beta` inside the fused kernels) live on the device for the whole
+ *    inner loop.  Only the
  *    residual norm is copied back to the host, and only once every
  *    `check_period` iterations (default 4).
  *  - The block-Jacobi factor `M` is rebuilt from the current `H` values

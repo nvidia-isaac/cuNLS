@@ -160,8 +160,10 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   storage.  ``kBundleAdjustment``: a deterministic kernel for
   bundle-adjustment Hessians (layout ``{{num_cameras, 6}, {num_points,
   3}}``, CSR or 3x3 block storage, sm_80 or newer) that reads each
-  camera-point block once; ``Initialize`` falls back to ``kGeneric``
-  when the matrix does not fit and logs the reason.  ``Solve`` re-checks
+  camera-point block once.  Limits: at most 1379 cameras and 524287
+  points, and the GPU must support cooperative launches.  ``Initialize``
+  falls back to ``kGeneric`` when the matrix does not fit and logs the
+  reason.  ``Solve`` re-checks
   a matrix with other buffers, storage or entry count; a pattern
   rewritten in place needs ``Initialize``.  Calls on one solver instance
   are stream-ordered; instances are independent.
@@ -175,7 +177,9 @@ standard preconditioned conjugate gradient recurrence (Saad,
 *Iterative Methods for Sparse Linear Systems*, §9.2) and a
 block-Jacobi preconditioner formed from the dense diagonal tiles of
 ``H``.  Each tile is factored independently with an in-shared-memory
-LDLT.  SpMV is delegated to cuSPARSE.
+LDLT.  ``H p`` uses the in-house BSR kernels for block storage, cuSPARSE
+for scalar CSR, or the bundle-adjustment kernel under
+``hessian_product = kBundleAdjustment``.
 
 All scalar quantities (``alpha``, ``beta``, ``<p, q>``, ``<r, r>``,
 ``<r, z>``) live on the device for the whole inner loop.  Only the

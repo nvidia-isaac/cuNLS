@@ -145,7 +145,7 @@ All Docker-based workflows use `scripts/Dockerfile` with `ARG CUDA_VERSION` and 
 
 ### 5. Rely on platform defaults
 
-Use the distro-default GCC (not a pinned version). Use the Kitware-latest CMake (not a pinned version unless there's a proven compatibility issue). Ubuntu 22.04 ships GCC 11, Ubuntu 24.04 ships GCC 13 -- both support C++17. Only pin versions when there is a documented, tested incompatibility.
+Use the distro-default GCC and CMake (not pinned versions unless there's a proven compatibility issue). Ubuntu 22.04 ships GCC 11, Ubuntu 24.04 ships GCC 13 -- both support C++17. Only pin versions when there is a documented, tested incompatibility.
 
 ### 6. CI adapts to infrastructure, not the other way around
 
@@ -212,8 +212,8 @@ $OUTPUT_DIR/                    # host build output
   cpp-test-results.xml
 
 cunls-x86_64-cuda13.2.0-ubuntu24.04.tar.gz   # release asset (also orin-*, thor-*)
-  output/shared/                # set CMAKE_PREFIX_PATH here for .so
-  output/static/                # set CMAKE_PREFIX_PATH here for .a
+  shared/                       # set CMAKE_PREFIX_PATH here for .so
+  static/                       # set CMAKE_PREFIX_PATH here for .a
 ```
 
 Headers are identical between shared and static. CMake configs differ (each references its own library file and link interface).

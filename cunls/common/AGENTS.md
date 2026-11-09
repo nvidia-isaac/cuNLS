@@ -19,6 +19,14 @@ Shared infrastructure used across cuNLS modules:
 - `cuda_stream.h`: RAII CUDA stream wrapper
 - `cublas_helper.h`, `cusparse_helper.h`, `cusolver_helper.h`, `cudss_helper.h`
 - `profiler.h`: NVTX range/domain wrappers
+- `cudss_dynamic.h`: cuDSS entry points resolved with dlopen() from libcudss.so
+  (cuDSS is an optional run-time dependency)
+- `pinned_vector.h`: RAII page-locked host buffer
+- `log.h`: verbosity levels, `SetLoggerOptions`, `LogMessage` / `LogError`
+- `helper.h`: CUDA/cuBLAS/cuSPARSE/cuSOLVER error-checking macros (`THROW_ON_*`)
+- `manifold.h`: empty tag types naming each Lie group at compile time
+- `utils.h`: debugging helpers (dump CSR matrices to files)
+- `type_traits.h`: SFINAE helpers used by the factor facades
 
 ## Contracts
 
