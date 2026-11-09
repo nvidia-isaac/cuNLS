@@ -43,7 +43,7 @@ constexpr int kThreads = 256;
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
-enum Status : int { kRunning = 0, kDone = 1, kStalled = 2 };
+enum Status : int { kRunning = 0, kDone = 1, kStalled = 2, kFailed = 3 };
 
 /// A violation above this fraction of the previous one is stagnating.
 constexpr float kStagnation = 0.9f;
@@ -55,7 +55,8 @@ enum Out : int {
   kMaxRunningViolation = 2,  ///< Over the running subproblems.
   kNumDone = 3,
   kNumStalled = 4,
-  kNumOut = 5,
+  kNumFailed = 5,  ///< Subproblems whose inner solve failed (non-finite cost or step).
+  kNumOut = 6,
 };
 
 /** Max of non-negative floats through their integer bit patterns (monotone for v >= 0). */
@@ -95,17 +96,25 @@ __global__ void multiplier_kernel(bool inequality, const float *values, size_t n
 
 /**
  * One thread per subproblem: penalty growth per constraint batch, stopping,
- * and the read-back scalars.
+ * and the read-back scalars. `inner_reason` (null in real time, where nothing
+ * is read back) is the TerminationReason of each subproblem's inner solve: a
+ * non-finite cost or step fails the subproblem, whatever its violation.
  */
 __global__ void control_kernel(size_t num_problems, int num_constraints, float tolerance,
                                float violation_decrease, float penalty_increase, float max_penalty,
-                               bool full_solve, const int *at_cap, const float *violation,
-                               float *prev_violation, float *penalty, int *status, float *out) {
+                               bool full_solve, const int *at_cap, const int *inner_reason,
+                               const float *violation, float *prev_violation, float *penalty,
+                               int *status, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   float vp = 0.f;
   for (int c = 0; c < num_constraints; ++c) vp = fmaxf(vp, violation[c * num_problems + p]);
   AtomicMaxNonNegative(out + kMaxViolation, vp);
+  if (status[p] == kRunning && inner_reason != nullptr &&
+      (inner_reason[p] == static_cast<int>(TerminationReason::NonFiniteCost) ||
+       inner_reason[p] == static_cast<int>(TerminationReason::NonFiniteStep))) {
+    status[p] = kFailed;
+  }
   if (status[p] == kRunning) {
     bool stalled = false;
     for (int c = 0; c < num_constraints; ++c) {
@@ -141,6 +150,8 @@ __global__ void control_kernel(size_t num_problems, int num_constraints, float t
     AtomicMaxNonNegative(out + kMaxRunningViolation, vp);
   } else if (status[p] == kDone) {
     atomicAdd(out + kNumDone, 1.f);
+  } else if (status[p] == kFailed) {
+    atomicAdd(out + kNumFailed, 1.f);
   } else {
     atomicAdd(out + kNumStalled, 1.f);
   }
@@ -316,6 +327,15 @@ std::string Describe(const AugmentedLagrangianMinimizerSummary &summary,
           << ") at max_penalty: the constraints are likely infeasible or contradict each other "
              "(check bounds and targets), or the objective outweighs them (raise max_penalty).";
       break;
+    case AugmentedLagrangianMinimizerStatus::kInnerSolveFailed:
+      out << "Failed: the inner solve of " << summary.num_inner_failed << " of "
+          << summary.num_problems
+          << " subproblems stopped on a non-finite cost or step (objective "
+          << summary.initial_cost << " -> " << summary.final_cost
+          << "). A factor returns NaN or Inf at the states, or the linear system is singular. "
+             "Fix: check that measurements and initial states are finite (pycunls.evaluate "
+             "shows the cost per factor batch) and that every gauge is fixed.";
+      break;
     case AugmentedLagrangianMinimizerStatus::kNotDetermined:
       out << "Convergence not determined after " << summary.outer_iterations
           << " outer iterations (nothing was read back).";
@@ -329,8 +349,11 @@ void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) 
   summary.max_violation = out[kMaxViolation];
   summary.num_converged = static_cast<size_t>(out[kNumDone]);
   summary.num_max_penalty = static_cast<size_t>(out[kNumStalled]);
+  summary.num_inner_failed = static_cast<size_t>(out[kNumFailed]);
   if (summary.num_converged == summary.num_problems) {
     summary.status = AugmentedLagrangianMinimizerStatus::kConverged;
+  } else if (summary.num_inner_failed > 0) {
+    summary.status = AugmentedLagrangianMinimizerStatus::kInnerSolveFailed;
   } else if (out[kNumRunning] > 0.f) {
     summary.status = AugmentedLagrangianMinimizerStatus::kMaxOuterIterations;
   } else {
@@ -525,9 +548,14 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
         summary.num_converged += inner.num_problems_by_reason[r];
       } else if (reason == TerminationReason::NotDetermined) {
         num_undetermined += inner.num_problems_by_reason[r];
+      } else if (reason == TerminationReason::NonFiniteCost ||
+                 reason == TerminationReason::NonFiniteStep) {
+        summary.num_inner_failed += inner.num_problems_by_reason[r];
       }
     }
-    if (summary.num_converged + num_undetermined < summary.num_problems) {
+    if (summary.num_inner_failed > 0) {
+      summary.status = AugmentedLagrangianMinimizerStatus::kInnerSolveFailed;
+    } else if (summary.num_converged + num_undetermined < summary.num_problems) {
       summary.status = AugmentedLagrangianMinimizerStatus::kMaxOuterIterations;
     } else if (num_undetermined > 0) {
       summary.status = AugmentedLagrangianMinimizerStatus::kNotDetermined;
@@ -651,8 +679,9 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
         num_problems_, static_cast<int>(constraints_.size()), options_.constraint_tolerance,
         options_.violation_decrease, options_.penalty_increase, options_.max_penalty, full_solve,
-        at_cap_.data(), violation_.data(), prev_violation_.data(), penalty_.data(),
-        problem_status_.data(), d_out_.data());
+        at_cap_.data(), real_time ? nullptr : minimizer_.SubproblemTerminationReasons(),
+        violation_.data(), prev_violation_.data(), penalty_.data(), problem_status_.data(),
+        d_out_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     // Multiplier updates of the subproblems still running.
     offset = 0;

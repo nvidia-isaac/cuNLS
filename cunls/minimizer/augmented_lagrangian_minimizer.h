@@ -133,6 +133,9 @@ enum class AugmentedLagrangianMinimizerStatus {
   /// Convergence was not checked: a real-time (fixed-iteration) call without
   /// constraint batches reads nothing back, so nothing is known about it.
   kNotDetermined = 3,
+  /// The inner solve of some subproblem stopped on a non-finite cost or step
+  /// (TerminationReason NonFiniteCost / NonFiniteStep), feasible or not.
+  kInnerSolveFailed = 4,
 };
 
 /** @brief Result of AugmentedLagrangianMinimizer::Minimize. */
@@ -160,6 +163,8 @@ struct AugmentedLagrangianMinimizerSummary {
   size_t num_converged = 0;
   /** @brief Subproblems stopped at the penalty cap (kMaxPenalty). */
   size_t num_max_penalty = 0;
+  /** @brief Subproblems whose inner solve failed (kInnerSolveFailed). */
+  size_t num_inner_failed = 0;
 
   /**
    * @brief One or two sentences for a person or an agent: the outcome and,

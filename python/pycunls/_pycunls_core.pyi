@@ -184,6 +184,11 @@ class AugmentedLagrangianMinimizerStatus(enum.Enum):
     Convergence was not checked: a real-time call without constraint batches reads nothing back. converged() is False.
     """
 
+    InnerSolveFailed = 4
+    """
+    The inner solve of some subproblem stopped on a non-finite cost or step (a factor returned NaN or Inf, or the system is singular), feasible or not.
+    """
+
 class AugmentedLagrangianMinimizerSummary:
     """Summary of a constrained minimization run."""
 
@@ -196,7 +201,7 @@ class AugmentedLagrangianMinimizerSummary:
     @property
     def status(self) -> AugmentedLagrangianMinimizerStatus:
         """
-        AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty or NotDetermined.
+        AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty, InnerSolveFailed or NotDetermined.
         """
 
     @property
@@ -234,6 +239,10 @@ class AugmentedLagrangianMinimizerSummary:
         """
         Subproblems stopped at the penalty cap (constraints likely infeasible).
         """
+
+    @property
+    def num_inner_failed(self) -> int:
+        """Subproblems whose inner solve stopped on a non-finite cost or step."""
 
     @property
     def message(self) -> str:

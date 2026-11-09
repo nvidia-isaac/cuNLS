@@ -380,6 +380,35 @@ TEST(AugmentedLagrangianMinimizerSummary, StatusIsNotDeterminedUntilSet) {
             AugmentedLagrangianMinimizerStatus::kNotDetermined);
 }
 
+// An inner solve that fails (here: a NaN objective, NonFiniteCost) while the
+// constraints happen to hold is not convergence: the subproblem is reported as
+// failed, with the inner reason, instead of kConverged.
+TEST_P(AugmentedLagrangianMinimizerTest, FailedInnerSolveIsNotConvergence) {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  CudaStream stream;
+  dvector<float> x(std::vector<float>(2, 0.f)), t(std::vector<float>{nan, 1.f});
+  dvector<float> normal(std::vector<float>{1.f, 2.f}), offset(std::vector<float>{1.f});
+  VectorStateBatch<2> states(x.data(), 1);
+  states.SetNumActiveStates(1);
+  PriorVectorFactorBatch<2> prior(reinterpret_cast<const Vector<2> *>(t.data()), 1);
+  prior.SetNumActiveFactors(1);
+  HalfspaceFactorBatch<2> halfspace(normal.data(), offset.data(), 1);  // x = 0 satisfies it
+  halfspace.SetNumActiveFactors(1);
+  ConstraintFactorBatch constraint(&halfspace, ConstraintKind::kInequality);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
+  problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0)});
+  auto inner = MakeMinimizer(GetParam());
+  AugmentedLagrangianMinimizer solver(*inner);
+  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kInnerSolveFailed)
+      << summary.message;
+  EXPECT_EQ(summary.num_converged, 0u);
+  EXPECT_EQ(summary.num_inner_failed, 1u);
+  EXPECT_NE(summary.message.find("non-finite"), std::string::npos) << summary.message;
+}
+
 // Contradicting bounds (lower > upper): no feasible point. The penalty
 // reaches its cap and the solve ends with kMaxPenalty, not a loop.
 TEST_P(AugmentedLagrangianMinimizerTest, InfeasibleStopsAtMaxPenalty) {

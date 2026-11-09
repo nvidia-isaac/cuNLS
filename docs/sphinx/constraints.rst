@@ -63,9 +63,10 @@ Python example
    print(summary.message)   # the outcome and, when not converged, what to try
 
 ``summary.status`` is an ``AugmentedLagrangianMinimizerStatus``: ``Converged``,
-``MaxOuterIterations`` (raise ``max_outer_iterations`` or ``initial_penalty``) or
-``MaxPenalty`` (the constraints are likely infeasible); ``summary.converged()``
-is ``status == Converged``.
+``MaxOuterIterations`` (raise ``max_outer_iterations`` or ``initial_penalty``),
+``MaxPenalty`` (the constraints are likely infeasible) or ``InnerSolveFailed`` (an
+inner solve hit a non-finite cost or step: check the factors and initial states);
+``summary.converged()`` is ``status == Converged``.
 
 ``AugmentedLagrangianMinimizer`` works on any problem: without constraint batches it
 is the wrapped minimizer.
@@ -191,8 +192,10 @@ Line search
 
 Status
    ``Converged`` (every subproblem feasible and stationary),
-   ``MaxOuterIterations``, or ``MaxPenalty`` (a subproblem's violation stopped
-   decreasing at the penalty cap: typically an infeasible problem).
+   ``MaxOuterIterations``, ``MaxPenalty`` (a subproblem's violation stopped
+   decreasing at the penalty cap: typically an infeasible problem), or
+   ``InnerSolveFailed`` (an inner solve stopped on a non-finite cost or step,
+   counted in ``num_inner_failed``).
    ``summary.final_cost`` is the objective: the cost of the non-constraint
    factors.
 
