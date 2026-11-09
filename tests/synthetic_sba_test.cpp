@@ -32,10 +32,12 @@
 #include <cstdlib>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
+#include "cunls/common/log.h"
 #include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/information/information_factor_batch.h"
@@ -241,82 +243,125 @@ class SyntheticSbaTest : public ::testing::TestWithParam<SyntheticSbaParams> {
     }
   }
 
+  /**
+   * @brief Builds the synthetic SBA problem for @p params (pose 0 and
+   *        landmark 0 held constant), runs LM with @p options and checks the
+   *        final cost and camera positions.  Time measurement is via NVTX
+   *        ranges installed by the minimizer + the test fixture.
+   */
+  MinimizerSummary RunLm(const SyntheticSbaParams &params, MinimizerOptions options) {
+    SCOPED_TRACE(std::string("SyntheticSbaTest: ") + params.label);
+
+    std::vector<SE3Transform> gt_poses, init_poses;
+    std::vector<Vector<3>> gt_points, init_points;
+    std::vector<Vector<2>> observations;
+    std::vector<int> pose_ids, point_ids;
+    GenerateProblem(params.n_poses, params.n_points, params.obs_per_landmark, gt_poses, init_poses,
+                    gt_points, init_points, observations, pose_ids, point_ids);
+
+    const size_t n_obs = observations.size();
+    EXPECT_GT(n_obs, 0u);
+
+    // Identity 2x2 sqrt information per observation.
+    std::vector<Matrix<2>> sqrt_info(n_obs);
+    for (size_t i = 0; i < n_obs; ++i) {
+      sqrt_info[i] = {1.f, 0.f, 0.f, 1.f};
+    }
+
+    // Camera-from-rig: identity (single camera, no rig).
+    std::vector<SE3Transform> cam_from_rig(n_obs);
+    for (size_t i = 0; i < n_obs; ++i) {
+      cam_from_rig[i] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    }
+
+    dvector<SE3Transform> poses_d(init_poses);
+    dvector<Vector<3>> points_d(init_points);
+    dvector<Vector<2>> obs_d(observations);
+    dvector<Matrix<2>> info_d(sqrt_info);
+    dvector<SE3Transform> cam_from_rig_d(cam_from_rig);
+
+    // Hold pose 0 + landmark 0 constant to fix the gauge.
+    std::vector<int> const_pose_ids = {0};
+    std::vector<int> const_point_ids = {0};
+    dvector<int> const_pose_ids_d(const_pose_ids);
+    dvector<int> const_point_ids_d(const_point_ids);
+
+    auto poses_ptr = reinterpret_cast<const float *>(poses_d.data());
+    auto points_ptr = reinterpret_cast<const float *>(points_d.data());
+
+    SE3StateBatch pose_batch(poses_ptr, static_cast<size_t>(params.n_poses),
+                             const_pose_ids_d.data(), const_pose_ids.size());
+    pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
+    VectorStateBatch<3> point_batch(points_ptr, init_points.size(), const_point_ids_d.data(),
+                                    const_point_ids.size());
+    point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
+
+    InformationFactorBatch<ReprojectionFactorBatch> info_factor(
+        info_d.data(), n_obs, obs_d.data(), cam_from_rig_d.data(), n_obs, 1e-3f);
+    info_factor.SetNumActiveFactors(info_factor.Capacity());
+
+    std::vector<float *> state_pointers;
+    state_pointers.reserve(n_obs * 2);
+    for (size_t i = 0; i < n_obs; ++i) {
+      state_pointers.push_back(pose_batch.StateDevicePtr(static_cast<size_t>(pose_ids[i])));
+      state_pointers.push_back(point_batch.StateDevicePtr(static_cast<size_t>(point_ids[i])));
+    }
+
+    HuberLossFunctionBatch huber(1.0f);
+    Problem problem;
+    problem.AddStateBatch(&pose_batch);
+    problem.AddStateBatch(&point_batch);
+    problem.AddFactorBatch(&info_factor, &huber, state_pointers);
+    EXPECT_TRUE(problem.CheckConsistency());
+
+    CudaStream stream;
+    if (test_utils::UseSchurComplementFromEnv(options)) {
+      problem.SetEliminatedStateBatches({&point_batch});
+    }
+    LevenbergMarquardtMinimizerOptions lm_options;
+    lm_options.base_options = options;
+    lm_options.initial_lambda = 1e-3f;
+    LevenbergMarquardtMinimizer minimizer(lm_options);
+
+    MinimizerSummary summary;
+    {
+      auto range = profiler_domain_.CreateDomainRange("Minimize");
+      const auto start = std::chrono::steady_clock::now();
+      summary = minimizer.Minimize(stream.GetStream(), problem);
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+      const double ms =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+              .count();
+      std::printf(
+          "[synthetic SBA] %s: %zu observations, %zu iterations, cost %.6g -> %.6g, %.1f ms\n",
+          params.label, n_obs, summary.num_iterations, summary.initial_cost, summary.final_cost,
+          ms);
+    }
+
+    EXPECT_TRUE(std::isfinite(summary.initial_cost));
+    EXPECT_TRUE(std::isfinite(summary.final_cost));
+    // Observation noise sigma = 1e-3 on both coordinates: at the optimum the cost
+    // (1/2 sum r^2) is about n_obs * 1e-6 or below (the states absorb part of it).
+    EXPECT_LT(summary.final_cost, 2e-6 * n_obs) << "initial cost " << summary.initial_cost;
+    // Camera positions (world_from_cam translations) back at the truth.
+    std::vector<SE3Transform> final_poses(params.n_poses);
+    poses_d.CopyToHost(final_poses.data(), final_poses.size());
+    float max_err = 0.f;
+    for (int i = 0; i < params.n_poses; ++i)
+      for (int k : {3, 7, 11})
+        max_err = std::max(max_err, std::fabs(final_poses[i][k] - gt_poses[i][k]));
+    EXPECT_LT(max_err, 0.05f);  // ~1.5 cm after the 10 iterations
+    return summary;
+  }
+
   profiler::Domain profiler_domain_ = profiler::Domain("SyntheticSbaTest");
 };
 
 /**
  * @brief Builds and runs LM on a synthetic SBA problem of the configured
- *        size.  Holds pose 0 and landmark 0 constant.  Time measurement
- *        is via NVTX ranges installed by the minimizer + the test
- *        fixture.
+ *        size, with the solver picked from the environment.
  */
 TEST_P(SyntheticSbaTest, Optimize) {
-  auto params = GetParam();
-  SCOPED_TRACE(std::string("SyntheticSbaTest: ") + params.label);
-
-  std::vector<SE3Transform> gt_poses, init_poses;
-  std::vector<Vector<3>> gt_points, init_points;
-  std::vector<Vector<2>> observations;
-  std::vector<int> pose_ids, point_ids;
-  GenerateProblem(params.n_poses, params.n_points, params.obs_per_landmark, gt_poses, init_poses,
-                  gt_points, init_points, observations, pose_ids, point_ids);
-
-  const size_t n_obs = observations.size();
-  ASSERT_GT(n_obs, 0u);
-
-  // Identity 2x2 sqrt information per observation.
-  std::vector<Matrix<2>> sqrt_info(n_obs);
-  for (size_t i = 0; i < n_obs; ++i) {
-    sqrt_info[i] = {1.f, 0.f, 0.f, 1.f};
-  }
-
-  // Camera-from-rig: identity (single camera, no rig).
-  std::vector<SE3Transform> cam_from_rig(n_obs);
-  for (size_t i = 0; i < n_obs; ++i) {
-    cam_from_rig[i] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  }
-
-  dvector<SE3Transform> poses_d(init_poses);
-  dvector<Vector<3>> points_d(init_points);
-  dvector<Vector<2>> obs_d(observations);
-  dvector<Matrix<2>> info_d(sqrt_info);
-  dvector<SE3Transform> cam_from_rig_d(cam_from_rig);
-
-  // Hold pose 0 + landmark 0 constant to fix the gauge.
-  std::vector<int> const_pose_ids = {0};
-  std::vector<int> const_point_ids = {0};
-  dvector<int> const_pose_ids_d(const_pose_ids);
-  dvector<int> const_point_ids_d(const_point_ids);
-
-  auto poses_ptr = reinterpret_cast<const float *>(poses_d.data());
-  auto points_ptr = reinterpret_cast<const float *>(points_d.data());
-
-  SE3StateBatch pose_batch(poses_ptr, static_cast<size_t>(params.n_poses), const_pose_ids_d.data(),
-                           const_pose_ids.size());
-  pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
-  VectorStateBatch<3> point_batch(points_ptr, init_points.size(), const_point_ids_d.data(),
-                                  const_point_ids.size());
-  point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
-
-  InformationFactorBatch<ReprojectionFactorBatch> info_factor(info_d.data(), n_obs, obs_d.data(),
-                                                              cam_from_rig_d.data(), n_obs, 1e-3f);
-  info_factor.SetNumActiveFactors(info_factor.Capacity());
-
-  std::vector<float *> state_pointers;
-  state_pointers.reserve(n_obs * 2);
-  for (size_t i = 0; i < n_obs; ++i) {
-    state_pointers.push_back(pose_batch.StateDevicePtr(static_cast<size_t>(pose_ids[i])));
-    state_pointers.push_back(point_batch.StateDevicePtr(static_cast<size_t>(point_ids[i])));
-  }
-
-  HuberLossFunctionBatch huber(1.0f);
-  Problem problem;
-  problem.AddStateBatch(&pose_batch);
-  problem.AddStateBatch(&point_batch);
-  problem.AddFactorBatch(&info_factor, &huber, state_pointers);
-  ASSERT_TRUE(problem.CheckConsistency());
-
-  CudaStream stream;
   MinimizerOptions options;
   options.max_num_iterations = 10;
   options.state_tolerance = 1e-10f;
@@ -329,40 +374,7 @@ TEST_P(SyntheticSbaTest, Optimize) {
       test_utils::PCGMaxIterFromEnv(200);
   options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
       test_utils::PCGTolFromEnv(1e-3f);
-  if (test_utils::UseSchurComplementFromEnv(options)) {
-    problem.SetEliminatedStateBatches({&point_batch});
-  }
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = options;
-  lm_options.initial_lambda = 1e-3f;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-
-  MinimizerSummary summary;
-  {
-    auto range = profiler_domain_.CreateDomainRange("Minimize");
-    const auto start = std::chrono::steady_clock::now();
-    summary = minimizer.Minimize(stream.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-    const double ms =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    std::printf(
-        "[synthetic SBA] %s: %zu observations, %zu iterations, cost %.6g -> %.6g, %.1f ms\n",
-        params.label, n_obs, summary.num_iterations, summary.initial_cost, summary.final_cost, ms);
-  }
-
-  EXPECT_TRUE(std::isfinite(summary.initial_cost));
-  EXPECT_TRUE(std::isfinite(summary.final_cost));
-  // Observation noise sigma = 1e-3 on both coordinates: at the optimum the cost
-  // (1/2 sum r^2) is about n_obs * 1e-6 or below (the states absorb part of it).
-  EXPECT_LT(summary.final_cost, 2e-6 * n_obs) << "initial cost " << summary.initial_cost;
-  // Camera positions (world_from_cam translations) back at the truth.
-  std::vector<SE3Transform> final_poses(params.n_poses);
-  poses_d.CopyToHost(final_poses.data(), final_poses.size());
-  float max_err = 0.f;
-  for (int i = 0; i < params.n_poses; ++i)
-    for (int k : {3, 7, 11})
-      max_err = std::max(max_err, std::fabs(final_poses[i][k] - gt_poses[i][k]));
-  EXPECT_LT(max_err, 0.05f);  // ~1.5 cm after the 10 iterations
+  RunLm(GetParam(), options);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -374,5 +386,56 @@ INSTANTIATE_TEST_SUITE_P(
                       // 1M landmarks: obs_per_landmark=2 keeps the Jacobian row count
                       // under cuNLS's per-batch grid-dim limit (~4M rows).  Total obs ≈ 2M.
                       SyntheticSbaParams{500, 1000000, 2, "P500_L1M_obs2"}));
+
+/** LM through BlockSparsePCG with the generic and the bundle-adjustment `H p`. */
+class SyntheticSbaHessianProductTest : public SyntheticSbaTest {};
+
+/**
+ * @brief The bundle-adjustment `H p` is taken through the minimizer's 3x3
+ *        block Hessian (no "not used" warning) and gives the same LM
+ *        iterations and final cost as the generic product.
+ */
+TEST_P(SyntheticSbaHessianProductTest, BundleAdjustmentProductMatchesGeneric) {
+  int device = 0;
+  int cc_major = 0;
+  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
+  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
+  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  MinimizerOptions options;
+  options.max_num_iterations = 10;
+  options.state_tolerance = 1e-10f;
+  options.cost_tolerance = 1e-6f;
+  options.disable_safety_checks = true;
+  options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparsePCG;
+  BlockSparsePCGOptions &pcg = options.sparse_linear_solver_config.block_sparse_pcg_options;
+  pcg.max_iterations = 200;
+  pcg.relative_tolerance = 1e-3f;
+  const MinimizerSummary generic = RunLm(GetParam(), options);
+
+  // The log callback is global: restore the default sinks and level even if a check fails.
+  const char *level = std::getenv("CUNLS_LOG_LEVEL");
+  const Verbosity restore_level = level != nullptr ? ParseVerbosity(level) : Verbosity::Silent;
+  struct RestoreLogger {
+    Verbosity level;
+    ~RestoreLogger() {
+      SetLogCallback({});
+      SetLoggerOptions(level);
+    }
+  } restore{restore_level};
+  std::vector<std::string> warnings;
+  SetLoggerOptions(Verbosity::Warning);
+  SetLogCallback([&warnings](Verbosity verbosity, std::string_view msg) {
+    if (verbosity == Verbosity::Warning) warnings.emplace_back(msg);
+  });
+  pcg.hessian_product = BlockSparsePCGOptions::HessianProduct::kBundleAdjustment;
+  const MinimizerSummary ba = RunLm(GetParam(), options);
+
+  EXPECT_EQ(ba.num_iterations, generic.num_iterations);
+  EXPECT_NEAR(ba.final_cost, generic.final_cost, 1e-3 * generic.final_cost);
+  for (const std::string &w : warnings) EXPECT_EQ(w.find("not used"), std::string::npos) << w;
+}
+
+INSTANTIATE_TEST_SUITE_P(Sizes, SyntheticSbaHessianProductTest,
+                         ::testing::Values(SyntheticSbaParams{50, 10000, 5, "P50_L10k_obs5"}));
 
 }  // namespace cunls

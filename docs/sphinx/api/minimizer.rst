@@ -765,7 +765,7 @@ criterion is applied per subproblem.
   ``BlockSparsePCG`` contains :code:`block_sparse_pcg_options`
   (``block_size`` / ``block_layout``, ``max_iterations``,
   ``relative_tolerance``, ``absolute_tolerance``, ``pivot_floor``,
-  ``check_period``, ``deterministic_mode``).  For ``cuDSS`` contains
+  ``check_period``, ``deterministic_mode``, ``hessian_product``).  For ``cuDSS`` contains
   :code:`cudss_solver_options`
   (mode, ``nthreads``, optional ``threading_lib_path`` for multi-threaded
   cuDSS).  Dense backends take no extra configuration.
