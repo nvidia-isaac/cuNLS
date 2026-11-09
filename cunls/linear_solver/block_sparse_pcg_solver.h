@@ -299,10 +299,11 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
    */
   int LastIterations() const { return last_iterations_; }
 
- protected:
   /**
    * @brief Whether @ref Solve uses the bundle-adjustment `H p` (see
-   *        @ref BlockSparsePCGOptions::hessian_product).
+   *        @ref BlockSparsePCGOptions::hessian_product): false when it was not
+   *        asked for, or when the matrix or GPU did not fit and the solver fell
+   *        back to the generic product (the reason is logged as a warning).
    */
   bool UsesBundleAdjustmentProduct() const { return ba_product_.Ready(); }
 

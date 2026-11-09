@@ -1265,18 +1265,26 @@ cusparseSpMVAlg_t SpmvAlg(const BlockSparsePCGOptions &options) {
 
 BlockSparsePCGSolver::BlockSparsePCGSolver(BlockSparsePCGOptions options)
     : options_(std::move(options)) {
+  const std::string max_block = std::to_string(kMaxBlockSize);
   if (options_.block_size < 1 || options_.block_size > kMaxBlockSize) {
-    throw std::invalid_argument("BlockSparsePCGSolver: block_size must be in [1, 16]");
+    throw std::invalid_argument(
+        "BlockSparsePCGSolver::BlockSparsePCGSolver: block_size is out of range (got " +
+        std::to_string(options_.block_size) + ", expected 1.." + max_block +
+        "). Fix: use the state tangent size, or another solver for larger blocks.");
   }
   for (const auto &seg : options_.block_layout) {
     if (seg.second < 1 || seg.second > kMaxBlockSize) {
       throw std::invalid_argument(
-          "BlockSparsePCGSolver: block_layout segment size must be in "
-          "[1, 16]");
+          "BlockSparsePCGSolver::BlockSparsePCGSolver: a block_layout segment size is out of "
+          "range (got " +
+          std::to_string(seg.second) + ", expected 1.." + max_block +
+          "). Fix: leave block_layout empty to derive it from the problem.");
     }
   }
   if (options_.check_period < 1) {
-    options_.check_period = 1;
+    throw std::invalid_argument(
+        "BlockSparsePCGSolver::BlockSparsePCGSolver: check_period must be positive (got " +
+        std::to_string(options_.check_period) + ", expected >= 1). Fix: use the default 4.");
   }
 }
 
@@ -1460,7 +1468,7 @@ void BlockSparsePCGSolver::WarnBaProductNotUsed() {
   last_ba_warning_ = ba_product_.FailureReason();
   LogWarning(
       "BlockSparsePCGSolver: hessian_product = kBundleAdjustment not used ({}); using the "
-      "generic H p",
+      "generic H p. Fix: set hessian_product = kGeneric for this problem to silence this.",
       last_ba_warning_);
 }
 

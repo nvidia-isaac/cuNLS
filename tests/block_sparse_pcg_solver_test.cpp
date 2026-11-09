@@ -34,6 +34,7 @@
 #include <map>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -318,13 +319,6 @@ BlockSparsePCGOptions BaOptions(int num_bodies, int num_points, bool ba_product)
   return options;
 }
 
-/** Exposes which `H p` the solver uses. */
-class InspectablePCGSolver : public BlockSparsePCGSolver {
- public:
-  using BlockSparsePCGSolver::BlockSparsePCGSolver;
-  using BlockSparsePCGSolver::UsesBundleAdjustmentProduct;
-};
-
 /**
  * Initializes with @p init, solves once with @p m and returns x; *uses_ba
  * reports which H p the solver took.
@@ -336,7 +330,7 @@ std::vector<float> SolveAfterInitialize(const InitMatrix &init, const Matrix &m,
   dvector<float> rhs(b);
   dvector<float> result(b.size());
   CudaStream stream;
-  InspectablePCGSolver solver(options);
+  BlockSparsePCGSolver solver(options);
   EXPECT_TRUE(solver.Initialize(stream.GetStream(), Problem(), init, rhs, result));
   EXPECT_TRUE(solver.Solve(stream.GetStream(), m, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
@@ -421,6 +415,29 @@ constexpr int kBaMaxBodiesPerPoint = 24;
 
 // About 1.4 M rows: the PCG kernels launch more CTAs than fit on a GPU at once,
 // and every CTA of the direction update must use the same beta.
+// Options that cannot work are rejected at construction with the value and a fix
+// (check_period < 1 used to be clamped to 1 silently).
+TEST(BlockSparsePCGSolverTest, RejectsInvalidOptions) {
+  auto expect_invalid = [](const BlockSparsePCGOptions &o, const std::string &needle) {
+    try {
+      BlockSparsePCGSolver solver(o);
+      FAIL() << "expected std::invalid_argument containing '" << needle << "'";
+    } catch (const std::invalid_argument &e) {
+      EXPECT_NE(std::string(e.what()).find(needle), std::string::npos) << e.what();
+      EXPECT_NE(std::string(e.what()).find("Fix:"), std::string::npos) << e.what();
+    }
+  };
+  BlockSparsePCGOptions o;
+  o.block_size = 17;
+  expect_invalid(o, "block_size");
+  o = BlockSparsePCGOptions();
+  o.block_layout = {{4, 6}, {10, 0}};
+  expect_invalid(o, "block_layout");
+  o = BlockSparsePCGOptions();
+  o.check_period = 0;
+  expect_invalid(o, "check_period");
+}
+
 TEST(BlockSparsePCGSolverTest, MatchesReferencePcgIteratesOnLargeSystem) {
   constexpr int kIterations = 8;
   const System s = MakeBundleAdjustmentSystem(40000, 400000, 1);
