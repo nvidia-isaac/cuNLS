@@ -86,6 +86,5 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
-
 };
 }  // namespace cunls

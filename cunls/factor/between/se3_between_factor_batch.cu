@@ -455,9 +455,7 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
  *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
  */
 SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      errors_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 /**
  * @brief Evaluates residuals and optionally Jacobians for the SE3 between
@@ -488,8 +486,7 @@ bool SE3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect L/R + compute Delta * L^{-1} * R in one kernel
   collect_and_compute_se3_between_error_kernel<<<num_blocks, block_size, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids,
-      num_factors);
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pitch = 4;

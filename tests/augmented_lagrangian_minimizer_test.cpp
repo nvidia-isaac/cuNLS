@@ -357,7 +357,8 @@ TEST_P(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatAppli
   Problem problem;
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
-  const MinimizerSummary plain = MakeMinimizer(GetParam(), 1)->Minimize(stream.GetStream(), problem);
+  const MinimizerSummary plain =
+      MakeMinimizer(GetParam(), 1)->Minimize(stream.GetStream(), problem);
   ASSERT_EQ(plain.termination_reason, TerminationReason::MaxIterations) << plain.message;
   EXPECT_NE(plain.message.find("reached max_num_iterations (1)"), std::string::npos)
       << plain.message;
@@ -371,8 +372,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatAppli
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxOuterIterations);
   EXPECT_NE(summary.message.find("inner solve's iteration cap (1)"), std::string::npos)
       << summary.message;
-  EXPECT_EQ(summary.message.find("raise max_num_iterations"), std::string::npos)
-      << summary.message;
+  EXPECT_EQ(summary.message.find("raise max_num_iterations"), std::string::npos) << summary.message;
 }
 
 TEST(AugmentedLagrangianMinimizerSummary, StatusIsNotDeterminedUntilSet) {

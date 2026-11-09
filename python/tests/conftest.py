@@ -29,4 +29,3 @@ import pycunls
 def stream():
     """Create a CUDA stream scoped to a single test."""
     return pycunls.CudaStream()
-

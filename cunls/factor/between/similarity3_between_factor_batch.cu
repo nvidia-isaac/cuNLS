@@ -453,9 +453,7 @@ __global__ void __launch_bounds__(128, 2)
 
 Similarity3BetweenFactorBatch::Similarity3BetweenFactorBatch(
     const Similarity3Transform *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      errors_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 constexpr size_t kSim3FusedBlockSize = 128;
 
@@ -472,12 +470,11 @@ bool Similarity3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
   collect_and_compute_sim3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids,
-      num_factors);
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
-  ComputeLogSim3(stream, reinterpret_cast<const float *>(errors_.data()),
-                 kSim3TransformStride, kSim3TangentStride, num_items, residuals);
+  ComputeLogSim3(stream, reinterpret_cast<const float *>(errors_.data()), kSim3TransformStride,
+                 kSim3TangentStride, num_items, residuals);
 
   if (jacobians != nullptr) {
     size_t fused_blocks = (num_items + kSim3FusedBlockSize - 1) / kSim3FusedBlockSize;

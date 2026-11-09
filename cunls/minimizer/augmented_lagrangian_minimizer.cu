@@ -329,8 +329,7 @@ std::string Describe(const AugmentedLagrangianMinimizerSummary &summary,
       break;
     case AugmentedLagrangianMinimizerStatus::kInnerSolveFailed:
       out << "Failed: the inner solve of " << summary.num_inner_failed << " of "
-          << summary.num_problems
-          << " subproblems stopped on a non-finite cost or step (objective "
+          << summary.num_problems << " subproblems stopped on a non-finite cost or step (objective "
           << summary.initial_cost << " -> " << summary.final_cost
           << "). A factor returns NaN or Inf at the states, or the linear system is singular. "
              "Fix: check that measurements and initial states are finite (pycunls.evaluate "

@@ -471,4 +471,3 @@ solve stays free of host synchronization.  BSR input is not supported.
 .. cpp:member:: static constexpr int BlockTridiagonalSolver::kMaxStageSize = 32
 
   Largest stage block size supported (one warp per subproblem).
-

@@ -86,10 +86,10 @@ const T *device_items(nb::handle obj, const char *name, size_t count) {
 // Device float32 array of `count` items of `per_item` values each ("<per_item>
 // float32 per <item>" in the error), checked like extract_device_ptr with a
 // minimum size.
-inline const float *device_floats(nb::handle obj, const char *name, size_t count,
-                                  size_t per_item, const char *item) {
-  const std::string what = std::to_string(count) + " x " + std::to_string(per_item) +
-                           " float32 per " + item;
+inline const float *device_floats(nb::handle obj, const char *name, size_t count, size_t per_item,
+                                  const char *item) {
+  const std::string what =
+      std::to_string(count) + " x " + std::to_string(per_item) + " float32 per " + item;
   return reinterpret_cast<const float *>(
       extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
 }

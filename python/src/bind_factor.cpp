@@ -125,10 +125,9 @@ void bind_bound_factor(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle lower, nb::handle upper, size_t capacity, float scale) {
-            new (self) Class(
-                device_floats(lower, "lower", capacity, Dim, "factor"),
-                device_floats(upper, "upper", capacity, Dim, "factor"),
-                capacity, scale);
+            new (self)
+                Class(device_floats(lower, "lower", capacity, Dim, "factor"),
+                      device_floats(upper, "upper", capacity, Dim, "factor"), capacity, scale);
           },
           nb::arg("lower"), nb::arg("upper"), nb::arg("capacity"), nb::arg("scale") = 1.f,
           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>());
@@ -152,10 +151,8 @@ void bind_halfspace_factor(nb::module_ &m, const char *name) {
       .def(
           "__init__",
           [](Class *self, nb::handle normals, nb::handle offsets, size_t capacity) {
-            new (self) Class(
-                device_floats(normals, "normals", capacity, Dim, "factor"),
-                device_floats(offsets, "offsets", capacity, 1, "factor"),
-                capacity);
+            new (self) Class(device_floats(normals, "normals", capacity, Dim, "factor"),
+                             device_floats(offsets, "offsets", capacity, 1, "factor"), capacity);
           },
           nb::arg("normals"), nb::arg("offsets"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>());
@@ -168,8 +165,8 @@ void bind_kinematics_factor(nb::module_ &m, const char *name, const char *doc) {
       .def(
           "__init__",
           [](Class *self, nb::handle time_steps, size_t capacity) {
-            new (self) Class(device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                             capacity);
+            new (self)
+                Class(device_floats(time_steps, "time_steps", capacity, 1, "factor"), capacity);
           },
           nb::arg("time_steps"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }
@@ -185,8 +182,7 @@ void bind_motion_prior_information(nb::module_ &m, const char *name, const char 
           [](Class *self, cunls::CudaStream &stream, nb::handle time_steps, nb::handle qc_diag,
              size_t capacity) {
             new (self) Class(
-                stream.GetStream(),
-                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
+                stream.GetStream(), device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                 device_floats(qc_diag, "qc_diag", 1, QcDim, "batch (the process-noise diagonal)"),
                 capacity);
           },
@@ -725,8 +721,8 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE2DifferentialDriveFactorBatch *self, nb::handle time_steps,
              float wheel_radius, float track_width, size_t capacity) {
             new (self) cunls::SE2DifferentialDriveFactorBatch(
-                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                wheel_radius, track_width, capacity);
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"), wheel_radius,
+                track_width, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
           nb::arg("capacity"), nb::keep_alive<1, 2>());
@@ -751,8 +747,8 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE2KinematicBicycleFactorBatch *self, nb::handle time_steps, float wheelbase,
              size_t capacity) {
             new (self) cunls::SE2KinematicBicycleFactorBatch(
-                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                wheelbase, capacity);
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"), wheelbase,
+                capacity);
           },
           nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
@@ -775,8 +771,8 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE3DifferentialDriveFactorBatch *self, nb::handle time_steps,
              float wheel_radius, float track_width, size_t capacity) {
             new (self) cunls::SE3DifferentialDriveFactorBatch(
-                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                wheel_radius, track_width, capacity);
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"), wheel_radius,
+                track_width, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
           nb::arg("capacity"), nb::keep_alive<1, 2>());
@@ -800,8 +796,8 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE3KinematicBicycleFactorBatch *self, nb::handle time_steps, float wheelbase,
              size_t capacity) {
             new (self) cunls::SE3KinematicBicycleFactorBatch(
-                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                wheelbase, capacity);
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"), wheelbase,
+                capacity);
           },
           nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
@@ -950,9 +946,9 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::QuadrotorFactorBatch *self, nb::handle time_steps,
              const cunls::QuadrotorParameters &parameters, size_t capacity) {
-            new (self)
-                cunls::QuadrotorFactorBatch(device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                                            parameters, capacity);
+            new (self) cunls::QuadrotorFactorBatch(
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"), parameters,
+                capacity);
           },
           nb::arg("time_steps"), nb::arg("parameters"), nb::arg("capacity"),
           nb::keep_alive<1, 2>());
@@ -997,11 +993,11 @@ void bind_factor(nb::module_ &m) {
           [](cunls::QuadrupedFactorBatch *self, nb::handle time_steps, nb::handle contacts,
              nb::handle foot_positions, const cunls::QuadrupedParameters &parameters,
              size_t capacity) {
-            new (self)
-                cunls::QuadrupedFactorBatch(device_floats(time_steps, "time_steps", capacity, 1, "factor"),
-                                            device_floats(contacts, "contacts", capacity, 4, "factor"),
-                                            device_floats(foot_positions, "foot_positions", capacity, 12, "factor"),
-                                            parameters, capacity);
+            new (self) cunls::QuadrupedFactorBatch(
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
+                device_floats(contacts, "contacts", capacity, 4, "factor"),
+                device_floats(foot_positions, "foot_positions", capacity, 12, "factor"), parameters,
+                capacity);
           },
           nb::arg("time_steps"), nb::arg("contacts"), nb::arg("foot_positions"),
           nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
@@ -1079,8 +1075,8 @@ void bind_factor(nb::module_ &m) {
              size_t num_samples, const cunls::ImuParameters &parameters, size_t capacity) {
             new (self) cunls::ImuFactorBatch(
                 device_floats(imu_samples, "imu_samples", num_samples, 7, "sample"),
-                device_ints(sample_offsets, "sample_offsets", checked_size(capacity, 1, "capacity") + 1,
-                            "capacity + 1 CSR offsets"),
+                device_ints(sample_offsets, "sample_offsets",
+                            checked_size(capacity, 1, "capacity") + 1, "capacity + 1 CSR offsets"),
                 num_samples, parameters, capacity);
           },
           nb::arg("imu_samples"), nb::arg("sample_offsets"), nb::arg("num_samples"),
@@ -1098,8 +1094,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE2DiskClearanceFactorBatch *self, nb::handle obstacles, float margin,
              size_t capacity) {
             new (self) cunls::SE2DiskClearanceFactorBatch(
-                device_floats(obstacles, "obstacles", capacity, 3, "factor"),
-                margin, capacity);
+                device_floats(obstacles, "obstacles", capacity, 3, "factor"), margin, capacity);
           },
           nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 
@@ -1113,8 +1108,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE3SphereClearanceFactorBatch *self, nb::handle obstacles, float margin,
              size_t capacity) {
             new (self) cunls::SE3SphereClearanceFactorBatch(
-                device_floats(obstacles, "obstacles", capacity, 4, "factor"),
-                margin, capacity);
+                device_floats(obstacles, "obstacles", capacity, 4, "factor"), margin, capacity);
           },
           nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }

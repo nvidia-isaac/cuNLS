@@ -63,10 +63,10 @@ struct CholeskyPlan {
    * columns and to the rows from the run on goes to the target.
    */
   struct Run {
-    int source;         ///< Source panel.
-    int target;         ///< Target panel.
-    int begin;          ///< First below-row position (of the source) in the run.
-    int end;            ///< One past the last.
+    int source;             ///< Source panel.
+    int target;             ///< Target panel.
+    int begin;              ///< First below-row position (of the source) in the run.
+    int end;                ///< One past the last.
     int64_t relmap_offset;  ///< Offset in the relative map of the target positions of below
                             ///< rows begin... of the source (the map is built on the device).
   };

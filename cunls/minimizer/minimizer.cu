@@ -398,9 +398,8 @@ std::string DescribeReason(TerminationReason reason, const MinimizerSummary &sum
             << ", last relative decrease " << LastRelativeDecrease(summary)
             << ". Fix: raise max_num_iterations, or improve the initial guess.";
       } else {
-        out << "Not converged: reached this inner solve's iteration cap (" << iteration_cap
-            << "); " << costs() << ", last relative decrease " << LastRelativeDecrease(summary)
-            << ".";
+        out << "Not converged: reached this inner solve's iteration cap (" << iteration_cap << "); "
+            << costs() << ", last relative decrease " << LastRelativeDecrease(summary) << ".";
       }
       break;
     case TerminationReason::MaxRejectedSteps:

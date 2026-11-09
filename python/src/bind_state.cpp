@@ -192,8 +192,9 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
                   "None, None to remove the bounds). Fix: pass -inf / +inf arrays for an "
                   "unbounded side.");
             }
-            self.SetBounds(device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
-                           device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
+            self.SetBounds(
+                device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
+                device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
           },
           nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(),

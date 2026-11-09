@@ -375,7 +375,6 @@ class Problem {
   /** @brief The error CheckSizes() reports, or an empty string. */
   std::string SizeError() const;
 
-
   /** @brief How one residual batch's connectivity is stored. */
   struct Connectivity {
     enum class Kind { kHostList, kDevicePointers, kDeviceIndices };

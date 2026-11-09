@@ -161,7 +161,8 @@ void BindOptions(nb::module_ &m) {
       .def_rw("cost_tolerance", &RansacMinimizerOptions::cost_tolerance,
               "Per-hypothesis convergence: relative cost decrease threshold. Default: 1e-7.")
       .def_rw("linear_solver", &RansacMinimizerOptions::linear_solver,
-              "Per-hypothesis dense solver (RansacLinearSolverType). Default: RansacLinearSolverType.ldlt.");
+              "Per-hypothesis dense solver (RansacLinearSolverType). Default: "
+              "RansacLinearSolverType.ldlt.");
 
   nb::class_<RansacLevenbergMarquardtMinimizerOptions>(
       m, "RansacLevenbergMarquardtMinimizerOptions",

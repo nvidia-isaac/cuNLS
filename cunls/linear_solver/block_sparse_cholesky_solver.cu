@@ -147,8 +147,8 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
         }
         pos = panel.width + lo;
       }
-      d = static_cast<Index>(panel.offset +
-                             static_cast<int64_t>(jp - panel.col) * panel.height + pos);
+      d = static_cast<Index>(panel.offset + static_cast<int64_t>(jp - panel.col) * panel.height +
+                             pos);
       if (ip == jp) diagonal_index[ip] = e;
     }
     dst[e] = d;

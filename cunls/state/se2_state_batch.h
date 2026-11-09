@@ -94,6 +94,5 @@ class SE2StateBatch : public SizedStateBatch<9, 3> {
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
-
 };
 }  // namespace cunls

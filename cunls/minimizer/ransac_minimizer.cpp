@@ -45,13 +45,14 @@ ransac_internal::SolverSettings GaussNewtonSettings(const RansacMinimizerOptions
 void ValidateDamping(const RansacLevenbergMarquardtMinimizerOptions &o) {
   auto fail = [](const std::string &what, float got, const std::string &expected,
                  const std::string &fix) {
-    throw std::invalid_argument("RansacLevenbergMarquardtMinimizer::RansacLevenbergMarquardt"
-                                "Minimizer: " +
-                                what + " (got " + std::to_string(got) + ", expected " + expected +
-                                "). Fix: " + fix + ".");
+    throw std::invalid_argument(
+        "RansacLevenbergMarquardtMinimizer::RansacLevenbergMarquardt"
+        "Minimizer: " +
+        what + " (got " + std::to_string(got) + ", expected " + expected + "). Fix: " + fix + ".");
   };
   if (!(o.lambda_min > 0.f)) {
-    fail("lambda_min must be positive", o.lambda_min, "> 0", "use a small positive floor, e.g. 1e-6");
+    fail("lambda_min must be positive", o.lambda_min, "> 0",
+         "use a small positive floor, e.g. 1e-6");
   }
   if (!(o.lambda_max >= o.lambda_min)) {
     fail("lambda_max is below lambda_min", o.lambda_max, ">= " + std::to_string(o.lambda_min),
@@ -66,8 +67,8 @@ void ValidateDamping(const RansacLevenbergMarquardtMinimizerOptions &o) {
          "use e.g. 2");
   }
   if (!(o.lambda_downscale > 0.f && o.lambda_downscale <= 1.f)) {
-    fail("lambda_downscale must shrink the damping on a good step", o.lambda_downscale,
-         "in (0, 1]", "use e.g. 0.5");
+    fail("lambda_downscale must shrink the damping on a good step", o.lambda_downscale, "in (0, 1]",
+         "use e.g. 0.5");
   }
 }
 

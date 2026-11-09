@@ -197,9 +197,7 @@ __global__ void __launch_bounds__(256, 4)
 }
 
 SO3BetweenFactorBatch::SO3BetweenFactorBatch(const SO3Rotation *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      errors_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
@@ -214,8 +212,7 @@ bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
 
   // Fused: collect L/R + compute R_error = (L^T * R) * Delta in one kernel
   collect_and_compute_so3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids,
-      num_factors);
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // residual = Log(R_error)
