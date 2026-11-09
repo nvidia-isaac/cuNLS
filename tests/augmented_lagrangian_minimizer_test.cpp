@@ -55,9 +55,9 @@ namespace {
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(Kind kind, size_t max_num_iterations = 50) {
   MinimizerOptions options;
-  options.max_num_iterations = 50;
+  options.max_num_iterations = max_num_iterations;
   options.state_tolerance = 1e-12f;
   options.cost_tolerance = 1e-12f;
   options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
@@ -339,6 +339,45 @@ TEST_P(AugmentedLagrangianMinimizerTest, NoConstraintsIsPlainSolve) {
   const auto result = Download(x);
   EXPECT_NEAR(result[0], 1.f, 1e-5f);
   EXPECT_NEAR(result[2], 3.f, 1e-5f);
+}
+
+// A capped solve names the cap that stopped it: max_num_iterations for a plain
+// Minimize(), the inner cap (final_inner_iterations) when the
+// AugmentedLagrangianMinimizer runs it, where raising max_num_iterations would
+// not help.
+TEST_P(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatApplied) {
+  CudaStream stream;
+  const float c = std::cos(2.5f), s = std::sin(2.5f);
+  dvector<float> x(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1}),
+      t(std::vector<float>{c, -s, 3.f, s, c, 2.f, 0, 0, 1});
+  SE2StateBatch states(x.data(), 1);
+  states.SetNumActiveStates(1);
+  SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(t.data()), 1);
+  prior.SetNumActiveFactors(1);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
+  const MinimizerSummary plain = MakeMinimizer(GetParam(), 1)->Minimize(stream.GetStream(), problem);
+  ASSERT_EQ(plain.termination_reason, TerminationReason::MaxIterations) << plain.message;
+  EXPECT_NE(plain.message.find("reached max_num_iterations (1)"), std::string::npos)
+      << plain.message;
+
+  x.CopyFromHost(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1}.data(), 9);
+  auto inner = MakeMinimizer(GetParam());
+  AugmentedLagrangianMinimizerOptions al;
+  al.final_inner_iterations = 1;
+  AugmentedLagrangianMinimizer solver(*inner, al);
+  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxOuterIterations);
+  EXPECT_NE(summary.message.find("inner solve's iteration cap (1)"), std::string::npos)
+      << summary.message;
+  EXPECT_EQ(summary.message.find("raise max_num_iterations"), std::string::npos)
+      << summary.message;
+}
+
+TEST(AugmentedLagrangianMinimizerSummary, StatusIsNotDeterminedUntilSet) {
+  EXPECT_EQ(AugmentedLagrangianMinimizerSummary().status,
+            AugmentedLagrangianMinimizerStatus::kNotDetermined);
 }
 
 // Contradicting bounds (lower > upper): no feasible point. The penalty

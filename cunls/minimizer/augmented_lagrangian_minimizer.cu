@@ -316,6 +316,10 @@ std::string Describe(const AugmentedLagrangianMinimizerSummary &summary,
           << ") at max_penalty: the constraints are likely infeasible or contradict each other "
              "(check bounds and targets), or the objective outweighs them (raise max_penalty).";
       break;
+    case AugmentedLagrangianMinimizerStatus::kNotDetermined:
+      out << "Convergence not determined after " << summary.outer_iterations
+          << " outer iterations (nothing was read back).";
+      break;
   }
   return out.str();
 }
@@ -527,6 +531,8 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       summary.status = AugmentedLagrangianMinimizerStatus::kMaxOuterIterations;
     } else if (num_undetermined > 0) {
       summary.status = AugmentedLagrangianMinimizerStatus::kNotDetermined;
+    } else {
+      summary.status = AugmentedLagrangianMinimizerStatus::kConverged;
     }
     summary.message = inner.message;
     summary.solve_time_ms = elapsed_ms();

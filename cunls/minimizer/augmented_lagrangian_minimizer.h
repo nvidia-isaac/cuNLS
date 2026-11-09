@@ -137,7 +137,8 @@ enum class AugmentedLagrangianMinimizerStatus {
 
 /** @brief Result of AugmentedLagrangianMinimizer::Minimize. */
 struct AugmentedLagrangianMinimizerSummary {
-  AugmentedLagrangianMinimizerStatus status = AugmentedLagrangianMinimizerStatus::kConverged;
+  /** @brief Outcome of the call; see AugmentedLagrangianMinimizerStatus and #message. */
+  AugmentedLagrangianMinimizerStatus status = AugmentedLagrangianMinimizerStatus::kNotDetermined;
 
   /** @brief Outer iterations performed. */
   size_t outer_iterations = 0;
@@ -148,16 +149,16 @@ struct AugmentedLagrangianMinimizerSummary {
   /** @brief Largest violation (see constraint_tolerance) over all rows and subproblems. */
   float max_violation = 0.f;
 
-  /** @brief Objective (the cost of the non-constraint factors) before and after. */
+  /** @brief Objective (the cost of the non-constraint factors) before the call. */
   float initial_cost = 0.f;
+  /** @brief Objective after the call. */
   float final_cost = 0.f;
 
-  /**
-   * @brief Subproblems in total, converged and stopped at the penalty cap.
-   * num_converged counts only established convergence (not kNotDetermined).
-   */
+  /** @brief Subproblems in total (Problem::NumProblems()). */
   size_t num_problems = 1;
+  /** @brief Subproblems with established convergence (not kNotDetermined ones). */
   size_t num_converged = 0;
+  /** @brief Subproblems stopped at the penalty cap (kMaxPenalty). */
   size_t num_max_penalty = 0;
 
   /**
