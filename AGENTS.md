@@ -41,6 +41,8 @@ flow, invariants); read it before changing that module.
 
 ### Build and test locally
 
+Full instructions (local builds, Jetson, cuDSS, docs): `INSTALL.md`.
+
 ```bash
 # C++ build (shared + static, installed to separate dirs)
 ./scripts/build_cunls_in_docker.sh Release

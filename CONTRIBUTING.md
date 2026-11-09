@@ -6,7 +6,7 @@ Thank you for your interest in contributing to cuNLS, a CUDA-accelerated library
 
 1. Fork the repository and clone your fork.
 2. Set up pre-commit hooks (see [Code Style](#code-style) below).
-3. Build the library following the instructions in the [README](README.md).
+3. Build the library following [INSTALL.md](INSTALL.md).
 4. Run the test suite to make sure everything passes before making changes.
 
 ### Code Style
