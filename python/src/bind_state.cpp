@@ -187,11 +187,13 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
               return;
             }
             if (lower.is_none() || upper.is_none()) {
-              throw std::invalid_argument("set_bounds: need both bounds or neither");
+              throw std::invalid_argument(
+                  "VectorStateBatch.set_bounds: got one bound and None (expected both arrays, or "
+                  "None, None to remove the bounds). Fix: pass -inf / +inf arrays for an "
+                  "unbounded side.");
             }
-            self.SetBounds(
-                reinterpret_cast<const float *>(extract_device_ptr(lower, "float32", "lower")),
-                reinterpret_cast<const float *>(extract_device_ptr(upper, "float32", "upper")));
+            self.SetBounds(device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
+                           device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
           },
           nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(),

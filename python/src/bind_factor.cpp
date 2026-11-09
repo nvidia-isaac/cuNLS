@@ -126,8 +126,8 @@ void bind_bound_factor(nb::module_ &m, const char *name) {
           "__init__",
           [](Class *self, nb::handle lower, nb::handle upper, size_t capacity, float scale) {
             new (self) Class(
-                reinterpret_cast<const float *>(extract_device_ptr(lower, "float32", "lower")),
-                reinterpret_cast<const float *>(extract_device_ptr(upper, "float32", "upper")),
+                device_floats(lower, "lower", capacity, Dim, "factor"),
+                device_floats(upper, "upper", capacity, Dim, "factor"),
                 capacity, scale);
           },
           nb::arg("lower"), nb::arg("upper"), nb::arg("capacity"), nb::arg("scale") = 1.f,
@@ -153,8 +153,8 @@ void bind_halfspace_factor(nb::module_ &m, const char *name) {
           "__init__",
           [](Class *self, nb::handle normals, nb::handle offsets, size_t capacity) {
             new (self) Class(
-                reinterpret_cast<const float *>(extract_device_ptr(normals, "float32", "normals")),
-                reinterpret_cast<const float *>(extract_device_ptr(offsets, "float32", "offsets")),
+                device_floats(normals, "normals", capacity, Dim, "factor"),
+                device_floats(offsets, "offsets", capacity, 1, "factor"),
                 capacity);
           },
           nb::arg("normals"), nb::arg("offsets"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
@@ -168,8 +168,7 @@ void bind_kinematics_factor(nb::module_ &m, const char *name, const char *doc) {
       .def(
           "__init__",
           [](Class *self, nb::handle time_steps, size_t capacity) {
-            new (self) Class(reinterpret_cast<const float *>(
-                                 extract_device_ptr(time_steps, "float32", "time_steps")),
+            new (self) Class(device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                              capacity);
           },
           nb::arg("time_steps"), nb::arg("capacity"), nb::keep_alive<1, 2>());
@@ -177,7 +176,8 @@ void bind_kinematics_factor(nb::module_ &m, const char *name, const char *doc) {
 
 // Motion priors weighted by their closed-form process-noise information:
 // (stream, time_steps, qc_diag, capacity) constructors and update(stream, num).
-template <class Class>
+// QcDim: the tangent size of the group (qc_diag holds that many floats).
+template <class Class, int QcDim>
 void bind_motion_prior_information(nb::module_ &m, const char *name, const char *doc) {
   nb::class_<Class, cunls::FactorBatch>(m, name, doc)
       .def(
@@ -186,9 +186,8 @@ void bind_motion_prior_information(nb::module_ &m, const char *name, const char 
              size_t capacity) {
             new (self) Class(
                 stream.GetStream(),
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(time_steps, "float32", "time_steps")),
-                reinterpret_cast<const float *>(extract_device_ptr(qc_diag, "float32", "qc_diag")),
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
+                device_floats(qc_diag, "qc_diag", 1, QcDim, "batch (the process-noise diagonal)"),
                 capacity);
           },
           nb::arg("stream"), nb::arg("time_steps"), nb::arg("qc_diag"), nb::arg("capacity"),
@@ -585,8 +584,10 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](PyInformationFactorBatch *self, cunls::FactorBatch *inner, nb::handle sqrt_info) {
-            auto ptr = reinterpret_cast<const float *>(
-                extract_device_ptr(sqrt_info, "float32", "sqrt_information_matrices"));
+            const size_t m = inner->ResidualsSize();
+            auto ptr = device_floats(sqrt_info, "sqrt_information_matrices", inner->Capacity(),
+                                     checked_size(m, m, "sqrt_information_matrices"),
+                                     "inner factor (residual_size^2)");
             new (self) PyInformationFactorBatch(inner, ptr);
           },
           nb::arg("inner_factor"), nb::arg("sqrt_information_matrices"), nb::keep_alive<1, 2>(),
@@ -621,8 +622,7 @@ void bind_factor(nb::module_ &m) {
       .def(
           "__init__",
           [](PyWeightedFactorBatch *self, cunls::FactorBatch *inner, nb::handle weights) {
-            auto ptr =
-                reinterpret_cast<const float *>(extract_device_ptr(weights, "float32", "weights"));
+            auto ptr = device_floats(weights, "weights", inner->Capacity(), 1, "inner factor");
             new (self) PyWeightedFactorBatch(inner, ptr);
           },
           // Keyword-only, so a positional number always selects the scalar `weight`
@@ -725,8 +725,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE2DifferentialDriveFactorBatch *self, nb::handle time_steps,
              float wheel_radius, float track_width, size_t capacity) {
             new (self) cunls::SE2DifferentialDriveFactorBatch(
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(time_steps, "float32", "time_steps")),
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                 wheel_radius, track_width, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
@@ -752,8 +751,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE2KinematicBicycleFactorBatch *self, nb::handle time_steps, float wheelbase,
              size_t capacity) {
             new (self) cunls::SE2KinematicBicycleFactorBatch(
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(time_steps, "float32", "time_steps")),
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                 wheelbase, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>());
@@ -777,8 +775,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE3DifferentialDriveFactorBatch *self, nb::handle time_steps,
              float wheel_radius, float track_width, size_t capacity) {
             new (self) cunls::SE3DifferentialDriveFactorBatch(
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(time_steps, "float32", "time_steps")),
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                 wheel_radius, track_width, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheel_radius"), nb::arg("track_width"),
@@ -803,8 +800,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE3KinematicBicycleFactorBatch *self, nb::handle time_steps, float wheelbase,
              size_t capacity) {
             new (self) cunls::SE3KinematicBicycleFactorBatch(
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(time_steps, "float32", "time_steps")),
+                device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                 wheelbase, capacity);
           },
           nb::arg("time_steps"), nb::arg("wheelbase"), nb::arg("capacity"), nb::keep_alive<1, 2>());
@@ -837,12 +833,12 @@ void bind_factor(nb::module_ &m) {
       "Constant-acceleration motion prior on SE3. States: pose_k, pose_{k+1} (SE3StateBatch), "
       "velocity v_k, v_{k+1} and acceleration a_k, a_{k+1} (VectorStateBatch6). time_steps: device "
       "buffer of capacity durations dt_k.");
-  bind_motion_prior_information<cunls::ConstantVelocityInformationSE3FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantVelocityInformationSE3FactorBatch, 6>(
       m, "ConstantVelocityInformationSE3FactorBatch",
       "ConstantVelocitySE3FactorBatch weighted by the closed-form white-noise-on-acceleration "
       "information Q(dt)^-1. qc_diag: device buffer of 6 floats, the continuous-time "
       "process-noise PSD diagonal. Call update(stream, n) after rewriting time_steps.");
-  bind_motion_prior_information<cunls::ConstantAccelerationInformationSE3FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantAccelerationInformationSE3FactorBatch, 6>(
       m, "ConstantAccelerationInformationSE3FactorBatch",
       "ConstantAccelerationSE3FactorBatch weighted by the closed-form white-noise-on-jerk "
       "information Q(dt)^-1. qc_diag: device buffer of 6 floats. Call update(stream, n) after "
@@ -857,12 +853,12 @@ void bind_factor(nb::module_ &m) {
       "Constant-acceleration motion prior on SO3. States: pose_k, pose_{k+1} (SO3StateBatch), "
       "velocity v_k, v_{k+1} and acceleration a_k, a_{k+1} (VectorStateBatch3). time_steps: device "
       "buffer of capacity durations dt_k.");
-  bind_motion_prior_information<cunls::ConstantVelocityInformationSO3FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantVelocityInformationSO3FactorBatch, 3>(
       m, "ConstantVelocityInformationSO3FactorBatch",
       "ConstantVelocitySO3FactorBatch weighted by the closed-form white-noise-on-acceleration "
       "information Q(dt)^-1. qc_diag: device buffer of 3 floats, the continuous-time "
       "process-noise PSD diagonal. Call update(stream, n) after rewriting time_steps.");
-  bind_motion_prior_information<cunls::ConstantAccelerationInformationSO3FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantAccelerationInformationSO3FactorBatch, 3>(
       m, "ConstantAccelerationInformationSO3FactorBatch",
       "ConstantAccelerationSO3FactorBatch weighted by the closed-form white-noise-on-jerk "
       "information Q(dt)^-1. qc_diag: device buffer of 3 floats. Call update(stream, n) after "
@@ -877,12 +873,12 @@ void bind_factor(nb::module_ &m) {
       "Constant-acceleration motion prior on SE2. States: pose_k, pose_{k+1} (SE2StateBatch), "
       "velocity v_k, v_{k+1} and acceleration a_k, a_{k+1} (VectorStateBatch3). time_steps: device "
       "buffer of capacity durations dt_k.");
-  bind_motion_prior_information<cunls::ConstantVelocityInformationSE2FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantVelocityInformationSE2FactorBatch, 3>(
       m, "ConstantVelocityInformationSE2FactorBatch",
       "ConstantVelocitySE2FactorBatch weighted by the closed-form white-noise-on-acceleration "
       "information Q(dt)^-1. qc_diag: device buffer of 3 floats, the continuous-time "
       "process-noise PSD diagonal. Call update(stream, n) after rewriting time_steps.");
-  bind_motion_prior_information<cunls::ConstantAccelerationInformationSE2FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantAccelerationInformationSE2FactorBatch, 3>(
       m, "ConstantAccelerationInformationSE2FactorBatch",
       "ConstantAccelerationSE2FactorBatch weighted by the closed-form white-noise-on-jerk "
       "information Q(dt)^-1. qc_diag: device buffer of 3 floats. Call update(stream, n) after "
@@ -897,12 +893,12 @@ void bind_factor(nb::module_ &m) {
       "Constant-acceleration motion prior on SO2. States: pose_k, pose_{k+1} (SO2StateBatch), "
       "velocity v_k, v_{k+1} and acceleration a_k, a_{k+1} (VectorStateBatch1). time_steps: device "
       "buffer of capacity durations dt_k.");
-  bind_motion_prior_information<cunls::ConstantVelocityInformationSO2FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantVelocityInformationSO2FactorBatch, 1>(
       m, "ConstantVelocityInformationSO2FactorBatch",
       "ConstantVelocitySO2FactorBatch weighted by the closed-form white-noise-on-acceleration "
       "information Q(dt)^-1. qc_diag: device buffer of 1 floats, the continuous-time "
       "process-noise PSD diagonal. Call update(stream, n) after rewriting time_steps.");
-  bind_motion_prior_information<cunls::ConstantAccelerationInformationSO2FactorBatch>(
+  bind_motion_prior_information<cunls::ConstantAccelerationInformationSO2FactorBatch, 1>(
       m, "ConstantAccelerationInformationSO2FactorBatch",
       "ConstantAccelerationSO2FactorBatch weighted by the closed-form white-noise-on-jerk "
       "information Q(dt)^-1. qc_diag: device buffer of 1 floats. Call update(stream, n) after "
@@ -955,8 +951,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::QuadrotorFactorBatch *self, nb::handle time_steps,
              const cunls::QuadrotorParameters &parameters, size_t capacity) {
             new (self)
-                cunls::QuadrotorFactorBatch(reinterpret_cast<const float *>(extract_device_ptr(
-                                                time_steps, "float32", "time_steps")),
+                cunls::QuadrotorFactorBatch(device_floats(time_steps, "time_steps", capacity, 1, "factor"),
                                             parameters, capacity);
           },
           nb::arg("time_steps"), nb::arg("parameters"), nb::arg("capacity"),
@@ -1003,12 +998,9 @@ void bind_factor(nb::module_ &m) {
              nb::handle foot_positions, const cunls::QuadrupedParameters &parameters,
              size_t capacity) {
             new (self)
-                cunls::QuadrupedFactorBatch(reinterpret_cast<const float *>(extract_device_ptr(
-                                                time_steps, "float32", "time_steps")),
-                                            reinterpret_cast<const float *>(extract_device_ptr(
-                                                contacts, "float32", "contacts")),
-                                            reinterpret_cast<const float *>(extract_device_ptr(
-                                                foot_positions, "float32", "foot_positions")),
+                cunls::QuadrupedFactorBatch(device_floats(time_steps, "time_steps", capacity, 1, "factor"),
+                                            device_floats(contacts, "contacts", capacity, 4, "factor"),
+                                            device_floats(foot_positions, "foot_positions", capacity, 12, "factor"),
                                             parameters, capacity);
           },
           nb::arg("time_steps"), nb::arg("contacts"), nb::arg("foot_positions"),
@@ -1085,11 +1077,11 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](cunls::ImuFactorBatch *self, nb::handle imu_samples, nb::handle sample_offsets,
              size_t num_samples, const cunls::ImuParameters &parameters, size_t capacity) {
-            new (self) cunls::ImuFactorBatch(reinterpret_cast<const float *>(extract_device_ptr(
-                                                 imu_samples, "float32", "imu_samples")),
-                                             reinterpret_cast<const int *>(extract_device_ptr(
-                                                 sample_offsets, "int32", "sample_offsets")),
-                                             num_samples, parameters, capacity);
+            new (self) cunls::ImuFactorBatch(
+                device_floats(imu_samples, "imu_samples", num_samples, 7, "sample"),
+                device_ints(sample_offsets, "sample_offsets", checked_size(capacity, 1, "capacity") + 1,
+                            "capacity + 1 CSR offsets"),
+                num_samples, parameters, capacity);
           },
           nb::arg("imu_samples"), nb::arg("sample_offsets"), nb::arg("num_samples"),
           nb::arg("parameters"), nb::arg("capacity"), nb::keep_alive<1, 2>(),
@@ -1106,8 +1098,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE2DiskClearanceFactorBatch *self, nb::handle obstacles, float margin,
              size_t capacity) {
             new (self) cunls::SE2DiskClearanceFactorBatch(
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(obstacles, "float32", "obstacles")),
+                device_floats(obstacles, "obstacles", capacity, 3, "factor"),
                 margin, capacity);
           },
           nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());
@@ -1122,8 +1113,7 @@ void bind_factor(nb::module_ &m) {
           [](cunls::SE3SphereClearanceFactorBatch *self, nb::handle obstacles, float margin,
              size_t capacity) {
             new (self) cunls::SE3SphereClearanceFactorBatch(
-                reinterpret_cast<const float *>(
-                    extract_device_ptr(obstacles, "float32", "obstacles")),
+                device_floats(obstacles, "obstacles", capacity, 4, "factor"),
                 margin, capacity);
           },
           nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());

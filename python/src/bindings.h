@@ -83,6 +83,22 @@ const T *device_items(nb::handle obj, const char *name, size_t count) {
       extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
 }
 
+// Device float32 array of `count` items of `per_item` values each ("<per_item>
+// float32 per <item>" in the error), checked like extract_device_ptr with a
+// minimum size.
+inline const float *device_floats(nb::handle obj, const char *name, size_t count,
+                                  size_t per_item, const char *item) {
+  const std::string what = std::to_string(count) + " x " + std::to_string(per_item) +
+                           " float32 per " + item;
+  return reinterpret_cast<const float *>(
+      extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
+}
+
+// Device int32 array of at least `count` values (`what` explains the count).
+inline const int *device_ints(nb::handle obj, const char *name, size_t count, const char *what) {
+  return reinterpret_cast<const int *>(extract_device_ptr(obj, "int32", name, count, what));
+}
+
 // --- Binding registration entry points (one per translation unit) ----------
 
 void bind_types(nb::module_ &m);      // CudaStream, enums, options
