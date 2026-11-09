@@ -150,12 +150,6 @@ class SchurSystem : public LinearSystem {
   void StepCurvature(cudaStream_t stream, const dvector<float> &step, ProblemPartition &partition,
                      float *out) const override;
 
-  /** @brief The reduced system S of the last Solve() (full scalar CSR, for tests). */
-  const CSRSparseMatrix &ReducedMatrix() const { return reduced_; }
-
-  /** @brief Retained (reduced) dimension. */
-  int NumRetainedColumns() const { return num_retained_cols_; }
-
  private:
   /// Temporaries shared by the setup phases (defined in the implementation).
   struct SetupScratch;

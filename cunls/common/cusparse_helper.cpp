@@ -91,15 +91,6 @@ cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows, int num_cols,
   description_ = static_cast<void *>(descr);
 };
 
-/** @copydoc cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int,int) */
-cuSPARSEMatrixDescription::cuSPARSEMatrixDescription(int num_rows, int num_cols) {
-  cusparseSpMatDescr_t descr = nullptr;
-  THROW_ON_CUSPARSE_ERROR(cusparseCreateCsr(&descr, num_rows, num_cols, 0, NULL, NULL, NULL,
-                                            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
-  description_ = static_cast<void *>(descr);
-};
-
 /** @copydoc cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription */
 cuSPARSEMatrixDescription::~cuSPARSEMatrixDescription() {
   if (description_) {

@@ -234,9 +234,6 @@ class Problem {
    */
   float *const *DeviceStatePointers(size_t residual_batch_index) const;
 
-  /** @brief True if the residual batch's connectivity is a user-owned device table. */
-  bool HasDeviceConnectivity(size_t residual_batch_index) const;
-
   /** @brief Number of active state pointers of a residual batch: NumActiveFactors() * B. */
   size_t NumStatePointers(size_t residual_batch_index) const;
 

@@ -138,10 +138,6 @@ size_t Problem::NumStatePointers(size_t residual_batch_index) const {
   return f->NumActiveFactors() * NumSlots(*f);
 }
 
-bool Problem::HasDeviceConnectivity(size_t residual_batch_index) const {
-  return connectivity_[residual_batch_index].kind != Connectivity::Kind::kHostList;
-}
-
 void Problem::ExpandIndices(size_t residual_batch_index, cudaStream_t stream) const {
   const Connectivity &c = connectivity_[residual_batch_index];
   problem_internal::SlotTable slots;
