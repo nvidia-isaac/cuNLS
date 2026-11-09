@@ -441,7 +441,7 @@ class ConstantAccelerationInformationSE2FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -463,7 +463,7 @@ class ConstantAccelerationInformationSE3FactorBatch(FactorBatch):
       qc_diag: 6 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -485,7 +485,7 @@ class ConstantAccelerationInformationSO2FactorBatch(FactorBatch):
       qc_diag: 1 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -507,7 +507,7 @@ class ConstantAccelerationInformationSO3FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -589,7 +589,7 @@ class ConstantVelocityInformationSE2FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -611,7 +611,7 @@ class ConstantVelocityInformationSE3FactorBatch(FactorBatch):
       qc_diag: 6 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -633,7 +633,7 @@ class ConstantVelocityInformationSO2FactorBatch(FactorBatch):
       qc_diag: 1 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -655,7 +655,7 @@ class ConstantVelocityInformationSO3FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -2021,7 +2021,7 @@ class RansacMinimizerOptions:
 
     @property
     def scoring(self) -> RansacScoring:
-        """Hypothesis scoring rule (RansacScoring). Default: MSAC."""
+        """Hypothesis scoring rule (RansacScoring). Default: RansacScoring.msac."""
 
     @scoring.setter
     def scoring(self, arg: RansacScoring, /) -> None: ...
@@ -2109,7 +2109,7 @@ class RansacMinimizerOptions:
 
     @property
     def linear_solver(self) -> RansacLinearSolverType:
-        """Per-hypothesis dense solver (RansacLinearSolverType). Default: LDLT."""
+        """Per-hypothesis dense solver (RansacLinearSolverType). Default: RansacLinearSolverType.ldlt."""
 
     @linear_solver.setter
     def linear_solver(self, arg: RansacLinearSolverType, /) -> None: ...

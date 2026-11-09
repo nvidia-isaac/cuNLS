@@ -188,7 +188,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                     | ({"qc_diag": f"{tan} floats (power spectral density)"} if info else {}),
                     True, "Smoothness prior on trajectories (with motion derivatives as states).",
                     "Information variants take a stream first and need "
-                    "update_information() after time_steps change." if info else ""))
+                    "update(stream, num) after time_steps change." if info else ""))
     for name, states, use in (
             ("SE2KinematicsFactorBatch", ["SE2StateBatch", "VectorStateBatch3", "SE2StateBatch"],
              "X_{k+1} = X_k Exp(dt xi_k) with the body twist as control (MPC, trajectories)."),

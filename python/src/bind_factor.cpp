@@ -586,7 +586,7 @@ void bind_factor(nb::module_ &m) {
           "__init__",
           [](PyInformationFactorBatch *self, cunls::FactorBatch *inner, nb::handle sqrt_info) {
             auto ptr = reinterpret_cast<const float *>(
-                extract_device_ptr(sqrt_info, "float32", "sqrt_info"));
+                extract_device_ptr(sqrt_info, "float32", "sqrt_information_matrices"));
             new (self) PyInformationFactorBatch(inner, ptr);
           },
           nb::arg("inner_factor"), nb::arg("sqrt_information_matrices"), nb::keep_alive<1, 2>(),

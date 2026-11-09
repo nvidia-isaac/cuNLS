@@ -33,7 +33,7 @@ scripts/            # Build/test shell scripts + Dockerfile
   generate_pycunls_stubs.py  # regenerate python/pycunls/_pycunls_core.pyi
   run_agent_eval.sh          # run an agent on python/agent_tasks and score it
 cmake/              # CMake modules (AddCUDSS, AddSpdlog, BundleStaticDeps)
-.github/workflows/  # CI workflows (nightly, static_docs)
+.github/workflows/  # CI workflows (pr-verify, build-and-test, lint, nightly, release, sync-rulesets)
 ```
 
 Each directory under `cunls/` has an `AGENTS.md` with its architecture notes (key classes, data

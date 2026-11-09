@@ -22,8 +22,7 @@
  * Including this header provides access to all public cuNLS components:
  * factors, minimizers, states, and robustifier loss functions.
  *
- * API terminology: optimization variables are referred to as **states** (and
- * states). Factor batches consume state pointers and produce residuals
+ * API terminology: optimization variables are referred to as **states**. Factor batches consume state pointers and produce residuals
  * and Jacobians; minimizers update states via state batch operations.
  */
 

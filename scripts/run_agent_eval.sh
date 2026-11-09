@@ -51,7 +51,7 @@ if [ -z "${AGENT_CMD:-}" ]; then
 fi
 if ! (cd "${STAGE}" && "${PYTHON}" -c "import pycunls._pycunls_core") 2>/dev/null; then
   echo "${PYTHON} cannot import pycunls. Build and install the wheel first:" >&2
-  echo "  ./scripts/build_pycunls_in_docker.sh && pip install dist/pycunls-*.whl" >&2
+  echo "  ./scripts/build_pycunls_in_docker.sh && pip install dist/pycunls*.whl" >&2
   exit 2
 fi
 TASKS="${TASKS:-$(coordinator -c 'from agent_tasks import TASKS; print(" ".join(TASKS))')}"
