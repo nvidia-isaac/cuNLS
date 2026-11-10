@@ -20,6 +20,7 @@ operations for applying tangent-space updates.
 - Rotation groups: `so2_state_batch.h`, `so3_state_batch.h`
 - Rigid transforms: `se2_state_batch.h`, `se3_state_batch.h`
 - Similarities: `similarity2_state_batch.h`, `similarity3_state_batch.h`
+- Projective: `sl4_state_batch.h` (SL(4) homographies)
 
 ## Memory model
 

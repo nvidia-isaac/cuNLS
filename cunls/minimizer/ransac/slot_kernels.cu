@@ -190,7 +190,8 @@ __device__ void LevenbergMarquardtDecision(const DevicePolicy &pol, bool ok, flo
     }
     stop = (cc - cn) <= pol.cost_tolerance * cc || step_sq <= pol.state_tolerance;
   } else {
-    lambda = fminf(lambda * pol.lambda_upscale, 2.f * pol.lambda_max);
+    // From at least lambda_min, so a hypothesis that starts at lambda = 0 escalates too.
+    lambda = fminf(fmaxf(lambda, pol.lambda_min) * pol.lambda_upscale, 2.f * pol.lambda_max);
     stop = lambda > pol.lambda_max;
   }
 }

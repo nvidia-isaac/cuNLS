@@ -17,7 +17,7 @@
 
 /**
  * @file sparse_linear_solver_test.cpp
- * @brief Unit tests for the cuDSS-based sparse linear solver.
+ * @brief Unit tests for the cuDSS and BlockSparsePCG sparse linear solvers.
  *
  * Generates a random symmetric sparse matrix A and vector b, solves Ax = b
  * on the GPU, then verifies correctness by checking A*x against b.

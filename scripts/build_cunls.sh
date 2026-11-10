@@ -11,8 +11,14 @@ CMAKE_BUILD_TYPE=$2
 INSTALL_DIR=${3:-}
 
 CMAKE_EXTRA_ARGS=""
+if [[ "$CMAKE_BUILD_TYPE" == "Coverage" ]]; then
+  CMAKE_EXTRA_ARGS="-D BUILD_TESTING=ON"
+elif [[ "$CMAKE_BUILD_TYPE" != "Release" ]]; then
+  echo "Wrong CMAKE_BUILD_TYPE '$CMAKE_BUILD_TYPE'. It can only be one of [Release, Coverage]." >&2
+  exit 1
+fi
 if [ -n "$INSTALL_DIR" ]; then
-  CMAKE_EXTRA_ARGS="-D CMAKE_INSTALL_PREFIX=${INSTALL_DIR}"
+  CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -D CMAKE_INSTALL_PREFIX=${INSTALL_DIR}"
 fi
 
 SOURCE_DIR="${CUNLS_SOURCE_DIR:-..}"
@@ -28,13 +34,8 @@ cmake --version && cmake \
 if [[ "$CMAKE_BUILD_TYPE" == "Coverage" ]]
 then
   echo "Building test coverage"
-
-  add-apt-repository -y universe
-  apt-get update
-  apt install -y lcov
   make -j 10 coverage
-elif [[ "$CMAKE_BUILD_TYPE" == "Release" ]]
-then
+else
   echo "Building cuNLS library"
   make -j 10
 
@@ -42,6 +43,4 @@ then
     echo "Installing cuNLS library to $INSTALL_DIR"
     make install
   fi
-else
-  echo "Wrong CMAKE_BUILD_TYPE. It can only be one of [Release, Coverage]."
 fi

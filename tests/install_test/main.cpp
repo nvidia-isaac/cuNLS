@@ -17,7 +17,9 @@
 
 #include <iostream>
 
-#include "cunls/common/cuda_stream.h"
+// The umbrella header, as applications include it: it pulls in every public
+// header (and with them <cuda/std/...> from CCCL).
+#include "cunls/cunls.h"
 
 int main() {
   cunls::CudaStream stream;

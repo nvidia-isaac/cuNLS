@@ -133,18 +133,6 @@ class cuSPARSEMatrixDescription {
                             const CSRSparseMatrix &matrix);
 
   /**
-   * @brief Constructor for empty matrices
-   *
-   * Creates a cuSPARSE matrix descriptor for an empty matrix with specified
-   * dimensions but no data. Useful for output matrices in operations like SpMV.
-   *
-   * @param num_rows Number of rows in the matrix
-   * @param num_cols Number of columns in the matrix
-   * @throws Runtime error if descriptor creation fails
-   */
-  cuSPARSEMatrixDescription(int num_rows, int num_cols);
-
-  /**
    * @brief Move assignment operator
    *
    * Transfers ownership of the cuSPARSE descriptor from another object.

@@ -128,4 +128,4 @@ optimization.
   `SetOptions` keeps the warm state. A real-time call reads its status back
   once, at the end.
 - `NormalEquations`: cached CSR diagonal positions, value-only lhs copies,
-  `ZeroMaskedLhsRowsColumns` (held bounds touch only the held rows).
+  `ZeroMaskedRowsColumns` (held bounds touch only the held rows).

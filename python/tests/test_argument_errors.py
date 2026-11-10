@@ -86,3 +86,38 @@ def test_capacity_overflow_is_rejected():
     huge = 2**64 // 16 + 1  # x 16 floats per state wraps size_t to a small number
     with pytest.raises(ValueError, match="overflows"):
         pycunls.SE3StateBatch(cp.zeros((1, 4, 4), cp.float32), huge)
+
+
+@pytest.mark.parametrize("make, needle", [
+    (lambda: pycunls.ConstantVelocitySE3FactorBatch(cp.zeros(3, cp.float32), 4),
+     "time_steps has 3 float32 values, but 4 are needed"),
+    (lambda: pycunls.ConstantVelocityInformationSE3FactorBatch(
+        pycunls.CudaStream(), cp.zeros(4, cp.float32), cp.zeros(3, cp.float32), 4),
+     "qc_diag has 3 float32 values, but 6 are needed"),
+    (lambda: pycunls.BoundFactorBatch3(cp.zeros(6, cp.float32), cp.zeros(9, cp.float32), 3),
+     "lower has 6 float32 values, but 9 are needed"),
+    (lambda: pycunls.HalfspaceFactorBatch2(cp.zeros(4, cp.float32), cp.zeros(3, cp.float32), 3),
+     "normals has 4 float32 values, but 6 are needed"),
+    (lambda: pycunls.WeightedFactorBatch(
+        pycunls.PriorVectorFactorBatch3(cp.zeros(9, cp.float32), 3), weights=cp.zeros(2, cp.float32)),
+     "weights has 2 float32 values, but 3 are needed"),
+    (lambda: pycunls.SE2DiskClearanceFactorBatch(cp.zeros(5, cp.float32), 0.1, 2),
+     "obstacles has 5 float32 values, but 6 are needed"),
+    (lambda: pycunls.ImuFactorBatch(cp.zeros(13, cp.float32), cp.zeros(3, cp.int32), 2,
+                                    pycunls.ImuParameters(), 2),
+     "imu_samples has 13 float32 values, but 14 are needed"),
+])
+def test_too_small_factor_arrays_are_rejected(make, needle):
+    with pytest.raises(ValueError, match=needle):
+        make()
+
+
+def test_too_small_bounds_are_rejected():
+    states = pycunls.VectorStateBatch3(cp.zeros(9, cp.float32), 3)
+    with pytest.raises(ValueError, match="upper has 6 float32 values, but 9 are needed"):
+        states.set_bounds(cp.zeros(9, cp.float32), cp.zeros(6, cp.float32))
+
+
+def test_capacity_that_overflows_the_size_is_rejected():
+    with pytest.raises(ValueError, match="overflows size_t"):
+        pycunls.BoundFactorBatch3(cp.zeros(9, cp.float32), cp.zeros(9, cp.float32), 2**63)

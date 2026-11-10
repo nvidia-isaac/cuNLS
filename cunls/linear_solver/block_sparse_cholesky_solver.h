@@ -91,8 +91,10 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   dvector<int> relmap_;  ///< Target row positions of the runs (built on the device).
   dvector<internal::CholeskyPlan::FactorItem> factor_items_;  ///< Factor CTAs by level.
   dvector<internal::CholeskyPlan::UpdateItem> update_items_;  ///< Update CTAs by level.
-  dvector<int> assembly_dst_;    ///< Per nonzero of A: its factor offset, or -1 (upper).
-  dvector<int> diagonal_index_;  ///< Per permuted column: its diagonal nonzero of A, or -1.
+  dvector<int> assembly_dst_;        ///< Per nonzero of A: its factor offset, or -1 (upper).
+  dvector<int64_t> assembly_dst64_;  ///< The same for a factor of more than 2^31 entries.
+  bool wide_assembly_ = false;       ///< assembly_dst64_ is in use (not assembly_dst_).
+  dvector<int> diagonal_index_;      ///< Per permuted column: its diagonal nonzero of A, or -1.
 
   // Numeric storage.
   dvector<float> factor_;    ///< Panels of L (column-major).

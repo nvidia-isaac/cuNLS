@@ -31,6 +31,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -1126,6 +1127,44 @@ void ExpectInvalid(F &&f, const std::string &needle) {
   } catch (const std::invalid_argument &e) {
     EXPECT_NE(std::string(e.what()).find(needle), std::string::npos) << e.what();
   }
+}
+
+TEST(RansacMinimizer, RejectsDampingThatCannotWork) {
+  struct Case {
+    const char *option;
+    std::function<void(RansacLevenbergMarquardtMinimizerOptions &)> set;
+  };
+  const std::vector<Case> cases = {
+      {"lambda_min", [](auto &o) { o.lambda_min = 0.f; }},
+      {"lambda_max", [](auto &o) { o.lambda_max = o.lambda_min / 2; }},
+      {"initial_lambda", [](auto &o) { o.initial_lambda = -1.f; }},
+      {"initial_lambda", [](auto &o) { o.initial_lambda = 2 * o.lambda_max; }},
+      {"lambda_upscale", [](auto &o) { o.lambda_upscale = 1.f; }},
+      {"lambda_downscale", [](auto &o) { o.lambda_downscale = 0.f; }},
+      {"lambda_downscale", [](auto &o) { o.lambda_downscale = 2.f; }},
+  };
+  for (const Case &c : cases) {
+    RansacLevenbergMarquardtMinimizerOptions o;
+    c.set(o);
+    ExpectInvalid([&] { RansacLevenbergMarquardtMinimizer r(o); }, c.option);
+  }
+}
+
+// initial_lambda = 0 (a Gauss-Newton start) stays valid; rejected steps then
+// escalate the damping from lambda_min, as in LevenbergMarquardtMinimizer.
+TEST(RansacMinimizer, ZeroInitialLambdaIsAccepted) {
+  const PnPScene scene = ransac_test::MakePnPScene(500, 0.3, kNoise, kMinOutlier, 24);
+  const SE3Transform init = Perturb(scene.world_from_cam, 6, 0.35, 0.8);
+  CudaStream stream;
+  PnPSetup setup(scene, init);
+  RansacLevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = PnPOptions();
+  lm.base_options.hypothesis_iterations = 10;
+  lm.initial_lambda = 0.f;
+  RansacLevenbergMarquardtMinimizer ransac(lm);
+  ransac.Minimize(stream.GetStream(), setup.problem);
+  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2);
+  EXPECT_LT(TranslationError(setup.Pose(), scene.world_from_cam), 0.02);
 }
 
 TEST(RansacMinimizer, RejectsDimensionAboveLimit) {

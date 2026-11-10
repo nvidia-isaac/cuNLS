@@ -65,7 +65,7 @@ class PriorVectorCostTest : public ::testing::Test {
 typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::Size<3>,
                          test_utils::Size<4>>
     VectorSizes;
-TYPED_TEST_CASE(PriorVectorCostTest, VectorSizes);
+TYPED_TEST_SUITE(PriorVectorCostTest, VectorSizes);
 
 /** @brief Verifies that residual evaluation produces correct (state -
  * observation) values. */

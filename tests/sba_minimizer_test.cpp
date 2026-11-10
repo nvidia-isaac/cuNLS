@@ -16,7 +16,7 @@
  */
 
 /**
- * @file sba_binary_minimizer_test.cpp
+ * @file sba_minimizer_test.cpp
  * @brief Tests ReprojectionFactorBatch + InformationFactorBatch with
  *        Levenberg-Marquardt on binary SBA (Sparse Bundle Adjustment) problems.
  *

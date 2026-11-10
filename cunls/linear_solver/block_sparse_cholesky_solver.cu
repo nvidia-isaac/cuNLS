@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <climits>
 #include <vector>
 
 #include "cunls/common/helper.h"
@@ -49,11 +50,16 @@ using UpdateItem = internal::CholeskyPlan::UpdateItem;
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
-/** factor[dst[e]] = values[e] for the nonzeros with dst[e] >= 0 (the lower triangle of PAPᵀ). */
-__global__ void AssembleKernel(int nnz, const int *dst, const float *values, float *factor) {
+/**
+ * factor[dst[e]] = values[e] for the nonzeros with dst[e] >= 0 (the lower
+ * triangle of PAPᵀ). Index: int, or int64_t for a factor of more than 2^31
+ * entries.
+ */
+template <typename Index>
+__global__ void AssembleKernel(int nnz, const Index *dst, const float *values, float *factor) {
   const int e = blockIdx.x * blockDim.x + threadIdx.x;
   if (e < nnz) {
-    const int d = dst[e];
+    const Index d = dst[e];
     if (d >= 0) factor[d] = values[e];
   }
 }
@@ -112,15 +118,16 @@ __global__ void AdjacencyKernel(int nb, const int *first_row, const int *row_off
  * is found in the panel of column j' by arithmetic (its own columns) or by
  * binary search in its below rows. diagonal_index[i'] = the nonzero (i, i).
  */
+template <typename Index>
 __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_ids,
                                   const int *iperm, const int *col_panel, const Panel *panels,
-                                  const int *below_rows, int *dst, int *diagonal_index) {
+                                  const int *below_rows, Index *dst, int *diagonal_index) {
   const int i = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x % 32;
   if (i >= n) return;
   const int ip = iperm[i];
   for (int e = row_offsets[i] + lane; e < row_offsets[i + 1]; e += 32) {
     const int jp = iperm[col_ids[e]];
-    int d = -1;
+    Index d = -1;
     if (ip >= jp) {
       const int p = col_panel[jp];
       const Panel panel = panels[p];
@@ -140,8 +147,8 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
         }
         pos = panel.width + lo;
       }
-      d = static_cast<int>(panel.offset + static_cast<int64_t>(jp - panel.col) * panel.height +
-                           pos);
+      d = static_cast<Index>(panel.offset + static_cast<int64_t>(jp - panel.col) * panel.height +
+                             pos);
       if (ip == jp) diagonal_index[ip] = e;
     }
     dst[e] = d;
@@ -711,7 +718,10 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
   update_items_ = dvector<UpdateItem>(plan.update_items);
 
   // Where each nonzero of A goes in the factor, and the target positions of the updates.
-  assembly_dst_.resize(spd_matrix.col_ids.size());
+  // 32-bit factor offsets unless the factor is larger (then 64-bit, twice the map's memory).
+  wide_assembly_ = plan.factor_size > INT_MAX;
+  assembly_dst_.resize(wide_assembly_ ? 0 : spd_matrix.col_ids.size());
+  assembly_dst64_.resize(wide_assembly_ ? spd_matrix.col_ids.size() : 0);
   diagonal_index_.resize(n);
   if (n > 0) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(diagonal_index_.data(), 0xFF, n * sizeof(int), stream));
@@ -723,10 +733,17 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
                 static_cast<int>(p));
     }
     dvector<int> d_iperm(iperm), d_col_panel(col_panel);
-    AssemblyMapKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(
-        static_cast<int>(n), spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
-        d_iperm.data(), d_col_panel.data(), panels_.data(), below_rows_.data(),
-        assembly_dst_.data(), diagonal_index_.data());
+    if (wide_assembly_) {
+      AssemblyMapKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(
+          static_cast<int>(n), spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
+          d_iperm.data(), d_col_panel.data(), panels_.data(), below_rows_.data(),
+          assembly_dst64_.data(), diagonal_index_.data());
+    } else {
+      AssemblyMapKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(
+          static_cast<int>(n), spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
+          d_iperm.data(), d_col_panel.data(), panels_.data(), below_rows_.data(),
+          assembly_dst_.data(), diagonal_index_.data());
+    }
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));  // before the temporaries go
   }
@@ -751,9 +768,9 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
   if (np > 0) THROW_ON_CUDA_ERROR(cudaMemsetAsync(counter_.data(), 0, np * sizeof(int), stream));
   LogMessage(
       "BlockSparseCholesky: n {}, {} supervariables, {} ordering, {} supernodes, {} panels, {} "
-      "levels, factor {:.2f} M entries, {:.3f} GFLOP",
+      "levels, factor {:.2f} M entries, relative map {:.2f} M entries, {:.3f} GFLOP",
       n, plan.num_supervariables, plan.ordering, plan.num_supernodes, np, plan.num_levels,
-      plan.factor_size / 1e6, plan.flops / 1e9);
+      plan.factor_size / 1e6, plan.relmap_size / 1e6, plan.flops / 1e9);
   return true;
 }
 
@@ -767,9 +784,14 @@ bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix
   }
   // Assembly of PAPᵀ into the panels, and the permuted right-hand side.
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_.data(), 0, factor_.size() * sizeof(float), stream));
-  const int nnz = static_cast<int>(assembly_dst_.size());
-  AssembleKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, assembly_dst_.data(),
-                                                       spd_matrix.values.data(), factor_.data());
+  const int nnz = static_cast<int>(spd_matrix.col_ids.size());
+  if (wide_assembly_) {
+    AssembleKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, assembly_dst64_.data(),
+                                                         spd_matrix.values.data(), factor_.data());
+  } else {
+    AssembleKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, assembly_dst_.data(),
+                                                         spd_matrix.values.data(), factor_.data());
+  }
   PermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), rhs.data(), work_.data(),
                                                     diagonal_index_.data(),
                                                     spd_matrix.values.data(), original_.data());

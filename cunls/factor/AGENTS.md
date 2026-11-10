@@ -45,6 +45,10 @@ manifold-generic, compile-time-deduced facade:
 - Registration: `point_to_point_factor_batch.h`, `point_to_plane_factor_batch.h`,
   `symmetric_point_to_plane_factor_batch.h`
 - Generic weighting wrapper: `weighted_factor_batch.h`
+- Clearance (`clearance/`): `SE2DiskClearanceFactorBatch` and
+  `SE3SphereClearanceFactorBatch` — distance from a pose's origin to disk /
+  sphere obstacles as a constraint function (wrap in `ConstraintFactorBatch`);
+  guide: `docs/sphinx/dynamics.rst`.
 - Dynamics (`dynamics/`): `SE2DifferentialDriveFactorBatch` (Carter: SE2 pose,
   wheel speeds, next pose) and `SE2KinematicBicycleFactorBatch` (car: pose, (v, δ),
   (a, δ̇), next pose, next (v, δ)), and their terrain versions

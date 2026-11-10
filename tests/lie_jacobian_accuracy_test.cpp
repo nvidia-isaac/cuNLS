@@ -80,7 +80,7 @@ dvector<float> RandomElements(size_t ambient, size_t tangent, float sigma, uint3
 }
 
 /**
- * Max relative error of the factor's Jacobian against central differences.
+ * Max absolute error of the factor's Jacobian against central differences.
  * `states` are B slot buffers of kN elements; each item reads element f of each.
  */
 template <class States, class Factor>

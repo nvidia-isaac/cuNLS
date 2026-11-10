@@ -188,7 +188,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                     | ({"qc_diag": f"{tan} floats (power spectral density)"} if info else {}),
                     True, "Smoothness prior on trajectories (with motion derivatives as states).",
                     "Information variants take a stream first and need "
-                    "update_information() after time_steps change." if info else ""))
+                    "update(stream, num) after time_steps change." if info else ""))
     for name, states, use in (
             ("SE2KinematicsFactorBatch", ["SE2StateBatch", "VectorStateBatch3", "SE2StateBatch"],
              "X_{k+1} = X_k Exp(dt xi_k) with the body twist as control (MPC, trajectories)."),
@@ -216,7 +216,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
             {"lower": f"{d} floats per factor", "upper": f"{d} floats per factor"}, False,
             "Box bounds on a vector state; needs AugmentedLagrangianMinimizer.",
             "For plain parameter bounds prefer VectorStateBatch.set_bounds (projected)."))
-    for d in (1, 2, 3, 6):
+    for d in _VECTOR_DIMS:
         entries.append(FactorInfo(
             f"HalfspaceFactorBatch{d}", [f"VectorStateBatch{d}"], 1, "a^T x - b",
             {"normals": f"{d} floats per factor (a)", "offsets": "1 float per factor (b)"},

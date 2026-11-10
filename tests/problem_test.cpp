@@ -56,7 +56,7 @@ class ProblemConsistencyTest : public ::testing::Test {
 typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::Size<3>,
                          test_utils::Size<4>>
     VectorSizes;
-TYPED_TEST_CASE(ProblemConsistencyTest, VectorSizes);
+TYPED_TEST_SUITE(ProblemConsistencyTest, VectorSizes);
 
 /** @brief Verifies that a problem is inconsistent without states and consistent
  * once added. */

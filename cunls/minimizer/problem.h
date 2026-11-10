@@ -174,9 +174,9 @@ class Problem {
    * @brief Validates the problem structure.
    *
    * Checks that all inputs are valid (no null pointers, matching sizes) and
-   * that the factor graph is properly connected (every state is
-   * constrained by at least one factor, every factor references
-   * valid states).
+   * runs Validate() on a temporary stream (every factor references an
+   * active state of the right tangent size, every state is constrained,
+   * constant ids are in range), logging the first error found.
    *
    * @return True if the problem is well-formed, false otherwise.
    */
@@ -233,9 +233,6 @@ class Problem {
    * residual batch. Valid after PrepareStatePointers() on the same stream.
    */
   float *const *DeviceStatePointers(size_t residual_batch_index) const;
-
-  /** @brief True if the residual batch's connectivity is a user-owned device table. */
-  bool HasDeviceConnectivity(size_t residual_batch_index) const;
 
   /** @brief Number of active state pointers of a residual batch: NumActiveFactors() * B. */
   size_t NumStatePointers(size_t residual_batch_index) const;
@@ -377,16 +374,6 @@ class Problem {
 
   /** @brief The error CheckSizes() reports, or an empty string. */
   std::string SizeError() const;
-
-  /**
-   * @brief Validates that the factor graph is properly connected.
-   *
-   * Ensures every factor references existing states and every
-   * state is constrained by at least one factor.
-   *
-   * @return True if the graph is connected, false otherwise.
-   */
-  bool CheckGraphConnectivity() const;
 
   /** @brief How one residual batch's connectivity is stored. */
   struct Connectivity {

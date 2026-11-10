@@ -18,10 +18,8 @@
 #include "cunls/linear_solver/block_sparse_cholesky_analysis.h"
 
 #include <algorithm>
-#include <climits>
 #include <cstdint>
 #include <limits>
-#include <stdexcept>
 #include <tuple>
 #include <utility>
 
@@ -606,9 +604,6 @@ std::vector<int> BuildPanels(const Graph &g, const Symbolic &s, CholeskyPlan &pl
       plan.panels.push_back(panel);
     }
   }
-  if (plan.factor_size > INT_MAX) {
-    throw std::runtime_error("BlockSparseCholeskySolver: the factor exceeds 2^31 entries");
-  }
   return col_panel;
 }
 
@@ -651,18 +646,14 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
       int b = a + 1;
       while (b < count && col_panel[rows[b]] == q) ++b;
       const int run = static_cast<int>(plan.runs.size());
-      if (relmap_size + (count - a) > INT_MAX) {
-        throw std::runtime_error(
-            "BlockSparseCholeskySolver: the relative map exceeds 2^31 entries");
-      }
-      plan.runs.push_back({p, q, a, b, static_cast<int>(relmap_size)});
+      plan.runs.push_back({p, q, a, b, relmap_size});
       relmap_size += count - a;
       for (int r = a; r < count; r += kCholeskyTileRows) update_by_level[l].push_back({p, run, r});
       targets.emplace_back(l, q, p);
       a = b;
     }
   }
-  plan.relmap_size = static_cast<int>(relmap_size);
+  plan.relmap_size = relmap_size;
   std::sort(targets.begin(), targets.end());
   plan.update_exclusive.assign(plan.num_levels, 1);
   for (size_t i = 1; i < targets.size(); ++i) {

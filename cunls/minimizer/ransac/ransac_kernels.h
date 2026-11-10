@@ -43,9 +43,6 @@ namespace ransac_internal {
 /** @brief Most states a single factor may reference. */
 constexpr int kMaxBlocksPerFactor = 8;
 
-/** @brief Largest supported free tangent dimension (mirrors kMaxRansacTangentDim). */
-constexpr int kMaxDim = 64;
-
 /** @brief Shared-memory words of one block group of the normal-equation kernel. */
 constexpr int kBlockGroupWords = 8192;
 

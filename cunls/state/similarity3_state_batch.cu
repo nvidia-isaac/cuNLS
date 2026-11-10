@@ -28,8 +28,7 @@ constexpr int kBlockSize = 256;
  *  exp_sim3_kernel + former strided batched GEMM. */
 __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
                                                const float *__restrict__ delta,
-                                               float *__restrict__ result, int n,
-                                               bool negate_delta) {
+                                               float *__restrict__ result, int n) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= n) {
     return;
@@ -39,15 +38,6 @@ __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
   float w1 = xi[0], w2 = xi[1], w3 = xi[2];
   float u1 = xi[3], u2 = xi[4], u3 = xi[5];
   float lambda = xi[6];
-  if (negate_delta) {
-    w1 = -w1;
-    w2 = -w2;
-    w3 = -w3;
-    u1 = -u1;
-    u2 = -u2;
-    u3 = -u3;
-    lambda = -lambda;
-  }
 
   const float theta2 = w1 * w1 + w2 * w2 + w3 * w3;
   const float theta = sqrtf(theta2);
@@ -124,23 +114,12 @@ __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
 }  // namespace
 
 Similarity3StateBatch::Similarity3StateBatch(const float *device_ptr, size_t capacity)
-    : Base(device_ptr, capacity), delta_transforms_(capacity), tangents_(capacity * 7) {}
+    : Base(device_ptr, capacity) {}
 
 Similarity3StateBatch::Similarity3StateBatch(const float *device_ptr, size_t capacity,
                                              const int *device_constant_state_ids,
                                              size_t const_capacity)
-    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
-      delta_transforms_(capacity),
-      tangents_(capacity * 7) {}
-
-void Similarity3StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
-                                        bool invert_delta, cudaStream_t stream, size_t num_blocks) {
-  const int num_transforms = static_cast<int>(num_blocks);
-  const int grid = (num_transforms + kBlockSize - 1) / kBlockSize;
-  sim3_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, num_transforms,
-                                                                  invert_delta);
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
 void Similarity3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                                  cudaStream_t stream, size_t num_replicas) {
@@ -148,7 +127,10 @@ void Similarity3StateBatch::Plus(const float *x, const float *delta, float *x_pl
   if (num_transforms == 0) {
     return;
   }
-  ApplyUpdate(x, delta, x_plus_delta, false, stream, num_transforms);
+  const int n = static_cast<int>(num_transforms);
+  const int grid = (n + kBlockSize - 1) / kBlockSize;
+  sim3_apply_update_fused_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, x_plus_delta, n);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace cunls

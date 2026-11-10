@@ -41,7 +41,7 @@ _RANSAC_FIELDS = _MINIMIZER_FIELDS + ("num_rounds", "num_hypotheses", "num_valid
                                       "refinement_reverted")
 _AL_FIELDS = ("status", "message", "outer_iterations", "inner_iterations", "max_violation",
               "initial_cost", "final_cost", "num_problems", "num_converged", "num_max_penalty",
-              "solve_time_ms")
+              "num_inner_failed", "solve_time_ms")
 
 
 def _plain(value):

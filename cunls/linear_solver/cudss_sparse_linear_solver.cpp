@@ -27,9 +27,6 @@
 #endif
 
 #include <cassert>
-#include <cmath>
-#include <cstdlib>
-#include <sstream>
 
 #include "cunls/common/cudss_dynamic.h"
 #include "cunls/common/cudss_helper.h"
@@ -38,14 +35,12 @@
 namespace cunls {
 
 /**
- * @brief Maps cuDSSLinearSolverMode to cuDSS algorithm type.
- *
- * Converts the solver configuration enum to the corresponding cuDSS algorithm
- * constant used for factorization.
+ * @brief Maps cuDSSLinearSolverMode to the cuDSS reordering algorithm.
  *
  * @param mode Solver mode.
- * @return cuDSS algorithm type number (0 for CUDSS_ALG_DEFAULT or 1 for
- * CUDSS_ALG_1).
+ * @return CUDSS_REORDERING_ALG_DEFAULT (SlowInitFastSolve) or
+ * CUDSS_REORDERING_ALG_BTF_COLAMD (FastInitSlowSolve) with cuDSS >= 0.8;
+ * CUDSS_ALG_DEFAULT / CUDSS_ALG_1 with older cuDSS.
  */
 int GetOrderingType(cuDSSLinearSolverMode mode) {
 #ifdef CUDSS_NEW_API
@@ -167,7 +162,7 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
       // Standard factorization
       break;
     case cuDSSLinearSolverMode::FastInitSlowSolve:
-      // Use refactorization for improved numerical stability
+      // Refactorize: reuses the analysis of the first factorization (faster).
       phase = CUDSS_PHASE_REFACTORIZATION;
       break;
   }

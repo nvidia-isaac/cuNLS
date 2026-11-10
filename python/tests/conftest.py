@@ -18,13 +18,9 @@
 Fixtures
 --------
 stream   – A fresh CudaStream for each test; many pycunls operations require one.
-sync     – Yields, then synchronises the stream *after* the test body finishes.
-           Use as ``usefixtures("sync")`` or request it directly when a test
-           needs the GPU work to have completed before it reads results back.
 """
 
 import pytest
-import cupy as cp
 
 import pycunls
 
@@ -33,10 +29,3 @@ import pycunls
 def stream():
     """Create a CUDA stream scoped to a single test."""
     return pycunls.CudaStream()
-
-
-@pytest.fixture
-def sync(stream):
-    """Yield, then synchronize the stream after the test body runs."""
-    yield
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())

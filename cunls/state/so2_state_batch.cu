@@ -25,15 +25,12 @@ namespace {
 constexpr int kBlockSize = 256;
 
 __global__ void fused_so2_plus_kernel(const float *__restrict__ x, const float *__restrict__ delta,
-                                      float *__restrict__ result, int n, bool negate_delta) {
+                                      float *__restrict__ result, int n) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= n) {
     return;
   }
   float theta = delta[tid];
-  if (negate_delta) {
-    theta = -theta;
-  }
   float c = cosf(theta);
   float s = sinf(theta);
   const float *X = x + tid * 4;
@@ -49,35 +46,28 @@ __global__ void fused_so2_plus_kernel(const float *__restrict__ x, const float *
 }
 
 void LaunchFusedSo2Plus(cudaStream_t stream, const float *x, const float *delta, float *result,
-                        size_t num_blocks, bool negate_delta) {
+                        size_t num_blocks) {
   int n = static_cast<int>(num_blocks);
   if (n <= 0) {
     return;
   }
   int grid = (n + kBlockSize - 1) / kBlockSize;
-  fused_so2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n, negate_delta);
+  fused_so2_plus_kernel<<<grid, kBlockSize, 0, stream>>>(x, delta, result, n);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace
 
 SO2StateBatch::SO2StateBatch(const float *device_ptr, size_t capacity)
-    : Base(device_ptr, capacity), delta_rotations_(capacity), angles_(capacity) {}
+    : Base(device_ptr, capacity) {}
 
 SO2StateBatch::SO2StateBatch(const float *device_ptr, size_t capacity,
                              const int *device_constant_state_ids, size_t const_capacity)
-    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
-      delta_rotations_(capacity),
-      angles_(capacity) {}
-
-void SO2StateBatch::ApplyUpdate(const float *x, const float *delta, float *result,
-                                bool invert_delta, cudaStream_t stream) {
-  LaunchFusedSo2Plus(stream, x, delta, result, NumActiveStates(), invert_delta);
-}
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
 void SO2StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {
-  LaunchFusedSo2Plus(stream, x, delta, x_plus_delta, NumActiveStates() * num_replicas, false);
+  LaunchFusedSo2Plus(stream, x, delta, x_plus_delta, NumActiveStates() * num_replicas);
 }
 
 }  // namespace cunls

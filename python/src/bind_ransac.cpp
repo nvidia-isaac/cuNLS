@@ -89,8 +89,11 @@ void BindOptions(nb::module_ &m) {
 
   nb::enum_<cunls::RansacLinearSolverType>(m, "RansacLinearSolverType",
                                            "Dense per-hypothesis solver.")
-      .value("cholesky", cunls::RansacLinearSolverType::kCholesky)
-      .value("ldlt", cunls::RansacLinearSolverType::kLDLT);
+      .value("cholesky", cunls::RansacLinearSolverType::kCholesky,
+             "In-kernel Cholesky; a non-positive pivot marks the hypothesis invalid.")
+      .value("ldlt", cunls::RansacLinearSolverType::kLDLT,
+             "In-kernel LDL^T with diagonal pivoting: rank-deficient directions get a zero "
+             "step instead of failing (suits minimal samples). Default.");
 
   nb::class_<RansacFactorBatchOptions>(m, "RansacFactorBatchOptions",
                                        "RANSAC configuration of one residual batch: role "
@@ -132,7 +135,7 @@ void BindOptions(nb::module_ &m) {
               "Inlier threshold on the raw residual norm (residual units) when factor_batches is "
               "empty. Default: 1.")
       .def_rw("scoring", &RansacMinimizerOptions::scoring,
-              "Hypothesis scoring rule (RansacScoring). Default: MSAC.")
+              "Hypothesis scoring rule (RansacScoring). Default: RansacScoring.msac.")
       .def_rw("score_always_on", &RansacMinimizerOptions::score_always_on,
               "Add 2 x the cost of the always_on factors to each hypothesis score. Default: True.")
       .def_rw("require_informative_inliers", &RansacMinimizerOptions::require_informative_inliers,
@@ -158,7 +161,8 @@ void BindOptions(nb::module_ &m) {
       .def_rw("cost_tolerance", &RansacMinimizerOptions::cost_tolerance,
               "Per-hypothesis convergence: relative cost decrease threshold. Default: 1e-7.")
       .def_rw("linear_solver", &RansacMinimizerOptions::linear_solver,
-              "Per-hypothesis dense solver (RansacLinearSolverType). Default: LDLT.");
+              "Per-hypothesis dense solver (RansacLinearSolverType). Default: "
+              "RansacLinearSolverType.ldlt.");
 
   nb::class_<RansacLevenbergMarquardtMinimizerOptions>(
       m, "RansacLevenbergMarquardtMinimizerOptions",

@@ -46,11 +46,11 @@ enum class SparseLinearSolverType {
   DenseQR,           ///< Densifies the coefficient matrix and solves with cuSOLVER
                      ///< QR factorization (cusolverDnSgeqrf / cusolverDnSormqr /
                      ///< cublasStrsm). Works for any non-singular square matrix.
-  BlockSparsePCG,    ///< Block-Jacobi preconditioned CG.  Iterative solver tuned
-                     ///< for SPD normal equations with uniform diagonal block
-                     ///< structure (e.g. 6x6 for SE3).  Skips the sparse direct
-                     ///< factorization cost; the preconditioner is refactored on
-                     ///< every Solve from the current diagonal tiles.
+  BlockSparsePCG,    ///< Block-Jacobi preconditioned CG.  Iterative solver for
+                     ///< SPD normal equations; the diagonal tiles follow the
+                     ///< state batches (e.g. 6x6 for SE3, mixed sizes allowed).
+                     ///< Skips the sparse direct factorization cost; the
+                     ///< preconditioner is refactored on every Solve.
   BlockTridiagonal,  ///< Block Cholesky of systems that are block tridiagonal
                      ///< in time (trajectories, MPC): needs the states'
                      ///< stages (Problem::SetStateStages). One warp per
@@ -71,10 +71,14 @@ enum class SparseLinearSolverType {
  * Contains solver-specific configuration options. Only the member
  * corresponding to the chosen SparseLinearSolverType is used:
  *  - cuDSS: uses @c cudss_solver_options.
- *  - DenseLDLT, DenseCholesky, DenseQR: no additional configuration.
+ *  - BlockSparsePCG: uses @c block_sparse_pcg_options.
+ *  - BlockSparseCholesky, BlockTridiagonal, DenseLDLT, DenseCholesky,
+ *    DenseQR: no additional configuration.
  */
 struct SparseLinearSolverConfig {
+  /** @brief Options of the cuDSS backend (mode, threading). */
   cuDSSLinearSolverOptions cudss_solver_options;
+  /** @brief Options of the BlockSparsePCG backend (tolerances, layout, H p mode). */
   BlockSparsePCGOptions block_sparse_pcg_options;
 };
 

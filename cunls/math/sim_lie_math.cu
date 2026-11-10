@@ -208,7 +208,7 @@ __global__ void __launch_bounds__(256, 4)
 
   const float *xi = tangent + idx * tangent_stride;
   float *J = jacobians + idx * jacobian_stride;
-  Sim2JrInv(xi[0], xi[1], xi[2], xi[3], J);
+  lie_device::Sim2JrInv(xi[0], xi[1], xi[2], xi[3], J);
 }
 
 // ============================================================================

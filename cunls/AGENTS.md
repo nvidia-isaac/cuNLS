@@ -18,13 +18,17 @@ This directory contains all core library modules and the public umbrella header
 - `common/AGENTS.md`: CUDA handles, device vectors, sparse/dense type aliases.
 - `factor/AGENTS.md`: factor interfaces and built-in factor implementations.
 - `linear_solver/AGENTS.md`: sparse solver interface, BlockSparseCholesky
-  direct solver (default), BlockSparsePCG iterative solver, cuDSS direct
-  solver, and dense fallbacks.
+  direct solver (default), BlockSparsePCG iterative solver, BlockTridiagonal
+  (trajectories / MPC), cuDSS direct solver, and dense fallbacks.
 - `math/AGENTS.md`: Lie and matrix math kernels/utilities.
-- `minimizer/AGENTS.md`: `Problem`, residual wrappers, GN/LM solvers, RANSAC minimizers.
+- `minimizer/AGENTS.md`: `Problem` (with subproblem partitions), residual wrappers, GN/LM
+  solvers, the assembled and Schur-complement linear systems, RANSAC minimizers and
+  `AugmentedLagrangianMinimizer` (constraints, bounds).
 - `robustifier/AGENTS.md`: robust loss batches.
 - `state/AGENTS.md`: manifold state batch implementations and update orchestration.
 
 ## Typical dependency direction
 
-`factor/state` -> `minimizer` -> `linear_solver`/`math` + `common`.
+`factor/state` -> `minimizer` -> `linear_solver`/`math` + `common`. One exception:
+`SparseLinearSolver::Initialize` takes the `Problem` (to derive the block layout or
+the stages), so `linear_solver` includes `minimizer/problem.h`.

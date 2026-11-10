@@ -9,7 +9,23 @@ viz/
 build/
 build_tests/
 
+# Default outputs of the scripts in scripts/, docs/ and CI
+build_docker/
+install_output/
+output/
+dist/
+agent_eval_*/
+docs/sphinx/_build/
+
+# Python caches and packaging metadata
 *.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Editor settings
+.vscode/
 
 # Design notes are kept locally, not in the repository
 docs/design/

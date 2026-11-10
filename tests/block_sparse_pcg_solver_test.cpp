@@ -34,6 +34,7 @@
 #include <map>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,6 +46,7 @@
 #include "cunls/minimizer/bsr_matrix.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/sparse_matrix.h"
+#include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -318,13 +320,6 @@ BlockSparsePCGOptions BaOptions(int num_bodies, int num_points, bool ba_product)
   return options;
 }
 
-/** Exposes which `H p` the solver uses. */
-class InspectablePCGSolver : public BlockSparsePCGSolver {
- public:
-  using BlockSparsePCGSolver::BlockSparsePCGSolver;
-  using BlockSparsePCGSolver::UsesBundleAdjustmentProduct;
-};
-
 /**
  * Initializes with @p init, solves once with @p m and returns x; *uses_ba
  * reports which H p the solver took.
@@ -336,7 +331,7 @@ std::vector<float> SolveAfterInitialize(const InitMatrix &init, const Matrix &m,
   dvector<float> rhs(b);
   dvector<float> result(b.size());
   CudaStream stream;
-  InspectablePCGSolver solver(options);
+  BlockSparsePCGSolver solver(options);
   EXPECT_TRUE(solver.Initialize(stream.GetStream(), Problem(), init, rhs, result));
   EXPECT_TRUE(solver.Solve(stream.GetStream(), m, rhs, result));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
@@ -418,6 +413,63 @@ constexpr int kBaPoints = 30000;
 constexpr int kBaMaxBodiesPerPoint = 24;
 
 }  // namespace
+
+// Options that cannot work are rejected at construction with the value and a fix
+// (check_period < 1 used to be clamped to 1 silently).
+TEST(BlockSparsePCGSolverTest, RejectsInvalidOptions) {
+  auto expect_invalid = [](const BlockSparsePCGOptions &o, const std::string &needle) {
+    try {
+      BlockSparsePCGSolver solver(o);
+      FAIL() << "expected std::invalid_argument containing '" << needle << "'";
+    } catch (const std::invalid_argument &e) {
+      EXPECT_NE(std::string(e.what()).find(needle), std::string::npos) << e.what();
+      EXPECT_NE(std::string(e.what()).find("Fix:"), std::string::npos) << e.what();
+    }
+  };
+  BlockSparsePCGOptions o;
+  o.block_size = 17;
+  expect_invalid(o, "block_size");
+  o = BlockSparsePCGOptions();
+  o.block_layout = {{4, 6}, {10, 0}};
+  expect_invalid(o, "block_layout");
+  o = BlockSparsePCGOptions();
+  o.check_period = 0;
+  expect_invalid(o, "check_period");
+}
+
+// The layout derived from a Problem's state batches must not replace the
+// user's block_layout: a solver initialized from a Problem and then reused on
+// a raw matrix (Problem without state batches) solves exactly like a fresh
+// solver with the same options.
+TEST(BlockSparsePCGSolverTest, DerivedLayoutDoesNotOverwriteTheOptions) {
+  const System s = MakeBundleAdjustmentSystem(200, 400, 3);  // 2400 rows
+  CSRSparseMatrix m;
+  ToCsr(s, m);
+  std::vector<float> b;
+  test_utils::GenerateRandomVector(s.n, b);
+  BlockSparsePCGOptions options;
+  options.block_layout = {{s.n / 3, 3}};
+  options.relative_tolerance = 0.f;
+  options.absolute_tolerance = 0.f;
+  options.max_iterations = 5;
+  options.deterministic_mode = true;
+  const auto [expected, expected_iterations] = SolveOnce(m, b, options);
+
+  CudaStream stream;
+  dvector<float> poses(s.n), rhs(b), result(s.n);
+  VectorStateBatch<6> states(poses.data(), s.n / 6);
+  states.SetNumActiveStates(s.n / 6);
+  Problem with_states;
+  with_states.AddStateBatch(&states);
+  BlockSparsePCGSolver solver(options);
+  ASSERT_TRUE(solver.Initialize(stream.GetStream(), with_states, m, rhs, result));  // {n/6, 6}
+  ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), m, rhs, result));    // {n/3, 3}
+  ASSERT_TRUE(solver.Solve(stream.GetStream(), m, rhs, result));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  std::vector<float> x(s.n);
+  result.CopyToHost(x.data(), s.n);
+  EXPECT_EQ(std::memcmp(x.data(), expected.data(), x.size() * sizeof(float)), 0);
+}
 
 // About 1.4 M rows: the PCG kernels launch more CTAs than fit on a GPU at once,
 // and every CTA of the direction update must use the same beta.

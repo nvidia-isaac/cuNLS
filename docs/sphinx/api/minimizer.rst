@@ -168,7 +168,9 @@ then override individual fields.
   converts to dense and factorizes with a custom pivoted LDLT kernel;
   ``DenseCholesky`` converts to dense and uses cuSOLVER Cholesky
   (requires SPD); ``DenseQR`` converts to dense and uses cuSOLVER QR
-  factorization (works for any non-singular matrix). Not used with
+  factorization (works for any non-singular matrix); ``BlockTridiagonal`` runs a
+  block Cholesky of systems that are block tridiagonal in time (trajectories, MPC;
+  needs ``Problem.set_state_stages``). Not used with
   ``LinearSystemType.SchurComplement``. How to choose: :doc:`../linear_solvers`.
 - **linear_system** (``LinearSystemType``, default ``Assembled``) — how each
   iteration's linear system is formed. ``Assembled`` assembles the full normal
@@ -646,6 +648,12 @@ Integer enum selecting the linear-system backend.
   via cuSOLVER Cholesky factorization (requires SPD matrix).
 - ``SparseLinearSolverType.DenseQR`` — converts CSR to dense and solves via
   cuSOLVER QR factorization (works for any non-singular matrix).
+- ``SparseLinearSolverType.BlockTridiagonal`` — block Cholesky of systems that
+  are block tridiagonal in time (trajectory optimization, MPC): needs every
+  state's stage (``Problem.set_state_stages``), stage blocks of at most 32
+  unknowns, one warp per subproblem. ``Initialize`` synchronizes; ``Solve``
+  is free of host synchronization (CUDA-graph capturable) only with safety
+  checks disabled.
 
 .. _py-minimizer-example-label:
 
@@ -751,8 +759,10 @@ criterion is applied per subproblem.
   direct solver via NVIDIA's cuDSS library), ``DenseLDLT`` (converts CSR
   to dense and solves with a custom CUDA pivoted LDLT factorization),
   ``DenseCholesky`` (converts CSR to dense and solves via cuSOLVER Cholesky;
-  requires SPD matrix), and ``DenseQR`` (converts CSR to dense and solves
-  via cuSOLVER QR factorization; works for any non-singular matrix).
+  requires SPD matrix), ``DenseQR`` (converts CSR to dense and solves
+  via cuSOLVER QR factorization; works for any non-singular matrix), and
+  ``BlockTridiagonal`` (block Cholesky of systems that are block tridiagonal in
+  time; needs ``Problem::SetStateStages``).
   Default: ``BlockSparseCholesky``. Not used with
   ``LinearSystemType::SchurComplement``. See :doc:`../linear_solvers`.
 - **linear_system** [in]: How each iteration's linear system is formed:

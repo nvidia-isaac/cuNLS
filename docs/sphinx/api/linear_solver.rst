@@ -37,6 +37,13 @@ Enum in `cunls/linear_solver/sparse_linear_solver.h`:
 - `DenseCholesky` — densifies the coefficient matrix and solves with
   cuSOLVER Cholesky (requires SPD).
 - `DenseQR` — densifies the coefficient matrix and solves with cuSOLVER QR.
+- `BlockTridiagonal` — block Cholesky (Riccati recursion) of systems that are
+  block tridiagonal in time: trajectory optimization and MPC, one subproblem per
+  trajectory.  Needs every state's stage (``Problem::SetStateStages``); factors may
+  only couple the same or adjacent stages, stage blocks of at most 32 unknowns.
+  One warp per subproblem; ``Solve`` has no host synchronization (CUDA-graph
+  capturable) when safety checks are disabled.
+  See `BlockTridiagonalSolver`_.
 
 SparseLinearSolverConfig
 ------------------------
@@ -125,11 +132,13 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
 - ``block_layout`` - [in] Optional ``std::vector<std::pair<int, int>>``
   describing a heterogeneous block-diagonal layout: each
   ``(count_i, size_i)`` element contributes ``count_i * size_i`` rows
-  with ``size_i``-square diagonal tiles.  When empty (default),
-  ``Initialize`` derives the layout automatically from the
-  ``Problem``'s state batches (segment per non-empty batch with
-  ``size = TangentSize()``, ``count = NumActiveStates() -
-  NumConstStates()``).
+  with ``size_i``-square diagonal tiles.  ``Initialize`` derives the
+  layout from the ``Problem``'s state batches whenever it has any
+  (segment per non-empty batch with ``size = TangentSize()``,
+  ``count = NumActiveStates() - NumConstStates()``, consecutive equal
+  sizes merged), and that layout takes precedence; ``block_layout``
+  applies when the solver runs on a matrix with a ``Problem`` without
+  state batches.  The solver never modifies its options.
 - ``max_iterations`` - [in] PCG iteration cap.  Default: ``200``.
 - ``relative_tolerance`` - [in] Stop when
   ``||r_k|| <= relative_tolerance * ||b||``.  Default: ``1e-3``.
@@ -154,8 +163,10 @@ and preconditioner-layout knobs for ``BlockSparsePCGSolver``.
   storage.  ``kBundleAdjustment``: a deterministic kernel for
   bundle-adjustment Hessians (layout ``{{num_cameras, 6}, {num_points,
   3}}``, CSR or 3x3 block storage, sm_80 or newer) that reads each
-  camera-point block once; ``Initialize`` falls back to ``kGeneric``
-  when the matrix does not fit and logs the reason.  ``Solve`` re-checks
+  camera-point block once.  Limits: at most 1379 cameras and 524287
+  points, and the GPU must support cooperative launches.  ``Initialize``
+  falls back to ``kGeneric`` when the matrix does not fit and logs the
+  reason.  ``Solve`` re-checks
   a matrix with other buffers, storage or entry count; a pattern
   rewritten in place needs ``Initialize``.  Calls on one solver instance
   are stream-ordered; instances are independent.
@@ -169,7 +180,9 @@ standard preconditioned conjugate gradient recurrence (Saad,
 *Iterative Methods for Sparse Linear Systems*, §9.2) and a
 block-Jacobi preconditioner formed from the dense diagonal tiles of
 ``H``.  Each tile is factored independently with an in-shared-memory
-LDLT.  SpMV is delegated to cuSPARSE.
+LDLT.  ``H p`` uses the in-house BSR kernels for block storage, cuSPARSE
+for scalar CSR, or the bundle-adjustment kernel under
+``hessian_product = kBundleAdjustment``.
 
 All scalar quantities (``alpha``, ``beta``, ``<p, q>``, ``<r, r>``,
 ``<r, z>``) live on the device for the whole inner loop.  Only the
@@ -185,13 +198,13 @@ residual norm is copied to the host, and only once every
 .. cpp:function:: bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Builds the cuSPARSE SpMV plan, allocates the PCG scratch vectors,
-  and (when ``options.block_layout`` is empty) derives the block-Jacobi
-  layout from ``problem.GetStateBatches()``.
+  and derives the block-Jacobi layout from ``problem.GetStateBatches()``
+  when the problem has state batches.
 
   :param ``stream``: [in] CUDA stream for asynchronous GPU operations.
-  :param ``problem``: [in] Source of the block-Jacobi layout when
-    ``options.block_layout`` is empty.  Pass a default-constructed
-    ``Problem`` when calling on a raw matrix.
+  :param ``problem``: [in] Source of the block-Jacobi layout.  Pass a
+    default-constructed ``Problem`` when calling on a raw matrix (then
+    ``options.block_layout`` or ``options.block_size`` applies).
   :param ``spd_matrix``: [in] Coefficient matrix ``H`` in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b``.
   :param ``result``: [out] Solution vector ``x``.
@@ -293,7 +306,7 @@ Concrete implementation in `cudss_sparse_linear_solver.h`.
   :param ``options``: [in] cuDSS mode/threading configuration.
   :returns: Constructor has no return value.
 
-.. cpp:function:: bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   For ``SlowInitFastSolve``: runs the cuDSS symbolic analysis phase only.
   For ``FastInitSlowSolve``: runs symbolic analysis followed by an initial
@@ -306,6 +319,7 @@ Concrete implementation in `cudss_sparse_linear_solver.h`.
 
   :param ``stream``: [in] CUDA stream for asynchronous GPU operations. Also
     used to lazily initialize the internal cuDSS handle on first call.
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] SPD matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -316,12 +330,13 @@ DenseLDLTSolver
 
 Concrete implementation in `dense_linear_solver.h`.
 
-.. cpp:function:: bool DenseLDLTSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool DenseLDLTSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Validates dimensions and allocates reusable dense buffers used by the dense
   pivoted LDLT pipeline.
 
   :param ``stream``: [in] CUDA stream (unused; buffers are allocated synchronously).
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] Symmetric matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -350,12 +365,13 @@ Concrete implementation in `dense_cholesky_solver.h`. Uses the cuSOLVER
 ``cusolverDnSpotrf`` / ``cusolverDnSpotrs`` routines (Cholesky factorization
 ``A = L L^T``). Requires the input matrix to be symmetric positive-definite.
 
-.. cpp:function:: bool DenseCholeskySolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool DenseCholeskySolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Validates dimensions and pre-allocates internal dense buffers and the
   cuSOLVER workspace for the given matrix size.
 
   :param ``stream``: [in] CUDA stream used to query the cuSOLVER workspace size.
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] SPD matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -385,12 +401,13 @@ Concrete implementation in `dense_qr_solver.h`. Uses the cuSOLVER
 (``A = Q R``) followed by a cuBLAS ``cublasStrsm`` upper-triangular solve.
 Works for any non-singular square matrix (not limited to SPD).
 
-.. cpp:function:: bool DenseQRSolver::Initialize(cudaStream_t stream, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
+.. cpp:function:: bool DenseQRSolver::Initialize(cudaStream_t stream, const Problem& problem, const CSRSparseMatrix& spd_matrix, const dvector<float>& rhs, dvector<float>& result)
 
   Validates dimensions and pre-allocates internal dense buffers, Householder
   tau vector, and the cuSOLVER workspace for the given matrix size.
 
   :param ``stream``: [in] CUDA stream used to query the cuSOLVER workspace size.
+  :param ``problem``: [in] The originating problem; unused by this backend.
   :param ``spd_matrix``: [in] Matrix in CSR format.
   :param ``rhs``: [in] Right-hand-side vector ``b`` (size must equal matrix rows).
   :param ``result``: [out] Solution vector ``x`` (size must equal matrix rows).
@@ -436,3 +453,26 @@ Function in `sparse_linear_solver.h`:
   :param ``type``: [in] Backend type to instantiate.
   :param ``config``: [in] Backend-specific configuration blob.
   :returns: [out] Heap-allocated solver instance.
+
+BlockTridiagonalSolver
+----------------------
+
+Header: :code:`cunls/linear_solver/block_tridiagonal_solver.h`
+
+Direct solver selected by ``SparseLinearSolverType::BlockTridiagonal``.  The ordering
+comes from the problem: ``Problem::SetStateStages`` gives every state a stage (time
+index) and ``Problem::SetProblemPartition`` the subproblem.  Within a subproblem the
+unknowns of stage :math:`k` form one block; factors may only couple the same or
+adjacent stages, so each subproblem's matrix is block tridiagonal.  ``Initialize``
+checks this and fails (``false``, with a logged error) otherwise.
+
+``Solve`` runs the block Cholesky (the Riccati recursion of LQR) per subproblem, then
+forward and back substitution: one warp per subproblem, blocks in shared memory,
+:math:`O(K m^3)` work for :math:`K` stages of at most :math:`m \le 32` unknowns.  A
+non-positive pivot is counted on the device and replaced by a tiny positive one;
+with safety checks enabled ``Solve`` reads the count back and fails, otherwise the
+solve stays free of host synchronization.  BSR input is not supported.
+
+.. cpp:member:: static constexpr int BlockTridiagonalSolver::kMaxStageSize = 32
+
+  Largest stage block size supported (one warp per subproblem).

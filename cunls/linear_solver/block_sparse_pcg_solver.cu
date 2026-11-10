@@ -74,9 +74,10 @@
  *
  * Each segment in @ref BlockSparsePCGOptions::block_layout gets its
  * own templated kernel launch (one per `Factor` and one per `Apply`).
- * Per-segment dispatch is a small host-side branch on the templated
- * block-size specialization (B ∈ {1, 2, 3, 4, 6, 7, 15}) and falls
- * back to a runtime-B generic kernel for any other value.  This keeps
+ * Per-segment dispatch is a small host-side branch on the block size:
+ * scalar Jacobi for B = 1, one tile per thread for B = 2..6, one CTA per
+ * tile with a templated kernel for B ∈ {7, 8, 15, 16}, and a runtime-B
+ * generic kernel for any other value.  This keeps
  * the hot kernels register-resident for the common cases (SE3 = 6,
  * Vector<3> = 3) while still supporting arbitrary user state batches.
  */
@@ -105,40 +106,18 @@ namespace {
 constexpr int kMaxBlockSize = 16;
 // Most CTAs a dot kernel launches; one partial sum per CTA.
 constexpr int kMaxDotBlocks = 1024;
-// d_scratch_: 7 PCG scalars, then from kDotWork the dot partial sums and tickets.
+// d_scratch_ slots of the PCG scalars. <r, z> alternates between kRzA and kRzB
+// (the previous iteration's value is rz_old) so no kernel overwrites a value
+// other CTAs still read. Each rz slot sits next to kRnorm2: DualDotAsync clears
+// rz_new and ||r||^2 with one 8-byte memset.
+enum : int { kPAp = 0, kRzA = 1, kRnorm2 = 2, kRzB = 3, kBnorm2 = 4, kNumPcgScalars = 5 };
+// From kDotWork: the dot partial sums and tickets (deterministic_mode only).
 constexpr int kDotWork = 8;
 constexpr size_t kScratchSize = kDotWork + 2 * kMaxDotBlocks + 2;
 
 // =============================================================================
 // Device kernels — preconditioner construction (`Factor`)
 // =============================================================================
-
-/**
- * @brief Factors one segment of block-diagonal tiles, in place into the
- *        factor buffer.
- *
- * One CTA per tile.  Threads cooperatively:
- *   1. Gather the dense `B × B` tile from `H`'s CSR rows
- *      `[segment_row_start + b*B, segment_row_start + b*B + B)`,
- *      filtering column indices to the tile's column range.  Any
- *      entries outside are zero (the tile is dense in the
- *      preconditioner's view of H; CSR sparsity within the tile is
- *      irrelevant for Jacobi).
- *   2. Symmetrize numerically: `H_d := (H_d + H_d^T) / 2`.  Algebraically
- *      a no-op for `J^T J`, but cheap insurance against FP drift when
- *      LM damping or column scaling has been applied in place.
- *   3. Run a serial LDLT on thread 0:
- *      `for k in 0..B: D_{kk} = H_{kk}; L_{ik} = H_{ik}/D_{kk};
- *                     H_{ij} -= L_{ik} D_{kk} L_{jk}` for i, j > k.
- *      A pivot floor (sign-preserving) guards against singular tiles.
- *   4. Write the (lower-triangle L, diagonal D) result to the global
- *      factor buffer.
- *
- * The serial LDLT is fine for the sizes here (B ≤ 16, dominant cost is
- * the global I/O for the tile, not the O(B³) arithmetic).
- *
- * @tparam B Compile-time tile side length.
- */
 
 /**
  * @brief Gathers one row of a diagonal tile out of scalar CSR.
@@ -437,6 +416,32 @@ __device__ __forceinline__ void GatherTileRow(const int *__restrict__ row_off,
   }
 }
 
+/**
+ * @brief Factors one segment of block-diagonal tiles, in place into the
+ *        factor buffer.
+ *
+ * One CTA per tile.  Threads cooperatively:
+ *   1. Gather the dense `B × B` tile from `H`'s CSR rows
+ *      `[segment_row_start + b*B, segment_row_start + b*B + B)`,
+ *      filtering column indices to the tile's column range.  Any
+ *      entries outside are zero (the tile is dense in the
+ *      preconditioner's view of H; CSR sparsity within the tile is
+ *      irrelevant for Jacobi).
+ *   2. Symmetrize numerically: `H_d := (H_d + H_d^T) / 2`.  Algebraically
+ *      a no-op for `J^T J`, but cheap insurance against FP drift when
+ *      LM damping or column scaling has been applied in place.
+ *   3. Run a serial LDLT on thread 0:
+ *      `for k in 0..B: D_{kk} = H_{kk}; L_{ik} = H_{ik}/D_{kk};
+ *                     H_{ij} -= L_{ik} D_{kk} L_{jk}` for i, j > k.
+ *      A pivot floor (sign-preserving) guards against singular tiles.
+ *   4. Write the (lower-triangle L, diagonal D) result to the global
+ *      factor buffer.
+ *
+ * The serial LDLT is fine for the sizes here (B ≤ 16, dominant cost is
+ * the global I/O for the tile, not the O(B³) arithmetic).
+ *
+ * @tparam B Compile-time tile side length.
+ */
 template <int B>
 __global__ void ExtractAndFactorBlockDiagonalsKernel(
     const int *__restrict__ row_off, const int *__restrict__ col_idx,
@@ -645,7 +650,8 @@ __global__ void ExtractAndFactorPerThreadKernel(const int *__restrict__ row_off,
   }
 }
 
-/** Scalar-Jacobi extractor for B == 1: `M^{-1}[i] = 1 / H[i,i]`. */
+/** Scalar-Jacobi extractor for B == 1: stores `H[i,i]` (sign-preserving
+ *  pivot floor); ApplyScalarJacobi divides by it, i.e. `M^{-1}[i] = 1 / H[i,i]`. */
 __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
                                     const int *__restrict__ col_idx,
                                     const float *__restrict__ values, bool block_storage,
@@ -797,7 +803,7 @@ __global__ void ApplyScalarJacobi(const float *__restrict__ factors, int factor_
 }
 
 /**
- * @brief One-thread-per-block apply, optimized for small B (≤ 8).
+ * @brief One-thread-per-block apply, optimized for small B (2..6).
  *
  * The per-block work (3*B² FMAs ≈ 27 for B=3, 108 for B=6) fits in a
  * handful of registers — well below the per-thread state budget that
@@ -809,7 +815,7 @@ __global__ void ApplyScalarJacobi(const float *__restrict__ factors, int factor_
  * scheduling overhead.
  *
  * @tparam B Compile-time tile side length, must be small enough for the
- *           per-thread register file (we instantiate for {2, 3, 4, 6}).
+ *           per-thread register file (we instantiate for {2, 3, 4, 5, 6}).
  */
 template <int B>
 __global__ void ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factors,
@@ -880,10 +886,8 @@ __global__ void ApplyBlockJacobiPerThreadKernel(const float *__restrict__ factor
  *        `x ← x + α p ; r ← r − α q` in a single kernel.
  *
  * Thread 0 reads the two scalar slots, computes α, stores it in
- * shared memory; all threads then perform the axpy on their slice.
- * This eliminates the separate `ComputeAlphaKernel` launch
- * (~1.2 µs / call × thousands of iters = several percent of total
- * runtime on the small-Minimize SBA fixture).
+ * shared memory; all threads then perform the axpy on their slice, so α
+ * needs no kernel launch of its own.
  */
 __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
                                 const float *__restrict__ pAp_ptr, const float *__restrict__ p,
@@ -906,7 +910,8 @@ __global__ void PcgUpdateKernel(const float *__restrict__ rz_old_ptr,
 /**
  * @brief Fused: compute `β = rz_new / rz_old` and update the search
  *        direction `p ← z + β p` in a single kernel.  Every CTA reads
- *        `rz_old`, so the caller advances it after this kernel.
+ *        both scalars, so neither may be written by this kernel (the
+ *        caller alternates the rz slots instead).
  */
 __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
                                    const float *__restrict__ rz_old_ptr,
@@ -1234,9 +1239,9 @@ void DualDotAsync(cudaStream_t stream, const float *a, const float *b, const flo
   int threads = 256;
   int blocks = std::min(kMaxDotBlocks, (n + threads - 1) / threads);
   if (work == nullptr) {
-    // Verified adjacent at the call site (kRzNew, kRnorm2 in d_scratch_).
-    assert(out_ac == out_ab + 1);
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(out_ab, 0, 2 * sizeof(float), stream));
+    // Adjacent by the d_scratch_ layout (kRzA or kRzB next to kRnorm2).
+    assert(out_ac == out_ab + 1 || out_ab == out_ac + 1);
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(std::min(out_ab, out_ac), 0, 2 * sizeof(float), stream));
     DualDotKernel<false>
         <<<blocks, threads, 0, stream>>>(a, b, c, n, out_ab, out_ac, nullptr, nullptr);
   } else {
@@ -1260,18 +1265,26 @@ cusparseSpMVAlg_t SpmvAlg(const BlockSparsePCGOptions &options) {
 
 BlockSparsePCGSolver::BlockSparsePCGSolver(BlockSparsePCGOptions options)
     : options_(std::move(options)) {
+  const std::string max_block = std::to_string(kMaxBlockSize);
   if (options_.block_size < 1 || options_.block_size > kMaxBlockSize) {
-    throw std::invalid_argument("BlockSparsePCGSolver: block_size must be in [1, 16]");
+    throw std::invalid_argument(
+        "BlockSparsePCGSolver::BlockSparsePCGSolver: block_size is out of range (got " +
+        std::to_string(options_.block_size) + ", expected 1.." + max_block +
+        "). Fix: use the state tangent size, or another solver for larger blocks.");
   }
   for (const auto &seg : options_.block_layout) {
     if (seg.second < 1 || seg.second > kMaxBlockSize) {
       throw std::invalid_argument(
-          "BlockSparsePCGSolver: block_layout segment size must be in "
-          "[1, 16]");
+          "BlockSparsePCGSolver::BlockSparsePCGSolver: a block_layout segment size is out of "
+          "range (got " +
+          std::to_string(seg.second) + ", expected 1.." + max_block +
+          "). Fix: leave block_layout empty to derive it from the problem.");
     }
   }
   if (options_.check_period < 1) {
-    options_.check_period = 1;
+    throw std::invalid_argument(
+        "BlockSparsePCGSolver::BlockSparsePCGSolver: check_period must be positive (got " +
+        std::to_string(options_.check_period) + ", expected >= 1). Fix: use the default 4.");
   }
 }
 
@@ -1279,12 +1292,19 @@ BlockSparsePCGSolver::~BlockSparsePCGSolver() = default;
 
 bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
   segments_.clear();
-  // Normalize the layout: use the user-supplied block_layout if it's
-  // non-empty; otherwise treat the whole matrix as a single segment of
-  // size `options_.block_size`.
-  layout_.clear();
-  if (!options_.block_layout.empty()) {
-    layout_ = options_.block_layout;
+  // The layout: the one derived from the last Initialize's state batches when
+  // it covers the matrix, else the user-supplied block_layout, else a single
+  // segment of size `options_.block_size`.
+  auto rows = [](const std::vector<std::pair<int, int>> &l) {
+    long long total = 0;
+    for (const auto &[count, size] : l) total += static_cast<long long>(count) * size;
+    return total;
+  };
+  std::vector<std::pair<int, int>> layout;
+  if (!problem_layout_.empty() && rows(problem_layout_) == matrix_dim) {
+    layout = problem_layout_;
+  } else if (!options_.block_layout.empty()) {
+    layout = options_.block_layout;
   } else {
     if (matrix_dim % options_.block_size != 0) {
       LogError(
@@ -1293,13 +1313,12 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
           matrix_dim, options_.block_size);
       return false;
     }
-    layout_.push_back({matrix_dim / options_.block_size, options_.block_size});
+    layout.push_back({matrix_dim / options_.block_size, options_.block_size});
   }
 
   int row_cursor = 0;
-  int block_cursor = 0;
   size_t factor_cursor = 0;
-  for (const auto &[count, size] : layout_) {
+  for (const auto &[count, size] : layout) {
     if (count <= 0) {
       continue;
     }
@@ -1312,11 +1331,9 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
     s.num_blocks = count;
     s.row_start = row_cursor;
     s.factor_offset = static_cast<int>(factor_cursor);
-    s.block_row_start = block_cursor;
     segments_.push_back(s);
 
     row_cursor += count * size;
-    block_cursor += count;
     factor_cursor +=
         static_cast<size_t>(count) * (size == 1 ? 1ull : static_cast<size_t>(size) * size);
   }
@@ -1325,7 +1342,6 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
              matrix_dim);
     return false;
   }
-  total_blocks_ = block_cursor;
   total_factor_floats_ = factor_cursor;
   return true;
 }
@@ -1335,7 +1351,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
                                       dvector<float> &result) {
   bsr_view_ = &spd_matrix;
   csr_view_ = nullptr;
-  return InitializeCommon(stream, problem, spd_matrix.NumRows(), rhs, result);
+  return InitializeCommon(stream, &problem, spd_matrix.NumRows(), rhs, result);
 }
 
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
@@ -1343,53 +1359,47 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
                                       dvector<float> &result) {
   csr_view_ = &spd_matrix;
   bsr_view_ = nullptr;
-  if (!InitializeCommon(stream, problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
+  if (!InitializeCommon(stream, &problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
     return false;
   }
   return InitializeCsrSpMV(stream, spd_matrix);
 }
 
 /** @brief Checks sizes and sets up the block layout, segment tables, BA product and scratch. */
-bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &problem, int n,
+bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem *problem, int n,
                                             const dvector<float> &rhs, dvector<float> &result) {
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
     LogError("BlockSparsePCGSolver: dim mismatch (matrix={}, rhs={}, result={})", n, rhs.size(),
              result.size());
     return false;
   }
-  // When @p problem carries state batches, the block-Jacobi layout is
-  // ALWAYS derived afresh from them — each non-empty batch contributes
-  // a segment with `size = TangentSize()` and
-  // `count = NumActiveStates() - NumConstStates()`.  Consecutive
-  // segments of equal size are merged so the dispatch loop has one
-  // entry per distinct-size group (typical: 1 entry for PGO, 2 for
-  // SBA).  Re-deriving on every Initialize is what makes the same
-  // solver instance work across a stream of differently-dimensioned
-  // problems (e.g. the binary SBA test fixture iterates over many
-  // such problems with one minimizer).
-  //
-  // Falls back to the user-supplied @c options_.block_layout (or the
-  // uniform @c options_.block_size) only when @p problem has no
-  // registered state batches — the path tests exercise when they call
-  // the solver directly on a raw matrix.
-  std::vector<std::pair<int, int>> derived_layout;
-  for (const auto *sb : problem.GetStateBatches()) {
-    if (sb == nullptr) {
-      continue;
+  // With @p problem, the layout follows its state batches (when it has any):
+  // each non-empty batch contributes a segment with `size = TangentSize()`
+  // and `count = NumActiveStates() - NumConstStates()`; consecutive segments
+  // of equal size are merged (typically 1 entry for PGO, 2 for SBA).
+  // Re-deriving on every Initialize lets one solver serve a stream of
+  // differently-sized problems. A problem without state batches (a raw
+  // matrix) uses options_.block_layout or the uniform block_size. Without
+  // @p problem (Solve re-initializing after a size or pattern change) the
+  // last derived layout is kept while it still covers the matrix.
+  // options_ is never modified.
+  if (problem != nullptr) {
+    problem_layout_.clear();
+    for (const auto *sb : problem->GetStateBatches()) {
+      if (sb == nullptr) {
+        continue;
+      }
+      int t = static_cast<int>(sb->TangentSize());
+      int count = static_cast<int>(sb->NumActiveStates() - sb->NumConstStates());
+      if (count == 0) {
+        continue;
+      }
+      if (!problem_layout_.empty() && problem_layout_.back().second == t) {
+        problem_layout_.back().first += count;
+      } else {
+        problem_layout_.emplace_back(count, t);
+      }
     }
-    int t = static_cast<int>(sb->TangentSize());
-    int count = static_cast<int>(sb->NumActiveStates() - sb->NumConstStates());
-    if (count == 0) {
-      continue;
-    }
-    if (!derived_layout.empty() && derived_layout.back().second == t) {
-      derived_layout.back().first += count;
-    } else {
-      derived_layout.emplace_back(count, t);
-    }
-  }
-  if (!derived_layout.empty()) {
-    options_.block_layout = std::move(derived_layout);
   }
   if (!BuildSegmentTables(n)) {
     return false;
@@ -1406,7 +1416,7 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem &
     p_.resize(n);
     Ap_.resize(n);
   }
-  const size_t scratch_size = options_.deterministic_mode ? kScratchSize : 7;
+  const size_t scratch_size = options_.deterministic_mode ? kScratchSize : kNumPcgScalars;
   if (d_scratch_.size() < scratch_size) {
     d_scratch_.resize(scratch_size);
   }
@@ -1459,7 +1469,7 @@ void BlockSparsePCGSolver::WarnBaProductNotUsed() {
   last_ba_warning_ = ba_product_.FailureReason();
   LogWarning(
       "BlockSparsePCGSolver: hessian_product = kBundleAdjustment not used ({}); using the "
-      "generic H p",
+      "generic H p. Fix: set hessian_product = kGeneric for this problem to silence this.",
       last_ba_warning_);
 }
 
@@ -1514,8 +1524,7 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd
   if (n != matrix_size_ ||
       BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
                        spd_matrix.block_size, spd_matrix.col_ids.size())) {
-    Problem empty_problem;
-    if (!InitializeCommon(stream, empty_problem, n, rhs, result)) {
+    if (!InitializeCommon(stream, nullptr, n, rhs, result)) {
       return false;
     }
   }
@@ -1539,12 +1548,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
       BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), 1,
                        spd_matrix.col_ids.size())) {
     // Recovery path: matrix dim (or, with the bundle-adjustment product, the
-    // pattern) changed since the last Initialize.  Use
-    // a default-constructed Problem; the cached options_.block_layout
-    // (set by the prior Initialize) is reused if non-empty, otherwise
-    // the uniform options_.block_size path takes over.
-    Problem empty_problem;
-    if (!Initialize(stream, empty_problem, spd_matrix, rhs, result)) {
+    // pattern) changed since the last Initialize. Keep the derived layout
+    // while it covers the matrix (see InitializeCommon).
+    if (!InitializeCommon(stream, nullptr, n, rhs, result) ||
+        !InitializeCsrSpMV(stream, spd_matrix)) {
       return false;
     }
   }
@@ -1600,10 +1607,6 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
   // -----------------------------------------------------------------
   // 3. Compute initial inner products on device.
   // -----------------------------------------------------------------
-  // Scratch slots: [0] alpha, [1] beta, [2] <p, Ap>, [3] rz_old (= <r, z>),
-  // [4] rz_new, [5] ||r||^2, [6] ||b||^2.
-  enum : int { kAlpha = 0, kBeta = 1, kPAp = 2, kRzOld = 3, kRzNew = 4, kRnorm2 = 5, kBnorm2 = 6 };
-
   // Fixed-order dot products need the partial sums and tickets in d_scratch_.
   float *dot_work = options_.deterministic_mode ? d_scratch_.data() + kDotWork : nullptr;
   if (dot_work != nullptr) {
@@ -1611,7 +1614,7 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     THROW_ON_CUDA_ERROR(
         cudaMemsetAsync(dot_work + 2 * kMaxDotBlocks, 0, 2 * sizeof(unsigned), stream));
   }
-  DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzOld, dot_work);
+  DotAsync(stream, r_.data(), z_.data(), n, d_scratch_.data() + kRzA, dot_work);
   DotAsync(stream, rhs.data(), rhs.data(), n, d_scratch_.data() + kBnorm2, dot_work);
 
   // Pull ||b||^2 once for the host-side convergence threshold.  This is
@@ -1644,6 +1647,8 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
 
   int it = 0;
   for (; it < options_.max_iterations; ++it) {
+    float *rz_old = d_scratch_.data() + ((it & 1) ? kRzB : kRzA);
+    float *rz_new = d_scratch_.data() + ((it & 1) ? kRzA : kRzB);
     // Ap = H * p.  Block storage carries one column index per tile instead of
     // one per scalar entry, which is where the bandwidth saving comes from.
     float spmv_alpha = 1.f;
@@ -1672,9 +1677,8 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
     DotAsync(stream, p_.data(), Ap_.data(), n, d_scratch_.data() + kPAp, dot_work);
 
     // α = rz_old / <p, Ap>; x ← x + α p; r ← r − α Ap (fused kernel).
-    PcgUpdateKernel<<<blocks, threads, 0, stream>>>(d_scratch_.data() + kRzOld,
-                                                    d_scratch_.data() + kPAp, p_.data(), Ap_.data(),
-                                                    result.data(), r_.data(), n);
+    PcgUpdateKernel<<<blocks, threads, 0, stream>>>(rz_old, d_scratch_.data() + kPAp, p_.data(),
+                                                    Ap_.data(), result.data(), r_.data(), n);
 
     // z = M^{-1} r.
     for (const auto &s : segments_) {
@@ -1682,14 +1686,11 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector
                            precond_factors_.data(), r_.data(), z_.data());
     }
     // Fused: rz_new = <r, z>, ||r||^2 = <r, r>.  Single pass over r.
-    DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, d_scratch_.data() + kRzNew,
-                 d_scratch_.data() + kRnorm2, dot_work);
+    DualDotAsync(stream, r_.data(), z_.data(), r_.data(), n, rz_new, d_scratch_.data() + kRnorm2,
+                 dot_work);
 
-    // β = rz_new / rz_old; p ← z + β p (fused); then rz_old ← rz_new.
-    PcgDirectionKernel<<<blocks, threads, 0, stream>>>(
-        d_scratch_.data() + kRzNew, d_scratch_.data() + kRzOld, z_.data(), p_.data(), n);
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d_scratch_.data() + kRzOld, d_scratch_.data() + kRzNew,
-                                        sizeof(float), cudaMemcpyDeviceToDevice, stream));
+    // β = rz_new / rz_old; p ← z + β p (fused). rz_new is the next iteration's rz_old.
+    PcgDirectionKernel<<<blocks, threads, 0, stream>>>(rz_new, rz_old, z_.data(), p_.data(), n);
 
     // Convergence poll every `check_period` iters: one D2H of one float
     // + one stream sync.  Far cheaper than a host sync per iteration.

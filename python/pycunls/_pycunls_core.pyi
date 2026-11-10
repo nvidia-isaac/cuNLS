@@ -184,6 +184,11 @@ class AugmentedLagrangianMinimizerStatus(enum.Enum):
     Convergence was not checked: a real-time call without constraint batches reads nothing back. converged() is False.
     """
 
+    InnerSolveFailed = 4
+    """
+    The inner solve of some subproblem stopped on a non-finite cost or step (a factor returned NaN or Inf, or the system is singular), feasible or not.
+    """
+
 class AugmentedLagrangianMinimizerSummary:
     """Summary of a constrained minimization run."""
 
@@ -196,7 +201,7 @@ class AugmentedLagrangianMinimizerSummary:
     @property
     def status(self) -> AugmentedLagrangianMinimizerStatus:
         """
-        AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty or NotDetermined.
+        AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty, InnerSolveFailed or NotDetermined.
         """
 
     @property
@@ -234,6 +239,10 @@ class AugmentedLagrangianMinimizerSummary:
         """
         Subproblems stopped at the penalty cap (constraints likely infeasible).
         """
+
+    @property
+    def num_inner_failed(self) -> int:
+        """Subproblems whose inner solve stopped on a non-finite cost or step."""
 
     @property
     def message(self) -> str:
@@ -441,7 +450,7 @@ class ConstantAccelerationInformationSE2FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -463,7 +472,7 @@ class ConstantAccelerationInformationSE3FactorBatch(FactorBatch):
       qc_diag: 6 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -485,7 +494,7 @@ class ConstantAccelerationInformationSO2FactorBatch(FactorBatch):
       qc_diag: 1 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -507,7 +516,7 @@ class ConstantAccelerationInformationSO3FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -589,7 +598,7 @@ class ConstantVelocityInformationSE2FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -611,7 +620,7 @@ class ConstantVelocityInformationSE3FactorBatch(FactorBatch):
       qc_diag: 6 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -633,7 +642,7 @@ class ConstantVelocityInformationSO2FactorBatch(FactorBatch):
       qc_diag: 1 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -655,7 +664,7 @@ class ConstantVelocityInformationSO3FactorBatch(FactorBatch):
       qc_diag: 3 floats (power spectral density)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      notes: Information variants take a stream first and need update_information() after time_steps change.
+      notes: Information variants take a stream first and need update(stream, num) after time_steps change.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
     """
 
@@ -902,6 +911,31 @@ class HalfspaceFactorBatch1(FactorBatch):
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
 
+class HalfspaceFactorBatch12(FactorBatch):
+    """
+    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
+
+    Parameters
+    ----------
+    normals : DevicePointer
+        Device buffer of capacity * Dim floats (a).
+    offsets : DevicePointer
+        Device buffer of capacity floats (b).
+    capacity : int
+        Number of factors the buffers hold.
+
+    HalfspaceFactorBatch12 (factor)
+      states: [VectorStateBatch12]
+      residual (1): a^T x - b
+      normals: 12 floats per factor (a)
+      offsets: 1 float per factor (b)
+      relative: no
+      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+    """
+
+    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
+
 class HalfspaceFactorBatch2(FactorBatch):
     """
     Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
@@ -944,6 +978,31 @@ class HalfspaceFactorBatch3(FactorBatch):
       states: [VectorStateBatch3]
       residual (1): a^T x - b
       normals: 3 floats per factor (a)
+      offsets: 1 float per factor (b)
+      relative: no
+      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+    """
+
+    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
+
+class HalfspaceFactorBatch4(FactorBatch):
+    """
+    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
+
+    Parameters
+    ----------
+    normals : DevicePointer
+        Device buffer of capacity * Dim floats (a).
+    offsets : DevicePointer
+        Device buffer of capacity floats (b).
+    capacity : int
+        Number of factors the buffers hold.
+
+    HalfspaceFactorBatch4 (factor)
+      states: [VectorStateBatch4]
+      residual (1): a^T x - b
+      normals: 4 floats per factor (a)
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
@@ -1112,8 +1171,10 @@ class JacobianMode(enum.Enum):
     """
 
     analytic = 0
+    """The factor's own hand-derived Jacobians from Evaluate() (default)."""
 
     numeric = 1
+    """Finite differences on the tangent space of each referenced state."""
 
 class LevenbergMarquardtMinimizer(Minimizer):
     """
@@ -1930,8 +1991,12 @@ class RansacLinearSolverType(enum.Enum):
     """Dense per-hypothesis solver."""
 
     cholesky = 0
+    """In-kernel Cholesky; a non-positive pivot marks the hypothesis invalid."""
 
     ldlt = 1
+    """
+    In-kernel LDL^T with diagonal pivoting: rank-deficient directions get a zero step instead of failing (suits minimal samples). Default.
+    """
 
 class RansacMinimizer:
     """
@@ -2021,7 +2086,7 @@ class RansacMinimizerOptions:
 
     @property
     def scoring(self) -> RansacScoring:
-        """Hypothesis scoring rule (RansacScoring). Default: MSAC."""
+        """Hypothesis scoring rule (RansacScoring). Default: RansacScoring.msac."""
 
     @scoring.setter
     def scoring(self, arg: RansacScoring, /) -> None: ...
@@ -2109,7 +2174,9 @@ class RansacMinimizerOptions:
 
     @property
     def linear_solver(self) -> RansacLinearSolverType:
-        """Per-hypothesis dense solver (RansacLinearSolverType). Default: LDLT."""
+        """
+        Per-hypothesis dense solver (RansacLinearSolverType). Default: RansacLinearSolverType.ldlt.
+        """
 
     @linear_solver.setter
     def linear_solver(self, arg: RansacLinearSolverType, /) -> None: ...

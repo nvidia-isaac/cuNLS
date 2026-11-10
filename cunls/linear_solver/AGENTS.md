@@ -37,8 +37,10 @@ Sparse linear system abstraction and implementation used by minimizers.
     products + `CUSPARSE_SPMV_CSR_ALG2`, so repeated solves return the same
     bits; off by default), `hessian_product` (`kBundleAdjustment`:
     deterministic bundle-adjustment `H p`, see `ba_hessian_vector_product.h`).
-  - `BlockSparsePCGSolver` — iterative SPD solver: cuSPARSE CSR SpMV +
-    block-Jacobi LDLT preconditioner (dense B x B diagonal tiles factored
+  - `BlockSparsePCGSolver` — iterative SPD solver. `H p` by one of three
+    paths: in-house BSR kernels for block storage, cuSPARSE SpMV for CSR
+    (`CUSPARSE_SPMV_CSR_ALG2` in `deterministic_mode`), or `BaHessianProduct`
+    for `kBundleAdjustment`; block-Jacobi LDLT preconditioner (dense B x B diagonal tiles factored
     in shared memory).  Supports a uniform block size or a layout vector
     of `(count, block_size)` segments matching the host state-batch
     structure (e.g. `{{N_poses, 6}, {N_points, 3}}` for SBA).  Inner loop
@@ -59,7 +61,8 @@ Sparse linear system abstraction and implementation used by minimizers.
   `Solve` scatters into D_k / C_k blocks and runs the block Cholesky (Riccati)
   recursion, one warp per subproblem, registers + shuffles, cp.async
   prefetch of the next stage, kernel templated on the stage block size
-  M <= 32 (dispatch table). No host synchronization (graph-capturable).
+  M <= 32 (dispatch table). No host synchronization (graph-capturable) unless
+  safety checks are on: then `Solve` reads back the singular-pivot count.
 - `block_sparse_cholesky_solver.h` / `block_sparse_cholesky_analysis.h`:
   `BlockSparseCholeskySolver` — supernodal sparse Cholesky, no external
   dependency; the default backend (`MinimizerOptions::sparse_linear_solver_type`)
@@ -81,7 +84,7 @@ Sparse linear system abstraction and implementation used by minimizers.
   assembled by `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`.  The
   layout is chosen in `NormalEquations`; no conversion runs on the solve path.
 
-## Performance modes
+## cuDSS performance modes (`cuDSSLinearSolverOptions::mode`)
 
 - `SlowInitFastSolve`: expensive setup, fast repeated solves.
 - `FastInitSlowSolve`: faster setup, slower repeated solves.

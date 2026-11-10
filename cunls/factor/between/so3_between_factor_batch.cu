@@ -197,11 +197,7 @@ __global__ void __launch_bounds__(256, 4)
 }
 
 SO3BetweenFactorBatch::SO3BetweenFactorBatch(const SO3Rotation *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      poses_left_(capacity),
-      poses_right_(capacity),
-      poses_left_inverse_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
@@ -211,18 +207,17 @@ bool SO3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
     return true;
   }
   const int num_factors = static_cast<int>(NumActiveFactors());
-  poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
+  errors_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
   // Fused: collect L/R + compute R_error = (L^T * R) * Delta in one kernel
   collect_and_compute_so3_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
-      num_factors);
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   // residual = Log(R_error)
   constexpr size_t rotation_pitch = 3;
-  ComputeLogSO3(stream, reinterpret_cast<const float *>(poses_left_inverse_.data()), rotation_pitch,
+  ComputeLogSO3(stream, reinterpret_cast<const float *>(errors_.data()), rotation_pitch,
                 kRotationStride, kTwistStride, num_items, residuals);
 
   if (jacobians != nullptr) {

@@ -35,6 +35,7 @@
 #include "cunls/math/sim_lie_math.h"
 #include "cunls/math/sl_lie_math.h"
 #include "cunls/math/so_se_lie_math.h"
+#include "cunls/state/se2_state_batch.h"
 
 namespace cunls {
 namespace {
@@ -103,6 +104,35 @@ TEST_P(LieMapAccuracy, SE2ExpAndLogMatchDoublePrecision) {
   const float tol = 2e-6f * std::max(1.f, scale);
   EXPECT_LT(MaxError(ToHost(d_t), ref), tol) << "exp, scale " << scale;
   EXPECT_LT(MaxError(ToHost(d_log), xi), 5 * tol) << "log(exp), scale " << scale;
+}
+
+// SE2StateBatch::Plus from the identity is Exp(delta). With unit translations
+// and rotations below 1e-3 the translation needs the first-order term
+// (1 - cos w) / w ~ w / 2: dropping it errs by |v| |w| / 2 (up to 5e-4 here).
+TEST(LieMapAccuracy, SE2StatePlusKeepsTheFirstOrderTermAtSmallAngles) {
+  CudaStream stream;
+  std::mt19937 rng(7);
+  std::normal_distribution<float> unit(0.f, 1.f);
+  std::uniform_real_distribution<float> small(-1e-3f, 1e-3f);
+  std::vector<float> xi(kN * 3), identity(kN * 9, 0.f), ref(kN * 9);
+  for (size_t i = 0; i < kN; ++i) {
+    xi[3 * i] = unit(rng);
+    xi[3 * i + 1] = unit(rng);
+    xi[3 * i + 2] = small(rng);
+    identity[9 * i] = identity[9 * i + 4] = identity[9 * i + 8] = 1.f;
+    const double vx = xi[3 * i], vy = xi[3 * i + 1], w = xi[3 * i + 2];
+    const double c = std::cos(w), s = std::sin(w);
+    const double a = std::fabs(w) < 1e-8 ? 1.0 - w * w / 6.0 : s / w;
+    const double b = std::fabs(w) < 1e-8 ? w / 2.0 : (1.0 - c) / w;
+    const double t[9] = {c, -s, a * vx - b * vy, s, c, b * vx + a * vy, 0.0, 0.0, 1.0};
+    std::copy(t, t + 9, ref.begin() + 9 * i);
+  }
+  dvector<float> d_x(identity), d_xi(xi), d_out(kN * 9);
+  SE2StateBatch states(d_x.data(), kN);
+  states.SetNumActiveStates(kN);
+  states.Plus(d_x.data(), d_xi.data(), d_out.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  EXPECT_LT(MaxError(ToHost(d_out), ref), 2e-6);
 }
 
 // SE(3) with small rotations and unit translations: the left Jacobian that

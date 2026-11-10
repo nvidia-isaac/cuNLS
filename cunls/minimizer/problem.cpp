@@ -21,7 +21,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "cunls/common/cuda_stream.h"
@@ -136,10 +135,6 @@ void Problem::AddStateBatch(StateBatch *state_batch) { state_batches_.push_back(
 size_t Problem::NumStatePointers(size_t residual_batch_index) const {
   const FactorBatch *f = residual_batches_[residual_batch_index].GetFactorBatch();
   return f->NumActiveFactors() * NumSlots(*f);
-}
-
-bool Problem::HasDeviceConnectivity(size_t residual_batch_index) const {
-  return connectivity_[residual_batch_index].kind != Connectivity::Kind::kHostList;
 }
 
 void Problem::ExpandIndices(size_t residual_batch_index, cudaStream_t stream) const {
@@ -387,44 +382,6 @@ void Problem::CheckSizes() const {
   }
 }
 
-/**
- * @brief Host check of the graph for problems whose connectivity is all host
- * lists: no two state batches share a state, every factor references an
- * existing state, and every state is constrained by a factor.
- */
-bool Problem::CheckGraphConnectivity() const {
-  std::unordered_map<float *, bool> visited;
-  for (const auto &state_batch : state_batches_) {
-    for (size_t i = 0; i < state_batch->NumActiveStates(); ++i) {
-      float *p = state_batch->StateDevicePtr(i);
-      if (visited.find(p) != visited.end()) {
-        LogError("Same pointer to a state in different state batches.");
-        return false;
-      }
-      visited.insert({p, false});
-    }
-  }
-  for (size_t i = 0; i < connectivity_.size(); ++i) {
-    const auto &host = connectivity_[i].host;
-    const size_t n = NumStatePointers(i);
-    for (size_t k = 0; k < n; ++k) {
-      auto it = visited.find(host[k]);
-      if (it == visited.end()) {
-        LogError("Cost function refers to state that does not exist.");
-        return false;
-      }
-      it->second = true;
-    }
-  }
-  for (const auto &[p, constrained] : visited) {
-    if (!constrained) {
-      LogError("State is not constrained by any factor.");
-      return false;
-    }
-  }
-  return true;
-}
-
 std::string Problem::FindStructureError(cudaStream_t stream) const {
   using problem_internal::StateRange;
   using problem_internal::ValidationError;
@@ -516,23 +473,15 @@ bool Problem::Validate(cudaStream_t stream) const {
 }
 
 /**
- * @brief Validates the complete problem structure.
- *
- * Host lists are checked on the host as before. As soon as one residual batch
- * uses a device table, the whole problem is checked on the GPU (Validate).
+ * @brief Validates the complete problem structure: the inputs on the host,
+ * then the graph on the GPU (Validate), whatever the connectivity kind.
  */
 bool Problem::CheckConsistency() const {
   if (!CheckForValidInputs()) {
     return false;
   }
-  const bool any_device =
-      std::any_of(connectivity_.begin(), connectivity_.end(),
-                  [](const Connectivity &c) { return c.kind != Connectivity::Kind::kHostList; });
-  if (any_device) {
-    CudaStream stream;
-    return Validate(stream.GetStream());
-  }
-  return CheckGraphConnectivity();
+  CudaStream stream;
+  return Validate(stream.GetStream());
 }
 
 // ---------------------------------------------------------------------------

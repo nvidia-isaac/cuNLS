@@ -51,8 +51,6 @@ class SE2PriorFactorBatch : public SizedFactorBatch<3, 3> {
   /**
    * @brief Constructs a batch of SE(2) prior factors.
    *
-   * Pre-computes T_target^{-1} for all targets during construction.
-   *
    * @param observations_ptr Pointer to GPU device memory containing target
    * transforms. Must point to at least capacity * 9 floats.
    * @param capacity Number of factors the measurement buffers hold. The active

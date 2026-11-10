@@ -6,6 +6,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/similarity2_between_factor_batch.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/sim_lie_math.h"
 
 namespace cunls {
@@ -136,10 +137,10 @@ __global__ void __launch_bounds__(256, 4)
 
   // Compute Jr and Jl in one pass: Jr = J_r^{-1}(r), Jl = J_r^{-1}(-r)
   float Jr[16];
-  Sim2JrInv(u1, u2, w, lam, Jr);
+  lie_device::Sim2JrInv(u1, u2, w, lam, Jr);
 
   float Jl[16];
-  Sim2JrInv(-u1, -u2, -w, -lam, Jl);
+  lie_device::Sim2JrInv(-u1, -u2, -w, -lam, Jl);
 
   float *J = jacobians + tid * 32;
 
@@ -168,7 +169,6 @@ Similarity2BetweenFactorBatch::Similarity2BetweenFactorBatch(
     : SizedFactorBatch(capacity),
       pose_deltas_ptr_(pose_deltas_ptr),
       poses_left_(capacity),
-      poses_right_(capacity),
       poses_left_inverse_(capacity) {}
 
 bool Similarity2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,

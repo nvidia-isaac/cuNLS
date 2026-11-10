@@ -63,12 +63,12 @@ struct CholeskyPlan {
    * columns and to the rows from the run on goes to the target.
    */
   struct Run {
-    int source;         ///< Source panel.
-    int target;         ///< Target panel.
-    int begin;          ///< First below-row position (of the source) in the run.
-    int end;            ///< One past the last.
-    int relmap_offset;  ///< Offset in the relative map of the target positions of below rows
-                        ///< begin... of the source (the map is built on the device).
+    int source;             ///< Source panel.
+    int target;             ///< Target panel.
+    int begin;              ///< First below-row position (of the source) in the run.
+    int end;                ///< One past the last.
+    int64_t relmap_offset;  ///< Offset in the relative map of the target positions of below
+                            ///< rows begin... of the source (the map is built on the device).
   };
 
   /** @brief One CTA of the factor kernel: a panel and the first of its <= 64 below rows. */
@@ -91,7 +91,7 @@ struct CholeskyPlan {
   int64_t factor_size = 0;      ///< Floats of the factor storage.
   int64_t diagonal_size = 0;    ///< Floats of the factored diagonal blocks.
   std::vector<Run> runs;        ///< Update runs of all panels.
-  int relmap_size = 0;          ///< Entries of the relative map (see Run).
+  int64_t relmap_size = 0;      ///< Entries of the relative map (see Run).
 
   int num_levels = 0;                    ///< Levels of the schedule.
   std::vector<FactorItem> factor_items;  ///< Factor CTAs by level.

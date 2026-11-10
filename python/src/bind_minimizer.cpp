@@ -154,13 +154,16 @@ void bind_minimizer(nb::module_ &m) {
              "Some subproblem cannot reduce its violation at max_penalty (likely infeasible).")
       .value("NotDetermined", cunls::AugmentedLagrangianMinimizerStatus::kNotDetermined,
              "Convergence was not checked: a real-time call without constraint batches reads "
-             "nothing back. converged() is False.");
+             "nothing back. converged() is False.")
+      .value("InnerSolveFailed", cunls::AugmentedLagrangianMinimizerStatus::kInnerSolveFailed,
+             "The inner solve of some subproblem stopped on a non-finite cost or step (a factor "
+             "returned NaN or Inf, or the system is singular), feasible or not.");
 
   nb::class_<cunls::AugmentedLagrangianMinimizerSummary>(
       m, "AugmentedLagrangianMinimizerSummary", "Summary of a constrained minimization run.")
       .def_ro("status", &cunls::AugmentedLagrangianMinimizerSummary::status,
-              "AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty or "
-              "NotDetermined.")
+              "AugmentedLagrangianMinimizerStatus: Converged, MaxOuterIterations, MaxPenalty, "
+              "InnerSolveFailed or NotDetermined.")
       .def_ro("outer_iterations", &cunls::AugmentedLagrangianMinimizerSummary::outer_iterations,
               "Outer (multiplier update) iterations performed.")
       .def_ro("inner_iterations", &cunls::AugmentedLagrangianMinimizerSummary::inner_iterations,
@@ -178,6 +181,8 @@ void bind_minimizer(nb::module_ &m) {
               "Subproblems that are feasible and stationary.")
       .def_ro("num_max_penalty", &cunls::AugmentedLagrangianMinimizerSummary::num_max_penalty,
               "Subproblems stopped at the penalty cap (constraints likely infeasible).")
+      .def_ro("num_inner_failed", &cunls::AugmentedLagrangianMinimizerSummary::num_inner_failed,
+              "Subproblems whose inner solve stopped on a non-finite cost or step.")
       .def_ro("message", &cunls::AugmentedLagrangianMinimizerSummary::message,
               "The outcome and, when not converged, the likely causes and what to try.")
       .def_ro("solve_time_ms", &cunls::AugmentedLagrangianMinimizerSummary::solve_time_ms,

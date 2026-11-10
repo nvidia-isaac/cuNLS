@@ -240,13 +240,11 @@ struct MinimizerOptions {
    *
    * Contains backend-specific options.  Only the field corresponding to
    * @ref sparse_linear_solver_type is read:
-   *  - `block_sparse_pcg_options` for `BlockSparsePCG`,
+   *  - `block_sparse_pcg_options` for `BlockSparsePCG` (its block layout is
+   *    derived from the problem's state batches when the structure is set up),
    *  - `cudss_solver_options` for `cuDSS`,
-   *  - Dense backends have no extra options.
-   *
-   * Defaults: `BlockSparsePCG` with the layout auto-derived from the
-   * problem's state batches when the structure is set up (the first
-   * Minimize() call on a problem).
+   *  - `BlockSparseCholesky`, `BlockTridiagonal` and the dense backends have no
+   *    extra options.
    *
    * To enable multi-threaded cuDSS, set
    * `cudss_solver_options.threading_lib_path` to the full path of

@@ -28,8 +28,9 @@ class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
 /**
  * @brief Base class for solvers of the sparse symmetric system `A x = b`.
  *
- * Derived classes implement specific strategies (cuDSS direct factorization,
- * dense pivoted LDLT / Cholesky / QR, block-Jacobi PCG).
+ * Derived classes implement specific strategies (supernodal sparse Cholesky,
+ * block-tridiagonal Cholesky, cuDSS direct factorization, dense pivoted LDLT /
+ * Cholesky / QR, block-Jacobi PCG).
  *
  * `A` arrives in one of two layouts, and every backend must accept at least
  * scalar CSR: Initialize and Solve are pure virtual for @ref CSRSparseMatrix
@@ -129,9 +130,13 @@ class SparseLinearSolver {
   /**
    * @brief Advisory request to skip post-factorization safety checks.
    *
-   * The dense backends copy a device-side status flag back to the host after
-   * factorization and synchronize the stream to detect singular or
-   * non-positive-definite matrices.  Skipping that removes a device-to-host
+   * The dense backends, BlockSparseCholesky and BlockTridiagonal copy a
+   * device-side status flag back to the host after factorization and
+   * synchronize the stream to detect singular or non-positive-definite
+   * matrices.  Exception: BlockSparseCholesky treats a pivot within 1e-5 of
+   * zero (relative to its diagonal entry) as a rank deficiency and fixes that
+   * unknown at zero, even with the checks on, so a successful solve does not
+   * prove the system was fully constrained.  Skipping that removes a device-to-host
    * memcpy, a stream synchronization, and (for LDLT) in-kernel pivot checks,
    * which can be a significant fraction of the solve time for small systems.
    *

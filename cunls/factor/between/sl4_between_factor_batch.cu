@@ -172,7 +172,6 @@ SL4BetweenFactorBatch::SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr
     : SizedFactorBatch(capacity),
       pose_deltas_ptr_(pose_deltas_ptr),
       poses_left_(capacity),
-      poses_right_(capacity),
       poses_left_inverse_(capacity) {}
 
 bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,

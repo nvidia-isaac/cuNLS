@@ -86,29 +86,5 @@ class SO2StateBatch : public SizedStateBatch<4, 1> {
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
-
- private:
-  mutable dvector<Matrix<2>> delta_rotations_;
-  mutable dvector<float> angles_;
-
-  /**
-   * @brief Applies an SO(2) update: result = x * Exp(delta) or
-   * result = x * Exp(-delta)
-   *
-   * Computes the right-multiplication update for SO(2) rotations.
-   * First computes the update matrix Exp(delta) or Exp(-delta),
-   * then performs batched matrix multiplication in a CUDA kernel.
-   *
-   * This is a helper function used by Plus (invert_delta=false).
-   *
-   * @param x Input rotation matrices (device pointer, row-major)
-   * @param delta Tangent space updates (scalar angles in radians, device
-   * pointer)
-   * @param result Output rotation matrices (device pointer, row-major)
-   * @param invert_delta If true, compute Exp(-delta), otherwise Exp(delta)
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
-                   cudaStream_t stream);
 };
 }  // namespace cunls

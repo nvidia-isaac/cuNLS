@@ -455,9 +455,7 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
  *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
  */
 SE3BetweenFactorBatch::SE3BetweenFactorBatch(const SE3Transform *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      poses_left_inverse_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 /**
  * @brief Evaluates residuals and optionally Jacobians for the SE3 between
@@ -483,19 +481,18 @@ bool SE3BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
     return true;
   }
   const int num_factors = static_cast<int>(NumActiveFactors());
-  poses_left_inverse_.resize(num_items);  // keeps capacity: allocates at most once per size
+  errors_.resize(num_items);  // keeps capacity: allocates at most once per size
   const size_t num_blocks = (num_items + block_size - 1) / block_size;
 
   // Fused: collect L/R + compute Delta * L^{-1} * R in one kernel
   collect_and_compute_se3_between_error_kernel<<<num_blocks, block_size, 0, stream>>>(
-      state_pointers, pose_deltas_ptr_, num_items, poses_left_inverse_.data(), factor_ids,
-      num_factors);
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t pitch = 4;
   constexpr size_t stride = 16;
   constexpr size_t twist_stride = 6;
-  ComputeLogSE3(stream, reinterpret_cast<const float *>(poses_left_inverse_.data()), pitch, stride,
+  ComputeLogSE3(stream, reinterpret_cast<const float *>(errors_.data()), pitch, stride,
                 twist_stride, num_items, residuals);
 
   if (jacobians != nullptr) {

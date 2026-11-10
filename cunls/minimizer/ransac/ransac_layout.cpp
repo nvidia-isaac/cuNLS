@@ -62,10 +62,6 @@ void FailConfiguration(const std::string &message) {
 }
 
 void RansacLayout::Build(const Problem &problem, const RansacMinimizerOptions &options) {
-  if (!problem.CheckConsistency()) {
-    FailConfiguration(
-        "RANSAC: Problem::CheckConsistency() failed; fix the problem before calling Minimize");
-  }
   // Features the RANSAC minimizers do not implement: reject them instead of
   // silently ignoring them.
   if (problem.NumProblems() > 1) {

@@ -78,9 +78,5 @@ class SE3StateBatch : public SizedStateBatch<16, 6> {
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
-
- private:
-  mutable dvector<SE3Transform> delta_transforms_;
-  mutable dvector<float> twists_;
 };
 }  // namespace cunls

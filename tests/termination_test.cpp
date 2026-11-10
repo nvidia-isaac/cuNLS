@@ -16,8 +16,8 @@
  */
 
 // MinimizerSummary::termination_reason, num_problems_by_reason, message and
-// Minimizer::SubproblemTerminationReasons(): every way a solve can stop is
-// reported, per subproblem with a partition.
+// Minimizer::SubproblemTerminationReasons(): how a solve stopped is reported,
+// per subproblem with a partition.
 
 #include <gtest/gtest.h>
 

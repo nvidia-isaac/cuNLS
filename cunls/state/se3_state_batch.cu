@@ -98,13 +98,11 @@ __global__ void se3_plus_fused_kernel(const float *__restrict__ x, const float *
 }  // namespace
 
 SE3StateBatch::SE3StateBatch(const float *device_ptr, size_t capacity)
-    : Base(device_ptr, capacity), delta_transforms_(capacity), twists_(capacity * 6) {}
+    : Base(device_ptr, capacity) {}
 
 SE3StateBatch::SE3StateBatch(const float *device_ptr, size_t capacity,
                              const int *device_constant_state_ids, size_t const_capacity)
-    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity),
-      delta_transforms_(capacity),
-      twists_(capacity * 6) {}
+    : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
 
 void SE3StateBatch::Plus(const float *x, const float *delta, float *x_plus_delta,
                          cudaStream_t stream, size_t num_replicas) {

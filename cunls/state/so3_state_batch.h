@@ -78,29 +78,5 @@ class SO3StateBatch : public SizedStateBatch<9, 3> {
    */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override;
-
- private:
-  mutable dvector<Matrix<3>> delta_rotations_;
-  mutable dvector<float> twists_;
-
-  /**
-   * @brief Applies an SO(3) update: result = x * Exp(skew(delta)) or
-   * result = x * Exp(-skew(delta))
-   *
-   * Computes the right-multiplication update for SO(3) rotations.
-   * First computes the update matrix Exp(skew(delta)) or Exp(-skew(delta))
-   * using Exp, then performs batched matrix multiplication in a CUDA kernel.
-   *
-   * This is a helper function used by Plus (invert_delta=false).
-   *
-   * @param x Input rotation matrices (device pointer, row-major)
-   * @param delta Tangent space updates (3D rotation vectors, device pointer)
-   * @param result Output rotation matrices (device pointer, row-major)
-   * @param invert_delta If true, compute Exp(-skew(delta)), otherwise
-   * Exp(skew(delta))
-   * @param stream CUDA stream for asynchronous execution
-   */
-  void ApplyUpdate(const float *x, const float *delta, float *result, bool invert_delta,
-                   cudaStream_t stream);
 };
 }  // namespace cunls

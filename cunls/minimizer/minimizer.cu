@@ -351,9 +351,13 @@ float LastRelativeDecrease(const MinimizerSummary &summary) {
   return (before - summary.final_cost) / std::max(std::abs(before), 1e-30f);
 }
 
-/** The sentence of MinimizerSummary::message for one reason. */
+/**
+ * The sentence of MinimizerSummary::message for one reason. `iteration_cap` is
+ * the call's cap: options.max_num_iterations for Minimize(), the inner cap of
+ * an AugmentedLagrangianMinimizer inner solve.
+ */
 std::string DescribeReason(TerminationReason reason, const MinimizerSummary &summary,
-                           const MinimizerOptions &options) {
+                           const MinimizerOptions &options, size_t iteration_cap) {
   std::ostringstream out;
   out.precision(4);
   const auto costs = [&]() {
@@ -389,9 +393,14 @@ std::string DescribeReason(TerminationReason reason, const MinimizerSummary &sum
              "the initial guess, or use LevenbergMarquardtMinimizer.";
       break;
     case TerminationReason::MaxIterations:
-      out << "Not converged: reached max_num_iterations (" << options.max_num_iterations << "); "
-          << costs() << ", last relative decrease " << LastRelativeDecrease(summary)
-          << ". Fix: raise max_num_iterations, or improve the initial guess.";
+      if (iteration_cap == options.max_num_iterations) {
+        out << "Not converged: reached max_num_iterations (" << iteration_cap << "); " << costs()
+            << ", last relative decrease " << LastRelativeDecrease(summary)
+            << ". Fix: raise max_num_iterations, or improve the initial guess.";
+      } else {
+        out << "Not converged: reached this inner solve's iteration cap (" << iteration_cap << "); "
+            << costs() << ", last relative decrease " << LastRelativeDecrease(summary) << ".";
+      }
       break;
     case TerminationReason::MaxRejectedSteps:
       out << "Stopped: " << options.max_consecutive_rejected_steps
@@ -417,10 +426,11 @@ std::string DescribeReason(TerminationReason reason, const MinimizerSummary &sum
 }
 
 /** MinimizerSummary::message from the reason counts. */
-std::string DescribeTermination(const MinimizerSummary &summary, const MinimizerOptions &options) {
+std::string DescribeTermination(const MinimizerSummary &summary, const MinimizerOptions &options,
+                                size_t iteration_cap) {
   size_t total = 0;
   for (size_t c : summary.num_problems_by_reason) total += c;
-  std::string text = DescribeReason(summary.termination_reason, summary, options);
+  std::string text = DescribeReason(summary.termination_reason, summary, options, iteration_cap);
   if (total <= 1) return text;
   std::ostringstream out;
   out.precision(4);
@@ -530,7 +540,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   MinimizerSummary summary;
   // Every return: the message and the wall time.
   auto done = [&]() {
-    summary.message = DescribeTermination(summary, options);
+    summary.message = DescribeTermination(summary, options, inner.max_num_iterations);
     summary.solve_time_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     if (!fixed) LogMessage("{}", summary.message);

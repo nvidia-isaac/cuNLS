@@ -17,7 +17,7 @@ namespace cunls {
  *
  * residual = Vee(Log(Delta * T_left^{-1} * T_right))  (15-vector).
  *
- * Jacobians use Ad(Delta) for the left pose and identity for the right
+ * Jacobians use -Ad(Delta) for the left pose and identity for the right
  * (approximate inverse left/right Jacobians of Exp, consistent with
  * small-residual linearization).
  */
@@ -37,7 +37,6 @@ class SL4BetweenFactorBatch : public SizedFactorBatch<15, 15, 15> {
 
   const SL4Transform *pose_deltas_ptr_;
   mutable DeviceVector<SL4Transform> poses_left_;
-  mutable DeviceVector<SL4Transform> poses_right_;
   mutable DeviceVector<SL4Transform> poses_left_inverse_;
 };
 
