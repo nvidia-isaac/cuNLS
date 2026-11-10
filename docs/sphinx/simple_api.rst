@@ -73,7 +73,11 @@ Jacobians (checked against finite differences at ``p0``):
 
 The ``B`` fits are one problem with one subproblem per fit
 (``Problem.set_problem_partition``): each fit takes its own steps and stops at
-its own convergence, and ``res.reasons`` says why each one stopped.
+its own convergence, and ``res.reasons`` says why each one stopped. A fit that
+has stopped costs no factorization work in later iterations with the default
+``BlockSparseCholesky`` linear solver (other solvers factor the whole system
+every iteration), so a batch where a few fits need many more iterations than
+the rest costs little more than those few.
 
 **Options.**
 

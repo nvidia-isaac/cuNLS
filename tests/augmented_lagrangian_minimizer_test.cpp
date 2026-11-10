@@ -248,6 +248,59 @@ TEST_P(AugmentedLagrangianMinimizerTest, BatchedBoxProjections) {
   }
 }
 
+// A batch where one subproblem is infeasible (lower bound above the upper
+// one): it stops at max_penalty, and every other subproblem still finishes
+// feasible and stationary at its projection. Each subproblem gets its own full
+// inner solve once it is feasible, independently of the infeasible one.
+TEST_P(AugmentedLagrangianMinimizerTest, BatchFinishesBesideAnInfeasibleSubproblem) {
+  constexpr int kBatch = 25, kInfeasible = 12;
+  std::mt19937 rng(11);
+  std::uniform_real_distribution<float> uniform(-3.f, 3.f);
+  std::vector<float> target(kBatch), lower(kBatch), upper(kBatch);
+  for (int i = 0; i < kBatch; ++i) {
+    target[i] = uniform(rng);
+    lower[i] = -1.f + 0.02f * i;
+    upper[i] = 1.f + 0.02f * i;
+  }
+  lower[kInfeasible] = 1.f;
+  upper[kInfeasible] = -1.f;
+  CudaStream stream;
+  dvector<float> x(std::vector<float>(kBatch, 0.f)), t(target), lo(lower), hi(upper);
+  VectorStateBatch<1> states(x.data(), kBatch);
+  states.SetNumActiveStates(kBatch);
+  PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(t.data()), kBatch);
+  prior.SetNumActiveFactors(kBatch);
+  BoundFactorBatch<1> bounds(lo.data(), hi.data(), kBatch);
+  bounds.SetNumActiveFactors(kBatch);
+  std::vector<float *> ptrs;
+  std::vector<int> ids_host;
+  for (int s = 0; s < kBatch; ++s) {
+    ptrs.push_back(states.StateDevicePtr(s));
+    ids_host.push_back(s);
+  }
+  dvector<int> ids(ids_host);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, ptrs);
+  problem.AddFactorBatch(&bounds, ptrs);
+  problem.SetProblemPartition(kBatch, {ids.data()});
+
+  auto inner = MakeMinimizer(GetParam());
+  AugmentedLagrangianMinimizerOptions options;
+  options.max_penalty = 1e4f;
+  AugmentedLagrangianMinimizer solver(*inner, options);
+  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxPenalty);
+  EXPECT_EQ(summary.num_converged, static_cast<size_t>(kBatch - 1));
+  EXPECT_EQ(summary.num_max_penalty, 1u);
+  const auto result = Download(x);
+  for (int i = 0; i < kBatch; ++i) {
+    if (i == kInfeasible) continue;
+    EXPECT_NEAR(result[i], std::min(std::max(target[i], lower[i]), upper[i]), 2e-4f)
+        << "subproblem " << i;
+  }
+}
+
 // An SE2 chain (prior on the first pose, odometry between poses) whose last
 // pose must equal a goal that the odometry does not reach: the constraint
 // holds to tolerance, and the solution is the limit of ever stiffer soft

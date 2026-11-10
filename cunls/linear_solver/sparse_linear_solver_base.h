@@ -146,6 +146,22 @@ class SparseLinearSolver {
    */
   virtual void DisableSafetyChecks() {}
 
+  /**
+   * @brief Advisory: the rows whose solution the next Solve() calls need.
+   *
+   * @p row_active is a device array of one int per row (nullptr: every row is
+   * needed); row r is needed when row_active[r] != 0. The minimizers declare
+   * the rows of the subproblems still iterating in a partitioned problem
+   * (LinearSystem::SetRowActivity): the solution entries of the other rows
+   * are never used, so a solver may skip their work and leave those entries
+   * unspecified. The rows of a skipped subproblem never couple to needed rows
+   * (subproblems are independent). Kept by pointer until the next call.
+   *
+   * BlockSparseCholeskySolver skips its panels whose rows are all idle
+   * (factorization, updates and substitutions); the other backends ignore it.
+   */
+  virtual void SetRowActivity(const int *row_active) {}
+
   /** @brief Virtual destructor for proper cleanup of derived solver instances.
    */
   virtual ~SparseLinearSolver() = default;

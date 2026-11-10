@@ -673,9 +673,21 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   StepControlParams params;
   params.max_consecutive_rejected_steps = static_cast<int>(options.max_consecutive_rejected_steps);
   params.line_search = inner.max_line_search_steps > 0;
+  params.iteration_cap = fixed ? nullptr : inner.problem_iteration_cap;
   for (summary.num_iterations = 0; summary.num_iterations < inner.max_num_iterations;) {
     auto it_range = m.profiler_domain_.CreateDomainRange("Iteration");
     summary.iteration_costs.push_back(summary.final_cost);
+    // The rows of subproblems that stopped iterating need no step: the
+    // solver may skip them (their steps are never taken).
+    if (partition.NumProblems() > 1) {
+      if (system.row_active.size() != partition.NumRows()) {
+        system.row_active.resize(partition.NumRows());
+      }
+      partition.ActiveRows(stream, system.row_active.data());
+      system.linear_system->SetRowActivity(&system.row_active);
+    } else {
+      system.linear_system->SetRowActivity(nullptr);
+    }
     {
       auto solve_range = m.profiler_domain_.CreateDomainRange("LinearSolve");
       SolveStep(stream, options, current, inner, m.RejectsFailedSolves(), system);
@@ -702,6 +714,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     }
     partition.SumRows(stream, system.step.data(), nullptr, nullptr, partition.StepSquared());
     m.ClassifySteps(stream, *system.linear_system, system.step, partition);
+    params.iterations_done = static_cast<int>(summary.num_iterations) + 1;
     partition.StepControl(stream, params, d_out);
     // One subproblem, with a read-back anyway: a taken step swaps the trial
     // states in instead of copying them.
@@ -732,11 +745,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     }
   }
 
-  if (inner.problem_at_cap != nullptr) {
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(inner.problem_at_cap, partition.Active(),
-                                        partition.NumProblems() * sizeof(int),
-                                        cudaMemcpyDeviceToDevice, stream));
-  }
+  if (inner.problem_at_cap != nullptr) partition.AtCap(stream, inner.problem_at_cap);
   Copy(stream, current, problem);
   finish_termination();
   if (!fixed) THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));

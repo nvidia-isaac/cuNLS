@@ -166,10 +166,12 @@ solve is therefore an ordinary least-squares solve. The outer loop:
    only when the violation is stagnating (above 0.9 times the previous one):
    a violation still falling is limited by the short solve, not by the
    penalty, and a larger penalty would only worsen the conditioning;
-4. once every running subproblem is feasible, run the inner solve to
-   convergence (``final_inner_iterations``); a subproblem that is feasible
-   after an inner solve that converged on its own (not at the iteration cap)
-   is done, and keeps its multipliers while the others continue.
+4. once a subproblem is feasible, its next inner solve runs to convergence
+   (``final_inner_iterations``); a subproblem that is feasible after an inner
+   solve that converged on its own (not at the iteration cap) is done, and
+   keeps its multipliers while the others continue. With a partition, each
+   subproblem gets this full solve as soon as it is feasible itself: it never
+   waits for the others.
 
 The violation of a row is :math:`|c|` (equality) or :math:`\max(0, c)`
 (inequality); a subproblem is feasible when every row is within
@@ -177,8 +179,11 @@ The violation of a row is :math:`|c|` (equality) or :math:`\max(0, c)`
 
 Batched problems
    With a problem partition (``Problem.set_problem_partition``), every
-   subproblem has its own penalty per constraint batch and stops on its own;
+   subproblem has its own penalty per constraint batch and stops on its own
+   (a feasible subproblem finishes without waiting for an infeasible one);
    updates run on the device with one small read-back per outer iteration.
+   Finished subproblems cost no factorization work with the default
+   ``BlockSparseCholesky`` solver (see :doc:`simple_api`).
 
 Line search
    The inequality rows make the cost piecewise quadratic: a Gauss-Newton step

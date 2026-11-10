@@ -176,6 +176,17 @@ class LinearSystem {
    */
   void SetMask(const dvector<float> *mask) { mask_ = mask; }
 
+  /**
+   * @brief Rows whose step is needed, or nullptr for all: row r is needed
+   * when row_active[r] != 0. The minimizer declares, before each solve, the
+   * rows of the subproblems still iterating (a partitioned problem): the steps
+   * of the others are never taken, so the solver may skip their work, and
+   * their step entries are then unspecified. Not copied, as SetColumnScale().
+   * Not reset by ClearModifications(): it describes the subproblems, not the
+   * system. Implementations forward it to solvers that can skip work
+   * (SparseLinearSolver::SetRowActivity) and may ignore it otherwise.
+   */
+  void SetRowActivity(const dvector<int> *row_active) { row_active_ = row_active; }
   /** @brief Clears the column scale, damping and mask (a new linearization). */
   void ClearModifications() {
     column_scale_ = nullptr;
@@ -193,11 +204,14 @@ class LinearSystem {
   const dvector<float> *Damping() const { return damping_; }
   /** @brief The declared mask; nullptr for none. */
   const dvector<float> *Mask() const { return mask_; }
+  /** @brief The declared row activity (SetRowActivity()); nullptr: every row is needed. */
+  const dvector<int> *RowActivity() const { return row_active_; }
 
  private:
   const dvector<float> *column_scale_ = nullptr;  ///< See SetColumnScale().
   const dvector<float> *damping_ = nullptr;       ///< See SetDamping().
   const dvector<float> *mask_ = nullptr;          ///< See SetMask().
+  const dvector<int> *row_active_ = nullptr;      ///< See SetRowActivity().
 };
 
 }  // namespace cunls

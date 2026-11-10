@@ -380,11 +380,20 @@ struct InnerSolve {
                      dvector<float> &rhs, const dvector<float> *step)>
       restrict_system;
   /// Device array of Problem::NumProblems() ints, written: nonzero where a
-  /// subproblem was still iterating at the iteration cap.
+  /// subproblem stopped at an iteration cap (max_num_iterations, or its own
+  /// problem_iteration_cap) instead of converging.
   int *problem_at_cap = nullptr;
   /// Device array of Problem::NumProblems() ints, read: subproblems with a
-  /// nonzero entry are not iterated (keep their states).
+  /// positive entry are not iterated (keep their states); zero and negative
+  /// entries iterate.
   const int *problem_frozen = nullptr;
+  /// Device array of Problem::NumProblems() ints, read, or nullptr: the
+  /// iteration cap of each subproblem in this call (at most
+  /// max_num_iterations). A subproblem that reaches its cap stops
+  /// (MaxIterations, reported in problem_at_cap) while the others continue,
+  /// so subproblems in different phases share one call. Not with
+  /// fixed_iterations.
+  const int *problem_iteration_cap = nullptr;
 };
 
 /** @brief Minimize() with the settings of `inner` (AugmentedLagrangianMinimizer, tests). */
@@ -408,6 +417,9 @@ struct MinimizerSystem {
   dvector<float> rhs;                           ///< -Jᵀr (scaled and masked like the system).
   dvector<float> column_scale;                  ///< S of ColumnScaling::HessianDiagonal.
   dvector<float> step;                          ///< The step δ, one entry per free column.
+  /// Per free column: nonzero while its subproblem iterates (partitioned
+  /// problems; LinearSystem::SetRowActivity).
+  dvector<int> row_active;
 };
 
 /** @brief Scratch buffers and read-back slots. */

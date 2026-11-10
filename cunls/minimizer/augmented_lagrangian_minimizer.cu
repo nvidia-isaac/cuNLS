@@ -43,16 +43,22 @@ constexpr int kThreads = 256;
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
-enum Status : int { kRunning = 0, kDone = 1, kStalled = 2, kFailed = 3 };
+/**
+ * Per-subproblem status. kRunning and kPolishing iterate; the positive ones
+ * are finished and frozen (InnerSolve::problem_frozen freezes positive
+ * entries). kPolishing: feasible at the last check, so its next inner solve
+ * runs to convergence (its own full solve), whatever the other subproblems do.
+ */
+enum Status : int { kPolishing = -1, kRunning = 0, kDone = 1, kStalled = 2, kFailed = 3 };
 
 /// A violation above this fraction of the previous one is stagnating.
 constexpr float kStagnation = 0.9f;
 
 /// Read-back slots of the control kernel.
 enum Out : int {
-  kMaxViolation = 0,         ///< Over all subproblems.
-  kNumRunning = 1,           ///< Subproblems still running.
-  kMaxRunningViolation = 2,  ///< Over the running subproblems.
+  kMaxViolation = 0,  ///< Over all subproblems.
+  kNumRunning = 1,    ///< Subproblems still iterating (kRunning or kPolishing).
+  kNumPolishing = 2,  ///< Of those, the ones whose next inner solve is a full solve.
   kNumDone = 3,
   kNumStalled = 4,
   kNumFailed = 5,  ///< Subproblems whose inner solve failed (non-finite cost or step).
@@ -89,7 +95,7 @@ __global__ void multiplier_kernel(bool inequality, const float *values, size_t n
   if (idx >= num_rows_total) return;
   const int f = static_cast<int>(idx / rows);
   const int p = factor_problem != nullptr ? factor_problem[f] : 0;
-  if (status[p] != kRunning) return;
+  if (status[p] != kRunning && status[p] != kPolishing) return;
   const float updated = multipliers[idx] + penalties[f] * values[idx];
   multipliers[idx] = inequality ? fmaxf(updated, 0.f) : updated;
 }
@@ -99,23 +105,33 @@ __global__ void multiplier_kernel(bool inequality, const float *values, size_t n
  * and the read-back scalars. `inner_reason` (null in real time, where nothing
  * is read back) is the TerminationReason of each subproblem's inner solve: a
  * non-finite cost or step fails the subproblem, whatever its violation.
+ *
+ * A subproblem is done when it is feasible after an inner solve that ran to
+ * convergence: its own full solve (it was kPolishing), or every subproblem's
+ * (`full_solve`: the last outer iteration, or real time). With `polish`, a
+ * subproblem that is feasible otherwise becomes kPolishing, and one that is
+ * no longer feasible after its full solve falls back to kRunning; without
+ * it (real time) a feasible subproblem stays kRunning until a full solve.
  */
 __global__ void control_kernel(size_t num_problems, int num_constraints, float tolerance,
                                float violation_decrease, float penalty_increase, float max_penalty,
-                               bool full_solve, const int *at_cap, const int *inner_reason,
-                               const float *violation, float *prev_violation, float *penalty,
-                               int *status, float *out) {
+                               bool full_solve, bool polish, const int *at_cap,
+                               const int *inner_reason, const float *violation,
+                               float *prev_violation, float *penalty, int *status, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (p >= num_problems) return;
   float vp = 0.f;
   for (int c = 0; c < num_constraints; ++c) vp = fmaxf(vp, violation[c * num_problems + p]);
   AtomicMaxNonNegative(out + kMaxViolation, vp);
-  if (status[p] == kRunning && inner_reason != nullptr &&
+  const bool iterating = status[p] == kRunning || status[p] == kPolishing;
+  if (iterating && inner_reason != nullptr &&
       (inner_reason[p] == static_cast<int>(TerminationReason::NonFiniteCost) ||
        inner_reason[p] == static_cast<int>(TerminationReason::NonFiniteStep))) {
     status[p] = kFailed;
   }
-  if (status[p] == kRunning) {
+  if (status[p] == kRunning || status[p] == kPolishing) {
+    // The inner solve just run was a full solve for this subproblem.
+    const bool solved_fully = full_solve || status[p] == kPolishing;
     bool stalled = false;
     for (int c = 0; c < num_constraints; ++c) {
       const size_t k = c * num_problems + p;
@@ -139,15 +155,17 @@ __global__ void control_kernel(size_t num_problems, int num_constraints, float t
     }
     // Done: feasible after an inner solve that converged on its own
     // (stationary), not one cut off by its iteration cap.
-    if (vp <= tolerance && full_solve && at_cap[p] == 0) {
+    if (vp <= tolerance && solved_fully && at_cap[p] == 0) {
       status[p] = kDone;
     } else if (stalled) {
       status[p] = kStalled;
+    } else if (polish) {
+      status[p] = vp <= tolerance ? kPolishing : kRunning;
     }
   }
-  if (status[p] == kRunning) {
+  if (status[p] == kRunning || status[p] == kPolishing) {
     atomicAdd(out + kNumRunning, 1.f);
-    AtomicMaxNonNegative(out + kMaxRunningViolation, vp);
+    if (status[p] == kPolishing) atomicAdd(out + kNumPolishing, 1.f);
   } else if (status[p] == kDone) {
     atomicAdd(out + kNumDone, 1.f);
   } else if (status[p] == kFailed) {
@@ -155,6 +173,17 @@ __global__ void control_kernel(size_t num_problems, int num_constraints, float t
   } else {
     atomicAdd(out + kNumStalled, 1.f);
   }
+}
+
+/**
+ * The iteration cap of every subproblem in the next inner solve
+ * (InnerSolve::problem_iteration_cap): `polishing_cap` for kPolishing (its
+ * full solve), `running_cap` for the others (frozen ones do not iterate).
+ */
+__global__ void cap_kernel(size_t num_problems, const int *status, int running_cap,
+                           int polishing_cap, int *cap) {
+  const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (p < num_problems) cap[p] = status[p] == kPolishing ? polishing_cap : running_cap;
 }
 
 __global__ void scatter_penalty_kernel(const float *penalty, const int *factor_problem,
@@ -628,16 +657,30 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       options_.final_inner_iterations > 0
           ? options_.final_inner_iterations
           : (real_time ? options_.inner_iterations : minimizer_.Options().max_num_iterations);
+  if (!real_time) iteration_cap_.resize(num_problems_);
   std::array<float, kNumOut> out{};
-  // Real time: every outer iteration may finish a subproblem (there is no
-  // read-back to decide on a final full solve).
+  // Whether the next inner solve is a full solve for every iterating
+  // subproblem: in real time every outer iteration may finish a subproblem
+  // (there is no read-back to schedule full solves), otherwise only the last.
+  // Elsewhere each subproblem gets its own full solve once it is feasible
+  // (kPolishing), independently of the others.
   bool full_solve = real_time;
+  bool any_polishing = false;
   for (size_t k = 0; k < options_.max_outer_iterations; ++k) {
     const bool last = k + 1 == options_.max_outer_iterations;
     if (last) full_solve = true;
-    const size_t cap = last || (full_solve && !real_time) ? final_cap : options_.inner_iterations;
+    const size_t running_cap = last ? final_cap : options_.inner_iterations;
+    // The call runs as long as its longest per-subproblem cap.
+    const size_t cap = real_time ? running_cap : (any_polishing ? final_cap : running_cap);
     internal::InnerSolve inner_solve;
     inner_solve.max_num_iterations = cap;
+    if (!real_time) {
+      cap_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
+          num_problems_, problem_status_.data(), static_cast<int>(running_cap),
+          static_cast<int>(final_cap), iteration_cap_.data());
+      THROW_ON_CUDA_ERROR(cudaGetLastError());
+      inner_solve.problem_iteration_cap = iteration_cap_.data();
+    }
     inner_solve.max_line_search_steps = options_.inner_line_search_steps;
     inner_solve.fixed_iterations = real_time;
     inner_solve.problem_at_cap = at_cap_.data();
@@ -678,7 +721,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     control_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
         num_problems_, static_cast<int>(constraints_.size()), options_.constraint_tolerance,
         options_.violation_decrease, options_.penalty_increase, options_.max_penalty, full_solve,
-        at_cap_.data(), real_time ? nullptr : minimizer_.SubproblemTerminationReasons(),
+        !real_time, at_cap_.data(), real_time ? nullptr : minimizer_.SubproblemTerminationReasons(),
         violation_.data(), prev_violation_.data(), penalty_.data(), problem_status_.data(),
         d_out_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -703,12 +746,12 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(out.data(), d_out_.data(), kNumOut * sizeof(float),
                                         cudaMemcpyDeviceToHost, stream));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-    LogMessage("Outer iteration #{}: max violation {}, {} of {} subproblems running", k,
-               out[kMaxViolation], out[kNumRunning], num_problems_);
+    LogMessage("Outer iteration #{}: max violation {}, {} of {} subproblems running ({} polishing)",
+               k, out[kMaxViolation], out[kNumRunning], num_problems_, out[kNumPolishing]);
     if (out[kNumRunning] == 0.f) break;
-    // Once every running subproblem is feasible, the next inner solve runs to
-    // convergence: feasibility after it means stationarity too.
-    full_solve = out[kMaxRunningViolation] <= options_.constraint_tolerance;
+    // A feasible subproblem's next inner solve runs to convergence
+    // (kPolishing): feasibility after it means stationarity too.
+    any_polishing = out[kNumPolishing] > 0.f;
     ScatterPenalties(stream, constraints_, penalty_, num_problems_);
   }
   if (real_time) {

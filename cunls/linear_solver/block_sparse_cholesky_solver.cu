@@ -204,6 +204,22 @@ __global__ void PermuteKernel(int n, const int *perm, const float *in, float *ou
 }
 
 /** out[perm[i]] = in[i]. */
+/**
+ * panel_active[p] = 1 if any column of panel p is a needed row (row_active of
+ * its original column != 0), else 0 (SparseLinearSolver::SetRowActivity).
+ */
+__global__ void PanelActivityKernel(int num_panels, const Panel *panels, const int *perm,
+                                    const int *row_active, int *panel_active) {
+  const int p = blockIdx.x * blockDim.x + threadIdx.x;
+  if (p >= num_panels) return;
+  const Panel panel = panels[p];
+  int active = 0;
+  for (int c = panel.col; c < panel.col + panel.width && !active; ++c) {
+    active = row_active[perm[c]] != 0;
+  }
+  panel_active[p] = active;
+}
+
 __global__ void UnpermuteKernel(int n, const int *perm, const float *in, float *out) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) out[perm[i]] = in[i];
@@ -229,7 +245,7 @@ __global__ void UnpermuteKernel(int n, const int *perm, const float *in, float *
 __global__ void __launch_bounds__(kThreads)
     FactorKernel(const FactorItem *items, const Panel *panels, const int *below_rows,
                  const float *original, float *factor, float *diagonal, float *y, float *z,
-                 int *failure) {
+                 int *failure, const int *panel_active) {
   constexpr int kRows = kW + kR;  // stacked rows, plus y_pᵀ
   constexpr int kB = 16;          // column block
   __shared__ float tile[kRows + 1][kPad];
@@ -239,6 +255,7 @@ __global__ void __launch_bounds__(kThreads)
   __shared__ __align__(16) float limit[kW];     // zero-pivot limits (kZeroPivot)
   __shared__ float partial[kThreads / kR][kR];
   const FactorItem item = items[blockIdx.x];
+  if (panel_active != nullptr && panel_active[item.panel] == 0) return;  // idle panel
   const Panel panel_info = panels[item.panel];
   const int col = panel_info.col, w = panel_info.width, h = panel_info.height;
   const int below = max(0, min(kR, h - w - item.row_begin));
@@ -505,10 +522,12 @@ __device__ void WarpTriangularSolve(const float (*ld)[kPad], int w, float *v) {
 template <bool kAtomic>
 __global__ void __launch_bounds__(kThreads)
     UpdateKernel(const UpdateItem *items, const Run *runs, const int *relmap, const Panel *panels,
-                 float *factor) {
+                 float *factor, const int *panel_active) {
   __shared__ __align__(16) float as[kW][kR];
   __shared__ __align__(16) float bs[kW][kR];  // 32 KB in all: 3 CTAs per SM on sm_86
   const UpdateItem item = items[blockIdx.x];
+  // An idle source updates only panels of its own (idle) subproblem.
+  if (panel_active != nullptr && panel_active[item.panel] == 0) return;
   const Panel source = panels[item.panel];
   const int w = source.width, h = source.height;
   const Run run = runs[item.run];
@@ -587,7 +606,7 @@ __global__ void __launch_bounds__(kThreads)
 __global__ void __launch_bounds__(kThreads)
     BackwardKernel(const FactorItem *items, const Panel *panels, const int *below_rows,
                    const float *factor, const float *diagonal, float *x, float *accumulator,
-                   int *counter) {
+                   int *counter, const int *panel_active) {
   __shared__ float ld[kW][kPad];
   __shared__ float v[kW];
   __shared__ bool last;
@@ -595,6 +614,11 @@ __global__ void __launch_bounds__(kThreads)
   const Panel panel = panels[item.panel];
   const int col = panel.col, w = panel.width, h = panel.height;
   const int t = threadIdx.x, lane = t % 32;
+  if (panel_active != nullptr && panel_active[item.panel] == 0) {
+    // Idle panel (not factored): a zero solution, so nothing stale is read.
+    if (item.row_begin == 0 && t < w) x[col + t] = 0.f;
+    return;
+  }
   const int below = min(kR, h - w - item.row_begin);
   const int tiles = max(1, (h - w + kR - 1) / kR);
   if (below > 0) {
@@ -795,22 +819,32 @@ bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix
   PermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), rhs.data(), work_.data(),
                                                     diagonal_index_.data(),
                                                     spd_matrix.values.data(), original_.data());
+  // Panels whose rows are all idle (SetRowActivity) are skipped below.
+  const int *panel_active = nullptr;
+  if (row_active_ != nullptr) {
+    const int np = static_cast<int>(plan.panels.size());
+    if (panel_active_.size() < plan.panels.size()) panel_active_.resize(plan.panels.size());
+    PanelActivityKernel<<<Blocks(np), kThreads, 0, stream>>>(np, panels_.data(), perm_.data(),
+                                                             row_active_, panel_active_.data());
+    panel_active = panel_active_.data();
+  }
   // Factorization and forward substitution, level by level.
   for (int l = 0; l < plan.num_levels; ++l) {
     const int f0 = plan.factor_offsets[l], f1 = plan.factor_offsets[l + 1];
-    FactorKernel<<<f1 - f0, kThreads, 0, stream>>>(
-        factor_items_.data() + f0, panels_.data(), below_rows_.data(), original_.data(),
-        factor_.data(), diagonal_.data(), work_.data(), solution_.data(), failure_.data());
+    FactorKernel<<<f1 - f0, kThreads, 0, stream>>>(factor_items_.data() + f0, panels_.data(),
+                                                   below_rows_.data(), original_.data(),
+                                                   factor_.data(), diagonal_.data(), work_.data(),
+                                                   solution_.data(), failure_.data(), panel_active);
     const int u0 = plan.update_offsets[l], u1 = plan.update_offsets[l + 1];
     if (u1 > u0) {
       if (plan.update_exclusive[l]) {
-        UpdateKernel<false><<<u1 - u0, kThreads, 0, stream>>>(update_items_.data() + u0,
-                                                              runs_.data(), relmap_.data(),
-                                                              panels_.data(), factor_.data());
+        UpdateKernel<false><<<u1 - u0, kThreads, 0, stream>>>(
+            update_items_.data() + u0, runs_.data(), relmap_.data(), panels_.data(), factor_.data(),
+            panel_active);
       } else {
-        UpdateKernel<true><<<u1 - u0, kThreads, 0, stream>>>(update_items_.data() + u0,
-                                                             runs_.data(), relmap_.data(),
-                                                             panels_.data(), factor_.data());
+        UpdateKernel<true><<<u1 - u0, kThreads, 0, stream>>>(
+            update_items_.data() + u0, runs_.data(), relmap_.data(), panels_.data(), factor_.data(),
+            panel_active);
       }
     }
   }
@@ -819,7 +853,7 @@ bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix
     const int f0 = plan.factor_offsets[l], f1 = plan.factor_offsets[l + 1];
     BackwardKernel<<<f1 - f0, kThreads, 0, stream>>>(
         factor_items_.data() + f0, panels_.data(), below_rows_.data(), factor_.data(),
-        diagonal_.data(), solution_.data(), accumulator_.data(), counter_.data());
+        diagonal_.data(), solution_.data(), accumulator_.data(), counter_.data(), panel_active);
   }
   UnpermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), solution_.data(),
                                                       result.data());

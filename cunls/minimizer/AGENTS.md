@@ -84,6 +84,24 @@ optimization.
    `MinimizerOptions::max_line_search_steps > 0`, a step that does not
    decrease the cost is halved along its direction, and any step that
    decreases the cost is taken (per subproblem).
+6. Subproblems that stopped (converged, capped, frozen) take no step and cost
+   no factorization work: before each solve the loop declares the rows of the
+   still-active subproblems (`ProblemPartition::ActiveRows` →
+   `LinearSystem::SetRowActivity` → `SparseLinearSolver::SetRowActivity`), and
+   `BlockSparseCholeskySolver` skips the panels of the others. Their step
+   entries are unspecified (never taken). `InnerSolve::problem_iteration_cap`
+   gives subproblems different caps within one call (`StepControl` stops each
+   at its own; `ProblemPartition::AtCap` reports them).
+
+## Batched invariants
+
+- A subproblem never waits for another: GN/LM stop each subproblem at its own
+  convergence; the AL gives each feasible subproblem its own full inner solve
+  (`kPolishing`, then `kDone`) while infeasible ones continue capped solves.
+- Without a partition, results and iteration counts are those of a single
+  problem (the per-subproblem paths reduce to the single-problem rules).
+- Inactive subproblems cost no linear-solver work with BlockSparseCholesky;
+  other solvers may ignore the row activity (results are the same).
 
 ## Important constraints
 

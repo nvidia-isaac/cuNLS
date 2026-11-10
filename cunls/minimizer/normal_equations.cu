@@ -123,6 +123,7 @@ bool NormalEquations::PrepareSolver(cudaStream_t stream, const Problem &problem,
 
 bool NormalEquations::Solve(cudaStream_t stream, const dvector<float> &rhs, dvector<float> &step) {
   BuildWorkingLhs(stream);
+  solver_->SetRowActivity(RowActivity() != nullptr ? RowActivity()->data() : nullptr);
   if (UsesBlockStorage()) {
     return solver_->Solve(stream, bsr_lhs_, rhs, step);
   }
