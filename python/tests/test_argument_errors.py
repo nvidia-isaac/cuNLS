@@ -24,7 +24,8 @@ import pycunls
 
 def test_host_array_is_rejected_with_the_fix():
     with pytest.raises(TypeError,
-                       match=r"host \(NumPy\) array.*wp\.array\(data, device=\"cuda\"\)"):
+                       match=r"host \(NumPy\) array.*"
+                             r"wp\.array\(data, dtype=wp\.float32, device=\"cuda\"\)"):
         pycunls.VectorStateBatch3(np.zeros(9, np.float32), 3)
 
 
@@ -35,7 +36,8 @@ def test_wrong_dtype_names_the_expected_one():
 
 
 def test_strided_view_is_rejected():
-    with pytest.raises(ValueError, match=r"C-contiguous.*strided view.*wp\.clone\(data\)"):
+    with pytest.raises(ValueError,
+                       match=r"C-contiguous.*strided view.*wp\.clone\(wp\.array\(data\)\)"):
         pycunls.VectorStateBatch3(wp.zeros((3, 6), wp.float32)[:, ::2], 3)
 
 

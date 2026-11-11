@@ -86,11 +86,12 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
       for (size_t i = shape.size(); i-- > 0;) {
         const size_t extent = nb::cast<size_t>(shape[i]);
         if (extent > 1 && nb::cast<int64_t>(strides[i]) != static_cast<int64_t>(expected)) {
-          throw nb::value_error((std::string(name) +
-                                 " must be C-contiguous (a row-major array without gaps); got "
-                                 "a strided view. Fix: pass a contiguous copy, e.g. wp.clone(" +
-                                 name + ").")
-                                    .c_str());
+          throw nb::value_error(
+              (std::string(name) +
+               " must be C-contiguous (a row-major array without gaps); got "
+               "a strided view. Fix: pass a contiguous copy, e.g. wp.clone(wp.array(" +
+               name + ")).")
+                  .c_str());
         }
         expected *= extent;
       }
@@ -104,9 +105,8 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
     throw nb::type_error((std::string(name) +
                           " is a host (NumPy) array, but cuNLS reads GPU memory. Fix: pass "
                           "wp.array(" +
-                          name + ", device=\"cuda\")" +
-                          (dtype ? std::string(" with dtype wp.") + dtype : "") +
-                          " and keep it alive while it is used.")
+                          name + (dtype ? std::string(", dtype=wp.") + dtype : "") +
+                          ", device=\"cuda\") and keep it alive while it is used.")
                              .c_str());
   }
   if (nb::hasattr(obj, "data") && nb::hasattr(obj.attr("data"), "ptr")) {

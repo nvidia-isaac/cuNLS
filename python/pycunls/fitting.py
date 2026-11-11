@@ -592,7 +592,8 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
     solver_stream = warp_stream(stream)
     with wp.ScopedStream(solver_stream):
         x_dev = wp.array(x_s, dtype=fitted.x_type, device=device)
-        fitted.choose_jacobian(x_dev, np.repeat(p0_flat, n, axis=0))
+        probe_fits = -(-256 // n)  # choose_jacobian probes at most 256 rows
+        fitted.choose_jacobian(x_dev, np.repeat(p0_flat[:probe_fits], n, axis=0))
         params = wp.array(start, dtype=float, device=device)
         state_cls = getattr(_core, f"VectorStateBatch{width}")
         states = state_cls(params, total)

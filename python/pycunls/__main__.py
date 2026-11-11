@@ -57,7 +57,8 @@ def doctor() -> Tuple[bool, List[dict]]:
 
     def warp_gpu():
         import warp as wp
-        wp.config.log_level = wp.LOG_WARNING  # this check reports the GPU; no init banner
+        if hasattr(wp, "LOG_WARNING"):  # Warp >= 1.14; this check reports the GPU, no banner
+            wp.config.log_level = wp.LOG_WARNING
         if not wp.is_cuda_available():
             raise RuntimeError(f"Warp {wp.__version__} finds no CUDA device")
         dev = wp.get_cuda_device()
