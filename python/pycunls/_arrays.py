@@ -26,7 +26,15 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
         if isinstance(a, wp.array):
             a = a.numpy()
         elif hasattr(type(a), "__cuda_array_interface__"):
-            a = wp.array(a, copy=False).numpy()
+            view = wp.array(a, copy=False)
+            # Warp ignores the producer stream the interface names: order the copy after it
+            # (None: no ordering needed; 1 and 2 are the legacy and per-thread default streams,
+            # which are also valid stream handles).
+            producer = a.__cuda_array_interface__.get("stream")
+            if producer:
+                wp.get_stream(view.device).wait_stream(
+                    wp.Stream(view.device, cuda_stream=producer))
+            a = view.numpy()
         return np.asarray(a, dtype=dtype)
     except Exception as exc:  # noqa: BLE001
         raise TypeError(f"{owner}: {name} must be array-like (got {type(a).__name__}, expected "

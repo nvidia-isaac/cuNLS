@@ -70,3 +70,19 @@ def test_optimize_and_read_back(stream):
     cp.cuda.runtime.streamSynchronize(stream.get_stream())
 
     np.testing.assert_allclose(cp.asnumpy(states_gpu), target, atol=1e-3)
+
+
+def test_host_copy_waits_for_the_producer_stream():
+    """A CuPy array still being written on a non-blocking stream is copied after the write."""
+    from pycunls._arrays import to_numpy
+    late_fill = cp.RawKernel(r"""
+    extern "C" __global__ void late_fill(float *a, int n) {
+      const long long start = clock64();
+      while (clock64() - start < 200000000) {}  // ~0.1 s: the copy must wait for it
+      for (int i = threadIdx.x; i < n; i += blockDim.x) a[i] = 1.0f;
+    }""", "late_fill")
+    with cp.cuda.Stream(non_blocking=True):
+        a = cp.zeros(1024, dtype=cp.float32)
+        late_fill((1,), (256,), (a, np.int32(a.size)))
+        host = to_numpy(a, np.float32, "a", "test")
+    assert (host == 1.0).all()

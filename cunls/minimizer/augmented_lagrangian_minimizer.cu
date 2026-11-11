@@ -671,7 +671,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     if (last) full_solve = true;
     const size_t running_cap = last ? final_cap : options_.inner_iterations;
     // The call runs as long as its longest per-subproblem cap.
-    const size_t cap = real_time ? running_cap : (any_polishing ? final_cap : running_cap);
+    const size_t cap = any_polishing && !real_time ? std::max(running_cap, final_cap) : running_cap;
     internal::InnerSolve inner_solve;
     inner_solve.max_num_iterations = cap;
     if (!real_time) {
