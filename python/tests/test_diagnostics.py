@@ -176,15 +176,21 @@ def test_states_are_unchanged_by_the_checks():
     assert np.array_equal(before, keep[0].numpy())
 
 
-def test_diagnose_sees_through_wrapped_factors():
-    # A weighted between factor is still relative: the gauge warning must stay.
+def _wrapped_chain(wrap):
+    """The 5-pose chain with its between factors wrapped by `wrap(fb)` (no anchor)."""
     problem, (poses, deltas, ids, sb, fb) = _pose_graph()
-    weighted = pycunls.WeightedFactorBatch(fb, 2.0)
-    assert weighted.inner_factor is fb
     wrapped = pycunls.Problem()
     wrapped.add_state_batch(sb)
-    wrapped.add_factor_batch(weighted, [sb.state_device_ptr(i + k) for i in range(4)
-                                        for k in (0, 1)])
+    outer, keep = wrap(fb)
+    wrapped.add_factor_batch(outer, [sb.state_device_ptr(i + k) for i in range(4) for k in (0, 1)])
+    return wrapped, (problem, poses, deltas, sb, fb, outer, keep)
+
+
+def test_diagnose_sees_through_wrapped_factors():
+    # A weighted between factor is still relative: the gauge warning must stay.
+    wrapped, keep = _wrapped_chain(lambda fb: (pycunls.WeightedFactorBatch(fb, 2.0), None))
+    sb, fb, weighted = keep[3:6]
+    assert weighted.inner_factor is fb
     issues = pycunls.diagnose(wrapped)
     assert len(issues) == 1 and "Gauge freedom" in issues[0].message
 
@@ -194,16 +200,6 @@ def test_diagnose_sees_through_wrapped_factors():
     prior.set_num_active_factors(1)
     wrapped.add_factor_batch(pycunls.WeightedFactorBatch(prior, 1.0), [sb.state_device_ptr(0)])
     assert pycunls.diagnose(wrapped) == []
-
-
-def _wrapped_chain(wrap):
-    """The 5-pose chain with its between factors wrapped by `wrap(fb)` (no anchor)."""
-    problem, (poses, deltas, ids, sb, fb) = _pose_graph()
-    wrapped = pycunls.Problem()
-    wrapped.add_state_batch(sb)
-    outer, keep = wrap(fb)
-    wrapped.add_factor_batch(outer, [sb.state_device_ptr(i + k) for i in range(4) for k in (0, 1)])
-    return wrapped, (problem, poses, deltas, sb, fb, outer, keep)
 
 
 def test_nested_wrappers_keep_the_gauge_warning():

@@ -204,35 +204,17 @@ if(BUILD_TESTING)
     tests/block_hessian_assembler_test.cpp
     tests/sparse_linear_solver_test.cpp
     tests/block_sparse_pcg_solver_test.cpp
-    tests/constant_velocity_se3_factor_batch_test.cpp
-    tests/constant_velocity_so3_factor_batch_test.cpp
-    tests/constant_velocity_se2_factor_batch_test.cpp
-    tests/constant_velocity_so2_factor_batch_test.cpp
-    tests/constant_acceleration_se3_factor_batch_test.cpp
-    tests/constant_acceleration_so3_factor_batch_test.cpp
-    tests/constant_acceleration_se2_factor_batch_test.cpp
-    tests/constant_acceleration_so2_factor_batch_test.cpp
+    tests/motion_factor_batch_test.cpp
     tests/motion_prior_information_test.cpp
     tests/motion_prior_perf_test.cpp
     tests/factor_manifold_facade_test.cpp
     tests/dense_linear_solver_test.cpp
-    tests/dense_cholesky_solver_test.cpp
     tests/block_sparse_cholesky_solver_test.cpp
-    tests/dense_qr_solver_test.cpp
     tests/gauss_newton_test.cpp
-    tests/so2_manifold_test.cpp
-    tests/se2_manifold_test.cpp
-    tests/so3_manifold_test.cpp
-    tests/se3_manifold_test.cpp
-    tests/sim2_manifold_test.cpp
-    tests/sim3_manifold_test.cpp
-    tests/sl4_manifold_test.cpp
-    tests/vector_manifold_test.cpp
+    tests/manifold_test.cpp
     tests/lie_math_test.cu
     tests/lie_between_factors_smoke_test.cpp
-    tests/point_to_plane_factor_batch_test.cpp
-    tests/point_to_point_factor_batch_test.cpp
-    tests/symmetric_point_to_plane_factor_batch_test.cpp
+    tests/registration_factor_batch_test.cpp
     tests/reprojection_factor_batch_test.cpp
     tests/pnp_factor_batch_test.cpp
     tests/decreasing_scale_minimizer_test.cpp
@@ -254,9 +236,8 @@ if(BUILD_TESTING)
     tests/ransac_minimizer_test.cpp
     tests/ransac_benchmark_test.cpp
     tests/evaluate_items_test.cpp
-    tests/evaluate_items_between_test.cpp
+    tests/evaluate_items_prior_between_test.cpp
     tests/evaluate_items_motion_test.cpp
-    tests/evaluate_items_prior_test.cpp
     tests/evaluate_items_registration_test.cpp
     tests/capacity_test.cpp
     tests/dynamic_problem_test.cpp
@@ -283,7 +264,7 @@ if(BUILD_TESTING)
   )
 
   if(CUNLS_BUILD_NUMERIC_DIFF_E2E_PERF_TEST)
-    target_sources(nls_tests PRIVATE tests/numeric_diff_e2e_perf_test.cpp)
+    target_compile_definitions(nls_tests PRIVATE CUNLS_NUMERIC_DIFF_E2E_PERF_TEST)
   endif()
 
   set_target_properties(nls_tests PROPERTIES

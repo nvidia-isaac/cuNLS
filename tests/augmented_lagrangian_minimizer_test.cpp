@@ -74,40 +74,85 @@ std::vector<float> Download(const dvector<float> &v) {
   return out;
 }
 
+/**
+ * @brief min ½‖x - t‖² s.t. lower <= x <= upper over target.size() / Dim
+ * states of dimension Dim, starting at x = 0; with `partitioned`, every state
+ * is its own subproblem. The solution is Projection(i) = clamp(t, lower, upper).
+ */
+template <int Dim>
+struct BoxProblem {
+  BoxProblem(const std::vector<float> &target, const std::vector<float> &lower,
+             const std::vector<float> &upper, bool partitioned = false)
+      : target_host(target),
+        lower_host(lower),
+        upper_host(upper),
+        n(target.size() / Dim),
+        x(std::vector<float>(target.size(), 0.f)),
+        t(target),
+        lo(lower),
+        hi(upper),
+        states(x.data(), n),
+        prior(reinterpret_cast<const Vector<Dim> *>(t.data()), n),
+        bounds(lo.data(), hi.data(), n) {
+    states.SetNumActiveStates(n);
+    prior.SetNumActiveFactors(n);
+    bounds.SetNumActiveFactors(n);
+    std::vector<float *> ptrs;
+    std::vector<int> ids_host;
+    for (size_t s = 0; s < n; ++s) {
+      ptrs.push_back(states.StateDevicePtr(s));
+      ids_host.push_back(static_cast<int>(s));
+    }
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, ptrs);
+    problem.AddFactorBatch(&bounds, ptrs);
+    if (partitioned) {
+      ids = dvector<int>(ids_host);
+      problem.SetProblemPartition(n, {ids.data()});
+    }
+  }
+
+  float Projection(size_t i) const {
+    return std::min(std::max(target_host[i], lower_host[i]), upper_host[i]);
+  }
+
+  std::vector<float> target_host, lower_host, upper_host;
+  size_t n;
+  dvector<float> x, t, lo, hi;
+  dvector<int> ids;
+  VectorStateBatch<Dim> states;
+  PriorVectorFactorBatch<Dim> prior;
+  BoundFactorBatch<Dim> bounds;
+  Problem problem;
+};
+
+/** Targets and bounds of the two-state box test (some sides unbounded). */
+struct MixedBox {
+  static constexpr float kInf = std::numeric_limits<float>::infinity();
+  std::vector<float> target = {2.f, -3.f, 0.5f, 7.f, -4.f, 0.25f};
+  std::vector<float> lower = {-1.f, -1.f, -1.f, -kInf, -2.f, 0.5f};
+  std::vector<float> upper = {1.f, 1.f, 1.f, 3.f, kInf, kInf};
+};
+
 class AugmentedLagrangianMinimizerTest : public ::testing::TestWithParam<Kind> {};
 
 // min ½‖x - t‖² s.t. lo <= x <= hi: x = clamp(t, lo, hi). Some components are
 // unbounded on one side (±inf), some targets are inside the box.
 TEST_P(AugmentedLagrangianMinimizerTest, BoxProjection) {
-  constexpr float kInf = std::numeric_limits<float>::infinity();
-  const std::vector<float> target = {2.f, -3.f, 0.5f, 7.f, -4.f, 0.25f};
-  const std::vector<float> lower = {-1.f, -1.f, -1.f, -kInf, -2.f, 0.5f};
-  const std::vector<float> upper = {1.f, 1.f, 1.f, 3.f, kInf, kInf};
+  const MixedBox box;
+  BoxProblem<3> b(box.target, box.lower, box.upper);
   CudaStream stream;
-  dvector<float> x(std::vector<float>(6, 0.f)), t(target), lo(lower), hi(upper);
-  VectorStateBatch<3> states(x.data(), 2);
-  states.SetNumActiveStates(2);
-  PriorVectorFactorBatch<3> prior(reinterpret_cast<const Vector<3> *>(t.data()), 2);
-  prior.SetNumActiveFactors(2);
-  BoundFactorBatch<3> bounds(lo.data(), hi.data(), 2);
-  bounds.SetNumActiveFactors(2);
-  Problem problem;
-  problem.AddStateBatch(&states);
-  const std::vector<float *> ptrs = {states.StateDevicePtr(0), states.StateDevicePtr(1)};
-  problem.AddFactorBatch(&prior, ptrs);
-  problem.AddFactorBatch(&bounds, ptrs);
-
   auto inner = MakeMinimizer(GetParam());
   AugmentedLagrangianMinimizer solver(*inner);
-  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
-  const auto result = Download(x);
+  const auto result = Download(b.x);
   double expected_cost = 0.0;
   for (size_t i = 0; i < 6; ++i) {
-    const float expected = std::min(std::max(target[i], lower[i]), upper[i]);
+    const float expected = b.Projection(i);
     EXPECT_NEAR(result[i], expected, 2e-4f) << "component " << i;
-    expected_cost += 0.5 * (expected - target[i]) * (expected - target[i]);
+    expected_cost += 0.5 * (expected - box.target[i]) * (expected - box.target[i]);
   }
   EXPECT_NEAR(summary.final_cost, expected_cost, 1e-3 * expected_cost);
 }
@@ -211,40 +256,21 @@ TEST_P(AugmentedLagrangianMinimizerTest, BatchedBoxProjections) {
     lower[i] = -half;
     upper[i] = half;
   }
+  BoxProblem<3> b(target, lower, upper, /*partitioned=*/true);
   CudaStream stream;
-  dvector<float> x(std::vector<float>(kBatch * 3, 0.f)), t(target), lo(lower), hi(upper);
-  VectorStateBatch<3> states(x.data(), kBatch);
-  states.SetNumActiveStates(kBatch);
-  PriorVectorFactorBatch<3> prior(reinterpret_cast<const Vector<3> *>(t.data()), kBatch);
-  prior.SetNumActiveFactors(kBatch);
-  BoundFactorBatch<3> bounds(lo.data(), hi.data(), kBatch);
-  bounds.SetNumActiveFactors(kBatch);
-  std::vector<float *> ptrs;
-  std::vector<int> ids_host;
-  for (int s = 0; s < kBatch; ++s) {
-    ptrs.push_back(states.StateDevicePtr(s));
-    ids_host.push_back(s);
-  }
-  dvector<int> ids(ids_host);
-  Problem problem;
-  problem.AddStateBatch(&states);
-  problem.AddFactorBatch(&prior, ptrs);
-  problem.AddFactorBatch(&bounds, ptrs);
-  problem.SetProblemPartition(kBatch, {ids.data()});
 
   auto inner = MakeMinimizer(GetParam());
   AugmentedLagrangianMinimizer solver(*inner);
-  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_EQ(summary.num_problems, static_cast<size_t>(kBatch));
   EXPECT_EQ(summary.num_converged, static_cast<size_t>(kBatch));
   // Finished subproblems keep their multipliers, so they stay feasible while
   // the others iterate.
   EXPECT_LE(summary.max_violation, 1e-4f);
-  const auto result = Download(x);
+  const auto result = Download(b.x);
   for (int i = 0; i < kBatch * 3; ++i) {
-    EXPECT_NEAR(result[i], std::min(std::max(target[i], lower[i]), upper[i]), 2e-4f)
-        << "subproblem " << i / 3;
+    EXPECT_NEAR(result[i], b.Projection(i), 2e-4f) << "subproblem " << i / 3;
   }
 }
 
@@ -264,40 +290,21 @@ TEST_P(AugmentedLagrangianMinimizerTest, BatchFinishesBesideAnInfeasibleSubprobl
   }
   lower[kInfeasible] = 1.f;
   upper[kInfeasible] = -1.f;
+  BoxProblem<1> b(target, lower, upper, /*partitioned=*/true);
   CudaStream stream;
-  dvector<float> x(std::vector<float>(kBatch, 0.f)), t(target), lo(lower), hi(upper);
-  VectorStateBatch<1> states(x.data(), kBatch);
-  states.SetNumActiveStates(kBatch);
-  PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(t.data()), kBatch);
-  prior.SetNumActiveFactors(kBatch);
-  BoundFactorBatch<1> bounds(lo.data(), hi.data(), kBatch);
-  bounds.SetNumActiveFactors(kBatch);
-  std::vector<float *> ptrs;
-  std::vector<int> ids_host;
-  for (int s = 0; s < kBatch; ++s) {
-    ptrs.push_back(states.StateDevicePtr(s));
-    ids_host.push_back(s);
-  }
-  dvector<int> ids(ids_host);
-  Problem problem;
-  problem.AddStateBatch(&states);
-  problem.AddFactorBatch(&prior, ptrs);
-  problem.AddFactorBatch(&bounds, ptrs);
-  problem.SetProblemPartition(kBatch, {ids.data()});
 
   auto inner = MakeMinimizer(GetParam());
   AugmentedLagrangianMinimizerOptions options;
   options.max_penalty = 1e4f;
   AugmentedLagrangianMinimizer solver(*inner, options);
-  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxPenalty);
   EXPECT_EQ(summary.num_converged, static_cast<size_t>(kBatch - 1));
   EXPECT_EQ(summary.num_max_penalty, 1u);
-  const auto result = Download(x);
+  const auto result = Download(b.x);
   for (int i = 0; i < kBatch; ++i) {
     if (i == kInfeasible) continue;
-    EXPECT_NEAR(result[i], std::min(std::max(target[i], lower[i]), upper[i]), 2e-4f)
-        << "subproblem " << i;
+    EXPECT_NEAR(result[i], b.Projection(i), 2e-4f) << "subproblem " << i;
   }
 }
 
@@ -465,24 +472,13 @@ TEST_P(AugmentedLagrangianMinimizerTest, FailedInnerSolveIsNotConvergence) {
 // Contradicting bounds (lower > upper): no feasible point. The penalty
 // reaches its cap and the solve ends with kMaxPenalty, not a loop.
 TEST_P(AugmentedLagrangianMinimizerTest, InfeasibleStopsAtMaxPenalty) {
+  BoxProblem<1> b({0.f}, {1.f}, {-1.f});
   CudaStream stream;
-  dvector<float> x(std::vector<float>{0.f}), t(std::vector<float>{0.f});
-  dvector<float> lo(std::vector<float>{1.f}), hi(std::vector<float>{-1.f});
-  VectorStateBatch<1> states(x.data(), 1);
-  states.SetNumActiveStates(1);
-  PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(t.data()), 1);
-  prior.SetNumActiveFactors(1);
-  BoundFactorBatch<1> bounds(lo.data(), hi.data(), 1);
-  bounds.SetNumActiveFactors(1);
-  Problem problem;
-  problem.AddStateBatch(&states);
-  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
-  problem.AddFactorBatch(&bounds, {states.StateDevicePtr(0)});
   auto inner = MakeMinimizer(GetParam());
   AugmentedLagrangianMinimizerOptions options;
   options.max_penalty = 1e4f;
   AugmentedLagrangianMinimizer solver(*inner, options);
-  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxPenalty);
   EXPECT_EQ(summary.num_max_penalty, 1u);
   EXPECT_LT(summary.outer_iterations, options.max_outer_iterations);
@@ -493,33 +489,21 @@ TEST_P(AugmentedLagrangianMinimizerTest, InfeasibleStopsAtMaxPenalty) {
 // solve of the same problem from a perturbed start needs fewer outer
 // iterations and reaches the same solution.
 TEST_P(AugmentedLagrangianMinimizerTest, WarmStartReusesMultipliers) {
-  const std::vector<float> target = {2.f, -3.f, 0.5f};
+  BoxProblem<3> b({2.f, -3.f, 0.5f}, std::vector<float>(3, -1.f), std::vector<float>(3, 1.f));
   CudaStream stream;
-  dvector<float> x(std::vector<float>(3, 0.f)), t(target);
-  dvector<float> lo(std::vector<float>(3, -1.f)), hi(std::vector<float>(3, 1.f));
-  VectorStateBatch<3> states(x.data(), 1);
-  states.SetNumActiveStates(1);
-  PriorVectorFactorBatch<3> prior(reinterpret_cast<const Vector<3> *>(t.data()), 1);
-  prior.SetNumActiveFactors(1);
-  BoundFactorBatch<3> bounds(lo.data(), hi.data(), 1);
-  bounds.SetNumActiveFactors(1);
-  Problem problem;
-  problem.AddStateBatch(&states);
-  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
-  problem.AddFactorBatch(&bounds, {states.StateDevicePtr(0)});
   auto inner = MakeMinimizer(GetParam());
   AugmentedLagrangianMinimizerOptions options;
   options.warm_start = true;
   AugmentedLagrangianMinimizer solver(*inner, options);
-  const auto cold = solver.Minimize(stream.GetStream(), problem);
+  const auto cold = solver.Minimize(stream.GetStream(), b.problem);
   ASSERT_EQ(cold.status, AugmentedLagrangianMinimizerStatus::kConverged);
   const std::vector<float> perturbed = {0.9f, -0.8f, 0.3f};
   THROW_ON_CUDA_ERROR(
-      cudaMemcpy(x.data(), perturbed.data(), 3 * sizeof(float), cudaMemcpyHostToDevice));
-  const auto warm = solver.Minimize(stream.GetStream(), problem);
+      cudaMemcpy(b.x.data(), perturbed.data(), 3 * sizeof(float), cudaMemcpyHostToDevice));
+  const auto warm = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(warm.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LT(warm.outer_iterations, cold.outer_iterations);
-  const auto result = Download(x);
+  const auto result = Download(b.x);
   EXPECT_NEAR(result[0], 1.f, 2e-4f);
   EXPECT_NEAR(result[1], -1.f, 2e-4f);
   EXPECT_NEAR(result[2], 0.5f, 2e-4f);
@@ -528,23 +512,9 @@ TEST_P(AugmentedLagrangianMinimizerTest, WarmStartReusesMultipliers) {
 // Real time: a fixed budget without per-iteration read-backs reaches the box
 // projection; a warm follow-up call keeps it.
 TEST_P(AugmentedLagrangianMinimizerTest, RealTimeBudget) {
-  constexpr float kInf = std::numeric_limits<float>::infinity();
-  const std::vector<float> target = {2.f, -3.f, 0.5f, 7.f, -4.f, 0.25f};
-  const std::vector<float> lower = {-1.f, -1.f, -1.f, -kInf, -2.f, 0.5f};
-  const std::vector<float> upper = {1.f, 1.f, 1.f, 3.f, kInf, kInf};
+  const MixedBox box;
+  BoxProblem<3> b(box.target, box.lower, box.upper);
   CudaStream stream;
-  dvector<float> x(std::vector<float>(6, 0.f)), t(target), lo(lower), hi(upper);
-  VectorStateBatch<3> states(x.data(), 2);
-  states.SetNumActiveStates(2);
-  PriorVectorFactorBatch<3> prior(reinterpret_cast<const Vector<3> *>(t.data()), 2);
-  prior.SetNumActiveFactors(2);
-  BoundFactorBatch<3> bounds(lo.data(), hi.data(), 2);
-  bounds.SetNumActiveFactors(2);
-  Problem problem;
-  problem.AddStateBatch(&states);
-  const std::vector<float *> ptrs = {states.StateDevicePtr(0), states.StateDevicePtr(1)};
-  problem.AddFactorBatch(&prior, ptrs);
-  problem.AddFactorBatch(&bounds, ptrs);
   auto inner = MakeMinimizer(GetParam());
   AugmentedLagrangianMinimizerOptions options;
   options.real_time = true;
@@ -554,14 +524,13 @@ TEST_P(AugmentedLagrangianMinimizerTest, RealTimeBudget) {
   options.reuse_structure = true;
   AugmentedLagrangianMinimizer solver(*inner, options);
   for (int call = 0; call < 2; ++call) {
-    const auto summary = solver.Minimize(stream.GetStream(), problem);
+    const auto summary = solver.Minimize(stream.GetStream(), b.problem);
     EXPECT_EQ(summary.outer_iterations, 12u);
     EXPECT_TRUE(std::isnan(summary.final_cost));
     EXPECT_LE(summary.max_violation, 1e-3f) << "call " << call;
-    const auto result = Download(x);
+    const auto result = Download(b.x);
     for (size_t i = 0; i < 6; ++i) {
-      const float expected = std::min(std::max(target[i], lower[i]), upper[i]);
-      EXPECT_NEAR(result[i], expected, 1e-3f) << "call " << call << " component " << i;
+      EXPECT_NEAR(result[i], b.Projection(i), 1e-3f) << "call " << call << " component " << i;
     }
   }
 }

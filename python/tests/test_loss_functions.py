@@ -13,48 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for loss function batch bindings.
-
-Each loss function is purely a construction smoke-test — we verify the object
-can be instantiated with its documented parameters.  Numeric correctness of
-the loss kernels is exercised indirectly by ``test_minimizer.py``'s Huber
-test case.
+"""Construction smoke tests for the loss function batch bindings: every robust loss can be
+instantiated with its documented parameters. Numeric correctness of the loss kernels is exercised
+indirectly by ``test_minimizer.py`` (Huber) and ``test_fitting.py`` (Cauchy, Huber).
 """
+
+import pytest
 
 import pycunls
 
 
-class TestLossFunctions:
-    """Instantiation smoke-tests for every robust loss function variant."""
-    def test_trivial(self):
-        loss = pycunls.TrivialLossFunctionBatch()
-        assert loss is not None
-
-    def test_huber(self):
-        loss = pycunls.HuberLossFunctionBatch(1.345)
-        assert loss is not None
-
-    def test_cauchy(self):
-        loss = pycunls.CauchyLossFunctionBatch(1.0, 1.0)
-        assert loss is not None
-
-    def test_arctan(self):
-        loss = pycunls.ArctanLossFunctionBatch(1.0, 1.0)
-        assert loss is not None
-
-    def test_soft_l_one(self):
-        loss = pycunls.SoftLOneLossFunctionBatch(1.0, 1.0)
-        assert loss is not None
-
-    def test_tolerant(self):
-        loss = pycunls.TolerantLossFunctionBatch(0.5, 1.0)
-        assert loss is not None
-
-    def test_tukey(self):
-        loss = pycunls.TukeyLossFunctionBatch(4.685)
-        assert loss is not None
-
-    def test_scaled(self):
-        inner = pycunls.HuberLossFunctionBatch(1.0)
-        loss = pycunls.ScaledLossFunctionBatch(inner, 2.5)
-        assert loss is not None
+@pytest.mark.parametrize("make", [
+    lambda: pycunls.TrivialLossFunctionBatch(),
+    lambda: pycunls.HuberLossFunctionBatch(1.345),
+    lambda: pycunls.CauchyLossFunctionBatch(1.0, 1.0),
+    lambda: pycunls.ArctanLossFunctionBatch(1.0, 1.0),
+    lambda: pycunls.SoftLOneLossFunctionBatch(1.0, 1.0),
+    lambda: pycunls.TolerantLossFunctionBatch(0.5, 1.0),
+    lambda: pycunls.TukeyLossFunctionBatch(4.685),
+    lambda: pycunls.ScaledLossFunctionBatch(pycunls.HuberLossFunctionBatch(1.0), 2.5),
+], ids=["trivial", "huber", "cauchy", "arctan", "soft_l_one", "tolerant", "tukey", "scaled"])
+def test_loss_function_constructs(make):
+    assert isinstance(make(), pycunls.LossFunctionBatch)

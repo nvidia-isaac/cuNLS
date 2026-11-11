@@ -27,19 +27,19 @@ def se2(x, y, theta):
     return np.array([[c, -s, x], [s, c, y], [0, 0, 1]], dtype=np.float32)
 
 
-def solve_se2_priors(stream, targets, init, partition):
-    """One SE2 state per subproblem, pulled to its target by an SE2 prior."""
+def solve_priors(stream, state_cls, prior_cls, targets, init, partition):
+    """One state per subproblem (if ``partition``), pulled to its target by a prior."""
     b = len(targets)
     poses = wp.array(np.stack(init))
     obs = wp.array(np.stack(targets))
-    states = pycunls.SE2StateBatch(poses, b)
+    states = state_cls(poses, b)
     states.set_num_active_states(b)
-    prior = pycunls.SE2PriorFactorBatch(obs, b)
+    prior = prior_cls(obs, b)
     prior.set_num_active_factors(b)
     problem = pycunls.Problem()
     problem.add_state_batch(states)
-    problem.add_factor_batch(prior, [states], wp.array(np.arange(b, dtype=np.int32)))
     ids = wp.array(np.arange(b, dtype=np.int32))
+    problem.add_factor_batch(prior, [states], ids)
     if partition:
         problem.set_problem_partition(b, [ids])
         assert problem.num_problems == b
@@ -55,7 +55,8 @@ def test_partitioned_se2_priors_reach_their_targets(stream, partition):
     rng = np.random.default_rng(0)
     targets = [se2(*rng.normal(size=2), rng.uniform(-2.5, 2.5)) for _ in range(16)]
     init = [se2(*rng.normal(size=2), rng.uniform(-2.5, 2.5)) for _ in range(16)]
-    poses, summary = solve_se2_priors(stream, targets, init, partition)
+    poses, summary = solve_priors(stream, pycunls.SE2StateBatch, pycunls.SE2PriorFactorBatch,
+                                  targets, init, partition)
     np.testing.assert_allclose(poses, np.stack(targets), atol=1e-4)
     assert summary.final_cost < 1e-6
 
@@ -93,18 +94,6 @@ def test_similarity_priors_reach_their_targets(stream, state_cls, prior_cls, dim
         m[: dim - 1, dim - 1] = 0.5 * (k + 1)
         m[dim - 1, dim - 1] = 1.0 / (1.0 + 0.2 * k)
         targets.append(m)
-    poses = wp.array(np.stack([np.eye(dim, dtype=np.float32)] * 4))
-    obs = wp.array(np.stack(targets))
-    states = state_cls(poses, 4)
-    states.set_num_active_states(4)
-    prior = prior_cls(obs, 4)
-    prior.set_num_active_factors(4)
-    problem = pycunls.Problem()
-    problem.add_state_batch(states)
-    problem.add_factor_batch(prior, [states], wp.array(np.arange(4, dtype=np.int32)))
-    problem.set_problem_partition(4, [wp.array(np.arange(4, dtype=np.int32))])
-    options = pycunls.MinimizerOptions()
-    options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.DenseLDLT
-    pycunls.GaussNewtonMinimizer(options).minimize(stream, problem)
-    wp.synchronize()
-    np.testing.assert_allclose(poses.numpy(), np.stack(targets), atol=1e-4)
+    init = [np.eye(dim, dtype=np.float32)] * 4
+    poses, _ = solve_priors(stream, state_cls, prior_cls, targets, init, partition=True)
+    np.testing.assert_allclose(poses, np.stack(targets), atol=1e-4)

@@ -15,20 +15,24 @@
  * limitations under the License.
  */
 
-#include "cunls/linear_solver/dense_linear_solver.h"
+/** @file dense_linear_solver_test.cpp
+ *  @brief Tests of the dense backends (DenseLDLT, DenseCholesky, DenseQR): the
+ *  same systems run through each, with per-backend expectations where they
+ *  differ (only DenseCholesky rejects a symmetric indefinite matrix).
+ */
 
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
-#include "cunls/common/log.h"
-#include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/reprojection_factor_batch.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
@@ -38,70 +42,137 @@
 namespace cunls {
 namespace {
 
-void GenerateRandomSPDMatrix(int n, int seed, float value_abs_bound, std::vector<float> &matrix) {
+constexpr float kSolutionTolerance = 1e-3f;
+
+/** A x A^T + n I with entries of x uniform in [-bound, bound]: SPD. */
+std::vector<float> RandomSPDMatrix(int n, int seed, float value_abs_bound = 0.5f) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> dist(-value_abs_bound, value_abs_bound);
   std::vector<float> m(static_cast<size_t>(n) * n);
   for (float &v : m) {
     v = dist(rng);
   }
-
-  matrix.assign(static_cast<size_t>(n) * n, 0.0f);
+  std::vector<float> matrix(static_cast<size_t>(n) * n, 0.0f);
   for (int row = 0; row < n; ++row) {
     for (int col = 0; col < n; ++col) {
-      float value = 0.0f;
+      float value = row == col ? static_cast<float>(n) : 0.0f;
       for (int k = 0; k < n; ++k) {
         value += m[row * n + k] * m[col * n + k];
-      }
-      if (row == col) {
-        value += static_cast<float>(n);
       }
       matrix[row * n + col] = value;
     }
   }
+  return matrix;
 }
 
 std::vector<float> MultiplyMatVec(const std::vector<float> &A, const std::vector<float> &x, int n) {
   std::vector<float> out(n, 0.0f);
   for (int i = 0; i < n; ++i) {
-    float sum = 0.0f;
     for (int j = 0; j < n; ++j) {
-      sum += A[i * n + j] * x[j];
+      out[i] += A[i * n + j] * x[j];
     }
-    out[i] = sum;
   }
   return out;
 }
 
-void DenseToCSR(const std::vector<float> &dense, int n, std::vector<int> &row_ptr,
-                std::vector<int> &col_idx, std::vector<float> &values,
-                float zero_threshold = 0.0f) {
-  row_ptr.clear();
-  col_idx.clear();
-  values.clear();
-  row_ptr.reserve(static_cast<size_t>(n) + 1);
-  row_ptr.push_back(0);
-  for (int row = 0; row < n; ++row) {
-    for (int col = 0; col < n; ++col) {
-      const float value = dense[row * n + col];
-      if (fabsf(value) <= zero_threshold) {
-        continue;
+/** 4x4 symmetric indefinite matrix: y^T A y < 0 for y = [1, -1, 0, 0]. */
+const std::vector<float> kIndefiniteMatrix = {
+    0.0f, 2.0f, 0.0f, 0.0f, 2.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 3.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f,
+};
+
+/** Rank-1 3x3 matrix: every row is a multiple of [1, 2, 3]. */
+const std::vector<float> kRankOneMatrix = {
+    1.0f, 2.0f, 3.0f, 2.0f, 4.0f, 6.0f, 3.0f, 6.0f, 9.0f,
+};
+
+class DenseSolverTest : public ::testing::TestWithParam<SparseLinearSolverType> {
+ protected:
+  void SetUp() override { solver_ = CreateSparseLinearSolver(GetParam(), {}); }
+
+  /**
+   * Uploads the dense n x n matrix @p A (as CSR, zeros dropped) and @p rhs,
+   * initializes and solves with the one solver instance of the test, and
+   * returns Solve's result; @p solution receives x when it succeeded.
+   */
+  bool Solve(const std::vector<float> &A, const std::vector<float> &rhs_host,
+             std::vector<float> *solution = nullptr) {
+    const int n = static_cast<int>(rhs_host.size());
+    std::vector<int> row_ptr{0};
+    std::vector<int> col_idx;
+    std::vector<float> values;
+    for (int row = 0; row < n; ++row) {
+      for (int col = 0; col < n; ++col) {
+        if (A[row * n + col] != 0.0f) {
+          col_idx.push_back(col);
+          values.push_back(A[row * n + col]);
+        }
       }
-      col_idx.push_back(col);
-      values.push_back(value);
+      row_ptr.push_back(static_cast<int>(col_idx.size()));
     }
-    row_ptr.push_back(static_cast<int>(col_idx.size()));
+    CSRSparseMatrix matrix;
+    test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
+    dvector<float> rhs(rhs_host);
+    dvector<float> result(n);
+    EXPECT_TRUE(solver_->Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
+    const bool ok = solver_->Solve(stream_.GetStream(), matrix, rhs, result);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
+    if (ok && solution != nullptr) {
+      solution->assign(n, 0.0f);
+      result.CopyToHost(solution->data(), n);
+    }
+    return ok;
+  }
+
+  /** Solves A x = A x_true and checks x against x_true. */
+  void ExpectSolves(const std::vector<float> &A, const std::vector<float> &x_true) {
+    const int n = static_cast<int>(x_true.size());
+    std::vector<float> solved;
+    ASSERT_TRUE(Solve(A, MultiplyMatVec(A, x_true, n), &solved));
+    for (int i = 0; i < n; ++i) {
+      EXPECT_NEAR(solved[i], x_true[i], kSolutionTolerance) << "i = " << i;
+    }
+  }
+
+  CudaStream stream_;
+  SparseLinearSolverPtr solver_;
+};
+
+TEST_P(DenseSolverTest, SolveDenseSystemAcrossDifferentSizes) {
+  for (const int n : {2, 3, 4, 8, 16, 24, 32}) {
+    SCOPED_TRACE("Matrix size = " + std::to_string(n));
+    std::vector<float> x_true(n);
+    for (int i = 0; i < n; ++i) {
+      x_true[i] = 0.25f + 0.3f * i;
+    }
+    ExpectSolves(RandomSPDMatrix(n, 7 + n), x_true);
   }
 }
 
-SE3Transform MakeIdentityPose() {
-  SE3Transform pose{};
-  pose.fill(0.0f);
-  pose[0] = 1.0f;
-  pose[5] = 1.0f;
-  pose[10] = 1.0f;
-  pose[15] = 1.0f;
-  return pose;
+// DenseLDLT (pivoted) and DenseQR solve symmetric indefinite systems;
+// DenseCholesky requires SPD and must report the failure.
+TEST_P(DenseSolverTest, SymmetricIndefiniteSystem) {
+  const std::vector<float> witness = {1.0f, -1.0f, 0.0f, 0.0f};
+  const std::vector<float> Aw = MultiplyMatVec(kIndefiniteMatrix, witness, 4);
+  ASSERT_LT(witness[0] * Aw[0] + witness[1] * Aw[1], 0.0f);
+
+  if (GetParam() == SparseLinearSolverType::DenseCholesky) {
+    EXPECT_FALSE(Solve(kIndefiniteMatrix, {1.0f, 2.0f, 3.0f, 4.0f}));
+  } else {
+    ExpectSolves(kIndefiniteMatrix, {1.0f, -2.0f, 0.5f, 3.0f});
+  }
+}
+
+TEST_P(DenseSolverTest, SolveReturnsFalseForZeroMatrix) {
+  EXPECT_FALSE(Solve(std::vector<float>(16, 0.0f), std::vector<float>(4, 1.0f)));
+}
+
+TEST_P(DenseSolverTest, SolveReturnsFalseForRankDeficientMatrix) {
+  EXPECT_FALSE(Solve(kRankOneMatrix, {1.0f, 2.0f, 3.0f}));
+}
+
+TEST_P(DenseSolverTest, SolveReturnsTrueForValidSystemAfterSingularOne) {
+  ASSERT_FALSE(Solve(std::vector<float>(9, 0.0f), std::vector<float>(3, 1.0f)));
+  ExpectSolves(RandomSPDMatrix(3, 42), {1.0f, -0.5f, 2.0f});
 }
 
 /** Projects a world point through the world_from_camera pose state. */
@@ -116,231 +187,45 @@ Vector<2> ProjectPoint(const SE3Transform &world_from_cam, const Vector<3> &poin
   return Vector<2>{x / z, y / z};
 }
 
-class DenseLDLTSolverTestFixture : public ::testing::Test {
- protected:
-  int spd_generation_seed_ = 7;
-  float spd_value_abs_bound_ = 0.5f;
-  std::vector<int> dense_solver_validation_sizes_ = {2, 3, 4, 8, 16, 24, 32};
+SE3Transform TranslationPose(float x, float y, float z) {
+  return {1.0f, 0.0f, 0.0f, x, 0.0f, 1.0f, 0.0f, y, 0.0f, 0.0f, 1.0f, z, 0.0f, 0.0f, 0.0f, 1.0f};
+}
 
-  // Synthetic PnP problem generation hyperparameters.
-  size_t pnp_num_points_ = 1000;
-  int pnp_generation_seed_ = 19;
-  float pnp_xy_abs_bound_ = 1.0f;
-  float pnp_depth_min_ = 4.0f;
-  float pnp_depth_max_ = 8.0f;
-  Vector<3> true_pose_translation_ = {0.2f, -0.15f, 0.35f};
-  Vector<3> initial_pose_translation_ = {0.45f, -0.45f, 0.8f};
-  std::vector<size_t> pnp_sequential_point_counts_ = {1000, 2000, 3000, 4000, 5000};
-
-  float linear_solver_rhs_scale_ = 0.3f;
-  float linear_solver_base_value_ = 0.25f;
-  float linear_solver_solution_tolerance_ = 1e-3f;
-
-  CudaStream stream_;
-  profiler::Domain profiler_domain_{"DenseLDLTSolverTestFixture"};
-};
-
-TEST_F(DenseLDLTSolverTestFixture, SolvePnPWithDenseSolver) {
-  const size_t num_points = pnp_num_points_;
-  std::mt19937 rng(pnp_generation_seed_);
-  std::uniform_real_distribution<float> xy_dist(-pnp_xy_abs_bound_, pnp_xy_abs_bound_);
-  std::uniform_real_distribution<float> z_dist(pnp_depth_min_, pnp_depth_max_);
-
-  std::vector<Vector<3>> points_host(num_points);
-  for (size_t i = 0; i < num_points; ++i) {
-    points_host[i] = Vector<3>{xy_dist(rng), xy_dist(rng), z_dist(rng)};
-  }
-
-  SE3Transform true_pose = MakeIdentityPose();
-  true_pose[3] = true_pose_translation_[0];
-  true_pose[7] = true_pose_translation_[1];
-  true_pose[11] = true_pose_translation_[2];
-
-  std::vector<Vector<2>> observations_host(num_points);
-  for (size_t i = 0; i < num_points; ++i) {
-    observations_host[i] = ProjectPoint(true_pose, points_host[i]);
-  }
-
-  SE3Transform initial_pose = MakeIdentityPose();
-  initial_pose[3] = initial_pose_translation_[0];
-  initial_pose[7] = initial_pose_translation_[1];
-  initial_pose[11] = initial_pose_translation_[2];
-
-  dvector<SE3Transform> poses_device(std::vector<SE3Transform>{initial_pose});
-  dvector<Vector<3>> points_device(points_host);
-  dvector<Vector<2>> observations_device(observations_host);
-  auto point_const_ids = test_utils::MakeSequentialIds(num_points);
-  dvector<int> point_const_ids_device(point_const_ids);
-
-  SE3StateBatch pose_batch(reinterpret_cast<const float *>(poses_device.data()), 1);
-  pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
-  VectorStateBatch<3> point_batch(reinterpret_cast<const float *>(points_device.data()), num_points,
-                                  point_const_ids_device.data(), point_const_ids.size());
-  point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
-  ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
-  reprojection_factor.SetNumActiveFactors(reprojection_factor.Capacity());
-
-  std::vector<float *> state_pointers;
-  state_pointers.reserve(num_points * 2);
-  for (size_t i = 0; i < num_points; ++i) {
-    state_pointers.push_back(pose_batch.StateDevicePtr(0));
-    state_pointers.push_back(point_batch.StateDevicePtr(i));
-  }
-
-  Problem problem;
-  problem.AddStateBatch(&pose_batch);
-  problem.AddStateBatch(&point_batch);
-  problem.AddFactorBatch(&reprojection_factor, state_pointers);
-  ASSERT_TRUE(problem.CheckConsistency());
-
+// One GaussNewtonMinimizer recovers a camera translation (PnP against fixed
+// points) for growing point counts, reusing the dense solver across sizes.
+TEST_P(DenseSolverTest, SolvePnPSequentiallyForDifferentPointCounts) {
   MinimizerOptions options;
   options.max_num_iterations = 20;
   options.state_tolerance = 1e-10f;
   options.cost_tolerance = 1e-12f;
   options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+  options.sparse_linear_solver_type = GetParam();
   GaussNewtonMinimizer minimizer(options);
 
-  const auto summary = minimizer.Minimize(stream_.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
-
-  ASSERT_LT(summary.final_cost, summary.initial_cost);
-  ASSERT_LT(summary.final_cost, 1e-5f);
-
-  std::vector<SE3Transform> optimized_pose_host(1);
-  poses_device.CopyToHost(optimized_pose_host.data(), 1);
-  ASSERT_NEAR(optimized_pose_host[0][3], true_pose[3], 5e-3f);
-  ASSERT_NEAR(optimized_pose_host[0][7], true_pose[7], 5e-3f);
-  ASSERT_NEAR(optimized_pose_host[0][11], true_pose[11], 5e-3f);
-}
-
-TEST_F(DenseLDLTSolverTestFixture, SolveDenseSystemAcrossDifferentSizes) {
-  DenseLDLTSolver solver;
-
-  for (const int n : dense_solver_validation_sizes_) {
-    SCOPED_TRACE("Matrix size = " + std::to_string(n));
-
-    std::vector<float> host_A;
-    GenerateRandomSPDMatrix(n, spd_generation_seed_ + n, spd_value_abs_bound_, host_A);
-
-    std::vector<float> x_true(n, 0.0f);
-    for (int i = 0; i < n; ++i) {
-      x_true[i] = linear_solver_base_value_ + linear_solver_rhs_scale_ * i;
-    }
-    const std::vector<float> rhs_host = MultiplyMatVec(host_A, x_true, n);
-
-    std::vector<int> row_ptr;
-    std::vector<int> col_idx;
-    std::vector<float> values;
-    DenseToCSR(host_A, n, row_ptr, col_idx, values);
-
-    CSRSparseMatrix matrix;
-    test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
-    dvector<float> rhs(rhs_host);
-    dvector<float> result(n);
-
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
-    ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
-
-    std::vector<float> solved_host(n, 0.0f);
-    result.CopyToHost(solved_host.data(), solved_host.size());
-    for (int i = 0; i < n; ++i) {
-      ASSERT_NEAR(solved_host[i], x_true[i], linear_solver_solution_tolerance_);
-    }
-  }
-}
-
-TEST_F(DenseLDLTSolverTestFixture, SolveSymmetricIndefiniteSystem) {
-  DenseLDLTSolver solver;
-  constexpr int n = 4;
-  const std::vector<float> host_A = {
-      0.0f, 2.0f, 0.0f, 0.0f, 2.0f, 0.0f, 1.0f, 0.0f,
-      0.0f, 1.0f, 3.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f,
-  };
-
-  // y^T A y < 0 for y = [1, -1, 0, 0], so the matrix is not SPD.
-  const std::vector<float> witness = {1.0f, -1.0f, 0.0f, 0.0f};
-  const std::vector<float> Aw = MultiplyMatVec(host_A, witness, n);
-  float quadratic_form = 0.0f;
-  for (int i = 0; i < n; ++i) {
-    quadratic_form += witness[i] * Aw[i];
-  }
-  ASSERT_LT(quadratic_form, 0.0f);
-
-  const std::vector<float> x_true = {1.0f, -2.0f, 0.5f, 3.0f};
-  const std::vector<float> rhs_host = MultiplyMatVec(host_A, x_true, n);
-
-  std::vector<int> row_ptr;
-  std::vector<int> col_idx;
-  std::vector<float> values;
-  DenseToCSR(host_A, n, row_ptr, col_idx, values);
-
-  CSRSparseMatrix matrix;
-  test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
-  dvector<float> rhs(rhs_host);
-  dvector<float> result(n);
-
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
-  ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
-
-  std::vector<float> solved_host(n, 0.0f);
-  result.CopyToHost(solved_host.data(), solved_host.size());
-  for (int i = 0; i < n; ++i) {
-    ASSERT_NEAR(solved_host[i], x_true[i], linear_solver_solution_tolerance_);
-  }
-}
-
-TEST_F(DenseLDLTSolverTestFixture, SolvePnPSequentiallyForDifferentPointCounts) {
-  MinimizerOptions options;
-  options.max_num_iterations = 20;
-  options.state_tolerance = 1e-10f;
-  options.cost_tolerance = 1e-12f;
-  options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
-
-  // Reuse one minimizer instance across different PnP problem sizes.
-  GaussNewtonMinimizer minimizer(options);
-
-  for (const size_t num_points : pnp_sequential_point_counts_) {
+  const SE3Transform true_pose = TranslationPose(0.2f, -0.15f, 0.35f);
+  for (const size_t num_points : {1000, 2000, 3000, 4000, 5000}) {
     SCOPED_TRACE("PnP point count = " + std::to_string(num_points));
 
-    std::mt19937 rng(pnp_generation_seed_ + static_cast<int>(num_points));
-    std::uniform_real_distribution<float> xy_dist(-pnp_xy_abs_bound_, pnp_xy_abs_bound_);
-    std::uniform_real_distribution<float> z_dist(pnp_depth_min_, pnp_depth_max_);
-
+    std::mt19937 rng(19 + static_cast<int>(num_points));
+    std::uniform_real_distribution<float> xy_dist(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> z_dist(4.0f, 8.0f);
     std::vector<Vector<3>> points_host(num_points);
-    for (size_t i = 0; i < num_points; ++i) {
-      points_host[i] = Vector<3>{xy_dist(rng), xy_dist(rng), z_dist(rng)};
-    }
-
-    SE3Transform true_pose = MakeIdentityPose();
-    true_pose[3] = true_pose_translation_[0];
-    true_pose[7] = true_pose_translation_[1];
-    true_pose[11] = true_pose_translation_[2];
-
     std::vector<Vector<2>> observations_host(num_points);
     for (size_t i = 0; i < num_points; ++i) {
+      points_host[i] = Vector<3>{xy_dist(rng), xy_dist(rng), z_dist(rng)};
       observations_host[i] = ProjectPoint(true_pose, points_host[i]);
     }
 
-    SE3Transform initial_pose = MakeIdentityPose();
-    initial_pose[3] = initial_pose_translation_[0];
-    initial_pose[7] = initial_pose_translation_[1];
-    initial_pose[11] = initial_pose_translation_[2];
-
-    dvector<SE3Transform> poses_device(std::vector<SE3Transform>{initial_pose});
+    dvector<SE3Transform> poses_device(
+        std::vector<SE3Transform>{TranslationPose(0.45f, -0.45f, 0.8f)});
     dvector<Vector<3>> points_device(points_host);
     dvector<Vector<2>> observations_device(observations_host);
-    auto point_const_ids = test_utils::MakeSequentialIds(num_points);
-    dvector<int> point_const_ids_device(point_const_ids);
+    dvector<int> point_const_ids_device(test_utils::MakeSequentialIds(num_points));
 
     SE3StateBatch pose_batch(reinterpret_cast<const float *>(poses_device.data()), 1);
     pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
     VectorStateBatch<3> point_batch(reinterpret_cast<const float *>(points_device.data()),
-                                    num_points, point_const_ids_device.data(),
-                                    point_const_ids.size());
+                                    num_points, point_const_ids_device.data(), num_points);
     point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
     ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
     reprojection_factor.SetNumActiveFactors(reprojection_factor.Capacity());
@@ -366,114 +251,26 @@ TEST_F(DenseLDLTSolverTestFixture, SolvePnPSequentiallyForDifferentPointCounts) 
 
     std::vector<SE3Transform> optimized_pose_host(1);
     poses_device.CopyToHost(optimized_pose_host.data(), 1);
-    ASSERT_NEAR(optimized_pose_host[0][3], true_pose[3], 5e-3f);
-    ASSERT_NEAR(optimized_pose_host[0][7], true_pose[7], 5e-3f);
-    ASSERT_NEAR(optimized_pose_host[0][11], true_pose[11], 5e-3f);
-  }
-}
-
-TEST_F(DenseLDLTSolverTestFixture, SolveReturnsFalseForZeroMatrix) {
-  DenseLDLTSolver solver;
-  constexpr int n = 4;
-
-  // All-zero matrix: every diagonal is zero, so the factorization kernel
-  // should detect a singular pivot at the very first step and set status = 0.
-  const std::vector<float> host_A(n * n, 0.0f);
-  const std::vector<float> rhs_host(n, 1.0f);
-
-  std::vector<int> row_ptr;
-  std::vector<int> col_idx;
-  std::vector<float> values;
-  DenseToCSR(host_A, n, row_ptr, col_idx, values);
-
-  CSRSparseMatrix matrix;
-  test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
-  dvector<float> rhs(rhs_host);
-  dvector<float> result(n);
-
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
-  ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
-}
-
-TEST_F(DenseLDLTSolverTestFixture, SolveReturnsFalseForRankDeficientMatrix) {
-  DenseLDLTSolver solver;
-  constexpr int n = 3;
-
-  // Rank-1 matrix: every row is a scalar multiple of [1, 2, 3].
-  // After the first pivot elimination the trailing 2x2 sub-matrix is
-  // numerically zero, triggering a singular-pivot failure.
-  const std::vector<float> host_A = {
-      1.0f, 2.0f, 3.0f, 2.0f, 4.0f, 6.0f, 3.0f, 6.0f, 9.0f,
-  };
-  const std::vector<float> rhs_host = {1.0f, 2.0f, 3.0f};
-
-  std::vector<int> row_ptr;
-  std::vector<int> col_idx;
-  std::vector<float> values;
-  DenseToCSR(host_A, n, row_ptr, col_idx, values);
-
-  CSRSparseMatrix matrix;
-  test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
-  dvector<float> rhs(rhs_host);
-  dvector<float> result(n);
-
-  ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
-  ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
-}
-
-TEST_F(DenseLDLTSolverTestFixture, SolveReturnsTrueForValidSystemAfterSingularOne) {
-  DenseLDLTSolver solver;
-
-  // First, feed a singular system and confirm Solve returns false.
-  {
-    constexpr int n = 3;
-    const std::vector<float> host_A(n * n, 0.0f);
-    const std::vector<float> rhs_host(n, 1.0f);
-    std::vector<int> row_ptr;
-    std::vector<int> col_idx;
-    std::vector<float> values;
-    DenseToCSR(host_A, n, row_ptr, col_idx, values);
-
-    CSRSparseMatrix matrix;
-    test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
-    dvector<float> rhs(rhs_host);
-    dvector<float> result(n);
-
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
-    ASSERT_FALSE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
-  }
-
-  // Then, feed a valid SPD system through the same solver instance and
-  // verify that it recovers and returns the correct solution.
-  {
-    constexpr int n = 3;
-    std::vector<float> host_A;
-    GenerateRandomSPDMatrix(n, 42, spd_value_abs_bound_, host_A);
-
-    const std::vector<float> x_true = {1.0f, -0.5f, 2.0f};
-    const std::vector<float> rhs_host = MultiplyMatVec(host_A, x_true, n);
-
-    std::vector<int> row_ptr;
-    std::vector<int> col_idx;
-    std::vector<float> values;
-    DenseToCSR(host_A, n, row_ptr, col_idx, values);
-
-    CSRSparseMatrix matrix;
-    test_utils::CreateCSRSparseMatrix(row_ptr, col_idx, values, matrix);
-    dvector<float> rhs(rhs_host);
-    dvector<float> result(n);
-
-    ASSERT_TRUE(solver.Initialize(stream_.GetStream(), Problem(), matrix, rhs, result));
-    ASSERT_TRUE(solver.Solve(stream_.GetStream(), matrix, rhs, result));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
-
-    std::vector<float> solved_host(n, 0.0f);
-    result.CopyToHost(solved_host.data(), solved_host.size());
-    for (int i = 0; i < n; ++i) {
-      ASSERT_NEAR(solved_host[i], x_true[i], linear_solver_solution_tolerance_);
+    for (const int t : {3, 7, 11}) {
+      ASSERT_NEAR(optimized_pose_host[0][t], true_pose[t], 5e-3f) << "translation entry " << t;
     }
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(DenseBackends, DenseSolverTest,
+                         ::testing::Values(SparseLinearSolverType::DenseLDLT,
+                                           SparseLinearSolverType::DenseCholesky,
+                                           SparseLinearSolverType::DenseQR),
+                         [](const ::testing::TestParamInfo<SparseLinearSolverType> &info) {
+                           switch (info.param) {
+                             case SparseLinearSolverType::DenseLDLT:
+                               return std::string("DenseLDLT");
+                             case SparseLinearSolverType::DenseCholesky:
+                               return std::string("DenseCholesky");
+                             default:
+                               return std::string("DenseQR");
+                           }
+                         });
 
 }  // namespace
 }  // namespace cunls

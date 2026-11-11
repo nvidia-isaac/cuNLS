@@ -34,21 +34,6 @@ def test_wrong_dtype_names_the_expected_one():
         pycunls.VectorStateBatch3(wp.zeros(9, wp.float64), 3)
 
 
-def test_too_small_state_array_counts_the_floats():
-    with pytest.raises(ValueError, match=r"has 36 float32 values, but 48 are needed.*16 float32"):
-        pycunls.SE3StateBatch(wp.zeros((3, 12), wp.float32), 3)
-
-
-def test_too_small_measurement_array():
-    with pytest.raises(ValueError, match="deltas has 32 float32 values, but 48 are needed"):
-        pycunls.SE3BetweenFactorBatch(wp.zeros((2, 4, 4), wp.float32), 3)
-
-
-def test_too_small_constant_id_array():
-    with pytest.raises(ValueError, match="const_ids has 1 int32 values, but 2 are needed"):
-        pycunls.VectorStateBatch2(wp.zeros(8, wp.float32), 4, wp.zeros(1, wp.int32), 2)
-
-
 def test_strided_view_is_rejected():
     with pytest.raises(ValueError, match=r"C-contiguous.*strided view.*wp\.clone\(data\)"):
         pycunls.VectorStateBatch3(wp.zeros((3, 6), wp.float32)[:, ::2], 3)
@@ -63,34 +48,31 @@ def test_valid_arrays_and_raw_pointers_still_work():
     data = wp.zeros((3, 4, 4), wp.float32)
     pycunls.SE3StateBatch(data, 3)
     pycunls.SE3StateBatch(data.ptr, 3)  # an int pointer is not checked
+    pycunls.VectorStateBatch3(wp.zeros(9, wp.float64).ptr, 3)  # not even its dtype
 
 
-def test_too_small_pnp_rig_pose_array():
-    obs = wp.zeros((4, 2), wp.float32)
-    points = wp.zeros((4, 3), wp.float32)
-    rig = wp.zeros((2, 4, 4), wp.float32)  # one rig pose per factor is needed
-    with pytest.raises(ValueError, match="poses_camera_from_rig has 32 float32 values, but 64"):
-        pycunls.PnPFactorBatch(obs, rig, points, 4)
-
-
-def test_too_small_custom_state_arrays():
-    class Vec2(pycunls.CustomStateBatch):
-        def plus(self, *args):
-            pass
-
-    with pytest.raises(ValueError, match="data has 6 float32 values, but 8 are needed"):
-        Vec2(wp.zeros(6, wp.float32), 2, 2, 4)
-    with pytest.raises(ValueError, match="const_ids has 1 int32 values, but 2 are needed"):
-        Vec2(wp.zeros(8, wp.float32), 2, 2, 4, wp.zeros(1, wp.int32), 2)
-
-
-def test_capacity_overflow_is_rejected():
-    huge = 2**64 // 16 + 1  # x 16 floats per state wraps size_t to a small number
-    with pytest.raises(ValueError, match="overflows"):
-        pycunls.SE3StateBatch(wp.zeros((1, 4, 4), wp.float32), huge)
+class _Vec2(pycunls.CustomStateBatch):
+    def plus(self, *args):
+        pass
 
 
 @pytest.mark.parametrize("make, needle", [
+    (lambda: pycunls.SE3StateBatch(wp.zeros((3, 12), wp.float32), 3),
+     r"has 36 float32 values, but 48 are needed.*16 float32"),
+    (lambda: pycunls.VectorStateBatch2(wp.zeros(8, wp.float32), 4, wp.zeros(1, wp.int32), 2),
+     "const_ids has 1 int32 values, but 2 are needed"),
+    (lambda: _Vec2(wp.zeros(6, wp.float32), 2, 2, 4),
+     "data has 6 float32 values, but 8 are needed"),
+    (lambda: _Vec2(wp.zeros(8, wp.float32), 2, 2, 4, wp.zeros(1, wp.int32), 2),
+     "const_ids has 1 int32 values, but 2 are needed"),
+    (lambda: pycunls.VectorStateBatch3(wp.zeros(9, wp.float32), 3).set_bounds(
+        wp.zeros(9, wp.float32), wp.zeros(6, wp.float32)),
+     "upper has 6 float32 values, but 9 are needed"),
+    (lambda: pycunls.SE3BetweenFactorBatch(wp.zeros((2, 4, 4), wp.float32), 3),
+     "deltas has 32 float32 values, but 48 are needed"),
+    (lambda: pycunls.PnPFactorBatch(wp.zeros((4, 2), wp.float32), wp.zeros((2, 4, 4), wp.float32),
+                                    wp.zeros((4, 3), wp.float32), 4),  # one rig pose per factor
+     "poses_camera_from_rig has 32 float32 values, but 64"),
     (lambda: pycunls.ConstantVelocitySE3FactorBatch(wp.zeros(3, wp.float32), 4),
      "time_steps has 3 float32 values, but 4 are needed"),
     (lambda: pycunls.ConstantVelocityInformationSE3FactorBatch(
@@ -110,24 +92,25 @@ def test_capacity_overflow_is_rejected():
                                     pycunls.ImuParameters(), 2),
      "imu_samples has 13 float32 values, but 14 are needed"),
 ])
-def test_too_small_factor_arrays_are_rejected(make, needle):
+def test_too_small_arrays_are_rejected(make, needle):
     with pytest.raises(ValueError, match=needle):
         make()
 
 
-def test_too_small_bounds_are_rejected():
-    states = pycunls.VectorStateBatch3(wp.zeros(9, wp.float32), 3)
-    with pytest.raises(ValueError, match="upper has 6 float32 values, but 9 are needed"):
-        states.set_bounds(wp.zeros(9, wp.float32), wp.zeros(6, wp.float32))
-
-
-def test_capacity_that_overflows_the_size_is_rejected():
-    with pytest.raises(ValueError, match="overflows size_t"):
-        pycunls.BoundFactorBatch3(wp.zeros(9, wp.float32), wp.zeros(9, wp.float32), 2**63)
+@pytest.mark.parametrize("make, needle", [
+    # x 16 floats per state wraps size_t to a small number.
+    (lambda: pycunls.SE3StateBatch(wp.zeros((1, 4, 4), wp.float32), 2**64 // 16 + 1),
+     "overflows"),
+    (lambda: pycunls.BoundFactorBatch3(wp.zeros(9, wp.float32), wp.zeros(9, wp.float32), 2**63),
+     "overflows size_t"),
+], ids=["state", "factor"])
+def test_capacity_that_overflows_the_size_is_rejected(make, needle):
+    with pytest.raises(ValueError, match=needle):
+        make()
 
 
 def test_every_device_buffer_dtype_is_checked():
-    """float32 data, int32 ids, uint64 pointer tables; raw integer pointers pass unchecked."""
+    """float32 data, int32 ids, uint64 pointer tables."""
     with pytest.raises(TypeError, match="const_ids must have dtype int32, got int64"):
         pycunls.SE3StateBatch(wp.zeros(16 * 2, wp.float32), 2, wp.zeros(1, wp.int64), 1)
     with pytest.raises(TypeError, match="observations must have dtype float32"):
@@ -148,5 +131,3 @@ def test_every_device_buffer_dtype_is_checked():
         problem.add_factor_batch(prior, state_pointer_table=table)
     with pytest.raises(TypeError, match="state_problem_ids must have dtype int32"):
         problem.set_problem_partition(2, [wp.array(np.arange(2, dtype=np.int64))])
-    pycunls.VectorStateBatch3(wp.zeros(9, wp.float32).ptr, 3)  # a raw pointer is not checked
-

@@ -183,6 +183,69 @@ class SyntheticPGOTest : public ::testing::Test {
     }
   }
 
+  /**
+   * @brief Optimizes `factor` (one between factor per pose i, left = set1[i],
+   * right = set2[i]) with LM and checks the deltas are satisfied.
+   */
+  void OptimizeAndExpectDeltasSatisfied(FactorBatch &factor) {
+    dvector<SE3Transform> poses_set1_device(poses_set1_);
+    dvector<SE3Transform> poses_set2_device(poses_set2_);
+    SE3StateBatch state_batch_set1(reinterpret_cast<const float *>(poses_set1_device.data()),
+                                   num_poses_);
+    state_batch_set1.SetNumActiveStates(num_poses_, 0);
+    SE3StateBatch state_batch_set2(reinterpret_cast<const float *>(poses_set2_device.data()),
+                                   num_poses_);
+    state_batch_set2.SetNumActiveStates(num_poses_, 0);
+
+    std::vector<float *> state_pointers;
+    state_pointers.reserve(num_poses_ * 2);
+    for (size_t i = 0; i < num_poses_; i++) {
+      state_pointers.push_back(state_batch_set1.StateDevicePtr(i));  // left
+      state_pointers.push_back(state_batch_set2.StateDevicePtr(i));  // right
+    }
+    factor.SetNumActiveFactors(num_poses_);
+    Problem problem;
+    problem.AddStateBatch(&state_batch_set1);
+    problem.AddStateBatch(&state_batch_set2);
+    problem.AddFactorBatch(&factor, state_pointers);
+    ASSERT_TRUE(problem.CheckConsistency());
+
+    CudaStream stream;
+    MinimizerOptions options;
+    options.max_num_iterations = 50;
+    options.state_tolerance = 1e-6f;
+    options.cost_tolerance = 1e-6f;
+    options.disable_safety_checks = false;
+    options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
+    options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
+        test_utils::PCGBlockSizeFromEnv(6);
+    options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
+        test_utils::PCGMaxIterFromEnv(400);
+    options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
+        test_utils::PCGTolFromEnv(1e-4f);
+    LevenbergMarquardtMinimizerOptions lm_options;
+    lm_options.base_options = options;
+    lm_options.initial_lambda = 1e-3f;
+    LevenbergMarquardtMinimizer minimizer(lm_options);
+
+    MinimizerSummary summary;
+    {
+      auto minimize_range = profiler_domain_.CreateDomainRange("Minimize");
+      summary = minimizer.Minimize(stream.GetStream(), problem);
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    }
+    ASSERT_LT(summary.final_cost, 1e-2f);
+    ASSERT_GT(summary.num_iterations, 0);
+    ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
+  }
+
+  /** num_poses_ identity 6x6 square-root information matrices on the device. */
+  dvector<Matrix<6>> IdentitySqrtInformation() const {
+    Matrix<6> identity{};
+    for (int j = 0; j < 6; j++) identity[j * 6 + j] = 1.0f;
+    return dvector<Matrix<6>>(std::vector<Matrix<6>>(num_poses_, identity));
+  }
+
   const size_t num_poses_ = 10000;
   const uint32_t fixed_seed_ = 42;
   std::vector<SE3Transform> poses_set1_;
@@ -193,343 +256,46 @@ class SyntheticPGOTest : public ::testing::Test {
 };
 
 /**
- * @brief Tests pose graph optimization with consecutive between constraints.
- *
- * Creates two sets of SE3 poses, adds between constraints between consecutive
- * pairs (pose[i] and pose[i+1]) for each set, optimizes with Gauss-Newton,
- * and verifies that consecutive poses are equal (relative transform is
- * identity).
+ * @brief Pose graph optimization with one SE3BetweenFactorBatch factor between
+ * pose i of each of two random sets: after LM the deltas are satisfied.
  */
 TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("OptimizeConsecutiveBetweenConstraints");
-
-  // Create device vectors from host vectors
-  dvector<SE3Transform> poses_set1_device(this->poses_set1_);
-  dvector<SE3Transform> poses_set2_device(this->poses_set2_);
-
-  // Create states for both sets
-  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(poses_set1_ptr, this->num_poses_);
-  state_batch_set1.SetNumActiveStates(state_batch_set1.Capacity(),
-                                      state_batch_set1.ConstCapacity());
-  SE3StateBatch state_batch_set2(poses_set2_ptr, this->num_poses_);
-  state_batch_set2.SetNumActiveStates(state_batch_set2.Capacity(),
-                                      state_batch_set2.ConstCapacity());
-
-  // Create between constraints for consecutive pairs in set 1
-  // For N poses, we have N-1 consecutive constraints
-  size_t num_constraints = this->num_poses_;
-  dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  SE3BetweenFactorBatch between_factor_batch(pose_deltas_device.data(), num_constraints);
-  between_factor_batch.SetNumActiveFactors(between_factor_batch.Capacity());
-
-  // Create state pointers for set 1 constraints
-  // Each constraint connects pose[i] from set1 (left) and pose[i] from set2
-  // (right)
-  std::vector<float *> state_pointers;
-  for (size_t i = 0; i < num_constraints; i++) {
-    state_pointers.push_back(state_batch_set1.StateDevicePtr(i));  // left
-    state_pointers.push_back(state_batch_set2.StateDevicePtr(i));  // right
-  }
-
-  // Build problem
-  Problem problem;
-  problem.AddStateBatch(&state_batch_set1);
-  problem.AddStateBatch(&state_batch_set2);
-
-  problem.AddFactorBatch(&between_factor_batch, state_pointers);
-
-  ASSERT_TRUE(problem.CheckConsistency());
-
-  // Optimize with Levenberg-Marquardt
-  CudaStream stream;
-  MinimizerOptions options;
-  options.max_num_iterations = 50;
-  options.state_tolerance = 1e-6f;
-  options.cost_tolerance = 1e-6f;
-  options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
-      test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
-      test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
-      test_utils::PCGTolFromEnv(1e-4f);
-  // GaussNewtonMinimizer minimizer(options);
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = options;
-  lm_options.initial_lambda = 1e-3f;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-
-  MinimizerSummary summary;
-  {
-    auto minimize_range = this->profiler_domain_.CreateDomainRange("Minimize");
-    summary = minimizer.Minimize(stream.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  // // Verify optimization converged
-  ASSERT_LT(summary.final_cost, 1e-2f);
-  ASSERT_GT(summary.num_iterations, 0);
-
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
+  dvector<SE3Transform> deltas(pose_deltas_);
+  SE3BetweenFactorBatch factor(deltas.data(), num_poses_);
+  OptimizeAndExpectDeltasSatisfied(factor);
 }
 
-/**
- * @brief Tests pose graph optimization with InformationFactorBatch
- * wrapper.
- *
- * Creates two sets of SE3 poses, adds between constraints wrapped with
- * InformationFactorBatch, optimizes with Levenberg-Marquardt,
- * and verifies that the optimized poses satisfy the constraints (relative
- * transform matches the expected delta).
- */
+/** The same with InformationFactorBatch (identity sqrt-information). */
 TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("OptimizeConsecutiveBetweenConstraints");
-
-  // Create device vectors from host vectors
-  dvector<SE3Transform> poses_set1_device(this->poses_set1_);
-  dvector<SE3Transform> poses_set2_device(this->poses_set2_);
-
-  // Create states for both sets
-  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(poses_set1_ptr, this->num_poses_);
-  state_batch_set1.SetNumActiveStates(state_batch_set1.Capacity(),
-                                      state_batch_set1.ConstCapacity());
-  SE3StateBatch state_batch_set2(poses_set2_ptr, this->num_poses_);
-  state_batch_set2.SetNumActiveStates(state_batch_set2.Capacity(),
-                                      state_batch_set2.ConstCapacity());
-
-  // Create between constraints for consecutive pairs in set 1
-  // For N poses, we have N-1 consecutive constraints
-  size_t num_constraints = this->num_poses_;
-
-  std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
-  for (size_t i = 0; i < num_constraints; i++) {
-    sqrt_information_matrices_host[i].fill(0.0f);
-    for (int j = 0; j < 6; j++) {
-      sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
-    }
-  }
-  dvector<Matrix<6>> sqrt_information_matrices_device(sqrt_information_matrices_host);
-  dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  InformationFactorBatch<SE3BetweenFactorBatch> between_factor_batch(
-      sqrt_information_matrices_device.data(), num_constraints, pose_deltas_device.data(),
-      num_constraints);
-  between_factor_batch.SetNumActiveFactors(between_factor_batch.Capacity());
-
-  // Create state pointers for set 1 constraints
-  // Each constraint connects pose[i] from set1 (left) and pose[i] from set2
-  // (right)
-  std::vector<float *> state_pointers;
-  for (size_t i = 0; i < num_constraints; i++) {
-    state_pointers.push_back(state_batch_set1.StateDevicePtr(i));  // left
-    state_pointers.push_back(state_batch_set2.StateDevicePtr(i));  // right
-  }
-
-  // Build problem
-  Problem problem;
-  problem.AddStateBatch(&state_batch_set1);
-  problem.AddStateBatch(&state_batch_set2);
-
-  problem.AddFactorBatch(&between_factor_batch, state_pointers);
-
-  ASSERT_TRUE(problem.CheckConsistency());
-
-  // Optimize with Levenberg-Marquardt
-  CudaStream stream;
-  MinimizerOptions options;
-  options.max_num_iterations = 50;
-  options.state_tolerance = 1e-6f;
-  options.cost_tolerance = 1e-6f;
-  options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
-      test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
-      test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
-      test_utils::PCGTolFromEnv(1e-4f);
-  // GaussNewtonMinimizer minimizer(options);
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = options;
-  lm_options.initial_lambda = 1e-3f;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-
-  MinimizerSummary summary;
-  {
-    auto minimize_range = this->profiler_domain_.CreateDomainRange("Minimize");
-    summary = minimizer.Minimize(stream.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  // // Verify optimization converged
-  ASSERT_LT(summary.final_cost, 1e-2f);
-  ASSERT_GT(summary.num_iterations, 0);
-
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
+  dvector<SE3Transform> deltas(pose_deltas_);
+  auto sqrt_information = IdentitySqrtInformation();
+  InformationFactorBatch<SE3BetweenFactorBatch> factor(sqrt_information.data(), num_poses_,
+                                                       deltas.data(), num_poses_);
+  OptimizeAndExpectDeltasSatisfied(factor);
 }
 
 /**
- * @brief PGO with WeightedFactorBatch around InformationFactorBatch (identity
- * sqrt-information, uniform weight).
+ * @brief The same with WeightedFactorBatch around InformationFactorBatch
+ * (identity sqrt-information, uniform weight).
  */
 TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("WeightedWrapsInformationBetweenFactorBatch");
-
-  dvector<SE3Transform> poses_set1_device(this->poses_set1_);
-  dvector<SE3Transform> poses_set2_device(this->poses_set2_);
-
-  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(poses_set1_ptr, this->num_poses_);
-  state_batch_set1.SetNumActiveStates(state_batch_set1.Capacity(),
-                                      state_batch_set1.ConstCapacity());
-  SE3StateBatch state_batch_set2(poses_set2_ptr, this->num_poses_);
-  state_batch_set2.SetNumActiveStates(state_batch_set2.Capacity(),
-                                      state_batch_set2.ConstCapacity());
-
-  const size_t num_constraints = this->num_poses_;
-  std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
-  for (size_t i = 0; i < num_constraints; i++) {
-    sqrt_information_matrices_host[i].fill(0.0f);
-    for (int j = 0; j < 6; j++) {
-      sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
-    }
-  }
-  dvector<Matrix<6>> sqrt_information_matrices_device(sqrt_information_matrices_host);
-  dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>> between_factor_batch(
-      2.0f, sqrt_information_matrices_device.data(), num_constraints, pose_deltas_device.data(),
-      num_constraints);
-  between_factor_batch.SetNumActiveFactors(between_factor_batch.Capacity());
-
-  std::vector<float *> state_pointers;
-  state_pointers.reserve(num_constraints * 2);
-  for (size_t i = 0; i < num_constraints; i++) {
-    state_pointers.push_back(state_batch_set1.StateDevicePtr(i));
-    state_pointers.push_back(state_batch_set2.StateDevicePtr(i));
-  }
-
-  Problem problem;
-  problem.AddStateBatch(&state_batch_set1);
-  problem.AddStateBatch(&state_batch_set2);
-  problem.AddFactorBatch(&between_factor_batch, state_pointers);
-  ASSERT_TRUE(problem.CheckConsistency());
-
-  CudaStream stream;
-  MinimizerOptions options;
-  options.max_num_iterations = 50;
-  options.state_tolerance = 1e-6f;
-  options.cost_tolerance = 1e-6f;
-  options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
-      test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
-      test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
-      test_utils::PCGTolFromEnv(1e-4f);
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = options;
-  lm_options.initial_lambda = 1e-3f;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-
-  MinimizerSummary summary;
-  {
-    auto minimize_range = this->profiler_domain_.CreateDomainRange("Minimize");
-    summary = minimizer.Minimize(stream.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  ASSERT_LT(summary.final_cost, 1e-2f);
-  ASSERT_GT(summary.num_iterations, 0);
-
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
+  dvector<SE3Transform> deltas(pose_deltas_);
+  auto sqrt_information = IdentitySqrtInformation();
+  WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>> factor(
+      2.0f, sqrt_information.data(), num_poses_, deltas.data(), num_poses_);
+  OptimizeAndExpectDeltasSatisfied(factor);
 }
 
 /**
- * @brief PGO with InformationFactorBatch around WeightedFactorBatch (identity
- * sqrt-information, uniform weight).
+ * @brief The same with InformationFactorBatch around WeightedFactorBatch
+ * (identity sqrt-information, uniform weight).
  */
 TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("InformationWrapsWeightedBetweenFactorBatch");
-
-  dvector<SE3Transform> poses_set1_device(this->poses_set1_);
-  dvector<SE3Transform> poses_set2_device(this->poses_set2_);
-
-  const float *poses_set1_ptr = reinterpret_cast<const float *>(poses_set1_device.data());
-  const float *poses_set2_ptr = reinterpret_cast<const float *>(poses_set2_device.data());
-  SE3StateBatch state_batch_set1(poses_set1_ptr, this->num_poses_);
-  state_batch_set1.SetNumActiveStates(state_batch_set1.Capacity(),
-                                      state_batch_set1.ConstCapacity());
-  SE3StateBatch state_batch_set2(poses_set2_ptr, this->num_poses_);
-  state_batch_set2.SetNumActiveStates(state_batch_set2.Capacity(),
-                                      state_batch_set2.ConstCapacity());
-
-  const size_t num_constraints = this->num_poses_;
-  std::vector<Matrix<6>> sqrt_information_matrices_host(num_constraints);
-  for (size_t i = 0; i < num_constraints; i++) {
-    sqrt_information_matrices_host[i].fill(0.0f);
-    for (int j = 0; j < 6; j++) {
-      sqrt_information_matrices_host[i][j * 6 + j] = 1.0f;
-    }
-  }
-  dvector<Matrix<6>> sqrt_information_matrices_device(sqrt_information_matrices_host);
-  dvector<SE3Transform> pose_deltas_device(this->pose_deltas_);
-  InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>> between_factor_batch(
-      sqrt_information_matrices_device.data(), num_constraints, 2.0f, pose_deltas_device.data(),
-      num_constraints);
-  between_factor_batch.SetNumActiveFactors(between_factor_batch.Capacity());
-
-  std::vector<float *> state_pointers;
-  state_pointers.reserve(num_constraints * 2);
-  for (size_t i = 0; i < num_constraints; i++) {
-    state_pointers.push_back(state_batch_set1.StateDevicePtr(i));
-    state_pointers.push_back(state_batch_set2.StateDevicePtr(i));
-  }
-
-  Problem problem;
-  problem.AddStateBatch(&state_batch_set1);
-  problem.AddStateBatch(&state_batch_set2);
-  problem.AddFactorBatch(&between_factor_batch, state_pointers);
-  ASSERT_TRUE(problem.CheckConsistency());
-
-  CudaStream stream;
-  MinimizerOptions options;
-  options.max_num_iterations = 50;
-  options.state_tolerance = 1e-6f;
-  options.cost_tolerance = 1e-6f;
-  options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = test_utils::SolverTypeFromEnv();
-  options.sparse_linear_solver_config.block_sparse_pcg_options.block_size =
-      test_utils::PCGBlockSizeFromEnv(6);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.max_iterations =
-      test_utils::PCGMaxIterFromEnv(400);
-  options.sparse_linear_solver_config.block_sparse_pcg_options.relative_tolerance =
-      test_utils::PCGTolFromEnv(1e-4f);
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = options;
-  lm_options.initial_lambda = 1e-3f;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-
-  MinimizerSummary summary;
-  {
-    auto minimize_range = this->profiler_domain_.CreateDomainRange("Minimize");
-    summary = minimizer.Minimize(stream.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  ASSERT_LT(summary.final_cost, 1e-2f);
-  ASSERT_GT(summary.num_iterations, 0);
-
-  ExpectRelativeDeltaSatisfied(state_batch_set1, state_batch_set2, stream.GetStream());
+  dvector<SE3Transform> deltas(pose_deltas_);
+  auto sqrt_information = IdentitySqrtInformation();
+  InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>> factor(
+      sqrt_information.data(), num_poses_, 2.0f, deltas.data(), num_poses_);
+  OptimizeAndExpectDeltasSatisfied(factor);
 }
 
 // =============================================================================

@@ -48,11 +48,15 @@ def make_minimizer(kind):
 # ---------------------------------------------------------------------------
 
 
+# Two 3-vector priors (target) in the box [lower, upper]; some sides are open.
+BOX = (np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32),
+       np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32),
+       np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32))
+
+
 @pytest.mark.parametrize("kind", ["gn", "lm"])
 def test_box_projection(stream, kind):
-    target = np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32)
-    lower = np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32)
-    upper = np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32)
+    target, lower, upper = BOX
     x = wp.zeros(6, dtype=wp.float32)
     t, lo, hi = wp.array(target), wp.array(lower), wp.array(upper)
     states = pycunls.VectorStateBatch3(x, 2)
@@ -81,9 +85,7 @@ def test_projected_state_bounds(stream, kind):
     """The same box through VectorStateBatch.set_bounds: solved by the augmented
     Lagrangian without outer iterations (projected Gauss-Newton), exact, from an
     infeasible initial guess; the minimizers alone reject the bounded problem."""
-    target = np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32)
-    lower = np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32)
-    upper = np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32)
+    target, lower, upper = BOX
     x = wp.array(np.array([5, 0, 0, 0, 0, 0], dtype=np.float32))
     t, lo, hi = wp.array(target), wp.array(lower), wp.array(upper)
     states = pycunls.VectorStateBatch3(x, 2)

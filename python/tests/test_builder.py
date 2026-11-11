@@ -22,24 +22,34 @@ import warp as wp
 import pycunls
 
 
+def _between(poses, edges):
+    """Exact SE3 between measurements T_right^-1 T_left (the cuNLS convention)."""
+    return np.stack([np.linalg.inv(poses[j]) @ poses[i] for i, j in edges]).astype(np.float32)
+
+
 def _chain(n=20, seed=0):
-    """Ground-truth SE3 chain, exact between measurements (cuNLS convention) and a bad start."""
+    """Ground-truth SE3 chain, exact between measurements and a bad start."""
     rng = np.random.default_rng(seed)
     truth = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     truth[:, 0, 3] = np.arange(n)
     truth[:, 1, 3] = np.sin(np.arange(n) * 0.3)
     edges = np.stack([np.arange(n - 1), np.arange(1, n)], 1)
-    deltas = np.stack([np.linalg.inv(truth[j]) @ truth[i] for i, j in edges]).astype(np.float32)
     initial = truth.copy()
     initial[1:, :3, 3] += rng.normal(0, 0.2, (n - 1, 3))
-    return truth, initial, edges, deltas
+    return truth, initial, edges, _between(truth, edges)
 
 
-def test_pose_graph_with_the_builder():
+def _chain_builder():
+    """The chain as a builder (pose 0 constant): ``(pb, poses, between, truth, initial, edges)``."""
     truth, initial, edges, deltas = _chain()
     pb = pycunls.ProblemBuilder()
     poses = pb.add_states(pycunls.SE3StateBatch, initial, constant=[0])
-    pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
+    between = pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
+    return pb, poses, between, truth, initial, edges
+
+
+def test_pose_graph_with_the_builder():
+    pb, poses, _, truth, _, _ = _chain_builder()
     # Exact measurements: the final cost is ~0, below the default absolute cost_tolerance.
     result = pb.solve(cost_tolerance=1e-12)
     assert result.converged, result.message
@@ -48,10 +58,8 @@ def test_pose_graph_with_the_builder():
 
 
 def test_handles_expose_device_arrays_and_host_copies():
-    truth, initial, edges, deltas = _chain()
-    pb = pycunls.ProblemBuilder()
-    poses = pb.add_states(pycunls.SE3StateBatch, initial, constant=[0])
-    between = pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
+    _, poses, between, truth, initial, edges = _chain_builder()
+    deltas = _between(truth, edges)
     assert isinstance(poses.data, wp.array) and poses.data.dtype == wp.float32
     assert poses.data.shape == initial.shape
     assert isinstance(poses.values, np.ndarray)
@@ -101,16 +109,6 @@ def test_two_state_types_and_per_slot_connectivity():
     np.testing.assert_allclose(result[p], points, atol=1e-2)
 
 
-def test_bounds_use_the_augmented_lagrangian():
-    pb = pycunls.ProblemBuilder()
-    x = pb.add_states(pycunls.VectorStateBatch2, np.zeros((3, 2)), bounds=(-1.0, [1.0, 0.5]))
-    target = np.array([[3, 3], [0.2, 0.2], [-5, 0]], np.float32)
-    pb.add_factors(pycunls.PriorVectorFactorBatch2, target, connect=(x, np.arange(3)))
-    result = pb.solve()
-    assert result.converged
-    np.testing.assert_allclose(result[x], [[1, 0.5], [0.2, 0.2], [-1, 0]], atol=1e-3)
-
-
 def test_mistakes_are_explained():
     _, initial, edges, deltas = _chain()
     pb = pycunls.ProblemBuilder()
@@ -132,21 +130,6 @@ def test_nan_initial_state_is_caught_before_solving():
     with pytest.raises(ValueError, match="first state 4"):
         pycunls.solve(pycunls.SE3BetweenFactorBatch, deltas, initial=initial, connect=edges,
                       constant=[0])
-
-
-def test_resolve_with_new_measurements():
-    truth, initial, edges, deltas = _chain()
-    pb = pycunls.ProblemBuilder()
-    poses = pb.add_states(pycunls.SE3StateBatch, initial, constant=[0])
-    between = pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
-    pb.solve(cost_tolerance=1e-12)
-    shifted = truth.copy()
-    shifted[1:, 2, 3] += 0.5  # every pose after the first moves up
-    new = np.stack([np.linalg.inv(shifted[j]) @ shifted[i] for i, j in edges]).astype(np.float32)
-    between.set_measurements(new)
-    poses.set(initial)
-    result = pb.solve(reuse_structure=True, cost_tolerance=1e-12)
-    np.testing.assert_allclose(result[poses], shifted, atol=1e-3)
 
 
 @pytest.mark.parametrize("factor, measurement, state, initial", [
@@ -181,19 +164,17 @@ def test_handles_of_another_builder_are_rejected():
 
 
 def test_repeated_solves_keep_the_solver_until_something_changes():
-    truth, initial, edges, deltas = _chain()
-    pb = pycunls.ProblemBuilder()
-    poses = pb.add_states(pycunls.SE3StateBatch, initial, constant=[0])
-    between = pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
+    pb, poses, between, truth, initial, edges = _chain_builder()
     pb.solve(cost_tolerance=1e-12)
     solver = pb._solver
     shifted = truth.copy()
-    shifted[1:, 2, 3] += 0.5
-    new = np.stack([np.linalg.inv(shifted[j]) @ shifted[i] for i, j in edges]).astype(np.float32)
+    shifted[1:, 2, 3] += 0.5  # every pose after the first moves up
+    new = _between(shifted, edges)
     between.set_measurements(new)
     poses.set(initial)
-    reused = pb.solve(cost_tolerance=1e-12)
+    reused = pb.solve(reuse_structure=True, cost_tolerance=1e-12)
     assert pb._solver is solver  # same method and options: kept
+    np.testing.assert_allclose(reused[poses], shifted, atol=1e-3)
 
     # The same problem solved from scratch gives the same answer.
     fresh = pycunls.ProblemBuilder()
@@ -211,12 +192,14 @@ def test_repeated_solves_keep_the_solver_until_something_changes():
     assert pb._solver is None  # structure changed
 
 
-def test_repeated_bounded_solves_reuse_the_solver():
+def test_bounds_use_the_augmented_lagrangian_and_repeated_solves_reuse_it():
     pb = pycunls.ProblemBuilder()
     x = pb.add_states(pycunls.VectorStateBatch2, np.zeros((3, 2)), bounds=(-1.0, [1.0, 0.5]))
     target = np.array([[3, 3], [0.2, 0.2], [-5, 0]], np.float32)
     prior = pb.add_factors(pycunls.PriorVectorFactorBatch2, target, connect=(x, np.arange(3)))
-    pb.solve()
+    result = pb.solve()
+    assert result.converged
+    np.testing.assert_allclose(result[x], [[1, 0.5], [0.2, 0.2], [-1, 0]], atol=1e-3)
     solver = pb._solver
     assert solver[2] is not None  # the augmented Lagrangian wrapper
     prior.set_measurements(-target)

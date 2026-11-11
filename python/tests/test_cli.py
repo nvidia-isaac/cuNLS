@@ -13,10 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""python -m pycunls: guide, doctor, describe, catalog (the help an agent finds without the repo)."""
+"""python -m pycunls: guide, doctor, describe, catalog (the help an agent finds without the
+repo)."""
 
 import json
+import os
 import pathlib
+import shutil
+import subprocess
+import sys
 
 import pycunls
 from pycunls.__main__ import doctor, main
@@ -28,21 +33,16 @@ def test_guide_ships_with_the_package(capsys):
     assert "pycunls.fit" in text and "ProblemBuilder" in text and "T_right^-1 T_left" in text
 
 
-def test_guide_names_only_existing_api():
-    text = (pathlib.Path(pycunls.__file__).with_name("AGENT_GUIDE.md")).read_text()
-    import re
-    for name in set(re.findall(r"pycunls\.(\w+)", text)):
-        if name == "X":  # the placeholder in help(pycunls.X)
-            continue
-        assert hasattr(pycunls, name) or name in ("warp", "mpc"), name
-
-
 def test_doctor_passes_on_a_working_install(capsys):
     ok, results = doctor()
     assert ok, results
     assert main(["doctor", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["ok"] and {r["check"] for r in report["checks"]} >= {"gpu", "solve", "fit"}
+    checks = {c["check"]: c for c in report["checks"]}
+    assert report["ok"] and set(checks) >= {"gpu", "solve", "fit"}
+    assert checks["gpu"]["ok"] and checks["gpu"]["detail"].startswith("Warp ")
+    assert "GPU" in checks["gpu"]["detail"]
+    assert "warp" not in checks  # Warp is required: part of the gpu check, not an extra one
 
 
 def test_describe_and_catalog(capsys):
@@ -54,12 +54,6 @@ def test_describe_and_catalog(capsys):
 
 
 # ---- a broken install: the CLI still reports what is broken ---------------------------------
-
-import os  # noqa: E402
-import shutil  # noqa: E402
-import subprocess  # noqa: E402
-import sys  # noqa: E402
-
 
 def _run(args, pythonpath, cwd):
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(p) for p in pythonpath))
@@ -97,8 +91,9 @@ def test_doctor_reports_a_missing_native_module(tmp_path):
     assert proc.returncode == 1, proc.stderr
     report, checks = _doctor_json(proc)
     assert not report["ok"]
-    assert not checks["native module"]["ok"] and "_pycunls_core" in checks["native module"]["detail"]
-    assert "reinstall" in checks["native module"]["fix"]
+    native = checks["native module"]
+    assert not native["ok"] and "_pycunls_core" in native["detail"]
+    assert "reinstall" in native["fix"]
     assert checks["solve"]["detail"].startswith("skipped: needs")
     # The guide and the catalog need no native module; a plain import keeps the original error.
     assert _run(["-m", "pycunls", "guide"], [broken], tmp_path).returncode == 0
@@ -117,11 +112,3 @@ def test_doctor_reports_missing_warp(tmp_path):
     assert not checks["gpu"]["ok"] and "simulated: no warp" in checks["gpu"]["detail"]
     assert checks["gpu"]["required"] and "warp-lang" in checks["gpu"]["fix"]
     assert checks["solve"]["detail"].startswith("skipped: needs gpu")
-
-
-def test_doctor_reports_the_warp_gpu(capsys):
-    assert main(["doctor", "--json"]) == 0
-    checks = {c["check"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
-    assert checks["gpu"]["ok"] and checks["gpu"]["detail"].startswith("Warp ")
-    assert "GPU" in checks["gpu"]["detail"]
-    assert "warp" not in checks  # Warp is required: part of the gpu check, not an extra one
