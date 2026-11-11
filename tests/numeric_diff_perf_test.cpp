@@ -21,7 +21,8 @@
  * problem types (PGO / SBA / PnP) and named problem sizes, timed two ways on
  * the same synthetic problems:
  *
- *  - NumericDiffPerfTest.BuildSystemTiming times repeated
+ *  - NumericDiffPerfTest.BuildSystemTiming (skipped unless the environment
+ *    sets CUNLS_NUMERIC_DIFF_PERF=1) times repeated
  *    `internal::BuildSystem` calls via CUDA events: `BuildSystem` is exactly
  *    the call that computes residuals + Jacobians and assembles the normal
  *    equations, so it isolates the cost the two Jacobian modes differ on.
@@ -62,6 +63,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -501,13 +503,23 @@ MinimizerOptions MakeOptions(JacobianMode mode) {
   return options;
 }
 
+// Off by default (18 cases up to 1M poses): set CUNLS_NUMERIC_DIFF_PERF=1 to run.
+bool PerfSweepEnabled() {
+  const char *e = std::getenv("CUNLS_NUMERIC_DIFF_PERF");
+  return e != nullptr && std::string(e) == "1";
+}
+
 class NumericDiffPerfTest : public ::testing::TestWithParam<PerfParams> {
  protected:
   static std::string CsvPath() { return std::string(kCsvDir) + "/results.csv"; }
   static void SetUpTestSuite() {
+    if (!PerfSweepEnabled()) return;
     StartCsv(CsvPath(),
              "problem_type,size_label,size_index,n_primary,n_secondary,jacobian_mode,"
              "mean_ms_per_build_system");
+  }
+  void SetUp() override {
+    if (!PerfSweepEnabled()) GTEST_SKIP() << "set CUNLS_NUMERIC_DIFF_PERF=1 to run";
   }
 };
 
