@@ -17,9 +17,9 @@
 rewritten in place between solves (the Python mirror of
 tests/dynamic_problem_test.cpp)."""
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 
@@ -59,9 +59,9 @@ def _options(jacobian_mode=pycunls.JacobianMode.analytic):
 def _solve_fresh(gt, initial, deltas, edges, stream):
     """Solves the frame with a problem built from scratch at exactly its size."""
     n, m = len(gt), len(deltas)
-    states = cp.asarray(initial.reshape(-1))
-    deltas_gpu = cp.asarray(deltas.reshape(-1))
-    anchor = cp.asarray(gt[0])
+    states = wp.array(initial.reshape(-1))
+    deltas_gpu = wp.array(deltas.reshape(-1))
+    anchor = wp.array(gt[0])
     state_batch = pycunls.VectorStateBatch3(states, n)
     between = pycunls.VectorBetweenFactorBatch3(deltas_gpu, m)
     prior = pycunls.PriorVectorFactorBatch3(anchor, 1)
@@ -73,8 +73,8 @@ def _solve_fresh(gt, initial, deltas, edges, stream):
     problem.add_factor_batch(between, [state_batch.state_device_ptr(int(i)) for i in edges])
     problem.add_factor_batch(prior, [state_batch.state_device_ptr(0)])
     pycunls.LevenbergMarquardtMinimizer(_options()).minimize(stream, problem)
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())
-    return cp.asnumpy(states).reshape(-1, 3)
+    wp.synchronize()
+    return states.numpy().reshape(-1, 3)
 
 
 class BoundProblem:
@@ -82,12 +82,12 @@ class BoundProblem:
 
     def __init__(self, form, options=None):
         self.form = form
-        self.states = cp.zeros(CAP_STATES * 3, dtype=cp.float32)
-        self.deltas = cp.zeros(CAP_EDGES * 3, dtype=cp.float32)
-        self.anchor = cp.zeros(3, dtype=cp.float32)
-        self.indices = cp.zeros(2 * CAP_EDGES, dtype=cp.int32)
-        self.pointers = cp.zeros(2 * CAP_EDGES, dtype=cp.uint64)
-        self.anchor_index = cp.zeros(1, dtype=cp.int32)
+        self.states = wp.zeros(CAP_STATES * 3, dtype=wp.float32)
+        self.deltas = wp.zeros(CAP_EDGES * 3, dtype=wp.float32)
+        self.anchor = wp.zeros(3, dtype=wp.float32)
+        self.indices = wp.zeros(2 * CAP_EDGES, dtype=wp.int32)
+        self.pointers = wp.zeros(2 * CAP_EDGES, dtype=wp.uint64)
+        self.anchor_index = wp.zeros(1, dtype=wp.int32)
         self.state_batch = pycunls.VectorStateBatch3(self.states, CAP_STATES)
         self.between = pycunls.VectorBetweenFactorBatch3(self.deltas, CAP_EDGES)
         self.prior = pycunls.PriorVectorFactorBatch3(self.anchor, 1)
@@ -105,13 +105,19 @@ class BoundProblem:
         self.problem.add_factor_batch(self.prior, [self.state_batch], self.anchor_index)
         self.minimizer = pycunls.LevenbergMarquardtMinimizer(options or _options())
         self.stream = pycunls.CudaStream()
+        self.wp_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=self.stream.get_stream())
+
+    def write(self, view, values):
+        """Copies host ``values`` into a device view, ordered with the solves on ``stream``."""
+        with wp.ScopedStream(self.wp_stream):
+            view.assign(np.asarray(values, dtype=wp.dtype_to_numpy(view.dtype)))
 
     def solve(self, gt, initial, deltas, edges):
         n, m = len(gt), len(deltas)
         # 1. Rewrite contents in place.
-        self.states[:n * 3] = cp.asarray(initial.reshape(-1))
-        self.deltas[:m * 3] = cp.asarray(deltas.reshape(-1))
-        self.anchor[:] = cp.asarray(gt[0])
+        self.write(self.states[:n * 3], initial.reshape(-1))
+        self.write(self.deltas[:m * 3], deltas.reshape(-1))
+        self.write(self.anchor, gt[0])
         ptrs = [self.state_batch.state_device_ptr(int(i)) for i in edges]
         # 2. Sizes.
         self.state_batch.set_num_active_states(n)
@@ -120,13 +126,13 @@ class BoundProblem:
         if self.form == "host_list":
             self.problem.set_state_pointers(0, ptrs)
         elif self.form == "device_pointers":
-            self.pointers[:len(ptrs)] = cp.asarray(np.array(ptrs, dtype=np.uint64))
+            self.write(self.pointers[:len(ptrs)], np.array(ptrs, dtype=np.uint64))
         else:
-            self.indices[:len(edges)] = cp.asarray(edges)
+            self.write(self.indices[:len(edges)], edges)
         assert self.problem.validate(self.stream)
         self.minimizer.minimize(self.stream, self.problem)
-        cp.cuda.runtime.streamSynchronize(self.stream.get_stream())
-        return cp.asnumpy(self.states[:n * 3]).reshape(-1, 3)
+        wp.synchronize()
+        return self.states[:n * 3].numpy().reshape(-1, 3)
 
 
 @pytest.mark.parametrize("form", ["host_list", "device_pointers", "device_indices"])
@@ -163,11 +169,11 @@ def test_validation_catches_bad_connectivity():
     assert bound.problem.check_consistency()
 
     # An index beyond the active states.
-    bound.indices[0] = 50
+    bound.write(bound.indices[:1], [50])
     assert not bound.problem.validate(bound.stream)
 
     # States no factor reads: keep only the first between factor.
-    bound.indices[:len(edges)] = cp.asarray(edges)
+    bound.write(bound.indices[:len(edges)], edges)
     assert bound.problem.validate(bound.stream)
     bound.between.set_num_active_factors(1)
     assert not bound.problem.validate(bound.stream)

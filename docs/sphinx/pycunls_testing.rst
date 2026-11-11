@@ -16,7 +16,8 @@ Install the test dependencies:
    cd python
    pip install ".[test]"
 
-This installs ``pytest``, ``cupy-cuda12x``, and ``warp-lang``.
+This installs ``pytest`` and ``cupy-cuda12x`` (used only by
+``test_cupy_interop.py``; ``warp-lang`` is a runtime dependency).
 
 ===============================================================================
 Run all tests
@@ -47,7 +48,8 @@ Test modules
    * - Module
      - Coverage
    * - ``test_cupy_interop.py``
-     - CuPy array and raw pointer interop with pycunls constructors.
+     - Interop with arrays from another library (CuPy) and raw pointers in
+       pycunls constructors.
    * - ``test_state_batches.py``
      - State batch creation, state pointer access, and constant-state
        marking for all Euclidean and Lie group state types.

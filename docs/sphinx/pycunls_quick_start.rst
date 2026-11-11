@@ -48,19 +48,21 @@ The cost is :math:`\tfrac{1}{2}\|x - o\|^2`, so the optimal solution is
 :math:`x^* = 2`.
 
 **Imports and GPU data.**
-All GPU memory is managed via CuPy arrays. A `CudaStream` is required by
-every pycunls API call — it controls asynchronous GPU execution.
+GPU data lives in `NVIDIA Warp <https://github.com/NVIDIA/warp>`_ arrays
+(``wp.array``; any array with ``__cuda_array_interface__``, such as a PyTorch
+or CuPy array, works too). A `CudaStream` is required by every solve — it
+controls asynchronous GPU execution.
 
 .. code-block:: python
 
-   import cupy as cp
+   import warp as wp
    import pycunls
 
    stream = pycunls.CudaStream()
 
    # Initial guess: x = 0.  Target observation: o = 2.
-   state_gpu = cp.array([0.0], dtype=cp.float32)
-   obs_gpu   = cp.array([2.0], dtype=cp.float32)
+   state_gpu = wp.array([0.0], dtype=wp.float32)
+   obs_gpu   = wp.array([2.0], dtype=wp.float32)
 
 **Create the state batch.**
 A `VectorStateBatch1` wraps the device memory as a batch of 1-dimensional
@@ -105,8 +107,15 @@ quality. ``minimize`` updates the state memory in-place and returns a
 `MinimizerSummary` with solve statistics. The minimizer allocates GPU
 workspace during initialization before the first linearized solve.
 
+The uploads above ran on Warp's stream, the solve runs on ``stream``:
+synchronize Warp's stream first so the solver reads the uploaded values (or
+upload inside ``with wp.ScopedStream(wp.Stream(wp.get_cuda_device(),
+cuda_stream=stream.get_stream())):``). ``minimize`` synchronizes ``stream``
+before it returns, so the results can be read right after it.
+
 .. code-block:: python
 
+   wp.synchronize_stream(wp.get_stream())
    minimizer = pycunls.LevenbergMarquardtMinimizer()
    summary   = minimizer.minimize(stream, problem)
 
@@ -117,7 +126,7 @@ workspace during initialization before the first linearized solve.
    print(f"Iterations:   {summary.num_iterations}")
    print(f"Initial cost: {summary.initial_cost}")
    print(f"Final cost:   {summary.final_cost}")
-   print(f"Solution x:   {cp.asnumpy(state_gpu)}")
+   print(f"Solution x:   {state_gpu.numpy()}")
 
 ===============================================================================
 Step 3: Run

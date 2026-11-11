@@ -39,19 +39,11 @@ This uses `scikit-build-core` to configure CMake with
 cuNLS core library, and installs the ``pycunls`` package into your Python
 environment.
 
-To include the optional `NVIDIA Warp <https://developer.nvidia.com/warp-python>`_
-integration and test dependencies:
+To also install the test dependencies:
 
 .. code-block:: bash
 
-   pip install ".[all]"
-
-Or selectively:
-
-.. code-block:: bash
-
-   pip install ".[warp]"   # Warp support only
-   pip install ".[test]"   # test dependencies (pytest, cupy, warp-lang)
+   pip install ".[test]"   # pytest, and cupy-cuda12x for one interoperability test
 
 ===============================================================================
 Build a wheel
@@ -71,17 +63,16 @@ Dependencies
 
 **Required (installed automatically by pip):**
 
-- `cupy-cuda12x <https://cupy.dev/>`_ — GPU arrays and CUDA interop. All
-  pycunls constructors accept either a ``cupy.ndarray`` or a raw ``int``
-  device pointer.
-
-**Optional:**
-
-- `warp-lang <https://nvidia.github.io/warp/>`_ — `NVIDIA Warp
-  <https://developer.nvidia.com/warp-python>`_ for authoring
-  custom factor and state kernels in Python (see
-  :doc:`pycunls_tutorial`). Install with ``pip install warp-lang`` or
-  ``pip install "pycunls[warp]"``.
+- `warp-lang <https://nvidia.github.io/warp/>`_ (``<1.18``) — `NVIDIA Warp
+  <https://developer.nvidia.com/warp-python>`_: GPU arrays (``wp.array``),
+  custom factor and state kernels (see :doc:`pycunls_tutorial`) and
+  ``pycunls.fit`` models. All pycunls constructors accept a ``wp.array``, any
+  other array with ``__cuda_array_interface__`` (PyTorch, CuPy, ...) or a raw
+  ``int`` device pointer. Warp 1.18 is excluded because its PyPI wheels need
+  an R580+ driver (older drivers, such as JetPack 6 on Jetson Orin, leave
+  Warp CPU-only).
+- `numpy <https://numpy.org/>`_ — host arrays (results, ``fit`` and
+  ``ProblemBuilder`` inputs).
 
 **Build-time only:**
 

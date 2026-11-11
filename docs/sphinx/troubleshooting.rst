@@ -130,7 +130,7 @@ Arrays are checked where they are passed, with the fix in the message: a NumPy
 (host) array where GPU memory is needed, a wrong dtype, a strided view, an
 array too small for the capacity (``data has 36 float32 values, but 48 are
 needed (capacity 3 states x 16 float32 per state)``). Any object with
-``__cuda_array_interface__`` (CuPy, PyTorch, Numba, Warp) is accepted; an
+``__cuda_array_interface__`` (Warp, PyTorch, CuPy, Numba) is accepted; an
 ``int`` device pointer is passed through unchecked.
 
 ================================================================================
@@ -155,6 +155,6 @@ the log to any sink.
 Environment: ``python -m pycunls doctor``
 ================================================================================
 
-Checks Python, the GPU and driver, CuPy, the native module, a small solve and a
-small fit, and the optional Warp and cuDSS, each with a fix when it fails
+Checks Python, the GPU and driver (through Warp), the native module, a small
+solve and a small fit, and the optional cuDSS, each with a fix when it fails
 (``--json`` for a machine-readable report).

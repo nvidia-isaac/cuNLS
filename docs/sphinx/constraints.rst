@@ -26,27 +26,27 @@ Python example
 
 .. code-block:: python
 
-   import cupy as cp
    import numpy as np
    import pycunls
+   import warp as wp
 
    # Objective: pull 1000 3-D points towards their targets ...
    n = 1000
-   x = cp.zeros(n * 3, dtype=cp.float32)
-   targets = cp.asarray(np.random.randn(n * 3).astype(np.float32) * 3)
+   x = wp.zeros(n * 3, dtype=wp.float32)
+   targets = wp.array(np.random.randn(n * 3) * 3, dtype=wp.float32)
    states = pycunls.VectorStateBatch3(x, n)
    states.set_num_active_states(n)
    prior = pycunls.PriorVectorFactorBatch3(targets, n)
    prior.set_num_active_factors(n)
 
    # ... subject to -1 <= x <= 1 (per state and component; ±inf: unbounded) ...
-   lo = cp.full(n * 3, -1.0, dtype=cp.float32)
-   hi = cp.full(n * 3, 1.0, dtype=cp.float32)
+   lo = wp.full(n * 3, -1.0, dtype=wp.float32)
+   hi = wp.full(n * 3, 1.0, dtype=wp.float32)
    states.set_bounds(lo, hi)
 
    # ... and x0 + x1 + x2 = 0.5: any factor batch becomes constraint rows.
-   normals = cp.ones(n * 3, dtype=cp.float32)
-   offsets = cp.full(n, 0.5, dtype=cp.float32)
+   normals = wp.ones(n * 3, dtype=wp.float32)
+   offsets = wp.full(n, 0.5, dtype=wp.float32)
    plane = pycunls.HalfspaceFactorBatch3(normals, offsets, n)   # r = aᵀx - b
    plane.set_num_active_factors(n)
    on_plane = pycunls.ConstraintFactorBatch(plane, pycunls.ConstraintKind.Equality)
@@ -58,6 +58,7 @@ Python example
        problem.add_factor_batch(fb, ptrs)
 
    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
+   wp.synchronize_stream(wp.get_stream())   # the uploads (Warp's stream) before the solve
    summary = solver.minimize(pycunls.CudaStream(), problem)
    print(summary.status, summary.max_violation, summary.outer_iterations)
    print(summary.message)   # the outcome and, when not converged, what to try

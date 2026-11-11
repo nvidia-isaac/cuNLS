@@ -22,33 +22,49 @@ Model fitting: ``pycunls.fit``
 .. code-block:: python
 
    import numpy as np
+   import warp as wp
    import pycunls
 
-   def decay(x, p):                    # y = a exp(-b x) + c
-       return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
+   @wp.func
+   def decay(x: float, p: wp.vec3) -> float:   # y = a exp(-b x) + c
+       return p[0] * wp.exp(-p[1] * x) + p[2]
 
    res = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)
    print(res.report())
    res.params, res.param_errors, res.converged, res.reduced_chi2
 
-**The model.** An *array function* ``model(x, p)`` receives one sample per row
-of ``x`` and the parameters of that row's fit in ``p`` (shape ``(rows, P)``),
-and returns one prediction per row: ``(rows,)``, or ``(rows, m)`` for ``m``
-outputs per sample. Row ``i`` of the output may depend only on row ``i`` of
-``x`` and ``p`` (``fit`` checks this). NumPy functions such as ``np.exp`` work
-on the CuPy arrays it receives. The Jacobian is taken by central differences in
-float64. A Warp function works too and gets automatic-differentiation
-Jacobians (checked against finite differences at ``p0``):
+**The model.** A **Warp function of one sample**, ``@wp.func def model(x, p)``,
+with annotated types:
+
+- ``x``: ``float``, or ``wp.vecN`` for ``N`` inputs per sample (``x`` of shape
+  ``(n, N)``);
+- ``p``: ``wp.vecP`` for ``P`` parameters (``wp.vec2``, ``wp.vec3``,
+  ``wp.vec4``, ... or ``wp.types.vector(length=5, dtype=float)`` for sizes
+  without a named type), or ``float`` for one parameter;
+- the result: ``float``, or ``wp.vecM`` for ``M`` outputs per sample (``y`` of
+  shape ``(n, M)``).
+
+Write the formula with Warp's math (``wp.exp``, ``wp.sin``, ``wp.sqrt``, ...).
+A loop with a constant trip count up to ``wp.config.max_unroll`` (16) is
+unrolled and differentiated, e.g. a 16-step RK4 integration from 0 to ``x``
+for a model given by an ODE; longer loops make ``jacobian="auto"`` fall back
+to central differences. A Python or NumPy function raises ``TypeError``. The Jacobian comes
+from Warp's automatic differentiation, checked against central differences at
+``p0`` (``jacobian="auto"``: on a mismatch ``fit`` warns and uses central
+differences); ``jacobian="autodiff"`` or ``"numeric"`` forces one.
 
 .. code-block:: python
 
-   import warp as wp
+   P5 = wp.types.vector(length=5, dtype=float)
 
    @wp.func
-   def decay_wp(x: float, p: wp.vec3) -> float:
-       return p[0] * wp.exp(-p[1] * x) + p[2]
+   def peak(x: float, p: P5) -> float:     # Gaussian peak on a linear background
+       d = (x - p[1]) / p[2]
+       return p[0] * wp.exp(-0.5 * d * d) + p[3] + p[4] * x
 
-   res = pycunls.fit(decay_wp, x, y, p0=[1.0, 1.0, 0.0])
+   @wp.func
+   def plane(x: wp.vec2, p: wp.vec3) -> float:   # two inputs per sample
+       return p[0] * x[0] + p[1] * x[1] + p[2]
 
 **Shapes.** With ``n`` samples, ``P`` parameters and ``B`` fits:
 
@@ -97,7 +113,7 @@ the rest costs little more than those few.
   objective (the robust one with ``loss``) wins (``res.start_index``), and starts
   where the model is not finite never win.
 - ``method`` (``"lm"`` default, ``"gn"``), ``max_iterations``, ``jacobian``
-  (Warp models: ``"auto"``, ``"autodiff"``, ``"numeric"``).
+  (``"auto"``, ``"autodiff"``, ``"numeric"``).
 
 **Result** (``pycunls.FitResult``): ``params``, ``param_errors`` and
 ``covariance`` (from the Jacobian at the solution), ``converged`` and
@@ -150,7 +166,7 @@ Graph problems: ``pycunls.ProblemBuilder``
   forces a fresh setup. Multipliers of constrained problems are not
   warm-started.
 - The underlying objects: ``pb.problem``, ``handle.batch``, ``handle.data``
-  (the CuPy array the solve updates).
+  (the ``wp.array`` the solve updates; ``handle.values`` is a NumPy copy).
 - The result (``pycunls.SolveResult``): ``converged``, ``message``,
   ``summary``, ``result[handle]`` (NumPy states), ``result.states`` (with one
   state batch), ``evaluate()`` and ``report()``.

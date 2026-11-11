@@ -154,7 +154,7 @@ uintptr_t CustomStateData(nb::handle data, size_t ambient_size, size_t capacity)
 // Both start with 0 active states: call set_num_active_states() before solving.
 //
 // nb::keep_alive<1, N> prevents the Python objects that own the GPU memory
-// (e.g. CuPy arrays passed as `data`) from being garbage-collected while the
+// (e.g. Warp arrays passed as `data`) from being garbage-collected while the
 // StateBatch is alive.
 template <int Dim>
 void bind_vector_state_batch(nb::module_ &m, const char *name) {

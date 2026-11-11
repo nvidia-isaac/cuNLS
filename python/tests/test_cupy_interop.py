@@ -18,14 +18,15 @@
 Validates that pycunls constructors accept both raw integer device pointers
 and ``cupy.ndarray`` objects, and that the two paths resolve to the same
 GPU address.  Also verifies full round-trip: CuPy → pycunls optimise →
-CuPy read-back.
+CuPy read-back. CuPy is optional (the ``test`` extra): skipped without it.
 """
 
-import cupy as cp
 import numpy as np
 import pytest
 
 import pycunls
+
+cp = pytest.importorskip("cupy")
 
 
 class TestDevicePointerExtraction:

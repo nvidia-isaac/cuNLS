@@ -27,7 +27,6 @@ The test is intentionally kept simple (a linear least-squares prior) so that
 convergence is guaranteed in a single Gauss-Newton step.
 """
 
-import cupy as cp
 import numpy as np
 import pytest
 import warp as wp
@@ -42,20 +41,24 @@ wp.init()
 def _prior_kernel(
     observations: wp.array(dtype=wp.float32),
     factor_ids: wp.array(dtype=wp.int32),
-    states: wp.array(dtype=wp.float32),
+    state_ptrs: wp.array(dtype=wp.uint64),
     residuals: wp.array(dtype=wp.float32),
     jacobians: wp.array(dtype=wp.float32),
     dim: int,
     num_items: int,
     write_jac: int,
 ):
-    """Per item: residual[d] = state[d] - observation_of_its_factor[d], Jacobian = I."""
+    """Per item: residual[d] = state[d] - observation_of_its_factor[d], Jacobian = I.
+
+    Item i reads its dim-float state through its own pointer ``state_ptrs[i]``.
+    """
     i = wp.tid()
     if i >= num_items:
         return
     m = factor_ids[i]
+    state = wp.array(ptr=state_ptrs[i], shape=(dim,), dtype=wp.float32)
     for d in range(dim):
-        residuals[i * dim + d] = states[i * dim + d] - observations[m * dim + d]
+        residuals[i * dim + d] = state[d] - observations[m * dim + d]
         if write_jac != 0:
             for d2 in range(dim):
                 if d == d2:
@@ -64,26 +67,12 @@ def _prior_kernel(
                     jacobians[i * dim * dim + d * dim + d2] = 0.0
 
 
-# Copies each item's dim-float state (one pointer per item) into a
-# contiguous array: Warp kernels cannot dereference raw pointers themselves.
-_gather_blocks_kernel = cp.RawKernel(r"""
-extern "C" __global__
-void gather_blocks(const unsigned long long* ptrs, float* out, int items, int dim) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < items * dim) {
-        const float* p = reinterpret_cast<const float*>(ptrs[i / dim]);
-        out[i] = p[i % dim];
-    }
-}
-""", "gather_blocks")
-
-
 class WarpPriorFactor(WarpFactorBatch):
     """Dim-D vector-prior factor implemented entirely in Warp.
 
-    ``evaluate`` gathers each item's state through the ``state_pointers``
-    device array (a CuPy kernel), then launches ``_prior_kernel`` on the
-    provided CUDA stream with one thread per item.
+    ``evaluate`` launches ``_prior_kernel`` on the provided CUDA stream with
+    one thread per item; each item reads its state through the
+    ``state_pointers`` device array.
     """
 
     def __init__(self, observations_wp, dim, capacity):
@@ -95,15 +84,7 @@ class WarpPriorFactor(WarpFactorBatch):
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
         dim = self._dim
-        ptrs = cp.ndarray(
-            shape=(n,), dtype=cp.uint64,
-            memptr=cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(sp_ptr, n * 8, None), 0))
-        states = cp.empty(n * dim, dtype=cp.float32)
-        threads = 256
-        _gather_blocks_kernel(((n * dim + threads - 1) // threads,), (threads,),
-                              (ptrs, states, np.int32(n), np.int32(dim)))
-        states_wp = wp.array(ptr=int(states.data.ptr), dtype=wp.float32,
-                             shape=(n * dim,), device=self._device, copy=False)
+        state_ptrs = self.wrap_array(sp_ptr, wp.uint64, n)
 
         res = self.wrap_array(res_ptr, wp.float32, n * dim)
         write_jac = 1 if jac_ptr != 0 else 0
@@ -112,7 +93,7 @@ class WarpPriorFactor(WarpFactorBatch):
 
         s = self.make_warp_stream(stream_handle)
         wp.launch(_prior_kernel, dim=n,
-                  inputs=[self.observations, self.factor_ids(factor_ids_ptr, n), states_wp,
+                  inputs=[self.observations, self.factor_ids(factor_ids_ptr, n), state_ptrs,
                           res, jac, dim, n, write_jac],
                   stream=s)
         return True
@@ -149,7 +130,7 @@ class TestWarpFactorBatch:
         target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         initial = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
-        states_gpu = cp.asarray(initial)
+        states_gpu = wp.array(initial)
         obs_wp = wp.array(target, dtype=wp.float32, device="cuda:0")
 
         sb = pycunls.VectorStateBatch3(states_gpu, 1)
@@ -167,8 +148,8 @@ class TestWarpFactorBatch:
         opts.disable_safety_checks = False
         minimizer = pycunls.GaussNewtonMinimizer(opts)
         summary = minimizer.minimize(stream, problem)
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
+        wp.synchronize()
 
         assert summary.final_cost < 1e-6
-        result = cp.asnumpy(states_gpu)
+        result = states_gpu.numpy()
         np.testing.assert_allclose(result, target, atol=1e-3)

@@ -39,10 +39,15 @@ linear algebra, state updates).
 **Methods**
 
 - ``get_stream() -> int`` — returns the underlying ``cudaStream_t`` cast to
-  an integer.  Pass this value to ``cp.cuda.runtime.streamSynchronize`` to
-  wait for all GPU work issued on this stream, or to `NVIDIA Warp
-  <https://developer.nvidia.com/warp-python>`_
-  (``wp.Stream(cuda_stream=handle)``) when authoring custom kernels.
+  an integer.  Wrap it as a `NVIDIA Warp
+  <https://developer.nvidia.com/warp-python>`_ stream,
+  ``wp.Stream(wp.get_cuda_device(), cuda_stream=handle)``, to order Warp work
+  with the solve (``wp.ScopedStream``, ``wp.synchronize_stream``) or to launch
+  custom kernels on it. ``minimize`` synchronizes the stream before it
+  returns.
+
+- ``__cuda_stream__()`` — the CUDA stream protocol ``(0, handle)``, for
+  libraries that accept it (e.g. PyTorch, CuPy).
 
 C++ API
 -------

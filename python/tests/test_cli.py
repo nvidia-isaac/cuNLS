@@ -108,19 +108,20 @@ def test_doctor_reports_a_missing_native_module(tmp_path):
     assert plain.returncode != 0 and "_pycunls_core" in plain.stderr
 
 
-def test_doctor_reports_missing_cupy(tmp_path):
+def test_doctor_reports_missing_warp(tmp_path):
     proc = _run(["-m", "pycunls", "doctor", "--json"],
-                [_fake_module(tmp_path, "cupy"), _installed_parent()], tmp_path)
+                [_fake_module(tmp_path, "warp"), _installed_parent()], tmp_path)
     assert proc.returncode == 1, proc.stderr
     report, checks = _doctor_json(proc)
-    assert not checks["gpu"]["ok"] and "simulated: no cupy" in checks["gpu"]["detail"]
-    assert "cupy-cuda12x" in checks["gpu"]["fix"]
+    assert not report["ok"]
+    assert not checks["gpu"]["ok"] and "simulated: no warp" in checks["gpu"]["detail"]
+    assert checks["gpu"]["required"] and "warp-lang" in checks["gpu"]["fix"]
     assert checks["solve"]["detail"].startswith("skipped: needs gpu")
 
 
-def test_missing_optional_warp_is_not_a_failure(tmp_path):
-    proc = _run(["-m", "pycunls", "doctor", "--json"],
-                [_fake_module(tmp_path, "warp"), _installed_parent()], tmp_path)
-    report, checks = _doctor_json(proc)
-    assert not checks["warp"]["ok"] and not checks["warp"]["required"]
-    assert report["ok"] and proc.returncode == 0, proc.stdout
+def test_doctor_reports_the_warp_gpu(capsys):
+    assert main(["doctor", "--json"]) == 0
+    checks = {c["check"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+    assert checks["gpu"]["ok"] and checks["gpu"]["detail"].startswith("Warp ")
+    assert "GPU" in checks["gpu"]["detail"]
+    assert "warp" not in checks  # Warp is required: part of the gpu check, not an extra one

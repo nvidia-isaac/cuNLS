@@ -29,9 +29,9 @@ Example
    ctrl = h.build()
 
    for t in range(T):
-       h.pose_reference[...] = next_reference(t)       # [1, 20, 3, 3], steps 1..N
+       h.pose_reference.assign(next_reference(t))      # [1, 20, 3, 3], steps 1..N
        u = ctrl.step(stream, pose=measured_pose, speed_steer=measured_speed_steer)
-       apply(u[0])
+       apply(u.numpy()[0])                             # u: wp.array [B, nu]
 
 ===============================================================================
 Horizon
@@ -46,8 +46,10 @@ stopped independently) of ``steps`` steps:
 - ``controls``: ``[B, N, nu]``;
 - ``time_steps``: ``[B * N]`` step durations (rewrite for non-uniform steps).
 
-These are CuPy arrays owned by the horizon; write to them to set initial
-guesses or to change the problem between solves. The first state of every
+These are ``wp.array`` buffers owned by the horizon; write to them with
+``assign(...)`` (e.g. ``h.poses.assign(np_poses)``) to set initial
+guesses or to change the problem between solves, and read them with
+``.numpy()``. The first state of every
 trajectory is constant (the measured state). The dynamics are equality
 constraints by default, or soft factors with ``hard_dynamics=False``.
 
@@ -111,7 +113,8 @@ Controller
 ``Controller.step(stream, pose=..., **vectors)`` shifts the previous solution
 one step (states, controls and the constraint multipliers; the last step
 repeats), writes the measured state into the first state of every trajectory,
-solves, and returns the first controls ``[B, nu]``. The first call fills the
+solves, and returns the first controls ``[B, nu]`` (a ``wp.array``;
+``.numpy()`` reads it). The first call fills the
 whole horizon with the measured state ("stay where you are"). ``solve``,
 ``shift`` and ``set_initial_state`` are the individual parts; ``summary`` is
 the last ``AugmentedLagrangianMinimizerSummary``.

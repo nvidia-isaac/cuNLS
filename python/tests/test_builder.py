@@ -17,6 +17,7 @@
 
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 
@@ -44,6 +45,27 @@ def test_pose_graph_with_the_builder():
     assert result.converged, result.message
     np.testing.assert_allclose(result[poses], truth, atol=1e-3)
     assert result.evaluate().total_cost < 1e-6
+
+
+def test_handles_expose_device_arrays_and_host_copies():
+    truth, initial, edges, deltas = _chain()
+    pb = pycunls.ProblemBuilder()
+    poses = pb.add_states(pycunls.SE3StateBatch, initial, constant=[0])
+    between = pb.add_factors(pycunls.SE3BetweenFactorBatch, deltas, connect=(poses, edges))
+    assert isinstance(poses.data, wp.array) and poses.data.dtype == wp.float32
+    assert poses.data.shape == initial.shape
+    assert isinstance(poses.values, np.ndarray)
+    np.testing.assert_array_equal(poses.values, initial)
+    (measured,) = between.measurements
+    assert isinstance(measured, wp.array) and measured.dtype == wp.float32
+    np.testing.assert_array_equal(measured.numpy().reshape(deltas.shape), deltas)
+    assert isinstance(between.connectivity, np.ndarray)
+    assert between.connectivity.dtype == np.int32
+    np.testing.assert_array_equal(between.connectivity, edges)
+    poses.set(truth)  # any array-like, written into the same device array
+    np.testing.assert_array_equal(poses.data.numpy(), truth)
+    with pytest.raises(ValueError, match="values must have shape"):
+        poses.set(truth[:3])
 
 
 def test_one_call_solve_infers_the_state_type():

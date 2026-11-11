@@ -16,7 +16,7 @@
 """Command line of pycunls.
 
     python -m pycunls guide              # the agent guide (how to use pycunls, conventions, fixes)
-    python -m pycunls doctor [--json]    # check the GPU, CUDA, CuPy, Warp and a small solve
+    python -m pycunls doctor [--json]    # check the GPU (via Warp), the native module, a solve
     python -m pycunls describe NAME      # one built-in state or factor batch
     python -m pycunls catalog [QUERY]    # list the built-in state and factor batches
 """
@@ -55,14 +55,13 @@ def doctor() -> Tuple[bool, List[dict]]:
             raise RuntimeError(f"Python {platform.python_version()} < 3.10")
         return platform.python_version()
 
-    def cupy_gpu():
-        import cupy as cp
-        dev = cp.cuda.Device()
-        props = cp.cuda.runtime.getDeviceProperties(dev.id)
-        name = props["name"].decode() if isinstance(props["name"], bytes) else props["name"]
-        return (f"CuPy {cp.__version__}, GPU {dev.id}: {name} (sm_{props['major']}{props['minor']}"
-                f"), driver {cp.cuda.runtime.driverGetVersion()}, runtime "
-                f"{cp.cuda.runtime.runtimeGetVersion()}")
+    def warp_gpu():
+        import warp as wp
+        wp.config.log_level = wp.LOG_WARNING  # this check reports the GPU; no init banner
+        if not wp.is_cuda_available():
+            raise RuntimeError(f"Warp {wp.__version__} finds no CUDA device")
+        dev = wp.get_cuda_device()
+        return f"Warp {wp.__version__}, GPU {dev.ordinal}: {dev.name} (sm_{dev.arch})"
 
     def native():
         import pycunls
@@ -70,10 +69,11 @@ def doctor() -> Tuple[bool, List[dict]]:
         return f"pycunls {pycunls.__version__} ({pathlib.Path(_pycunls_core.__file__).name})"
 
     def solve():
-        import cupy as cp
+        import numpy as np
+        import warp as wp
         import pycunls
-        x = cp.asarray([[5.0, -3.0, 2.0]], dtype=cp.float32)
-        target = cp.asarray([[1.0, 2.0, 3.0]], dtype=cp.float32)
+        x = wp.array([[5.0, -3.0, 2.0]], dtype=float)
+        target = wp.array([[1.0, 2.0, 3.0]], dtype=float)
         states = pycunls.VectorStateBatch3(x, 1)
         states.set_num_active_states(1)
         prior = pycunls.PriorVectorFactorBatch3(target, 1)
@@ -82,30 +82,32 @@ def doctor() -> Tuple[bool, List[dict]]:
         problem.add_state_batch(states)
         problem.add_factor_batch(prior, [states.state_device_ptr(0)])
         summary = pycunls.LevenbergMarquardtMinimizer().minimize(pycunls.CudaStream(), problem)
-        if not summary.converged() or float(cp.abs(x - target).max()) > 1e-3:
+        if not summary.converged() or float(np.abs(x.numpy() - target.numpy()).max()) > 1e-3:
             raise RuntimeError(summary.message)
         return f"{summary.num_iterations} iterations, {summary.solve_time_ms:.1f} ms"
 
     def fit():
         import numpy as np
+        import warp as wp
         import pycunls
+
+        @wp.func
+        def line(x: float, p: wp.vec2) -> float:
+            return p[0] * x + p[1]
+
         xs = np.linspace(0, 2, 20)
-        res = pycunls.fit(lambda x, p: p[:, 0] * x + p[:, 1], xs, 2 * xs - 1, p0=[0, 0])
+        res = pycunls.fit(line, xs, 2 * xs - 1, p0=[0, 0])
         if not np.allclose(res.params, [2, -1], atol=1e-3):
             raise RuntimeError(f"fit returned {res.params}")
         return "line fit ok"
 
-    def warp():
-        import warp as wp
-        return f"warp {wp.__version__} (custom Warp factors and Warp fit() models)"
-
     def cudss():
-        import cupy as cp
+        import warp as wp
         import pycunls
-        x = cp.asarray([[5.0, -3.0, 2.0]], dtype=cp.float32)
+        x = wp.array([[5.0, -3.0, 2.0]], dtype=float)
         states = pycunls.VectorStateBatch3(x, 1)
         states.set_num_active_states(1)
-        prior = pycunls.PriorVectorFactorBatch3(cp.zeros((1, 3), cp.float32), 1)
+        prior = pycunls.PriorVectorFactorBatch3(wp.zeros((1, 3), dtype=float), 1)
         prior.set_num_active_factors(1)
         problem = pycunls.Problem()
         problem.add_state_batch(states)
@@ -116,9 +118,8 @@ def doctor() -> Tuple[bool, List[dict]]:
         return "cuDSS solver available"
 
     results.append(_check("python", python_version, "use Python 3.10 or newer"))
-    gpu = _check("gpu", cupy_gpu, "install a CUDA driver and the CuPy build for your CUDA "
-                 "version (pip install cupy-cuda12x / cupy-cuda13x); check nvidia-smi and "
-                 "CUDA_VISIBLE_DEVICES")
+    gpu = _check("gpu", warp_gpu, "install a CUDA driver that supports your Warp build (pip "
+                 "install warp-lang); check nvidia-smi and CUDA_VISIBLE_DEVICES")
     module = _check("native module", native, "reinstall the pycunls wheel built for your CUDA "
                     "version (pip install pycunls-cu12 / pycunls-cu13)")
     results += [gpu, module]
@@ -126,8 +127,6 @@ def doctor() -> Tuple[bool, List[dict]]:
                     needs=(gpu, module))
     results.append(solved)
     results.append(_check("fit", fit, "check the solve result above", needs=(solved,)))
-    results.append(_check("warp", warp, "pip install 'pycunls[warp]' (optional: custom Warp "
-                          "factors)", required=False))
     results.append(_check("cudss", cudss, "optional: set the library path so libcudss.so is "
                           "found (SparseLinearSolverType.cuDSS only)", required=False,
                           needs=(gpu, module)))

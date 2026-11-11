@@ -207,7 +207,7 @@ Python custom types subclass ``pycunls.CustomFactorBatch`` /
 ``pycunls.CustomStateBatch`` and override ``evaluate`` / ``plus``. cuNLS calls
 them with raw device pointers (``int``) and the CUDA stream handle, from the
 minimizer's thread with the GIL held. Launch GPU kernels on that stream with
-CuPy, NVIDIA Warp (``pycunls.warp``), or any other library.
+NVIDIA Warp (``pycunls.warp``) or any other library.
 
 The Python signatures mirror the C++ contract above, with one difference:
 ``num_factor_ids`` is always the **actual** item count :math:`n > 0` (the binding resolves the
@@ -223,98 +223,95 @@ C++ default 0 to ``NumActiveFactors()``).
 ``jacobians_ptr`` and ``factor_ids_ptr`` are ``0`` when null.
 
 -------------------------------------------------------------------------------
-With CuPy raw kernels
+With NVIDIA Warp
 -------------------------------------------------------------------------------
 
-The line fit, with the kernel written in CUDA C++ and launched through
-``cupy.RawKernel``. The state pointers arrive as an array of 64-bit
-addresses. ``cupy_stream`` makes CuPy launch on cuNLS's stream, so the kernel
-is ordered with the rest of the minimizer's work:
+``pycunls.warp.WarpFactorBatch`` and ``WarpStateBatch`` wrap the raw pointers
+as ``warp.array`` objects (``wrap_array``) and cuNLS's stream as a
+``warp.Stream`` (``make_warp_stream``), so the kernel is ordered with the rest
+of the minimizer's work. ``WarpFactorBatch.factor_ids(factor_ids_ptr, n)``
+returns the factor of every item as an ``int32`` array, so a kernel can always
+read ``ids[t]``, whether or not the caller passed factor ids. The state
+pointers arrive as a table of 64-bit addresses: wrap it as a ``wp.uint64``
+array, and read item ``t``'s state inside the kernel with
+``wp.array(ptr=state_ptrs[t], shape=(J,), dtype=wp.float32)``:
 
 .. code-block:: python
 
-   import cupy as cp
    import numpy as np
+   import warp as wp
    import pycunls
+   from pycunls.warp import WarpFactorBatch, WarpStateBatch
 
-   class _StreamHandle:
-       """Exposes a raw cudaStream_t handle through the CUDA stream protocol."""
-
-       def __init__(self, handle):
-           self.handle = handle
-
-       def __cuda_stream__(self):
-           return (0, self.handle)
-
-
-   def cupy_stream(handle):
-       """CuPy stream wrapping cuNLS's cudaStream_t (use as a context manager)."""
-       if hasattr(cp.cuda.Stream, "from_external"):  # CuPy >= 14
-           return cp.cuda.Stream.from_external(_StreamHandle(handle))
-       return cp.cuda.ExternalStream(handle)
-
-   _line_kernel = cp.RawKernel(r"""
-   extern "C" __global__
-   void line(const float* xs, const float* ys, const int* factor_ids, int num_factors,
-             const unsigned long long* state_ptrs, float* res, float* jac, int n) {
-     int t = blockIdx.x * blockDim.x + threadIdx.x;          // item
-     if (t >= n) return;
-     int f = factor_ids ? factor_ids[t] : t % num_factors;   // measurement of item t
-     const float* ab = (const float*)state_ptrs[t];           // state of item t
-     res[t] = ab[0] * xs[f] + ab[1] - ys[f];                  // row t
-     if (jac) { jac[2 * t] = xs[f]; jac[2 * t + 1] = 1.f; }
-   }
-   """, "line")
+   @wp.kernel
+   def line_kernel(xs: wp.array(dtype=wp.float32), ys: wp.array(dtype=wp.float32),
+                   ids: wp.array(dtype=wp.int32), state_ptrs: wp.array(dtype=wp.uint64),
+                   res: wp.array(dtype=wp.float32), jac: wp.array(dtype=wp.float32),
+                   write_jac: int):
+       t = wp.tid()                                      # item
+       f = ids[t]                                        # measurement of item t
+       ab = wp.array(ptr=state_ptrs[t], shape=(2,), dtype=wp.float32)  # state of item t
+       res[t] = ab[0] * xs[f] + ab[1] - ys[f]            # row t
+       if write_jac != 0:
+           jac[2 * t] = xs[f]
+           jac[2 * t + 1] = 1.0
 
 
-   class LineFitFactorBatch(pycunls.CustomFactorBatch):
+   class LineFitFactorBatch(WarpFactorBatch):
        def __init__(self, xs, ys):
            # residual size 1, one state of tangent size 2, capacity len(xs)
-           super().__init__(1, [2], len(xs))
-           self.xs, self.ys = xs, ys          # cupy arrays; keep them alive
+           super().__init__(residual_size=1, state_sizes=[2], capacity=xs.shape[0])
+           self.xs, self.ys = xs, ys                     # wp.arrays; keep them alive
 
-       def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle,
-                    factor_ids_ptr, num_factor_ids):
-           n = num_factor_ids                 # number of items, always > 0
-           with cupy_stream(stream_handle):
-               _line_kernel(((n + 127) // 128,), (128,),
-                            (self.xs, self.ys, cp.uint64(factor_ids_ptr),
-                             cp.int32(self.num_active_factors), cp.uint64(sp_ptr),
-                             cp.uint64(res_ptr), cp.uint64(jac_ptr), cp.int32(n)))
+       def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr,
+                    num_factor_ids):
+           n = num_factor_ids                            # number of items, always > 0
+           write_jac = 1 if jac_ptr != 0 else 0
+           jac = (self.wrap_array(jac_ptr, wp.float32, 2 * n) if write_jac
+                  else wp.empty(1, dtype=wp.float32, device=self._device))
+           wp.launch(line_kernel, dim=n,
+                     inputs=[self.xs, self.ys, self.factor_ids(factor_ids_ptr, n),
+                             self.wrap_array(sp_ptr, wp.uint64, n),   # one state per item
+                             self.wrap_array(res_ptr, wp.float32, n), jac, write_jac],
+                     stream=self.make_warp_stream(stream_handle))
            return True
+
+The state pointer table holds ``n * B`` entries, item-major (item ``t``'s
+``k``-th state is ``state_ptrs[t * B + k]``): read **per item**, not per
+factor.
 
 A custom state works the same way. Here, a 2D Euclidean state written by
 hand (a manifold would change only the kernel body):
 
 .. code-block:: python
 
-   _plus_kernel = cp.RawKernel(r"""
-   extern "C" __global__
-   void plus(const float* x, const float* d, float* out, int n) {
-     int i = blockIdx.x * blockDim.x + threadIdx.x;
-     if (i < n) out[i] = x[i] + d[i];
-   }
-   """, "plus")
+   @wp.kernel
+   def plus_kernel(x: wp.array(dtype=wp.float32), d: wp.array(dtype=wp.float32),
+                   out: wp.array(dtype=wp.float32)):
+       i = wp.tid()
+       out[i] = x[i] + d[i]
 
 
-   class LineState(pycunls.CustomStateBatch):
+   class LineState(WarpStateBatch):
        def __init__(self, data):
-           super().__init__(data, 2, 2, 1)    # ambient 2, tangent 2, capacity 1
+           super().__init__(data, ambient_size=2, tangent_size=2, capacity=1)
 
        def plus(self, x_ptr, delta_ptr, out_ptr, stream_handle, num_replicas):
            n = 2 * self.num_active_states * num_replicas   # every float of every replica
-           with cupy_stream(stream_handle):
-               _plus_kernel(((n + 127) // 128,), (128,),
-                            (cp.uint64(x_ptr), cp.uint64(delta_ptr), cp.uint64(out_ptr),
-                             cp.int32(n)))
+           wp.launch(plus_kernel, dim=n,
+                     inputs=[self.wrap_array(x_ptr, wp.float32, n),
+                             self.wrap_array(delta_ptr, wp.float32, n),
+                             self.wrap_array(out_ptr, wp.float32, n)],
+                     stream=self.make_warp_stream(stream_handle))
 
-Using them with RANSAC:
+Using them with RANSAC (``xs``, ``ys``: NumPy arrays of the points):
 
 .. code-block:: python
 
-   ab = cp.zeros(2, dtype=cp.float32)
+   ab = wp.zeros(2, dtype=wp.float32)
    state = LineState(ab)
-   factor = LineFitFactorBatch(cp.asarray(xs), cp.asarray(ys))
+   factor = LineFitFactorBatch(wp.array(xs, dtype=wp.float32),
+                               wp.array(ys, dtype=wp.float32))
    state.set_num_active_states(1)          # active sizes start at 0
    factor.set_num_active_factors(len(xs))
    problem = pycunls.Problem()
@@ -324,58 +321,26 @@ Using them with RANSAC:
    options = pycunls.RansacMinimizerOptions()
    options.default_inlier_threshold = 0.05
    ransac = pycunls.RansacGaussNewtonMinimizer(options)
+   wp.synchronize_stream(wp.get_stream())  # the uploads (Warp's stream) before the solve
    summary = ransac.minimize(pycunls.CudaStream(), problem)
-   a, b = cp.asnumpy(ab)
+   a, b = ab.numpy()
    mask = ransac.inlier_mask(0)
 
-This exact code is exercised by ``python/tests/test_ransac.py``.
+Complete Warp versions: ``python/examples/custom_warp_factor.py`` and
+``python/examples/custom_warp_state.py`` (they read the states with the
+``state_value`` helper of ``python/examples/example_utils/gpu.py``), and the
+:doc:`pycunls_tutorial`.
 
 -------------------------------------------------------------------------------
-With NVIDIA Warp
+With other GPU libraries
 -------------------------------------------------------------------------------
 
-``pycunls.warp.WarpFactorBatch`` and ``WarpStateBatch`` wrap the raw pointers
-as ``warp.array`` objects. ``WarpFactorBatch.factor_ids(factor_ids_ptr, n)``
-returns the factor of every item as an ``int32`` array, so a kernel can always
-read ``ids[t]``, whether or not the caller passed factor ids:
-
-.. code-block:: python
-
-   import warp as wp
-   from pycunls.warp import WarpFactorBatch
-
-   @wp.kernel
-   def line_kernel(xs: wp.array(dtype=wp.float32), ys: wp.array(dtype=wp.float32),
-                   ids: wp.array(dtype=wp.int32), ab: wp.array(dtype=wp.vec2),
-                   res: wp.array(dtype=wp.float32), jac: wp.array(dtype=wp.float32),
-                   write_jac: int):
-       t = wp.tid()                 # item
-       f = ids[t]                   # measurement of item t
-       res[t] = ab[t][0] * xs[f] + ab[t][1] - ys[f]
-       if write_jac != 0:
-           jac[2 * t] = xs[f]
-           jac[2 * t + 1] = 1.0
-
-   class WarpLineFit(WarpFactorBatch):
-       def __init__(self, xs, ys):
-           super().__init__(residual_size=1, state_sizes=[2], capacity=xs.shape[0])
-           self.xs, self.ys = xs, ys
-
-       def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr,
-                    num_factor_ids):
-           n = num_factor_ids
-           ids = self.factor_ids(factor_ids_ptr, n)
-           ab = gather_states(sp_ptr, n, stream_handle)  # item t's state -> ab[t] (see note)
-           ...                             # wrap res / jac, launch line_kernel with dim=n
-           return True
-
-Warp kernels cannot dereference the ``float*`` table directly, so the Warp
-examples first gather the item states into a contiguous array with a small
-CuPy kernel on cuNLS's stream (``gather_state_values`` / ``gather_state_pairs``
-in ``python/examples/example_utils/gpu.py``).
-Gather **per item** (``n * B`` pointers), not per factor. Complete Warp
-versions: ``python/examples/custom_warp_factor.py`` and
-``python/examples/custom_warp_state.py``, and the :doc:`pycunls_tutorial`.
+``pycunls.CustomFactorBatch`` / ``pycunls.CustomStateBatch`` (the bases of the
+Warp classes) do not depend on Warp: ``evaluate`` and ``plus`` receive plain
+integer pointers and the ``cudaStream_t`` handle, so the kernels can come from
+any library (a CuPy ``RawKernel``, Numba, PyTorch, a compiled CUDA extension)
+as long as they launch on ``stream_handle``. ``pycunls.CudaStream`` also
+implements the ``__cuda_stream__`` protocol.
 
 ===============================================================================
 C++

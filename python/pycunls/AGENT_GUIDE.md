@@ -26,20 +26,25 @@ states, residual, measurement layout and conventions.
 ## 2. Model fitting with `fit`
 
 ```python
-import numpy as np, pycunls
+import numpy as np, warp as wp, pycunls
 
-def model(x, p):            # p: (rows, P), one row of parameters per sample; no loops
-    return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
+@wp.func
+def model(x: float, p: wp.vec3) -> float:   # one sample: y = a exp(-b x) + c
+    return p[0] * wp.exp(-p[1] * x) + p[2]
 
 res = pycunls.fit(model, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)
 print(res.report())
 res.params, res.param_errors, res.converged, res.reduced_chi2
 ```
 
-- `model(x, p)` must be row-wise: row `i` of the output depends only on row `i` of `x` and `p`
-  (NumPy functions such as `np.exp` work on the CuPy arrays it receives). Return `(rows,)` or
-  `(rows, m)` for `m` outputs per sample. A Warp `@wp.func model(x: float, p: wp.vec3) -> float`
-  also works and gets autodiff Jacobians.
+- The model is a **Warp function of one sample** (`@wp.func`), with annotated types: `x` a
+  `float` or `wp.vecN` (one sample's inputs), `p` a `wp.vecP` (a `float` for one parameter;
+  `wp.types.vector(length=5, dtype=float)` for sizes without a named type), the result a `float`
+  or `wp.vecM` (`m` outputs per sample). Use `wp.exp`, `wp.sin`, ... inside. A Python or NumPy
+  function is a `TypeError`.
+- The Jacobian comes from Warp's automatic differentiation, checked against central differences
+  at `p0` (`jacobian="auto"`; on a mismatch it warns and uses central differences).
+  `jacobian="autodiff"` or `"numeric"` forces one.
 - Batches: `y` of shape `(B, n)` with `x` shared `(n,)` or per fit `(B, n)`; `p0` `(P,)` or
   `(B, P)`. Pad shorter fits with NaN in `y`. Results gain a leading `B` axis; `res.converged` is
   per fit.
@@ -51,8 +56,9 @@ res.params, res.param_errors, res.converged, res.reduced_chi2
   model returns NaN never win.
 - Up to 12 parameters per fit; beyond that build the problem with `ProblemBuilder`.
 - A model given by an ODE: use its closed-form solution when there is one; otherwise integrate
-  inside the model with a fixed-step scheme (e.g. RK4 from 0 to each row's `x`, all rows at once
-  with array operations). Frequencies, phases and other periodic parameters make the cost
+  inside the model with a fixed-step scheme (e.g. RK4 from 0 to the sample's `x`, `h = x / 16.0`,
+  in a `for i in range(16)` loop: Warp unrolls and differentiates loops of up to 16 steps;
+  longer loops make `jacobian="auto"` fall back to central differences). Frequencies, phases and other periodic parameters make the cost
   multi-modal: give `bounds` and `starts`.
 
 ## 3. Graph problems with `ProblemBuilder`
@@ -74,8 +80,14 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
 
 ## 4. Conventions that cost a turn when missed
 
-- **GPU float32 arrays.** The low-level API takes CuPy float32, C-contiguous arrays (or int
-  device pointers). `fit` and `ProblemBuilder` convert NumPy for you.
+- **GPU float32 arrays.** The low-level API takes float32, C-contiguous GPU arrays: `wp.array`
+  (any `__cuda_array_interface__` array such as PyTorch or CuPy works too) or int device
+  pointers. `fit` and `ProblemBuilder` convert NumPy for you. Read results back with
+  `a.numpy()`; write into a bound buffer with `a.assign(np_array)`.
+- **Streams.** Warp work (uploads, `assign`, kernels) runs on Warp's current stream, the solve on
+  a `CudaStream`. Order them: `wp.synchronize_stream(wp.get_stream())` before `minimize`, or
+  upload inside `with wp.ScopedStream(wp.Stream(wp.get_cuda_device(),
+  cuda_stream=stream.get_stream())):`. `minimize` synchronizes its stream before returning.
 - **Poses are `world_from_body`, row-major 4x4 (SE3) or 3x3 (SE2).** Updates are on the right:
   `T' = T Exp(delta)`; se(3) tangent order is `[omega, v]` (rotation first), se(2) `[v_x, v_y,
   theta]`.
@@ -109,7 +121,7 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
 
 | Symptom (message / reason) | Likely cause | Fix |
 |---|---|---|
-| `TypeError: ... is a host (NumPy) array` | NumPy array to the low-level API | `cupy.asarray(a, dtype=cupy.float32)` |
+| `TypeError: ... is a host (NumPy) array` | NumPy array to the low-level API | `wp.array(a, dtype=wp.float32)` |
 | `ValueError: data has N float32 values, but M are needed` | wrong array shape or capacity | check `pycunls.describe(cls)` for floats per item |
 | `NonFiniteCost` | NaN/Inf in states or measurements, or a factor outside its domain | `pycunls.diagnose(problem)` names the batch and index |
 | `NonFiniteStep` | singular system (gauge freedom, unconstrained state) or NaN at trial states | `diagnose()`; fix a state constant; use LM |
@@ -119,7 +131,7 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
 | `No residual batch has active factors` | forgot `set_num_active_factors` | set the active counts |
 | `... box-bounded states ... AugmentedLagrangianMinimizer` | bounds with GN/LM | wrap the minimizer in `AugmentedLagrangianMinimizer` (`fit`/`ProblemBuilder` do) |
 | warning `Gauge freedom` | relative factors only | `constant=[0]` or a prior |
-| fit: `model(x, p) mixes rows` | sums/means over samples in the model | make the model row-wise |
+| fit: `TypeError: model must be a Warp function` | a Python/NumPy model | rewrite it as `@wp.func` of one sample |
 | fit: high `reduced_chi2` with the right `sigma` | the model does not explain the data | change the model |
 
 More detail: `pycunls.log_to_python(verbosity=pycunls.Verbosity.Message)` (or the environment
@@ -129,18 +141,22 @@ variable `CUNLS_LOG_LEVEL=message`) logs every iteration and the final message t
 ## 7. Low-level API in one screen
 
 ```python
-import cupy as cp, pycunls
-poses = cp.asarray(T0)                            # (N, 4, 4) float32
-const = cp.zeros(1, cp.int32)                     # state 0 fixed
+import numpy as np, warp as wp, pycunls
+poses = wp.array(T0, dtype=wp.float32)            # (N, 4, 4)
+const = wp.zeros(1, dtype=wp.int32)               # state 0 fixed
 states = pycunls.SE3StateBatch(poses, N, const, 1)
 states.set_num_active_states(N, 1)
-between = pycunls.SE3BetweenFactorBatch(cp.asarray(deltas), M)
+deltas_gpu = wp.array(deltas, dtype=wp.float32)   # keep every array alive
+between = pycunls.SE3BetweenFactorBatch(deltas_gpu, M)
 between.set_num_active_factors(M)
 problem = pycunls.Problem()
 problem.add_state_batch(states)
-problem.add_factor_batch(between, [states, states], cp.asarray(edges.reshape(-1), cp.int32))
+edge_ids = wp.array(edges.reshape(-1), dtype=wp.int32)
+problem.add_factor_batch(between, [states, states], edge_ids)
 for issue in pycunls.diagnose(problem):           # optional: catches most setup mistakes
     print(issue)
+wp.synchronize_stream(wp.get_stream())            # the uploads finish before the solve
 summary = pycunls.LevenbergMarquardtMinimizer().minimize(pycunls.CudaStream(), problem)
-print(summary.report())                           # poses is updated in place
+print(summary.report())
+T = poses.numpy()                                 # poses is updated in place
 ```

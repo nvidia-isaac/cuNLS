@@ -22,7 +22,7 @@ Use it to pick a class and to get its data layout right without reading the C++ 
 
 Conventions shared by every class:
 
-* All arrays are float32 GPU arrays (CuPy), C-contiguous, one item after another.
+* All arrays are float32 GPU arrays (e.g. ``wp.array``), C-contiguous, one item after another.
 * Poses are ``world_from_body`` matrices stored row-major (SE3: 4x4 = 16 floats per pose,
   SE2: 3x3, SO3: 3x3, SO2: 2x2). The update is right-multiplicative, ``T' = T Exp(delta)``.
 * Tangent order: se(3) = ``[omega (3), v (3)]`` (rotation first), se(2) = ``[v_x, v_y, theta]``
@@ -356,7 +356,7 @@ def describe(name) -> str:
 
 _CAPACITY_NOTE = ("capacity: how many factors (or states) the arrays hold. Batches start with 0 "
                   "active items: call set_num_active_factors(n) / set_num_active_states(n) "
-                  "before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.")
+                  "before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.")
 
 
 def annotate_classes(module) -> None:

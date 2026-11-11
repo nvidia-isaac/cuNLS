@@ -20,8 +20,9 @@ Python API (``pycunls``)
 
 All Python factor batches inherit from the abstract ``FactorBatch`` base
 class.  Every constructor argument documented as ``DevicePointer`` accepts
-either a ``cupy.ndarray`` (the device pointer is extracted automatically via
-``.data.ptr``) or a raw ``int`` GPU device address.
+either a GPU array (``wp.array``, or any object with
+``__cuda_array_interface__`` such as a PyTorch or CuPy array; the device
+pointer is extracted automatically) or a raw ``int`` GPU device address.
 
 The residual formulas, Jacobian structure, and state layouts are identical to
 the C++ versions documented in :ref:`factor-cpp-api` below (each Python entry
@@ -67,11 +68,12 @@ read-only properties and methods.
   only; 3-D points are fixed in the constructor).
 
 **Device buffers.** Constructor and state-batch arguments typed
-``DevicePointer`` take a CuPy array or a raw integer pointer. CuPy arrays are
+``DevicePointer`` take a GPU array or a raw integer pointer. GPU arrays are
 checked against the dtype the kernels read — ``float32`` for data and
 measurements, ``int32`` for ids and indices, ``uint64`` for state-pointer
-tables — and a mismatch raises ``TypeError`` (``cp.arange`` is int64, NumPy
-and CuPy default to float64). Raw integer pointers are not checked.
+tables — and a mismatch raises ``TypeError`` (NumPy defaults to float64 and
+int64, and ``wp.array(np_array)`` keeps that dtype: pass
+``dtype=wp.float32`` / ``wp.int32``). Raw integer pointers are not checked.
 
 **C++ reference:** :ref:`cpp-factor-batch`.
 
@@ -808,10 +810,10 @@ and Jacobian computation that is not available as a built-in factor.
   - *state_pointers_ptr* — device pointer to an array of ``float*``
     pointers.  The array has ``n × len(state_sizes)``
     entries; item *t*'s state *b* is entry ``t * len(state_sizes) + b``
-    (the device address of that state's ambient-space storage).  Because Warp
-    kernels cannot perform ``float**`` double-pointer indirection, custom
-    factors typically gather state values into contiguous CuPy arrays
-    before launching a kernel (see the
+    (the device address of that state's ambient-space storage).  A Warp
+    kernel takes the table as a ``wp.array(dtype=wp.uint64)`` and reads a
+    state with ``wp.array(ptr=state_pointers[i], shape=(J,), dtype=float)``
+    (see the
     :ref:`Custom Warp Factor tutorial <pycunls_tutorial:Custom Warp Factor>`).
   - *stream_handle* — ``cudaStream_t`` cast to ``int``.  All GPU work
     **must** be launched on this stream.
@@ -851,7 +853,7 @@ Convenience base for custom factors implemented with `NVIDIA Warp
 <https://developer.nvidia.com/warp-python>`_ kernels.
 Inherits from ``CustomFactorBatch`` and provides helper methods for
 zero-copy pointer wrapping so you never need to manually construct
-``wp.array`` objects from raw device addresses.  Requires ``warp-lang``.
+``wp.array`` objects from raw device addresses.
 
 **Constructor**
 
@@ -897,12 +899,12 @@ zero-copy pointer wrapping so you never need to manually construct
   — same contract as ``CustomFactorBatch.evaluate``.  Typical
   implementations:
 
-  1. Gather scattered state pointers into contiguous CuPy arrays (using a
-     CuPy ``RawKernel`` or ``cp.ndarray`` indexing), one entry per item.
+  1. Wrap the state pointer table with ``self.wrap_array(state_pointers_ptr,
+     wp.uint64, num_factor_ids * K)``; the kernel reads item *t*'s state *k*
+     with ``wp.array(ptr=state_pointers[t * K + k], shape=(J,), dtype=float)``.
   2. Get per-item factor indices with ``self.factor_ids(factor_ids_ptr,
      num_factor_ids)`` and read measurements through them.
-  3. Wrap the contiguous arrays and output buffers with
-     ``self.wrap_array``.
+  3. Wrap the output buffers with ``self.wrap_array``.
   4. Build a ``wp.Stream`` with ``self.make_warp_stream``.
   5. Launch a ``@wp.kernel`` with ``dim=num_factor_ids`` on that stream.
 

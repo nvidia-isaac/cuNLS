@@ -22,27 +22,11 @@ Hock-Schittkowski problems have known solutions.
 
 import itertools
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
-
-
-class _StreamHandle:
-    """Exposes a raw cudaStream_t handle through the CUDA stream protocol."""
-
-    def __init__(self, handle):
-        self.handle = handle
-
-    def __cuda_stream__(self):
-        return (0, self.handle)
-
-
-def cupy_stream(handle):
-    if hasattr(cp.cuda.Stream, "from_external"):  # CuPy >= 14
-        return cp.cuda.Stream.from_external(_StreamHandle(handle))
-    return cp.cuda.ExternalStream(handle)
 
 
 def make_minimizer(kind):
@@ -69,8 +53,8 @@ def test_box_projection(stream, kind):
     target = np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32)
     lower = np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32)
     upper = np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32)
-    x = cp.zeros(6, dtype=cp.float32)
-    t, lo, hi = cp.asarray(target), cp.asarray(lower), cp.asarray(upper)
+    x = wp.zeros(6, dtype=wp.float32)
+    t, lo, hi = wp.array(target), wp.array(lower), wp.array(upper)
     states = pycunls.VectorStateBatch3(x, 2)
     states.set_num_active_states(2)
     prior = pycunls.PriorVectorFactorBatch3(t, 2)
@@ -89,7 +73,7 @@ def test_box_projection(stream, kind):
     summary = solver.minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
     assert summary.max_violation <= 1e-4
-    np.testing.assert_allclose(cp.asnumpy(x), np.clip(target, lower, upper), atol=2e-4)
+    np.testing.assert_allclose(x.numpy(), np.clip(target, lower, upper), atol=2e-4)
 
 
 @pytest.mark.parametrize("kind", ["gn", "lm"])
@@ -100,8 +84,8 @@ def test_projected_state_bounds(stream, kind):
     target = np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32)
     lower = np.array([-1, -1, -1, -np.inf, -2, 0.5], dtype=np.float32)
     upper = np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32)
-    x = cp.asarray(np.array([5, 0, 0, 0, 0, 0], dtype=np.float32))
-    t, lo, hi = cp.asarray(target), cp.asarray(lower), cp.asarray(upper)
+    x = wp.array(np.array([5, 0, 0, 0, 0, 0], dtype=np.float32))
+    t, lo, hi = wp.array(target), wp.array(lower), wp.array(upper)
     states = pycunls.VectorStateBatch3(x, 2)
     states.set_num_active_states(2)
     assert not states.has_bounds
@@ -119,7 +103,7 @@ def test_projected_state_bounds(stream, kind):
     assert summary.outer_iterations == 1
     # LM stops when its float32 cost decrease vanishes, a little before GN's exact step.
     atol = 1e-5 if kind == "gn" else 1e-3
-    np.testing.assert_allclose(cp.asnumpy(x), np.clip(target, lower, upper), atol=atol)
+    np.testing.assert_allclose(x.numpy(), np.clip(target, lower, upper), atol=atol)
     states.set_bounds(None, None)
     assert not states.has_bounds
     with pytest.raises(ValueError):
@@ -178,8 +162,8 @@ def test_random_convex_qps_match_reference(stream, kind):
     normals_eq = np.concatenate([A for *_, A, _ in qps]).astype(np.float32)
     offsets_eq = np.concatenate([b for *_, b in qps]).astype(np.float32)
 
-    x = cp.zeros(batch * n, dtype=cp.float32)
-    buffers = [cp.asarray(a.reshape(-1)) for a in
+    x = wp.zeros(batch * n, dtype=wp.float32)
+    buffers = [wp.array(a.reshape(-1)) for a in
                (centers, sqrt_info, normals_in, offsets_in, normals_eq, offsets_eq)]
     c_buf, s_buf, gn_buf, go_buf, an_buf, ao_buf = buffers
     states = pycunls.VectorStateBatch3(x, batch)
@@ -200,14 +184,14 @@ def test_random_convex_qps_match_reference(stream, kind):
     problem.add_factor_batch(objective, ptr)
     problem.add_factor_batch(inequalities, [p for p in ptr for _ in range(m_in)])
     problem.add_factor_batch(equalities, [p for p in ptr for _ in range(m_eq)])
-    problem.set_problem_partition(batch, [cp.arange(batch, dtype=cp.int32)])
+    problem.set_problem_partition(batch, [wp.array(np.arange(batch, dtype=np.int32))])
 
     solver = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind))
     summary = solver.minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged, summary
     assert summary.num_converged == batch
     assert summary.max_violation <= 1e-4
-    result = cp.asnumpy(x).reshape(batch, n)
+    result = x.numpy().reshape(batch, n)
     # Float32 inner solves stop when the cost decrease vanishes (LM a little
     # before GN), and their accept / stop decisions vary run to run with the
     # atomic cost sums: x lands up to ~6e-4 from the float64 optimum (LM; GN
@@ -221,25 +205,28 @@ def test_random_convex_qps_match_reference(stream, kind):
 
 # Rows of the HS1/HS2/HS6 functions of x = (x1, x2):
 #   which 0: r = 10 (x2 - x1²)    which 1: r = 1 - x1    which 2: both rows
-_hs_kernel = cp.RawKernel(r"""
-extern "C" __global__
-void hs_rows(int which, const unsigned long long* state_ptrs, float* res, float* jac, int n) {
-  int t = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t >= n) return;
-  const float* x = (const float*)state_ptrs[t];
-  int rows = which == 2 ? 2 : 1;
-  int r = t * rows;
-  if (which != 1) {
-    res[r] = 10.f * (x[1] - x[0] * x[0]);
-    if (jac) { jac[2 * r] = -20.f * x[0]; jac[2 * r + 1] = 10.f; }
-    ++r;
-  }
-  if (which != 0) {
-    res[r] = 1.f - x[0];
-    if (jac) { jac[2 * r] = -1.f; jac[2 * r + 1] = 0.f; }
-  }
-}
-""", "hs_rows")
+@wp.kernel
+def _hs_rows(which: int, state_ptrs: wp.array(dtype=wp.uint64), res: wp.array(dtype=float),
+             jac_ptr: wp.uint64):
+    t = wp.tid()
+    x = wp.array(ptr=state_ptrs[t], shape=(2,), dtype=float)
+    rows = 1
+    if which == 2:
+        rows = 2
+    r = t * rows
+    if which != 1:
+        res[r] = 10.0 * (x[1] - x[0] * x[0])
+        if jac_ptr != wp.uint64(0):
+            jac = wp.array(ptr=jac_ptr, shape=(2 * (r + 1),), dtype=float)
+            jac[2 * r] = -20.0 * x[0]
+            jac[2 * r + 1] = 10.0
+        r += 1
+    if which != 0:
+        res[r] = 1.0 - x[0]
+        if jac_ptr != wp.uint64(0):
+            jac = wp.array(ptr=jac_ptr, shape=(2 * (r + 1),), dtype=float)
+            jac[2 * r] = -1.0
+            jac[2 * r + 1] = 0.0
 
 
 class HsRows(pycunls.CustomFactorBatch):
@@ -249,14 +236,16 @@ class HsRows(pycunls.CustomFactorBatch):
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
-        with cupy_stream(stream_handle):
-            _hs_kernel((1,), (128,), (cp.int32(self.which), cp.uint64(sp_ptr),
-                                      cp.uint64(res_ptr), cp.uint64(jac_ptr), cp.int32(n)))
+        device = wp.get_cuda_device()
+        state_ptrs = wp.array(ptr=sp_ptr, shape=(n,), dtype=wp.uint64, device=device)
+        res = wp.array(ptr=res_ptr, shape=(n * self.residuals_size,), dtype=float, device=device)
+        wp.launch(_hs_rows, dim=n, inputs=[self.which, state_ptrs, res, wp.uint64(jac_ptr)],
+                  device=device, stream=wp.Stream(device, cuda_stream=stream_handle))
         return True
 
 
 def hs_problem(x0, objective_rows, constraint=None, bounds=None):
-    x = cp.asarray(np.array(x0, dtype=np.float32))
+    x = wp.array(np.array(x0, dtype=np.float32))
     states = pycunls.VectorStateBatch2(x, 1)
     states.set_num_active_states(1)
     problem = pycunls.Problem()
@@ -271,7 +260,7 @@ def hs_problem(x0, objective_rows, constraint=None, bounds=None):
         problem.add_factor_batch(constraint, [states.state_device_ptr(0)])
         keep.append(constraint)
     if bounds is not None:
-        lo, hi = (cp.asarray(np.array(v, dtype=np.float32)) for v in bounds)
+        lo, hi = (wp.array(np.array(v, dtype=np.float32)) for v in bounds)
         bound = pycunls.BoundFactorBatch2(lo, hi, 1)
         bound.set_num_active_factors(1)
         problem.add_factor_batch(bound, [states.state_device_ptr(0)])
@@ -287,7 +276,7 @@ def test_hs2_active_bound(stream, kind):
     x, problem, keep = hs_problem([2.0, 1.0], 2, bounds=([-np.inf, 1.5], [np.inf, np.inf]))
     summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind)).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
-    np.testing.assert_allclose(cp.asnumpy(x), [1.2243707487363527, 1.5], atol=2e-4)
+    np.testing.assert_allclose(x.numpy(), [1.2243707487363527, 1.5], atol=2e-4)
     # HS2 objective value 0.0504261879 is twice the least-squares cost.
     assert summary.final_cost == pytest.approx(0.0504261879 / 2, rel=1e-3)
 
@@ -301,7 +290,7 @@ def test_hs6_nonlinear_equality(stream, kind):
     summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind)).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
     assert summary.max_violation <= 1e-4
-    np.testing.assert_allclose(cp.asnumpy(x), [1.0, 1.0], atol=1e-3)
+    np.testing.assert_allclose(x.numpy(), [1.0, 1.0], atol=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +299,7 @@ def test_hs6_nonlinear_equality(stream, kind):
 
 
 def test_constraint_wrapper_api(stream):
-    obs = cp.zeros(3 * 4, dtype=cp.float32)
+    obs = wp.zeros(3 * 4, dtype=wp.float32)
     inner = pycunls.PriorVectorFactorBatch3(obs, 4)
     c = pycunls.ConstraintFactorBatch(inner, pycunls.ConstraintKind.Equality, scale=2.0)
     assert c.capacity == 4 and c.num_active_factors == 0
@@ -319,10 +308,10 @@ def test_constraint_wrapper_api(stream):
     assert c.kind == pycunls.ConstraintKind.Equality and c.scale == 2.0
     assert c.residuals_size == 3 and c.state_sizes() == [3]
     c.set_penalty(5.0, stream)
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())
-    penalties = cp.ndarray((4,), cp.float32,
-                           cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(c.penalties_ptr, 16, c), 0))
-    np.testing.assert_array_equal(cp.asnumpy(penalties), 5.0)
+    wp.synchronize()
+    penalties = wp.array(ptr=c.penalties_ptr, shape=(4,), dtype=wp.float32,
+                         device=wp.get_cuda_device())
+    np.testing.assert_array_equal(penalties.numpy(), 5.0)
     assert c.multipliers_ptr != 0
     with pytest.raises(ValueError):
         pycunls.ConstraintFactorBatch(inner, pycunls.ConstraintKind.Equality, scale=0.0)
@@ -330,7 +319,7 @@ def test_constraint_wrapper_api(stream):
     with pytest.raises(ValueError, match="constraint"):
         pycunls.WeightedFactorBatch(c, 2.0)
     with pytest.raises(ValueError, match="constraint"):
-        pycunls.InformationFactorBatch(c, cp.zeros(4 * 9, dtype=cp.float32))
+        pycunls.InformationFactorBatch(c, wp.zeros(4 * 9, dtype=wp.float32))
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     assert options.constraint_tolerance == pytest.approx(1e-4)
     assert options.inner_line_search_steps == 10

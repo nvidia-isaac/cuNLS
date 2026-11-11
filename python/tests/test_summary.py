@@ -18,8 +18,8 @@ per-subproblem reasons, to_dict() and report()."""
 
 import json
 
-import cupy as cp
 import numpy as np
+import warp as wp
 
 import pycunls
 from pycunls import TerminationReason
@@ -29,8 +29,8 @@ def _priors(initial, partition=False):
     """n 2-vectors pulled to (1, 2), optionally one subproblem per vector."""
     initial = np.asarray(initial, np.float32).reshape(-1)
     n = initial.size // 2
-    states = cp.asarray(initial)
-    obs = cp.asarray(np.tile(np.array([1, 2], np.float32), n))
+    states = wp.array(initial)
+    obs = wp.array(np.tile(np.array([1, 2], np.float32), n))
     sb = pycunls.VectorStateBatch2(states, n)
     sb.set_num_active_states(n)
     fb = pycunls.PriorVectorFactorBatch2(obs, n)
@@ -38,7 +38,7 @@ def _priors(initial, partition=False):
     problem = pycunls.Problem()
     problem.add_state_batch(sb)
     problem.add_factor_batch(fb, [sb.state_device_ptr(i) for i in range(n)])
-    ids = cp.arange(n, dtype=cp.int32)
+    ids = wp.array(np.arange(n, dtype=np.int32))
     if partition:
         problem.set_problem_partition(n, [ids])
     return problem, (states, obs, sb, fb, ids)

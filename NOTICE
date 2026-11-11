@@ -28,13 +28,7 @@ This product includes third-party software components:
    Copyright (c) 2022 Wenzel Jakob
    https://github.com/wjakob/nanobind
 
-6. CuPy (pycunls runtime dependency)
-   License: MIT
-   Copyright (c) 2015 Preferred Infrastructure, Inc.
-   Copyright (c) 2015 Preferred Networks, Inc.
-   https://github.com/cupy/cupy
-
-7. NVIDIA Warp (pycunls optional dependency)
+6. NVIDIA Warp (pycunls runtime dependency)
    License: Apache-2.0
    Copyright (c) NVIDIA Corporation
    https://github.com/NVIDIA/warp

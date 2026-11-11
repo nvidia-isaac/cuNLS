@@ -39,8 +39,9 @@ on the torus3D pose graph it is 24–34× faster than Ceres, GTSAM and g2o.<sup>
 ### Two APIs
 
 - **Python (`pycunls`)**: the main way to use cuNLS. It works directly on
-  [CuPy](https://cupy.dev/) arrays, and you write custom factors and states as
-  [NVIDIA Warp](https://github.com/NVIDIA/warp) kernels in Python. `pycunls.fit` and
+  [NVIDIA Warp](https://github.com/NVIDIA/warp) arrays (or any GPU array with
+  `__cuda_array_interface__`, such as PyTorch or CuPy), and you write custom factors, states and
+  `fit` models as Warp kernels and functions in Python. `pycunls.fit` and
   `pycunls.ProblemBuilder` build problems from NumPy arrays; the full API underneath gives
   fixed-buffer, real-time re-solves.
 - **C++ (`cunls`)**: the native CUDA/C++ library (shared or static, CMake package) for
@@ -69,8 +70,8 @@ cuNLS is designed to be driven by coding agents (and to save humans the same deb
 
 | Category | Details |
 |---|---|
-| **APIs** | Python (`pycunls`, nanobind bindings with first-class CuPy interop; constructors accept a `cupy.ndarray` or a raw device pointer) and C++ (`cunls`, shared or static library) |
-| **Quick setup** | `pycunls.fit(model, x, y, p0)` for model fitting (NumPy-style or Warp models, thousands of independent fits in one solve, measurement errors, robust losses, bounds, multiple starts, standard errors and reduced chi-square per fit); `pycunls.ProblemBuilder` for graph problems from arrays; see [Quick setup](docs/sphinx/simple_api.rst) |
+| **APIs** | Python (`pycunls`, nanobind bindings; constructors accept a `wp.array`, any other `__cuda_array_interface__` array, or a raw device pointer) and C++ (`cunls`, shared or static library) |
+| **Quick setup** | `pycunls.fit(model, x, y, p0)` for model fitting (a Warp function of one sample with autodiff Jacobians, thousands of independent fits in one solve, measurement errors, robust losses, bounds, multiple starts, standard errors and reduced chi-square per fit); `pycunls.ProblemBuilder` for graph problems from arrays; see [Quick setup](docs/sphinx/simple_api.rst) |
 | **Manifold support** | SO(2), SO(3), SE(2), SE(3), Sim(2), Sim(3), SL(4), Euclidean vectors |
 | **Solvers** | Gauss-Newton, Levenberg-Marquardt with adaptive damping; batched subproblems, each with its own steps and stopping rule |
 | **Constraints** | `AugmentedLagrangianMinimizer`: equality and inequality constraints (any factor can be a constraint) and box bounds on vector states (projected); see [Constraints](docs/sphinx/constraints.rst) |
@@ -78,7 +79,7 @@ cuNLS is designed to be driven by coding agents (and to save humans the same deb
 | **Robust losses** | Huber, Cauchy, Arctan, SoftL1, Tolerant, Tukey, Scaled |
 | **Built-in factors** | Reprojection, PnP, between (SO(2)/SO(3)/SE(2)/SE(3)/Sim(2)/Sim(3)/SL(4)/vector), point-to-point, point-to-plane, symmetric point-to-plane, prior, IMU preintegration ([IMU](docs/sphinx/imu.rst)), constant-velocity/constant-acceleration motion priors (SO(2)/SO(3)/SE(2)/SE(3)), dynamics (kinematics, differential drive, bicycle, quadrotor, quadruped; [Dynamics](docs/sphinx/dynamics.rst)), clearance and half-space constraints |
 | **Model-predictive control** | `pycunls.mpc`: batched receding-horizon problems from the dynamics factors, costs and constraints, solved in closed loop; see [MPC](docs/sphinx/mpc.rst) |
-| **Custom factors and states** | CuPy / NVIDIA Warp kernels in Python, or user-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
+| **Custom factors and states** | NVIDIA Warp kernels in Python, or user-defined CUDA kernels via `SizedFactorBatch` / `SizedStateBatch` in C++; the same types work with every minimizer, including RANSAC — see [Custom factors and states](docs/sphinx/custom_factors_and_states.rst) |
 | **Numeric Jacobians** | Finite-difference Jacobians for any factor batch (manifold-aware, reuses each state's `Plus` retraction), selectable globally (`MinimizerOptions.jacobian_mode`) or per factor group (the `jacobian_mode_override` of `Problem.add_factor_batch`) — write a factor with only a residual and let cuNLS differentiate it; see [Numeric Jacobians](docs/sphinx/numeric_jacobians.rst) |
 | **Linear solver** | Supernodal block-sparse Cholesky (built in, default: exact steps; also solves the Schur complement of bundle adjustment), block-sparse PCG (variable block-Jacobi preconditioner), NVIDIA cuDSS (optional, loaded via `dlopen()` at runtime — see [INSTALL.md](INSTALL.md#cudss)), block-tridiagonal Cholesky, dense LDLT, dense Cholesky (cuSOLVER), dense QR (cuSOLVER). Guide: [Linear systems and solvers](docs/sphinx/linear_solvers.rst) |
 | **Self-explaining results** | Every summary has `converged()` and a `message` with the fix; Gauss-Newton, Levenberg-Marquardt and RANSAC summaries also give a `termination_reason` (per subproblem too), the augmented Lagrangian one a `status`; `pycunls.diagnose` / `evaluate` / `check_jacobians` check a problem before and after solving; argument errors name the expected shape and dtype; see [Troubleshooting](docs/sphinx/troubleshooting.rst) |
@@ -107,21 +108,23 @@ Local builds, the C++ CMake package, Jetson, cuDSS, testing and building the doc
 
 ```python
 import numpy as np
+import warp as wp
 import pycunls
 
-def decay(x, p):                        # y = a exp(-b x) + c; p holds one row per sample
-    return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
+@wp.func
+def decay(x: float, p: wp.vec3) -> float:   # y = a exp(-b x) + c, for one sample
+    return p[0] * wp.exp(-p[1] * x) + p[2]
 
 rng = np.random.default_rng(0)
 x = np.linspace(0.0, 4.0, 200)
-y = decay(x, np.array([[2.0, 1.3, 0.5]])) + rng.normal(0.0, 0.02, x.size)
+y = 2.0 * np.exp(-1.3 * x) + 0.5 + rng.normal(0.0, 0.02, x.size)
 
 res = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)
 print(res.report())                     # parameters ± errors, reduced chi2, why it stopped
 ```
 
 ```text
-FitResult: converged (numeric Jacobian)
+FitResult: converged (autodiff Jacobian)
   Converged: the predicted relative cost reduction fell below relative_reduction_tolerance; cost 1.166e+05 -> 91.28 in 5 iterations.
   p = [1.9964 ± 0.0063, 1.28707 ± 0.0087, 0.497294 ± 0.0027], reduced chi2 0.927, RelativeReductionTolerance
 ```
@@ -134,8 +137,8 @@ res = pycunls.fit(decay, x, Y, p0=[1.0, 1.0, 0.0], sigma=0.02)   # Y: (10000, 20
 res.params.shape, res.converged.all()                            # (10000, 3), True
 ```
 
-Robust losses (`loss="cauchy"`), bounds, multiple starts and Warp models with autodiff
-Jacobians are one argument each: [Quick setup](docs/sphinx/simple_api.rst) and
+The Jacobian comes from Warp's automatic differentiation, checked against central differences.
+Robust losses (`loss="cauchy"`), bounds and multiple starts are one argument each: [Quick setup](docs/sphinx/simple_api.rst) and
 [`python/examples/model_fitting.py`](python/examples/model_fitting.py).
 
 ### Solve a factor graph from arrays
@@ -237,16 +240,16 @@ fails, in 1.4 ms for 1,000 correspondences and 15 ms for 1,000,000. See
 ### The full API
 
 `fit` and `ProblemBuilder` build an ordinary `pycunls.Problem`. Built directly, it works on your
-own CuPy buffers, which is what real-time loops use: allocate once, then change the data and
+own GPU buffers (Warp arrays), which is what real-time loops use: allocate once, then change the data and
 the active counts every frame.
 
 ```python
-import cupy as cp
+import warp as wp
 import pycunls
 
 stream = pycunls.CudaStream()
-state_gpu = cp.array([0.0], dtype=cp.float32)   # initial guess x = 0
-obs_gpu = cp.array([2.0], dtype=cp.float32)     # observation o = 2
+state_gpu = wp.array([0.0], dtype=wp.float32)   # initial guess x = 0
+obs_gpu = wp.array([2.0], dtype=wp.float32)     # observation o = 2
 
 state_batch = pycunls.VectorStateBatch1(state_gpu, 1)   # capacity: fixed buffer size
 state_batch.set_num_active_states(1)                     # active count: starts at 0
@@ -257,8 +260,9 @@ problem = pycunls.Problem()
 problem.add_state_batch(state_batch)
 problem.add_factor_batch(prior, [state_batch.state_device_ptr(0)])
 
+wp.synchronize_stream(wp.get_stream())         # uploads (Warp's stream) before the solve
 summary = pycunls.LevenbergMarquardtMinimizer().minimize(stream, problem)
-print(summary.message, cp.asnumpy(state_gpu))  # x = 2, updated in place
+print(summary.message, state_gpu.numpy())       # x = 2, updated in place
 ```
 
 > [!IMPORTANT]

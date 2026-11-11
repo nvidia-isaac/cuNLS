@@ -67,7 +67,7 @@ def main():
     report.check(after < 0.1 * before, "position error did not decrease")
 
     # 5. Underneath is an ordinary pycunls.Problem: pb.problem, poses.batch (the
-    #    SE3StateBatch) and poses.data (the CuPy array the solve updates) are the
+    #    SE3StateBatch) and poses.data (the Warp array the solve updates) are the
     #    full API, e.g. for real-time re-solves with fixed buffers (see
     #    tartan_vio.py and the quick start).
 

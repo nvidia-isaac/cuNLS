@@ -28,14 +28,13 @@ prior on the first element (both custom Warp factors):
 The Jacobians are constant because the problem is linear in log space.
 """
 
-import cupy as cp
 import numpy as np
 import warp as wp
 
 import pycunls
 from pycunls.warp import WarpFactorBatch, WarpStateBatch
 from example_utils import datasets, metrics, report
-from example_utils.gpu import gather_state_pairs, gather_state_values
+from example_utils.gpu import state_value
 
 wp.init()
 
@@ -71,21 +70,25 @@ class PositiveScalarStateBatch(WarpStateBatch):
 
 @wp.kernel
 def log_prior_kernel(observations: wp.array(dtype=wp.float32), ids: wp.array(dtype=wp.int32),
-                     states: wp.array(dtype=wp.float32), residuals: wp.array(dtype=wp.float32),
+                     state_pointers: wp.array(dtype=wp.uint64),
+                     residuals: wp.array(dtype=wp.float32),
                      jacobians: wp.array(dtype=wp.float32), write_jacobians: int):
     t = wp.tid()                                                     # item
-    residuals[t] = wp.log(states[t]) - wp.log(observations[ids[t]])  # observation of its factor
+    x = state_value(state_pointers, t, 0)                            # its one state
+    residuals[t] = wp.log(x) - wp.log(observations[ids[t]])          # observation of its factor
     if write_jacobians != 0:
         jacobians[t] = 1.0
 
 
 @wp.kernel
 def log_ratio_kernel(measurements: wp.array(dtype=wp.float32), ids: wp.array(dtype=wp.int32),
-                     left: wp.array(dtype=wp.float32), right: wp.array(dtype=wp.float32),
+                     state_pointers: wp.array(dtype=wp.uint64),
                      residuals: wp.array(dtype=wp.float32), jacobians: wp.array(dtype=wp.float32),
                      write_jacobians: int):
     t = wp.tid()
-    residuals[t] = wp.log(right[t]) - wp.log(left[t]) - measurements[ids[t]]
+    left = state_value(state_pointers, 2 * t, 0)
+    right = state_value(state_pointers, 2 * t + 1, 0)
+    residuals[t] = wp.log(right) - wp.log(left) - measurements[ids[t]]
     if write_jacobians != 0:
         jacobians[2 * t] = -1.0
         jacobians[2 * t + 1] = 1.0
@@ -101,12 +104,12 @@ class LogPriorFactor(WarpFactorBatch):
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids                                   # number of items
         ids = self.factor_ids(factor_ids_ptr, n)             # factor of each item
-        states = gather_state_values(sp_ptr, n, stream_handle)  # item t's state
+        state_pointers = self.wrap_array(sp_ptr, wp.uint64, n)   # item t's state
         write_jacobians = 1 if jac_ptr != 0 else 0           # 0 = residuals only
         jacobians = (self.wrap_array(jac_ptr, wp.float32, n) if write_jacobians
                      else wp.zeros(1, dtype=wp.float32, device=self._device))
         wp.launch(log_prior_kernel, dim=n,
-                  inputs=[self.observations, ids, wp.from_dlpack(states),
+                  inputs=[self.observations, ids, state_pointers,
                           self.wrap_array(res_ptr, wp.float32, n), jacobians, write_jacobians],
                   stream=self.make_warp_stream(stream_handle))
         return True
@@ -122,12 +125,12 @@ class LogRatioBetweenFactor(WarpFactorBatch):
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
         ids = self.factor_ids(factor_ids_ptr, n)
-        left, right = gather_state_pairs(sp_ptr, n, stream_handle)
+        state_pointers = self.wrap_array(sp_ptr, wp.uint64, 2 * n)  # [2t], [2t + 1]
         write_jacobians = 1 if jac_ptr != 0 else 0
         jacobians = (self.wrap_array(jac_ptr, wp.float32, 2 * n) if write_jacobians
                      else wp.zeros(1, dtype=wp.float32, device=self._device))
         wp.launch(log_ratio_kernel, dim=n,
-                  inputs=[self.measurements, ids, wp.from_dlpack(left), wp.from_dlpack(right),
+                  inputs=[self.measurements, ids, state_pointers,
                           self.wrap_array(res_ptr, wp.float32, n), jacobians, write_jacobians],
                   stream=self.make_warp_stream(stream_handle))
         return True
@@ -140,8 +143,8 @@ def main():
     chain = datasets.positive_chain(num_states=128)
     num_states = len(chain.gt)
 
-    # 2. Upload: states with CuPy, factor data with Warp.
-    states_gpu = cp.asarray(chain.initial)
+    # 2. Upload states and factor data as Warp arrays.
+    states_gpu = wp.array(chain.initial, dtype=wp.float32, device="cuda:0")
     log_ratios_wp = wp.array(chain.measurements, dtype=wp.float32, device="cuda:0")
     prior_wp = wp.array(chain.gt[:1], dtype=wp.float32, device="cuda:0")
 
@@ -185,11 +188,11 @@ def main():
     options.base_options.cost_tolerance = 1e-8
     options.initial_lambda = 1e-3
     stream = pycunls.CudaStream()
-    summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())
+    wp.synchronize_stream(wp.get_stream())  # uploads ran on Warp's stream: finish them first
+    summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)  # syncs
 
     # 6. Report and check (errors measured in log space).
-    optimized = cp.asnumpy(states_gpu)
+    optimized = states_gpu.numpy()
     mse_before = metrics.mse(np.log(chain.initial), np.log(chain.gt))
     mse_after = metrics.mse(np.log(optimized), np.log(chain.gt))
     report.print_summary(
