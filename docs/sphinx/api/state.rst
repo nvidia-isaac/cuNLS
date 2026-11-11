@@ -82,8 +82,9 @@ Python API (``pycunls``)
 
 All Python state batches inherit from the abstract ``StateBatch`` base class.
 Every constructor argument documented as ``DevicePointer`` accepts either a
-``cupy.ndarray`` (the device pointer is extracted automatically via
-``.data.ptr``) or a raw ``int`` GPU device address.
+GPU array (``wp.array``, or any object with ``__cuda_array_interface__`` such
+as a PyTorch or CuPy array; the device pointer is extracted automatically) or
+a raw ``int`` GPU device address.
 
 The Plus formula, ambient and tangent dimensions, and memory layout of each
 built-in manifold are tabulated in :ref:`state-batch-types` (C++ API
@@ -380,7 +381,7 @@ scalars, quaternions, constrained subspaces).
 Convenience base for custom state batches implemented with `NVIDIA Warp
 <https://developer.nvidia.com/warp-python>`_ kernels.  Inherits from ``CustomStateBatch`` and provides helper methods for
 zero-copy pointer wrapping so you never need to manually construct
-``wp.array`` objects from raw device addresses.  Requires ``warp-lang``.
+``wp.array`` objects from raw device addresses.
 
 **Constructor**
 

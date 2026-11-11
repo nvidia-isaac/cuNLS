@@ -21,7 +21,6 @@ prior factor, this exercises the full CustomStateBatch → C++ trampoline →
 Python callback round-trip during optimisation.
 """
 
-import cupy as cp
 import numpy as np
 import pytest
 import warp as wp
@@ -52,47 +51,23 @@ def _positive_plus_kernel(
 def _log_prior_kernel(
     observations: wp.array(dtype=wp.float32),
     factor_ids: wp.array(dtype=wp.int32),
-    states: wp.array(dtype=wp.float32),
+    state_ptrs: wp.array(dtype=wp.uint64),
     residuals: wp.array(dtype=wp.float32),
     jacobians: wp.array(dtype=wp.float32),
     num_factors: int,
     write_jac: int,
 ):
-    """Log-space prior: residual = log(x) - log(target), Jacobian = 1."""
+    """Log-space prior: residual = log(x) - log(target), Jacobian = 1.
+
+    Item i reads its state through its own pointer ``state_ptrs[i]``.
+    """
     i = wp.tid()
     if i >= num_factors:
         return
-    residuals[i] = wp.log(states[i]) - wp.log(observations[factor_ids[i]])
+    x = wp.array(ptr=state_ptrs[i], shape=(1,), dtype=wp.float32)
+    residuals[i] = wp.log(x[0]) - wp.log(observations[factor_ids[i]])
     if write_jac != 0:
         jacobians[i] = 1.0
-
-
-# ── CuPy gather kernel (reused from custom_warp_factor example) ────────────
-
-_gather_kernel = cp.RawKernel(r"""
-extern "C" __global__
-void gather_floats(const unsigned long long* ptrs,
-                   float* out, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        const float* p = reinterpret_cast<const float*>(ptrs[i]);
-        out[i] = p[0];
-    }
-}
-""", "gather_floats")
-
-
-def _gather_state_values(state_ptrs_ptr: int, count: int) -> cp.ndarray:
-    """Read *count* float values from scattered pointers in device memory."""
-    ptrs = cp.ndarray(
-        shape=(count,), dtype=cp.uint64,
-        memptr=cp.cuda.MemoryPointer(
-            cp.cuda.UnownedMemory(state_ptrs_ptr, count * 8, None), 0))
-    out = cp.empty(count, dtype=cp.float32)
-    threads = 256
-    blocks = (count + threads - 1) // threads
-    _gather_kernel((blocks,), (threads,), (ptrs, out, np.int32(count)))
-    return out
 
 
 # ── Custom state batch ──────────────────────────────────────────────────────
@@ -131,9 +106,7 @@ class LogPriorFactor(WarpFactorBatch):
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
         ids = self.factor_ids(factor_ids_ptr, n)
-        vals = _gather_state_values(sp_ptr, n)
-        states_wp = wp.array(ptr=int(vals.data.ptr), dtype=wp.float32,
-                             shape=(n,), device=self._device, copy=False)
+        state_ptrs = self.wrap_array(sp_ptr, wp.uint64, n)
 
         res = self.wrap_array(res_ptr, wp.float32, n)
         write_jac = 1 if jac_ptr != 0 else 0
@@ -143,7 +116,7 @@ class LogPriorFactor(WarpFactorBatch):
 
         stream = self.make_warp_stream(stream_handle)
         wp.launch(_log_prior_kernel, dim=n,
-                  inputs=[self.observations, ids, states_wp, res, jac,
+                  inputs=[self.observations, ids, state_ptrs, res, jac,
                           n, write_jac],
                   stream=stream)
         return True
@@ -155,7 +128,7 @@ class TestCustomStateBatch:
     """Verify CustomStateBatch metadata and the plus() override contract."""
 
     def test_basic_properties(self):
-        data = cp.ones(10, dtype=cp.float32)
+        data = wp.ones(10, dtype=wp.float32)
         sb = PositiveScalarStateBatch(data, 10)
         assert sb.capacity == 10
         assert sb.num_active_states == 0  # zero until set
@@ -165,7 +138,7 @@ class TestCustomStateBatch:
         assert sb.tangent_size == 1
 
     def test_state_device_ptr(self):
-        data = cp.ones(5, dtype=cp.float32)
+        data = wp.ones(5, dtype=wp.float32)
         sb = PositiveScalarStateBatch(data, 5)
         sb.set_num_active_states(sb.capacity, sb.const_capacity)
         p0 = sb.state_device_ptr(0)
@@ -174,14 +147,14 @@ class TestCustomStateBatch:
         assert p1 - p0 == 4  # 1 float * 4 bytes
 
     def test_plus_raises_without_override(self):
-        data = cp.ones(3, dtype=cp.float32)
+        data = wp.ones(3, dtype=wp.float32)
         sb = pycunls.CustomStateBatch(data, 1, 1, 3)
         with pytest.raises(RuntimeError, match="must be overridden"):
             sb.plus(0, 0, 0, 0, 1)
 
     def test_with_const_ids(self):
-        data = cp.ones(10, dtype=cp.float32)
-        const_ids = cp.array([0], dtype=cp.int32)
+        data = wp.ones(10, dtype=wp.float32)
+        const_ids = wp.array([0], dtype=wp.int32)
         sb = PositiveScalarStateBatch(data, 10,
                                       const_state_ids=const_ids,
                                       const_capacity=1)
@@ -201,7 +174,7 @@ class TestPositiveScalarEndToEnd:
         targets = rng.uniform(1.0, 10.0, n).astype(np.float32)
         initial = targets * rng.uniform(0.5, 2.0, n).astype(np.float32)
 
-        states_gpu = cp.asarray(initial)
+        states_gpu = wp.array(initial)
         obs_wp = wp.array(targets, dtype=wp.float32, device="cuda:0")
 
         sb = PositiveScalarStateBatch(states_gpu, n)
@@ -221,8 +194,8 @@ class TestPositiveScalarEndToEnd:
         opts.disable_safety_checks = False
         minimizer = pycunls.GaussNewtonMinimizer(opts)
         summary = minimizer.minimize(stream, problem)
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
+        wp.synchronize()
 
         assert summary.final_cost < 1e-6
-        result = cp.asnumpy(states_gpu)
+        result = states_gpu.numpy()
         np.testing.assert_allclose(result, targets, rtol=1e-3)

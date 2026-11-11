@@ -20,11 +20,11 @@ It is designed around batched factor evaluation, sparse Jacobian assembly,
 and sparse linear solvers tailored for large scale minimization problems.
 
 cuNLS is used primarily from Python through **pycunls**, a package that
-exposes the full library through CuPy-based GPU arrays (see
-:doc:`pycunls_installation` and :doc:`pycunls_quick_start`). For advanced
-extensibility, pycunls integrates with `NVIDIA Warp
-<https://developer.nvidia.com/warp-python>`_ to let users author custom
-factor and state kernels in Python (see :doc:`pycunls_tutorial`).
+exposes the full library on GPU arrays from `NVIDIA Warp
+<https://developer.nvidia.com/warp-python>`_ (``wp.array``; any array with
+``__cuda_array_interface__`` works too; see :doc:`pycunls_installation` and
+:doc:`pycunls_quick_start`). Warp also lets users author custom factor and
+state kernels in Python (see :doc:`pycunls_tutorial`).
 
 The same functionality is available as a native **C++/CUDA API**
 (``libcunls``), for applications written in C++ or for custom factors
@@ -204,17 +204,22 @@ to the capacity.
 
 .. code-block:: python
 
-   import cupy as cp
+   import warp as wp
    import pycunls
 
    # Once: buffers and batches sized for the largest problem (the capacity).
    max_points = 100000
-   obs_gpu = cp.zeros((max_points, 2), dtype=cp.float32)
-   pts_gpu = cp.zeros((max_points, 3), dtype=cp.float32)
+   obs_gpu = wp.zeros((max_points, 2), dtype=wp.float32)
+   pts_gpu = wp.zeros((max_points, 3), dtype=wp.float32)
    pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, max_points)   # capacity
    # ... state batch, problem, minimizer ...
+   solver_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=stream.get_stream())
 
-   # Every frame: write the first num_points entries, then set the active count.
+   # Every frame: write the first num_points entries (on the solver's stream),
+   # then set the active count.
+   with wp.ScopedStream(solver_stream):
+       obs_gpu[:num_points].assign(observations)   # NumPy (num_points, 2)
+       pts_gpu[:num_points].assign(points)         # NumPy (num_points, 3)
    pnp.set_num_active_factors(num_points)       # num_points <= max_points
    pose_state.set_num_active_states(1)
    minimizer.minimize(stream, problem)
@@ -266,7 +271,7 @@ tables, device index tables) is described in the ``Problem`` API reference
 High-level solve flow
 ===============================================================================
 
-1. Allocate state and measurement data on the GPU (CuPy arrays in Python,
+1. Allocate state and measurement data on the GPU (Warp arrays in Python,
    device buffers in C++), sized for the largest problem (the capacity).
 2. Wrap state memory in one or more ``StateBatch`` objects (constructed with
    their capacity).
@@ -290,7 +295,7 @@ Supported optimization patterns
 - Bundle-adjustment style reprojection optimization.
 - ICP-like alignment (point-to-point / point-to-plane factors).
 - Custom user-defined factors: in Python through ``CustomFactorBatch`` /
-  ``CustomStateBatch`` (CuPy kernels) or ``WarpFactorBatch`` /
+  ``CustomStateBatch`` (kernels from any GPU library) or ``WarpFactorBatch`` /
   ``WarpStateBatch`` (NVIDIA Warp); in C++ through ``FactorBatch`` /
   ``SizedFactorBatch`` (see :doc:`custom_factors_and_states`).
 

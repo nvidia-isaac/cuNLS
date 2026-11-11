@@ -4,8 +4,8 @@ cuNLS Documentation
 
 cuNLS provides GPU-accelerated nonlinear least-squares optimization for
 batched geometric estimation problems. It is used primarily from **Python**
-through the ``pycunls`` package (CuPy arrays, custom kernels with NVIDIA
-Warp), and also offers a native **C++/CUDA** API.
+through the ``pycunls`` package (NVIDIA Warp arrays and custom Warp
+kernels), and also offers a native **C++/CUDA** API.
 
 .. raw:: html
 

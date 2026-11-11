@@ -30,16 +30,16 @@ plus a built-in prior on x_0, twice:
   differentiates it by finite differences.
 
 Both factors follow the item contract of ``WarpFactorBatch.evaluate``: item t
-reads the measurement of its factor ``ids[t]`` and its own two states.
+reads the measurement of its factor ``ids[t]`` and its own two states, which
+the kernel reads directly through the state pointer table.
 """
 
-import cupy as cp
 import warp as wp
 
 import pycunls
 from pycunls.warp import WarpFactorBatch
 from example_utils import datasets, metrics, report
-from example_utils.gpu import gather_state_pairs
+from example_utils.gpu import state_value
 
 wp.init()
 
@@ -49,13 +49,14 @@ wp.init()
 @wp.kernel
 def scalar_diff_kernel(measurements: wp.array(dtype=wp.float32),
                        ids: wp.array(dtype=wp.int32),
-                       left: wp.array(dtype=wp.float32),
-                       right: wp.array(dtype=wp.float32),
+                       state_pointers: wp.array(dtype=wp.uint64),
                        residuals: wp.array(dtype=wp.float32),
                        jacobians: wp.array(dtype=wp.float32),
                        write_jacobians: int):
     t = wp.tid()                                                # item
-    residuals[t] = (right[t] - left[t]) - measurements[ids[t]]  # measurement of its factor
+    left = state_value(state_pointers, 2 * t, 0)                # x_i
+    right = state_value(state_pointers, 2 * t + 1, 0)           # x_{i+1}
+    residuals[t] = (right - left) - measurements[ids[t]]        # measurement of its factor
     if write_jacobians != 0:
         jacobians[2 * t] = -1.0                                 # d r / d x_i
         jacobians[2 * t + 1] = 1.0                              # d r / d x_{i+1}
@@ -75,13 +76,13 @@ class ScalarDiffFactor(WarpFactorBatch):
         n = num_factor_ids                                  # number of items
         ids = self.factor_ids(factor_ids_ptr, n)            # factor of each item
         # Item t's states are state_pointers[2t] (x_i) and [2t + 1] (x_{i+1}).
-        left, right = gather_state_pairs(state_pointers_ptr, n, stream_handle)
+        state_pointers = self.wrap_array(state_pointers_ptr, wp.uint64, 2 * n)
 
         write_jacobians = 1 if jacobians_ptr != 0 else 0    # 0 = residuals only
         jacobians = (self.wrap_array(jacobians_ptr, wp.float32, 2 * n) if write_jacobians
                      else wp.zeros(1, dtype=wp.float32, device=self._device))
         wp.launch(scalar_diff_kernel, dim=n,
-                  inputs=[self.measurements, ids, wp.from_dlpack(left), wp.from_dlpack(right),
+                  inputs=[self.measurements, ids, state_pointers,
                           self.wrap_array(residuals_ptr, wp.float32, n), jacobians,
                           write_jacobians],
                   stream=self.make_warp_stream(stream_handle))
@@ -93,11 +94,12 @@ class ScalarDiffFactor(WarpFactorBatch):
 @wp.kernel
 def scalar_diff_residual_only_kernel(measurements: wp.array(dtype=wp.float32),
                                      ids: wp.array(dtype=wp.int32),
-                                     left: wp.array(dtype=wp.float32),
-                                     right: wp.array(dtype=wp.float32),
+                                     state_pointers: wp.array(dtype=wp.uint64),
                                      residuals: wp.array(dtype=wp.float32)):
     t = wp.tid()
-    residuals[t] = (right[t] - left[t]) - measurements[ids[t]]
+    left = state_value(state_pointers, 2 * t, 0)
+    right = state_value(state_pointers, 2 * t + 1, 0)
+    residuals[t] = (right - left) - measurements[ids[t]]
 
 
 class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
@@ -111,9 +113,9 @@ class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
                  factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
         ids = self.factor_ids(factor_ids_ptr, n)
-        left, right = gather_state_pairs(state_pointers_ptr, n, stream_handle)
+        state_pointers = self.wrap_array(state_pointers_ptr, wp.uint64, 2 * n)
         wp.launch(scalar_diff_residual_only_kernel, dim=n,
-                  inputs=[self.measurements, ids, wp.from_dlpack(left), wp.from_dlpack(right),
+                  inputs=[self.measurements, ids, state_pointers,
                           self.wrap_array(residuals_ptr, wp.float32, n)],
                   stream=self.make_warp_stream(stream_handle))
         return True
@@ -126,9 +128,9 @@ def run_chain_example(title, use_numeric_jacobian):
     chain = datasets.scalar_chain(num_states=256)
     num_states = len(chain.gt)
 
-    # 2. Upload: states and the anchor value with CuPy, measurements with Warp.
-    states_gpu = cp.asarray(chain.initial)
-    prior_gpu = cp.asarray(chain.gt[:1])
+    # 2. Upload states, the anchor value and the measurements as Warp arrays.
+    states_gpu = wp.array(chain.initial, dtype=wp.float32, device="cuda:0")
+    prior_gpu = wp.array(chain.gt[:1], dtype=wp.float32, device="cuda:0")
     measurements_wp = wp.array(chain.measurements, dtype=wp.float32, device="cuda:0")
 
     # 3. Scalar states; one difference factor per pair (x_i, x_{i+1}); a
@@ -179,12 +181,12 @@ def run_chain_example(title, use_numeric_jacobian):
     options.base_options.cost_tolerance = 1e-8
     options.initial_lambda = 1e-3
     stream = pycunls.CudaStream()
-    summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())
+    wp.synchronize_stream(wp.get_stream())  # uploads ran on Warp's stream: finish them first
+    summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)  # syncs
 
     # 6. Report and check.
     mse_before = metrics.mse(chain.initial, chain.gt)
-    mse_after = metrics.mse(cp.asnumpy(states_gpu), chain.gt)
+    mse_after = metrics.mse(states_gpu.numpy(), chain.gt)
     report.print_summary(title, summary, State_MSE=f"{mse_before:.6f} -> {mse_after:.6f}")
     report.check(mse_after < 0.01 * mse_before, "state error did not decrease")
 

@@ -53,7 +53,6 @@ import os
 import time
 from dataclasses import dataclass
 
-import cupy as cp
 import numpy as np
 from scipy.ndimage import binary_dilation
 from scipy.spatial import cKDTree
@@ -305,7 +304,7 @@ def build_controller(num_drones, num_shoppers, params):
     h.track_pose(weight=[0.3, 0.3, 0.4, 1.5, 1.5, 2.5])
     h.track_vector("velocity", weight=0.4)
     h.track_vector("rates", weight=0.05)
-    h.controls[...] = hover
+    h.controls.fill_(hover)
     h.control_effort(weight=0.05, nominal=np.full((B, STEPS, 4), hover))
     h.control_rate(weight=0.1)
     h.control_bounds(0.0, F_MAX)
@@ -356,12 +355,11 @@ def fly(store, num_drones=6, num_shoppers=10, duration=45.0, seed=3, on_step=Non
         refs = [c.reference() for c in couriers]
         for b, c in enumerate(couriers):
             c.update(T[b, :3, 3])
-        h.pose_reference[...] = cp.asarray(np.stack([r[0] for r in refs]), dtype=cp.float32)
-        h.vector_reference["velocity"][...] = cp.asarray(np.stack([r[1] for r in refs]),
-                                                         dtype=cp.float32)
+        h.pose_reference.assign(np.stack([r[0] for r in refs]).astype(np.float32))
+        h.vector_reference["velocity"].assign(np.stack([r[1] for r in refs]).astype(np.float32))
 
         # Obstacles of steps 1..N, from the previous plans (shifted one step).
-        plans = cp.asnumpy(h.poses[:, :, :3, 3]).astype(np.float64)
+        plans = h.poses.numpy()[:, :, :3, 3].astype(np.float64)
         if i == 0:
             plans[:] = T[:, None, :3, 3]
         ahead = np.concatenate([plans[:, 2:], plans[:, -1:]], axis=1)  # [B, N, 3]
@@ -378,12 +376,11 @@ def fly(store, num_drones=6, num_shoppers=10, duration=45.0, seed=3, on_step=Non
             others = [o for o in range(B) if o != b]
             obstacles[b, :, K_STATIC + 3 * len(shoppers):, :3] = ahead[others].transpose(1, 0, 2)
             obstacles[b, :, K_STATIC + 3 * len(shoppers):, 3] = DRONE_RADIUS + DRONE_ZONE
-        h.obstacles[...] = cp.asarray(obstacles, dtype=cp.float32)
+        h.obstacles.assign(obstacles.astype(np.float32))
 
         start = time.perf_counter()
-        u = cp.asnumpy(ctrl.step(stream, pose=T.astype(np.float32),
-                                 velocity=v.astype(np.float32),
-                                 rates=w.astype(np.float32))).astype(np.float64)
+        u = ctrl.step(stream, pose=T.astype(np.float32), velocity=v.astype(np.float32),
+                      rates=w.astype(np.float32)).numpy().astype(np.float64)
         solve_ms = 1e3 * (time.perf_counter() - start)
 
         p = T[:, :3, 3]
@@ -391,7 +388,7 @@ def fly(store, num_drones=6, num_shoppers=10, duration=45.0, seed=3, on_step=Non
         people = np.concatenate([person_spheres(s.position(t)) for s in shoppers])
         shopper_clear = np.min(np.linalg.norm(p[:, None] - people[None, :, :3], axis=-1) -
                                people[None, :, 3])
-        step = FleetStep(t, T.copy(), v.copy(), u, cp.asnumpy(h.poses[:, :, :3, 3]),
+        step = FleetStep(t, T.copy(), v.copy(), u, h.poses.numpy()[:, :, :3, 3],
                          [c.route for c in couriers], np.stack([c.route[-1] for c in couriers]),
                          np.stack([s.position(t) for s in shoppers]),
                          np.stack([s.velocity(t) for s in shoppers]), float(d.min()),

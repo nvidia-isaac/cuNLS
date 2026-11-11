@@ -62,11 +62,11 @@ import os
 import time
 from dataclasses import dataclass, field
 
-import cupy as cp
 import cv2
 import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
+import warp as wp
 
 import pycunls
 from example_utils import report
@@ -217,16 +217,18 @@ class MatchBuffers:
 
     def __init__(self, sensors):
         self.sensors = sensors
-        self.observations = cp.zeros((MAX_MATCHES, 2), dtype=cp.float32)
-        self.points = cp.zeros((MAX_MATCHES, 3), dtype=cp.float32)
-        self.camera_from_rig = cp.zeros((MAX_MATCHES, 4, 4), dtype=cp.float32)
+        self.observations = wp.zeros((MAX_MATCHES, 2), dtype=wp.float32)
+        self.points = wp.zeros((MAX_MATCHES, 3), dtype=wp.float32)
+        self.camera_from_rig = wp.zeros((MAX_MATCHES, 4, 4), dtype=wp.float32)
 
     def upload(self, matches):
+        """Copies the first n matches into the buffers (on Warp's current stream)."""
         n = min(len(matches.camera), MAX_MATCHES)
-        self.observations[:n] = cp.asarray(matches.observations[:n], dtype=cp.float32)
-        self.points[:n] = cp.asarray(matches.points[:n], dtype=cp.float32)
-        self.camera_from_rig[:n] = cp.asarray(self.sensors.cameras[matches.camera[:n]],
-                                              dtype=cp.float32)
+        if n:
+            self.observations[:n].assign(matches.observations[:n].astype(np.float32))
+            self.points[:n].assign(matches.points[:n].astype(np.float32))
+            self.camera_from_rig[:n].assign(
+                self.sensors.cameras[matches.camera[:n]].astype(np.float32))
         return n
 
     def pnp_batch(self):
@@ -274,11 +276,13 @@ class InertialPnP:
     def __init__(self, sensors, robust, sample_size=2):
         self.sensors = sensors
         self.stream = pycunls.CudaStream()
+        # The per-frame uploads run on the solver's stream, so the solve sees them.
+        self.warp_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=self.stream.get_stream())
 
         # --- States: two slots each, all free ---
-        self.pose_buf = cp.zeros((2, 4, 4), dtype=cp.float32)
-        self.vel_buf = cp.zeros((2, 3), dtype=cp.float32)
-        self.bias_buf = cp.zeros((2, 6), dtype=cp.float32)
+        self.pose_buf = wp.zeros((2, 4, 4), dtype=wp.float32)
+        self.vel_buf = wp.zeros((2, 3), dtype=wp.float32)
+        self.bias_buf = wp.zeros((2, 6), dtype=wp.float32)
         self.poses = pycunls.SE3StateBatch(self.pose_buf, 2)
         self.vels = pycunls.VectorStateBatch3(self.vel_buf, 2)
         self.biases = pycunls.VectorStateBatch6(self.bias_buf, 2)
@@ -290,23 +294,23 @@ class InertialPnP:
         self.pnp = self.matches.pnp_batch()
 
         # --- IMU factor between the two slots; offsets [0, n] rewritten per frame ---
-        self.imu_samples = cp.zeros((MAX_IMU_SAMPLES, 7), dtype=cp.float32)
-        self.imu_offsets = cp.zeros(2, dtype=cp.int32)
+        self.imu_samples = wp.zeros((MAX_IMU_SAMPLES, 7), dtype=wp.float32)
+        self.imu_offsets = wp.zeros(2, dtype=wp.int32)
         self.imu = pycunls.ImuFactorBatch(self.imu_samples, self.imu_offsets, MAX_IMU_SAMPLES,
                                           sensors.imu, 1)
         self.imu.set_num_active_factors(1)
 
         # --- Priors on slot 0, whitened by their square-root information ---
-        self.pose_prior_obs = cp.zeros((1, 4, 4), dtype=cp.float32)
-        self.pose_prior_sqrt_info = cp.zeros((1, 6, 6), dtype=cp.float32)
+        self.pose_prior_obs = wp.zeros((1, 4, 4), dtype=wp.float32)
+        self.pose_prior_sqrt_info = wp.zeros((1, 6, 6), dtype=wp.float32)
         self.pose_prior = pycunls.InformationFactorBatch(
             pycunls.SE3PriorFactorBatch(self.pose_prior_obs, 1), self.pose_prior_sqrt_info)
-        self.vel_prior_obs = cp.zeros((1, 3), dtype=cp.float32)
+        self.vel_prior_obs = wp.zeros((1, 3), dtype=wp.float32)
         self.vel_prior = pycunls.WeightedFactorBatch(
             pycunls.PriorVectorFactorBatch3(self.vel_prior_obs, 1), 1.0 / self.VELOCITY_SIGMA)
-        self.bias_prior_obs = cp.zeros((1, 6), dtype=cp.float32)
-        self.bias_prior_sqrt_info = cp.asarray(np.diag(1.0 / self.BIAS_SIGMA)[None],
-                                               dtype=cp.float32)
+        self.bias_prior_obs = wp.zeros((1, 6), dtype=wp.float32)
+        self.bias_prior_sqrt_info = wp.array(np.diag(1.0 / self.BIAS_SIGMA)[None],
+                                             dtype=wp.float32)
         self.bias_prior = pycunls.InformationFactorBatch(
             pycunls.PriorVectorFactorBatch6(self.bias_prior_obs, 1), self.bias_prior_sqrt_info)
         for prior in (self.pose_prior, self.vel_prior, self.bias_prior):
@@ -356,23 +360,25 @@ class InertialPnP:
         T0, v0, b0 = self.state
         # Prediction for the current frame: integrate the IMU from the previous one.
         T1, v1 = self.predict(imu_samples)
-        self.pose_buf[...] = cp.asarray(np.stack([T0, T1]), dtype=cp.float32)
-        self.vel_buf[...] = cp.asarray(np.stack([v0, v1]), dtype=cp.float32)
-        self.bias_buf[...] = cp.asarray(np.stack([b0, b0]), dtype=cp.float32)
         num_samples = len(imu_samples)
         assert 0 < num_samples <= MAX_IMU_SAMPLES
-        self.imu_samples[:num_samples] = cp.asarray(imu_samples, dtype=cp.float32)
-        self.imu_offsets[1] = num_samples
+        f32 = np.float32
+        with wp.ScopedStream(self.warp_stream):  # ordered before the solve
+            self.pose_buf.assign(np.stack([T0, T1]).astype(f32))
+            self.vel_buf.assign(np.stack([v0, v1]).astype(f32))
+            self.bias_buf.assign(np.stack([b0, b0]).astype(f32))
+            self.imu_samples[:num_samples].assign(np.asarray(imu_samples, dtype=f32))
+            self.imu_offsets.assign(np.array([0, num_samples], dtype=np.int32))
 
-        # Priors: the previous estimate and its pose covariance.
-        self.pose_prior_obs[0] = cp.asarray(T0, dtype=cp.float32)
-        self.pose_prior_sqrt_info[0] = cp.asarray(
-            np.linalg.cholesky(np.linalg.inv(self.pose_cov)).T, dtype=cp.float32)
-        self.vel_prior_obs[0] = cp.asarray(v0, dtype=cp.float32)
-        self.bias_prior_obs[0] = cp.asarray(b0, dtype=cp.float32)
+            # Priors: the previous estimate and its pose covariance.
+            self.pose_prior_obs.assign(T0[None].astype(f32))
+            self.pose_prior_sqrt_info.assign(
+                np.linalg.cholesky(np.linalg.inv(self.pose_cov)).T[None].astype(f32))
+            self.vel_prior_obs.assign(np.asarray(v0, dtype=f32)[None])
+            self.bias_prior_obs.assign(np.asarray(b0, dtype=f32)[None])
 
-        # Matches: rewrite the buffers, the active count and the connectivity.
-        n = self.matches.upload(matches)
+            # Matches: rewrite the buffers, the active count and the connectivity.
+            n = self.matches.upload(matches)
         self.pnp.set_num_active_factors(n)
         self.problem.set_state_pointers(0, [self.poses.state_device_ptr(1)] * n)
 
@@ -386,9 +392,9 @@ class InertialPnP:
             self.lm.minimize(self.stream, self.problem)
         solve_ms = 1e3 * (time.perf_counter() - start)
 
-        T1 = cp.asnumpy(self.pose_buf[1]).astype(np.float64)
-        v1 = cp.asnumpy(self.vel_buf[1]).astype(np.float64)
-        b1 = cp.asnumpy(self.bias_buf[1]).astype(np.float64)
+        T1 = self.pose_buf.numpy()[1].astype(np.float64)
+        v1 = self.vel_buf.numpy()[1].astype(np.float64)
+        b1 = self.bias_buf.numpy()[1].astype(np.float64)
         if mask is None:  # classify for the report: the Huber "inliers" are within the threshold
             mask = classify(T1, matches, self.sensors)
         info = pnp_information(T1, matches, mask, self.sensors) if n else np.zeros((6, 6))
@@ -407,7 +413,8 @@ class VisualPnP:
 
     def __init__(self, sensors):
         self.stream = pycunls.CudaStream()
-        self.pose_buf = cp.zeros((1, 4, 4), dtype=cp.float32)
+        self.warp_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=self.stream.get_stream())
+        self.pose_buf = wp.zeros((1, 4, 4), dtype=wp.float32)
         self.pose = pycunls.SE3StateBatch(self.pose_buf, 1)
         self.pose.set_num_active_states(1)
         self.matches = MatchBuffers(sensors)
@@ -428,10 +435,12 @@ class VisualPnP:
 
     def track(self, matches):
         guess = self.predict()
-        n = self.matches.upload(matches)
+        with wp.ScopedStream(self.warp_stream):  # uploads ordered before the solve
+            n = self.matches.upload(matches)
+            if n > 3:
+                self.pose_buf.assign(guess[None].astype(np.float32))
         estimate = FrameEstimate(guess, inlier_mask=np.zeros(n, np.uint8))
         if n > 3:
-            self.pose_buf[0] = cp.asarray(guess, dtype=cp.float32)
             self.pnp.set_num_active_factors(n)
             self.problem.set_state_pointers(0, [self.pose.state_device_ptr(0)] * n)
             start = time.perf_counter()
@@ -439,7 +448,7 @@ class VisualPnP:
             estimate.solve_ms = 1e3 * (time.perf_counter() - start)
             estimate.num_hypotheses = summary.num_hypotheses
             if summary.num_inliers >= self.MIN_INLIERS:
-                estimate.pose = cp.asnumpy(self.pose_buf[0]).astype(np.float64)
+                estimate.pose = self.pose_buf.numpy()[0].astype(np.float64)
                 estimate.inlier_mask = self.ransac.inlier_mask(0)[:n].copy()
         # Too few matches or inliers: the frame is a failure, coast on the prediction.
         self.history.append(estimate.pose)

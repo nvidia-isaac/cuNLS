@@ -16,9 +16,9 @@
 """ImuFactorBatch: layout, parameters, and zero cost on keyframes from a NumPy
 integration of the factor's Euler model."""
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 
@@ -32,8 +32,8 @@ def so3_exp(w):
 
 
 def test_layout_and_parameters():
-    samples = cp.zeros(7 * 4, dtype=cp.float32)
-    offsets = cp.asarray([0, 2, 4], dtype=cp.int32)
+    samples = wp.zeros(7 * 4, dtype=wp.float32)
+    offsets = wp.array([0, 2, 4], dtype=wp.int32)
     p = pycunls.ImuParameters()
     assert p.gravity == pytest.approx([0.0, 0.0, -9.80665])
     assert p.body_from_imu == pytest.approx(np.eye(4).ravel().tolist())
@@ -50,10 +50,10 @@ def test_layout_and_parameters():
     # Array dtypes are checked (the kernel reads float32 samples, int32 offsets);
     # raw integer pointers pass unchecked.
     with pytest.raises(TypeError, match="imu_samples must have dtype float32"):
-        pycunls.ImuFactorBatch(samples.astype(cp.float64), offsets, 4, p, 2)
+        pycunls.ImuFactorBatch(wp.zeros(7 * 4, dtype=wp.float64), offsets, 4, p, 2)
     with pytest.raises(TypeError, match="sample_offsets must have dtype int32"):
-        pycunls.ImuFactorBatch(samples, offsets.astype(cp.int64), 4, p, 2)
-    raw = pycunls.ImuFactorBatch(samples.data.ptr, offsets.data.ptr, 4, p, 2)
+        pycunls.ImuFactorBatch(samples, wp.array([0, 2, 4], dtype=wp.int64), 4, p, 2)
+    raw = pycunls.ImuFactorBatch(samples.ptr, offsets.ptr, 4, p, 2)
     assert raw.residuals_size == 15
 
 
@@ -81,10 +81,10 @@ def test_integrated_keyframes_have_zero_cost(stream):
             v = v + acc * dt
             R = R @ so3_exp((w - bias[:3]) * dt)
             samples.append(np.concatenate([w, a, [dt]]))
-    pose_buf = cp.asarray(np.stack(poses).astype(np.float32))
-    vel_buf = cp.asarray(np.stack(vels).astype(np.float32))
-    bias_buf = cp.asarray(np.tile(bias, (keyframes, 1)).astype(np.float32))
-    first = cp.asarray([0], dtype=cp.int32)  # keyframe 0 fixed (gauge)
+    pose_buf = wp.array(np.stack(poses).astype(np.float32))
+    vel_buf = wp.array(np.stack(vels).astype(np.float32))
+    bias_buf = wp.array(np.tile(bias, (keyframes, 1)).astype(np.float32))
+    first = wp.array([0], dtype=wp.int32)  # keyframe 0 fixed (gauge)
     pose_states = pycunls.SE3StateBatch(pose_buf, keyframes, first, 1)
     pose_states.set_num_active_states(keyframes, 1)
     vel_states = pycunls.VectorStateBatch3(vel_buf, keyframes, first, 1)
@@ -92,8 +92,8 @@ def test_integrated_keyframes_have_zero_cost(stream):
     bias_states = pycunls.VectorStateBatch6(bias_buf, keyframes, first, 1)
     bias_states.set_num_active_states(keyframes, 1)
 
-    sample_buf = cp.asarray(np.stack(samples).astype(np.float32))
-    offsets = cp.asarray(np.arange(keyframes) * n, dtype=cp.int32)
+    sample_buf = wp.array(np.stack(samples).astype(np.float32))
+    offsets = wp.array(np.arange(keyframes) * n, dtype=wp.int32)
     imu = pycunls.ImuFactorBatch(sample_buf, offsets, len(samples), p, keyframes - 1)
     imu.set_num_active_factors(keyframes - 1)
     problem = pycunls.Problem()

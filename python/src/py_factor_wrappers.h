@@ -32,7 +32,7 @@
 //      factor_ids, num_items) (see FactorBatch::Evaluate for the item contract).
 //
 // All GPU pointer arguments are passed as uintptr_t so that the Python side
-// can wrap them with CuPy or Warp arrays without any C++ <-> Python type
+// can wrap them with Warp arrays without any C++ <-> Python type
 // conversion overhead.
 class PyFactorBatch : public cunls::FactorBatch {
  public:

@@ -47,10 +47,11 @@ struct AugmentedLagrangianMinimizerOptions {
   size_t inner_iterations = 5;
 
   /**
-   * @brief Iteration cap of the inner solves once every running subproblem is
-   * feasible (and of the last outer iteration): the solve that establishes
-   * stationarity. 0 means the wrapped minimizer's
-   * MinimizerOptions::max_num_iterations. Default: 0
+   * @brief Iteration cap of a subproblem's full inner solve: its first inner
+   * solve after it is feasible (and every subproblem's in the last outer
+   * iteration), the solve that establishes stationarity. Each subproblem of a
+   * partitioned problem gets its own, without waiting for the others. 0 means
+   * the wrapped minimizer's MinimizerOptions::max_num_iterations. Default: 0
    */
   size_t final_inner_iterations = 0;
 
@@ -210,10 +211,13 @@ struct ConstraintBatchState {
  *
  * Constraint batches are found among the problem's residual batches by type.
  * With a problem partition (Problem::SetProblemPartition) every subproblem has
- * its own penalties per constraint batch and stops on its own; multiplier and
- * penalty updates run on the device, with one small read-back per outer
- * iteration. Without constraint batches the call is the wrapped minimizer's
- * Minimize.
+ * its own penalties per constraint batch and stops on its own: a subproblem
+ * that becomes feasible gets its own full inner solve in the next outer
+ * iteration (final_inner_iterations) and finishes there, while the others
+ * continue with capped solves; it never waits for another subproblem.
+ * Multiplier and penalty updates run on the device, with one small read-back
+ * per outer iteration. Without constraint batches the call is the wrapped
+ * minimizer's Minimize.
  *
  * The multipliers and penalties live in the constraint batches, so the batches
  * may be solved again with warm_start.
@@ -300,12 +304,15 @@ class AugmentedLagrangianMinimizer {
   dvector<float> penalty_;         ///< [constraint * P + p]
   dvector<float> violation_;       ///< [constraint * P + p], this outer iteration.
   dvector<float> prev_violation_;  ///< [constraint * P + p], previous outer iteration.
-  dvector<int> problem_status_;    ///< [p]: 0 running, 1 converged, 2 max penalty.
-  dvector<int> at_cap_;            ///< [p]: last inner solve stopped by its cap.
-  dvector<float> values_;          ///< Constraint values of every batch, concatenated.
-  dvector<float> d_out_;           ///< Read-back scalars.
-  dvector<float> scratch_;         ///< Objective evaluation buffers.
-  dvector<float> partials_;        ///< Reduction partials.
+  /// [p]: -1 polishing (next inner solve is its full solve), 0 running,
+  /// 1 converged, 2 max penalty, 3 failed; positive entries are frozen.
+  dvector<int> problem_status_;
+  dvector<int> at_cap_;         ///< [p]: last inner solve stopped by its cap.
+  dvector<int> iteration_cap_;  ///< [p]: inner iteration cap of the next solve (not real time).
+  dvector<float> values_;       ///< Constraint values of every batch, concatenated.
+  dvector<float> d_out_;        ///< Read-back scalars.
+  dvector<float> scratch_;      ///< Objective evaluation buffers.
+  dvector<float> partials_;     ///< Reduction partials.
 
   std::vector<size_t> bounded_;  ///< Box-bounded state batches of the problem.
   std::vector<dvector<int>>

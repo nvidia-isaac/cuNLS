@@ -35,13 +35,7 @@ from typing import Any, List, Tuple, Union
 
 import numpy as np
 
-try:
-    import warp as wp
-except ImportError as exc:
-    raise ImportError(
-        "pycunls.warp requires the 'warp-lang' package. "
-        "Install it with: pip install warp-lang"
-    ) from exc
+import warp as wp
 
 from pycunls._pycunls_core import CustomFactorBatch, CustomStateBatch
 
@@ -139,6 +133,9 @@ class WarpFactorBatch(CustomFactorBatch):
             if num_factors > 0:
                 values %= num_factors
             ids = wp.array(values, dtype=wp.int32, device=self._device)
+            # The upload runs on Warp's stream and the caller's kernel on cuNLS's: finish it
+            # (once per item count and active count, not per evaluation).
+            wp.synchronize_stream(wp.get_stream(self._device))
             self._default_ids[key] = ids
         return ids
 
@@ -233,7 +230,7 @@ class WarpStateBatch(CustomStateBatch):
     Parameters
     ----------
     data : DevicePointer
-        CuPy array (or raw int pointer) to the contiguous GPU buffer
+        GPU array (e.g. ``wp.array``) or raw int pointer to the contiguous buffer
         holding ``capacity * ambient_size`` floats.
     ambient_size : int
         Number of floats stored per state (storage dimension).
@@ -243,7 +240,7 @@ class WarpStateBatch(CustomStateBatch):
         Number of states the buffer holds. The batch starts with 0
         active states: call :meth:`set_num_active_states` before solving.
     const_state_ids : DevicePointer, optional
-        CuPy array of ``int32`` indices of states held constant.
+        GPU array of ``int32`` indices of states held constant.
     const_capacity : int
         Number of entries the *const_state_ids* buffer holds.
     device : str

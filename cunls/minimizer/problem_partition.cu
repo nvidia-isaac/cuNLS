@@ -181,7 +181,7 @@ __global__ void init_control_kernel(const float *cost, size_t num_problems, floa
   if (p >= num_problems) return;
   // A frozen subproblem (InnerSolve::problem_frozen) is never active: it takes
   // no step and keeps its states.
-  const bool is_frozen = frozen != nullptr && frozen[p] != 0;
+  const bool is_frozen = frozen != nullptr && frozen[p] > 0;
   const int is_active = cost[p] >= cost_tolerance && !is_frozen && isfinite(cost[p]);
   active[p] = is_active;
   TerminationReason reason = TerminationReason::NotDetermined;
@@ -257,11 +257,32 @@ __global__ void step_control_kernel(StepControlParams params, size_t num_problem
       result = kStepTaken;
     }
     if (take) cost[p] = updated;
+    // Its own iteration cap (InnerSolve::problem_iteration_cap) ends its part of the call.
+    if (active[p] && params.iteration_cap != nullptr &&
+        params.iterations_done >= params.iteration_cap[p]) {
+      active[p] = 0;
+      termination[p] = static_cast<int>(TerminationReason::MaxIterations);
+    }
   }
   accept[p] = take;
   outcome[p] = result;
   AddToTotals(num_problems, cost[p], active[p], out);
   if (num_problems == 1) out[2] = static_cast<float>(take);
+}
+
+/** out[p] = 1 if subproblem p stopped at an iteration cap (still active, or MaxIterations). */
+__global__ void at_cap_kernel(size_t num_problems, const int *active, const int *termination,
+                              int *out) {
+  const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (p >= num_problems) return;
+  out[p] = active[p] != 0 || termination[p] == static_cast<int>(TerminationReason::MaxIterations);
+}
+
+/** row_active[r] = active[row_problem[r]]. */
+__global__ void active_rows_kernel(size_t num_rows, const int *row_problem, const int *active,
+                                   int *row_active) {
+  const size_t r = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (r < num_rows) row_active[r] = active[row_problem[r]];
 }
 
 /** Still-active subproblems hit the iteration cap; counts per reason. */
@@ -506,6 +527,19 @@ void ProblemPartition::FinishTermination(cudaStream_t stream, unsigned int *d_co
       cudaMemsetAsync(d_counts, 0, kNumTerminationReasons * sizeof(unsigned int), stream));
   finish_termination_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(
       num_problems_, active_.data(), termination_.data(), d_counts);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ProblemPartition::AtCap(cudaStream_t stream, int *out) const {
+  at_cap_kernel<<<Blocks(num_problems_), kThreads, 0, stream>>>(num_problems_, active_.data(),
+                                                                termination_.data(), out);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
+void ProblemPartition::ActiveRows(cudaStream_t stream, int *row_active) const {
+  if (num_rows_ == 0) return;
+  active_rows_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(num_rows_, row_problem_.data(),
+                                                                 active_.data(), row_active);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

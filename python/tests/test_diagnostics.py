@@ -17,9 +17,9 @@
 
 import json
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 from pycunls.catalog import effective_factor
@@ -34,9 +34,9 @@ def _pose_graph(n=5, constant_first=False, nan_pose=None):
         T[nan_pose, 1, 3] = np.nan
     D = np.tile(np.eye(4, dtype=np.float32), (n - 1, 1, 1))
     D[:, 0, 3] = -1.0  # Delta = T_{i+1}^-1 T_i for unit steps along x
-    poses, deltas = cp.asarray(T), cp.asarray(D)
+    poses, deltas = wp.array(T), wp.array(D)
     if constant_first:
-        ids = cp.zeros(1, cp.int32)
+        ids = wp.zeros(1, wp.int32)
         sb = pycunls.SE3StateBatch(poses, n, ids, 1)
         sb.set_num_active_states(n, 1)
     else:
@@ -54,18 +54,19 @@ def _pose_graph(n=5, constant_first=False, nan_pose=None):
     return problem, (poses, deltas, ids, sb, fb)
 
 
-class _Handle:
-    def __init__(self, handle):
-        self.handle = handle
-
-    def __cuda_stream__(self):
-        return (0, self.handle)
-
-
-def _cupy_stream(handle):
-    if hasattr(cp.cuda.Stream, "from_external"):
-        return cp.cuda.Stream.from_external(_Handle(handle))
-    return cp.cuda.ExternalStream(handle)
+@wp.kernel
+def _wrong_jacobian_prior(state_ptrs: wp.array(dtype=wp.uint64), obs: wp.array2d(dtype=float),
+                          scale: float, res: wp.array2d(dtype=float), jac_ptr: wp.uint64):
+    t = wp.tid()
+    x = wp.array(ptr=state_ptrs[t], shape=(2,), dtype=float)
+    res[t, 0] = x[0] - obs[t, 0]
+    res[t, 1] = x[1] - obs[t, 1]
+    if jac_ptr != wp.uint64(0):
+        jac = wp.array(ptr=jac_ptr, shape=(4 * t + 4,), dtype=float)  # row-major 2x2 per item
+        jac[4 * t + 0] = scale
+        jac[4 * t + 1] = 0.0
+        jac[4 * t + 2] = 0.0
+        jac[4 * t + 3] = scale
 
 
 class _WrongJacobianPrior(pycunls.CustomFactorBatch):
@@ -77,25 +78,18 @@ class _WrongJacobianPrior(pycunls.CustomFactorBatch):
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream, ids_ptr, num_ids):
         n = num_ids if num_ids else self.num_active_factors
-        with _cupy_stream(stream):
-            ptrs = cp.ndarray((n,), cp.uint64, cp.cuda.MemoryPointer(
-                cp.cuda.UnownedMemory(sp_ptr, n * 8, None), 0)).get()
-            res = cp.ndarray((n, 2), cp.float32, cp.cuda.MemoryPointer(
-                cp.cuda.UnownedMemory(res_ptr, n * 8, None), 0))
-            for t in range(n):
-                x = cp.ndarray((2,), cp.float32, cp.cuda.MemoryPointer(
-                    cp.cuda.UnownedMemory(int(ptrs[t]), 8, None), 0))
-                res[t] = x - self.obs[t]
-            if jac_ptr:
-                jac = cp.ndarray((n, 2, 2), cp.float32, cp.cuda.MemoryPointer(
-                    cp.cuda.UnownedMemory(jac_ptr, n * 16, None), 0))
-                jac[...] = self.scale * cp.eye(2, dtype=cp.float32)
+        device = wp.get_cuda_device()
+        state_ptrs = wp.array(ptr=sp_ptr, shape=(n,), dtype=wp.uint64, device=device)
+        res = wp.array(ptr=res_ptr, shape=(n, 2), dtype=float, device=device)
+        wp.launch(_wrong_jacobian_prior, dim=n,
+                  inputs=[state_ptrs, self.obs, float(self.scale), res, wp.uint64(jac_ptr)],
+                  stream=wp.Stream(device, cuda_stream=stream))
         return True
 
 
 def _custom_problem(scale):
-    states = cp.asarray(np.array([[3, 4], [5, -1]], np.float32))
-    obs = cp.asarray(np.array([[1, 2], [0, 0]], np.float32))
+    states = wp.array(np.array([[3, 4], [5, -1]], np.float32))
+    obs = wp.array(np.array([[1, 2], [0, 0]], np.float32))
     sb = pycunls.VectorStateBatch2(states, 2)
     sb.set_num_active_states(2)
     fb = _WrongJacobianPrior(obs, 2, scale)
@@ -139,7 +133,9 @@ def test_evaluate_reports_cost_and_the_worst_factor():
     (b,) = ev.batches
     assert b.num_factors == 4 and b.residual_size == 6 and b.num_non_finite == 0
     assert b.worst_factor == 3  # the steps grow along the chain
-    norms = b.factor_norms().get()
+    norms = b.factor_norms()
+    assert isinstance(norms, np.ndarray) and isinstance(b.residuals, np.ndarray)
+    assert b.residuals.shape == (4, 6)
     assert np.argmax(norms) == 3
     assert ev.total_cost == pytest.approx(0.5 * float(np.sum(norms ** 2)), rel=1e-4)
     json.dumps(ev.to_dict())
@@ -173,31 +169,11 @@ def test_check_jacobians_catches_a_wrong_custom_jacobian():
 
 def test_states_are_unchanged_by_the_checks():
     problem, keep = _pose_graph(constant_first=True)
-    before = keep[0].copy()
+    before = keep[0].numpy().copy()
     pycunls.diagnose(problem)
     pycunls.evaluate(problem)
     pycunls.check_jacobians(problem)
-    assert cp.array_equal(before, keep[0])
-
-
-def test_diagnose_sees_through_wrapped_factors():
-    # A weighted between factor is still relative: the gauge warning must stay.
-    problem, (poses, deltas, ids, sb, fb) = _pose_graph()
-    weighted = pycunls.WeightedFactorBatch(fb, 2.0)
-    assert weighted.inner_factor is fb
-    wrapped = pycunls.Problem()
-    wrapped.add_state_batch(sb)
-    wrapped.add_factor_batch(weighted, [sb.state_device_ptr(i + k) for i in range(4)
-                                        for k in (0, 1)])
-    issues = pycunls.diagnose(wrapped)
-    assert len(issues) == 1 and "Gauge freedom" in issues[0].message
-
-    # A weighted prior still anchors.
-    target = cp.asarray(np.eye(4, dtype=np.float32)[None])
-    prior = pycunls.SE3PriorFactorBatch(target, 1)
-    prior.set_num_active_factors(1)
-    wrapped.add_factor_batch(pycunls.WeightedFactorBatch(prior, 1.0), [sb.state_device_ptr(0)])
-    assert pycunls.diagnose(wrapped) == []
+    assert np.array_equal(before, keep[0].numpy())
 
 
 def _wrapped_chain(wrap):
@@ -210,9 +186,25 @@ def _wrapped_chain(wrap):
     return wrapped, (problem, poses, deltas, sb, fb, outer, keep)
 
 
+def test_diagnose_sees_through_wrapped_factors():
+    # A weighted between factor is still relative: the gauge warning must stay.
+    wrapped, keep = _wrapped_chain(lambda fb: (pycunls.WeightedFactorBatch(fb, 2.0), None))
+    sb, fb, weighted = keep[3:6]
+    assert weighted.inner_factor is fb
+    issues = pycunls.diagnose(wrapped)
+    assert len(issues) == 1 and "Gauge freedom" in issues[0].message
+
+    # A weighted prior still anchors.
+    target = wp.array(np.eye(4, dtype=np.float32)[None])
+    prior = pycunls.SE3PriorFactorBatch(target, 1)
+    prior.set_num_active_factors(1)
+    wrapped.add_factor_batch(pycunls.WeightedFactorBatch(prior, 1.0), [sb.state_device_ptr(0)])
+    assert pycunls.diagnose(wrapped) == []
+
+
 def test_nested_wrappers_keep_the_gauge_warning():
     def wrap(fb):
-        sqrt_info = cp.tile(cp.eye(6, dtype=cp.float32), (4, 1, 1))
+        sqrt_info = wp.array(np.tile(np.eye(6, dtype=np.float32), (4, 1, 1)))
         info = pycunls.InformationFactorBatch(fb, sqrt_info)
         return pycunls.WeightedFactorBatch(info, 3.0), (info, sqrt_info)
 
@@ -224,7 +216,7 @@ def test_nested_wrappers_keep_the_gauge_warning():
 
 
 def _anchor_with(problem, sb, kind):
-    target = cp.asarray(np.eye(4, dtype=np.float32)[None])
+    target = wp.array(np.eye(4, dtype=np.float32)[None])
     prior = pycunls.SE3PriorFactorBatch(target, 1)
     prior.set_num_active_factors(1)
     constraint = pycunls.ConstraintFactorBatch(prior, kind)

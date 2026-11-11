@@ -26,27 +26,27 @@ Python example
 
 .. code-block:: python
 
-   import cupy as cp
    import numpy as np
    import pycunls
+   import warp as wp
 
    # Objective: pull 1000 3-D points towards their targets ...
    n = 1000
-   x = cp.zeros(n * 3, dtype=cp.float32)
-   targets = cp.asarray(np.random.randn(n * 3).astype(np.float32) * 3)
+   x = wp.zeros(n * 3, dtype=wp.float32)
+   targets = wp.array(np.random.randn(n * 3) * 3, dtype=wp.float32)
    states = pycunls.VectorStateBatch3(x, n)
    states.set_num_active_states(n)
    prior = pycunls.PriorVectorFactorBatch3(targets, n)
    prior.set_num_active_factors(n)
 
    # ... subject to -1 <= x <= 1 (per state and component; ±inf: unbounded) ...
-   lo = cp.full(n * 3, -1.0, dtype=cp.float32)
-   hi = cp.full(n * 3, 1.0, dtype=cp.float32)
+   lo = wp.full(n * 3, -1.0, dtype=wp.float32)
+   hi = wp.full(n * 3, 1.0, dtype=wp.float32)
    states.set_bounds(lo, hi)
 
    # ... and x0 + x1 + x2 = 0.5: any factor batch becomes constraint rows.
-   normals = cp.ones(n * 3, dtype=cp.float32)
-   offsets = cp.full(n, 0.5, dtype=cp.float32)
+   normals = wp.ones(n * 3, dtype=wp.float32)
+   offsets = wp.full(n, 0.5, dtype=wp.float32)
    plane = pycunls.HalfspaceFactorBatch3(normals, offsets, n)   # r = aᵀx - b
    plane.set_num_active_factors(n)
    on_plane = pycunls.ConstraintFactorBatch(plane, pycunls.ConstraintKind.Equality)
@@ -58,6 +58,7 @@ Python example
        problem.add_factor_batch(fb, ptrs)
 
    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
+   wp.synchronize_stream(wp.get_stream())   # the uploads (Warp's stream) before the solve
    summary = solver.minimize(pycunls.CudaStream(), problem)
    print(summary.status, summary.max_violation, summary.outer_iterations)
    print(summary.message)   # the outcome and, when not converged, what to try
@@ -166,10 +167,12 @@ solve is therefore an ordinary least-squares solve. The outer loop:
    only when the violation is stagnating (above 0.9 times the previous one):
    a violation still falling is limited by the short solve, not by the
    penalty, and a larger penalty would only worsen the conditioning;
-4. once every running subproblem is feasible, run the inner solve to
-   convergence (``final_inner_iterations``); a subproblem that is feasible
-   after an inner solve that converged on its own (not at the iteration cap)
-   is done, and keeps its multipliers while the others continue.
+4. once a subproblem is feasible, its next inner solve runs to convergence
+   (``final_inner_iterations``); a subproblem that is feasible after an inner
+   solve that converged on its own (not at the iteration cap) is done, and
+   keeps its multipliers while the others continue. With a partition, each
+   subproblem gets this full solve as soon as it is feasible itself: it never
+   waits for the others.
 
 The violation of a row is :math:`|c|` (equality) or :math:`\max(0, c)`
 (inequality); a subproblem is feasible when every row is within
@@ -177,8 +180,11 @@ The violation of a row is :math:`|c|` (equality) or :math:`\max(0, c)`
 
 Batched problems
    With a problem partition (``Problem.set_problem_partition``), every
-   subproblem has its own penalty per constraint batch and stops on its own;
+   subproblem has its own penalty per constraint batch and stops on its own
+   (a feasible subproblem finishes without waiting for an infeasible one);
    updates run on the device with one small read-back per outer iteration.
+   Finished subproblems cost no factorization work with the default
+   ``BlockSparseCholesky`` solver (see :doc:`simple_api`).
 
 Line search
    The inequality rows make the cost piecewise quadratic: a Gauss-Newton step

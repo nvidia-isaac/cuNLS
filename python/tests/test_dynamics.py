@@ -16,9 +16,9 @@
 """Dynamics factor batches: layout, consistency with a NumPy rollout, and a
 Carter driving to a goal under AugmentedLagrangianMinimizer."""
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 
@@ -38,7 +38,7 @@ def se2_exp(v):
 
 
 def test_layouts():
-    dts = cp.full(10, 0.1, dtype=cp.float32)
+    dts = wp.full(10, 0.1, dtype=wp.float32)
     carter = pycunls.SE2DifferentialDriveFactorBatch(dts, 0.125, 0.5, 10)
     assert carter.state_sizes() == [3, 2, 3] and carter.residuals_size == 3
     car = pycunls.SE2KinematicBicycleFactorBatch(dts, 2.75, 10)
@@ -55,8 +55,8 @@ def test_layouts():
     assert qp.inertia == pytest.approx([0.01, 0.01, 0.02])
     quad = pycunls.QuadrotorFactorBatch(dts, qp, 10)
     assert quad.state_sizes() == [6, 3, 3, 4, 6, 3, 3] and quad.residuals_size == 12
-    contacts = cp.ones(40, dtype=cp.float32)
-    feet = cp.zeros(120, dtype=cp.float32)
+    contacts = wp.ones(40, dtype=wp.float32)
+    feet = wp.zeros(120, dtype=wp.float32)
     legged = pycunls.QuadrupedFactorBatch(dts, contacts, feet, pycunls.QuadrupedParameters(), 10)
     assert legged.state_sizes() == [6, 3, 3, 12, 6, 3, 3]
     with pytest.raises(ValueError, match="positive"):
@@ -79,13 +79,13 @@ def test_carter_rollout_is_consistent(stream):
         v = r * (u[k, 1] + u[k, 0]) / 2
         w = r * (u[k, 1] - u[k, 0]) / b
         poses.append(poses[-1] @ se2_exp(np.array([dt * v, 0.0, dt * w])))
-    pose_buf = cp.asarray(np.stack(poses).astype(np.float32))
-    u_buf = cp.asarray(u)
+    pose_buf = wp.array(np.stack(poses).astype(np.float32))
+    u_buf = wp.array(u)
     pose_states = pycunls.SE2StateBatch(pose_buf, steps + 1)
     pose_states.set_num_active_states(steps + 1)
     controls = pycunls.VectorStateBatch2(u_buf, steps)
     controls.set_num_active_states(steps)
-    dts = cp.full(steps, dt, dtype=cp.float32)
+    dts = wp.full(steps, dt, dtype=wp.float32)
     dynamics = pycunls.SE2DifferentialDriveFactorBatch(dts, r, b, steps)
     dynamics.set_num_active_factors(steps)
     problem = pycunls.Problem()
@@ -105,27 +105,27 @@ def test_carter_rollout_is_consistent(stream):
 @pytest.mark.parametrize("kind", ["gn", "lm"])
 def test_carter_reaches_goal(stream, kind):
     steps, dt, umax = 30, 0.1, 25.0
-    pose_buf = cp.asarray(np.stack([se2(0, 0, 0)] * (steps + 1)))
-    u_buf = cp.zeros((steps, 2), dtype=cp.float32)
-    const_ids = cp.asarray([0], dtype=cp.int32)
+    pose_buf = wp.array(np.stack([se2(0, 0, 0)] * (steps + 1)))
+    u_buf = wp.zeros((steps, 2), dtype=wp.float32)
+    const_ids = wp.array([0], dtype=wp.int32)
     pose_states = pycunls.SE2StateBatch(pose_buf, steps + 1, const_ids, 1)
     pose_states.set_num_active_states(steps + 1, 1)
     controls = pycunls.VectorStateBatch2(u_buf, steps)
     controls.set_num_active_states(steps)
 
-    dts = cp.full(steps, dt, dtype=cp.float32)
+    dts = wp.full(steps, dt, dtype=wp.float32)
     dynamics = pycunls.SE2DifferentialDriveFactorBatch(dts, 0.125, 0.5, steps)
     dynamics.set_num_active_factors(steps)
     hard_dynamics = pycunls.ConstraintFactorBatch(dynamics, pycunls.ConstraintKind.Equality)
-    goal = cp.asarray(se2(1.5, 0.8, 1.2)[None])
+    goal = wp.array(se2(1.5, 0.8, 1.2)[None])
     goal_prior = pycunls.SE2PriorFactorBatch(goal, 1)
     goal_prior.set_num_active_factors(1)
     at_goal = pycunls.ConstraintFactorBatch(goal_prior, pycunls.ConstraintKind.Equality)
-    zeros = cp.zeros(steps * 2, dtype=cp.float32)
+    zeros = wp.zeros(steps * 2, dtype=wp.float32)
     effort = pycunls.WeightedFactorBatch(pycunls.PriorVectorFactorBatch2(zeros, steps), 0.1)
     effort.set_num_active_factors(steps)
-    lo = cp.full(steps * 2, -umax, dtype=cp.float32)
-    hi = cp.full(steps * 2, umax, dtype=cp.float32)
+    lo = wp.full(steps * 2, -umax, dtype=wp.float32)
+    hi = wp.full(steps * 2, umax, dtype=wp.float32)
     limits = pycunls.BoundFactorBatch2(lo, hi, steps)
     limits.set_num_active_factors(steps)
 
@@ -153,6 +153,6 @@ def test_carter_reaches_goal(stream, kind):
         inner = pycunls.LevenbergMarquardtMinimizer(lm)
     summary = pycunls.AugmentedLagrangianMinimizer(inner).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged, summary
-    poses = cp.asnumpy(pose_buf)
+    poses = pose_buf.numpy()
     np.testing.assert_allclose(poses[-1], se2(1.5, 0.8, 1.2), atol=1e-3)
-    assert np.abs(cp.asnumpy(u_buf)).max() <= umax + 1e-3
+    assert np.abs(u_buf.numpy()).max() <= umax + 1e-3

@@ -8,13 +8,13 @@ renders of large problems ([gallery](#gallery-large-problems-one-iteration-per-f
 
 | Example | What it shows | Needs |
 |---|---|---|
-| [`model_fitting.py`](#model-fitting-model_fittingpy) | `pycunls.fit` in six scenes: errors, 20,000 fits in one call, outliers, bounds, multiple starts, model check | CuPy (Warp optional) |
-| [`pose_graph_optimization.py`](#pose-graph-optimization-pose_graph_optimizationpy) | SE(3) pose graph with `ProblemBuilder`: NumPy poses and an edge list in, solved poses out | CuPy |
-| [`sparse_bundle_adjustment.py`](#sparse-bundle-adjustment-sparse_bundle_adjustmentpy) | Cameras and points with `ProblemBuilder`, points eliminated by a Schur complement | CuPy |
-| [`ransac_pnp.py`](#robust-pnp-with-ransac-ransac_pnppy) | PnP with 50% wrong matches: `RansacLevenbergMarquardtMinimizer` vs least squares | CuPy |
-| [`imu_bundle_adjustment.py`](#visual-inertial-bundle-adjustment-imu_bundle_adjustmentpy) | `ImuFactorBatch` + reprojection factors: poses, velocities, IMU biases | CuPy |
-| [`custom_warp_factor.py`](#custom-factor-in-warp-custom_warp_factorpy) | A factor written as a Warp kernel, with an analytic or a numeric Jacobian | CuPy, Warp |
-| [`custom_warp_state.py`](#custom-state-in-warp-custom_warp_statepy) | A state type written in Warp: positive scalars with a multiplicative retraction | CuPy, Warp |
+| [`model_fitting.py`](#model-fitting-model_fittingpy) | `pycunls.fit` in six scenes: errors, 20,000 fits in one call, outliers, bounds, multiple starts, model check | - |
+| [`pose_graph_optimization.py`](#pose-graph-optimization-pose_graph_optimizationpy) | SE(3) pose graph with `ProblemBuilder`: NumPy poses and an edge list in, solved poses out | - |
+| [`sparse_bundle_adjustment.py`](#sparse-bundle-adjustment-sparse_bundle_adjustmentpy) | Cameras and points with `ProblemBuilder`, points eliminated by a Schur complement | - |
+| [`ransac_pnp.py`](#robust-pnp-with-ransac-ransac_pnppy) | PnP with 50% wrong matches: `RansacLevenbergMarquardtMinimizer` vs least squares | - |
+| [`imu_bundle_adjustment.py`](#visual-inertial-bundle-adjustment-imu_bundle_adjustmentpy) | `ImuFactorBatch` + reprojection factors: poses, velocities, IMU biases | - |
+| [`custom_warp_factor.py`](#custom-factor-in-warp-custom_warp_factorpy) | A factor written as a Warp kernel, with an analytic or a numeric Jacobian | - |
+| [`custom_warp_state.py`](#custom-state-in-warp-custom_warp_statepy) | A state type written in Warp: positive scalars with a multiplicative retraction | - |
 | [`tartan_vio.py`](#visual-inertial-odometry-with-ransac-on-tartanground) | RGB-D inertial odometry on TartanGround with injected outliers: IMU factor + RANSAC | data, OpenCV, Rerun |
 | [`supermarket_drones.py`](#a-drone-fleet-in-a-supermarket-batched-mpc) | A fleet of quadrotors in a real store with walking shoppers: batched MPC | data, SciPy, Rerun |
 
@@ -26,8 +26,8 @@ Build the `pycunls` wheel ([INSTALL.md](../../INSTALL.md)), then, from the repos
 install it and run the examples from this folder so that `example_utils` is importable:
 
 ```bash
-pip install ./dist/pycunls*.whl "warp-lang<1.18"   # the wheel brings the matching CuPy
-python -m pycunls doctor                            # GPU, native module, a test solve
+pip install ./dist/pycunls*.whl   # brings NumPy and NVIDIA Warp, its GPU array library
+python -m pycunls doctor          # GPU, native module, a test solve
 cd python/examples
 python model_fitting.py
 ```
@@ -41,8 +41,9 @@ showcases need downloaded data and log to [Rerun](https://rerun.io)
 ## Model fitting (`model_fitting.py`)
 
 `pycunls.fit(model, x, y, p0)` fits the parameters of `y ~ model(x, p)`: no states, factors or
-device pointers. The model is a NumPy-style function of `(x, p)` (one parameter row per sample);
-a Warp `@wp.func` works too and gets autodiff Jacobians. Six scenes, one call each:
+device pointers. The model is a Warp function of one sample,
+`@wp.func def model(x: float, p: wp.vec3) -> float`; its Jacobian comes from Warp's automatic
+differentiation, checked against central differences. Six scenes, one call each:
 
 1. one decay curve with measurement errors: parameters ± standard errors, reduced chi-square;
 2. 20,000 curves (one per pixel of an image) in one batched GPU solve, each fit with its own
@@ -57,14 +58,14 @@ python model_fitting.py            # or: python model_fitting.py --quick (a smal
 ```
 
 ```text
-FitResult: converged (numeric Jacobian)
+FitResult: converged (autodiff Jacobian)
   p = [2.00779 ± 0.013, 1.31179 ± 0.017, 0.495582 ± 0.0044], reduced chi2 0.82, RelativeReductionTolerance
   truth: [2.0, 1.3, 0.5]
-  All 20000 subproblems converged (2708 StateTolerance, 17292 RelativeReductionTolerance); ...
+  All 20000 subproblems converged (2423 StateTolerance, 17577 RelativeReductionTolerance); ...
   squared loss: m, q = [1.928, 2.155]  (pulled by the outliers)
   Cauchy loss:  m, q = [2.001, -1.002]  (truth [2.0, -1.0])
   one start:  A, w = [0.075, 1.073], reduced chi2 460.1  (a local minimum)
-  64 starts:  A, w = [1.502, 3.699], reduced chi2 0.88  (start #15 won)
+  64 starts:  A, w = [1.502, 3.699], reduced chi2 0.88  (start #52 won)
   one exponential:  reduced chi2   28.95  -> rejected
   two exponentials: reduced chi2    1.20  -> p = [0.996, 0.496, 1.001, 2.996]
 ```
@@ -172,7 +173,8 @@ A residual no built-in factor computes, written as an NVIDIA Warp kernel and sol
 regular `Problem` with a built-in prior. A chain of scalars is solved from difference
 measurements twice: with a kernel that writes the residual and its analytic Jacobian, and with a
 residual-only kernel whose Jacobian pycunls computes by finite differences
-(`jacobian_mode_override=pycunls.JacobianMode.numeric`). Python version of
+(`jacobian_mode_override=pycunls.JacobianMode.numeric`). The kernels read their states through
+the state pointer table cuNLS passes in (`state_value` in `example_utils/gpu.py`). Python version of
 [`examples/custom_factor`](../../examples/custom_factor).
 
 ```bash

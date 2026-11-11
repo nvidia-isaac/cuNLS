@@ -38,13 +38,14 @@ Python bindings (pycunls) dependencies
   - License: BSD-3-Clause
   - URL: `https://github.com/wjakob/nanobind`
 
-- **CuPy** (runtime; GPU array interface for pycunls)
-  - License: MIT
-  - URL: `https://github.com/cupy/cupy`
-
-- **`NVIDIA Warp <https://developer.nvidia.com/warp-python>`_** (optional; custom Warp factor/state kernels)
+- **`NVIDIA Warp <https://developer.nvidia.com/warp-python>`_** (runtime; GPU arrays, custom
+  Warp factor/state kernels and ``fit`` models)
   - License: Apache-2.0
   - URL: `https://github.com/NVIDIA/warp`
+
+- **NumPy** (runtime; host arrays)
+  - License: BSD-3-Clause
+  - URL: `https://github.com/numpy/numpy`
 
 ===============================================================================
 Test-only dependency
@@ -53,6 +54,10 @@ Test-only dependency
 - **GoogleTest** (used when `BUILD_TESTING=ON`)
   - License: BSD-3-Clause
   - URL: `https://github.com/google/googletest`
+
+- **CuPy** (``pycunls[test]`` only; one interoperability test)
+  - License: MIT
+  - URL: `https://github.com/cupy/cupy`
 
 ===============================================================================
 License texts in repository

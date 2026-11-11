@@ -299,6 +299,60 @@ TEST(BlockSparseCholeskyPlanTest, PanelsCoverTheColumns) {
   EXPECT_GT(plan.num_levels, 1);
 }
 
+/**
+ * SetRowActivity: a block-diagonal system of three independent chains with
+ * the middle chain declared idle. Its panels are skipped (an indefinite
+ * matrix there does not fail the solve), its solution entries are 0, and the
+ * other chains get the solution of the full system.
+ */
+TEST(BlockSparseCholeskySolverTest, SkipsIdleComponents) {
+  constexpr int kChains = 3, kBlocks = 12, kSize = 6;
+  BlockPattern pattern;
+  for (int b = 0; b < kChains * kBlocks; ++b) {
+    pattern.sizes.push_back(kSize);
+    if ((b + 1) % kBlocks != 0) pattern.pairs.insert({b, b + 1});
+  }
+  const HostSystem healthy = MakeSystem(pattern, 3);
+  const int n = healthy.n, chain = kBlocks * kSize;
+  // The middle chain made indefinite: a full solve of it fails.
+  HostSystem broken = healthy;
+  broken.a[static_cast<size_t>(chain + 5) * n + chain + 5] = -10.0;
+
+  CudaStream stream;
+  DeviceSystem d(healthy);
+  BlockSparseCholeskySolver solver;
+  ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), d.matrix, d.rhs, d.result));
+  bool ok = false;
+  EXPECT_LT(SolveError(solver, stream.GetStream(), healthy, d, 7, &ok), 1e-5);
+  ASSERT_TRUE(ok);
+  std::vector<float> full(n);
+  d.result.CopyToHost(full.data(), n);
+
+  std::vector<int> active(n, 1);
+  for (int i = chain; i < 2 * chain; ++i) active[i] = 0;
+  dvector<int> row_active(active);
+  d.SetValues(broken);
+  SolveError(solver, stream.GetStream(), broken, d, 7, &ok);
+  EXPECT_FALSE(ok) << "the indefinite chain fails a full solve";
+  solver.SetRowActivity(row_active.data());
+  SolveError(solver, stream.GetStream(), broken, d, 7, &ok);
+  EXPECT_TRUE(ok) << "the idle chain is not factored";
+  std::vector<float> x(n);
+  d.result.CopyToHost(x.data(), n);
+  for (int i = 0; i < n; ++i) {
+    if (active[i] != 0) {
+      EXPECT_NEAR(x[i], full[i], 1e-5f * (1.f + std::fabs(full[i]))) << "row " << i;
+    } else {
+      EXPECT_EQ(x[i], 0.f) << "row " << i;
+    }
+  }
+  // Every row active again: the same solution as without row activity.
+  solver.SetRowActivity(nullptr);
+  d.SetValues(healthy);
+  EXPECT_LT(SolveError(solver, stream.GetStream(), healthy, d, 7, &ok), 1e-5);
+  EXPECT_TRUE(ok);
+}
+
 TEST(BlockSparseCholeskySolverTest, EmptySystem) {
   HostSystem s;
   s.row_offsets = {0};

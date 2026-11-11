@@ -111,10 +111,11 @@ Python API (``pycunls``)
 
 The Python bindings expose the same minimizer, problem, options, and summary
 types as the C++ API (documented in :ref:`minimizer-cpp-api` below) through
-the ``pycunls`` package.  All GPU memory is managed via CuPy
-arrays; every constructor argument documented as ``DevicePointer`` accepts
-either a ``cupy.ndarray`` (the device pointer is extracted automatically) or
-a raw ``int`` device address.
+the ``pycunls`` package.  GPU memory is held in Warp arrays
+(``wp.array``); every constructor argument documented as ``DevicePointer``
+accepts a ``wp.array`` or any other object with ``__cuda_array_interface__``
+(the device pointer is extracted automatically) or a raw ``int`` device
+address.
 
 The utility type :ref:`CudaStream <py-cuda-stream-label>` is documented in
 :doc:`common`.
@@ -555,13 +556,14 @@ Creates an empty problem with no states or factors.
 
 - ``add_factor_batch(factor_batch, *, state_pointer_table, loss_function=None,
   jacobian_mode_override=None) -> None`` — connectivity is a **device** table
-  of state pointers (CuPy ``uint64`` array or int pointer) with
-  ``capacity * K`` entries; bound once, rewritten in place between solves.
-  Keyword-only, so a CuPy array is never mistaken for a host list.
+  of state pointers (a GPU ``uint64`` array such as ``wp.array(dtype=wp.uint64)``,
+  or an int pointer) with ``capacity * K`` entries; bound once, rewritten in
+  place between solves. Keyword-only, so a GPU array is never mistaken for a
+  host list.
 
 - ``add_factor_batch(factor_batch, slot_state_batches, state_indices,
   loss_function=None, jacobian_mode_override=None) -> None`` — connectivity is
-  a **device** table of state indices (CuPy ``int32`` array, ``capacity * K``
+  a **device** table of state indices (GPU ``int32`` array, ``capacity * K``
   entries): factor *f* reads state ``state_indices[f * K + k]`` of
   ``slot_state_batches[k]``.
 
@@ -663,13 +665,13 @@ Minimal Python example
 
 .. code-block:: python
 
-   import cupy as cp
+   import warp as wp
    import pycunls
 
    stream = pycunls.CudaStream()
 
-   state_gpu = cp.array([0.0], dtype=cp.float32)
-   obs_gpu   = cp.array([2.0], dtype=cp.float32)
+   state_gpu = wp.array([0.0], dtype=wp.float32)
+   obs_gpu   = wp.array([2.0], dtype=wp.float32)
 
    sb = pycunls.VectorStateBatch1(state_gpu, 1)       # capacity 1
    fb = pycunls.PriorVectorFactorBatch1(obs_gpu, 1)
@@ -680,11 +682,11 @@ Minimal Python example
    problem.add_state_batch(sb)
    problem.add_factor_batch(fb, [sb.state_device_ptr(0)])
 
+   wp.synchronize_stream(wp.get_stream())   # the uploads (Warp's stream) first
    minimizer = pycunls.LevenbergMarquardtMinimizer()
-   summary   = minimizer.minimize(stream, problem)
+   summary   = minimizer.minimize(stream, problem)   # synchronizes stream
 
-   cp.cuda.runtime.streamSynchronize(stream.get_stream())
-   print(summary.final_cost)  # ≈ 0.0
+   print(summary.final_cost, state_gpu.numpy())  # ≈ 0.0, [2.0]
 
 .. _minimizer-cpp-api:
 

@@ -17,15 +17,24 @@
 
 Fixtures
 --------
-stream   – A fresh CudaStream for each test; many pycunls operations require one.
+stream   – A fresh CudaStream for each test; many pycunls operations require one. It is also
+           Warp's current stream for the test, so ``wp.array`` uploads, ``.assign`` and
+           ``.numpy()`` read-backs are ordered with the cuNLS work on it.
 """
 
 import pytest
+import warp as wp
 
 import pycunls
 
 
 @pytest.fixture
 def stream():
-    """Create a CUDA stream scoped to a single test."""
-    return pycunls.CudaStream()
+    """Create a CUDA stream scoped to a single test and make it Warp's current stream."""
+    s = pycunls.CudaStream()
+    device = wp.get_cuda_device()
+    previous = wp.get_stream(device)
+    wp.set_stream(wp.Stream(device, cuda_stream=s.get_stream()), device)
+    yield s
+    wp.synchronize_device(device)
+    wp.set_stream(previous, device)

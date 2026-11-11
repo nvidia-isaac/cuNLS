@@ -37,6 +37,39 @@ Arrays = Dict[str, np.ndarray]
 Truth = Dict[str, Any]
 
 
+def _models():
+    """The Warp models of the fitting tasks (``pycunls.fit`` takes a ``@wp.func`` of one sample);
+    defined on first use so that importing the tasks needs neither Warp nor a GPU."""
+    global _MODELS
+    if _MODELS is None:
+        import warp as wp
+
+        @wp.func
+        def decay(x: float, p: wp.vec3) -> float:
+            return p[0] * wp.exp(-p[1] * x) + p[2]
+
+        @wp.func
+        def sine(x: float, p: wp.vec2) -> float:
+            return p[0] * wp.sin(p[1] * x)
+
+        @wp.func
+        def line(x: float, p: wp.vec2) -> float:
+            return p[0] * x + p[1]
+
+        @wp.func
+        def oscillator(t: float, p: wp.vec2) -> float:
+            c = p[0]
+            k = p[1]
+            w = wp.sqrt(wp.max(k - 0.25 * c * c, 1e-12))
+            return wp.exp(-0.5 * c * t) * (wp.cos(w * t) + 0.5 * c / w * wp.sin(w * t))
+
+        _MODELS = dict(decay=decay, sine=sine, line=line, oscillator=oscillator)
+    return _MODELS
+
+
+_MODELS = None
+
+
 @dataclasses.dataclass(frozen=True)
 class Task:
     """``make(seed) -> (data, truth)``; ``check(answer, truth) -> (passed, message)``;
@@ -100,7 +133,7 @@ def _make_decay(seed):
 def _reference_decay(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2], data["x"],
+    res = pycunls.fit(_models()["decay"], data["x"],
                       data["y"], p0=[1.0, 1.0, 0.0], sigma=0.02)
     return {"params": res.params.tolist()}
 
@@ -127,7 +160,7 @@ def _make_sine(seed):
 def _reference_sine(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.sin(p[:, 1] * x), data["x"], data["y"],
+    res = pycunls.fit(_models()["sine"], data["x"], data["y"],
                       p0=[1.5, 1.0], bounds=([1.0, 0.5], [2.0, 5.0]), starts=64)
     return {"params": res.params.tolist()}
 
@@ -135,7 +168,7 @@ def _reference_sine(data):
 def _naive_sine(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.sin(p[:, 1] * x), data["x"], data["y"],
+    res = pycunls.fit(_models()["sine"], data["x"], data["y"],
                       p0=[1.5, 1.0])
     return {"params": res.params.tolist()}
 
@@ -166,7 +199,7 @@ def _check_pixels(answer, truth):
 def _reference_pixels(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2], data["x"],
+    res = pycunls.fit(_models()["decay"], data["x"],
                       data["y"], p0=[1.0, 1.0, 0.0])
     return {"params": res.params.tolist()}
 
@@ -175,7 +208,7 @@ def _naive_pixels(data):
     # One fit of the mean curve for every pixel.
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2], data["x"],
+    res = pycunls.fit(_models()["decay"], data["x"],
                       data["y"].mean(axis=0), p0=[1.0, 1.0, 0.0])
     return {"params": np.tile(res.params, (data["y"].shape[0], 1)).tolist()}
 
@@ -197,7 +230,7 @@ def _make_outliers(seed):
 def _reference_outliers(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * x + p[:, 1], data["x"], data["y"], p0=[0.0, 0.0],
+    res = pycunls.fit(_models()["line"], data["x"], data["y"], p0=[0.0, 0.0],
                       sigma=0.1, loss="cauchy", loss_scale=2.0)
     return {"params": res.params.tolist()}
 
@@ -236,7 +269,7 @@ def _check_adequacy(answer, truth):
 def _reference_adequacy(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2], data["x"],
+    res = pycunls.fit(_models()["decay"], data["x"],
                       data["y"], p0=[1.0, 1.0, 0.0], sigma=0.01)
     return {"model_adequate": bool(res.reduced_chi2 < 2.0)}
 
@@ -267,11 +300,7 @@ def _reference_oscillator(data):
 
     t = 0.05 * np.arange(1, data["y"].size + 1)
 
-    def model(t, p):
-        c, k = p[:, 0], p[:, 1]
-        w = np.sqrt(np.maximum(k - 0.25 * c * c, 1e-12))
-        return np.exp(-0.5 * c * t) * (np.cos(w * t) + 0.5 * c / w * np.sin(w * t))
-
+    model = _models()["oscillator"]
     # The frequency makes the cost multi-modal: several starts in a plausible range.
     res = pycunls.fit(model, t, data["y"], p0=[0.3, 5.0], bounds=([0.0, 0.5], [2.0, 50.0]),
                       starts=64)
@@ -284,11 +313,7 @@ def _naive_oscillator(data):
 
     t = 0.05 * np.arange(1, data["y"].size + 1)
 
-    def model(t, p):
-        c, k = p[:, 0], p[:, 1]
-        w = np.sqrt(np.maximum(k - 0.25 * c * c, 1e-12))
-        return np.exp(-0.5 * c * t) * (np.cos(w * t) + 0.5 * c / w * np.sin(w * t))
-
+    model = _models()["oscillator"]
     res = pycunls.fit(model, t, data["y"], p0=[0.3, 1.0])
     return {"params": res.params.tolist()}
 
@@ -409,7 +434,7 @@ def _check_bounded(answer, truth):
 def _reference_bounded(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2], data["x"],
+    res = pycunls.fit(_models()["decay"], data["x"],
                       data["y"], p0=[1.0, 1.0, 0.1], bounds=([0, 0, 0], [np.inf] * 3))
     return {"params": res.params.tolist()}
 
@@ -417,7 +442,7 @@ def _reference_bounded(data):
 def _naive_bounded(data):
     import pycunls
 
-    res = pycunls.fit(lambda x, p: p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2], data["x"],
+    res = pycunls.fit(_models()["decay"], data["x"],
                       data["y"], p0=[1.0, 1.0, 0.1])
     return {"params": res.params.tolist()}
 

@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""pycunls.fit: one-call model fitting (array and Warp models, batches, losses, bounds, starts)."""
+"""pycunls.fit: one-call model fitting (Warp models, batches, losses, bounds, starts)."""
 
 import json
 
-import cupy as cp
 import numpy as np
 import pytest
 import warp as wp
@@ -27,17 +26,59 @@ import pycunls
 wp.config.quiet = True
 
 
-def decay(x, p):
-    return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
-
+# Models are Warp functions of one sample (module level: Warp reads their source).
 
 @wp.func
-def decay_wp(x: float, p: wp.vec3) -> float:
+def decay(x: float, p: wp.vec3) -> float:
     return p[0] * wp.exp(-p[1] * x) + p[2]
 
 
-def line(x, p):
-    return p[:, 0] * x + p[:, 1]
+@wp.func
+def line(x: float, p: wp.vec2) -> float:
+    return p[0] * x + p[1]
+
+
+@wp.func
+def sine(x: float, p: wp.vec2) -> float:
+    return p[0] * wp.sin(p[1] * x)
+
+
+@wp.func
+def circle(t: float, p: wp.vec3) -> wp.vec2:
+    return wp.vec2(p[0] + p[2] * wp.cos(t), p[1] + p[2] * wp.sin(t))
+
+
+@wp.func
+def proportional(x: float, p: float) -> float:
+    return p * x
+
+
+@wp.func
+def sqrt_model(x: float, p: float) -> float:
+    return wp.sqrt(p) * x  # NaN for p < 0
+
+
+@wp.func
+def always_nan(x: float, p: float) -> float:
+    return p * x * wp.nan
+
+
+vec5 = wp.types.vector(length=5, dtype=float)
+
+
+@wp.func
+def quadratic_surface(x: wp.vec2, p: vec5) -> float:
+    return p[0] + p[1] * x[0] + p[2] * x[1] + p[3] * x[0] * x[1] + p[4] * x[0] * x[0]
+
+
+@wp.func
+def one_argument(x: float) -> float:
+    return x
+
+
+@wp.func
+def integer_parameter(x: float, p: int) -> float:
+    return float(p) * x
 
 
 def _decay_data(seed=0, n=40, sigma=0.02):
@@ -58,16 +99,17 @@ def _reference(x, y, sigma):
     return p, np.sqrt(np.diag(cov))
 
 
-@pytest.mark.parametrize("model", [decay, decay_wp], ids=["array", "warp"])
-def test_single_fit_matches_the_least_squares_answer(model):
+@pytest.mark.parametrize("jacobian, mode", [("auto", "autodiff"), ("autodiff", "autodiff"),
+                                            ("numeric", "numeric")])
+def test_single_fit_matches_the_least_squares_answer(jacobian, mode):
     x, y = _decay_data()
-    res = pycunls.fit(model, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)
+    res = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02, jacobian=jacobian)
     p_ref, err_ref = _reference(x, y, 0.02)
     assert res.converged and res.params.shape == (3,)
     np.testing.assert_allclose(res.params, p_ref, rtol=2e-3, atol=2e-4)
     np.testing.assert_allclose(res.param_errors, err_ref, rtol=2e-2)
     assert 0.3 < res.reduced_chi2 < 2.0
-    assert res.jacobian_mode == ("numeric" if model is decay else "autodiff")
+    assert res.jacobian_mode == mode
     assert res.residuals.shape == (40,)
 
 
@@ -125,10 +167,6 @@ def test_starts_escape_a_local_minimum():
     rng = np.random.default_rng(3)
     x = np.linspace(0, 10, 100)
     y = 1.5 * np.sin(3.7 * x) + rng.normal(0, 0.01, x.size)
-
-    def sine(x, p):
-        return p[:, 0] * np.sin(p[:, 1] * x)
-
     single = pycunls.fit(sine, x, y, p0=[1, 1])
     assert abs(single.params[1] - 3.7) > 0.5  # a local minimum
     multi = pycunls.fit(sine, x, y, p0=[1, 1], bounds=([1, 0.5], [2, 5]), starts=32)
@@ -142,13 +180,20 @@ def test_vector_output_model():
     rng = np.random.default_rng(4)
     t = np.linspace(0, 6, 50)
     pts = np.stack([1 + 2 * np.cos(t), -1 + 2 * np.sin(t)], 1) + rng.normal(0, 0.01, (50, 2))
-
-    def circle(t, p):
-        return np.stack([p[:, 0] + p[:, 2] * np.cos(t), p[:, 1] + p[:, 2] * np.sin(t)], axis=1)
-
     res = pycunls.fit(circle, t, pts, p0=[0, 0, 1])
     np.testing.assert_allclose(res.params, [1, -1, 2], atol=0.01)
     assert res.residuals.shape == (50, 2)
+
+
+def test_vector_input_and_five_parameters_match_linear_least_squares():
+    rng = np.random.default_rng(6)
+    x = rng.uniform(-1, 1, (60, 2))
+    truth = np.array([0.5, -1.0, 2.0, 0.7, -0.3])
+    design = np.stack([np.ones(60), x[:, 0], x[:, 1], x[:, 0] * x[:, 1], x[:, 0] ** 2], 1)
+    y = design @ truth + rng.normal(0, 0.01, 60)
+    res = pycunls.fit(quadratic_surface, x, y, p0=np.zeros(5))
+    assert res.converged and res.params.shape == (5,)
+    np.testing.assert_allclose(res.params, np.linalg.lstsq(design, y, rcond=None)[0], atol=1e-4)
 
 
 def test_wrong_model_shows_in_reduced_chi2():
@@ -171,7 +216,7 @@ def test_report_and_to_dict():
 def test_to_dict_is_strict_json_when_errors_are_undetermined():
     # As many samples as parameters: no degrees of freedom, so the errors are NaN.
     x = np.array([0.0, 1.0])
-    res = pycunls.fit(lambda x, p: p[:, 0] * x + p[:, 1], x, 2 * x + 1, p0=[0, 0])
+    res = pycunls.fit(line, x, 2 * x + 1, p0=[0, 0])
     assert np.isnan(res.reduced_chi2)
     d = res.to_dict()
     json.dumps(d, allow_nan=False)
@@ -180,10 +225,17 @@ def test_to_dict_is_strict_json_when_errors_are_undetermined():
 
 def test_errors_explain_the_mistake():
     x, y = _decay_data()
-    with pytest.raises(ValueError, match="mixes rows"):
-        pycunls.fit(lambda x, p: p[:, 0] * x - np.mean(x * p[:, 1]), x, y, p0=[1, 1])
-    with pytest.raises(ValueError, match="one prediction per row"):
-        pycunls.fit(lambda x, p: np.sum(p), x, y, p0=[1, 1])
+    with pytest.raises(TypeError, match="model must be a Warp function.*@wp.func"):
+        pycunls.fit(lambda x, p: p[:, 0] * x + p[:, 1], x, y, p0=[1, 1])
+    with pytest.raises(TypeError, match="takes 1 arguments"):
+        pycunls.fit(one_argument, x, y, p0=[1.0])
+    with pytest.raises(TypeError, match="unsupported Warp model types"):
+        pycunls.fit(integer_parameter, x, y, p0=[1.0])
+    with pytest.raises(ValueError, match="p0 has 2 parameters but the Warp model's p is a vector "
+                                         "of 3"):
+        pycunls.fit(decay, x, y, p0=[1, 1])
+    with pytest.raises(ValueError, match="jacobian must be 'auto', 'autodiff' or 'numeric'"):
+        pycunls.fit(decay, x, y, p0=[1, 1, 0], jacobian="analytic")
     with pytest.raises(ValueError, match="up to 12 parameters"):
         pycunls.fit(decay, x, y, p0=np.zeros(13))
     with pytest.raises(ValueError, match="starts=K needs finite bounds"):
@@ -194,13 +246,9 @@ def test_errors_explain_the_mistake():
 
 # ---- failed models, start selection and input checks ---------------------------------------
 
-def _sqrt_model(x, p):
-    return np.sqrt(p[:, 0]) * x  # NaN for p < 0
-
-
 def test_a_start_where_the_model_fails_never_wins():
     x = np.linspace(0.1, 2, 20)
-    res = pycunls.fit(_sqrt_model, x, 2 * x, p0=[1.0], starts=[[-1.0], [4.0]])
+    res = pycunls.fit(sqrt_model, x, 2 * x, p0=[1.0], starts=[[-1.0], [4.0]])
     assert res.start_index == 1
     assert res.converged and abs(res.params[0] - 4.0) < 1e-4
     assert np.isfinite(res.cost) and "best of 2 starts" in res.message
@@ -208,7 +256,7 @@ def test_a_start_where_the_model_fails_never_wins():
 
 def test_a_model_that_always_fails_is_not_a_perfect_fit():
     x = np.linspace(0.1, 2, 20)
-    res = pycunls.fit(lambda x, p: p[:, 0] * x * np.nan, x, 2 * x, p0=[1.0], starts=[[1.0], [2.0]])
+    res = pycunls.fit(always_nan, x, 2 * x, p0=[1.0], starts=[[1.0], [2.0]])
     assert not res.converged and np.isnan(res.cost) and res.cost != 0
     assert np.all(np.isnan(res.param_errors))
     d = res.to_dict()
@@ -219,7 +267,7 @@ def test_a_model_that_always_fails_is_not_a_perfect_fit():
 def test_a_failed_fit_does_not_spoil_the_others():
     x = np.linspace(0.1, 2, 20)
     y = np.stack([2 * x, 3 * x])
-    res = pycunls.fit(_sqrt_model, x, y, p0=[[-1.0], [4.0]])
+    res = pycunls.fit(sqrt_model, x, y, p0=[[-1.0], [4.0]])
     assert list(res.converged) == [False, True]
     assert res.reasons[0] == "NonFiniteCost" and np.isnan(res.cost[0])
     assert abs(res.params[1, 0] - 9.0) < 1e-3 and np.isfinite(res.param_errors[1, 0])
@@ -238,7 +286,7 @@ def test_nan_padding_matches_removing_the_samples():
 def test_a_fit_without_observations_is_reported():
     x = np.linspace(0, 1, 10)
     y = np.stack([np.full(10, np.nan), 2 * x])
-    res = pycunls.fit(lambda x, p: p[:, 0] * x, x, y, p0=[1.0])
+    res = pycunls.fit(proportional, x, y, p0=[1.0])
     assert list(res.converged) == [False, True]
     assert res.reasons[0] == "NoObservations" and res.num_samples[0] == 0
     assert "NoObservations" in res.message
@@ -264,10 +312,11 @@ def test_sigma_and_y_are_checked():
 def test_starts_are_ranked_by_the_robust_objective():
     from pycunls.fitting import _objective
     k = 1.5
-    r = cp.asarray([[[0.5], [3.0]], [[2.0], [0.1]]], cp.float64)  # (fits, n, m)
-    cost = 0.5 * cp.sum(r.reshape(2, -1) ** 2, axis=1)
-    got = cp.asnumpy(_objective(pycunls.HuberLossFunctionBatch(k), r, cost, pycunls.CudaStream()))
-    a = np.abs(cp.asnumpy(r).reshape(2, -1))
+    r = np.array([[[0.5], [3.0]], [[2.0], [0.1]]], np.float64)  # (fits, n, m)
+    cost = 0.5 * np.sum(r.reshape(2, -1) ** 2, axis=1)
+    got = _objective(pycunls.HuberLossFunctionBatch(k), r, cost, pycunls.CudaStream(),
+                     wp.get_cuda_device())
+    a = np.abs(r.reshape(2, -1))
     rho = np.where(a <= k, a * a, 2 * k * a - k * k)
     np.testing.assert_allclose(got, 0.5 * rho.sum(axis=1), rtol=1e-6)
-    assert cp.asnumpy(_objective(None, r, cost, None)) == pytest.approx(cp.asnumpy(cost))
+    assert _objective(None, r, cost, None, None) == pytest.approx(cost)

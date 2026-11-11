@@ -7,14 +7,13 @@ name = "pycunls"
 version = "0.2.0"
 description = "Python bindings for cuNLS: CUDA-accelerated nonlinear least squares solver"
 requires-python = ">=3.10"
-dependencies = ["cupy-cuda12x"]
-
-[project.optional-dependencies]
 # warp-lang 1.18 builds its PyPI wheels with CUDA 13.4 and needs an R580+ driver for CUDA;
 # older drivers (JetPack 6 on Jetson Orin) leave Warp CPU-only. Keep the CUDA 12 builds.
-warp = ["warp-lang<1.18"]
-test = ["pytest", "cupy-cuda12x", "warp-lang<1.18"]
-all = ["warp-lang<1.18"]
+dependencies = ["numpy", "warp-lang<1.18"]
+
+[project.optional-dependencies]
+# cupy only for the interoperability test (any __cuda_array_interface__ array works).
+test = ["pytest", "cupy-cuda12x"]
 
 [tool.scikit-build]
 cmake.source-dir = ".."

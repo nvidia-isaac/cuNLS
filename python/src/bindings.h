@@ -31,7 +31,7 @@ namespace nb = nanobind;
 
 // Extract a raw GPU device pointer from a Python object.
 // Accepts either a plain int (already a pointer) or any object whose
-// .data.ptr attribute yields one (e.g. a cupy.ndarray).
+// .data.ptr attribute yields one.
 uintptr_t extract_device_ptr(nb::handle obj);
 
 // Same, and when obj is an array (has .dtype) checks that its dtype is
@@ -54,7 +54,7 @@ struct DeviceArray {
 };
 
 // Checks and reads a device array argument: an int pointer passes unchecked;
-// an object with __cuda_array_interface__ (CuPy, PyTorch, Numba, Warp) must
+// an object with __cuda_array_interface__ (Warp, PyTorch, CuPy, Numba) must
 // have dtype `dtype` (when not null) and be C-contiguous; a NumPy array raises
 // TypeError explaining that GPU memory is needed. Errors name `name`.
 DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *name);

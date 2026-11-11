@@ -31,8 +31,8 @@ Usage::
 
 import argparse
 
-import cupy as cp
 import numpy as np
+import warp as wp
 
 import pycunls
 
@@ -143,12 +143,12 @@ def main():
         if k > 0:  # keyframe 0 is fixed (gauge)
             Xi[:3, 3] += rng.normal(0, 0.02, 3)
         init_poses.append(Xi)
-    pose_buf = cp.asarray(np.stack(init_poses), dtype=cp.float32)
-    vel_buf = cp.zeros((K, 3), dtype=cp.float32)
-    bias_buf = cp.zeros((K, 6), dtype=cp.float32)
-    point_buf = cp.asarray(true_points + rng.normal(0, 0.05, true_points.shape), dtype=cp.float32)
+    pose_buf = wp.array(np.stack(init_poses), dtype=wp.float32)
+    vel_buf = wp.zeros((K, 3), dtype=wp.float32)
+    bias_buf = wp.zeros((K, 6), dtype=wp.float32)
+    point_buf = wp.array(true_points + rng.normal(0, 0.05, true_points.shape), dtype=wp.float32)
 
-    fixed = cp.asarray([0], dtype=cp.int32)
+    fixed = wp.array([0], dtype=wp.int32)
     poses = pycunls.SE3StateBatch(pose_buf, K, fixed, 1)
     poses.set_num_active_states(K, 1)
     vels = pycunls.VectorStateBatch3(vel_buf, K)
@@ -159,8 +159,8 @@ def main():
     points.set_num_active_states(L)
 
     # --- IMU factors: samples of all keyframe pairs back to back, CSR offsets ---
-    imu_samples = cp.asarray(samples, dtype=cp.float32)  # (num_samples, 7)
-    offsets = cp.asarray(np.arange(K) * N, dtype=cp.int32)  # K - 1 pairs + 1
+    imu_samples = wp.array(samples, dtype=wp.float32)  # (num_samples, 7)
+    offsets = wp.array(np.arange(K) * N, dtype=wp.int32)  # K - 1 pairs + 1
     imu = pycunls.ImuFactorBatch(imu_samples, offsets, len(samples), params, K - 1)
     imu.set_num_active_factors(K - 1)
     imu_ptrs = []
@@ -170,7 +170,7 @@ def main():
                          biases.state_device_ptr(j)]
 
     # --- Reprojections (normalized image coordinates, sigma = 1e-3) on the same poses ---
-    obs_buf = cp.asarray(observations, dtype=cp.float32)
+    obs_buf = wp.array(observations, dtype=wp.float32)
     reproj = pycunls.WeightedFactorBatch(
         pycunls.ReprojectionFactorBatch(obs_buf, len(pairs)), 1e3)
     reproj.set_num_active_factors(len(pairs))
@@ -193,11 +193,12 @@ def main():
     options.base_options.max_num_iterations = 30
     options.base_options.linear_system = pycunls.LinearSystemType.SchurComplement
     stream = pycunls.CudaStream()
+    wp.synchronize_stream(wp.get_stream())  # uploads ran on Warp's stream: finish them first
     summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
 
     # --- Compare with the ground truth ---
-    est_poses = cp.asnumpy(pose_buf).reshape(K, 4, 4)
-    est_vels, est_bias = cp.asnumpy(vel_buf), cp.asnumpy(bias_buf)
+    est_poses = pose_buf.numpy().reshape(K, 4, 4)
+    est_vels, est_bias = vel_buf.numpy(), bias_buf.numpy()
     true_vels = np.array([v for _, v, _ in keyframes])
     pos_err = max(np.linalg.norm(est_poses[k][:3, 3] - keyframes[k][2])
                   for k in range(K))

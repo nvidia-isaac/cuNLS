@@ -18,14 +18,14 @@
 * PnP with gross outliers: RANSAC-GN / RANSAC-LM recover the pose and the
   inlier mask; plain LM does not.
 * An always-on prior batch is accepted and never classified.
-* Custom Python factor / state (CuPy kernels) that follow the item / replica
+* Custom Python factor / state (Warp kernels) that follow the item / replica
   contract work under RANSAC.
 * Option validation errors surface as Python exceptions.
 """
 
 import numpy as np
-import cupy as cp
 import pytest
+import warp as wp
 
 import pycunls
 
@@ -67,9 +67,9 @@ def _pnp_scene(n, outlier_ratio, seed):
 
 class _PnPProblem:
     def __init__(self, init, pts, obs, with_prior=False):
-        self.pose_gpu = cp.asarray(init.reshape(-1))
-        self.pts_gpu = cp.asarray(pts.reshape(-1))
-        self.obs_gpu = cp.asarray(obs.reshape(-1))
+        self.pose_gpu = wp.array(init.reshape(-1))
+        self.pts_gpu = wp.array(pts.reshape(-1))
+        self.obs_gpu = wp.array(obs.reshape(-1))
         self.state = pycunls.SE3StateBatch(self.pose_gpu, 1)
         self.state.set_num_active_states(self.state.capacity, self.state.const_capacity)
         self.pnp = pycunls.PnPFactorBatch(self.obs_gpu, self.pts_gpu, len(pts))
@@ -79,13 +79,13 @@ class _PnPProblem:
         ptr = self.state.state_device_ptr(0)
         self.problem.add_factor_batch(self.pnp, [ptr] * len(pts))
         if with_prior:
-            self.prior_gpu = cp.asarray(init.reshape(-1))
+            self.prior_gpu = wp.array(init.reshape(-1))
             self.prior = pycunls.SE3PriorFactorBatch(self.prior_gpu, 1)
             self.prior.set_num_active_factors(self.prior.capacity)
             self.problem.add_factor_batch(self.prior, [ptr])
 
     def pose(self):
-        return cp.asnumpy(self.pose_gpu).reshape(4, 4)
+        return self.pose_gpu.numpy().reshape(4, 4)
 
 
 def _rot_err_deg(a, b):
@@ -189,43 +189,37 @@ class TestRansacPnP:
 #     its own state pointer state_pointers[t], and writes row t;
 #   * plus: process num_replicas * num_active_states states.
 
-class _StreamHandle:
-    """Exposes a raw cudaStream_t handle through the CUDA stream protocol."""
+@wp.kernel
+def _line(xs: wp.array(dtype=float), ys: wp.array(dtype=float), factor_ids_ptr: wp.uint64,
+          num_factors: int, state_ptrs: wp.array(dtype=wp.uint64), res: wp.array(dtype=float),
+          jac_ptr: wp.uint64):
+    t = wp.tid()
+    f = t % num_factors  # measurement of item t
+    if factor_ids_ptr != wp.uint64(0):
+        factor_ids = wp.array(ptr=factor_ids_ptr, shape=(t + 1,), dtype=wp.int32)
+        f = factor_ids[t]
+    ab = wp.array(ptr=state_ptrs[t], shape=(2,), dtype=float)  # state of item t
+    res[t] = ab[0] * xs[f] + ab[1] - ys[f]  # row t
+    if jac_ptr != wp.uint64(0):
+        jac = wp.array(ptr=jac_ptr, shape=(2 * t + 2,), dtype=float)
+        jac[2 * t] = xs[f]
+        jac[2 * t + 1] = 1.0
 
-    def __init__(self, handle):
-        self.handle = handle
 
-    def __cuda_stream__(self):
-        return (0, self.handle)
-
-
-def cupy_stream(handle):
-    """CuPy stream wrapping cuNLS's cudaStream_t (use as a context manager)."""
-    if hasattr(cp.cuda.Stream, "from_external"):  # CuPy >= 14
-        return cp.cuda.Stream.from_external(_StreamHandle(handle))
-    return cp.cuda.ExternalStream(handle)
+@wp.kernel
+def _plus(x: wp.array(dtype=float), d: wp.array(dtype=float), out: wp.array(dtype=float)):
+    i = wp.tid()
+    out[i] = x[i] + d[i]
 
 
-_line_kernel = cp.RawKernel(r"""
-extern "C" __global__
-void line(const float* xs, const float* ys, const int* factor_ids, int num_factors,
-          const unsigned long long* state_ptrs, float* res, float* jac, int n) {
-  int t = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t >= n) return;
-  int f = factor_ids ? factor_ids[t] : t % num_factors;   // measurement of item t
-  const float* ab = (const float*)state_ptrs[t];           // state of item t
-  res[t] = ab[0] * xs[f] + ab[1] - ys[f];                  // row t
-  if (jac) { jac[2 * t] = xs[f]; jac[2 * t + 1] = 1.f; }
-}
-""", "line")
+def _device_floats(ptr, n):
+    """A wp.array view of n float32 values at a raw device pointer (not owned)."""
+    return wp.array(ptr=ptr, shape=(n,), dtype=float, device=wp.get_cuda_device())
 
-_plus_kernel = cp.RawKernel(r"""
-extern "C" __global__
-void plus(const float* x, const float* d, float* out, int n) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) out[i] = x[i] + d[i];
-}
-""", "plus")
+
+def _cunls_stream(stream_handle):
+    """A wp.Stream view of the cudaStream_t cuNLS passes to a callback."""
+    return wp.Stream(wp.get_cuda_device(), cuda_stream=stream_handle)
 
 
 class LineState(pycunls.CustomStateBatch):
@@ -234,10 +228,9 @@ class LineState(pycunls.CustomStateBatch):
 
     def plus(self, x_ptr, delta_ptr, out_ptr, stream_handle, num_replicas):
         n = 2 * self.num_active_states * num_replicas  # every replica, every float
-        with cupy_stream(stream_handle):
-            _plus_kernel(((n + 127) // 128,), (128,),
-                         (cp.uint64(x_ptr), cp.uint64(delta_ptr), cp.uint64(out_ptr),
-                          cp.int32(n)))
+        wp.launch(_plus, dim=n, inputs=[_device_floats(x_ptr, n), _device_floats(delta_ptr, n),
+                                        _device_floats(out_ptr, n)],
+                  stream=_cunls_stream(stream_handle))
 
 
 class LineFactor(pycunls.CustomFactorBatch):
@@ -247,11 +240,12 @@ class LineFactor(pycunls.CustomFactorBatch):
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids  # always the actual item count in Python
-        with cupy_stream(stream_handle):
-            _line_kernel(((n + 127) // 128,), (128,),
-                         (self.xs, self.ys, cp.uint64(factor_ids_ptr), cp.int32(self.num_active_factors),
-                          cp.uint64(sp_ptr), cp.uint64(res_ptr), cp.uint64(jac_ptr),
-                          cp.int32(n)))
+        state_ptrs = wp.array(ptr=sp_ptr, shape=(n,), dtype=wp.uint64,
+                              device=wp.get_cuda_device())
+        wp.launch(_line, dim=n,
+                  inputs=[self.xs, self.ys, wp.uint64(factor_ids_ptr), self.num_active_factors,
+                          state_ptrs, _device_floats(res_ptr, n), wp.uint64(jac_ptr)],
+                  stream=_cunls_stream(stream_handle))
         return True
 
 
@@ -264,10 +258,10 @@ class TestCustomTypesUnderRansac:
         out = rng.uniform(size=n) < 0.6
         ys[out] += rng.choice([-1, 1], out.sum()) * rng.uniform(1, 10, out.sum())
 
-        ab = cp.zeros(2, dtype=cp.float32)
+        ab = wp.zeros(2, dtype=wp.float32)
         state = LineState(ab)
         state.set_num_active_states(state.capacity, state.const_capacity)
-        factor = LineFactor(cp.asarray(xs), cp.asarray(ys))
+        factor = LineFactor(wp.array(xs), wp.array(ys))
         factor.set_num_active_factors(factor.capacity)
         problem = pycunls.Problem()
         problem.add_state_batch(state)
@@ -277,7 +271,7 @@ class TestCustomTypesUnderRansac:
         o.default_inlier_threshold = 0.05
         minimizer = pycunls.RansacGaussNewtonMinimizer(o)
         summary = minimizer.minimize(stream, problem)
-        a, b = cp.asnumpy(ab)
+        a, b = ab.numpy()
         assert abs(a - 1.5) < 0.01 and abs(b + 2.0) < 0.01
         mask = minimizer.inlier_mask(0)
         assert int(np.sum((mask == 1) & out)) == 0

@@ -23,7 +23,7 @@
 //
 //   nb::keep_alive<1, N>  ensures the Python objects passed to add_*() are
 //   prevented from garbage-collection as long as the Problem itself is alive.
-//   Without this, a CuPy array backing a StateBatch could be freed while the
+//   Without this, a Warp array backing a StateBatch could be freed while the
 //   C++ optimizer still holds a raw pointer to its GPU memory.
 //
 //   state_pointers are received as std::vector<uintptr_t> and reinterpret-
@@ -31,8 +31,8 @@
 //   list[int] to std::vector<float*>.
 //
 //   Device connectivity tables are taken as
-//   DevicePointer objects (a CuPy array or an int): a uint64 table of state
-//   pointers (keyword-only `state_pointer_table`, so a CuPy array is never
+//   DevicePointer objects (a GPU array or an int): a uint64 table of state
+//   pointers (keyword-only `state_pointer_table`, so a GPU array is never
 //   mistaken for a host list), or an int32 table of state indices together
 //   with the state batch of each factor slot.
 

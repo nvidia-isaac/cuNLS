@@ -29,7 +29,7 @@ a different optimization pattern. The first two build their problems with
 The two custom Warp examples use the full API, which the builder sets up
 underneath (the flow of the :doc:`introduction` and :doc:`pycunls_quick_start`):
 
-1. Allocate state data on the GPU (CuPy arrays).
+1. Allocate state data on the GPU (Warp arrays).
 2. Wrap the GPU memory in one or more
    :ref:`state batch <py-state-batch-interface>` objects.
 3. Build one or more
@@ -283,8 +283,8 @@ Custom Warp Factor
 .. note::
 
    For the full ``evaluate`` / ``plus`` contract (items, ``factor_ids_ptr``,
-   ``num_factor_ids``, ``num_replicas``), plain-CuPy versions of a custom
-   factor and state, and how to use them with the RANSAC minimizers, see
+   ``num_factor_ids``, ``num_replicas``), a self-contained custom factor and
+   state, and how to use them with the RANSAC minimizers, see
    :doc:`custom_factors_and_states`.
 
 Custom Warp factor problem statement
@@ -337,8 +337,8 @@ Jacobians.
 
 **Step 1 — Define the Warp kernel.**
 One thread per *item*: one factor evaluated at one set of states. Item ``t``
-reads the measurement of its factor ``ids[t]`` and its own two state values,
-and writes row ``t``. The regular minimizers evaluate each factor once
+reads the measurement of its factor ``ids[t]`` and its own two state values
+(through the state pointer table, with ``state_value``), and writes row ``t``. The regular minimizers evaluate each factor once
 (``ids[t] == t``); the RANSAC minimizers evaluate many items per factor (see
 :doc:`custom_factors_and_states`).
 
@@ -348,10 +348,10 @@ and writes row ``t``. The regular minimizers evaluate each factor once
 
 **Step 2 — Subclass WarpFactorBatch.**
 ``evaluate`` receives raw device pointers. ``factor_ids`` gives the factor
-of every item (``t % num_active_factors`` when cuNLS passes none),
-``gather_state_pairs`` copies each item's two state values into contiguous
-arrays (Warp cannot dereference the pointer table), and the kernel runs on
-cuNLS's stream. When ``jacobians_ptr`` is 0 only residuals are wanted. The
+of every item (``t % num_active_factors`` when cuNLS passes none), the
+state pointer table (``2 * n`` addresses, item ``t``'s states at ``2t`` and
+``2t + 1``) is wrapped as a ``wp.uint64`` array for the kernel, and the
+kernel runs on cuNLS's stream. When ``jacobians_ptr`` is 0 only residuals are wanted. The
 constructor passes the capacity (measurements the buffer holds) to the base
 class; ``num_active_factors`` is the active count, 0 until
 ``set_num_active_factors``.
@@ -360,13 +360,13 @@ class; ``num_active_factors`` is the active count, 0 until
    :language: python
    :pyobject: ScalarDiffFactor
 
-**Step 3 — The gather helper.**
-``gather_state_pairs`` lives in ``example_utils/gpu.py`` and is reusable
-for any factor with two scalar states:
+**Step 3 — The state reader.**
+``state_value`` lives in ``example_utils/gpu.py`` and is reusable for any
+Warp factor: it reads one component of the state a table entry points to.
 
 .. literalinclude:: ../../python/examples/example_utils/gpu.py
    :language: python
-   :pyobject: gather_state_pairs
+   :pyobject: state_value
 
 **Step 4 — Generate synthetic data.**
 ``scalar_chain`` returns a monotonic chain, exact consecutive differences and a
@@ -381,8 +381,8 @@ generators are ordinary NumPy code and are not part of the lesson.
    :dedent: 4
 
 **Step 5 — Upload to the GPU.**
-States and the prior target go to CuPy arrays; the measurements, read inside
-the Warp kernel, to a Warp array.
+States, the prior target and the measurements (read inside the Warp kernel)
+go to Warp arrays.
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
    :language: python
@@ -413,7 +413,9 @@ keeps its analytic Jacobian (see :doc:`numeric_jacobians`).
    :dedent: 4
 
 **Step 8 — Solve with Levenberg-Marquardt.**
-Same solver as in the previous examples.
+Same solver as in the previous examples. The uploads ran on Warp's stream and
+the solve runs on its own ``CudaStream``, so Warp's stream is synchronized
+first; ``minimize`` synchronizes its stream before returning.
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
    :language: python
@@ -529,7 +531,7 @@ generators are ordinary NumPy code and are not part of the lesson.
    :dedent: 4
 
 **Step 5 — Upload to the GPU.**
-States go to a CuPy array; factor data to Warp arrays.
+States and factor data go to Warp arrays.
 
 .. literalinclude:: ../../python/examples/custom_warp_state.py
    :language: python
@@ -538,7 +540,7 @@ States go to a CuPy array; factor data to Warp arrays.
    :dedent: 4
 
 **Step 6 — Build the custom state and factor batches.**
-The custom state batch wraps the CuPy array; the factors read
+The custom state batch wraps the Warp array; the factors read
 ``[x_i, x_{i+1}]`` and ``x_0``. Custom batches follow the same capacity rule
 as the built-in ones: 0 active entries until ``set_num_*`` is called.
 

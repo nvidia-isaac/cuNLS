@@ -57,6 +57,10 @@ namespace cunls {
  * A clearly negative or non-finite pivot sets a device flag; with safety
  * checks (the default) Solve() reads it back and returns false. Without them
  * the failure shows up as non-finite values in the result.
+ *
+ * With SetRowActivity() (the minimizers declare the rows of the subproblems
+ * still iterating in a partitioned problem), panels whose rows are all idle
+ * are skipped, so a batch costs in proportion to its active subproblems.
  */
 class BlockSparseCholeskySolver : public SparseLinearSolver {
  public:
@@ -76,12 +80,26 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   /** @brief Skips reading back the pivot-failure flag after each factorization. */
   void DisableSafetyChecks() override { safety_checks_ = false; }
 
+  /**
+   * @brief Rows the next Solve() calls need (see
+   * SparseLinearSolver::SetRowActivity), or nullptr for all.
+   *
+   * A panel whose columns are all idle is skipped: not factored, no updates
+   * from it, and a zero solution. Exact because a panel never mixes connected
+   * components of the matrix (supernodes merge only along the elimination
+   * tree), and the idle rows of a partitioned problem are whole subproblems,
+   * i.e. whole components.
+   */
+  void SetRowActivity(const int *row_active) override { row_active_ = row_active; }
+
   /** @brief The analysis of the last Initialize() (host side). */
   const internal::CholeskyPlan &Plan() const { return plan_; }
 
  private:
-  internal::CholeskyPlan plan_;  ///< Host analysis.
-  bool safety_checks_ = true;    ///< Read back the failure flag after each Solve().
+  internal::CholeskyPlan plan_;      ///< Host analysis.
+  bool safety_checks_ = true;        ///< Read back the failure flag after each Solve().
+  const int *row_active_ = nullptr;  ///< SetRowActivity(): needed rows, or nullptr for all.
+  dvector<int> panel_active_;        ///< Per panel: 1 if any of its rows is needed.
 
   // Device copies of the plan.
   dvector<int> perm_;                              ///< Permuted column -> original column.

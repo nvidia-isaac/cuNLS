@@ -26,11 +26,13 @@ the toolchain comes with the image (`scripts/Dockerfile`).
 
 ## Python package (pycunls)
 
-`pycunls` exposes cuNLS to Python via [nanobind](https://github.com/wjakob/nanobind), with
-first-class [CuPy](https://cupy.dev/) interop and optional
-[NVIDIA Warp](https://github.com/NVIDIA/warp) support for custom factor kernels and `fit()`
-models. The wheel statically links the cuNLS core library and dynamically links the CUDA runtime
-libraries, so it is specific to the CUDA version it was built with.
+`pycunls` exposes cuNLS to Python via [nanobind](https://github.com/wjakob/nanobind). Its
+runtime dependencies are NumPy and [NVIDIA Warp](https://github.com/NVIDIA/warp)
+(`warp-lang<1.18`): Warp arrays hold the GPU data, and custom factors, states and `fit()` models
+are Warp kernels and functions. The bindings accept any GPU array with
+`__cuda_array_interface__` (Warp, PyTorch, CuPy, ...) or a raw device pointer. The wheel
+statically links the cuNLS core library and dynamically links the CUDA runtime libraries, so it
+is specific to the CUDA version it was built with.
 
 ### Build the wheel in Docker
 
@@ -42,9 +44,9 @@ The output directory defaults to `./dist`. The script builds the wheel inside a 
 the source mounted read-only. Intermediate build directories live inside the container and are
 discarded; only the final `.whl` file is written to the host output directory.
 
-Docker wheels use the distribution name `pycunls-cu12` or `pycunls-cu13` and the matching CuPy
-dependency; both use `import pycunls`. With `RELEASE_TAG=v<version>`, the Docker build uses the
-committed checkout, excluding local changes and generated files. The tag version must match
+Docker wheels use the distribution name `pycunls-cu12` or `pycunls-cu13` (and the matching
+CuPy in the `test` extra); both use `import pycunls`. With `RELEASE_TAG=v<version>`, the Docker
+build uses the committed checkout, excluding local changes and generated files. The tag version must match
 `python/pyproject.toml` and `python/pycunls/__init__.py`. Wheels include the source commit and
 measured CUDA toolkit version and are repaired with auditwheel while keeping CUDA libraries
 external.
@@ -56,9 +58,12 @@ pip install scikit-build-core nanobind
 (cd python && pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist)
 ```
 
-A local wheel declares the CUDA 12 CuPy (`cupy-cuda12x`, from `python/pyproject.toml`); only
-the Docker build switches it to `cupy-cuda13x` for CUDA 13. For a local CUDA 13 build, install
-`cupy-cuda13x` yourself, or build the wheel in Docker.
+The `test` extra of a local wheel declares the CUDA 12 CuPy (`cupy-cuda12x`, from
+`python/pyproject.toml`, used only by an interoperability test); only the Docker build switches
+it to `cupy-cuda13x` for CUDA 13. For local CUDA 13 testing, install `cupy-cuda13x` yourself.
+
+`warp-lang` is capped below 1.18: the 1.18 PyPI wheels are built with CUDA 13 and need an R580+
+driver, and older drivers (JetPack 6 on Jetson Orin) leave Warp CPU-only.
 
 ### Install the wheel
 
@@ -66,7 +71,7 @@ From the repository root:
 
 ```bash
 pip install ./dist/pycunls*.whl
-python -m pycunls doctor     # checks Python, the GPU, the native module, a solve, a fit, Warp, cuDSS
+python -m pycunls doctor     # checks Python, the GPU (via Warp), the native module, a solve, a fit, cuDSS
 ```
 
 ### Editable install for development
@@ -79,13 +84,9 @@ pip install scikit-build-core nanobind
 pip install -e ".[test]" --no-build-isolation
 ```
 
-This installs `pycunls` along with all test dependencies (`pytest`, `cupy-cuda12x`,
-`warp-lang`). Other optional dependency groups:
-
-```bash
-pip install -e ".[warp]"   # warp-lang only
-pip install -e ".[all]"    # all optional extras
-```
+This installs `pycunls` with its runtime dependencies (`numpy`, `warp-lang`) and the test
+dependencies (`pytest`, and `cupy-cuda12x` for the one CuPy interoperability test). `test` is the
+only optional dependency group.
 
 After changing the bindings, regenerate the type stub with
 `python scripts/generate_pycunls_stubs.py`.

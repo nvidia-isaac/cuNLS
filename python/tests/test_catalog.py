@@ -16,8 +16,8 @@
 """The catalog matches the classes: every built-in batch is listed, and the listed sizes are the
 sizes the classes report."""
 
-import cupy as cp
 import pytest
+import warp as wp
 
 import pycunls
 from pycunls import _pycunls_core as core
@@ -48,7 +48,7 @@ def test_every_catalog_entry_exists():
 @pytest.mark.parametrize("name", _exported(core.StateBatch))
 def test_state_sizes_match(name):
     info = state_info(name)
-    batch = getattr(pycunls, name)(cp.zeros(4 * info.ambient, cp.float32), 4)
+    batch = getattr(pycunls, name)(wp.zeros(4 * info.ambient, wp.float32), 4)
     assert (batch.ambient_size, batch.tangent_size) == (info.ambient, info.tangent)
 
 
@@ -69,7 +69,7 @@ def _simple_factors():
 @pytest.mark.parametrize("name", _simple_factors())
 def test_factor_sizes_match(name):
     info = factor_info(name)
-    arrays = [cp.zeros(64 * 4, cp.float32) for a in info.arrays
+    arrays = [wp.zeros(64 * 4, wp.float32) for a in info.arrays
               if a != "poses_camera_from_rig"]
     fb = getattr(pycunls, name)(*arrays, 4)
     assert fb.residuals_size == info.residual_size

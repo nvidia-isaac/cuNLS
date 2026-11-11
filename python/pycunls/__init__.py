@@ -16,23 +16,24 @@
 """pycunls -- Python bindings for cuNLS CUDA-accelerated nonlinear least squares solver.
 
 This package exposes the full cuNLS C++ API to Python through a nanobind-based
-native extension module (``_pycunls_core``).  All GPU memory is managed via
-CuPy arrays; constructors accept either a ``cupy.ndarray`` or a plain ``int``
-device pointer.
+native extension module (``_pycunls_core``).  Device arrays are passed as any
+object with ``__cuda_array_interface__`` (Warp, PyTorch, CuPy, ...) or as a plain
+``int`` device pointer; the pure-Python layers (``fit``, ``ProblemBuilder``,
+``mpc``, diagnostics) use Warp.
 
 Typical workflow::
 
-    import cupy as cp
+    import warp as wp
     import pycunls
 
     stream  = pycunls.CudaStream()
 
     # 1. Allocate state(s) on the GPU
-    states_gpu = cp.zeros(num * dim, dtype=cp.float32)
+    states_gpu = wp.zeros(num * dim, dtype=float)
     sb = pycunls.VectorStateBatch3(states_gpu, num)
 
     # 2. Create factor(s) and observation data
-    obs_gpu = cp.asarray(observations)
+    obs_gpu = wp.array(observations, dtype=float)
     fb = pycunls.PriorVectorFactorBatch3(obs_gpu, num)
 
     # 3. Assemble the problem
@@ -218,7 +219,7 @@ try:
 
     _annotate_classes(_pycunls_core)
 except ImportError:
-    # `python -m pycunls doctor` must start on a broken install (missing native module, CuPy
+    # `python -m pycunls doctor` must start on a broken install (missing native module, Warp
     # or driver) to report what is broken; sys.argv[0] is "-m" only while `python -m` imports
     # this package. Every other import keeps the original error.
     if _sys.argv[:1] != ["-m"]:

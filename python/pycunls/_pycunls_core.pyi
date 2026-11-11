@@ -281,7 +281,7 @@ class BoundFactorBatch1(ConstraintFactorBatchBase):
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
       notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
@@ -308,7 +308,7 @@ class BoundFactorBatch12(ConstraintFactorBatchBase):
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
       notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
@@ -335,7 +335,7 @@ class BoundFactorBatch2(ConstraintFactorBatchBase):
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
       notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
@@ -362,7 +362,7 @@ class BoundFactorBatch3(ConstraintFactorBatchBase):
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
       notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
@@ -389,7 +389,7 @@ class BoundFactorBatch4(ConstraintFactorBatchBase):
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
       notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
@@ -416,7 +416,7 @@ class BoundFactorBatch6(ConstraintFactorBatchBase):
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
       notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
@@ -451,7 +451,7 @@ class ConstantAccelerationInformationSE2FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -473,7 +473,7 @@ class ConstantAccelerationInformationSE3FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -495,7 +495,7 @@ class ConstantAccelerationInformationSO2FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -517,7 +517,7 @@ class ConstantAccelerationInformationSO3FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -537,7 +537,7 @@ class ConstantAccelerationSE2FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -552,7 +552,7 @@ class ConstantAccelerationSE3FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -567,7 +567,7 @@ class ConstantAccelerationSO2FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -582,7 +582,7 @@ class ConstantAccelerationSO3FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -599,7 +599,7 @@ class ConstantVelocityInformationSE2FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -621,7 +621,7 @@ class ConstantVelocityInformationSE3FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -643,7 +643,7 @@ class ConstantVelocityInformationSO2FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -665,7 +665,7 @@ class ConstantVelocityInformationSO3FactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
       notes: Information variants take a stream first and need update(stream, num) after time_steps change.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, stream: CudaStream, time_steps: object, qc_diag: object, capacity: int) -> None: ...
@@ -685,7 +685,7 @@ class ConstantVelocitySE2FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -700,7 +700,7 @@ class ConstantVelocitySE3FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -715,7 +715,7 @@ class ConstantVelocitySO2FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -730,7 +730,7 @@ class ConstantVelocitySO3FactorBatch(FactorBatch):
       time_steps: 1 float per factor (dt)
       relative: yes (needs an anchor: a constant state or a prior)
       use: Smoothness prior on trajectories (with motion derivatives as states).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -753,7 +753,7 @@ class ConstraintFactorBatch(ConstraintFactorBatchBase):
       residual: scale * r_inner = 0 or <= 0
       relative: no
       use: Turn any factor into hard equality / inequality constraints (AugmentedLagrangianMinimizer).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, inner_factor: FactorBatch, kind: ConstraintKind, scale: float = 1.0) -> None: ...
@@ -802,7 +802,7 @@ class ConstraintKind(enum.Enum):
 
 class CudaStream:
     """
-    A CUDA stream for cuNLS work (created on construction, destroyed with the object). sync_on_destroy: synchronize before destroying. minimize() synchronizes it before returning; use cupy.cuda.Stream.from_external(stream) to order CuPy work with it.
+    A CUDA stream for cuNLS work (created on construction, destroyed with the object). sync_on_destroy: synchronize before destroying. minimize() synchronizes it before returning; use wp.Stream(cuda_stream=stream.get_stream()) to order Warp work with it.
     """
 
     def __init__(self, sync_on_destroy: bool = False) -> None: ...
@@ -812,7 +812,7 @@ class CudaStream:
 
     def __cuda_stream__(self) -> tuple:
         """
-        CUDA stream protocol (version 0, handle): cupy.cuda.Stream.from_external(stream) and other libraries can enqueue work on this stream.
+        CUDA stream protocol (version 0, handle): libraries that accept it (e.g. PyTorch, CuPy) can enqueue work on this stream.
         """
 
 class CustomFactorBatch(FactorBatch):
@@ -906,7 +906,7 @@ class HalfspaceFactorBatch1(FactorBatch):
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
@@ -931,7 +931,7 @@ class HalfspaceFactorBatch12(FactorBatch):
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
@@ -956,7 +956,7 @@ class HalfspaceFactorBatch2(FactorBatch):
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
@@ -981,7 +981,7 @@ class HalfspaceFactorBatch3(FactorBatch):
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
@@ -1006,7 +1006,7 @@ class HalfspaceFactorBatch4(FactorBatch):
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
@@ -1031,7 +1031,7 @@ class HalfspaceFactorBatch6(FactorBatch):
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
@@ -1067,7 +1067,7 @@ class ImuFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Visual-inertial estimation; guide docs/sphinx/imu.rst.
       notes: Gravity makes roll and pitch observable; yaw and position still need an anchor.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, imu_samples: object, sample_offsets: object, num_samples: int, parameters: ImuParameters, capacity: int) -> None: ...
@@ -1156,7 +1156,7 @@ class InformationFactorBatch(FactorBatch):
       relative: no
       use: Weight any factor by a per-factor square-root information matrix (measurement covariance^-1/2).
       notes: Inherits the wrapped factor's states.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, inner_factor: FactorBatch, sqrt_information_matrices: object) -> None: ...
@@ -1533,7 +1533,7 @@ class PnPFactorBatch(FactorBatch):
       relative: no
       use: Camera pose from known 3D points (PnP); with outliers use the RANSAC minimizers.
       notes: Points are constants, not states. z_threshold: minimum depth; points closer or behind the camera give a zero residual.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -1554,7 +1554,7 @@ class PointToPlaneFactorBatch(FactorBatch):
       nq_observations: 3 floats per factor: plane normal in the target frame
       relative: no
       use: Point-to-plane ICP.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, p_observations: object, q_observations: object, nq_observations: object, capacity: int) -> None: ...
@@ -1570,7 +1570,7 @@ class PointToPointFactorBatch(FactorBatch):
       q_observations: 3 floats per factor (source point)
       relative: no
       use: Point-set registration (ICP) with known correspondences.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, p_observations: object, q_observations: object, capacity: int) -> None: ...
@@ -1585,7 +1585,7 @@ class PriorVectorFactorBatch1(FactorBatch):
       observations: 1 floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -1600,7 +1600,7 @@ class PriorVectorFactorBatch12(FactorBatch):
       observations: 12 floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -1615,7 +1615,7 @@ class PriorVectorFactorBatch2(FactorBatch):
       observations: 2 floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -1630,7 +1630,7 @@ class PriorVectorFactorBatch3(FactorBatch):
       observations: 3 floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -1645,7 +1645,7 @@ class PriorVectorFactorBatch4(FactorBatch):
       observations: 4 floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -1660,7 +1660,7 @@ class PriorVectorFactorBatch6(FactorBatch):
       observations: 6 floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -1778,7 +1778,7 @@ class QuadrotorFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Quadrotor rigid-body dynamics with rotor thrusts.
       notes: Prefer pycunls.mpc, which wires these for you.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, parameters: QuadrotorParameters, capacity: int) -> None: ...
@@ -1854,7 +1854,7 @@ class QuadrupedFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Quadruped base driven by foot forces.
       notes: Prefer pycunls.mpc, which wires these for you.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, contacts: object, foot_positions: object, parameters: QuadrupedParameters, capacity: int) -> None: ...
@@ -2248,7 +2248,7 @@ class ReprojectionFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Bundle adjustment: camera pose (world_from_camera) and 3D point.
       notes: Observations are normalized (divide pixel coords by the intrinsics first). Points behind the camera (z < z_threshold) give a zero residual. Has a 7-DOF gauge (6 + scale): fix a pose and the scale (a second pose or a prior).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int, z_threshold: float = 0.0010000000474974513) -> None: ...
@@ -2264,7 +2264,7 @@ class SE2BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative SE(2) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2288,7 +2288,7 @@ class SE2DifferentialDriveFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Differential-drive robot dynamics (MPC).
       notes: Prefer pycunls.mpc, which wires these for you.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, wheel_radius: float, track_width: float, capacity: int) -> None: ...
@@ -2303,7 +2303,7 @@ class SE2DiskClearanceFactorBatch(FactorBatch):
       obstacles: 3 floats per factor: center x, y, radius
       relative: no
       use: Obstacle avoidance constraint (wrap in ConstraintFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, obstacles: object, margin: float, capacity: int) -> None: ...
@@ -2327,7 +2327,7 @@ class SE2KinematicBicycleFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Car-like (Ackermann) dynamics (MPC).
       notes: Prefer pycunls.mpc, which wires these for you.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, wheelbase: float, capacity: int) -> None: ...
@@ -2343,7 +2343,7 @@ class SE2KinematicsFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: X_{k+1} = X_k Exp(dt xi_k) with the body twist as control (MPC, trajectories).
       notes: See docs/sphinx/dynamics.rst.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -2358,7 +2358,7 @@ class SE2PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 3x3 matrix [R t; 0 1], row-major (9 floats)
       relative: no
       use: Absolute SE(2) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2372,7 +2372,7 @@ class SE2StateBatch(StateBatch):
       tangent (3): [v_x, v_y, theta]
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 9), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2392,7 +2392,7 @@ class SE3BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative SE(3) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2416,7 +2416,7 @@ class SE3DifferentialDriveFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Differential drive on non-planar terrain.
       notes: Prefer pycunls.mpc, which wires these for you.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, wheel_radius: float, track_width: float, capacity: int) -> None: ...
@@ -2440,7 +2440,7 @@ class SE3KinematicBicycleFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Car-like dynamics on non-planar roads.
       notes: Prefer pycunls.mpc, which wires these for you.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, wheelbase: float, capacity: int) -> None: ...
@@ -2456,7 +2456,7 @@ class SE3KinematicsFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: T_{k+1} = T_k Exp(dt xi_k) with the body twist [omega, v] as control.
       notes: See docs/sphinx/dynamics.rst.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -2471,7 +2471,7 @@ class SE3PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 4x4 matrix [R t; 0 1], row-major (16 floats)
       relative: no
       use: Absolute SE(3) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2486,7 +2486,7 @@ class SE3SphereClearanceFactorBatch(FactorBatch):
       obstacles: 4 floats per factor: center x, y, z, radius
       relative: no
       use: Obstacle avoidance constraint (wrap in ConstraintFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, obstacles: object, margin: float, capacity: int) -> None: ...
@@ -2500,7 +2500,7 @@ class SE3StateBatch(StateBatch):
       tangent (6): [omega_x, omega_y, omega_z, v_x, v_y, v_z]
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 16), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2520,7 +2520,7 @@ class SL4BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative SL(4) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2535,7 +2535,7 @@ class SL4PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 4x4 matrix with det 1, row-major
       relative: no
       use: Absolute SL(4) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2549,7 +2549,7 @@ class SL4StateBatch(StateBatch):
       tangent (15): 15 sl(4) coordinates
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 16), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2569,7 +2569,7 @@ class SO2BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative SO(2) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2584,7 +2584,7 @@ class SO2PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 2x2 rotation matrix, row-major
       relative: no
       use: Absolute SO(2) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2598,7 +2598,7 @@ class SO2StateBatch(StateBatch):
       tangent (1): [omega]
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 4), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2618,7 +2618,7 @@ class SO3BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative SO(3) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2634,7 +2634,7 @@ class SO3KinematicsFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: R_{k+1} = R_k Exp(dt omega_k) with the body rate as control.
       notes: See docs/sphinx/dynamics.rst.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, time_steps: object, capacity: int) -> None: ...
@@ -2649,7 +2649,7 @@ class SO3PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 3x3 rotation matrix, row-major
       relative: no
       use: Absolute SO(3) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2663,7 +2663,7 @@ class SO3StateBatch(StateBatch):
       tangent (3): [omega_x, omega_y, omega_z]
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 9), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2690,7 +2690,7 @@ class Similarity2BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative Sim(2) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2705,7 +2705,7 @@ class Similarity2PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 3x3 matrix [sR t; 0 1], row-major
       relative: no
       use: Absolute Sim(2) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2719,7 +2719,7 @@ class Similarity2StateBatch(StateBatch):
       tangent (4): [u_x, u_y, theta, lambda (log scale)]
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 9), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2739,7 +2739,7 @@ class Similarity3BetweenFactorBatch(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative Sim(3) measurement between two states (odometry, loop closures, pose graphs).
       notes: Delta = T_right^-1 * T_left (the inverse of the usual T_left^-1 * T_right). Connect [left, right] per factor. Fix one state (constant id) or add a prior.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2754,7 +2754,7 @@ class Similarity3PriorFactorBatch(FactorBatch):
       observations: T_target per factor: 4x4 matrix [sR t; 0 1], row-major
       relative: no
       use: Absolute Sim(3) measurement or anchor of one state.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, observations: object, capacity: int) -> None: ...
@@ -2768,7 +2768,7 @@ class Similarity3StateBatch(StateBatch):
       tangent (7): [omega (3), u (3), lambda (log scale)]
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 16), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -2880,7 +2880,7 @@ class SymmetricPointToPlaneFactorBatch(FactorBatch):
       nq_observations: 3 floats per factor (normal at q)
       relative: no
       use: Symmetric point-to-plane ICP.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, p_observations: object, q_observations: object, np_observations: object, nq_observations: object, capacity: int) -> None: ...
@@ -2956,7 +2956,7 @@ class VectorBetweenFactorBatch1(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
       notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2972,7 +2972,7 @@ class VectorBetweenFactorBatch12(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
       notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -2988,7 +2988,7 @@ class VectorBetweenFactorBatch2(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
       notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -3004,7 +3004,7 @@ class VectorBetweenFactorBatch3(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
       notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -3020,7 +3020,7 @@ class VectorBetweenFactorBatch4(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
       notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -3036,7 +3036,7 @@ class VectorBetweenFactorBatch6(FactorBatch):
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
       notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     def __init__(self, deltas: object, capacity: int) -> None: ...
@@ -3050,7 +3050,7 @@ class VectorStateBatch1(StateBatch):
       tangent (1): the 1 components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 1), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -3079,7 +3079,7 @@ class VectorStateBatch12(StateBatch):
       tangent (12): the 12 components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 12), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -3108,7 +3108,7 @@ class VectorStateBatch2(StateBatch):
       tangent (2): the 2 components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 2), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -3137,7 +3137,7 @@ class VectorStateBatch3(StateBatch):
       tangent (3): the 3 components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 3), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -3166,7 +3166,7 @@ class VectorStateBatch4(StateBatch):
       tangent (4): the 4 components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 4), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -3195,7 +3195,7 @@ class VectorStateBatch6(StateBatch):
       tangent (6): the 6 components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
       constructor: data (float32 GPU array of capacity x 6), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload
@@ -3260,7 +3260,7 @@ class WeightedFactorBatch(FactorBatch):
       relative: no
       use: Scale any factor by a weight (1 / sigma).
       notes: Inherits the wrapped factor's states.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (CuPy), C-contiguous.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
     """
 
     @overload

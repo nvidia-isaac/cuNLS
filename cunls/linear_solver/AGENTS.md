@@ -76,6 +76,11 @@ Sparse linear system abstraction and implementation used by minimizers.
   `Solve`: per level a factor kernel (one
   CTA per panel and 64 rows; forward substitution folded in) and an update
   kernel (64 x 64 tiles), then a level-scheduled backward substitution.
+  `SetRowActivity` (advisory, from the minimizers of partitioned problems)
+  skips panels whose rows are all idle: no factorization, no updates from
+  them, zero solution. Exact because a panel never mixes connected components
+  (supervariables need identical patterns; supernodes merge only along the
+  elimination tree): keep it that way when changing the analysis.
 
 ## Expected system form
 

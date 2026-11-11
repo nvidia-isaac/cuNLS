@@ -18,9 +18,9 @@ path tracking, car lane keeping), obstacle avoidance, a batch of quadrotors
 flying to waypoints under thrust limits, and a standing quadruped; each with
 converged solves and with the real-time budget."""
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 from pycunls import mpc
@@ -92,8 +92,8 @@ def test_carter_tracks_lines_closed_loop(stream, kind, real_time):
     ctrl = h.build(minimizer=inner(kind), real_time=real_time)
     poses = [se2(0, 0, 0) for _ in range(B)]
     for t in range(60):
-        h.pose_reference[...] = cp.asarray(reference(t + 1)[:, 1:])
-        u0 = cp.asnumpy(ctrl.step(stream, pose=np.stack(poses).astype(np.float32)))
+        h.pose_reference.assign(reference(t + 1)[:, 1:])
+        u0 = ctrl.step(stream, pose=np.stack(poses).astype(np.float32)).numpy()
         assert np.all(np.abs(u0) <= umax + 1e-3)
         poses = [carter_plant(poses[b], u0[b], dt) for b in range(B)]
     for b in range(B):
@@ -116,7 +116,7 @@ def test_carter_drives_around_disk_closed_loop(stream, kind, real_time):
     ctrl = h.build(minimizer=inner(kind), real_time=real_time)
     T, closest = se2(0, 0, 0), np.inf
     for t in range(80):
-        u0 = cp.asnumpy(ctrl.step(stream, pose=T[None].astype(np.float32)))[0]
+        u0 = ctrl.step(stream, pose=T[None].astype(np.float32)).numpy()[0]
         T = carter_plant(T, u0, dt)
         closest = min(closest, np.hypot(T[0, 2] - center[0], T[1, 2] - center[1]))
     assert closest >= radius + margin - 0.02, f"clearance {closest:.3f}"
@@ -140,9 +140,9 @@ def test_car_lane_keeping_closed_loop(stream, kind, real_time):
     # Start 1 m off the lane, at 4 m/s.
     T, z = se2(0.0, 1.0, 0.0), np.array([4.0, 0.0])
     for t in range(60):
-        h.pose_reference[...] = cp.asarray(reference(t + 1)[:, 1:].astype(np.float32))
-        u = cp.asnumpy(ctrl.step(stream, pose=T[None].astype(np.float32),
-                                 speed_steer=z[None].astype(np.float32)))[0]
+        h.pose_reference.assign(reference(t + 1)[:, 1:].astype(np.float32))
+        u = ctrl.step(stream, pose=T[None].astype(np.float32),
+                      speed_steer=z[None].astype(np.float32)).numpy()[0]
         # Bounds hold to the AL tolerance scale.
         assert -3.0 - 5e-3 <= u[0] <= 3.0 + 5e-3 and abs(u[1]) <= 0.5 + 5e-3
         for _ in range(10):  # plant: fine Euler substeps of the bicycle model
@@ -192,11 +192,11 @@ def test_quadrotors_fly_to_waypoints_closed_loop(stream, kind, real_time):
     start = np.stack([se3(0, 0, 1) for _ in range(B)])
     targets = np.stack([se3(np.cos(2 * np.pi * b / B), np.sin(2 * np.pi * b / B), 1.5)
                         for b in range(B)])
-    h.poses[...] = cp.asarray(np.repeat(start[:, None], N + 1, axis=1))
+    h.poses.assign(np.repeat(start[:, None], N + 1, axis=1))
     h.track_pose(np.repeat(targets[:, None], N + 1, axis=1), weight=[0.5, 0.5, 0.5, 2.0, 2.0, 2.0])
     h.track_vector("velocity", np.zeros((B, N + 1, 3)), weight=0.3)
     hover = p.mass * p.gravity / 4
-    h.controls[...] = hover
+    h.controls.fill_(hover)
     h.control_effort(weight=0.05, nominal=np.full((B, N, 4), hover))
     h.control_bounds(0.0, fmax)
     ctrl = h.build(minimizer=inner(kind), real_time=real_time)
@@ -204,9 +204,9 @@ def test_quadrotors_fly_to_waypoints_closed_loop(stream, kind, real_time):
     v = [np.zeros(3) for _ in range(B)]
     w = [np.zeros(3) for _ in range(B)]
     for t in range(120):  # 3 s
-        u = cp.asnumpy(ctrl.step(stream, pose=np.stack(T).astype(np.float32),
-                                 velocity=np.stack(v).astype(np.float32),
-                                 rates=np.stack(w).astype(np.float32)))
+        u = ctrl.step(stream, pose=np.stack(T).astype(np.float32),
+                      velocity=np.stack(v).astype(np.float32),
+                      rates=np.stack(w).astype(np.float32)).numpy()
         assert u.min() >= -5e-3 and u.max() <= fmax + 5e-3
         for b in range(B):
             T[b], v[b], w[b] = quadrotor_plant(p, T[b], v[b], w[b], u[b].astype(np.float64), dt)
@@ -224,8 +224,8 @@ def test_quadruped_stands_closed_loop(stream, kind, real_time):
     base = se3(0, 0, 0.4)
     feet = np.array([[0.2, -0.15, 0], [-0.2, 0.15, 0], [0.2, 0.15, 0], [-0.2, -0.15, 0]],
                     np.float32)
-    h.foot_positions[...] = cp.asarray(np.broadcast_to(feet, (1, N, 4, 3)))
-    h.poses[...] = cp.asarray(base)
+    h.foot_positions.assign(np.ascontiguousarray(np.broadcast_to(feet, (1, N, 4, 3))))
+    h.poses.assign(np.ascontiguousarray(np.broadcast_to(base, h.poses.shape)))
     h.track_pose(np.broadcast_to(base, (1, N + 1, 4, 4)), weight=5.0)
     h.track_vector("velocity", np.zeros((1, N + 1, 3)), weight=1.0)
     h.track_vector("rates", np.zeros((1, N + 1, 3)), weight=1.0)
@@ -233,7 +233,7 @@ def test_quadruped_stands_closed_loop(stream, kind, real_time):
     ctrl = h.build(minimizer=inner(kind), real_time=real_time)
     zero = np.zeros((1, 3), np.float32)
     for t in range(5):
-        F = cp.asnumpy(ctrl.step(stream, pose=base[None], velocity=zero, rates=zero))
+        F = ctrl.step(stream, pose=base[None], velocity=zero, rates=zero).numpy()
         # The applied forces hold the weight, a quarter per leg, vertically.
         np.testing.assert_allclose(F.reshape(4, 3)[:, 2], prm.mass * prm.gravity / 4, rtol=2e-2)
         assert np.abs(F.reshape(4, 3)[:, :2]).max() < 0.5
@@ -241,12 +241,14 @@ def test_quadruped_stands_closed_loop(stream, kind, real_time):
 
 def test_horizon_layout_and_shift(stream):
     h = mpc.Horizon(mpc.Car(wheelbase=2.75), steps=5, dt=0.1, batch=3)
+    assert isinstance(h.poses, wp.array) and isinstance(h.controls, wp.array)
     assert h.poses.shape == (3, 6, 3, 3)
     assert h.vectors["speed_steer"].shape == (3, 6, 2)
     assert h.controls.shape == (3, 5, 2)
     ctrl = h.control_bounds(-1.0, 1.0).build()
-    h.controls[...] = cp.arange(5, dtype=cp.float32)[None, :, None]
+    h.controls.assign(np.ascontiguousarray(
+        np.broadcast_to(np.arange(5, dtype=np.float32)[None, :, None], h.controls.shape)))
     ctrl.shift()
-    np.testing.assert_array_equal(cp.asnumpy(h.controls)[0, :, 0], [1, 2, 3, 4, 4])
+    np.testing.assert_array_equal(h.controls.numpy()[0, :, 0], [1, 2, 3, 4, 4])
     with pytest.raises(ValueError):
         mpc.Horizon(mpc.Carter(), steps=0, dt=0.1)

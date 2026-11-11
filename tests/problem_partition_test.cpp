@@ -110,11 +110,12 @@ std::vector<float> ToFloat(const std::vector<Mat3> &m, size_t first, size_t coun
 
 enum class Kind { kGaussNewton, kLevenbergMarquardt };
 
-std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
+std::unique_ptr<Minimizer> MakeMinimizer(
+    Kind kind, SparseLinearSolverType solver = SparseLinearSolverType::DenseLDLT) {
   MinimizerOptions options;
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-12f;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+  options.sparse_linear_solver_type = solver;
   if (kind == Kind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
   LevenbergMarquardtMinimizerOptions lm;
   lm.base_options = options;
@@ -127,7 +128,8 @@ std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
  * `partition`); returns the optimized poses, 9 floats each.
  */
 std::vector<float> Solve(const Graphs &g, int first, int count, bool partition, Kind kind,
-                         const std::vector<int> *ids_override = nullptr) {
+                         const std::vector<int> *ids_override = nullptr,
+                         SparseLinearSolverType solver = SparseLinearSolverType::DenseLDLT) {
   const int n = g.n, m = static_cast<int>(g.edges.size());
   CudaStream stream;
   dvector<float> poses(ToFloat(g.init, size_t(first) * n, size_t(count) * n));
@@ -156,7 +158,7 @@ std::vector<float> Solve(const Graphs &g, int first, int count, bool partition, 
   if (ids_override != nullptr) ids_host = *ids_override;
   dvector<int> ids(ids_host);
   if (partition) problem.SetProblemPartition(count, {ids.data()});
-  auto minimizer = MakeMinimizer(kind);
+  auto minimizer = MakeMinimizer(kind, solver);
   minimizer->Minimize(stream.GetStream(), problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   std::vector<float> out(poses.size());
@@ -164,13 +166,12 @@ std::vector<float> Solve(const Graphs &g, int first, int count, bool partition, 
   return out;
 }
 
-class ProblemPartitionTest : public ::testing::TestWithParam<Kind> {};
-
-TEST_P(ProblemPartitionTest, BatchMatchesIndividualSolves) {
+/** Solves 8 graphs as one partitioned problem and each alone; the solutions agree. */
+void BatchMatchesIndividualSolves(Kind kind, SparseLinearSolverType solver) {
   const Graphs g(8, 12, 3);
-  const auto batched = Solve(g, 0, g.batch, /*partition=*/true, GetParam());
+  const auto batched = Solve(g, 0, g.batch, /*partition=*/true, kind, nullptr, solver);
   for (int s = 0; s < g.batch; ++s) {
-    const auto alone = Solve(g, s, 1, /*partition=*/false, GetParam());
+    const auto alone = Solve(g, s, 1, /*partition=*/false, kind, nullptr, solver);
     float worst = 0.f, size = 0.f;
     for (size_t k = 0; k < alone.size(); ++k) {
       worst = std::max(worst, std::fabs(batched[s * g.n * 9 + k] - alone[k]));
@@ -179,6 +180,19 @@ TEST_P(ProblemPartitionTest, BatchMatchesIndividualSolves) {
     // float32: near the minimum, poses ~1e-4 (relative) apart have equal cost,
     // and two standalone solves of the same graph already differ by ~1e-5.
     EXPECT_LT(worst, 5e-4f * std::max(1.f, size)) << "subproblem " << s;
+  }
+}
+
+class ProblemPartitionTest : public ::testing::TestWithParam<Kind> {};
+
+// Also with BlockSparseCholesky, which skips the panels of the subproblems
+// that stopped iterating (LinearSystem::SetRowActivity): the subproblems start
+// at different distances, so they finish at different iterations.
+TEST_P(ProblemPartitionTest, BatchMatchesIndividualSolves) {
+  for (auto solver :
+       {SparseLinearSolverType::DenseLDLT, SparseLinearSolverType::BlockSparseCholesky}) {
+    SCOPED_TRACE(solver == SparseLinearSolverType::DenseLDLT ? "DenseLDLT" : "BlockSparseCholesky");
+    BatchMatchesIndividualSolves(GetParam(), solver);
   }
 }
 
@@ -254,7 +268,8 @@ TEST(ProblemPartition, FrozenSubproblemsKeepTheirStates) {
     // Two subproblems of two states each, priors pulling every state to 1.
     const std::vector<float> start = {0.f, 0.5f, -2.f, 3.f};
     dvector<float> x(start), targets(std::vector<float>(4, 1.f));
-    dvector<int> ids(std::vector<int>{0, 0, 1, 1}), frozen(std::vector<int>{1, 0});
+    // Positive entries freeze; zero and negative ones iterate.
+    dvector<int> ids(std::vector<int>{0, 0, 1, 1}), frozen(std::vector<int>{1, -1});
     VectorStateBatch<1> states(x.data(), 4);
     states.SetNumActiveStates(4);
     PriorVectorFactorBatch<1> priors(reinterpret_cast<const Vector<1> *>(targets.data()), 4);
@@ -285,6 +300,77 @@ TEST(ProblemPartition, FrozenSubproblemsKeepTheirStates) {
     EXPECT_EQ(out[1], start[1]) << "lm " << lm;
     EXPECT_NEAR(out[2], 1.f, 1e-3f) << "lm " << lm;
     EXPECT_NEAR(out[3], 1.f, 1e-3f) << "lm " << lm;
+  }
+}
+
+// InnerSolve::problem_iteration_cap: each subproblem stops at its own cap
+// (MaxIterations, reported in problem_at_cap) while the others continue; a
+// subproblem capped at one iteration ends where one iteration alone ends.
+TEST(ProblemPartition, IterationCapsStopEachSubproblemAtItsOwnCap) {
+  const Graphs g(2, 12, 6);
+  const int n = g.n, m = static_cast<int>(g.edges.size());
+  auto run = [&](int first, int count, const std::vector<int> &caps, size_t max_iterations,
+                 std::vector<int> *at_cap, std::vector<int> *reasons) {
+    CudaStream stream;
+    dvector<float> poses(ToFloat(g.init, size_t(first) * n, size_t(count) * n));
+    dvector<float> deltas(ToFloat(g.deltas, size_t(first) * m, size_t(count) * m));
+    dvector<float> priors(ToFloat(g.priors, first, count));
+    SE2StateBatch states(poses.data(), count * n);
+    states.SetNumActiveStates(count * n);
+    SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(priors.data()), count);
+    prior.SetNumActiveFactors(count);
+    SE2BetweenFactorBatch between(reinterpret_cast<const SE2Transform *>(deltas.data()), count * m);
+    between.SetNumActiveFactors(count * m);
+    std::vector<float *> prior_ptrs, between_ptrs;
+    for (int s = 0; s < count; ++s) {
+      prior_ptrs.push_back(states.StateDevicePtr(s * n));
+      for (auto [a, b] : g.edges) {
+        between_ptrs.push_back(states.StateDevicePtr(s * n + a));
+        between_ptrs.push_back(states.StateDevicePtr(s * n + b));
+      }
+    }
+    Problem problem;
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, prior_ptrs);
+    problem.AddFactorBatch(&between, between_ptrs);
+    std::vector<int> ids_host;
+    for (int s = 0; s < count; ++s) ids_host.insert(ids_host.end(), n, s);
+    dvector<int> ids(ids_host), d_caps(caps), d_at_cap(std::vector<int>(count, -1));
+    if (count > 1) problem.SetProblemPartition(count, {ids.data()});
+    MinimizerOptions options;
+    options.state_tolerance = 1e-12f;
+    options.cost_tolerance = 1e-12f;
+    options.sparse_linear_solver_type = SparseLinearSolverType::BlockSparseCholesky;
+    GaussNewtonMinimizer minimizer(options);
+    internal::InnerSolve settings;
+    settings.max_num_iterations = max_iterations;
+    if (!caps.empty()) settings.problem_iteration_cap = d_caps.data();
+    settings.problem_at_cap = d_at_cap.data();
+    internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    if (at_cap != nullptr) {
+      at_cap->resize(count);
+      d_at_cap.CopyToHost(at_cap->data(), count);
+    }
+    if (reasons != nullptr) {
+      reasons->resize(count);
+      THROW_ON_CUDA_ERROR(cudaMemcpy(reasons->data(), minimizer.SubproblemTerminationReasons(),
+                                     count * sizeof(int), cudaMemcpyDeviceToHost));
+    }
+    std::vector<float> out(poses.size());
+    poses.CopyToHost(out.data(), out.size());
+    return out;
+  };
+  std::vector<int> at_cap, reasons;
+  const auto batched = run(0, 2, {1, 30}, 30, &at_cap, &reasons);
+  EXPECT_EQ(at_cap, (std::vector<int>{1, 0}));
+  EXPECT_EQ(reasons[0], static_cast<int>(TerminationReason::MaxIterations));
+  EXPECT_TRUE(IsConvergence(static_cast<TerminationReason>(reasons[1]))) << reasons[1];
+  const auto one_iteration = run(0, 1, {}, 1, nullptr, nullptr);
+  const auto converged = run(1, 1, {}, 30, nullptr, nullptr);
+  for (size_t k = 0; k < one_iteration.size(); ++k) {
+    EXPECT_NEAR(batched[k], one_iteration[k], 1e-5f) << "capped subproblem, entry " << k;
+    EXPECT_NEAR(batched[n * 9 + k], converged[k], 5e-4f) << "free subproblem, entry " << k;
   }
 }
 

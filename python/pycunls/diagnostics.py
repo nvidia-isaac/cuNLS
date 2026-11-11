@@ -33,9 +33,10 @@ import dataclasses
 import math
 from typing import Dict, List, Optional
 
-import cupy as cp
 import numpy as np
+import warp as wp
 
+from pycunls._arrays import warp_stream
 from pycunls._summary import _plain
 from pycunls.catalog import effective_factor
 from pycunls._pycunls_core import CudaStream, Problem
@@ -46,28 +47,33 @@ from pycunls._pycunls_core import CudaStream, Problem
 # ---------------------------------------------------------------------------------------------
 
 def _stream(stream: Optional[CudaStream]) -> CudaStream:
-    return stream if stream is not None else CudaStream()
+    """The stream to run on; it first waits for the work on Warp's current stream (uploads)."""
+    stream = stream if stream is not None else CudaStream()
+    warp_stream(stream).wait_stream(wp.get_stream(wp.get_cuda_device()))
+    return stream
 
 
-def _external(stream: CudaStream):
-    """The cuNLS stream as a CuPy stream, so CuPy work is ordered with the solver's."""
-    if hasattr(cp.cuda.Stream, "from_external"):  # CuPy >= 14
-        return cp.cuda.Stream.from_external(stream)
-    return cp.cuda.ExternalStream(stream.get_stream())
+def _external(stream: CudaStream) -> wp.ScopedStream:
+    """Runs Warp work on the cuNLS stream, after the work already on Warp's current stream."""
+    return wp.ScopedStream(warp_stream(stream))
 
 
 def _batch_name(problem: Problem, index: int) -> str:
     return f"#{index} {type(problem.factor_batch(index)).__name__}"
 
 
-def _state_view(batch) -> cp.ndarray:
-    """The active states of a state batch as a (num_active_states, ambient_size) CuPy view."""
+def _state_view(batch) -> wp.array:
+    """The active states of a state batch as a (num_active_states, ambient_size) Warp view."""
     n, a = batch.num_active_states, batch.ambient_size
+    device = wp.get_cuda_device()
     if n == 0:
-        return cp.empty((0, a), cp.float32)
-    ptr = batch.state_device_ptr(0)
-    mem = cp.cuda.UnownedMemory(ptr, n * a * 4, batch)
-    return cp.ndarray((n, a), cp.float32, cp.cuda.MemoryPointer(mem, 0))
+        return wp.empty((0, a), dtype=float, device=device)
+    return wp.array(ptr=batch.state_device_ptr(0), dtype=float, shape=(n, a), device=device,
+                    copy=False)
+
+
+def _device(a: np.ndarray) -> wp.array:
+    return wp.array(np.ascontiguousarray(a), device=wp.get_cuda_device())
 
 
 def _pointer_table(problem: Problem, index: int) -> np.ndarray:
@@ -95,7 +101,7 @@ class BatchResiduals:
         first_non_finite: First such factor (-1 if none).
         has_loss: The batch has a robust loss (``cost`` is the plain squared cost).
         evaluate_ok: The factor batch did not report a failure.
-        residuals: The (num_factors, residual_size) residuals when requested, else None.
+        residuals: The (num_factors, residual_size) residuals (NumPy) when requested, else None.
     """
     index: int
     name: str
@@ -109,13 +115,13 @@ class BatchResiduals:
     first_non_finite: int
     has_loss: bool
     evaluate_ok: bool
-    residuals: Optional[cp.ndarray] = None
+    residuals: Optional[np.ndarray] = None
 
-    def factor_norms(self) -> cp.ndarray:
+    def factor_norms(self) -> np.ndarray:
         """Per-factor residual norm ``|r_f|`` (needs ``keep_residuals=True``)."""
         if self.residuals is None:
             raise ValueError("call evaluate(..., keep_residuals=True) to keep the residuals")
-        return cp.linalg.norm(self.residuals, axis=1)
+        return np.linalg.norm(self.residuals, axis=1)
 
 
 @dataclasses.dataclass
@@ -175,7 +181,7 @@ def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
     """
     stream = _stream(stream)
     batches = []
-    with _external(stream) as ext:
+    with _external(stream):
         for i in range(problem.num_residual_batches):
             fb = problem.factor_batch(i)
             n, m = fb.num_active_factors, fb.residuals_size
@@ -184,25 +190,25 @@ def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
                                               -1, 0, -1, problem.loss_function(i) is not None,
                                               True, None))
                 continue
-            table = cp.asarray(_pointer_table(problem, i))
-            residuals = cp.empty((n, m), cp.float32)
-            ok = fb.evaluate_batch(residuals, None, table, stream)
-            finite_rows = cp.all(cp.isfinite(residuals), axis=1)
-            clean = cp.where(finite_rows[:, None], residuals, 0.0)
-            sq = cp.sum(clean.astype(cp.float64) ** 2, axis=1)
-            num_bad = int(n - int(cp.count_nonzero(finite_rows)))
-            first_bad = int(cp.argmin(finite_rows)) if num_bad else -1
+            table = _device(_pointer_table(problem, i))
+            out = wp.empty((n, m), dtype=float, device=table.device)
+            ok = fb.evaluate_batch(out, None, table, stream)
+            residuals = out.numpy()
+            finite_rows = np.all(np.isfinite(residuals), axis=1)
+            clean = np.where(finite_rows[:, None], residuals, 0.0)
+            sq = np.sum(clean.astype(np.float64) ** 2, axis=1)
+            num_bad = int(n - int(np.count_nonzero(finite_rows)))
+            first_bad = int(np.argmin(finite_rows)) if num_bad else -1
             num_good = n - num_bad
             batches.append(BatchResiduals(
                 index=i, name=_batch_name(problem, i), num_factors=n, residual_size=m,
-                cost=0.5 * float(cp.sum(sq)),
-                rms=math.sqrt(float(cp.sum(sq)) / (num_good * m)) if num_good else float("nan"),
-                max_abs=float(cp.max(cp.abs(clean))) if num_good else float("nan"),
-                worst_factor=int(cp.argmax(sq)) if num_good else -1,
+                cost=0.5 * float(np.sum(sq)),
+                rms=math.sqrt(float(np.sum(sq)) / (num_good * m)) if num_good else float("nan"),
+                max_abs=float(np.max(np.abs(clean))) if num_good else float("nan"),
+                worst_factor=int(np.argmax(sq)) if num_good else -1,
                 num_non_finite=num_bad, first_non_finite=first_bad,
                 has_loss=problem.loss_function(i) is not None, evaluate_ok=bool(ok),
                 residuals=residuals if keep_residuals else None))
-        ext.synchronize()
     return Evaluation(batches)
 
 
@@ -278,7 +284,7 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
     state_batches = problem.state_batches()
     indices = range(problem.num_residual_batches) if batches is None else batches
     results = []
-    with _external(stream) as ext:
+    with _external(stream):
         for i in indices:
             fb = problem.factor_batch(i)
             n, m = fb.num_active_factors, fb.residuals_size
@@ -287,10 +293,12 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
             if n == 0 or cols == 0:
                 continue
             pointers = _pointer_table(problem, i)
-            table = cp.asarray(pointers)
-            analytic = cp.empty((n, m, cols), cp.float32)
-            fb.evaluate_batch(cp.empty((n, m), cp.float32), analytic, table, stream)
-            numeric = cp.zeros((n, m, cols), cp.float32)
+            device = wp.get_cuda_device()
+            analytic_dev = wp.empty((n, m, cols), dtype=float, device=device)
+            fb.evaluate_batch(wp.empty((n, m), dtype=float, device=device), analytic_dev,
+                              _device(pointers), stream)
+            analytic = analytic_dev.numpy()
+            numeric = np.zeros((n, m, cols), np.float32)
             where = _locate(pointers, state_batches).reshape(n, len(sizes), 2)
             col = 0
             for slot, tangent in enumerate(sizes):
@@ -304,32 +312,30 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
                     for k in range(tangent):
                         r = []
                         for sign in (1.0, -1.0):
-                            delta = cp.zeros((sb.num_active_states, sb.tangent_size), cp.float32)
+                            delta = np.zeros((sb.num_active_states, sb.tangent_size), np.float32)
                             delta[:, k] = sign * step
-                            moved = cp.empty_like(x)
-                            sb.apply_plus(x, delta, moved, stream)
+                            moved = wp.empty_like(x)
+                            sb.apply_plus(x, _device(delta), moved, stream)
                             # Slot `slot` of the factors on batch j reads the moved copy.
                             shifted = pointers.reshape(n, len(sizes)).copy()
-                            offset = np.uint64(moved.data.ptr) - base
+                            offset = np.uint64(moved.ptr) - base
                             shifted[rows, slot] = shifted[rows, slot] + offset
-                            out = cp.empty((n, m), cp.float32)
-                            fb.evaluate_batch(out, None, cp.asarray(shifted.reshape(-1)), stream)
-                            r.append(out)
+                            out = wp.empty((n, m), dtype=float, device=device)
+                            fb.evaluate_batch(out, None, _device(shifted.reshape(-1)), stream)
+                            r.append(out.numpy())
                         diff = (r[0] - r[1]) / (2.0 * step)
-                        rows_d = cp.asarray(rows)
-                        numeric[:, :, col + k] = cp.where(rows_d[:, None], diff,
+                        numeric[:, :, col + k] = np.where(rows[:, None], diff,
                                                           numeric[:, :, col + k])
                 col += tangent
-            error = cp.abs(analytic - numeric)
-            error = cp.where(cp.isfinite(error), error, cp.inf)
-            flat = int(cp.argmax(error))
+            error = np.abs(analytic - numeric)
+            error = np.where(np.isfinite(error), error, np.inf)
+            flat = int(np.argmax(error))
             f, row, c = np.unravel_index(flat, error.shape)
             max_err = float(error.reshape(-1)[flat])
-            scale = max(1.0, float(cp.max(cp.abs(cp.nan_to_num(numeric)))))
+            scale = max(1.0, float(np.max(np.abs(np.nan_to_num(numeric)))))
             rel = max_err / scale
             results.append(JacobianCheck(i, _batch_name(problem, i), max_err, rel, int(f),
                                          int(row), int(c), bool(rel <= tolerance)))
-        ext.synchronize()
     return results
 
 
@@ -431,18 +437,17 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     if error:
         return [Issue("error", error)]
     state_batches = problem.state_batches()
-    with _external(stream) as ext:
+    with _external(stream):
         for j, sb in enumerate(state_batches):
             if sb.num_active_states == 0:
                 continue
-            bad = cp.flatnonzero(~cp.all(cp.isfinite(_state_view(sb)), axis=1))
+            bad = np.flatnonzero(~np.all(np.isfinite(_state_view(sb).numpy()), axis=1))
             if bad.size:
                 issues.append(Issue(
                     "error",
                     f"State batch {j} ({type(sb).__name__}): {bad.size} states hold NaN or Inf, "
                     f"first state {int(bad[0])}. Fix: initialize every active state with finite "
                     "float32 values in the batch's layout."))
-        ext.synchronize()
     if issues:
         return issues
     evaluation = evaluate(problem, stream)

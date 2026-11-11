@@ -141,6 +141,21 @@ inline Vec TransposeSO3(const Vec &R) {
   return {R[0], R[3], R[6], R[1], R[4], R[7], R[2], R[5], R[8]};
 }
 
+// --- SO(2): row-major 2x2, tangent θ --------------------------------------------
+
+inline Vec ExpSO2(const double *th) {
+  return {std::cos(*th), -std::sin(*th), std::sin(*th), std::cos(*th)};
+}
+
+inline Vec LogSO2(const Vec &R) { return {std::atan2(R[2], R[0])}; }
+
+inline Vec MulSO2(const Vec &a, const Vec &b) {
+  return {a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2],
+          a[2] * b[1] + a[3] * b[3]};
+}
+
+inline Vec TransposeSO2(const Vec &R) { return {R[0], R[2], R[1], R[3]}; }
+
 // --- SE(2): row-major 3x3, tangent [v_x, v_y, θ] --------------------------------
 
 inline Vec Mul3(const Vec &a, const Vec &b) {
@@ -192,12 +207,13 @@ inline Vec Log3(const Vec &t) {
 // --- Factor checker -----------------------------------------------------------
 
 /** Kind of a state slot. Poses are perturbed on the right (X Exp(δ)). */
-enum class SlotKind { kSE2, kSO3, kSE3, kVector };
+enum class SlotKind { kSO2, kSE2, kSO3, kSE3, kVector };
 
 struct Slot {
   SlotKind kind;
-  std::vector<float> storage;  ///< SE(2): 9, SE(3): 16, vector: its size.
+  std::vector<float> storage;  ///< SO(2): 4, SE(2)/SO(3): 9, SE(3): 16, vector: its size.
   int Tangent() const {
+    if (kind == SlotKind::kSO2) return 1;
     if (kind == SlotKind::kSE2 || kind == SlotKind::kSO3) return 3;
     return kind == SlotKind::kSE3 ? 6 : static_cast<int>(storage.size());
   }
@@ -211,7 +227,9 @@ inline std::vector<Vec> Perturbed(const std::vector<Slot> &slots, const Vec &del
   int c = 0;
   for (const Slot &s : slots) {
     Vec v(s.storage.begin(), s.storage.end());
-    if (s.kind == SlotKind::kSE2) {
+    if (s.kind == SlotKind::kSO2) {
+      v = MulSO2(v, ExpSO2(&delta[c]));
+    } else if (s.kind == SlotKind::kSE2) {
       v = Mul3(v, Exp3(&delta[c]));
     } else if (s.kind == SlotKind::kSO3) {
       v = Mul3(v, ExpSO3(&delta[c]));

@@ -20,15 +20,15 @@ import os
 import subprocess
 import sys
 
-import cupy as cp
 import numpy as np
+import warp as wp
 
 import pycunls
 
 
 def _solve(stream):
-    states = cp.asarray(np.array([5, -3], np.float32))
-    obs = cp.asarray(np.array([1, 2], np.float32))
+    states = wp.array(np.array([5, -3], np.float32))
+    obs = wp.array(np.array([1, 2], np.float32))
     sb = pycunls.VectorStateBatch2(states, 1)
     sb.set_num_active_states(1)
     fb = pycunls.PriorVectorFactorBatch2(obs, 1)
@@ -64,8 +64,8 @@ def test_silent_by_default_forwards_nothing(stream, caplog):
 
 
 def test_env_var_sets_the_initial_level():
-    code = ("import cupy as cp, numpy as np, pycunls\n"
-            "s = cp.asarray(np.array([5, -3], np.float32)); o = cp.asarray(np.array([1, 2], "
+    code = ("import numpy as np, warp as wp, pycunls\n"
+            "s = wp.array(np.array([5, -3], np.float32)); o = wp.array(np.array([1, 2], "
             "np.float32))\n"
             "sb = pycunls.VectorStateBatch2(s, 1); sb.set_num_active_states(1)\n"
             "fb = pycunls.PriorVectorFactorBatch2(o, 1); fb.set_num_active_factors(1)\n"

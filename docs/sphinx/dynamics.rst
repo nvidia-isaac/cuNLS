@@ -85,17 +85,18 @@ Example: a Carter drives to a goal
 
 .. code-block:: python
 
-   import cupy as cp, numpy as np, pycunls
+   import numpy as np, pycunls, warp as wp
 
    steps, dt = 30, 0.1
-   poses = cp.asarray(np.tile(np.eye(3, dtype=np.float32), (steps + 1, 1, 1)))
-   u = cp.zeros((steps, 2), dtype=cp.float32)
-   x = pycunls.SE2StateBatch(poses, steps + 1, cp.asarray([0], dtype=cp.int32), 1)
+   poses = wp.array(np.tile(np.eye(3), (steps + 1, 1, 1)), dtype=wp.float32)
+   u = wp.zeros((steps, 2), dtype=wp.float32)
+   fixed = wp.array([0], dtype=wp.int32)
+   x = pycunls.SE2StateBatch(poses, steps + 1, fixed, 1)
    x.set_num_active_states(steps + 1, 1)                       # x_0 is fixed
    uu = pycunls.VectorStateBatch2(u, steps)
    uu.set_num_active_states(steps)
 
-   dts = cp.full(steps, dt, dtype=cp.float32)
+   dts = wp.full(steps, dt, dtype=wp.float32)
    dyn = pycunls.SE2DifferentialDriveFactorBatch(dts, 0.125, 0.5, steps)   # r, b
    dyn.set_num_active_factors(steps)
    hard = pycunls.ConstraintFactorBatch(dyn, pycunls.ConstraintKind.Equality)
@@ -110,5 +111,6 @@ Example: a Carter drives to a goal
        ptrs += [x.state_device_ptr(k), uu.state_device_ptr(k), x.state_device_ptr(k + 1)]
    problem.add_factor_batch(hard, ptrs)
    # problem.add_factor_batch(goal / effort / limits ...)
+   wp.synchronize_stream(wp.get_stream())   # the uploads (Warp's stream) before the solve
    pycunls.AugmentedLagrangianMinimizer(pycunls.GaussNewtonMinimizer()).minimize(
        pycunls.CudaStream(), problem)

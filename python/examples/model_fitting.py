@@ -24,8 +24,9 @@ Six short scenes, each one call:
 5. a sine whose frequency the initial guess gets wrong -> multiple starts;
 6. the model check: reduced chi-square rejects a model that does not explain the data.
 
-The models are plain NumPy-style functions of (x, p): p holds one row of parameters per sample.
-A Warp ``@wp.func`` works too (autodiff Jacobians): see ``decay_wp`` below.
+Each model is a Warp function of one sample, ``@wp.func def model(x: float, p: wp.vec3) -> float``
+(``p`` a ``wp.vecP``, a scalar for one parameter); the Jacobian comes from Warp's automatic
+differentiation, checked against central differences. The data are generated with NumPy.
 
     python model_fitting.py [--quick]
 """
@@ -34,25 +35,35 @@ import argparse
 import time
 
 import numpy as np
+import warp as wp
 
 import pycunls
 
 RNG = np.random.default_rng(7)
 
 
-def decay(x, p):
+@wp.func
+def decay(x: float, p: wp.vec3) -> float:
     """y = a exp(-b x) + c, p = [a, b, c]."""
-    return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
+    return p[0] * wp.exp(-p[1] * x) + p[2]
 
 
-def line(x, p):
-    """y = m x + q."""
-    return p[:, 0] * x + p[:, 1]
+@wp.func
+def line(x: float, p: wp.vec2) -> float:
+    """y = m x + q, p = [m, q]."""
+    return p[0] * x + p[1]
 
 
-def sine(x, p):
-    """y = A sin(w x)."""
-    return p[:, 0] * np.sin(p[:, 1] * x)
+@wp.func
+def sine(x: float, p: wp.vec2) -> float:
+    """y = A sin(w x), p = [A, w]."""
+    return p[0] * wp.sin(p[1] * x)
+
+
+@wp.func
+def two_decays(x: float, p: wp.vec4) -> float:
+    """y = a exp(-b x) + c exp(-d x), p = [a, b, c, d]."""
+    return p[0] * wp.exp(-p[1] * x) + p[2] * wp.exp(-p[3] * x)
 
 
 def show(title, result, truth=None):
@@ -65,7 +76,7 @@ def show(title, result, truth=None):
 def scene_single_curve():
     x = np.linspace(0, 5, 50)
     sigma = 0.02
-    y = decay(x, np.array([[2.0, 1.3, 0.5]])) + RNG.normal(0, sigma, x.size)
+    y = 2.0 * np.exp(-1.3 * x) + 0.5 + RNG.normal(0, sigma, x.size)
     result = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=sigma)
     show("1. one curve with measurement errors", result, [2.0, 1.3, 0.5])
 
@@ -87,7 +98,7 @@ def scene_many_curves(num_pixels):
 
 def scene_outliers():
     x = np.linspace(0, 10, 200)
-    y = line(x, np.array([[2.0, -1.0]])) + RNG.normal(0, 0.1, x.size)
+    y = 2.0 * x - 1.0 + RNG.normal(0, 0.1, x.size)
     bad = RNG.random(x.size) < 0.25
     y[bad] += RNG.uniform(3, 15, bad.sum())  # gross errors, all on one side
     plain = pycunls.fit(line, x, y, p0=[0.0, 0.0], sigma=0.1)
@@ -100,7 +111,7 @@ def scene_outliers():
 def scene_bounds():
     # Few, noisy samples: the unconstrained offset c comes out negative, which is unphysical.
     x = np.linspace(0, 2, 8)
-    y = decay(x, np.array([[1.0, 0.8, 0.02]])) + RNG.normal(0, 0.05, x.size)
+    y = np.exp(-0.8 * x) + 0.02 + RNG.normal(0, 0.05, x.size)
     free = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.1])
     bounded = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.1], bounds=([0, 0, 0], [np.inf] * 3))
     print("\n== 4. bounds: c >= 0")
@@ -110,7 +121,7 @@ def scene_bounds():
 
 def scene_starts():
     x = np.linspace(0, 10, 200)
-    y = sine(x, np.array([[1.5, 3.7]])) + RNG.normal(0, 0.05, x.size)
+    y = 1.5 * np.sin(3.7 * x) + RNG.normal(0, 0.05, x.size)
     single = pycunls.fit(sine, x, y, p0=[1.0, 1.0], sigma=0.05)
     multi = pycunls.fit(sine, x, y, p0=[1.0, 1.0], sigma=0.05,
                         bounds=([0.5, 0.1], [3.0, 6.0]), starts=64)
@@ -127,34 +138,11 @@ def scene_model_check():
     sigma = 0.01
     y = np.exp(-0.5 * x) + np.exp(-3.0 * x) + RNG.normal(0, sigma, x.size)
     one = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=sigma)
-
-    def two(x, p):
-        return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2] * np.exp(-p[:, 3] * x)
-
-    both = pycunls.fit(two, x, y, p0=[1.0, 0.3, 1.0, 2.0], sigma=sigma)
+    both = pycunls.fit(two_decays, x, y, p0=[1.0, 0.3, 1.0, 2.0], sigma=sigma)
     print("\n== 6. does the model explain the data? (reduced chi2 ~ 1 if it does)")
     print(f"  one exponential:  reduced chi2 {one.reduced_chi2:7.2f}  -> rejected")
     print(f"  two exponentials: reduced chi2 {both.reduced_chi2:7.2f}  -> "
           f"p = {np.round(both.params, 3).tolist()}")
-
-
-def scene_warp():
-    """The same decay as a Warp function: autodiff Jacobians, fastest for very large batches."""
-    try:
-        import warp as wp
-    except ImportError:
-        print("\n(warp-lang not installed: skipping the Warp model)")
-        return
-    wp.config.quiet = True
-
-    @wp.func
-    def decay_wp(x: float, p: wp.vec3) -> float:
-        return p[0] * wp.exp(-p[1] * x) + p[2]
-
-    x = np.linspace(0, 5, 50)
-    y = decay(x, np.array([[2.0, 1.3, 0.5]])) + RNG.normal(0, 0.02, x.size)
-    result = pycunls.fit(decay_wp, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)
-    show("Warp model (same fit as scene 1)", result)
 
 
 def main():
@@ -167,7 +155,6 @@ def main():
     scene_bounds()
     scene_starts()
     scene_model_check()
-    scene_warp()
 
 
 if __name__ == "__main__":

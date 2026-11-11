@@ -15,7 +15,7 @@
 
 """Problems from arrays: :class:`ProblemBuilder` and the one-call :func:`solve`.
 
-The builder sets up a :class:`pycunls.Problem` from NumPy or CuPy arrays: states from their
+The builder sets up a :class:`pycunls.Problem` from NumPy or Warp arrays: states from their
 initial values, factors from their measurements and an index array saying which states each
 factor connects. It owns the device arrays, the capacities, active counts, constant ids and the
 connectivity table, checks shapes against the catalog, runs :func:`pycunls.diagnose` before the
@@ -41,10 +41,11 @@ import dataclasses
 import warnings
 from typing import Any, List, Optional, Sequence, Tuple
 
-import cupy as cp
 import numpy as np
+import warp as wp
 
 from pycunls import _pycunls_core as _core
+from pycunls._arrays import to_device, to_numpy
 from pycunls.catalog import factor_info, state_info
 from pycunls.diagnostics import diagnose, evaluate
 
@@ -72,11 +73,8 @@ def _resolve(cls_or_name, base, kind: str):
     return cls_or_name
 
 
-def _float32(a, name: str) -> cp.ndarray:
-    try:
-        return cp.ascontiguousarray(cp.asarray(a, dtype=cp.float32))
-    except Exception as exc:  # noqa: BLE001
-        raise TypeError(f"{name} must be array-like (NumPy, CuPy, list); got {type(a)}") from exc
+def _float32(a, name: str) -> wp.array:
+    return to_device(a, np.float32, name, "ProblemBuilder")
 
 
 @dataclasses.dataclass(eq=False)
@@ -85,15 +83,15 @@ class StateHandle:
 
     Attributes:
         batch: The :class:`pycunls.StateBatch`.
-        data: Its device array (CuPy, float32), shaped like the initial values; the solve updates
-            it in place.
+        data: Its device array (``wp.array``, float32), shaped like the initial values; the
+            solve updates it in place.
         index: Position among the builder's state batches.
     """
     batch: Any
-    data: cp.ndarray
+    data: wp.array
     index: int
-    constant_ids: Optional[cp.ndarray] = None
-    bounds: Optional[Tuple[cp.ndarray, cp.ndarray]] = None
+    constant_ids: Optional[wp.array] = None
+    bounds: Optional[Tuple[wp.array, wp.array]] = None
 
     @property
     def count(self) -> int:
@@ -103,14 +101,14 @@ class StateHandle:
     @property
     def values(self) -> np.ndarray:
         """The current states as a NumPy array (same shape as the initial values)."""
-        return cp.asnumpy(self.data)
+        return self.data.numpy()
 
     def set(self, values) -> None:
         """Overwrites the states (same shape), e.g. a new initial guess before solving again."""
-        new = _float32(values, "values")
+        new = to_numpy(values, np.float32, "values", "StateHandle.set")
         if new.shape != self.data.shape:
             raise ValueError(f"values must have shape {self.data.shape}, got {new.shape}")
-        self.data[...] = new
+        self.data.assign(new)
 
 
 @dataclasses.dataclass(eq=False)
@@ -119,13 +117,13 @@ class FactorHandle:
 
     Attributes:
         batch: The :class:`pycunls.FactorBatch`.
-        measurements: Its device measurement arrays (CuPy, float32).
-        connectivity: The (num_factors, num_slots) int32 state indices on the device.
+        measurements: Its device measurement arrays (``wp.array``, float32).
+        connectivity: The (num_factors, num_slots) int32 state indices (host copy).
         index: Residual batch index in the problem (as in :func:`pycunls.evaluate`).
     """
     batch: Any
-    measurements: List[cp.ndarray]
-    connectivity: cp.ndarray
+    measurements: List[wp.array]
+    connectivity: np.ndarray
     index: int
     loss: Any = None
 
@@ -137,7 +135,7 @@ class FactorHandle:
             new = _float32(new, "measurements")
             if new.shape != old.shape:
                 raise ValueError(f"measurement shape {new.shape} differs from {old.shape}")
-            old[...] = new
+            old.assign(new)
 
 
 @dataclasses.dataclass
@@ -221,9 +219,10 @@ class ProblemBuilder:
                              f"{data.size / max(n, 1):g} per state")
         const_ids = None
         if constant is not None and len(constant):
-            const_ids = cp.asarray(np.asarray(constant, dtype=np.int32).reshape(-1))
-            if int(const_ids.max()) >= n or int(const_ids.min()) < 0:
+            ids = to_numpy(constant, np.int32, "constant", "ProblemBuilder").reshape(-1)
+            if int(ids.max()) >= n or int(ids.min()) < 0:
                 raise ValueError(f"constant ids must be in [0, {n}); got {constant}")
+            const_ids = wp.array(ids, dtype=wp.int32, device=data.device)
             batch = cls(data, n, const_ids, const_ids.size)
             batch.set_num_active_states(n, const_ids.size)
         else:
@@ -234,8 +233,11 @@ class ProblemBuilder:
             if not hasattr(batch, "set_bounds"):
                 raise TypeError(f"{cls.__name__} has no bounds; only VectorStateBatchN does")
             dim = batch.tangent_size
-            lo = cp.ascontiguousarray(cp.broadcast_to(_float32(bounds[0], "lower"), (n, dim)))
-            hi = cp.ascontiguousarray(cp.broadcast_to(_float32(bounds[1], "upper"), (n, dim)))
+            def bound(b, name):
+                b = to_numpy(b, np.float32, name, "ProblemBuilder")
+                return _float32(np.broadcast_to(b, (n, dim)), name)
+
+            lo, hi = bound(bounds[0], "lower"), bound(bounds[1], "upper")
             batch.set_bounds(lo, hi)
             handle.bounds = (lo, hi)
         self.problem.add_state_batch(batch)
@@ -253,7 +255,7 @@ class ProblemBuilder:
             factor_class: A factor batch class or its name, e.g. ``pycunls.SE3BetweenFactorBatch``
                 (``pycunls.describe(...)`` shows its states and measurement layout).
             *measurements: The constructor's measurement arrays in order (one item per factor),
-                e.g. ``deltas`` ``(M, 4, 4)``; NumPy or CuPy, converted to float32.
+                e.g. ``deltas`` ``(M, 4, 4)``; NumPy or Warp arrays, converted to float32.
             connect: Which states each factor reads, one entry per state slot of the factor:
                 ``(handle, indices)`` with ``indices`` of shape ``(M, num_slots)`` (all slots in
                 one state batch, e.g. ``(poses, edges)`` for between factors), or a list of
@@ -291,7 +293,8 @@ class ProblemBuilder:
                 raise ValueError(f"connect: slot {slot} indices must be in [0, {handle.count}) "
                                  f"for {type(handle.batch).__name__}; got [{int(col.min())}, "
                                  f"{int(col.max())}]")
-        table = cp.ascontiguousarray(columns.reshape(-1))
+        table = wp.array(np.ascontiguousarray(columns.reshape(-1)), dtype=wp.int32,
+                         device=wp.get_cuda_device())
         self.problem.add_factor_batch(batch, [h.batch for h in handles], table, loss)
         handle = FactorHandle(batch, arrays, columns, len(self.factor_handles), loss)
         self.factor_handles.append(handle)
@@ -305,22 +308,23 @@ class ProblemBuilder:
                              "that this builder's add_states returned")
         return handle
 
-    def _connectivity(self, connect) -> Tuple[List[StateHandle], cp.ndarray]:
+    def _connectivity(self, connect) -> Tuple[List[StateHandle], np.ndarray]:
         if isinstance(connect, tuple) and len(connect) == 2 and isinstance(connect[0],
                                                                            StateHandle):
             handle, idx = connect
-            idx = cp.asarray(idx, dtype=cp.int32)
+            idx = to_numpy(idx, np.int32, "connect", "ProblemBuilder")
             if idx.ndim == 1:
                 idx = idx[:, None]
-            return [self._own(handle)] * idx.shape[1], cp.ascontiguousarray(idx)
+            return [self._own(handle)] * idx.shape[1], np.ascontiguousarray(idx)
         if isinstance(connect, (list, tuple)) and all(
                 isinstance(c, tuple) and len(c) == 2 and isinstance(c[0], StateHandle)
                 for c in connect):
             handles = [self._own(c[0]) for c in connect]
-            cols = [cp.asarray(c[1], dtype=cp.int32).reshape(-1) for c in connect]
+            cols = [to_numpy(c[1], np.int32, "connect", "ProblemBuilder").reshape(-1)
+                    for c in connect]
             if len({c.size for c in cols}) != 1:
                 raise ValueError("connect: every slot needs one index per factor (equal lengths)")
-            return handles, cp.ascontiguousarray(cp.stack(cols, axis=1))
+            return handles, np.ascontiguousarray(np.stack(cols, axis=1))
         raise TypeError("connect must be (handle, indices[M, slots]) or a list of "
                         "(handle, indices[M]) pairs, one per state slot")
 
@@ -406,11 +410,13 @@ class ProblemBuilder:
         if self._solver is None or self._solver[0] != key or reuse is False:
             self._solver = (key,) + self._make_solver(method, constrained, options)
         _, minimizer, al = self._solver
+        # Uploads and StateHandle.set() run on Warp's stream; the solve on self.stream (and
+        # minimize() synchronizes it before returning).
+        wp.synchronize_stream(wp.get_stream(wp.get_cuda_device()))
         if al is not None:
             summary = al.minimize(self.stream, self.problem)
         else:
             summary = minimizer.minimize(self.stream, self.problem)
-        cp.cuda.runtime.streamSynchronize(self.stream.get_stream())
         self._solved_once = True
         return SolveResult(summary, bool(summary.converged()), summary.message, self)
 

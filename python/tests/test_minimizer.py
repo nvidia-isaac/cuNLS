@@ -15,151 +15,77 @@
 
 """End-to-end minimizer tests using a simple vector-prior problem.
 
-All tests share a helper ``_make_prior_problem()`` that assembles a
-one-factor, one-state problem: minimise ``||x - target||^2`` with
-``x ∈ R^3``.  This is a convex quadratic, so both Gauss-Newton and LM
-should converge in very few iterations (often 1), making it a fast
-correctness check for the full Python → C++ → GPU round-trip.
+Most tests share ``_make_prior_problem()``, a one-factor, one-state problem: minimise
+``||x - target||^2`` with ``x ∈ R^3``. This is a convex quadratic, so both Gauss-Newton and LM
+converge in very few iterations (often 1), making it a fast correctness check for the full
+Python → C++ → GPU round-trip.
 """
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 
+TARGET = np.array([1.0, 2.0, 3.0], dtype=np.float32)
 
-def _make_prior_problem():
-    """Build a trivial 3D vector-prior problem: minimise ||x - target||^2.
 
-    Returns ``(problem, states_gpu, target)`` so the caller can inspect
-    both the CuPy state array and the NumPy ground-truth after solving.
+def _make_prior_problem(loss=None, **add_factor_options):
+    """Build a trivial 3D vector-prior problem: minimise ||x - TARGET||^2 from x = 0.
+
+    Returns ``(problem, states_gpu)``: the Warp state array holds the solution after solving.
+    ``loss`` and ``add_factor_options`` (e.g. ``jacobian_mode_override``) go to
+    ``add_factor_batch``.
     """
-    target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-    initial = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-
-    states_gpu = cp.asarray(initial)
-    obs_gpu = cp.asarray(target)
-
+    states_gpu = wp.zeros(3, dtype=wp.float32)
+    obs_gpu = wp.array(TARGET)
     sb = pycunls.VectorStateBatch3(states_gpu, 1)
     sb.set_num_active_states(sb.capacity, sb.const_capacity)
     fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
     fb.set_num_active_factors(fb.capacity)
-
-    ptrs = [sb.state_device_ptr(0)]
-
     problem = pycunls.Problem()
     problem.add_state_batch(sb)
-    problem.add_factor_batch(fb, ptrs)
+    if loss is None:
+        problem.add_factor_batch(fb, [sb.state_device_ptr(0)], **add_factor_options)
+    else:
+        problem.add_factor_batch(fb, loss, [sb.state_device_ptr(0)], **add_factor_options)
     assert problem.check_consistency()
-    return problem, states_gpu, target
+    return problem, states_gpu
 
 
-class TestGaussNewtonMinimizer:
-    """Gauss-Newton convergence on the simple prior problem."""
-    def test_converges(self, stream):
-        problem, states_gpu, target = _make_prior_problem()
-
-        opts = pycunls.MinimizerOptions()
-        opts.max_num_iterations = 10
-        opts.disable_safety_checks = False
-        minimizer = pycunls.GaussNewtonMinimizer(opts)
-        summary = minimizer.minimize(stream, problem)
-
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < 1e-6
-        result = cp.asnumpy(states_gpu)
-        np.testing.assert_allclose(result, target, atol=1e-3)
-
-    def test_converges_with_hessian_column_scaling(self, stream):
-        problem, states_gpu, target = _make_prior_problem()
-
-        opts = pycunls.MinimizerOptions()
-        opts.max_num_iterations = 10
-        opts.column_scaling = pycunls.ColumnScaling.hessian_diagonal
-        opts.disable_safety_checks = False
-        minimizer = pycunls.GaussNewtonMinimizer(opts)
-        summary = minimizer.minimize(stream, problem)
-
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < 1e-6
-        result = cp.asnumpy(states_gpu)
-        np.testing.assert_allclose(result, target, atol=1e-3)
+def _minimizer(kind, **base_options):
+    """A Gauss-Newton ("gn") or LM ("lm") minimizer with the given MinimizerOptions fields."""
+    opts = pycunls.MinimizerOptions()
+    opts.max_num_iterations = 20
+    opts.disable_safety_checks = False
+    for name, value in base_options.items():
+        setattr(opts, name, value)
+    if kind == "gn":
+        return pycunls.GaussNewtonMinimizer(opts)
+    lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
+    lm_opts.base_options = opts
+    return pycunls.LevenbergMarquardtMinimizer(lm_opts)
 
 
-class TestLevenbergMarquardtMinimizer:
-    """LM convergence, summary field validation, and robust-loss integration."""
-    def test_converges(self, stream):
-        problem, states_gpu, target = _make_prior_problem()
+@pytest.mark.parametrize("kind", ["gn", "lm"])
+@pytest.mark.parametrize("scaling", [pycunls.ColumnScaling.none,
+                                     pycunls.ColumnScaling.hessian_diagonal])
+def test_converges(stream, kind, scaling):
+    problem, states_gpu = _make_prior_problem()
+    summary = _minimizer(kind, column_scaling=scaling).minimize(stream, problem)
+    wp.synchronize()
+    assert summary.initial_cost > 0
+    assert summary.final_cost < 1e-6
+    assert len(summary.iteration_costs) > 0
+    assert "MinimizerSummary" in repr(summary)
+    np.testing.assert_allclose(states_gpu.numpy(), TARGET, atol=1e-3)
 
-        lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
-        lm_opts.base_options.max_num_iterations = 20
-        lm_opts.base_options.disable_safety_checks = False
-        minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-        summary = minimizer.minimize(stream, problem)
 
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < 1e-6
-        result = cp.asnumpy(states_gpu)
-        np.testing.assert_allclose(result, target, atol=1e-3)
-
-    @pytest.mark.parametrize(
-        "scaling",
-        [pycunls.ColumnScaling.hessian_diagonal],
-    )
-    def test_converges_with_column_scaling(self, stream, scaling):
-        problem, states_gpu, target = _make_prior_problem()
-
-        lm_opts = pycunls.LevenbergMarquardtMinimizerOptions()
-        lm_opts.base_options.max_num_iterations = 20
-        lm_opts.base_options.column_scaling = scaling
-        lm_opts.base_options.disable_safety_checks = False
-        minimizer = pycunls.LevenbergMarquardtMinimizer(lm_opts)
-        summary = minimizer.minimize(stream, problem)
-
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < 1e-6
-        result = cp.asnumpy(states_gpu)
-        np.testing.assert_allclose(result, target, atol=1e-3)
-
-    def test_summary_fields(self, stream):
-        problem, _, _ = _make_prior_problem()
-        minimizer = pycunls.LevenbergMarquardtMinimizer()
-        summary = minimizer.minimize(stream, problem)
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.initial_cost > 0
-        assert summary.final_cost < summary.initial_cost
-        assert len(summary.iteration_costs) > 0
-        assert "MinimizerSummary" in repr(summary)
-
-    def test_with_huber_loss(self, stream):
-        target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-        initial = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-
-        states_gpu = cp.asarray(initial)
-        obs_gpu = cp.asarray(target)
-
-        sb = pycunls.VectorStateBatch3(states_gpu, 1)
-        sb.set_num_active_states(sb.capacity, sb.const_capacity)
-        fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
-        fb.set_num_active_factors(fb.capacity)
-        loss = pycunls.HuberLossFunctionBatch(1.0)
-
-        problem = pycunls.Problem()
-        problem.add_state_batch(sb)
-        problem.add_factor_batch(fb, loss, [sb.state_device_ptr(0)])
-        assert problem.check_consistency()
-
-        minimizer = pycunls.LevenbergMarquardtMinimizer()
-        summary = minimizer.minimize(stream, problem)
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < summary.initial_cost
+def test_lm_with_huber_loss(stream):
+    problem, _ = _make_prior_problem(loss=pycunls.HuberLossFunctionBatch(1.0))
+    summary = pycunls.LevenbergMarquardtMinimizer().minimize(stream, problem)
+    wp.synchronize()
+    assert summary.final_cost < summary.initial_cost
 
 
 class TestMinimizerOptions:
@@ -192,54 +118,21 @@ class TestMinimizerOptions:
         assert lm.lambda_upscale == pytest.approx(2.0)
 
 
-class TestJacobianMode:
-    """Numeric (finite-difference) Jacobians via JacobianMode.numeric."""
-    def test_global_default_converges(self, stream):
-        problem, states_gpu, target = _make_prior_problem()
-
-        opts = pycunls.MinimizerOptions()
-        opts.max_num_iterations = 20
-        opts.jacobian_mode = pycunls.JacobianMode.numeric
-        minimizer = pycunls.GaussNewtonMinimizer(opts)
-        summary = minimizer.minimize(stream, problem)
-
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < 1e-3
-        result = cp.asnumpy(states_gpu)
-        np.testing.assert_allclose(result, target, atol=1e-2)
-
-    def test_per_group_override_converges(self, stream):
-        # Same problem, but forced to numeric mode via the per-group
-        # override on add_factor_batch instead of the global default.
-        target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-        initial = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-
-        states_gpu = cp.asarray(initial)
-        obs_gpu = cp.asarray(target)
-
-        sb = pycunls.VectorStateBatch3(states_gpu, 1)
-        sb.set_num_active_states(sb.capacity, sb.const_capacity)
-        fb = pycunls.PriorVectorFactorBatch3(obs_gpu, 1)
-        fb.set_num_active_factors(fb.capacity)
-
-        problem = pycunls.Problem()
-        problem.add_state_batch(sb)
-        problem.add_factor_batch(
-            fb, [sb.state_device_ptr(0)],
+@pytest.mark.parametrize("where", ["global_default", "per_group_override"])
+def test_numeric_jacobians_converge(stream, where):
+    """Finite-difference Jacobians, set for every group in MinimizerOptions or for one group
+    through the jacobian_mode_override of add_factor_batch."""
+    if where == "global_default":
+        problem, states_gpu = _make_prior_problem()
+        minimizer = _minimizer("gn", jacobian_mode=pycunls.JacobianMode.numeric)
+    else:
+        problem, states_gpu = _make_prior_problem(
             jacobian_mode_override=pycunls.JacobianMode.numeric)
-        assert problem.check_consistency()
-
-        opts = pycunls.MinimizerOptions()
-        opts.max_num_iterations = 20
-        minimizer = pycunls.GaussNewtonMinimizer(opts)
-        summary = minimizer.minimize(stream, problem)
-
-        cp.cuda.runtime.streamSynchronize(stream.get_stream())
-
-        assert summary.final_cost < 1e-3
-        result = cp.asnumpy(states_gpu)
-        np.testing.assert_allclose(result, target, atol=1e-2)
+        minimizer = _minimizer("gn")
+    summary = minimizer.minimize(stream, problem)
+    wp.synchronize()
+    assert summary.final_cost < 1e-3
+    np.testing.assert_allclose(states_gpu.numpy(), TARGET, atol=1e-2)
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +158,10 @@ def _bundle(num_poses=6, num_points=200, seed=0):
     initial_points = points + rng.normal(0, 0.1, points.shape).astype(np.float32)
 
     buffers = {
-        "poses": cp.asarray(initial_poses.reshape(-1)),
-        "points": cp.asarray(initial_points.reshape(-1)),
-        "observations": cp.asarray(observations.reshape(-1)),
-        "const_ids": cp.array([0, 1], dtype=cp.int32),
+        "poses": wp.array(initial_poses.reshape(-1)),
+        "points": wp.array(initial_points.reshape(-1)),
+        "observations": wp.array(observations.reshape(-1)),
+        "const_ids": wp.array([0, 1], dtype=wp.int32),
     }
     pose_states = pycunls.SE3StateBatch(buffers["poses"], num_poses, buffers["const_ids"], 2)
     pose_states.set_num_active_states(num_poses, 2)
@@ -305,7 +198,7 @@ class TestSchurComplement:
             options.base_options.sparse_linear_solver_type = (
                 pycunls.SparseLinearSolverType.DenseCholesky)
             summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
-            cp.cuda.runtime.streamSynchronize(stream.get_stream())
+            wp.synchronize()
             assert summary.final_cost < 1e-3 * summary.initial_cost
             costs.append(summary.final_cost)
         assert costs[1] == pytest.approx(costs[0], rel=1e-2, abs=1e-6)

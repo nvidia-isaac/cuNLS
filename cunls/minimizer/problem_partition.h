@@ -50,6 +50,14 @@ struct StepControlParams {
   int max_consecutive_rejected_steps = 0;
   /// Line search on: any step (full or shortened) that decreases the cost is taken.
   bool line_search = false;
+  /// Per-subproblem iteration caps of the call (device, NumProblems() ints;
+  /// InnerSolve::problem_iteration_cap), or nullptr for none: a subproblem
+  /// still active once `iterations_done` reaches its cap stops with
+  /// MaxIterations, while the others continue.
+  const int *iteration_cap = nullptr;
+  /// Iterations of the call completed, the current one included (1 at the
+  /// first StepControl of a Minimize() call). Read with `iteration_cap`.
+  int iterations_done = 0;
 };
 
 /** @brief What StepControl decided for a subproblem's step (ProblemPartition::Outcome). */
@@ -109,7 +117,7 @@ class ProblemPartition {
   /**
    * @brief Starts a Minimize() call: the costs in Cost() become the current
    * costs; subproblems below `cost_tolerance`, with a non-finite cost, or with
-   * a nonzero `frozen` entry (may be null) are inactive (Termination():
+   * a positive `frozen` entry (may be null) are inactive (Termination():
    * CostTolerance, NonFiniteCost, NotDetermined). Writes [total cost, active count] to `d_out`.
    */
   void InitStepControl(cudaStream_t stream, float cost_tolerance, const int *frozen, float *d_out);
@@ -129,7 +137,8 @@ class ProblemPartition {
    * step that lowers the cost is taken; a converged subproblem stops, taking
    * its step if the cost did not rise; a rejection counts towards the cap.
    * A subproblem that stops records its TerminationReason in Termination():
-   * the Converged() code, or MaxRejectedSteps / NonFiniteStep at the cap.
+   * the Converged() code, MaxRejectedSteps / NonFiniteStep at the rejection
+   * cap, or MaxIterations at its StepControlParams::iteration_cap.
    * Writes Outcome(), the accepted costs into Cost(), and [total cost, active
    * count] into `d_out`; with one subproblem also d_out[2] = 1 if its step was
    * taken (`d_out` must then hold 3 floats).
@@ -146,6 +155,21 @@ class ProblemPartition {
 
   /** @brief Clears the shortened flags of the line search (start of an iteration). */
   void ResetLineSearch(cudaStream_t stream);
+
+  /**
+   * @brief out[p] = 1 for the subproblems that stopped at an iteration cap,
+   * 0 for the others: still active at the end of the call (its cap), or
+   * stopped by StepControlParams::iteration_cap. Asynchronous; NumProblems()
+   * ints (InnerSolve::problem_at_cap).
+   */
+  void AtCap(cudaStream_t stream, int *out) const;
+
+  /**
+   * @brief row_active[r] = Active()[subproblem of row r] for every row of the
+   * reduced system (NumRows() ints): the rows whose step is still needed
+   * (LinearSystem::SetRowActivity). Only with a partition (NumProblems() > 1).
+   */
+  void ActiveRows(cudaStream_t stream, int *row_active) const;
 
   /**
    * @name Per-subproblem device arrays (NumProblems() entries).

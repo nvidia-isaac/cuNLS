@@ -17,9 +17,9 @@
 chain recovered from perturbed poses and velocities with the closed-form
 process-noise information."""
 
-import cupy as cp
 import numpy as np
 import pytest
+import warp as wp
 
 import pycunls
 
@@ -41,8 +41,8 @@ def se3_exp(xi):
 
 @pytest.mark.parametrize("group,tangent", [("SE3", 6), ("SO3", 3), ("SE2", 3), ("SO2", 1)])
 def test_layouts(stream, group, tangent):
-    dts = cp.full(4, 0.1, dtype=cp.float32)
-    qc = cp.ones(tangent, dtype=cp.float32)
+    dts = wp.full(4, 0.1, dtype=wp.float32)
+    qc = wp.ones(tangent, dtype=wp.float32)
     cv = getattr(pycunls, f"ConstantVelocity{group}FactorBatch")(dts, 4)
     assert cv.state_sizes() == [tangent] * 4 and cv.residuals_size == 2 * tangent
     ca = getattr(pycunls, f"ConstantAcceleration{group}FactorBatch")(dts, 4)
@@ -55,7 +55,7 @@ def test_layouts(stream, group, tangent):
     with pytest.raises(ValueError):
         cvi.update(stream, 5)  # beyond the capacity
     with pytest.raises(TypeError, match="time_steps must have dtype float32"):
-        getattr(pycunls, f"ConstantVelocity{group}FactorBatch")(cp.zeros(4), 4)
+        getattr(pycunls, f"ConstantVelocity{group}FactorBatch")(wp.zeros(4, dtype=wp.float64), 4)
 
 
 def test_constant_velocity_se3_chain(stream):
@@ -72,15 +72,15 @@ def test_constant_velocity_se3_chain(stream):
     vel0 = np.tile(v, (n, 1))
     vel0[1:] += rng.normal(0, 0.1, (n - 1, 6))
 
-    pose_buf = cp.asarray(np.stack(init), dtype=cp.float32)
-    vel_buf = cp.asarray(vel0, dtype=cp.float32)
-    const = cp.asarray([0], dtype=cp.int32)
+    pose_buf = wp.array(np.stack(init), dtype=wp.float32)
+    vel_buf = wp.array(vel0, dtype=wp.float32)
+    const = wp.array([0], dtype=wp.int32)
     poses_sb = pycunls.SE3StateBatch(pose_buf, n, const, 1)
     poses_sb.set_num_active_states(n, 1)
     vels_sb = pycunls.VectorStateBatch6(vel_buf, n, const, 1)
     vels_sb.set_num_active_states(n, 1)
-    dts = cp.full(n - 1, dt, dtype=cp.float32)
-    qc = cp.ones(6, dtype=cp.float32)
+    dts = wp.full(n - 1, dt, dtype=wp.float32)
+    qc = wp.ones(6, dtype=wp.float32)
     prior = pycunls.ConstantVelocityInformationSE3FactorBatch(stream, dts, qc, n - 1)
     prior.set_num_active_factors(n - 1)
     ptrs = []
@@ -96,8 +96,8 @@ def test_constant_velocity_se3_chain(stream):
     options.base_options.max_num_iterations = 100
     summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
     assert summary.final_cost < 1e-6 * summary.initial_cost
-    est = cp.asnumpy(pose_buf).reshape(n, 4, 4)
+    est = pose_buf.numpy().reshape(n, 4, 4)
     # float32 round-off accumulates along the chain (anchored at one end): a few
     # millimeters after 30 steps (~3 m).
     assert np.abs(est[:, :3, 3] - np.stack(poses)[:, :3, 3]).max() < 1e-2
-    np.testing.assert_allclose(cp.asnumpy(vel_buf), np.tile(v, (n, 1)), atol=1e-2)
+    np.testing.assert_allclose(vel_buf.numpy(), np.tile(v, (n, 1)), atol=1e-2)

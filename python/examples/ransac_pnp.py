@@ -28,7 +28,7 @@ Usage::
 
 import argparse
 
-import cupy as cp
+import warp as wp
 
 import pycunls
 from example_utils import datasets, metrics, report
@@ -42,9 +42,9 @@ class PnPProblem:
 
     def __init__(self, scene):
         n = len(scene.points)
-        self.pose_gpu = cp.asarray(scene.initial_pose.reshape(-1))
-        self.points_gpu = cp.asarray(scene.points.reshape(-1))
-        self.observations_gpu = cp.asarray(scene.observations.reshape(-1))
+        self.pose_gpu = wp.array(scene.initial_pose.reshape(-1), dtype=wp.float32)
+        self.points_gpu = wp.array(scene.points.reshape(-1), dtype=wp.float32)
+        self.observations_gpu = wp.array(scene.observations.reshape(-1), dtype=wp.float32)
 
         # Capacity vs. active count. A batch is constructed with its capacity: how many states (or
         # factors) its bound device buffers hold. The capacity is fixed for the batch's lifetime;
@@ -68,9 +68,10 @@ class PnPProblem:
         self.problem.add_state_batch(self.pose_state)
         self.problem.add_factor_batch(self.pnp, [self.pose_state.state_device_ptr(0)] * n)
         assert self.problem.check_consistency()
+        wp.synchronize_stream(wp.get_stream())  # uploads ran on Warp's stream: finish them
 
     def pose(self):
-        return cp.asnumpy(self.pose_gpu).reshape(4, 4)
+        return self.pose_gpu.numpy().reshape(4, 4)
 
 
 def solve_with_lm(scene):

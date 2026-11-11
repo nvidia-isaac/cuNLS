@@ -49,6 +49,7 @@
 #include "cunls/factor/between/se2_between_factor_batch.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
 #include "cunls/factor/between/vector_between_factor_batch.h"
+#include "cunls/factor/bound_factor_batch.h"
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/dynamics/se2_differential_drive_factor_batch.h"
 #include "cunls/factor/pnp_factor_batch.h"
@@ -183,9 +184,19 @@ void RunBoth(const std::string &name, Problem &problem, SparseLinearSolverType s
   }
 }
 
-/** B independent SE(2) pose graphs: a chain of n poses plus `closures` loop closures each. */
+/** Which graphs of a heterogeneous batch to solve (SE2Graphs). */
+enum class Subset { kAll, kEasy, kHard };
+
+/**
+ * B independent SE(2) pose graphs: a chain of n poses plus `closures` loop
+ * closures each. A fraction `hard` of the graphs starts far from the solution
+ * (heterogeneous batch: they need many more iterations than the others);
+ * `subset` solves all graphs, only the easy or only the hard ones (the
+ * reference for what a batch costs when finished subproblems cost nothing).
+ */
 void SE2Graphs(const std::string &name, int batch, int n, int closures,
-               SparseLinearSolverType solver, int reps) {
+               SparseLinearSolverType solver, int reps, double hard = 0.0,
+               Subset subset = Subset::kAll, size_t iterations = 30) {
   std::mt19937 rng(3);
   std::normal_distribution<double> normal(0.0, 1.0);
   std::uniform_int_distribution<int> pick(0, n - 1);
@@ -196,23 +207,36 @@ void SE2Graphs(const std::string &name, int batch, int n, int closures,
     if (std::abs(a - b) > 1) edges.push_back({a, b});
   }
   std::vector<Mat3> init, deltas, priors;
+  std::uniform_real_distribution<double> uniform(0.0, 1.0);
+  int kept = 0;
   for (int s = 0; s < batch; ++s) {
+    // No extra draws without hard graphs: the homogeneous cases keep their data.
+    const bool is_hard = hard > 0.0 && (s == 0 || uniform(rng) < hard);
+    const double noise = is_hard ? 1.2 : 0.1;
+    const bool keep = subset == Subset::kAll || (subset == Subset::kHard) == is_hard;
     std::vector<Mat3> gt;
     Mat3 t = Pose2(normal(rng), normal(rng), normal(rng));
     for (int i = 0; i < n; ++i) {
       gt.push_back(t);
       t = Mul<9, 3>(t, Pose2(1.0 + 0.3 * normal(rng), 0.3 * normal(rng), 0.2 * normal(rng)));
     }
+    std::vector<Mat3> graph_init, graph_deltas;
     for (int i = 0; i < n; ++i) {
-      init.push_back(
-          Mul<9, 3>(gt[i], Pose2(0.1 * normal(rng), 0.1 * normal(rng), 0.1 * normal(rng))));
+      graph_init.push_back(
+          Mul<9, 3>(gt[i], Pose2(noise * normal(rng), noise * normal(rng), noise * normal(rng))));
     }
     for (auto [a, b] : edges) {
-      const Mat3 noise = Pose2(0.02 * normal(rng), 0.02 * normal(rng), 0.02 * normal(rng));
-      deltas.push_back(Mul<9, 3>(Mul<9, 3>(Inv<9, 3>(gt[b]), gt[a]), noise));
+      const Mat3 measurement_noise =
+          Pose2(0.02 * normal(rng), 0.02 * normal(rng), 0.02 * normal(rng));
+      graph_deltas.push_back(Mul<9, 3>(Mul<9, 3>(Inv<9, 3>(gt[b]), gt[a]), measurement_noise));
     }
+    if (!keep) continue;
+    init.insert(init.end(), graph_init.begin(), graph_init.end());
+    deltas.insert(deltas.end(), graph_deltas.begin(), graph_deltas.end());
     priors.push_back(gt[0]);
+    ++kept;
   }
+  batch = kept;
   const int m = static_cast<int>(edges.size());
   const std::vector<float> init_f = ToFloat(init);
   dvector<float> init_d(init_f), poses(init_f);
@@ -239,7 +263,7 @@ void SE2Graphs(const std::string &name, int batch, int n, int closures,
   for (int s = 0; s < batch; ++s) ids_host.insert(ids_host.end(), n, s);
   dvector<int> ids(ids_host);
   if (batch > 1) problem.SetProblemPartition(batch, {ids.data()});
-  RunBoth(name, problem, solver, 30, reps, [&] {
+  RunBoth(name, problem, solver, iterations, reps, [&] {
     THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_d.data(), init_f.size() * sizeof(float),
                                    cudaMemcpyDeviceToDevice));
   });
@@ -278,12 +302,42 @@ TEST(MinimizerBenchmark, DISABLED_SE2GraphSingleSmall) {
   SE2Graphs("se2_graph_1x12", 1, 12, 2, SparseLinearSolverType::DenseLDLT, 200);
 }
 
+/** Large and batched cases run the default solver; BENCH_CUDSS=1 adds cuDSS variants. */
+bool WithCudss() { return std::getenv("BENCH_CUDSS") != nullptr; }
+
 TEST(MinimizerBenchmark, DISABLED_SE2GraphSingleLarge) {
-  SE2Graphs("se2_graph_1x5000", 1, 5000, 1000, SparseLinearSolverType::cuDSS, 20);
+  SE2Graphs("se2_graph_1x5000", 1, 5000, 1000, SparseLinearSolverType::BlockSparseCholesky, 20);
+  if (WithCudss()) {
+    SE2Graphs("se2_graph_1x5000_cudss", 1, 5000, 1000, SparseLinearSolverType::cuDSS, 20);
+  }
 }
 
 TEST(MinimizerBenchmark, DISABLED_SE2GraphsBatched) {
-  SE2Graphs("se2_graph_256x12", 256, 12, 2, SparseLinearSolverType::cuDSS, 50);
+  SE2Graphs("se2_graph_256x12", 256, 12, 2, SparseLinearSolverType::BlockSparseCholesky, 50);
+  if (WithCudss()) {
+    SE2Graphs("se2_graph_256x12_cudss", 256, 12, 2, SparseLinearSolverType::cuDSS, 50);
+  }
+}
+
+/**
+ * Heterogeneous batches: 2% of the graphs start far from the solution. Each
+ * size prints the batch and the easy-only and hard-only batches: their sum is
+ * what the batch would cost if finished subproblems cost nothing.
+ */
+TEST(MinimizerBenchmark, DISABLED_SE2GraphsHeterogeneous) {
+  constexpr auto kSolver = SparseLinearSolverType::BlockSparseCholesky;
+  struct Size {
+    int batch, n, closures;
+  };
+  for (const Size &size : {Size{256, 50, 10}, Size{1024, 50, 10}, Size{4096, 20, 4}}) {
+    const std::string base =
+        "se2_hetero_" + std::to_string(size.batch) + "x" + std::to_string(size.n);
+    SE2Graphs(base, size.batch, size.n, size.closures, kSolver, 10, 0.02, Subset::kAll, 100);
+    SE2Graphs(base + "_easy", size.batch, size.n, size.closures, kSolver, 10, 0.02, Subset::kEasy,
+              100);
+    SE2Graphs(base + "_hard", size.batch, size.n, size.closures, kSolver, 10, 0.02, Subset::kHard,
+              100);
+  }
 }
 
 TEST(MinimizerBenchmark, DISABLED_SE3LoopClosurePGO) {
@@ -326,10 +380,15 @@ TEST(MinimizerBenchmark, DISABLED_SE3LoopClosurePGO) {
   Problem problem;
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&between, ptrs);
-  RunBoth("se3_pgo_5000_lc2000", problem, SparseLinearSolverType::cuDSS, 15, 10, [&] {
+  auto reset = [&] {
     THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_d.data(), init_f.size() * sizeof(float),
                                    cudaMemcpyDeviceToDevice));
-  });
+  };
+  RunBoth("se3_pgo_5000_lc2000", problem, SparseLinearSolverType::BlockSparseCholesky, 15, 10,
+          reset);
+  if (WithCudss()) {
+    RunBoth("se3_pgo_5000_lc2000_cudss", problem, SparseLinearSolverType::cuDSS, 15, 10, reset);
+  }
 }
 
 /**
@@ -423,7 +482,114 @@ void BoundedChains(const std::string &name, int chains, int n, SparseLinearSolve
 
 TEST(MinimizerBenchmark, DISABLED_BoundedChains) {
   BoundedChains("bounded_chain_1x64", 1, 64, SparseLinearSolverType::DenseLDLT, 200);
-  BoundedChains("bounded_chains_4096x16", 4096, 16, SparseLinearSolverType::cuDSS, 30);
+  BoundedChains("bounded_chains_4096x16", 4096, 16, SparseLinearSolverType::BlockSparseCholesky,
+                30);
+}
+
+/**
+ * Heterogeneous batched augmented Lagrangian: chains of n scalars pulled to
+ * random targets and smoothed, every state bounded to [-1, 1] by constraint
+ * rows (BoundFactorBatch, multipliers and penalties). A fraction `infeasible`
+ * of the chains has one contradicting bound (lower above upper): those stop at
+ * max_penalty while the others finish. `subset` solves all chains, only the
+ * feasible or only the infeasible ones (the reference for what the batch would
+ * cost if finished subproblems cost nothing).
+ */
+void ConstrainedChains(const std::string &name, int chains, int n, double infeasible, Subset subset,
+                       int reps) {
+  std::mt19937 rng(9);
+  std::normal_distribution<float> normal(0.f, 1.f);
+  std::uniform_real_distribution<double> uniform(0.0, 1.0);
+  std::vector<float> t, lo, hi;
+  int kept = 0;
+  for (int c = 0; c < chains; ++c) {
+    const bool bad = c == 0 || uniform(rng) < infeasible;
+    std::vector<float> ct(n), clo(n, -1.f), chi(n, 1.f);
+    for (float &v : ct) v = normal(rng);
+    if (bad) {
+      clo[n / 2] = 1.f;
+      chi[n / 2] = -1.f;
+    }
+    const bool keep = subset == Subset::kAll || (subset == Subset::kHard) == bad;
+    if (!keep) continue;
+    t.insert(t.end(), ct.begin(), ct.end());
+    lo.insert(lo.end(), clo.begin(), clo.end());
+    hi.insert(hi.end(), chi.begin(), chi.end());
+    ++kept;
+  }
+  chains = kept;
+  const int total = chains * n;
+  dvector<float> x(std::vector<float>(total, 0.f)), init(std::vector<float>(total, 0.f));
+  dvector<float> d_t(t), d_lo(lo), d_hi(hi), zeros(std::vector<float>(total, 0.f));
+  VectorStateBatch<1> states(x.data(), total);
+  states.SetNumActiveStates(total);
+  PriorVectorFactorBatch<1> prior(reinterpret_cast<const Vector<1> *>(d_t.data()), total);
+  prior.SetNumActiveFactors(total);
+  const int edges = chains * (n - 1);
+  WeightedFactorBatch<VectorBetweenFactorBatch<1>> smooth(
+      2.f, reinterpret_cast<const Vector<1> *>(zeros.data()), static_cast<size_t>(edges));
+  smooth.SetNumActiveFactors(edges);
+  BoundFactorBatch<1> bounds(d_lo.data(), d_hi.data(), total);
+  bounds.SetNumActiveFactors(total);
+  std::vector<float *> state_ptrs, edge_ptrs;
+  for (int i = 0; i < total; ++i) state_ptrs.push_back(states.StateDevicePtr(i));
+  for (int c = 0; c < chains; ++c) {
+    for (int k = 0; k + 1 < n; ++k) {
+      edge_ptrs.push_back(states.StateDevicePtr(c * n + k));
+      edge_ptrs.push_back(states.StateDevicePtr(c * n + k + 1));
+    }
+  }
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, state_ptrs);
+  problem.AddFactorBatch(&smooth, edge_ptrs);
+  problem.AddFactorBatch(&bounds, state_ptrs);
+  std::vector<int> ids(total);
+  for (int i = 0; i < total; ++i) ids[i] = i / n;
+  dvector<int> d_ids(ids);
+  if (chains > 1) problem.SetProblemPartition(chains, {d_ids.data()});
+
+  CudaStream stream;
+  AugmentedLagrangianMinimizerOptions al;  // defaults (max_penalty 1e8)
+  auto run = [&](Minimizer &inner, const char *label) {
+    AugmentedLagrangianMinimizer solver(inner, al);
+    size_t outer = 0;
+    Print(name, label,
+          Time(
+              reps,
+              [&] {
+                THROW_ON_CUDA_ERROR(cudaMemcpy(x.data(), init.data(), total * sizeof(float),
+                                               cudaMemcpyDeviceToDevice));
+              },
+              [&] {
+                const auto summary = solver.Minimize(stream.GetStream(), problem);
+                outer = summary.outer_iterations;
+                MinimizerSummary out;
+                out.num_iterations = summary.inner_iterations;
+                out.final_cost = summary.final_cost;
+                return out;
+              }));
+    std::printf("  outer_iterations=%zu\n", outer);
+  };
+  MinimizerOptions o = Options(SparseLinearSolverType::BlockSparseCholesky, 50);
+  {
+    GaussNewtonMinimizer gn(o);
+    run(gn, "GN");
+  }
+  {
+    LevenbergMarquardtMinimizerOptions lm;
+    lm.base_options = o;
+    lm.relative_reduction_tolerance = 1e-10f;
+    LevenbergMarquardtMinimizer minimizer(lm);
+    run(minimizer, "LM");
+  }
+}
+
+/** Heterogeneous batched AL: 1% of 1024 constrained chains infeasible (see ConstrainedChains). */
+TEST(MinimizerBenchmark, DISABLED_ConstrainedChainsHeterogeneous) {
+  ConstrainedChains("al_chains_1024x16", 1024, 16, 0.01, Subset::kAll, 5);
+  ConstrainedChains("al_chains_1024x16_feasible", 1024, 16, 0.01, Subset::kEasy, 5);
+  ConstrainedChains("al_chains_1024x16_infeasible", 1024, 16, 0.01, Subset::kHard, 5);
 }
 
 /** Real-time AL calls on B SE(2) differential-drive trajectories of N stages (as real_time_test).

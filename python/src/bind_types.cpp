@@ -20,7 +20,7 @@
 // This translation unit also defines extract_device_ptr(), the central helper
 // that converts Python-side GPU memory handles into raw C pointers.  Every
 // other bind_*.cpp file relies on it for constructor arguments that accept
-// CuPy arrays or plain integer addresses.
+// Warp (or other __cuda_array_interface__) arrays or plain integer addresses.
 
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -72,8 +72,8 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
     const std::string actual = DtypeName(nb::cast<std::string>(cai["typestr"]));
     if (dtype != nullptr && actual != dtype) {
       throw nb::type_error((std::string(name) + " must have dtype " + dtype + ", got " + actual +
-                            ". Fix: convert it, e.g. cupy.asarray(" + name + ", dtype=cupy." +
-                            dtype + ").")
+                            ". Fix: convert it, e.g. wp.array(" + name + ", dtype=wp." + dtype +
+                            ").")
                                .c_str());
     }
     const nb::tuple shape = nb::cast<nb::tuple>(cai["shape"]);
@@ -86,11 +86,12 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
       for (size_t i = shape.size(); i-- > 0;) {
         const size_t extent = nb::cast<size_t>(shape[i]);
         if (extent > 1 && nb::cast<int64_t>(strides[i]) != static_cast<int64_t>(expected)) {
-          throw nb::value_error((std::string(name) +
-                                 " must be C-contiguous (a row-major array without gaps); got "
-                                 "a strided view. Fix: pass cupy.ascontiguousarray(" +
-                                 name + ").")
-                                    .c_str());
+          throw nb::value_error(
+              (std::string(name) +
+               " must be C-contiguous (a row-major array without gaps); got "
+               "a strided view. Fix: pass a contiguous copy, e.g. wp.clone(wp.array(" +
+               name + ")).")
+                  .c_str());
         }
         expected *= extent;
       }
@@ -103,9 +104,9 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
   if (nb::hasattr(obj, "__array_interface__")) {
     throw nb::type_error((std::string(name) +
                           " is a host (NumPy) array, but cuNLS reads GPU memory. Fix: pass "
-                          "cupy.asarray(" +
-                          name + ")" + (dtype ? std::string(" with dtype ") + dtype : "") +
-                          " and keep it alive while it is used.")
+                          "wp.array(" +
+                          name + (dtype ? std::string(", dtype=wp.") + dtype : "") +
+                          ", device=\"cuda\") and keep it alive while it is used.")
                              .c_str());
   }
   if (nb::hasattr(obj, "data") && nb::hasattr(obj.attr("data"), "ptr")) {
@@ -113,7 +114,7 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
     return out;
   }
   throw nb::type_error((std::string(name) +
-                        " must be a GPU array (cupy.ndarray or any object "
+                        " must be a GPU array (wp.array or any object "
                         "with __cuda_array_interface__) or an int device "
                         "pointer; got " +
                         nb::cast<std::string>(nb::str(obj.type())))
@@ -149,7 +150,7 @@ void bind_types(nb::module_ &m) {
       m, "CudaStream",
       "A CUDA stream for cuNLS work (created on construction, destroyed with the object). "
       "sync_on_destroy: synchronize before destroying. minimize() synchronizes it before "
-      "returning; use cupy.cuda.Stream.from_external(stream) to order CuPy work with it.")
+      "returning; use wp.Stream(cuda_stream=stream.get_stream()) to order Warp work with it.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)
       .def(
           "get_stream",
@@ -162,8 +163,8 @@ void bind_types(nb::module_ &m) {
           [](cunls::CudaStream &self) {
             return nb::make_tuple(0, reinterpret_cast<uintptr_t>(self.GetStream()));
           },
-          "CUDA stream protocol (version 0, handle): cupy.cuda.Stream.from_external(stream) "
-          "and other libraries can enqueue work on this stream.");
+          "CUDA stream protocol (version 0, handle): libraries that accept it (e.g. PyTorch, "
+          "CuPy) can enqueue work on this stream.");
 
   // --- Logging ---
 

@@ -29,7 +29,6 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
-#include "cunls/common/profiler.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
@@ -120,14 +119,45 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
     }
   }
 
+  /**
+   * @brief Builds the prior problem (with `const_state_ids` fixed), minimizes
+   * it with Gauss-Newton or Levenberg-Marquardt (default LM options) under
+   * `options`, and checks the result with CheckConvergence.
+   */
+  void SolveAndCheck(bool levenberg_marquardt, const MinimizerOptions &options,
+                     const std::vector<int> &const_state_ids = {}) {
+    StateData state_data(state_values_, const_state_ids);
+    auto &vector_states = state_data.get();
+    FactorData factor_data(observations_);
+    Problem problem;
+    problem.AddFactorBatch(&factor_data.get(), test_utils::CollectStatePointers(vector_states));
+    problem.AddStateBatch(&vector_states);
+
+    CudaStream stream;
+    if (levenberg_marquardt) {
+      LevenbergMarquardtMinimizerOptions lm_options;
+      lm_options.base_options = options;
+      LevenbergMarquardtMinimizer(lm_options).Minimize(stream.GetStream(), problem);
+    } else {
+      GaussNewtonMinimizer(options).Minimize(stream.GetStream(), problem);
+    }
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    CheckConvergence(vector_states, const_state_ids);
+  }
+
+  /** minimizer_options_ with Hessian-diagonal column scaling. */
+  MinimizerOptions ColumnScaled() const {
+    MinimizerOptions options = minimizer_options_;
+    options.column_scaling = ColumnScaling::HessianDiagonal;
+    return options;
+  }
+
   const size_t num_vectors_ = 10000;  ///< Number of states in test.
 
   std::vector<VectorType> observations_;  ///< Target values for optimization.
   std::vector<VectorType> state_values_;  ///< Initial state values.
 
   MinimizerOptions minimizer_options_{.disable_safety_checks = false};
-
-  profiler::Domain profiler_domain_{"GaussNewtonMinimizerTest"};  ///< Profiling domain.
 };
 
 /**
@@ -156,173 +186,31 @@ typedef ::testing::Types<
     TestParams;
 TYPED_TEST_SUITE(GaussNewtonMinimizerTest, TestParams);
 
-/**
- * @brief Tests basic Gauss-Newton optimization.
- *
- * Creates a simple least squares problem and verifies that Gauss-Newton
- * converges to the correct solution.
- */
+/** Gauss-Newton and Levenberg-Marquardt converge on the prior problem. */
 TYPED_TEST(GaussNewtonMinimizerTest, SimpleGN) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("SimpleGNTest");
-  typename TestFixture::StateData state_data(this->state_values_);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  GaussNewtonMinimizer minimizer(this->minimizer_options_);
-  auto range = this->profiler_domain_.CreateDomainRange("GN Minimize");
-  // User-owned pool path: pre-attach before Minimize (minimizer skips
-  // auto-attach).
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states);
+  this->SolveAndCheck(false, this->minimizer_options_);
 }
 
-/**
- * @brief Tests Gauss-Newton with constant (fixed) states.
- *
- * Verifies that the optimizer correctly handles constant states by
- * not modifying them during optimization while still optimizing other
- * states.
- */
-TYPED_TEST(GaussNewtonMinimizerTest, GNWithConstantStates) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("GNWithConstantStates");
-  std::vector<int> const_state_ids = {0, 9, 99, 999};
-  typename TestFixture::StateData state_data(this->state_values_, const_state_ids);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  GaussNewtonMinimizer minimizer(this->minimizer_options_);
-  auto range = this->profiler_domain_.CreateDomainRange("GN Minimize");
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states, const_state_ids);
-}
-
-/**
- * @brief Tests basic Levenberg-Marquardt optimization.
- *
- * Creates a simple least squares problem and verifies that Levenberg-Marquardt
- * converges to the correct solution. LM should be more robust than GN for
- * ill-conditioned problems.
- */
 TYPED_TEST(GaussNewtonMinimizerTest, SimpleLM) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("SimpleLM");
-  typename TestFixture::StateData state_data(this->state_values_);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = this->minimizer_options_;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-  auto range = this->profiler_domain_.CreateDomainRange("LM Minimize");
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states);
+  this->SolveAndCheck(true, this->minimizer_options_);
 }
 
-/**
- * @brief Tests Levenberg-Marquardt with constant (fixed) states.
- *
- * Verifies that LM correctly handles constant states by not modifying them
- * during optimization while still optimizing other states.
- */
+/** Constant (fixed) states are left unchanged while the others converge. */
+TYPED_TEST(GaussNewtonMinimizerTest, GNWithConstantStates) {
+  this->SolveAndCheck(false, this->minimizer_options_, {0, 9, 99, 999});
+}
+
 TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("LMWithConstantStates");
-  std::vector<int> const_state_ids = {0, 9, 99, 999};
-  typename TestFixture::StateData state_data(this->state_values_, const_state_ids);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = this->minimizer_options_;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-  auto range = this->profiler_domain_.CreateDomainRange("LM Minimize");
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states, const_state_ids);
+  this->SolveAndCheck(true, this->minimizer_options_, {0, 9, 99, 999});
 }
 
-/**
- * @brief Levenberg-Marquardt with Hessian-diagonal column scaling.
- */
-TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("LMColumnScalingHessianDiagonal");
-  typename TestFixture::StateData state_data(this->state_values_);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = this->minimizer_options_;
-  lm_options.base_options.column_scaling = ColumnScaling::HessianDiagonal;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states);
-}
-
-/**
- * @brief Gauss-Newton with column scaling (shared MinimizerOptions path).
- */
+/** Hessian-diagonal column scaling (shared MinimizerOptions path). */
 TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("GNColumnScalingHessianDiagonal");
-  typename TestFixture::StateData state_data(this->state_values_);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  typename TestFixture::FactorData factor_data(this->observations_);
-  auto &factor_batch = factor_data.get();
+  this->SolveAndCheck(false, this->ColumnScaled());
+}
 
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  MinimizerOptions opts = this->minimizer_options_;
-  opts.column_scaling = ColumnScaling::HessianDiagonal;
-  GaussNewtonMinimizer minimizer(opts);
-  minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  this->CheckConvergence(vector_states);
+TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
+  this->SolveAndCheck(true, this->ColumnScaled());
 }
 
 /**

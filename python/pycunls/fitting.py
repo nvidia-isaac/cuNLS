@@ -19,24 +19,21 @@ One curve, or thousands of independent fits solved together on the GPU, with opt
 errors, robust losses, bounds and multiple starts. The result says per fit whether it converged
 and how well the model explains the data (reduced chi-square, standard errors).
 
-The model is either
-
-* an **array function** ``model(x, p)``: ``x`` holds one sample per row, ``p`` the parameters of
-  that row's fit (shape ``(rows, P)``), and it returns one prediction per row (shape ``(rows,)``
-  or ``(rows, m)``). Write it with NumPy functions (``np.exp(...)`` works on the CuPy arrays it
-  receives) and no loops: row ``i`` of the output may depend only on row ``i`` of ``x`` and ``p``.
-  The Jacobian is taken by central differences in float64. Easiest to write.
-* a **Warp function** ``@wp.func def model(x: float, p: wp.vec3) -> float`` (``x`` a scalar or a
-  ``wp.vecN``, ``p`` a ``wp.vecP``, the result a scalar or ``wp.vecM``). The Jacobian comes from
-  Warp's automatic differentiation (checked against finite differences at ``p0``). Fastest for
-  large problems.
+The model is a **Warp function** of one sample, ``@wp.func def model(x: float, p: wp.vec3) ->
+float``: ``x`` is a scalar or a ``wp.vecN`` (one sample's inputs), ``p`` a ``wp.vecP`` (a scalar
+for one parameter), and the result a scalar or a ``wp.vecM`` (one sample's prediction). The
+Jacobian comes from Warp's automatic differentiation, checked against central differences at
+``p0`` (``jacobian="auto"``). Warp differentiates loops only up to ``wp.config.max_unroll``
+iterations (16 by default; e.g. a 32-step integrator): "auto" detects a wrong gradient and falls
+back to central differences, ``jacobian="autodiff"`` does not.
 
 Example::
 
-    import numpy as np, pycunls
+    import numpy as np, warp as wp, pycunls
 
-    def decay(x, p):                       # y = a exp(-b x) + c
-        return p[:, 0] * np.exp(-p[:, 1] * x) + p[:, 2]
+    @wp.func
+    def decay(x: float, p: wp.vec3) -> float:   # y = a exp(-b x) + c
+        return p[0] * wp.exp(-p[1] * x) + p[2]
 
     res = pycunls.fit(decay, x, y, p0=[1.0, 1.0, 0.0], sigma=0.02)
     print(res.report())                     # params, errors, reduced chi2, convergence
@@ -51,262 +48,287 @@ See ``python/examples/model_fitting.py`` for a tour.
 
 import collections
 import dataclasses
-import math
 import warnings
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
-import cupy as cp
 import numpy as np
+import warp as wp
 
 from pycunls import _pycunls_core as _core
+from pycunls._arrays import to_numpy, warp_stream
 from pycunls._summary import _plain
 
 _VECTOR_SIZES = (1, 2, 3, 4, 6, 12)
 _MAX_PARAMETERS = 12
-
-_GATHER = cp.RawKernel(r"""
-extern "C" __global__
-void gather_params(const unsigned long long* pointers, float* out, long long items, int width) {
-  long long i = blockIdx.x * (long long)blockDim.x + threadIdx.x;
-  if (i < items * width) {
-    const float* p = reinterpret_cast<const float*>(pointers[i / width]);
-    out[i] = p[i % width];
-  }
-}
-""", "gather_params")
-
-
-def _cupy_stream(handle: int):
-    class _Handle:
-        def __cuda_stream__(self):
-            return (0, handle)
-
-    if hasattr(cp.cuda.Stream, "from_external"):
-        return cp.cuda.Stream.from_external(_Handle())
-    return cp.cuda.ExternalStream(handle)
-
-
-def _device_view(ptr: int, shape: Tuple[int, ...], dtype=cp.float32) -> cp.ndarray:
-    size = int(np.prod(shape)) * np.dtype(dtype).itemsize
-    mem = cp.cuda.UnownedMemory(ptr, size, None)
-    return cp.ndarray(shape, dtype, cp.cuda.MemoryPointer(mem, 0))
+_FD_STEP = 3e-4   # relative central-difference step in float32
 
 
 # ---------------------------------------------------------------------------------------------
-# Models
+# Model
 # ---------------------------------------------------------------------------------------------
 
-class _ArrayModel:
-    """model(x_rows, p_rows) -> (rows,) or (rows, m); Jacobian by central differences."""
+def _length(t) -> int:
+    """1 for a scalar Warp type, N for a wp.vecN, 0 for anything else."""
+    return 1 if t in (float, wp.float32) else int(getattr(t, "_length_", 0))
 
-    def __init__(self, fn: Callable):
-        self.fn = fn
-        self.m = None
-        self.float64 = True
 
-    def predict(self, x: cp.ndarray, p: cp.ndarray) -> cp.ndarray:
-        out = self.fn(x, p)
-        out = cp.asarray(out)
-        if out.ndim == 0 or out.shape[0] != p.shape[0]:
-            raise ValueError(
-                f"model(x, p) must return one prediction per row: got shape {out.shape} for "
-                f"{p.shape[0]} rows. Use p[:, k] for parameter k (p has shape (rows, P)) and "
-                "keep the row axis (no sum or mean over rows).")
-        return out.reshape(out.shape[0], -1)
+def _is_warp_function(model) -> bool:
+    # warp's Function class; its module moved between Warp versions.
+    return type(model).__name__ == "Function" and type(model).__module__.startswith("warp")
 
-    def setup(self, x: cp.ndarray, p0_rows: cp.ndarray) -> None:
-        rows = min(8, x.shape[0])
-        out = self.predict(x[:rows], p0_rows[:rows])
-        self.m = out.shape[1]
-        self.float64 = out.dtype == cp.float64
-        # Rows must be independent: permuting the rows permutes the output, and the first
-        # rows give the same output alone (no sums or means over rows).
-        if rows > 1:
-            perm = cp.arange(rows)[::-1]
-            swapped = self.predict(x[:rows][perm], p0_rows[:rows][perm])
-            half = self.predict(x[:rows // 2], p0_rows[:rows // 2])
-            if not (cp.allclose(swapped, out[perm], rtol=1e-5, atol=1e-6, equal_nan=True) and
-                    cp.allclose(half, out[:rows // 2], rtol=1e-5, atol=1e-6, equal_nan=True)):
-                raise ValueError(
-                    "model(x, p) mixes rows: row i of the output must depend only on row i of x "
-                    "and p (no sums, means or cumulative operations over the row axis).")
 
-    def evaluate(self, x: cp.ndarray, p: cp.ndarray, want_jacobian: bool):
-        """Predictions (rows, m) and, if asked, the Jacobian (rows, m, P), both float32."""
-        p64 = p.astype(cp.float64)
-        f = self.predict(x, p64)
-        if not want_jacobian:
-            return f.astype(cp.float32), None
-        rel = 1e-6 if self.float64 else 3e-4
-        jac = cp.empty((p.shape[0], self.m, p.shape[1]), cp.float32)
-        for k in range(p.shape[1]):
-            h = rel * cp.maximum(1.0, cp.abs(p64[:, k]))
-            plus, minus = p64.copy(), p64.copy()
-            plus[:, k] += h
-            minus[:, k] -= h
-            diff = (self.predict(x, plus) - self.predict(x, minus)) / (2.0 * h)[:, None]
-            jac[:, :, k] = diff
-        return f.astype(cp.float32), jac
+class _Workspace:
+    """Device buffers of one evaluation of ``rows`` samples (reused while large enough)."""
+
+    def __init__(self, model: "_WarpModel", rows: int):
+        m, num_params, device = model.m, model.num_params, model.device
+        self.rows = rows
+        self.sample = wp.empty(rows, dtype=wp.int32, device=device)
+        self.params = wp.empty(rows, dtype=model.p_type, device=device, requires_grad=True)
+        self.pred = wp.empty((rows, m), dtype=float, device=device, requires_grad=True)
+        self.jac = wp.empty((rows, m, num_params), dtype=float, device=device)
+        seeds = np.zeros((m, rows, m), np.float32)
+        for r in range(m):
+            seeds[r, :, r] = 1.0
+        self.seeds = [wp.array(seeds[r], dtype=float, device=device) for r in range(m)]
 
 
 class _WarpModel:
-    """A @wp.func model(x, p) with Warp autodiff Jacobians (or central differences)."""
+    """A ``@wp.func`` model(x, p) evaluated per sample, with autodiff or central-difference
+    Jacobians. All kernels run on the device's current Warp stream."""
 
-    def __init__(self, fn, jacobian: str):
-        import warp as wp
-
-        self.wp = wp
-        self.fn = fn
+    def __init__(self, fn, jacobian: str, device):
         types = list(fn.input_types.values())
         if len(types) != 2:
-            raise TypeError("a Warp model takes two arguments: model(x, p)")
+            raise TypeError(f"fit: the Warp model takes {len(types)} arguments (expected 2: "
+                            "model(x, p)). Fix: declare it as @wp.func def model(x: float, "
+                            "p: wp.vec3) -> float.")
+        self.fn = fn
+        self.device = device
         self.x_type, self.p_type = types
-        self.y_type = fn.value_type if fn.value_type is not None else float
-        def length(t):
-            return 1 if t in (float, wp.float32) else int(getattr(t, "_length_", 0))
-
-        self.num_params = length(self.p_type)
-        self.x_dim = length(self.x_type)
-        self.m = length(self.y_type)
+        self.y_type = getattr(fn, "func", None) and fn.func.__annotations__.get("return")
+        self.y_type = self.y_type or fn.value_type or float
+        self.num_params = _length(self.p_type)
+        self.x_dim = _length(self.x_type)
+        self.m = _length(self.y_type)
         if not (self.num_params and self.x_dim and self.m):
-            raise TypeError("Warp model types: x must be float or a wp.vecN, p a wp.vecP (e.g. "
-                            "wp.vec3, or wp.types.vector(length=5, dtype=float)), and the "
-                            "result float or a wp.vecM")
+            raise TypeError("fit: unsupported Warp model types (got x: "
+                            f"{self.x_type}, p: {self.p_type}, result: {self.y_type}; expected "
+                            "x float or wp.vecN, p wp.vecP (e.g. wp.vec3 or "
+                            "wp.types.vector(length=5, dtype=float)), result float or wp.vecM). "
+                            "Fix: annotate the arguments and the return type with those types.")
         self.mode = jacobian
-        self.float64 = False
-        self._kernel = self._make_kernel()
+        self._kernels = self._make_kernels()
+        self._workspace: Optional[_Workspace] = None
+        self._retired = []   # buffers replaced while kernels may still read them
 
-    def _make_kernel(self):
-        wp = self.wp
-        fn, XT, PT, YT = self.fn, self.x_type, self.p_type, self.y_type
+    def _make_kernels(self):
+        fn, XT, PT = self.fn, self.x_type, self.p_type
+        P, M = self.num_params, self.m
 
         @wp.kernel(module="unique")
-        def predict(x: wp.array(dtype=XT), p: wp.array(dtype=PT), y: wp.array(dtype=YT)):
+        def gather(pointers: wp.array(dtype=wp.uint64), ids: wp.array(dtype=wp.int32),
+                   use_ids: int, num_factors: int, width: int, params: wp.array(dtype=PT),
+                   sample: wp.array(dtype=wp.int32)):
+            # Item t: the parameters its state pointer addresses, and its sample.
             t = wp.tid()
-            y[t] = fn(x[t], p[t])
-
-        return predict
-
-    def setup(self, x: cp.ndarray, p0_rows: cp.ndarray) -> None:
-        if p0_rows.shape[1] != self.num_params:
-            raise ValueError(f"p0 has {p0_rows.shape[1]} parameters but the Warp model's p is "
-                             f"a vector of {self.num_params}")
-        if self.mode == "auto":
-            rows = min(256, x.shape[0])
-            _, auto = self._autodiff(x[:rows], p0_rows[:rows])
-            fd = _ArrayModel(lambda xx, pp: self._predict(xx, pp.astype(cp.float32)))
-            fd.m, fd.float64 = self.m, False
-            _, numeric = fd.evaluate(x[:rows], p0_rows[:rows], True)
-            scale = max(1.0, float(cp.max(cp.abs(numeric))))
-            err = float(cp.max(cp.abs(auto - numeric))) / scale
-            if not math.isfinite(err) or err > 1e-2:
-                warnings.warn(f"Warp autodiff Jacobian differs from finite differences at p0 "
-                              f"(relative error {err:.3g}); using finite differences. Check the "
-                              "model for in-place writes or data-dependent loops.", stacklevel=3)
-                self.mode = "numeric"
+            a = wp.array(ptr=pointers[t], shape=(width,), dtype=float)
+            if wp.static(P == 1):
+                params[t] = a[0]
             else:
-                self.mode = "autodiff"
+                v = PT()
+                for k in range(P):
+                    v[k] = a[k]
+                params[t] = v
+            if use_ids:
+                sample[t] = ids[t]
+            else:
+                sample[t] = t % num_factors
 
-    def _wp(self, a: cp.ndarray, dtype, requires_grad=False):
-        return self.wp.array(ptr=a.data.ptr, dtype=dtype, shape=(a.shape[0],),
-                             device=f"cuda:{a.device.id}", copy=False,
-                             requires_grad=requires_grad)
+        @wp.kernel(module="unique")
+        def predict(x: wp.array(dtype=XT), sample: wp.array(dtype=wp.int32),
+                    params: wp.array(dtype=PT), pred: wp.array2d(dtype=float)):
+            t = wp.tid()
+            y = fn(x[sample[t]], params[t])
+            if wp.static(M == 1):
+                pred[t, 0] = y
+            else:
+                for i in range(M):
+                    pred[t, i] = y[i]
 
-    def _predict(self, x: cp.ndarray, p: cp.ndarray) -> cp.ndarray:
-        x = cp.ascontiguousarray(x, dtype=cp.float32)
-        p = cp.ascontiguousarray(p, dtype=cp.float32)
-        out = cp.empty((p.shape[0], self.m), cp.float32)
-        cp.cuda.get_current_stream().synchronize()
-        device = f"cuda:{p.device.id}"
-        self.wp.launch(self._kernel, dim=p.shape[0], inputs=[self._wp(x, self.x_type),
-                       self._wp(p, self.p_type), self._wp(out, self.y_type)], device=device)
-        self.wp.synchronize_device(device)
-        return out
+        @wp.kernel(module="unique")
+        def central_differences(x: wp.array(dtype=XT), sample: wp.array(dtype=wp.int32),
+                                params: wp.array(dtype=PT), rel: float,
+                                jac: wp.array3d(dtype=float)):
+            t = wp.tid()
+            xs = x[sample[t]]
+            p = params[t]
+            for k in range(P):
+                if wp.static(P == 1):
+                    h = rel * wp.max(1.0, wp.abs(p))
+                    d = (fn(xs, p + h) - fn(xs, p - h)) / (2.0 * h)
+                else:
+                    h = rel * wp.max(1.0, wp.abs(p[k]))
+                    e = PT()
+                    e[k] = h
+                    d = (fn(xs, p + e) - fn(xs, p - e)) / (2.0 * h)
+                if wp.static(M == 1):
+                    jac[t, 0, k] = d
+                else:
+                    for i in range(M):
+                        jac[t, i, k] = d[i]
 
-    def _autodiff(self, x: cp.ndarray, p: cp.ndarray):
-        wp = self.wp
-        x = cp.ascontiguousarray(x, dtype=cp.float32)
-        p = cp.ascontiguousarray(p, dtype=cp.float32)
-        n = p.shape[0]
-        cp.cuda.get_current_stream().synchronize()
-        xw = self._wp(x, self.x_type)
-        pw = self._wp(p, self.p_type, requires_grad=True)
-        out = cp.empty((n, self.m), cp.float32)
-        yw = self._wp(out, self.y_type, requires_grad=True)
-        jac = cp.empty((n, self.m, self.num_params), cp.float32)
+        @wp.kernel(module="unique")
+        def store_gradient(grad: wp.array(dtype=PT), row: int, jac: wp.array3d(dtype=float)):
+            t = wp.tid()
+            g = grad[t]
+            if wp.static(P == 1):
+                jac[t, row, 0] = g
+            else:
+                for k in range(P):
+                    jac[t, row, k] = g[k]
+
+        return dict(gather=gather, predict=predict, central_differences=central_differences,
+                    store_gradient=store_gradient)
+
+    def workspace(self, rows: int) -> _Workspace:
+        """Buffers for ``rows`` samples; grows (never shrinks) and keeps replaced buffers alive."""
+        if self._workspace is None or self._workspace.rows < rows:
+            if self._workspace is not None:
+                self._retired.append(self._workspace)
+            self._workspace = _Workspace(self, rows)
+        return self._workspace
+
+    def gather(self, pointers: wp.array, ids: Optional[wp.array], num_factors: int, width: int,
+               rows: int) -> _Workspace:
+        """Reads each item's parameters through its state pointer and its sample index."""
+        ws = self.workspace(rows)
+        wp.launch(self._kernels["gather"], dim=rows, device=self.device,
+                  inputs=[pointers, ids, int(ids is not None), num_factors, width, ws.params,
+                          ws.sample])
+        return ws
+
+    def evaluate(self, x: wp.array, ws: _Workspace, rows: int, mode: Optional[str]) -> None:
+        """``ws.pred`` (rows, m) and, unless ``mode`` is None, ``ws.jac`` (rows, m, P) at
+        ``ws.params`` for samples ``ws.sample``; ``mode`` is "autodiff" or "numeric"."""
+        k = self._kernels
+        inputs = [x, ws.sample, ws.params]
+        if mode != "autodiff":
+            wp.launch(k["predict"], dim=rows, inputs=inputs + [ws.pred], device=self.device)
+            if mode == "numeric":
+                wp.launch(k["central_differences"], dim=rows, device=self.device,
+                          inputs=inputs + [_FD_STEP, ws.jac])
+            return
         tape = wp.Tape()
-        device = f"cuda:{p.device.id}"
         with tape:
-            wp.launch(self._kernel, dim=n, inputs=[xw, pw, yw], device=device)
+            wp.launch(k["predict"], dim=rows, inputs=inputs + [ws.pred], device=self.device)
         for r in range(self.m):
-            seed = cp.zeros((n, self.m), cp.float32)
-            seed[:, r] = 1.0
-            cp.cuda.get_current_stream().synchronize()
-            tape.backward(grads={yw: self._wp(seed, self.y_type)})
-            wp.synchronize_device(device)
-            jac[:, r, :] = _device_view(pw.grad.ptr, (n, self.num_params))
+            tape.backward(grads={ws.pred: ws.seeds[r]})
+            wp.launch(k["store_gradient"], dim=rows, inputs=[ws.params.grad, r, ws.jac],
+                      device=self.device)
             tape.zero()
-        wp.synchronize_device(device)
-        return out, jac
 
-    def evaluate(self, x: cp.ndarray, p: cp.ndarray, want_jacobian: bool):
-        if not want_jacobian:
-            return self._predict(x, p), None
-        if self.mode == "numeric":
-            fd = _ArrayModel(lambda xx, pp: self._predict(xx, pp.astype(cp.float32)))
-            fd.m, fd.float64 = self.m, False
-            return fd.evaluate(x, p, True)
-        return self._autodiff(x, p)
+    def choose_jacobian(self, x: wp.array, p0_rows: np.ndarray) -> None:
+        """``jacobian="auto"``: autodiff unless it disagrees with central differences at p0."""
+        if self.mode != "auto":
+            return
+        rows = min(256, p0_rows.shape[0])
+        ws = self.workspace(rows)
+        wp.copy(ws.sample, wp.array(np.arange(rows, dtype=np.int32), device=self.device))
+        wp.copy(ws.params, wp.array(np.ascontiguousarray(p0_rows[:rows], np.float32),
+                                    dtype=self.p_type, device=self.device), count=rows)
+        self.evaluate(x, ws, rows, "autodiff")
+        auto = ws.jac.numpy()[:rows].reshape(rows, -1)
+        self.evaluate(x, ws, rows, "numeric")
+        numeric = ws.jac.numpy()[:rows].reshape(rows, -1)
+        # Rows where the model is not finite (a start outside its domain) say nothing.
+        finite = np.all(np.isfinite(auto) & np.isfinite(numeric), axis=1)
+        if not finite.any():
+            self.mode = "autodiff"
+            return
+        auto, numeric = auto[finite], numeric[finite]
+        scale = max(1.0, float(np.max(np.abs(numeric))))
+        err = float(np.max(np.abs(auto - numeric))) / scale
+        if err > 1e-2:
+            warnings.warn(f"Warp autodiff Jacobian differs from finite differences at p0 "
+                          f"(relative error {err:.3g}); using finite differences. Check the "
+                          "model for in-place writes or data-dependent loops.", stacklevel=3)
+            self.mode = "numeric"
+        else:
+            self.mode = "autodiff"
 
 
-def _make_model(model, jacobian: str):
-    # A @wp.func (warp's Function class; its module moved between Warp versions).
-    is_warp = type(model).__name__ == "Function" and type(model).__module__.startswith("warp")
-    if is_warp:
-        if jacobian not in ("auto", "autodiff", "numeric"):
-            raise ValueError("jacobian must be 'auto', 'autodiff' or 'numeric'")
-        return _WarpModel(model, jacobian)
-    if not callable(model):
-        raise TypeError("model must be a function model(x, p) or a Warp @wp.func")
-    return _ArrayModel(model)
+def _make_model(model, jacobian: str, device) -> _WarpModel:
+    if not _is_warp_function(model):
+        raise TypeError(
+            f"fit: model must be a Warp function (got {type(model).__name__}). Fix: write it "
+            "for one sample, e.g. @wp.func def model(x: float, p: wp.vec3) -> float: return "
+            "p[0] * wp.exp(-p[1] * x) + p[2].")
+    if jacobian not in ("auto", "autodiff", "numeric"):
+        raise ValueError(f"fit: jacobian must be 'auto', 'autodiff' or 'numeric' (got "
+                         f"{jacobian!r}).")
+    return _WarpModel(model, jacobian, device)
 
 
 # ---------------------------------------------------------------------------------------------
 # The factor: one residual per sample
 # ---------------------------------------------------------------------------------------------
 
+@wp.kernel
+def _write_residuals(pred: wp.array2d(dtype=float), jac: wp.array3d(dtype=float),
+                     sample: wp.array(dtype=wp.int32), y: wp.array2d(dtype=float),
+                     w: wp.array2d(dtype=float), num_params: int, want_jacobian: int,
+                     residuals: wp.array2d(dtype=float), jacobians: wp.array3d(dtype=float)):
+    # residual = w * (pred - y); samples with w = 0 (NaN y) contribute nothing.
+    t = wp.tid()
+    s = sample[t]
+    for i in range(pred.shape[1]):
+        wi = w[s, i]
+        r = float(0.0)
+        if wi > 0.0:
+            r = (pred[t, i] - y[s, i]) * wi
+        residuals[t, i] = r
+        if want_jacobian:
+            for k in range(jacobians.shape[2]):
+                v = float(0.0)
+                if wi > 0.0 and k < num_params:
+                    v = jac[t, i, k] * wi
+                jacobians[t, i, k] = v
+
+
 class _SampleFactors(_core.CustomFactorBatch):
     """residual_t = w_t * (model(x_t, p_fit(t)) - y_t) for every sample t."""
 
-    def __init__(self, model, x, y, w, num_params, width):
+    def __init__(self, model: _WarpModel, x: wp.array, y: wp.array, w: wp.array,
+                 num_params: int, width: int):
         super().__init__(model.m, [width], y.shape[0])
         self.model, self.x, self.y, self.w = model, x, y, w
         self.num_params, self.width = num_params, width
+        self._streams: Dict[int, wp.Stream] = {}
+
+    def _stream(self, handle: int) -> wp.Stream:
+        stream = self._streams.get(handle)
+        if stream is None:
+            stream = self._streams[handle] = warp_stream(handle)
+        return stream
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, ids_ptr, num_ids):
         n = num_ids if num_ids else self.num_active_factors
-        m, width, num_params = self.model.m, self.width, self.num_params
-        with _cupy_stream(stream_handle):
-            pointers = _device_view(sp_ptr, (n,), cp.uint64)
-            params = cp.empty((n, width), cp.float32)
-            threads = 256
-            _GATHER(((n * width + threads - 1) // threads,), (threads,),
-                    (pointers, params, np.int64(n), np.int32(width)))
+        m, width, device = self.model.m, self.width, self.model.device
+
+        def wrap(ptr, dtype, shape):
+            return wp.array(ptr=ptr, dtype=dtype, shape=shape, device=device, copy=False)
+
+        with wp.ScopedStream(self._stream(stream_handle), sync_enter=False):
             # Item t evaluates factor ids[t], or t % N without ids (FactorBatch.Evaluate).
-            if ids_ptr:
-                samples = _device_view(ids_ptr, (n,), cp.int32)
-            elif n == self.num_active_factors:
-                samples = slice(0, n)
-            else:
-                samples = cp.arange(n) % self.num_active_factors
-            x, y, w = self.x[samples], self.y[samples], self.w[samples]
-            pred, jac = self.model.evaluate(x, params[:, :num_params], jac_ptr != 0)
-            res = _device_view(res_ptr, (n, m))
-            res[...] = cp.where(w > 0, (pred - y) * w, 0.0)
-            if jac_ptr:
-                out = _device_view(jac_ptr, (n, m, width))
-                out[...] = 0.0
-                out[:, :, :num_params] = cp.where(w[:, :, None] > 0, jac * w[:, :, None], 0.0)
+            ids = wrap(ids_ptr, wp.int32, (n,)) if ids_ptr else None
+            ws = self.model.gather(wrap(sp_ptr, wp.uint64, (n,)), ids, self.num_active_factors,
+                                   width, n)
+            self.model.evaluate(self.x, ws, n, self.model.mode if jac_ptr else None)
+            wp.launch(_write_residuals, dim=n, device=device,
+                      inputs=[ws.pred, ws.jac, ws.sample, self.y, self.w, self.num_params,
+                              int(jac_ptr != 0), wrap(res_ptr, float, (n, m)),
+                              wrap(jac_ptr, float, (n, m, width)) if jac_ptr else None])
         return True
 
 
@@ -412,13 +434,6 @@ def _loss(loss, scale: float):
     return table[loss]()
 
 
-def _as_device(a, name: str) -> cp.ndarray:
-    try:
-        return cp.asarray(a, dtype=cp.float64)
-    except Exception as exc:  # noqa: BLE001
-        raise TypeError(f"{name} must be array-like (NumPy, CuPy, list); got {type(a)}") from exc
-
-
 def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]] = None,
         loss_scale: float = 1.0, bounds: Optional[Tuple[Any, Any]] = None,
         starts: Optional[Union[int, Sequence]] = None, method: str = "lm",
@@ -436,8 +451,10 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
       with NaN (NaN samples are skipped; +-inf in ``y`` is an error).
 
     Args:
-        model: ``model(x, p)`` (array function or Warp ``@wp.func``; see the module docs).
-        x: Inputs (NumPy, CuPy or lists).
+        model: Warp function ``@wp.func def model(x, p)`` of one sample: ``x`` a float or
+            ``wp.vecN``, ``p`` a ``wp.vecP`` (a float for one parameter), returning a float or
+            ``wp.vecM`` (see the module docs).
+        x: Inputs (NumPy, lists or Warp arrays).
         y: Observations.
         p0: Initial parameters. A poor start can end in a local minimum: use ``starts``.
         sigma: Measurement standard deviation: a scalar or an array broadcastable to ``y``,
@@ -456,8 +473,8 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
             robust one with ``loss``) wins; starts where the model is not finite never win.
         method: ``"lm"`` (Levenberg-Marquardt, default, robust) or ``"gn"`` (Gauss-Newton).
         max_iterations: Iteration cap of the solve.
-        jacobian: Warp models: ``"auto"`` (autodiff, checked against finite differences at
-            ``p0``), ``"autodiff"`` or ``"numeric"``. Array models always use central differences.
+        jacobian: ``"auto"`` (autodiff, checked against central differences at ``p0``),
+            ``"autodiff"`` or ``"numeric"`` (central differences).
         seed: Seed of the random starts.
         stream: CUDA stream (a new one by default).
 
@@ -465,127 +482,140 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
         :class:`FitResult`. Check ``result.converged`` and ``result.reduced_chi2``.
 
     Raises:
-        ValueError: inconsistent shapes, more than 12 parameters, or a model that mixes rows.
+        TypeError: the model is not a ``@wp.func`` of two arguments with supported types.
+        ValueError: inconsistent shapes or more than 12 parameters.
     """
     stream = stream if stream is not None else _core.CudaStream()
-    fitted = _make_model(model, jacobian)
+    device = wp.get_cuda_device()
+
+    def _host(a, name):
+        return to_numpy(a, np.float64, name, "fit")
+
+    fitted = _make_model(model, jacobian, device)
 
     # ---- shapes ------------------------------------------------------------------------------
-    y_in = _as_device(y, "y")
-    x_in = _as_device(x, "x")
-    p0_d = _as_device(p0, "p0")
+    y_in = _host(y, "y")
+    x_in = _host(x, "x")
+    p0_d = _host(p0, "p0")
     if p0_d.ndim not in (1, 2):
         raise ValueError(f"p0 must be (P,) or (B, P); got shape {p0_d.shape}")
     num_params = p0_d.shape[-1]
     if num_params > _MAX_PARAMETERS:
         raise ValueError(f"fit() supports up to {_MAX_PARAMETERS} parameters per fit, got "
                          f"{num_params}; build the problem with pycunls.Problem instead")
+    if num_params != fitted.num_params:
+        raise ValueError(f"p0 has {num_params} parameters but the Warp model's p is a vector "
+                         f"of {fitted.num_params}")
     batched, num_fits, n = _layout(x_in, y_in, p0_d)
     y_d = (y_in if batched else y_in[None]).reshape(num_fits, n, -1)
     if x_in.shape[:2] == (num_fits, n) and batched and not (x_in.shape[0] == n and num_fits != n):
         x_d = x_in
     else:
-        x_d = cp.broadcast_to(x_in[None], (num_fits,) + x_in.shape)
+        x_d = np.broadcast_to(x_in[None], (num_fits,) + x_in.shape)
     if p0_d.ndim == 1:
-        p0_d = cp.broadcast_to(p0_d, (num_fits, num_params))
+        p0_d = np.broadcast_to(p0_d, (num_fits, num_params))
     elif p0_d.shape[0] != num_fits:
         raise ValueError(f"p0 has {p0_d.shape[0]} rows but there are {num_fits} fits")
-    if bool(cp.any(cp.isinf(y_d))):
+    if np.any(np.isinf(y_d)):
         raise ValueError("y contains +-inf; mark missing samples with NaN (they are skipped)")
     if sigma is None:
-        sig_d = cp.ones_like(y_d)
+        sig_d = np.ones_like(y_d)
     else:
-        sig_d = cp.broadcast_to(_as_device(sigma, "sigma"), y_in.shape)
+        sig_d = np.broadcast_to(_host(sigma, "sigma"), y_in.shape)
         sig_d = (sig_d if batched else sig_d[None]).reshape(y_d.shape)
-        observed = ~cp.isnan(y_d)
-        if bool(cp.any(observed & ~(cp.isfinite(sig_d) & (sig_d > 0)))):
+        observed = ~np.isnan(y_d)
+        if np.any(observed & ~(np.isfinite(sig_d) & (sig_d > 0))):
             raise ValueError("sigma must be finite and positive for every observed sample "
                              "(NaN samples of y are skipped)")
 
     # ---- starts ------------------------------------------------------------------------------
     lower = upper = None
     if bounds is not None:
-        lower = cp.broadcast_to(_as_device(bounds[0], "bounds[0]"), (num_fits, num_params))
-        upper = cp.broadcast_to(_as_device(bounds[1], "bounds[1]"), (num_fits, num_params))
-        if bool(cp.any(lower > upper)):
+        lower = np.broadcast_to(_host(bounds[0], "bounds[0]"), (num_fits, num_params))
+        upper = np.broadcast_to(_host(bounds[1], "bounds[1]"), (num_fits, num_params))
+        if np.any(lower > upper):
             raise ValueError("bounds: lower must not exceed upper")
     num_starts = 1
     if starts is not None:
         if isinstance(starts, (int, np.integer)):
             num_starts = int(starts)
-            if lower is None or not (bool(cp.all(cp.isfinite(lower)))
-                                     and bool(cp.all(cp.isfinite(upper)))):
+            if lower is None or not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
                 raise ValueError("starts=K needs finite bounds to draw starts from; pass bounds "
                                  "or an explicit (K, P) array of starts")
-            rng = cp.random.default_rng(seed)
+            rng = np.random.default_rng(seed)
             draws = lower[None] + (upper - lower)[None] * rng.random(
                 (num_starts, num_fits, num_params))
             draws[0] = p0_d
             p0_all = draws
         else:
-            s = _as_device(starts, "starts")
+            s = _host(starts, "starts")
             if s.ndim != 2 or s.shape[1] != num_params:
                 raise ValueError(f"starts must be an int or a (K, P) array; got shape {s.shape}")
             num_starts = s.shape[0]
-            p0_all = cp.broadcast_to(s[:, None, :], (num_starts, num_fits, num_params))
+            p0_all = np.broadcast_to(s[:, None, :], (num_starts, num_fits, num_params))
         total = num_starts * num_fits
         p0_flat = p0_all.reshape(total, num_params)
-        x_rep = cp.broadcast_to(x_d[None], (num_starts,) + x_d.shape).reshape((total,) +
-                                                                            x_d.shape[1:])
-        y_rep = cp.broadcast_to(y_d[None], (num_starts,) + y_d.shape).reshape((total,) +
-                                                                            y_d.shape[1:])
-        sig_rep = cp.broadcast_to(sig_d[None], (num_starts,) + sig_d.shape).reshape(
-            (total,) + sig_d.shape[1:])
+
+        def repeat(a):
+            return np.broadcast_to(a[None], (num_starts,) + a.shape).reshape((total,) + a.shape[1:])
+
+        x_rep, y_rep, sig_rep = repeat(x_d), repeat(y_d), repeat(sig_d)
         if lower is not None:
-            lower = cp.broadcast_to(lower[None], (num_starts, num_fits, num_params)).reshape(
-                total, num_params)
-            upper = cp.broadcast_to(upper[None], (num_starts, num_fits, num_params)).reshape(
-                total, num_params)
+            lower, upper = repeat(lower), repeat(upper)
     else:
         total, p0_flat, x_rep, y_rep, sig_rep = num_fits, p0_d, x_d, y_d, sig_d
 
     # ---- per-sample arrays -------------------------------------------------------------------
-    x_s = cp.ascontiguousarray(x_rep.reshape((total * n,) + x_rep.shape[2:]))
-    p0_rows = cp.repeat(cp.ascontiguousarray(p0_flat), n, axis=0)
-    fitted.setup(x_s if isinstance(fitted, _ArrayModel) else x_s.astype(cp.float32),
-                 p0_rows if isinstance(fitted, _ArrayModel) else p0_rows.astype(cp.float32))
+    rows = total * n
+    x_s = np.ascontiguousarray(x_rep, np.float32)
+    if x_s.size != rows * fitted.x_dim:
+        raise ValueError(f"x has {x_s.size // rows} values per sample but the Warp model's x "
+                         f"has {fitted.x_dim}; x must be (n,) / (B, n) for a float x or "
+                         "(n, d) / (B, n, d) for a wp.vecd x")
+    scalar_x = fitted.x_type in (float, wp.float32)
+    x_s = x_s.reshape(rows) if scalar_x else x_s.reshape(rows, fitted.x_dim)
+    y_s = y_rep.reshape(rows, -1)
+    if y_s.shape[1] != fitted.m:
+        raise ValueError(f"the model returns {fitted.m} values per sample but y has "
+                         f"{y_s.shape[1]}; y must be (n,) / (B, n) for scalar models or "
+                         "(n, m) / (B, n, m)")
     m = fitted.m
-    y_s = y_rep.reshape(total * n, -1)
-    if y_s.shape[1] != m:
-        raise ValueError(f"the model returns {m} values per sample but y has {y_s.shape[1]}; "
-                         "y must be (n,) / (B, n) for scalar models or (n, m) / (B, n, m)")
-    sig = sig_rep.reshape(total * n, -1)
-    valid = cp.isfinite(y_s)
-    w = cp.where(valid, 1.0 / sig, 0.0).astype(cp.float32)
-    y_clean = cp.where(valid, y_s, 0.0).astype(cp.float32)
-    if not isinstance(fitted, _ArrayModel):
-        x_s = x_s.astype(cp.float32)
+    sig = sig_rep.reshape(rows, -1)
+    valid = np.isfinite(y_s)
+    w = np.where(valid, 1.0 / sig, 0.0).astype(np.float32)
+    y_clean = np.where(valid, y_s, 0.0).astype(np.float32)
 
     # ---- problem -----------------------------------------------------------------------------
     width = next(k for k in _VECTOR_SIZES if k >= num_params)
-    params = cp.zeros((total, width), cp.float32)
-    params[:, :num_params] = p0_flat
-    if lower is not None:
-        params[:, :num_params] = cp.clip(params[:, :num_params], lower, upper)
-    state_cls = getattr(_core, f"VectorStateBatch{width}")
-    states = state_cls(params, total)
-    states.set_num_active_states(total)
-    lo = hi = None
-    if lower is not None:
-        lo = cp.full((total, width), -cp.inf, cp.float32)
-        hi = cp.full((total, width), cp.inf, cp.float32)
-        lo[:, :num_params], hi[:, :num_params] = lower, upper
-        states.set_bounds(lo, hi)
-    factors = _SampleFactors(fitted, x_s, y_clean, w, num_params, width)
-    factors.set_num_active_factors(total * n)
-    fit_of_sample = cp.repeat(cp.arange(total, dtype=cp.int32), n)
-    loss_batch = _loss(loss, loss_scale)
-    problem = _core.Problem()
-    problem.add_state_batch(states)
-    problem.add_factor_batch(factors, [states], fit_of_sample, loss_batch)
-    fit_ids = cp.arange(total, dtype=cp.int32)
-    if total > 1:
-        problem.set_problem_partition(total, [fit_ids])
+    start = np.zeros((total, width), np.float32)
+    start[:, :num_params] = p0_flat if lower is None else np.clip(p0_flat, lower, upper)
+    solver_stream = warp_stream(stream)
+    with wp.ScopedStream(solver_stream):
+        x_dev = wp.array(x_s, dtype=fitted.x_type, device=device)
+        probe_fits = -(-256 // n)  # choose_jacobian probes at most 256 rows
+        fitted.choose_jacobian(x_dev, np.repeat(p0_flat[:probe_fits], n, axis=0))
+        params = wp.array(start, dtype=float, device=device)
+        state_cls = getattr(_core, f"VectorStateBatch{width}")
+        states = state_cls(params, total)
+        states.set_num_active_states(total)
+        if lower is not None:
+            lo = np.full((total, width), -np.inf, np.float32)
+            hi = np.full((total, width), np.inf, np.float32)
+            lo[:, :num_params], hi[:, :num_params] = lower, upper
+            lo, hi = wp.array(lo, device=device), wp.array(hi, device=device)
+            states.set_bounds(lo, hi)
+        factors = _SampleFactors(fitted, x_dev, wp.array(y_clean, device=device),
+                                 wp.array(w, device=device), num_params, width)
+        factors.set_num_active_factors(rows)
+        fit_of_sample = wp.array(np.repeat(np.arange(total, dtype=np.int32), n), device=device)
+        loss_batch = _loss(loss, loss_scale)
+        problem = _core.Problem()
+        problem.add_state_batch(states)
+        problem.add_factor_batch(factors, [states], fit_of_sample, loss_batch)
+        fit_ids = wp.array(np.arange(total, dtype=np.int32), device=device)
+        if total > 1:
+            problem.set_problem_partition(total, [fit_ids])
+        wp.synchronize_stream(solver_stream)
 
     base = _core.MinimizerOptions()
     base.max_num_iterations = int(max_iterations)
@@ -605,63 +635,70 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
         summary = al.minimize(stream, problem)
     else:
         summary = minimizer.minimize(stream, problem)
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())
 
     # ---- results -----------------------------------------------------------------------------
     # Why each fit stopped (with bounds: the wrapped minimizer's last solve).
     codes = np.asarray(minimizer.subproblem_termination_reasons())
-    p_final = params[:, :num_params].astype(cp.float64)
-    pred, jac = fitted.evaluate(x_s, cp.repeat(p_final, n, axis=0), True)
+    with wp.ScopedStream(solver_stream):
+        p_final = params.numpy()[:, :num_params].astype(np.float64)
+        ws = fitted.workspace(rows)
+        wp.copy(ws.sample, wp.array(np.arange(rows, dtype=np.int32), device=device))
+        p_rows = np.ascontiguousarray(np.repeat(p_final, n, axis=0), np.float32)
+        wp.copy(ws.params, wp.array(p_rows, dtype=fitted.p_type, device=device), count=rows)
+        fitted.evaluate(x_dev, ws, rows, fitted.mode)
+        pred = ws.pred.numpy()[:rows].astype(np.float64)
+        jac = ws.jac.numpy()[:rows].astype(np.float64)
     # Skipped (NaN) samples contribute nothing; a non-finite prediction for an observed sample
     # stays non-finite, so a failed start can never look like a perfect fit.
-    r_obs = cp.where(valid, (pred - y_clean) * w, 0.0)
-    r = cp.where(valid, r_obs, cp.nan).reshape(total, n, m)
-    rr = r_obs.reshape(total, n * m).astype(cp.float64)
-    cost = 0.5 * cp.sum(rr * rr, axis=1)
-    counts = cp.sum(valid.reshape(total, n * m), axis=1)
+    w64 = w.astype(np.float64)
+    with np.errstate(invalid="ignore", over="ignore"):
+        r_obs = np.where(valid, (pred - y_clean) * w64, 0.0)
+        r = np.where(valid, r_obs, np.nan).reshape(total, n, m)
+        rr = r_obs.reshape(total, n * m)
+        cost = 0.5 * np.sum(rr * rr, axis=1)
+    counts = np.sum(valid.reshape(total, n * m), axis=1)
     dof = counts - num_params
-    chi2 = cp.where(dof > 0, 2.0 * cost / cp.maximum(dof, 1), cp.nan)
-    usable = cp.all(cp.isfinite(p_final), axis=1) & cp.isfinite(cost)
+    chi2 = np.where(dof > 0, 2.0 * cost / np.maximum(dof, 1), np.nan)
+    usable = np.all(np.isfinite(p_final), axis=1) & np.isfinite(cost)
 
     # Best start per fit, by the objective that was minimized (the robust one with a loss);
     # starts with non-finite parameters or cost cannot win.
     start_index = None
     if num_starts > 1:
-        score = _objective(loss_batch, rr.reshape(total, n, m), cost, stream)
-        c = cp.where(usable & cp.isfinite(score), score, cp.inf).reshape(num_starts, num_fits)
-        best = cp.argmin(c, axis=0)
-        pick = best * num_fits + cp.arange(num_fits)
-        start_index = cp.asnumpy(best)
+        score = _objective(loss_batch, rr.reshape(total, n, m), cost, stream, device)
+        c = np.where(usable & np.isfinite(score), score, np.inf).reshape(num_starts, num_fits)
+        best = np.argmin(c, axis=0)
+        pick = best * num_fits + np.arange(num_fits)
+        start_index = best
     else:
-        pick = cp.arange(num_fits)
-    jw = (jac * w[:, :, None]).reshape(total, n * m, num_params)[pick].astype(cp.float64)
+        pick = np.arange(num_fits)
+    jw = (jac * w64[:, :, None]).reshape(total, n * m, num_params)[pick]
     # Only finite Jacobians are inverted; the others get undefined (NaN) errors.
-    ok = usable[pick] & cp.all(cp.isfinite(jw.reshape(jw.shape[0], -1)), axis=1)
-    jw = cp.where(ok[:, None, None], jw, 0.0)
-    jtj = cp.einsum("bki,bkj->bij", jw, jw)
-    jtj = cp.where(ok[:, None, None], jtj, cp.eye(num_params)[None])
-    cov = cp.where(ok[:, None, None], _batched_pinv(jtj), cp.nan)
+    ok = usable[pick] & np.all(np.isfinite(jw.reshape(jw.shape[0], -1)), axis=1)
+    jw = np.where(ok[:, None, None], jw, 0.0)
+    jtj = np.einsum("bki,bkj->bij", jw, jw)
+    jtj = np.where(ok[:, None, None], jtj, np.eye(num_params)[None])
+    cov = np.where(ok[:, None, None], _batched_pinv(jtj), np.nan)
     if sigma is None:
         cov = cov * chi2[pick][:, None, None]
-    errors = cp.sqrt(cp.clip(cp.diagonal(cov, axis1=1, axis2=2), 0, None))
+    errors = np.sqrt(np.clip(np.diagonal(cov, axis1=1, axis2=2), 0, None))
 
-    codes = codes[cp.asnumpy(pick)]
+    codes = codes[pick]
     names = [_reason_name(c) for c in codes]
     converged = np.array([_converged(c) for c in codes])
     # A fit without one observed sample determines nothing.
-    empty = cp.asnumpy(counts[pick] == 0)
+    empty = counts[pick] == 0
     for k in np.flatnonzero(empty):
         names[k] = "NoObservations"
-    converged[empty | ~cp.asnumpy(usable[pick])] = False
+    converged[empty | ~usable[pick]] = False
     reason_names = np.array(names)
     message = summary.message
     if num_starts > 1 or empty.any():
         message = _fit_message(names, converged, num_starts)
     out = dict(
-        params=cp.asnumpy(p_final[pick]), param_errors=cp.asnumpy(errors),
-        covariance=cp.asnumpy(cov), converged=converged, reasons=reason_names,
-        cost=cp.asnumpy(cost[pick]), reduced_chi2=cp.asnumpy(chi2[pick]),
-        num_samples=cp.asnumpy(counts[pick] // m), residuals=cp.asnumpy(r[pick]),
+        params=p_final[pick], param_errors=errors, covariance=cov, converged=converged,
+        reasons=reason_names, cost=cost[pick], reduced_chi2=chi2[pick],
+        num_samples=counts[pick] // m, residuals=r[pick],
     )
     if not batched:
         out = {k: v[0] for k, v in out.items()}
@@ -676,9 +713,7 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
             start_index = int(start_index[0])
     elif m == 1:
         out["residuals"] = out["residuals"][..., 0]
-    return FitResult(message=message, summary=summary,
-                     jacobian_mode=getattr(fitted, "mode", "numeric")
-                     if not isinstance(fitted, _ArrayModel) else "numeric",
+    return FitResult(message=message, summary=summary, jacobian_mode=fitted.mode,
                      start_index=start_index, **out)
 
 
@@ -702,20 +737,21 @@ def _fit_message(names, converged, num_starts: int) -> str:
             (" " + "; ".join(fixes) + "." if fixes else ""))
 
 
-def _objective(loss_batch, rr: cp.ndarray, cost: cp.ndarray, stream) -> cp.ndarray:
+def _objective(loss_batch, rr: np.ndarray, cost: np.ndarray, stream, device) -> np.ndarray:
     """Per-fit objective that the solve minimized: ``cost`` without a loss, else the sum of
     ``0.5 rho(|r_t|^2)`` over the samples (``rr`` is ``(fits, n, m)`` weighted residuals)."""
     if loss_batch is None:
         return cost
-    sq = cp.ascontiguousarray(cp.sum(rr * rr, axis=2).reshape(-1), dtype=cp.float32)
-    rho = cp.empty((sq.size, 3), cp.float32)
-    cp.cuda.get_current_stream().synchronize()
-    loss_batch.evaluate(sq, rho, sq.size, stream)
-    cp.cuda.runtime.streamSynchronize(stream.get_stream())
-    return 0.5 * cp.sum(rho[:, 0].reshape(rr.shape[:2]).astype(cp.float64), axis=1)
+    sq = np.sum(rr * rr, axis=2).reshape(-1).astype(np.float32)
+    with wp.ScopedStream(warp_stream(stream)):
+        sq_dev = wp.array(sq, device=device)
+        rho = wp.empty((sq.size, 3), dtype=float, device=device)
+        loss_batch.evaluate(sq_dev, rho, sq.size, stream)
+        values = rho.numpy()[:, 0]
+    return 0.5 * np.sum(values.reshape(rr.shape[:2]).astype(np.float64), axis=1)
 
 
-def _layout(x: cp.ndarray, y: cp.ndarray, p0: cp.ndarray) -> Tuple[bool, int, int]:
+def _layout(x: np.ndarray, y: np.ndarray, p0: np.ndarray) -> Tuple[bool, int, int]:
     """(batched, number of fits B, samples per fit n) from the shapes (see fit())."""
     if p0.ndim == 2 and p0.shape[0] > 1:
         if y.ndim < 2 or y.shape[0] != p0.shape[0]:
@@ -739,17 +775,17 @@ def _layout(x: cp.ndarray, y: cp.ndarray, p0: cp.ndarray) -> Tuple[bool, int, in
                      "y (B, n) with x (n, ...) shared or (B, n, ...) per fit")
 
 
-def _batched_pinv(a: cp.ndarray) -> cp.ndarray:
+def _batched_pinv(a: np.ndarray) -> np.ndarray:
     """Inverse of each symmetric (P, P) matrix; NaN where it is singular."""
-    out = cp.full_like(a, cp.nan)
+    out = np.full_like(a, np.nan)
     try:
-        inv = cp.linalg.inv(a)
-    except cp.linalg.LinAlgError:
-        inv = cp.stack([cp.linalg.pinv(m) for m in a])
-    ok = cp.all(cp.isfinite(inv.reshape(a.shape[0], -1)), axis=1)
-    cond = cp.linalg.norm(a, axis=(1, 2)) * cp.linalg.norm(cp.nan_to_num(inv), axis=(1, 2))
+        inv = np.linalg.inv(a)
+    except np.linalg.LinAlgError:
+        inv = np.stack([np.linalg.pinv(m) for m in a])
+    ok = np.all(np.isfinite(inv.reshape(a.shape[0], -1)), axis=1)
+    cond = np.linalg.norm(a, axis=(1, 2)) * np.linalg.norm(np.nan_to_num(inv), axis=(1, 2))
     ok &= cond < 1e12
-    return cp.where(ok[:, None, None], inv, out)
+    return np.where(ok[:, None, None], inv, out)
 
 
 def _reason_name(code: int) -> str:
