@@ -15,73 +15,6 @@ constexpr size_t kSimMathBlockSize = 256;
 // Sim(2) Device helpers
 // ============================================================================
 
-/**
- * @brief Sim(2) V-matrix coefficients for the exponential/logarithm map.
- *
- * The Sim(2) V-matrix maps translation generators to actual translations:
- *   t = V(theta, lambda) * [u_x, u_y]^T
- * where V = [[X, -theta*Y], [theta*Y, X]].
- *
- * The coefficients X and Y interpolate between two regimes:
- *   - Pure rotation (|lambda| small): X = sin(theta)/theta, Y = (1-cos)/theta^2
- *   - Mixed rotation+scale: uses a blending parameter alpha =
- * lambda^2/(lambda^2+theta^2)
- *
- * Reference: Eade, "Lie Groups for 2D and 3D Transformations", Sec. 3.
- *
- * @param theta  Rotation angle
- * @param lambda Log-scale (lambda = log(s))
- * @param[out] X Diagonal element of V
- * @param[out] thetaY Off-diagonal magnitude (theta * Y)
- */
-static __device__ void ComputeVCoeffsSim2(float theta, float lambda, float &X, float &thetaY) {
-  const float lambda2 = lambda * lambda;
-  const float theta2 = theta * theta;
-
-  if (fabsf(lambda) < 1e-4f) {
-    float A, B;
-    if (theta2 > 1e-6f) {
-      float sv = sinf(theta);
-      float cv = cosf(theta);
-      A = sv / theta;
-      B = (1.0f - cv) / theta2;
-    } else {
-      A = 1.0f - theta2 / 6.0f;
-      B = 0.5f - theta2 / 24.0f;
-    }
-    X = A;
-    thetaY = theta * B;
-    return;
-  }
-
-  const float d2 = lambda2 + theta2;
-  if (d2 < 1e-10f) {
-    X = 1.0f;
-    thetaY = 0.0f;
-    return;
-  }
-
-  float A, B, C;
-  if (theta2 > 1e-6f) {
-    float sv = sinf(theta);
-    float cv = cosf(theta);
-    A = sv / theta;
-    B = (1.0f - cv) / theta2;
-    C = (1.0f - A) / theta2;
-  } else {
-    A = 1.0f - theta2 / 6.0f;
-    B = 0.5f - theta2 / 24.0f;
-    C = 1.0f / 6.0f - theta2 / 120.0f;
-  }
-
-  float alpha_coeff = lambda2 / d2;
-  float s_inv = expf(-lambda);
-  X = alpha_coeff * (1.0f - s_inv) / lambda + (1.0f - alpha_coeff) * (A - lambda * B);
-  float Y =
-      alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 + (1.0f - alpha_coeff) * (B - lambda * C);
-  thetaY = theta * Y;
-}
-
 // ============================================================================
 // Sim(2) Kernels
 // ============================================================================
@@ -116,7 +49,7 @@ __global__ void exp_sim2_kernel(const float *tangent, size_t tangent_stride, flo
   float inv_scale = expf(-lambda);
 
   float X, thetaY;
-  ComputeVCoeffsSim2(theta, lambda, X, thetaY);
+  lie_device::Sim2VCoefficients(theta, lambda, &X, &thetaY);
 
   float tx = X * ux - thetaY * uy;
   float ty = thetaY * ux + X * uy;
@@ -162,7 +95,7 @@ __global__ void log_sim2_kernel(const float *transforms, size_t transform_stride
   float lambda = logf(scale);
 
   float X, thetaY;
-  ComputeVCoeffsSim2(theta, lambda, X, thetaY);
+  lie_device::Sim2VCoefficients(theta, lambda, &X, &thetaY);
 
   float det = X * X + thetaY * thetaY;
   float ux, uy;

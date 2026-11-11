@@ -19,12 +19,14 @@
 // near-identity elements (where series and closed forms switch) to large
 // ones: SE2 exp and log against a double-precision closed form, and
 // log(exp(xi)) round trips for SE2, Sim3 and SL4; SE3 exp and log against a
+// double-precision closed form; Sim2 exp, log and the fused Sim2 Plus against a
 // double-precision closed form.
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <random>
 #include <vector>
 
@@ -36,6 +38,7 @@
 #include "cunls/math/sl_lie_math.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/state/se2_state_batch.h"
+#include "cunls/state/similarity2_state_batch.h"
 
 namespace cunls {
 namespace {
@@ -175,6 +178,64 @@ TEST_P(LieMapAccuracy, SE3ExpAndLogMatchDoublePrecision) {
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   EXPECT_LT(MaxError(ToHost(d_t), ref), 2e-6) << "exp, rotation scale " << scale;
   EXPECT_LT(MaxError(ToHost(d_log), xi), 1e-5) << "log(exp), rotation scale " << scale;
+}
+
+/**
+ * Sim(2) tangents [u, theta, lambda] with unit translations, rotations of 0.3
+ * rad and log-scales of either sign between 1e-5 and 1e-2 in magnitude, and
+ * Exp of each computed in double: T = [R(theta), V u; 0, e^-lambda], where V u is the
+ * complex product (e^{i theta} - e^-lambda) / (lambda + i theta) * (u_x + i u_y).
+ */
+void SmallLogScaleSim2(std::vector<float> &xi, std::vector<float> &ref) {
+  std::mt19937 rng(13);
+  std::normal_distribution<float> unit(0.f, 1.f), rotation(0.f, 0.3f);
+  std::uniform_real_distribution<float> log_scale(-5.f, -2.f);
+  xi.resize(kN * 4);
+  ref.resize(kN * 9);
+  for (size_t i = 0; i < kN; ++i) {
+    float *d = xi.data() + 4 * i;
+    d[0] = unit(rng);
+    d[1] = unit(rng);
+    d[2] = rotation(rng);
+    d[3] = (i % 2 == 0 ? 1.f : -1.f) * std::pow(10.f, log_scale(rng));
+    const double theta = d[2], lambda = d[3];
+    const double c = std::cos(theta), s = std::sin(theta);
+    const std::complex<double> z(lambda, theta);
+    const std::complex<double> v = (std::polar(1.0, theta) - std::exp(-lambda)) / z;
+    const std::complex<double> t = v * std::complex<double>(d[0], d[1]);
+    const double T[9] = {c, -s, t.real(), s, c, t.imag(), 0.0, 0.0, std::exp(-lambda)};
+    std::copy(T, T + 9, ref.begin() + 9 * i);
+  }
+}
+
+// With unit translations and small log-scales the Sim(2) translation V u needs
+// the first-order term in lambda (dropping it below 1e-4 errs by |u| |lambda| / 2)
+// and coefficients that do not cancel in float32: (1 - e^-lambda) / lambda
+// carries the rounding of e^-lambda, up to 6e-8 / |lambda| (6e-4 at 1e-4).
+TEST(LieMapAccuracy, Sim2ExpAndLogStayAccurateAtSmallLogScales) {
+  CudaStream stream;
+  std::vector<float> xi, ref;
+  SmallLogScaleSim2(xi, ref);
+  dvector<float> d_xi(xi), d_ref(ref), d_t(kN * 9), d_log(kN * 4);
+  ComputeExpSim2(stream.GetStream(), d_xi.data(), 4, 9, kN, d_t.data());
+  ComputeLogSim2(stream.GetStream(), d_ref.data(), 9, 4, kN, d_log.data());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  EXPECT_LT(MaxError(ToHost(d_t), ref), 4e-6) << "exp";
+  EXPECT_LT(MaxError(ToHost(d_log), xi), 1e-5) << "log of the reference transforms";
+}
+
+// Similarity2StateBatch::Plus from the identity is Exp(delta).
+TEST(LieMapAccuracy, Sim2StatePlusStaysAccurateAtSmallLogScales) {
+  CudaStream stream;
+  std::vector<float> xi, ref, identity(kN * 9, 0.f);
+  SmallLogScaleSim2(xi, ref);
+  for (size_t i = 0; i < kN; ++i) identity[9 * i] = identity[9 * i + 4] = identity[9 * i + 8] = 1.f;
+  dvector<float> d_x(identity), d_xi(xi), d_out(kN * 9);
+  Similarity2StateBatch states(d_x.data(), kN);
+  states.SetNumActiveStates(kN);
+  states.Plus(d_x.data(), d_xi.data(), d_out.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  EXPECT_LT(MaxError(ToHost(d_out), ref), 4e-6);
 }
 
 TEST_P(LieMapAccuracy, Sim3LogInvertsExp) {

@@ -16,6 +16,7 @@
  */
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/state/similarity2_state_batch.h"
 
 namespace cunls {
@@ -23,55 +24,6 @@ namespace cunls {
 namespace {
 
 constexpr int kBlockSize = 256;
-
-/** Same logic as ComputeVCoeffsSim2 in sim_lie_math.cu (inlined for fusion). */
-__device__ void ComputeVCoeffsSim2Inline(float theta, float lambda, float &X, float &thetaY) {
-  const float lambda2 = lambda * lambda;
-  const float theta2 = theta * theta;
-
-  if (fabsf(lambda) < 1e-4f) {
-    float A, B;
-    if (theta2 > 1e-6f) {
-      const float sv = sinf(theta);
-      const float cv = cosf(theta);
-      A = sv / theta;
-      B = (1.0f - cv) / theta2;
-    } else {
-      A = 1.0f - theta2 / 6.0f;
-      B = 0.5f - theta2 / 24.0f;
-    }
-    X = A;
-    thetaY = theta * B;
-    return;
-  }
-
-  const float d2 = lambda2 + theta2;
-  if (d2 < 1e-10f) {
-    X = 1.0f;
-    thetaY = 0.0f;
-    return;
-  }
-
-  float A, B, C;
-  if (theta2 > 1e-6f) {
-    const float sv = sinf(theta);
-    const float cv = cosf(theta);
-    A = sv / theta;
-    B = (1.0f - cv) / theta2;
-    C = (1.0f - A) / theta2;
-  } else {
-    A = 1.0f - theta2 / 6.0f;
-    B = 0.5f - theta2 / 24.0f;
-    C = 1.0f / 6.0f - theta2 / 120.0f;
-  }
-
-  const float alpha_coeff = lambda2 / d2;
-  const float s_inv = expf(-lambda);
-  X = alpha_coeff * (1.0f - s_inv) / lambda + (1.0f - alpha_coeff) * (A - lambda * B);
-  const float Y =
-      alpha_coeff * (s_inv - 1.0f + lambda) / lambda2 + (1.0f - alpha_coeff) * (B - lambda * C);
-  thetaY = theta * Y;
-}
 
 __global__ void sim2_apply_update_fused_kernel(const float *__restrict__ x,
                                                const float *__restrict__ delta,
@@ -89,7 +41,7 @@ __global__ void sim2_apply_update_fused_kernel(const float *__restrict__ x,
   const float inv_scale = expf(-lambda);
 
   float X, thetaY;
-  ComputeVCoeffsSim2Inline(theta, lambda, X, thetaY);
+  lie_device::Sim2VCoefficients(theta, lambda, &X, &thetaY);
   const float tx = X * ux - thetaY * uy;
   const float ty = thetaY * ux + X * uy;
 
