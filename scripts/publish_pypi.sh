@@ -10,7 +10,7 @@ fail() {
 }
 
 mode=${1:-}
-case "$mode" in prepare|verify-assets|verify-publication) ;; *) fail "$0" "$mode" 'prepare | verify-assets | verify-publication' 'run publication through the internal publisher' ;; esac
+case "$mode" in prepare|verify-assets) ;; *) fail "$0" "$mode" 'prepare | verify-assets' 'run publication through the internal publisher' ;; esac
 PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-github-release}
 [ "$PYPI_ASSET_SOURCE" = github-release ] || fail "$0" "$PYPI_ASSET_SOURCE" 'github-release' 'use the public GitHub release assets'
 for dependency in curl jq unzip sha256sum; do
@@ -20,11 +20,9 @@ RELEASE_TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-}}
 RELEASE_COMMIT=${RELEASE_COMMIT:-${GITHUB_SHA:-}}
 PYPI_PLATFORM=${PYPI_PLATFORM:-manylinux_*_x86_64}
 PYPI_PER_RELEASE_PLC=${PYPI_PER_RELEASE_PLC:-no}
-PYPI_POLL_SECONDS=${PYPI_POLL_SECONDS:-10}
-PYPI_INDEX_TIMEOUT_SECONDS=${PYPI_INDEX_TIMEOUT_SECONDS:-600}
 PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS=${PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS:-1800}
 manifest=pypi-manifest.json
-for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_PER_RELEASE_PLC PYPI_POLL_SECONDS PYPI_INDEX_TIMEOUT_SECONDS PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS PYPI_PUBLISH_CELLS; do
+for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_PER_RELEASE_PLC PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS PYPI_PUBLISH_CELLS; do
     eval 'input_value=${'"$input_name"':-}'
     printf '%s=%s\n' "$input_name" "$input_value"
 done
@@ -176,22 +174,6 @@ prepare() {
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$scratch/summary" >> "$GITHUB_STEP_SUMMARY"; fi
 }
 
-verify_indexes() {
-    deadline=$(($(date +%s) + PYPI_INDEX_TIMEOUT_SECONDS))
-    while :; do
-        missing=0
-        while IFS="$(printf '\t')" read -r name version filename checksum; do
-            http 120 "https://pypi.org/pypi/$name/$version/json"
-            if [ "$http_status" = 200 ] && [ "$http_rc" -eq 0 ] && jq -e --arg file "$filename" --arg sum "$checksum" 'any(.urls[]; .filename == $file and .digests.sha256 == $sum)' "$scratch/response" >/dev/null; then printf 'VERIFIED pypi.org %s %s\n' "$filename" "$checksum"; else missing=$((missing + 1)); printf 'WAIT pypi.org %s %s\n' "$filename" "$checksum"; cat "$scratch/response"; fi
-            http 120 "https://pypi.nvidia.com/$name/"
-            if [ "$http_status" = 200 ] && [ "$http_rc" -eq 0 ] && grep -F "$filename#sha256=$checksum" "$scratch/response" >/dev/null; then printf 'VERIFIED pypi.nvidia.com %s %s\n' "$filename" "$checksum"; else missing=$((missing + 1)); printf 'WAIT pypi.nvidia.com %s %s\n' "$filename" "$checksum"; cat "$scratch/response"; fi
-        done < "$scratch/expected"
-        [ "$missing" -ne 0 ] || return 0
-        [ "$(date +%s)" -lt "$deadline" ] || fail "$manifest" "$missing index entries missing or hash mismatch" 'every filename and SHA256 on both indexes' 'inspect indexes and saved UUIDs; do not resubmit'
-        sleep "$PYPI_POLL_SECONDS"
-    done
-}
-
 manifest_guard() {
     required PYPI_PUBLISH_REPOSITORY PYPI_ASSET_SOURCE RELEASE_TAG RELEASE_COMMIT KITMAKER_PROJECTS PYPI_MANIFEST_SHA256
     [ -f "$manifest" ] || fail "$manifest" 'missing' 'original public checksum manifest' 'fetch the approved release manifest'
@@ -212,7 +194,6 @@ manifest_guard() {
         expected_url=$(asset_url "$filename")
         [ "$url" = "$expected_url" ] || fail "$filename" "$url" "$expected_url" 'preserve the approved direct asset URL; do not rewrite or mirror GitHub assets'
     done < "$scratch/asset-urls"
-    jq -r '.wheels[] | [.distribution,.version,.filename,.sha256] | @tsv' "$manifest" > "$scratch/expected"
 }
 
 check_public_release() {
@@ -254,25 +235,14 @@ validate_assets() {
 positive_times "$PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS"
 case "$mode" in
     prepare) prepare ;;
-    verify-assets|verify-publication)
+    verify-assets)
         required PYPI_PUBLISH_REPOSITORY PYPI_ASSET_SOURCE RELEASE_TAG RELEASE_COMMIT
-        if [ "$mode" = verify-publication ]; then
-            positive_times "$PYPI_POLL_SECONDS" "$PYPI_INDEX_TIMEOUT_SECONDS"
-        fi
         repository_guard
         PYPI_MANIFEST_SHA256=$(sha256sum "$manifest"); PYPI_MANIFEST_SHA256=${PYPI_MANIFEST_SHA256%% *}
         manifest_guard
-        if [ "$mode" = verify-assets ]; then
-            validate_assets
-        else
-            check_public_release
-        fi
+        validate_assets
         http 120 "$(asset_url pypi-manifest.json)"
         [ "$http_rc" -eq 0 ] || fail "$manifest" 'public manifest unreadable' 'anonymous immutable manifest asset' 'attach the original manifest before freezing the release'
         actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
-        [ "$actual" = "$PYPI_MANIFEST_SHA256" ] || fail "$manifest" "$actual" "$PYPI_MANIFEST_SHA256" 'preserve the original public manifest bytes'
-        if [ "$mode" = verify-publication ]; then
-            verify_indexes
-            printf 'PUBLICATION VERIFIED: every selected filename and SHA256 is present on both indexes.\n'
-        fi ;;
+        [ "$actual" = "$PYPI_MANIFEST_SHA256" ] || fail "$manifest" "$actual" "$PYPI_MANIFEST_SHA256" 'preserve the original public manifest bytes' ;;
 esac
