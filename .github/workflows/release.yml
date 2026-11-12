@@ -16,7 +16,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PYPI_PUBLISH_REPOSITORY: nvidia-isaac/cuNLS
   PYPI_ASSET_SOURCE: github-release
-  PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS: ${{ vars.PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS || '1800' }}
   WHEEL_DIR: pypi-wheels
   KITMAKER_PROJECTS: |
     pycunls-cu12=6865
@@ -72,8 +71,6 @@ jobs:
     needs: build-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      verify_assets_timeout_minutes: ${{ steps.prepare.outputs.verify_assets_timeout_minutes }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -82,8 +79,7 @@ jobs:
         with:
           pattern: pycunls-x86_64-*
           path: pypi-wheels
-      - id: prepare
-        run: sh scripts/publish_pypi.sh prepare
+      - run: sh scripts/publish_pypi.sh prepare
       - uses: actions/upload-artifact@v6
         with:
           name: pypi-manifest
@@ -97,7 +93,7 @@ jobs:
     if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
     needs: [release, pypi-prepare]
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(needs.pypi-prepare.outputs.verify_assets_timeout_minutes) }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:

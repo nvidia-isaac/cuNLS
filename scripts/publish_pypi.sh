@@ -8,11 +8,10 @@ fail() {
     printf '\n' >&2
     exit 1
 }
-
 mode=${1:-}
-case "$mode" in prepare|verify-assets) ;; *) fail "$0" "$mode" 'prepare | verify-assets' 'run publication through the internal publisher' ;; esac
+case "$mode" in prepare|verify-assets) ;; *) fail "$0" "$mode" 'prepare | verify-assets' 'run Kitmaker publication through the operations service' ;; esac
 PYPI_ASSET_SOURCE=${PYPI_ASSET_SOURCE:-github-release}
-[ "$PYPI_ASSET_SOURCE" = github-release ] || fail "$0" "$PYPI_ASSET_SOURCE" 'github-release' 'use the public GitHub release assets'
+[ "$PYPI_ASSET_SOURCE" = github-release ] || fail "$0" "$PYPI_ASSET_SOURCE" 'github-release' 'publish the wheels as public GitHub release assets'
 for dependency in curl jq unzip sha256sum; do
     command -v "$dependency" >/dev/null || fail "$0" "$dependency missing" 'curl jq unzip sha256sum' "install $dependency on the runner host"
 done
@@ -20,9 +19,9 @@ RELEASE_TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-}}
 RELEASE_COMMIT=${RELEASE_COMMIT:-${GITHUB_SHA:-}}
 PYPI_PLATFORM=${PYPI_PLATFORM:-manylinux_*_x86_64}
 PYPI_PER_RELEASE_PLC=${PYPI_PER_RELEASE_PLC:-no}
-PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS=${PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS:-1800}
 manifest=pypi-manifest.json
-for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_PER_RELEASE_PLC PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS PYPI_PUBLISH_CELLS; do
+# Enumerating known nonsecret inputs avoids dumping ambient credentials.
+for input_name in PYPI_ASSET_SOURCE PYPI_PUBLISH_REPOSITORY RELEASE_TAG RELEASE_COMMIT WHEEL_DIR KITMAKER_PROJECTS PYPI_PLATFORM PYPI_PROVENANCE_PATH PYPI_PER_RELEASE_PLC PYPI_PUBLISH_CELLS; do
     eval 'input_value=${'"$input_name"':-}'
     printf '%s=%s\n' "$input_name" "$input_value"
 done
@@ -30,7 +29,6 @@ umask 077
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
 normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[-_.][-_\.]*/-/g'; }
-
 required() {
     missing=
     for input_name in "$@"; do
@@ -39,14 +37,6 @@ required() {
     done
     [ -z "$missing" ] || fail "$0" "missing:$missing" 'all required inputs set' 'export the listed names from the confirmed context'
 }
-
-positive_times() {
-    for number in "$@"; do
-        case "$number" in ''|*[!0-9]*) fail "$0" "$number" 'positive integer deadline/interval' 'correct polling configuration' ;; esac
-        [ "$number" -gt 0 ] || fail "$0" "$number" 'positive polling value' 'correct polling configuration'
-    done
-}
-
 repository_guard() {
     [ "${GITHUB_REPOSITORY:-}" = "$PYPI_PUBLISH_REPOSITORY" ] || fail "$0" "${GITHUB_REPOSITORY:-}" "$PYPI_PUBLISH_REPOSITORY" "private copies don't publish; run in the canonical repository"
 }
@@ -58,7 +48,6 @@ asset_url() {
 public_version() {
     printf '%s' "$1" | jq -eRs 'test("^([0-9]+!)?[0-9]+(\\.[0-9]+)*((a|b|rc)[0-9]+)?(\\.post[0-9]+)?(\\.dev[0-9]+)?$")' >/dev/null
 }
-
 project_map() {
     printf '%s\n' "${KITMAKER_PROJECTS:-}" | jq -Rsc '
       split("\n") | map(select(length > 0) | split("=")) |
@@ -68,21 +57,17 @@ project_map() {
       then error("duplicate name or project ID")
       else map({name:.[0], id:.[1]}) end' > "$scratch/map.json"
 }
-
 valid_cell_directories() {
     printf '%s' "$1" | jq -e 'type == "array" and length > 0 and all(.[];
       (.cuda | type == "string") and (.artifact_dir | type == "string" and (. == "." or (test("^[A-Za-z0-9_][A-Za-z0-9_./-]*$") and (split("/") | all(.[]; . != ".." and . != "." and . != "")))))) and
       (length == 1 or all(.[]; .artifact_dir != ".")) and
       (map(.artifact_dir) | unique | length) == length' >/dev/null
 }
-
 http() {
-    request_timeout=$1
-    shift
     http_status=000
     http_rc=0
     : > "$scratch/response"
-    http_status=$(curl --fail-with-body --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time "$request_timeout" --output "$scratch/response" --write-out '%{http_code}' "$@") || http_rc=$?
+    http_status=$(curl --fail-with-body --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 --output "$scratch/response" --write-out '%{http_code}' "$@") || http_rc=$?
     printf 'HTTP %s (curl=%s)\n' "$http_status" "$http_rc"
 }
 
@@ -158,12 +143,6 @@ prepare() {
     jq -es --slurpfile cells "$scratch/cells" --arg root "${WHEEL_DIR%/}/" 'length == ($cells[0] | length) and all(.[]; . as $wheel | any($cells[0][]; (if .artifact_dir == "." then $root else $root + .artifact_dir + "/" end) as $prefix | $wheel.path | startswith($prefix)))' "$scratch/entries" >/dev/null || fail "$WHEEL_DIR" 'extra wheel or wheel outside selected cell directories' 'only the confirmed publish cells' 'narrow the artifact download selection'
     jq -s --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg repository "$PYPI_PUBLISH_REPOSITORY" --arg source "$PYPI_ASSET_SOURCE" --arg plc "$PYPI_PER_RELEASE_PLC" '{template_version:"2.0.0",tag:$tag,commit:$commit,repository:$repository,asset_source:$source,per_release_plc:$plc,wheels:.}' "$scratch/entries" > "$manifest"
     sha256sum "$manifest" > pypi-manifest.sha256
-    if [ -n "${GITHUB_OUTPUT:-}" ]; then
-        # Budget every wheel, three metadata requests, and ten minutes of setup.
-        verify_timeout_minutes=$(jq -r --arg seconds "$PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS" '(((.wheels | length) * ($seconds | tonumber) + 3 * 120) / 60 | ceil) + 10' "$manifest")
-        [ "$verify_timeout_minutes" -le 360 ] || fail "$manifest" "$verify_timeout_minutes minutes" 'at most 360 minutes on GitHub-hosted runners' 'reduce the download timeout or review the release verification layout'
-        printf 'verify_assets_timeout_minutes=%s\n' "$verify_timeout_minutes" >> "$GITHUB_OUTPUT"
-    fi
     {
         printf '| Wheel | Bytes | SHA256 |\n|---|---:|---|\n'
         jq -r '.wheels[] | "| \(.filename) | \(.bytes) | \(.sha256) |"' "$manifest"
@@ -195,10 +174,9 @@ manifest_guard() {
         [ "$url" = "$expected_url" ] || fail "$filename" "$url" "$expected_url" 'preserve the approved direct asset URL; do not rewrite or mirror GitHub assets'
     done < "$scratch/asset-urls"
 }
-
 check_public_release() {
     tag_uri=$(printf '%s' "$RELEASE_TAG" | jq -sRr @uri)
-    http 120 "https://api.github.com/repos/$PYPI_PUBLISH_REPOSITORY/releases/tags/$tag_uri"
+    http "https://api.github.com/repos/$PYPI_PUBLISH_REPOSITORY/releases/tags/$tag_uri"
     manifest_url=$(asset_url pypi-manifest.json)
     sidecar_url=$(asset_url pypi-manifest.sha256)
     if [ "$http_rc" -ne 0 ] || ! jq -e --arg tag "$RELEASE_TAG" --arg manifest_url "$manifest_url" --arg sidecar_url "$sidecar_url" --arg hash "$PYPI_MANIFEST_SHA256" --slurpfile manifest "$manifest" '
@@ -211,28 +189,24 @@ check_public_release() {
           (.digest == null or .digest == ("sha256:" + $wheel.sha256)))))' "$scratch/response" >/dev/null; then
         fail "$RELEASE_TAG" "HTTP $http_status; release absent, draft, mutable or assets differ" 'published immutable release with wheels, original manifest and sidecar' 'attach the manifest and sidecar before freezing the public release'
     fi
-    http 120 "https://api.github.com/repos/$PYPI_PUBLISH_REPOSITORY/commits/$tag_uri"
+    http "https://api.github.com/repos/$PYPI_PUBLISH_REPOSITORY/commits/$tag_uri"
     if [ "$http_rc" -ne 0 ] || ! jq -e --arg sha "$RELEASE_COMMIT" '.sha == $sha' "$scratch/response" >/dev/null; then
         fail "$RELEASE_TAG" 'release tag commit differs or is unreadable' "$RELEASE_COMMIT" 'retain the tag and built source commit across the handoff'
     fi
 }
-
 validate_assets() {
     jq -r '.wheels[] | [.path,.filename,.sha256,.url,.bytes] | @tsv' "$manifest" > "$scratch/to-publish"
     check_public_release
     while IFS="$(printf '\t')" read -r wheel filename checksum url bytes; do
         # The submitted URL must serve the same bytes to an anonymous downloader.
-        http "$PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS" "$url"
+        http "$url"
         [ "$http_rc" -eq 0 ] || fail "$filename" "HTTP $http_status curl=$http_rc" 'anonymous asset download' "a draft release isn't readable; inspect public asset visibility"
         actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
         [ "$actual" = "$checksum" ] || fail "$filename" "$actual" "$checksum" 'restore the exact immutable artifact; repeat validation and approval after any change'
         actual_bytes=$(wc -c < "$scratch/response" | tr -d ' ')
         [ "$actual_bytes" = "$bytes" ] || fail "$filename" "$actual_bytes bytes" "$bytes bytes" 'restore the approved artifact'
     done < "$scratch/to-publish"
-    cp "$manifest" "$scratch/publish-manifest"
 }
-
-positive_times "$PYPI_ASSET_DOWNLOAD_TIMEOUT_SECONDS"
 case "$mode" in
     prepare) prepare ;;
     verify-assets)
@@ -241,7 +215,7 @@ case "$mode" in
         PYPI_MANIFEST_SHA256=$(sha256sum "$manifest"); PYPI_MANIFEST_SHA256=${PYPI_MANIFEST_SHA256%% *}
         manifest_guard
         validate_assets
-        http 120 "$(asset_url pypi-manifest.json)"
+        http "$(asset_url pypi-manifest.json)"
         [ "$http_rc" -eq 0 ] || fail "$manifest" 'public manifest unreadable' 'anonymous immutable manifest asset' 'attach the original manifest before freezing the release'
         actual=$(sha256sum "$scratch/response"); actual=${actual%% *}
         [ "$actual" = "$PYPI_MANIFEST_SHA256" ] || fail "$manifest" "$actual" "$PYPI_MANIFEST_SHA256" 'preserve the original public manifest bytes' ;;
