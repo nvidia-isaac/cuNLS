@@ -16,6 +16,7 @@
  */
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/state/similarity3_state_batch.h"
 
 namespace cunls {
@@ -40,38 +41,11 @@ __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
   float lambda = xi[6];
 
   const float theta2 = w1 * w1 + w2 * w2 + w3 * w3;
-  const float theta = sqrtf(theta2);
 
-  float A1, A2, A3, A4;
-  if (theta2 > 1e-6f) {
-    const float st = sinf(theta), ct = cosf(theta);
-    A1 = st / theta;
-    A2 = (1.0f - ct) / theta2;
-    A3 = (1.0f - A1) / theta2;
-    A4 = (0.5f - A2) / theta2;
-  } else {
-    A1 = 1.0f - theta2 / 6.0f;
-    A2 = 0.5f - theta2 / 24.0f;
-    A3 = 1.0f / 6.0f - theta2 / 120.0f;
-    A4 = 1.0f / 24.0f - theta2 / 720.0f;
-  }
-
-  const float lambda2 = lambda * lambda;
-  float P_c, Q_c, R_c;
-  if (lambda2 > 1e-8f) {
-    const float e = expf(-lambda);
-    P_c = (1.0f - e) / lambda;
-    const float alpha = lambda2 / (lambda2 + theta2);
-    const float beta = (e - 1.0f + lambda) / lambda2;
-    const float mu = (1.0f - lambda + 0.5f * lambda2 - e) / (lambda2 * lambda);
-    const float one_m_alpha = 1.0f - alpha;
-    Q_c = alpha * beta + one_m_alpha * (A2 - lambda * A3);
-    R_c = alpha * mu + one_m_alpha * (A3 - lambda * A4);
-  } else {
-    P_c = 1.0f - lambda / 2.0f + lambda2 / 6.0f;
-    Q_c = A2 - lambda * A3;
-    R_c = A3 - lambda * A4;
-  }
+  // The coefficients of ComputeExpSim3: float32-safe at small angles and
+  // small log-scales, where the closed forms cancel.
+  float A1, A2, P_c, Q_c, R_c;
+  lie_device::Sim3VCoefficients(theta2, lambda, &A1, &A2, &P_c, &Q_c, &R_c);
 
   const float ct_val = 1.0f - A2 * theta2;
   const float e00 = ct_val + A2 * w1 * w1;
