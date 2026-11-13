@@ -73,6 +73,10 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs: [check-changes, build-matrix]
+    # Runs from different refs share the dated release tags.
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
     permissions:
       contents: write
       pages: write
@@ -202,15 +206,41 @@ jobs:
         with:
           path: docs/sphinx/_build
 
-      - name: Create GitHub Release
+      # A published release is immutable, so a rerun on the same day keeps the
+      # release that is already published.
+      - name: Check for a published release
+        id: release-state
         if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: nightly-${{ steps.release-notes.outputs.date }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft | grep -qx false; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Immutable releases reject assets after publication, so the prerelease
+      # stays a draft until every asset is attached.
+      - name: Create GitHub Release
+        if: steps.check.outputs.skip == 'false' && steps.release-state.outputs.published != 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly-${{ steps.release-notes.outputs.date }}
           name: "Nightly ${{ steps.release-notes.outputs.date }}"
+          target_commitish: ${{ github.sha }}
           body_path: release-notes.md
           prerelease: true
+          draft: true
           files: release-assets/*
+
+      - name: Publish GitHub Release
+        if: steps.check.outputs.skip == 'false' && steps.release-state.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: nightly-${{ steps.release-notes.outputs.date }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Deploy to GitHub Pages
         if: steps.check.outputs.skip == 'false'

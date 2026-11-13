@@ -20,7 +20,6 @@ env:
   KITMAKER_PROJECTS: |
     pycunls-cu12=6865
     pycunls-cu13=6866
-  KITMAKER_PIC: hguillen@nvidia.com
   PYPI_PLATFORM: manylinux_*_x86_64
   PYPI_PROVENANCE_PATH: pycunls/_build_provenance.json
   PYPI_PER_RELEASE_PLC: ${{ vars.PYPI_PER_RELEASE_PLC || 'yes' }}
@@ -45,7 +44,7 @@ jobs:
 
   release:
     if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
-    needs: build-matrix
+    needs: [build-matrix, pypi-prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -58,6 +57,10 @@ jobs:
         with:
           pattern: pycunls-x86_64-*
           path: pypi-wheels
+      - uses: actions/download-artifact@v7
+        with:
+          name: pypi-manifest
+          path: .
       - run: bash scripts/release_pycunls.sh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,25 +83,17 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: pypi-manifest
-          path: pypi-manifest.json
+          path: |
+            pypi-manifest.json
+            pypi-manifest.sha256
           if-no-files-found: error
           retention-days: 30
 
-  pypi-publish:
-    if: >-
-      github.repository == 'nvidia-isaac/cuNLS' &&
-      startsWith(github.ref, 'refs/tags/v') &&
-      vars.PYPI_PUBLISH_ENABLED == 'true'
+  pypi-verify-assets:
+    if: github.repository == 'nvidia-isaac/cuNLS' && startsWith(github.ref, 'refs/tags/v')
     needs: [release, pypi-prepare]
-    runs-on: ${{ fromJson(vars.PYPI_PUBLISH_RUNNER || '["self-hosted","gpu"]') }}
-    timeout-minutes: 180
-    environment: pypi
-    concurrency:
-      group: pypi-${{ github.repository }}-${{ github.ref_name }}
-      cancel-in-progress: false
-    env:
-      KITMAKER_TOKEN: ${{ secrets.KITMAKER_TOKEN }}
-      PYPI_DRY_RUN_ONLY: ${{ vars.PYPI_DRY_RUN_ONLY || '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -107,14 +102,4 @@ jobs:
         with:
           name: pypi-manifest
           path: .
-      - run: sh scripts/publish_pypi.sh publish
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: pypi-publication-record-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            pypi-manifest.json
-            pypi-release-uuids.txt
-            pypi-status-*.json
-          if-no-files-found: warn
-          retention-days: 30
+      - run: sh scripts/publish_pypi.sh verify-assets
