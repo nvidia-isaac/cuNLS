@@ -206,58 +206,28 @@ jobs:
         with:
           path: docs/sphinx/_build
 
-      # Published releases cannot take new assets and an existing tag keeps its
-      # commit: a rerun for this commit skips the release, a tag on another
-      # commit gets a run-numbered replacement, and another commit's draft is
-      # discarded.
-      - name: Choose the release tag
-        id: release-tag
+      # A published release is immutable, so a rerun on the same day keeps the
+      # release that is already published.
+      - name: Check for a published release
+        id: release-state
         if: steps.check.outputs.skip == 'false'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_DATE: ${{ steps.release-notes.outputs.date }}
+          RELEASE_TAG: nightly-${{ steps.release-notes.outputs.date }}
         run: |
-          tag_commit() {
-            git ls-remote --tags origin "refs/tags/$1" "refs/tags/$1^{}" | awk '{ commit = $1 } END { print commit }'
-          }
-          release_state() {
-            if ! gh release view "$1" --json isDraft,targetCommitish \
-              --jq 'if .isDraft then "draft \(.targetCommitish)" else "published" end' 2> "$RUNNER_TEMP/release-view.log"; then
-              grep -qx 'release not found' "$RUNNER_TEMP/release-view.log" || { cat "$RUNNER_TEMP/release-view.log" >&2; return 1; }
-              echo missing
-            fi
-          }
-          tag="nightly-$RELEASE_DATE"
-          commit=$(tag_commit "$tag")
-          if [ -n "$commit" ] && [ "$commit" != "$GITHUB_SHA" ]; then
-            tag="$tag-$GITHUB_RUN_NUMBER"
-            commit=$(tag_commit "$tag")
-            if [ -n "$commit" ] && [ "$commit" != "$GITHUB_SHA" ]; then
-              echo "::error::$tag points to $commit, not $GITHUB_SHA"
-              exit 1
-            fi
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft | grep -qx false; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
           fi
-          state=$(release_state "$tag")
-          case "$state" in
-            "draft $GITHUB_SHA" | published | missing) ;;
-            *) gh release delete "$tag" --yes ;;
-          esac
-          {
-            echo "tag=$tag"
-            echo "name=Nightly ${tag#nightly-}"
-            if [ "$state" = published ]; then echo "published=true"; else echo "published=false"; fi
-          } >> "$GITHUB_OUTPUT"
 
       # Immutable releases reject assets after publication, so the prerelease
       # stays a draft until every asset is attached.
       - name: Create GitHub Release
-        if: steps.check.outputs.skip == 'false' && steps.release-tag.outputs.published == 'false'
+        if: steps.check.outputs.skip == 'false' && steps.release-state.outputs.published != 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.release-tag.outputs.tag }}
-          name: ${{ steps.release-tag.outputs.name }}
+          tag_name: nightly-${{ steps.release-notes.outputs.date }}
+          name: "Nightly ${{ steps.release-notes.outputs.date }}"
           target_commitish: ${{ github.sha }}
           body_path: release-notes.md
           prerelease: true
@@ -265,11 +235,11 @@ jobs:
           files: release-assets/*
 
       - name: Publish GitHub Release
-        if: steps.check.outputs.skip == 'false' && steps.release-tag.outputs.published == 'false'
+        if: steps.check.outputs.skip == 'false' && steps.release-state.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
+          RELEASE_TAG: nightly-${{ steps.release-notes.outputs.date }}
         run: gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Deploy to GitHub Pages
