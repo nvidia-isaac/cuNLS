@@ -48,7 +48,6 @@ docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -e RELEASE_COMMIT="$RELEASE_COMMIT" \
   -e RELEASE_TAG="${RELEASE_TAG:-}" \
   -e CUDA_VERSION="${CUDA_VERSION:-}" \
-  -e EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS:-}" \
   -e CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-}" \
   cunls:local bash /cunls/scripts/build_pycunls.sh
 

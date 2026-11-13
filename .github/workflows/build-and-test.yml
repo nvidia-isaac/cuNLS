@@ -66,9 +66,7 @@ jobs:
         run: ./scripts/test_cunls_in_docker.sh ./output
 
       - name: Build Python wheel
-        run: |
-          EXTRA_CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${{ matrix.config.archs }}" \
-          ./scripts/build_pycunls_in_docker.sh ./output/wheel
+        run: ./scripts/build_pycunls_in_docker.sh ./output/wheel
 
       - name: Run Python tests
         run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
