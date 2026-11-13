@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pycunls"
-version = "0.3.0"
+version = "0.4.0"
 description = "Python bindings for cuNLS: CUDA-accelerated nonlinear least squares solver"
 requires-python = ">=3.10"
 # warp-lang 1.18 builds its PyPI wheels with CUDA 13.4 and needs an R580+ driver for CUDA;
