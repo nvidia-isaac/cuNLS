@@ -19,7 +19,8 @@
 // near-identity elements (where series and closed forms switch) to large
 // ones: SE2 exp and log against a double-precision closed form, and
 // log(exp(xi)) round trips for SE2, Sim3 and SL4; SE3 exp and log against a
-// double-precision closed form.
+// double-precision closed form; the fused Sim3 Plus against a double-precision
+// matrix exponential.
 
 #include <gtest/gtest.h>
 
@@ -36,6 +37,7 @@
 #include "cunls/math/sl_lie_math.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/state/se2_state_batch.h"
+#include "cunls/state/similarity3_state_batch.h"
 
 namespace cunls {
 namespace {
@@ -129,6 +131,75 @@ TEST(LieMapAccuracy, SE2StatePlusKeepsTheFirstOrderTermAtSmallAngles) {
   }
   dvector<float> d_x(identity), d_xi(xi), d_out(kN * 9);
   SE2StateBatch states(d_x.data(), kN);
+  states.SetNumActiveStates(kN);
+  states.Plus(d_x.data(), d_xi.data(), d_out.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  EXPECT_LT(MaxError(ToHost(d_out), ref), 2e-6);
+}
+
+/** exp(X) of a row-major 4x4 matrix in double: scaling and squaring of the Taylor series. */
+void MatrixExp4(const double *X, double *E) {
+  double norm = 0.0;
+  for (int i = 0; i < 16; ++i) norm = std::max(norm, std::fabs(X[i]));
+  int squarings = 0;
+  while (norm > 0.25) {
+    norm *= 0.5;
+    ++squarings;
+  }
+  double A[16], term[16], next[16];
+  for (int i = 0; i < 16; ++i) {
+    A[i] = std::ldexp(X[i], -squarings);
+    term[i] = E[i] = (i % 5 == 0) ? 1.0 : 0.0;
+  }
+  const auto multiply = [](const double *a, const double *b, double *c) {
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        double sum = 0.0;
+        for (int k = 0; k < 4; ++k) sum += a[4 * i + k] * b[4 * k + j];
+        c[4 * i + j] = sum;
+      }
+    }
+  };
+  for (int n = 1; n <= 20; ++n) {
+    multiply(term, A, next);
+    for (int i = 0; i < 16; ++i) {
+      term[i] = next[i] / n;
+      E[i] += term[i];
+    }
+  }
+  for (int k = 0; k < squarings; ++k) {
+    multiply(E, E, next);
+    std::copy(next, next + 16, E);
+  }
+}
+
+// Similarity3StateBatch::Plus from the identity is Exp(delta), the matrix
+// exponential of [[w]_x, u; 0, -lambda]. With unit translations and log-scales
+// between 1e-4 and 1e-2 the coefficients of V = P I + Q [w]_x + R [w]_x^2 must
+// not be computed by their closed forms, which cancel in float32:
+// (1 - e^-lambda) / lambda alone carries the rounding of e^-lambda, up to
+// 6e-8 / |lambda| (6e-4 at 1e-4).
+TEST(LieMapAccuracy, Sim3StatePlusStaysAccurateAtSmallLogScales) {
+  CudaStream stream;
+  std::mt19937 rng(11);
+  std::normal_distribution<float> unit(0.f, 1.f), rotation(0.f, 0.3f);
+  std::uniform_real_distribution<float> log_scale(-4.f, -2.f);
+  std::vector<float> xi(kN * 7), identity(kN * 16, 0.f), ref(kN * 16);
+  for (size_t i = 0; i < kN; ++i) {
+    float *d = xi.data() + 7 * i;
+    for (int k = 0; k < 3; ++k) d[k] = rotation(rng);
+    for (int k = 3; k < 6; ++k) d[k] = unit(rng);
+    d[6] = (i % 2 == 0 ? 1.f : -1.f) * std::pow(10.f, log_scale(rng));
+    for (int k = 0; k < 4; ++k) identity[16 * i + 5 * k] = 1.f;
+    const double w1 = d[0], w2 = d[1], w3 = d[2], lambda = d[6];
+    const double X[16] = {0.0, -w3, w2,  d[3], w3,  0.0, -w1, d[4],
+                          -w2, w1,  0.0, d[5], 0.0, 0.0, 0.0, -lambda};
+    double E[16];
+    MatrixExp4(X, E);
+    std::copy(E, E + 16, ref.begin() + 16 * i);
+  }
+  dvector<float> d_x(identity), d_xi(xi), d_out(kN * 16);
+  Similarity3StateBatch states(d_x.data(), kN);
   states.SetNumActiveStates(kN);
   states.Plus(d_x.data(), d_xi.data(), d_out.data(), stream.GetStream());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));

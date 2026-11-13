@@ -888,6 +888,64 @@ __device__ __forceinline__ void SE3JacobianLeftInverse(const float *xi, float *J
 }
 
 /**
+ * Coefficients of the Sim(3) exponential, float32-safe for all angles and
+ * scales: R = I + A1 [w]_x + A2 [w]_x^2 and V = P I + Q [w]_x + R [w]_x^2 with
+ * V = int_0^1 exp(t [w]_x) exp(-(1 - t) lambda) dt, evaluated as the exact
+ * blend of its theta -> 0 and lambda -> 0 limits,
+ *   Q = a beta + (1 - a)(A2 - lambda A3),  R = a mu + (1 - a)(A3 - lambda A4),
+ *   a = lambda^2 / (lambda^2 + theta^2),
+ * where A3 = (1 - A1) / theta^2, A4 = (1/2 - A2) / theta^2,
+ * beta = (e^-lambda - 1 + lambda) / lambda^2 and
+ * mu = (1 - lambda + lambda^2 / 2 - e^-lambda) / lambda^3. Each cancelling
+ * ratio switches to its Taylor series where the direct form loses digits.
+ * Shared by the batched Sim(3) exp / log kernels and Similarity3StateBatch::Plus.
+ */
+__device__ __forceinline__ void Sim3VCoefficients(float theta2, float lambda, float *A1, float *A2,
+                                                  float *P, float *Q, float *R) {
+  float A3, A4;
+  if (theta2 < 0.0625f) {
+    const float t = theta2;
+    *A1 = 1.0f - t / 6.0f * (1.0f - t / 20.0f * (1.0f - t / 42.0f));
+    *A2 = 0.5f - t / 24.0f * (1.0f - t / 30.0f * (1.0f - t / 56.0f));
+    A3 = 1.0f / 6.0f - t / 120.0f * (1.0f - t / 42.0f * (1.0f - t / 72.0f));
+    A4 = 1.0f / 24.0f - t / 720.0f * (1.0f - t / 56.0f * (1.0f - t / 90.0f));
+  } else {
+    const float theta = sqrtf(theta2);
+    const float sh = sinf(0.5f * theta);
+    *A1 = sinf(theta) / theta;
+    *A2 = 2.0f * sh * sh / theta2;
+    A3 = (1.0f - *A1) / theta2;
+    A4 = (0.5f - *A2) / theta2;
+  }
+  float beta, mu;
+  const float l = lambda;
+  if (fabsf(l) < 0.5f) {
+    // sum_k (-l)^k / (k + 2)!  and  sum_k (-l)^k / (k + 3)!
+    beta = 0.5f -
+           l / 6.0f *
+               (1.0f -
+                l / 4.0f *
+                    (1.0f - l / 5.0f * (1.0f - l / 6.0f * (1.0f - l / 7.0f * (1.0f - l / 8.0f)))));
+    mu = 1.0f / 6.0f -
+         l / 24.0f *
+             (1.0f -
+              l / 5.0f *
+                  (1.0f - l / 6.0f * (1.0f - l / 7.0f * (1.0f - l / 8.0f * (1.0f - l / 9.0f)))));
+    *P = 1.0f - l * beta;  // (1 - e^-l) / l
+  } else {
+    const float em1 = expm1f(-l);  // e^-l - 1
+    *P = -em1 / l;
+    beta = (em1 + l) / (l * l);
+    mu = (0.5f * l * l - l - em1) / (l * l * l);
+  }
+  const float l2 = l * l;
+  const float d = l2 + theta2;
+  const float a = d > 0.0f ? l2 / d : 0.0f;
+  *Q = a * beta + (1.0f - a) * (*A2 - l * A3);
+  *R = a * mu + (1.0f - a) * (A3 - l * A4);
+}
+
+/**
  * @brief Compute J_r^{-1}(xi) for Sim(2) into a local 4x4 array (row-major).
  *
  * xi = (u1, u2, w, lambda). Exact closed form (series near 0), float32-safe;
