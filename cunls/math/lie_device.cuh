@@ -888,6 +888,40 @@ __device__ __forceinline__ void SE3JacobianLeftInverse(const float *xi, float *J
 }
 
 /**
+ * Coefficients of the Sim(2) exponential, float32-safe for all angles and
+ * scales: the translation of Exp([u, theta, lambda]) is V u with
+ * V = [[X, -Y], [Y, X]] = int_0^1 R(t theta) e^{-(1 - t) lambda} dt, i.e. as
+ * complex numbers X + i Y = (e^{i theta} - e^{-lambda}) / z = e^{-lambda} (e^z - 1) / z
+ * at z = lambda + i theta. The ratio cancels near z = 0 and switches to its
+ * Taylor series there. Shared by the batched Sim(2) exp / log kernels and
+ * Similarity2StateBatch::Plus.
+ */
+__device__ __forceinline__ void Sim2VCoefficients(float theta, float lambda, float *X, float *Y) {
+  const float z2 = lambda * lambda + theta * theta;
+  if (z2 < 0.25f) {
+    // (e^z - 1) / z = sum_k z^k / (k + 1)! = 1 + z/2 (1 + z/3 (... (1 + z/9))).
+    float pr = 1.0f, pi = 0.0f;
+#pragma unroll
+    for (int k = 9; k >= 2; --k) {
+      const float inv_k = 1.0f / k;
+      const float tr = 1.0f + (lambda * pr - theta * pi) * inv_k;
+      pi = (lambda * pi + theta * pr) * inv_k;
+      pr = tr;
+    }
+    const float s_inv = expf(-lambda);
+    *X = s_inv * pr;
+    *Y = s_inv * pi;
+  } else {
+    // e^{i theta} - e^{-lambda} = a + i b.
+    const float a = cosf(theta) - expf(-lambda);
+    const float b = sinf(theta);
+    const float inv = 1.0f / z2;
+    *X = (a * lambda + b * theta) * inv;
+    *Y = (b * lambda - a * theta) * inv;
+  }
+}
+
+/**
  * Coefficients of the Sim(3) exponential, float32-safe for all angles and
  * scales: R = I + A1 [w]_x + A2 [w]_x^2 and V = P I + Q [w]_x + R [w]_x^2 with
  * V = int_0^1 exp(t [w]_x) exp(-(1 - t) lambda) dt, evaluated as the exact
