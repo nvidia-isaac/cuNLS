@@ -97,8 +97,24 @@ Optional: cuDSS sparse solver
 
 cuDSS is an **optional runtime dependency**: the ``pycunls`` wheel neither
 bundles nor requires it, and every other sparse linear solver works without
-it. To use ``SparseLinearSolverType.cuDSS``, make ``libcudss.so`` reachable
-through ``LD_LIBRARY_PATH`` *before* starting ``python``; requesting it
-otherwise raises ``RuntimeError``. See :ref:`installation:Notes` for details.
+it. To use ``SparseLinearSolverType.cuDSS``, either ``pip install
+"nvidia-cudss-cu13==0.8.*"`` (``nvidia-cudss-cu12`` for CUDA 12) into the same
+environment, which ``pycunls`` finds without any setup, or make a cuDSS 0.8
+``libcudss.so`` reachable through ``LD_LIBRARY_PATH`` *before* starting
+``python``; requesting it otherwise raises ``RuntimeError``. See
+:ref:`installation:Notes` for details.
+
+===============================================================================
+CUDA libraries
+===============================================================================
+
+The wheel links ``cudart``, ``cublas``, ``cusparse`` and ``cusolver`` without
+bundling them. Its native module searches, in order: ``LD_LIBRARY_PATH``, the
+NVIDIA pip packages next to it in ``site-packages`` (``nvidia/cu13/lib`` for
+CUDA 13; ``nvidia/{cuda_runtime,cublas,cusparse,cusolver,cu12}/lib`` for
+CUDA 12), then the system library cache (a CUDA toolkit under
+``/usr/local/cuda``). Install the pip packages from one CUDA release with
+``pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"``
+(``==12.8.*`` for ``pycunls-cu12``).
 
 Next: :doc:`pycunls_quick_start`.

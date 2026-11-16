@@ -17,6 +17,42 @@
 
 ---
 
+### Install with pip
+
+Prebuilt `pycunls` wheels are on PyPI for x86_64 Linux, Python 3.10 and 3.12, one package per
+CUDA major version. `warp-lang` and `numpy` are installed as dependencies (there is no
+`[warp-lang]` extra). The wheel does not bundle the CUDA libraries it links against
+(`cudart`, `cublas`, `cusparse`, `cusolver`, `nvJitLink`): install them from NVIDIA's pip
+packages as below, or use a CUDA toolkit installed on the system. pycunls finds the pip
+packages in the same environment by itself, with no `LD_LIBRARY_PATH`.
+
+```bash
+# CUDA 13 (driver R580 or newer)
+pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
+pip install "nvidia-cudss-cu13==0.8.*"   # optional, only for SparseLinearSolverType.cuDSS
+
+# CUDA 12 (driver R525 or newer)
+pip install pycunls-cu12 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==12.8.*"
+pip install "nvidia-cudss-cu12==0.8.*"   # optional, only for SparseLinearSolverType.cuDSS
+
+python -m pycunls doctor                 # checks the GPU, the native module, a solve, cuDSS
+```
+
+The `cuda-toolkit` metapackage installs `nvidia-cuda-runtime`, `nvidia-cublas`,
+`nvidia-cusparse`, `nvidia-cusolver` and `nvidia-nvjitlink` (`-cu12` names for CUDA 12) from a
+single CUDA release. Installing them one by one without pins can mix releases (for example
+the newest `nvidia-cusolver-cu12` needs the newest `nvidia-cublas-cu12`), and the import then
+fails with an `undefined symbol` error.
+
+A directory on `LD_LIBRARY_PATH` takes precedence over the pip packages. pycunls 0.4.0 does not
+search the pip packages: with it, add `<site-packages>/nvidia/cu13/lib` (CUDA 13) or the
+`nvidia/{cuda_runtime,cublas,cusparse,cusolver,cu12}/lib` directories (CUDA 12) to
+`LD_LIBRARY_PATH` before starting Python, or upgrade.
+
+To build from source instead, see [Installation](#installation).
+
+---
+
 **cuNLS** is a general-purpose nonlinear least-squares solver that runs entirely on the GPU. It
 solves any factor graph over Euclidean and manifold states, with robust losses, constraints and
 bounds:
@@ -88,8 +124,8 @@ cuNLS is designed to be driven by coding agents (and to save humans the same deb
 
 ## Installation
 
-cuNLS is built from source (Python wheels on PyPI are coming). With Docker and the NVIDIA
-Container Toolkit:
+Python wheels are on PyPI (see [Install with pip](#install-with-pip)); the C++ library is
+built from source. With Docker and the NVIDIA Container Toolkit:
 
 ```bash
 ./scripts/build_pycunls_in_docker.sh        # Python wheel -> ./dist

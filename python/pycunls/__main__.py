@@ -128,8 +128,9 @@ def doctor() -> Tuple[bool, List[dict]]:
                     needs=(gpu, module))
     results.append(solved)
     results.append(_check("fit", fit, "check the solve result above", needs=(solved,)))
-    results.append(_check("cudss", cudss, "optional: set the library path so libcudss.so is "
-                          "found (SparseLinearSolverType.cuDSS only)", required=False,
+    results.append(_check("cudss", cudss, "optional (SparseLinearSolverType.cuDSS only): pip "
+                          "install nvidia-cudss-cu12/cu13==0.8.*, or put a cuDSS 0.8 libcudss.so "
+                          "on LD_LIBRARY_PATH", required=False,
                           needs=(gpu, module)))
     ok = all(r["ok"] for r in results if r["required"])
     return ok, results

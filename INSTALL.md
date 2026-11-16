@@ -1,7 +1,8 @@
 # Installing cuNLS
 
 cuNLS ships as a Python package (`pycunls`) and as a CUDA/C++ library (`cunls`). Both need an
-NVIDIA GPU and are built from source; Python wheels on PyPI are coming.
+NVIDIA GPU. Prebuilt Python wheels are on PyPI as `pycunls-cu12` and `pycunls-cu13`
+([Install with pip](README.md#install-with-pip)); this page covers building from source.
 
 - [Python package](#python-package-pycunls): build the wheel in Docker or locally, install it,
   check it with `python -m pycunls doctor`.
