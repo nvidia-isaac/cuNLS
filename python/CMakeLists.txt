@@ -38,6 +38,21 @@ if(NOT BUILD_SHARED_LIBS)
     CUDA::cusparse CUDA::cublas CUDA::cusolver)
 endif()
 
+# Find the CUDA libraries from NVIDIA's pip wheels (nvidia-cuda-runtime, nvidia-cublas, ...,
+# nvidia-cudss-cu12/13) without LD_LIBRARY_PATH. The paths are relative to
+# site-packages/pycunls/, where the module is installed. The loader tries LD_LIBRARY_PATH
+# first, then these directories, then the system library cache, so a system CUDA toolkit
+# is still used when the pip wheels are absent. glibc dlopen() also searches the caller's
+# RUNPATH, which covers the runtime-loaded libcudss.so.0. CUDA 13 wheels share one directory;
+# CUDA 12 wheels use one directory per library (cuDSS goes to nvidia/cu12/lib).
+if(CUDAToolkit_VERSION_MAJOR VERSION_GREATER_EQUAL 13)
+  set(_pycunls_pip_cuda_rpath "$ORIGIN/../nvidia/cu${CUDAToolkit_VERSION_MAJOR}/lib")
+else()
+  set(_pycunls_pip_cuda_rpath
+    "$ORIGIN/../nvidia/cuda_runtime/lib:$ORIGIN/../nvidia/cublas/lib:$ORIGIN/../nvidia/cusparse/lib:$ORIGIN/../nvidia/cusolver/lib:$ORIGIN/../nvidia/cu12/lib")
+endif()
+set_target_properties(_pycunls_core PROPERTIES INSTALL_RPATH "${_pycunls_pip_cuda_rpath}")
+
 install(TARGETS _pycunls_core LIBRARY DESTINATION pycunls)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pycunls/ DESTINATION pycunls
   FILES_MATCHING
