@@ -76,6 +76,15 @@ manifold-generic, compile-time-deduced facade:
   `bound_factor_batch.h` (`BoundFactorBatch<Dim>`: box bounds on a vector
   state, itself an inequality batch), `halfspace_factor_batch.h`
   (`HalfspaceFactorBatch<Dim>`: `a^T x - b`, to be wrapped)
+- Kinematics (`kinematics/`, on `ArticulationStateBatch`): `ArticulationFactorBatch`
+  (base: topology + residual size, state size = DOF count), `LinkPositionFactorBatch`,
+  `LinkOrientationFactorBatch`, `LinkPoseFactorBatch` (one templated kernel in
+  `link_target_factor_batch.cu`), `PostureFactorBatch`, `LoopClosureFactorBatch`
+  (BALL 3 / REVOLUTE 5 / PRISMATIC 5 / FIXED 6 rows, wrapped as equality),
+  `MimicJointFactorBatch`. They never run kinematics: they read the state's cache
+  (link poses, DOF motion columns) and the topology's ancestor bitsets. Kernels use one
+  group of 8/16/32 lanes per item (by DOF count): lane l writes Jacobian columns l, l+G, ...
+  of every row (coalesced rows). Guide: `docs/sphinx/articulations.rst`.
 
 ## Data contracts
 

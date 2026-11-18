@@ -83,8 +83,10 @@ class BlockTridiagonalSolver : public SparseLinearSolver {
 
  private:
   int num_problems_ = 0;  ///< P
-  int num_stages_ = 0;    ///< K (the largest stage index + 1)
-  int stage_size_ = 0;    ///< m (the largest stage block)
+  int num_sms_ =
+      1;  ///< SMs of the device (Initialize): packs subproblems per block when P is large
+  int num_stages_ = 0;  ///< K (the largest stage index + 1)
+  int stage_size_ = 0;  ///< m (the largest stage block)
   size_t num_rows_ = 0;
   /// Per CSR entry: index into blocks_ (D blocks, then C blocks), or -1 (lower half).
   dvector<int> entry_slot_;

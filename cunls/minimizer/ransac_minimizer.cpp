@@ -21,6 +21,7 @@
 #include <string>
 
 #include "cunls/minimizer/ransac/ransac_context.h"
+#include "cunls/state/state_batch.h"
 
 namespace cunls {
 
@@ -95,6 +96,9 @@ RansacMinimizer::RansacMinimizer(const RansacMinimizerOptions &options,
     : options_(options), settings_(settings) {}
 
 RansacSummary RansacMinimizer::Minimize(cudaStream_t stream, Problem &problem) {
+  // Derived state data (articulation link poses) must match the coordinates
+  // before the hypothesis slots copy the states.
+  for (StateBatch *batch : problem.GetStateBatches()) RefreshDerivedStateData(batch, stream);
   return ransac_internal::RunRansac(stream, problem, options_, settings_, context_);
 }
 

@@ -174,26 +174,72 @@ __device__ void AddToTotals(size_t num_problems, float cost, int active, float *
   if (active) atomicAdd(out + 1, 1.f);
 }
 
+/**
+ * AddToTotals for a whole block: every thread of the block must call it,
+ * `counted` false for a thread without a subproblem. With more subproblems
+ * than one block holds, sums the block in shared memory and adds it with one
+ * atomic per total, instead of one atomic per subproblem on the same two
+ * addresses (which serializes thousands of subproblems); with fewer, the
+ * plain per-subproblem atomics (cheaper there).
+ */
+__device__ void AddBlockToTotals(size_t num_problems, bool counted, float cost, int active,
+                                 float *out) {
+  if (num_problems <= kThreads) {
+    // One block: per-subproblem atomics are cheaper than the block sum.
+    if (counted) AddToTotals(num_problems, cost, active, out);
+    return;
+  }
+  __shared__ float costs[kThreads / 32], counts[kThreads / 32];
+  float c = cost, a = active ? 1.f : 0.f;
+#pragma unroll
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    c += __shfl_down_sync(0xffffffffu, c, offset);
+    a += __shfl_down_sync(0xffffffffu, a, offset);
+  }
+  const int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
+  if (lane == 0) {
+    costs[warp] = c;
+    counts[warp] = a;
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    float total = 0.f, total_active = 0.f;
+    for (int w = 0; w < static_cast<int>(blockDim.x) / 32; ++w) {
+      total += costs[w];
+      total_active += counts[w];
+    }
+    atomicAdd(out, total);
+    if (total_active > 0.f) atomicAdd(out + 1, total_active);
+  }
+}
+
 __global__ void init_control_kernel(const float *cost, size_t num_problems, float cost_tolerance,
                                     const int *frozen, int *active, int *rejected, int *accept,
                                     int *outcome, int *termination, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (p >= num_problems) return;
-  // A frozen subproblem (InnerSolve::problem_frozen) is never active: it takes
-  // no step and keeps its states.
-  const bool is_frozen = frozen != nullptr && frozen[p] > 0;
-  const int is_active = cost[p] >= cost_tolerance && !is_frozen && isfinite(cost[p]);
-  active[p] = is_active;
-  TerminationReason reason = TerminationReason::NotDetermined;
-  if (!is_active && !is_frozen) {
-    reason =
-        isfinite(cost[p]) ? TerminationReason::CostTolerance : TerminationReason::NonFiniteCost;
+  // Every thread reaches the one AddBlockToTotals below (it synchronizes the
+  // block and shuffles the full warp): no early return.
+  float my_cost = 0.f;
+  int my_active = 0;
+  if (p < num_problems) {
+    // A frozen subproblem (InnerSolve::problem_frozen) is never active: it takes
+    // no step and keeps its states.
+    const bool is_frozen = frozen != nullptr && frozen[p] > 0;
+    const int is_active = cost[p] >= cost_tolerance && !is_frozen && isfinite(cost[p]);
+    active[p] = is_active;
+    TerminationReason reason = TerminationReason::NotDetermined;
+    if (!is_active && !is_frozen) {
+      reason =
+          isfinite(cost[p]) ? TerminationReason::CostTolerance : TerminationReason::NonFiniteCost;
+    }
+    termination[p] = static_cast<int>(reason);
+    rejected[p] = 0;
+    accept[p] = 0;
+    outcome[p] = kStepInactive;
+    my_cost = cost[p];
+    my_active = is_active;
   }
-  termination[p] = static_cast<int>(reason);
-  rejected[p] = 0;
-  accept[p] = 0;
-  outcome[p] = kStepInactive;
-  AddToTotals(num_problems, cost[p], is_active, out);
+  AddBlockToTotals(num_problems, p < num_problems, my_cost, my_active, out);
 }
 
 __global__ void line_search_kernel(size_t num_problems, const float *cost, const float *new_cost,
@@ -221,53 +267,60 @@ __global__ void step_control_kernel(StepControlParams params, size_t num_problem
                                     int *active, int *rejected, int *accept, int *outcome,
                                     int *termination, float *out) {
   const size_t p = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (p >= num_problems) return;
-  int take = 0;
-  int result = kStepInactive;
-  if (active[p]) {
-    const float current = cost[p], updated = new_cost[p];
-    // A non-finite step (a failed linear solve) or a step to a non-finite
-    // cost is rejected, never taken. The step is checked on its own: factors
-    // may give an invalid state (e.g. a NaN point) a finite, even zero, cost.
-    const bool finite = isfinite(updated) && isfinite(step_squared[p]);
-    const bool is_rejected = reject[p] != 0 || !finite;
-    if (params.line_search && finite && updated < current && (shortened[p] || is_rejected)) {
-      // Line search: a (possibly shortened) step that decreases the cost is
-      // taken (see MinimizerOptions::max_line_search_steps).
-      take = 1;
-      rejected[p] = 0;
-      result = kStepLineSearched;
-    } else if (converged[p] != 0 && finite) {
-      take = updated <= current;
-      active[p] = 0;
-      termination[p] = converged[p];
-      result = kStepConverged;
-    } else if (is_rejected) {
-      rejected[p] += 1;
-      if (params.max_consecutive_rejected_steps > 0 &&
-          rejected[p] >= params.max_consecutive_rejected_steps) {
+  // Every thread reaches the one AddBlockToTotals below (it synchronizes the
+  // block and shuffles the full warp): no early return.
+  float my_cost = 0.f;
+  int my_active = 0;
+  if (p < num_problems) {
+    int take = 0;
+    int result = kStepInactive;
+    if (active[p]) {
+      const float current = cost[p], updated = new_cost[p];
+      // A non-finite step (a failed linear solve) or a step to a non-finite
+      // cost is rejected, never taken. The step is checked on its own: factors
+      // may give an invalid state (e.g. a NaN point) a finite, even zero, cost.
+      const bool finite = isfinite(updated) && isfinite(step_squared[p]);
+      const bool is_rejected = reject[p] != 0 || !finite;
+      if (params.line_search && finite && updated < current && (shortened[p] || is_rejected)) {
+        // Line search: a (possibly shortened) step that decreases the cost is
+        // taken (see MinimizerOptions::max_line_search_steps).
+        take = 1;
+        rejected[p] = 0;
+        result = kStepLineSearched;
+      } else if (converged[p] != 0 && finite) {
+        take = updated <= current;
         active[p] = 0;
-        termination[p] = static_cast<int>(finite ? TerminationReason::MaxRejectedSteps
-                                                 : TerminationReason::NonFiniteStep);
+        termination[p] = converged[p];
+        result = kStepConverged;
+      } else if (is_rejected) {
+        rejected[p] += 1;
+        if (params.max_consecutive_rejected_steps > 0 &&
+            rejected[p] >= params.max_consecutive_rejected_steps) {
+          active[p] = 0;
+          termination[p] = static_cast<int>(finite ? TerminationReason::MaxRejectedSteps
+                                                   : TerminationReason::NonFiniteStep);
+        }
+        result = kStepRejected;
+      } else {
+        take = 1;
+        rejected[p] = 0;
+        result = kStepTaken;
       }
-      result = kStepRejected;
-    } else {
-      take = 1;
-      rejected[p] = 0;
-      result = kStepTaken;
+      if (take) cost[p] = updated;
+      // Its own iteration cap (InnerSolve::problem_iteration_cap) ends its part of the call.
+      if (active[p] && params.iteration_cap != nullptr &&
+          params.iterations_done >= params.iteration_cap[p]) {
+        active[p] = 0;
+        termination[p] = static_cast<int>(TerminationReason::MaxIterations);
+      }
     }
-    if (take) cost[p] = updated;
-    // Its own iteration cap (InnerSolve::problem_iteration_cap) ends its part of the call.
-    if (active[p] && params.iteration_cap != nullptr &&
-        params.iterations_done >= params.iteration_cap[p]) {
-      active[p] = 0;
-      termination[p] = static_cast<int>(TerminationReason::MaxIterations);
-    }
+    accept[p] = take;
+    outcome[p] = result;
+    my_cost = cost[p];
+    my_active = active[p];
+    if (num_problems == 1) out[2] = static_cast<float>(take);
   }
-  accept[p] = take;
-  outcome[p] = result;
-  AddToTotals(num_problems, cost[p], active[p], out);
-  if (num_problems == 1) out[2] = static_cast<float>(take);
+  AddBlockToTotals(num_problems, p < num_problems, my_cost, my_active, out);
 }
 
 /** out[p] = 1 if subproblem p stopped at an iteration cap (still active, or MaxIterations). */

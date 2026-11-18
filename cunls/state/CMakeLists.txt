@@ -1,4 +1,6 @@
 add_library(cunls_state OBJECT
+  articulation_state_batch.cu
+  articulation_topology.cpp
   state_batch_ops.cu
   se2_state_batch.cu
   se3_state_batch.cu

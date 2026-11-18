@@ -48,6 +48,8 @@ def test_every_catalog_entry_exists():
 @pytest.mark.parametrize("name", _exported(core.StateBatch))
 def test_state_sizes_match(name):
     info = state_info(name)
+    if info.ambient == 0:
+        pytest.skip("sizes depend on the ArticulationTopology (tests/test_articulation.py)")
     batch = getattr(pycunls, name)(wp.zeros(4 * info.ambient, wp.float32), 4)
     assert (batch.ambient_size, batch.tangent_size) == (info.ambient, info.tangent)
 
@@ -60,7 +62,7 @@ def _simple_factors():
             continue
         args = list(e["arrays"])
         if any(a in ("imu_samples", "time_steps", "obstacles", "poses_camera_from_rig",
-                     "lower") for a in args):
+                     "lower", "topology") for a in args):
             continue
         out.append(e["name"])
     return out

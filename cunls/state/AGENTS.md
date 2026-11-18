@@ -21,6 +21,13 @@ operations for applying tangent-space updates.
 - Rigid transforms: `se2_state_batch.h`, `se3_state_batch.h`
 - Similarities: `similarity2_state_batch.h`, `similarity3_state_batch.h`
 - Projective: `sl4_state_batch.h` (SL(4) homographies)
+- Articulations: `articulation_topology.h` (`ArticulationDescription`: Newton's joint
+  arrays; `ArticulationTopology`: validated, parents-first, uploaded; `DeviceView` for
+  kernels) and `articulation_state_batch.h` (`ArticulationStateBatch`: owned storage,
+  ambient = joint_q + link poses (12/link) + DOF motion columns (6/DOF); `Plus` applies the
+  per-joint step, clamps moved scalar coordinates, then runs forward kinematics into the
+  cache). Implements `BoxBoundedStates` (bounds per DOF; `BoundedComponentOffsets` =
+  coordinate of each scalar DOF, -1 for BALL/FREE) and `DerivedStateData`.
 
 ## Memory model
 
@@ -45,6 +52,13 @@ operations for applying tangent-space updates.
   (it holds the active bounds in the inner systems). Numeric differentiation
   perturbs bounded states by plain addition (a clamped perturbation would
   give a one-sided derivative at a bound).
+
+- Derived data: `DerivedStateData` (`state_batch.h`) for batches whose storage caches data
+  computed from the coordinates; the minimizers call `RefreshDerivedStateData` on every
+  problem batch at the start of each (inner) solve, before copying the states, and the
+  Python diagnostics before evaluating.
+- `BoxBoundedStates::PlusIgnoringBounds` is the perturbation of numeric differentiation;
+  `BoundedComponentOffsets` (nullptr = identity) tells the AL where each bounded value is.
 
 ## Related modules
 

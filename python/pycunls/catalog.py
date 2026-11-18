@@ -243,6 +243,60 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                    "Turn any factor into hard equality / inequality constraints "
                    "(AugmentedLagrangianMinimizer)."),
     ]
+    # Articulations: sizes depend on the ArticulationTopology (0 = per topology).
+    entries.append(StateInfo(
+        "ArticulationStateBatch", 0, 0,
+        "owned: joint_q (topology.coord_count, Newton layout, quaternions x, y, z, w), then a cache "
+        "of link poses (12 floats each) and DOF motion columns (6 each); per topology",
+        "topology.dof_count values in joint_qd order: a scalar per PRISMATIC/REVOLUTE/D6 axis, "
+        "BALL a rotation vector and FREE (dp, dtheta) in the parent-anchor frame"))
+    art = ["ArticulationStateBatch"]
+    articulation_note = ("Build ArticulationTopology from the robot's joint arrays (Newton layout), "
+                         "then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. "
+                         "Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.")
+    entries += [
+        FactorInfo("LinkPositionFactorBatch", art, 3, "W (X_L(q) c - p*)",
+                   {"topology": "ArticulationTopology", "links": "int32 link per factor",
+                    "points": "3 floats per factor (link frame)",
+                    "targets": "3 floats per factor (world)",
+                    "weights": "3 floats per factor or None"}, False,
+                   "Inverse kinematics: a point on a link should reach a world position.",
+                   articulation_note),
+        FactorInfo("LinkOrientationFactorBatch", art, 3, "W Log(R_L(q) R_off R*^T)",
+                   {"topology": "ArticulationTopology", "links": "int32 link per factor",
+                    "offsets": "quaternion x, y, z, w per factor or None",
+                    "targets": "quaternion x, y, z, w per factor",
+                    "weights": "3 floats per factor or None"}, False,
+                   "Inverse kinematics: a link frame should reach a world orientation.",
+                   articulation_note),
+        FactorInfo("LinkPoseFactorBatch", art, 6, "W [X_L p_off - p*; Log(R_L R_off R*^T)]",
+                   {"topology": "ArticulationTopology", "links": "int32 link per factor",
+                    "offsets": "7 floats (position, quaternion) per factor or None",
+                    "targets": "7 floats (position, quaternion) per factor",
+                    "weights": "6 floats per factor or None"}, False,
+                   "Inverse kinematics: a link frame should reach a world pose.",
+                   articulation_note),
+        FactorInfo("PostureFactorBatch", art, 0, "W (q (-) q*)  (topology.dof_count rows)",
+                   {"topology": "ArticulationTopology",
+                    "targets": "topology.coord_count floats per factor (joint_q layout)",
+                    "weights": "topology.dof_count floats per factor or None"}, False,
+                   "Regularizer / null-space posture / stay near a requested configuration.",
+                   articulation_note),
+        FactorInfo("LoopClosureFactorBatch", art, 0,
+                   "constraint rows between two joint frames (BALL 3, REVOLUTE 5, PRISMATIC 5, "
+                   "FIXED 6)",
+                   {"topology": "ArticulationTopology", "parent_links": "int32 (-1: world)",
+                    "child_links": "int32", "frames": "14 floats: joint_X_p, joint_X_c",
+                    "axes": "3 floats per factor (REVOLUTE/PRISMATIC) or None"}, False,
+                   "Closed kinematic loops (four-bars, parallel mechanisms); wrap in "
+                   "ConstraintFactorBatch(..., ConstraintKind.Equality).", articulation_note),
+        FactorInfo("MimicJointFactorBatch", art, 1, "q_m - (a + b q_ref)",
+                   {"topology": "ArticulationTopology", "mimic_dofs": "int32 DOF per factor",
+                    "reference_dofs": "int32 DOF per factor",
+                    "coefficients": "2 floats per factor (a, b)"}, False,
+                   "Coupled joints (Newton joint_mimic_*, URDF <mimic>); wrap in "
+                   "ConstraintFactorBatch(..., ConstraintKind.Equality).", articulation_note),
+    ]
     return {e.name: e for e in entries}
 
 

@@ -97,23 +97,40 @@ __device__ void StoreBlock(float *__restrict__ dst, const float *src, int lane) 
  * Rows past a stage's size (padding up to M) are identity rows with zero
  * right-hand side; lanes past M only take part in the shuffles.
  */
+/// Most subproblems (warps) per block of block_tridiagonal_kernel for stages of
+/// M unknowns, within 48 KB of static shared memory. Several warps per block
+/// keep more warps resident per SM when there are many subproblems (one-warp
+/// blocks cap occupancy at the per-SM block limit); few subproblems keep one
+/// warp per block so that they spread over the SMs (see Solve).
 template <int M>
-__global__ void __launch_bounds__(kWarp)
-    block_tridiagonal_kernel(int num_stages, const int *__restrict__ stage_sizes,
+__host__ __device__ constexpr int MaxWarpsPerBlock() {
+  return M <= 16 ? 4 : 1;
+}
+
+template <int M, int kWarps>
+__global__ void __launch_bounds__(kWarp *kWarps)
+    block_tridiagonal_kernel(int num_problems, int num_stages, const int *__restrict__ stage_sizes,
                              float *__restrict__ blocks, size_t c_offset,
                              float *__restrict__ vectors, int *__restrict__ num_singular) {
   constexpr int LD = M + 1;            // rows read one per lane: conflict free
   constexpr int LW = (M + 3) / 4 * 4;  // rows read by every lane (broadcast, float4)
   constexpr int MM = M * M;
   constexpr unsigned kFull = 0xffffffffu;
-  __shared__ float Dbuf[2][M * LD];            // D_k, then L_k
-  __shared__ float Cbuf[2][M * LD];            // C_k, then W_{k+1}
-  __shared__ __align__(16) float Wsh[M * LW];  // rows of W (the current W_k, then W_{k+1})
-  __shared__ float bbuf[2][kWarp];
-  __shared__ int size_buf[2][2];  // sizes of stages k and k + 1
+  __shared__ float Dbuf_all[kWarps][2][M * LD];            // D_k, then L_k
+  __shared__ float Cbuf_all[kWarps][2][M * LD];            // C_k, then W_{k+1}
+  __shared__ __align__(16) float Wsh_all[kWarps][M * LW];  // rows of W (W_k, then W_{k+1})
+  __shared__ float bbuf_all[kWarps][2][kWarp];
+  __shared__ int size_buf_all[kWarps][2][2];  // sizes of stages k and k + 1
 
-  const int p = blockIdx.x;
-  const int lane = threadIdx.x;
+  const int warp = threadIdx.x / kWarp;
+  const int p = blockIdx.x * kWarps + warp;
+  if (p >= num_problems) return;  // the whole warp: only warp-level synchronization below
+  const int lane = threadIdx.x % kWarp;
+  auto &Dbuf = Dbuf_all[warp];
+  auto &Cbuf = Cbuf_all[warp];
+  float *Wsh = Wsh_all[warp];
+  auto &bbuf = bbuf_all[warp];
+  auto &size_buf = size_buf_all[warp];
   const int row = lane < M ? lane : 0;  // lanes past M read row 0 and never write
   const int K = num_stages;
   float *D = blocks + static_cast<size_t>(p) * K * MM;
@@ -283,14 +300,30 @@ __global__ void __launch_bounds__(kWarp)
   }
 }
 
-using KernelPtr = void (*)(int, const int *, float *, size_t, float *, int *);
+using KernelPtr = void (*)(int, int, const int *, float *, size_t, float *, int *);
 
 template <int... Ms>
 constexpr std::array<KernelPtr, sizeof...(Ms)> MakeKernelTable(std::integer_sequence<int, Ms...>) {
-  return {&block_tridiagonal_kernel<Ms + 1>...};
+  return {&block_tridiagonal_kernel<Ms + 1, 1>...};
 }
 
-/// block_tridiagonal_kernel<M> for M = 1..32, indexed by M - 1.
+template <int... Ms>
+constexpr std::array<KernelPtr, sizeof...(Ms)> MakePackedKernelTable(
+    std::integer_sequence<int, Ms...>) {
+  return {&block_tridiagonal_kernel<Ms + 1, MaxWarpsPerBlock<Ms + 1>()>...};
+}
+
+template <int... Ms>
+constexpr std::array<int, sizeof...(Ms)> MakeWarpsTable(std::integer_sequence<int, Ms...>) {
+  return {MaxWarpsPerBlock<Ms + 1>()...};
+}
+
+/// MaxWarpsPerBlock<M>() for M = 1..32, indexed by M - 1.
+constexpr auto kWarpsPerBlock = MakeWarpsTable(std::make_integer_sequence<int, 32>{});
+/// block_tridiagonal_kernel<M, MaxWarpsPerBlock<M>()> for M = 1..32, indexed by M - 1.
+constexpr auto kPackedKernels = MakePackedKernelTable(std::make_integer_sequence<int, 32>{});
+
+/// block_tridiagonal_kernel<M, 1> for M = 1..32, indexed by M - 1.
 constexpr auto kKernels = MakeKernelTable(std::make_integer_sequence<int, 32>{});
 
 template <typename T>
@@ -332,6 +365,9 @@ bool BlockTridiagonalSolver::Initialize(cudaStream_t stream, const Problem &prob
   std::vector<Unknown> unknowns;
   unknowns.reserve(num_rows_);
   num_problems_ = static_cast<int>(problem.NumProblems());
+  int device = 0;
+  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
+  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&num_sms_, cudaDevAttrMultiProcessorCount, device));
   std::vector<std::vector<int>> sizes(num_problems_);  // [p][k]
   for (size_t b = 0; b < batches.size(); ++b) {
     const StateBatch *batch = batches[b];
@@ -431,9 +467,15 @@ bool BlockTridiagonalSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &s
       spd_matrix.values.data(), entry_slot_.data(), nnz, blocks_.data());
   gather_rhs_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(rhs.data(), row_slot_.data(),
                                                                 num_rows_, vectors_.data());
-  kKernels[stage_size_ - 1]<<<num_problems_, kWarp, 0, stream>>>(
-      num_stages_, stage_sizes_.data(), blocks_.data(), c_offset, vectors_.data(),
-      num_singular_.data());
+  // Pack several subproblems per block only when the one-warp blocks would
+  // exceed what the SMs hold at once (16 blocks each); fewer stay spread out.
+  const bool packed = num_problems_ > 16 * num_sms_;
+  const int warps = packed ? kWarpsPerBlock[stage_size_ - 1] : 1;
+  const KernelPtr kernel = packed ? kPackedKernels[stage_size_ - 1] : kKernels[stage_size_ - 1];
+  const unsigned grid = static_cast<unsigned>((num_problems_ + warps - 1) / warps);
+  kernel<<<grid, kWarp * warps, 0, stream>>>(static_cast<int>(num_problems_), num_stages_,
+                                             stage_sizes_.data(), blocks_.data(), c_offset,
+                                             vectors_.data(), num_singular_.data());
   scatter_solution_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(
       vectors_.data(), row_slot_.data(), num_rows_, result.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());

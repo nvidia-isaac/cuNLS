@@ -30,6 +30,137 @@ class ArctanLossFunctionBatch(LossFunctionBatch):
 
     def __init__(self, a: float, b: float) -> None: ...
 
+class ArticulationJointType(enum.Enum):
+    """
+    Joint types of an articulation; the values are Newton's JointType values.
+    """
+
+    Prismatic = 0
+    """1 coordinate: translation along the axis."""
+
+    Revolute = 1
+    """1 coordinate: rotation about the axis."""
+
+    Ball = 2
+    """4 coordinates (quaternion x, y, z, w), 3 DOFs."""
+
+    Fixed = 3
+    """0 coordinates."""
+
+    Free = 4
+    """7 coordinates (position, quaternion x, y, z, w), 6 DOFs."""
+
+    D6 = 6
+    """
+    Up to 3 linear then up to 3 angular scalar coordinates (joint_dof_dim).
+    """
+
+class ArticulationStateBatch(StateBatch):
+    """
+    Instances of one articulation (topology): each instance's joint_q plus a cache of link poses and motion columns that the kinematic factors read. The storage is owned (capacity x topology.ambient_size); write coordinates with set_joint_q and read them with get_joint_q. Tangent per joint, in joint_qd order: one scalar per PRISMATIC/REVOLUTE/D6 axis; BALL a rotation vector in the parent-anchor frame (quat <- Exp(d) * quat); FREE (dp, dtheta) in the parent-anchor frame. With apply_joint_limits the topology's limits are box bounds (solve with AugmentedLagrangianMinimizer). const_state_ids (int32 device array) with const_capacity entries holds instances constant. Starts with 0 active states: call set_num_active_states.
+
+    ArticulationStateBatch (state)
+      stored: owned: joint_q (topology.coord_count, Newton layout, quaternions x, y, z, w), then a cache of link poses (12 floats each) and DOF motion columns (6 each); per topology, 0 floats per state
+      tangent (0): topology.dof_count values in joint_qd order: a scalar per PRISMATIC/REVOLUTE/D6 axis, BALL a rotation vector and FREE (dp, dtheta) in the parent-anchor frame
+      update: x' = x (+) delta (right-multiplicative for Lie groups)
+      constructor: data (float32 GPU array of capacity x 0), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    @overload
+    def __init__(self, topology: ArticulationTopology, capacity: int, apply_joint_limits: bool = True) -> None: ...
+
+    @overload
+    def __init__(self, topology: ArticulationTopology, capacity: int, const_state_ids: object, const_capacity: int, apply_joint_limits: bool = True) -> None: ...
+
+    @property
+    def topology(self) -> ArticulationTopology:
+        """The kinematic tree of every instance."""
+
+    def set_joint_q(self, joint_q: object, num_states: int, stream: CudaStream) -> None:
+        """
+        Copies the coordinates of the first num_states instances from joint_q (device float32, num_states x coord_count, Newton's layout) and recomputes their cache (asynchronous on stream).
+        """
+
+    def get_joint_q(self, joint_q: object, num_states: int, stream: CudaStream) -> None:
+        """
+        Copies the coordinates of the first num_states instances into joint_q (device float32, num_states x coord_count; asynchronous on stream).
+        """
+
+    def set_bounds(self, lower: object | None, upper: object | None) -> None:
+        """
+        Box bounds per instance and DOF (device float32 arrays of capacity x dof_count; ±inf: unbounded; BALL/FREE entries ignored), replacing the joint limits. None, None removes them; use_joint_limits() restores the topology's limits.
+        """
+
+    def use_joint_limits(self) -> None:
+        """
+        Restores the topology's joint limits as the bounds (none if it has no finite limit).
+        """
+
+    @property
+    def has_bounds(self) -> bool:
+        """
+        Whether the batch has box bounds (solve with AugmentedLagrangianMinimizer).
+        """
+
+    def refresh(self, stream: CudaStream) -> None:
+        """
+        Recomputes the cache of the active instances from their joint_q (after writing state_device_ptr storage directly; the minimizers refresh at every solve).
+        """
+
+class ArticulationTopology:
+    """
+    An immutable kinematic tree (Newton's array layout), shared by every ArticulationStateBatch instance and kinematic factor built on it. Built once from host arrays (lists or numpy): joint_type, joint_parent (parent link, -1: root frame), joint_child (child link; link i is the child of exactly one joint), joint_X_p / joint_X_c (7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start (J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose (the frame root joints attach to). Loop-closing joints are not part of the tree: add them as LoopClosureFactorBatch. Forward kinematics: X_world(child) = X_world(parent) joint_X_p X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).
+    """
+
+    def __init__(self, joint_type: object, joint_parent: object, joint_child: object, joint_X_p: object, joint_X_c: object, joint_q_start: object, joint_qd_start: object, joint_axis: object, joint_dof_dim: object | None = None, limit_lower: object | None = None, limit_upper: object | None = None, root_pose: object | None = None) -> None: ...
+
+    @property
+    def joint_count(self) -> int:
+        """Number of joints J (== number of links)."""
+
+    @property
+    def link_count(self) -> int:
+        """Number of links (== joint_count)."""
+
+    @property
+    def coord_count(self) -> int:
+        """Coordinates per instance (joint_q floats, Newton's layout)."""
+
+    @property
+    def dof_count(self) -> int:
+        """
+        Degrees of freedom per instance: the tangent size of an articulation state.
+        """
+
+    @property
+    def ambient_size(self) -> int:
+        """
+        float32 values stored per instance: joint_q, 12 per link pose, 6 per DOF motion column.
+        """
+
+    @property
+    def has_limits(self) -> bool:
+        """Whether any DOF has a finite limit."""
+
+    @property
+    def lower_limits(self) -> list[float]:
+        """Lower limit per DOF (-inf: unbounded)."""
+
+    @property
+    def upper_limits(self) -> list[float]:
+        """Upper limit per DOF (+inf: unbounded)."""
+
+    def link_pose_offset(self, link: int) -> int:
+        """
+        Offset of a link's world pose (row-major 3x4 [R | p], 12 floats) in an instance's storage.
+        """
+
+    def dof_column_offset(self, dof: int) -> int:
+        """
+        Offset of a DOF's world motion column (omega, v: 6 floats) in an instance's storage.
+        """
+
 class AugmentedLagrangianMinimizer:
     """
     Augmented Lagrangian solver for problems with constraint factor batches (ConstraintFactorBatch, BoundFactorBatchN), around a Gauss-Newton or Levenberg-Marquardt minimizer (minimizer), with options: AugmentedLagrangianMinimizerOptions. Also the solver for box-bounded states (VectorStateBatch.set_bounds). Without constraints or bounds it is the wrapped minimizer.
@@ -1285,6 +1416,86 @@ class LinearSystemType(enum.Enum):
     Eliminate the state batches of Problem.set_eliminated_state_batches (the landmarks of a bundle adjustment) and solve the reduced system with the built-in supernodal Cholesky (BlockSparseCholesky; sparse_linear_solver_type is not used).
     """
 
+class LinkOrientationFactorBatch(FactorBatch):
+    """
+    r = W Log(R_L(q) R_off R*^T): the world orientation of a frame on link L should equal R* (3 rows, world rotation vector). Device arrays per factor: links (int32, 1), offsets (R_off as quaternion x, y, z, w: 4 floats, or None for identity), targets (R* as quaternion: 4 floats), weights (3 floats, or None).
+
+    LinkOrientationFactorBatch (factor)
+      states: [ArticulationStateBatch]
+      residual (3): W Log(R_L(q) R_off R*^T)
+      topology: ArticulationTopology
+      links: int32 link per factor
+      offsets: quaternion x, y, z, w per factor or None
+      targets: quaternion x, y, z, w per factor
+      weights: 3 floats per factor or None
+      relative: no
+      use: Inverse kinematics: a link frame should reach a world orientation.
+      notes: Build ArticulationTopology from the robot's joint arrays (Newton layout), then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    def __init__(self, topology: ArticulationTopology, links: object, offsets: object | None, targets: object, weights: object | None, capacity: int) -> None: ...
+
+class LinkPoseFactorBatch(FactorBatch):
+    """
+    r = W [X_L(q) p_off - p*; Log(R_L(q) R_off R*^T)]: the world pose of a frame on link L should equal a target (6 rows). Device arrays per factor: links (int32, 1), offsets (the frame in the link frame: position, quaternion x, y, z, w = 7 floats, or None), targets (7 floats: position, quaternion), weights (6 floats, or None).
+
+    LinkPoseFactorBatch (factor)
+      states: [ArticulationStateBatch]
+      residual (6): W [X_L p_off - p*; Log(R_L R_off R*^T)]
+      topology: ArticulationTopology
+      links: int32 link per factor
+      offsets: 7 floats (position, quaternion) per factor or None
+      targets: 7 floats (position, quaternion) per factor
+      weights: 6 floats per factor or None
+      relative: no
+      use: Inverse kinematics: a link frame should reach a world pose.
+      notes: Build ArticulationTopology from the robot's joint arrays (Newton layout), then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    def __init__(self, topology: ArticulationTopology, links: object, offsets: object | None, targets: object, weights: object | None, capacity: int) -> None: ...
+
+class LinkPositionFactorBatch(FactorBatch):
+    """
+    r = W (X_L(q) c - p*): the world position of point c on link L should equal p* (3 rows). Device arrays per factor: links (int32, 1), points (3 floats, link frame), targets (3 floats, world), weights (3 floats, or None for 1). One articulation state per factor.
+
+    LinkPositionFactorBatch (factor)
+      states: [ArticulationStateBatch]
+      residual (3): W (X_L(q) c - p*)
+      topology: ArticulationTopology
+      links: int32 link per factor
+      points: 3 floats per factor (link frame)
+      targets: 3 floats per factor (world)
+      weights: 3 floats per factor or None
+      relative: no
+      use: Inverse kinematics: a point on a link should reach a world position.
+      notes: Build ArticulationTopology from the robot's joint arrays (Newton layout), then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    def __init__(self, topology: ArticulationTopology, links: object, points: object, targets: object, weights: object | None, capacity: int) -> None: ...
+
+class LoopClosureFactorBatch(FactorBatch):
+    """
+    A loop-closing joint between two links of an articulation instance (parent -1: the world): the constraint rows keeping its two joint frames together (BALL 3, REVOLUTE 5, PRISMATIC 5, FIXED 6). Wrap in ConstraintFactorBatch(..., ConstraintKind.Equality). joint_type: the ArticulationJointType of every factor. Device arrays per factor: parent_links, child_links (int32, 1 each), frames (14 floats: joint_X_p then joint_X_c, each position + quaternion x, y, z, w), axes (3 floats; None allowed for BALL/FIXED).
+
+    LoopClosureFactorBatch (factor)
+      states: [ArticulationStateBatch]
+      residual: constraint rows between two joint frames (BALL 3, REVOLUTE 5, PRISMATIC 5, FIXED 6)
+      topology: ArticulationTopology
+      parent_links: int32 (-1: world)
+      child_links: int32
+      frames: 14 floats: joint_X_p, joint_X_c
+      axes: 3 floats per factor (REVOLUTE/PRISMATIC) or None
+      relative: no
+      use: Closed kinematic loops (four-bars, parallel mechanisms); wrap in ConstraintFactorBatch(..., ConstraintKind.Equality).
+      notes: Build ArticulationTopology from the robot's joint arrays (Newton layout), then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    def __init__(self, topology: ArticulationTopology, joint_type: ArticulationJointType, parent_links: object, child_links: object, frames: object, axes: object | None, capacity: int) -> None: ...
+
 class LossFunctionBatch:
     """Abstract base class for batched robust loss functions."""
 
@@ -1292,6 +1503,25 @@ class LossFunctionBatch:
         r"""
         Evaluates the loss on `count` squared residual norms s (float32 GPU array; may be overwritten) into out (float32 GPU array of count x 3: rho, rho', rho\'\' per entry), asynchronously on `stream`. The cost of a factor is 0.5 * rho(|r|^2).
         """
+
+class MimicJointFactorBatch(FactorBatch):
+    """
+    c = q_m - (a + b q_ref): a mimic (coupled) scalar DOF, as Newton's joint_mimic_* and URDF <mimic>. Wrap in ConstraintFactorBatch(..., ConstraintKind.Equality). Device arrays per factor: mimic_dofs, reference_dofs (int32 DOF indices, 1 each), coefficients (a, b: 2 floats).
+
+    MimicJointFactorBatch (factor)
+      states: [ArticulationStateBatch]
+      residual (1): q_m - (a + b q_ref)
+      topology: ArticulationTopology
+      mimic_dofs: int32 DOF per factor
+      reference_dofs: int32 DOF per factor
+      coefficients: 2 floats per factor (a, b)
+      relative: no
+      use: Coupled joints (Newton joint_mimic_*, URDF <mimic>); wrap in ConstraintFactorBatch(..., ConstraintKind.Equality).
+      notes: Build ArticulationTopology from the robot's joint arrays (Newton layout), then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    def __init__(self, topology: ArticulationTopology, mimic_dofs: object, reference_dofs: object, coefficients: object, capacity: int) -> None: ...
 
 class Minimizer:
     """
@@ -1574,6 +1804,24 @@ class PointToPointFactorBatch(FactorBatch):
     """
 
     def __init__(self, p_observations: object, q_observations: object, capacity: int) -> None: ...
+
+class PostureFactorBatch(FactorBatch):
+    """
+    r = W (q (-) q*): the coordinates should stay near a nominal configuration (dof_count rows; scalar DOFs q - q*, BALL/FREE rotations Log(R R*^T)). A regularizer, null-space posture, or 'stay close to the requested state'. Device arrays per factor: targets (coord_count floats, joint_q layout), weights (dof_count floats, or None for 1).
+
+    PostureFactorBatch (factor)
+      states: [ArticulationStateBatch]
+      residual: W (q (-) q*)  (topology.dof_count rows)
+      topology: ArticulationTopology
+      targets: topology.coord_count floats per factor (joint_q layout)
+      weights: topology.dof_count floats per factor or None
+      relative: no
+      use: Regularizer / null-space posture / stay near a requested configuration.
+      notes: Build ArticulationTopology from the robot's joint arrays (Newton layout), then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.
+    """
+
+    def __init__(self, topology: ArticulationTopology, targets: object, weights: object | None, capacity: int) -> None: ...
 
 class PriorVectorFactorBatch1(FactorBatch):
     """

@@ -80,6 +80,14 @@ def _pointer_table(problem: Problem, index: int) -> np.ndarray:
     return np.asarray(problem.host_state_pointers(index), dtype=np.uint64)
 
 
+def _refresh_derived_state_data(problem: Problem, stream: CudaStream) -> None:
+    """Recomputes cached state data (ArticulationStateBatch link poses) from the coordinates, as
+    the minimizers do at the start of a solve, so an evaluation sees what a solve would."""
+    for batch in problem.state_batches():
+        if hasattr(batch, "refresh"):
+            batch.refresh(stream)
+
+
 # ---------------------------------------------------------------------------------------------
 # evaluate
 # ---------------------------------------------------------------------------------------------
@@ -180,6 +188,7 @@ def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
         :class:`Evaluation`; ``print()`` it for a table, ``to_dict()`` for JSON.
     """
     stream = _stream(stream)
+    _refresh_derived_state_data(problem, stream)
     batches = []
     with _external(stream):
         for i in range(problem.num_residual_batches):
@@ -281,6 +290,7 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
         One :class:`JacobianCheck` per checked batch.
     """
     stream = _stream(stream)
+    _refresh_derived_state_data(problem, stream)
     state_batches = problem.state_batches()
     indices = range(problem.num_residual_batches) if batches is None else batches
     results = []

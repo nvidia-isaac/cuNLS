@@ -33,16 +33,15 @@ namespace cunls {
 namespace {
 
 /**
- * x ⊞ δ for a perturbed evaluation. A box-bounded vector state's ⊞ clamps the
- * moved components into its box (VectorStateBatch::SetBounds), but a
- * derivative needs the factor on both sides of a bound, so its perturbation is
- * the plain sum.
+ * x ⊞ δ for a perturbed evaluation. A box-bounded state's ⊞ clamps the
+ * moved components into its box, but a derivative needs the factor on both
+ * sides of a bound, so its perturbation ignores the bounds
+ * (BoxBoundedStates::PlusIgnoringBounds).
  */
 void PerturbationPlus(StateBatch *batch, const float *x, const float *delta, float *x_plus_delta,
                       cudaStream_t stream) {
   if (HasBoxBounds(batch)) {
-    CalculateVectorPlus(x, delta, x_plus_delta, batch->NumActiveStates(),
-                        static_cast<int>(batch->TangentSize()), stream);
+    dynamic_cast<BoxBoundedStates *>(batch)->PlusIgnoringBounds(x, delta, x_plus_delta, stream);
     return;
   }
   batch->Plus(x, delta, x_plus_delta, stream);

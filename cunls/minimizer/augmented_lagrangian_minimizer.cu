@@ -221,11 +221,34 @@ __global__ void project_kernel(float *x, const int *column_offsets, const float 
 }
 
 /**
+ * project_kernel for a batch whose bounded values sit at `offsets` within
+ * each state of `ambient` floats (BoxBoundedStates::BoundedComponentOffsets;
+ * -1: the component has no bounds), e.g. articulation joint coordinates.
+ */
+__global__ void project_offsets_kernel(float *x, const int *column_offsets, const float *lower,
+                                       const float *upper, size_t n, int dim, int ambient,
+                                       const int *offsets) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i >= n || column_offsets[i / dim] < 0) return;
+  const int offset = offsets[i % dim];
+  if (offset < 0) return;
+  float *v = x + (i / dim) * ambient + offset;
+  *v = fminf(fmaxf(*v, lower[i]), upper[i]);
+}
+
+/**
  * mask[column] = 0 for the components of non-constant states that sit at a
  * bound with direction (the right-hand side, minus the gradient) pointing
  * outward. A component within a relative 1e-6 of a bound counts as at it
  * (projection puts it exactly there; this catches float round-off).
  */
+__device__ __forceinline__ void HoldIfOutward(float v, float lo, float hi, float d, int row,
+                                              float *mask) {
+  const bool at_lower = v <= lo + 1e-6f * (1.f + fabsf(lo));
+  const bool at_upper = v >= hi - 1e-6f * (1.f + fabsf(hi));
+  if ((at_lower && d <= 0.f) || (at_upper && d >= 0.f)) mask[row] = 0.f;
+}
+
 __global__ void hold_kernel(const float *x, const int *column_offsets, const float *lower,
                             const float *upper, const float *direction, size_t n, int dim,
                             float *mask) {
@@ -238,6 +261,20 @@ __global__ void hold_kernel(const float *x, const int *column_offsets, const flo
   const bool at_lower = v <= lo + 1e-6f * (1.f + fabsf(lo));
   const bool at_upper = v >= hi - 1e-6f * (1.f + fabsf(hi));
   if ((at_lower && d <= 0.f) || (at_upper && d >= 0.f)) mask[row] = 0.f;
+}
+
+/** hold_kernel for bounded values at `offsets` (see project_offsets_kernel). */
+__global__ void hold_offsets_kernel(const float *x, const int *column_offsets, const float *lower,
+                                    const float *upper, const float *direction, size_t n, int dim,
+                                    int ambient, const int *offsets, float *mask) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i >= n) return;
+  const int column = column_offsets[i / dim];
+  if (column < 0) return;
+  const int offset = offsets[i % dim];
+  if (offset < 0) return;
+  const int row = column + static_cast<int>(i % dim);
+  HoldIfOutward(x[(i / dim) * ambient + offset], lower[i], upper[i], direction[row], row, mask);
 }
 
 /**
@@ -425,10 +462,18 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
       const StateBatch *batch = state_batches[b];
       const size_t n = batch->NumActiveStates() * batch->TangentSize();
       if (n == 0) continue;
-      hold_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-          state.GetStates()[b].data(), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
-          Bounds(batch).UpperBounds(), direction, n, static_cast<int>(batch->TangentSize()),
-          mask.data());
+      const int *offsets = Bounds(batch).BoundedComponentOffsets();
+      const int dim = static_cast<int>(batch->TangentSize());
+      if (offsets == nullptr) {
+        hold_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+            state.GetStates()[b].data(), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
+            Bounds(batch).UpperBounds(), direction, n, dim, mask.data());
+      } else {
+        hold_offsets_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+            state.GetStates()[b].data(), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
+            Bounds(batch).UpperBounds(), direction, n, dim, static_cast<int>(batch->AmbientSize()),
+            offsets, mask.data());
+      }
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
   };
@@ -535,9 +580,17 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       StateBatch *batch = state_batches[b];
       const size_t n = batch->NumActiveStates() * batch->TangentSize();
       if (n == 0) continue;
-      project_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-          batch->StateDevicePtr(0), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
-          Bounds(batch).UpperBounds(), n, static_cast<int>(batch->TangentSize()));
+      const int *offsets = Bounds(batch).BoundedComponentOffsets();
+      const int dim = static_cast<int>(batch->TangentSize());
+      if (offsets == nullptr) {
+        project_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+            batch->StateDevicePtr(0), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
+            Bounds(batch).UpperBounds(), n, dim);
+      } else {
+        project_offsets_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+            batch->StateDevicePtr(0), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
+            Bounds(batch).UpperBounds(), n, dim, static_cast<int>(batch->AmbientSize()), offsets);
+      }
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
   }

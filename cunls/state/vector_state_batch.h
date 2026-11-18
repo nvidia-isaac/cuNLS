@@ -41,20 +41,43 @@ void CalculateVectorPlus(const float *x, const float *delta, float *x_plus_delta
                          const float *upper = nullptr, size_t bound_values = 0);
 
 /**
- * @brief Box bounds of a state batch: lower <= x <= upper per component
- * (VectorStateBatch::SetBounds). Bounds are a constraint, enforced only by
- * AugmentedLagrangianMinimizer; read through this interface (dynamic_cast
- * from StateBatch), so StateBatch itself knows nothing about bounds.
+ * @brief Box bounds of a state batch: lower <= value <= upper per tangent
+ * component (VectorStateBatch::SetBounds, ArticulationStateBatch::SetBounds).
+ * Bounds are a constraint, enforced only by AugmentedLagrangianMinimizer; read
+ * through this interface (dynamic_cast from StateBatch), so StateBatch itself
+ * knows nothing about bounds.
+ *
+ * The bounded value of tangent component k of state s is the ambient float
+ * `x[s * AmbientSize() + offset[k]]`, with offset = BoundedComponentOffsets()
+ * (the identity, offset[k] = k, for vector states).
  */
 class BoxBoundedStates {
  public:
   virtual ~BoxBoundedStates() = default;
 
-  /** @brief Device lower bounds, Capacity() * dimension floats; nullptr: no bounds. */
+  /** @brief Device lower bounds, Capacity() * TangentSize() floats; nullptr: no bounds. */
   virtual const float *LowerBounds() const = 0;
 
-  /** @brief Device upper bounds, Capacity() * dimension floats; nullptr: no bounds. */
+  /** @brief Device upper bounds, Capacity() * TangentSize() floats; nullptr: no bounds. */
   virtual const float *UpperBounds() const = 0;
+
+  /**
+   * @brief Where each tangent component's bounded value is stored: a device
+   * array of TangentSize() ints, the ambient offset within one state, or -1
+   * for a component that has no bounds (e.g. the rotation of a ball joint).
+   * nullptr (the default): the identity, for states whose ambient and
+   * tangent coordinates coincide (VectorStateBatch).
+   */
+  virtual const int *BoundedComponentOffsets() const { return nullptr; }
+
+  /**
+   * @brief x ⊕ δ for the active states without clamping into the bounds,
+   * for numeric differentiation (a clamped perturbation would give a
+   * one-sided derivative at a bound). Same arrays as StateBatch::Plus with
+   * one replica.
+   */
+  virtual void PlusIgnoringBounds(const float *x, const float *delta, float *x_plus_delta,
+                                  cudaStream_t stream) = 0;
 };
 
 /** @brief Whether `batch` has box bounds (see BoxBoundedStates). */
@@ -149,6 +172,12 @@ class VectorStateBatch : public SizedStateBatch<Dim, Dim>, public BoxBoundedStat
   const float *LowerBounds() const override { return lower_; }
   /** @brief See BoxBoundedStates. */
   const float *UpperBounds() const override { return upper_; }
+
+  /** @brief x + delta for the active states, without clamping (see BoxBoundedStates). */
+  void PlusIgnoringBounds(const float *x, const float *delta, float *x_plus_delta,
+                          cudaStream_t stream) override {
+    CalculateVectorPlus(x, delta, x_plus_delta, this->num_active_states_, Dim, stream);
+  }
 
  private:
   /** @brief Default constructor (private, not for external use). */

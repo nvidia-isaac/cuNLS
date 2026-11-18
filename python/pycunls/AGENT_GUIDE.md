@@ -18,6 +18,7 @@ the environment. Every class and function also documents itself: `help(pycunls.X
 | poses / points / velocities linked by built-in factors (pose graph, bundle adjustment, ICP, PnP) | `pycunls.ProblemBuilder` or the one-call `pycunls.solve` | below |
 | gross outliers in geometric matches (PnP, registration) | `RansacLevenbergMarquardtMinimizer` | `python/examples/ransac_pnp.py` |
 | hard constraints, MPC | `AugmentedLagrangianMinimizer`, `pycunls.mpc` | `python/examples/supermarket_drones.py` |
+| a robot (URDF or joint arrays): inverse kinematics with hard joint limits, closed loops, mimic joints | `ArticulationTopology`, `ArticulationStateBatch`, `LinkPoseFactorBatch` + `AugmentedLagrangianMinimizer` | `python/tests/test_articulation.py`, `docs/sphinx/articulations.rst` |
 | a residual no built-in factor computes, inside a larger graph | a Warp factor (`pycunls.warp.WarpFactorBatch`) | `python/examples/custom_warp_factor.py` |
 
 `pycunls.catalog("factor")` lists the built-in factors; `pycunls.describe(name)` gives one's
@@ -104,6 +105,10 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   "converged" early (the message says which criterion fired).
 - **Reprojection observations are normalized** image coordinates (intrinsics removed).
 - **Keep arrays alive.** Batches read the arrays you pass; do not let them be garbage collected.
+- **Articulations.** `joint_q` follows Newton's layout (quaternions x, y, z, w); write it with
+  `ArticulationStateBatch.set_joint_q`, read it with `get_joint_q`. Joint limits are hard bounds
+  (solve with `AugmentedLagrangianMinimizer`). Loop-closing joints are not tree joints: add them
+  as `LoopClosureFactorBatch` wrapped in an equality `ConstraintFactorBatch`.
 
 ## 5. After a solve: check, do not assume
 

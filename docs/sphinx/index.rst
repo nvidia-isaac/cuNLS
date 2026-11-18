@@ -49,6 +49,7 @@ Guides
    troubleshooting
    ransac
    constraints
+   articulations
    dynamics
    imu
    linear_solvers
