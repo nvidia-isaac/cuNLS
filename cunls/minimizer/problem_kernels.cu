@@ -63,7 +63,9 @@ __global__ void CheckPointersKernel(float *const *__restrict__ pointers, size_t 
         diff % range.ambient != 0) {
       continue;
     }
-    if (range.tangent != slots.tangent[t % slots.num_slots]) {
+    const int s = static_cast<int>(t % slots.num_slots);
+    if (range.tangent != slots.tangent[s] ||
+        (slots.ambient[s] != 0 && range.ambient != slots.ambient[s])) {
       Report(error, 2, batch, static_cast<long long>(t));
       return;
     }

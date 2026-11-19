@@ -37,7 +37,7 @@ namespace cunls {
  *
  * @verbatim
  *   BALL       3 rows: Δp
- *   REVOLUTE   5 rows: Δp;  (R_FP b₁)·(R_FC a),  (R_FP b₂)·(R_FC a)        (axes stay aligned)
+ *   REVOLUTE   6 rows: Δp;  R_FC a - R_FP a                                (axes stay aligned)
  *   PRISMATIC  5 rows: Log(R_FC R_FPᵀ);  (R_FP b₁)·Δp,  (R_FP b₂)·Δp      (no motion off the axis)
  *   FIXED      6 rows: Δp;  Log(R_FC R_FPᵀ)
  * @endverbatim
@@ -45,8 +45,10 @@ namespace cunls {
  * Positions in meters, rotations in radians. The Jacobian takes the motion
  * columns of the child branch with + and of the parent branch with -; DOFs
  * both branches share cancel. Rows may be redundant (a planar four-bar closed
- * by a REVOLUTE joint has 5 rows of rank 2); the augmented Lagrangian
- * tolerates that.
+ * by a REVOLUTE joint has 6 rows of rank 2; R_FC a - R_FP a has rank 2 at
+ * most, as both are unit vectors); the augmented Lagrangian tolerates that.
+ * The REVOLUTE rows compare the axes whole: their projections on b₁, b₂
+ * also vanish when the axes point in opposite directions.
  *
  * Data per factor (user-owned device arrays):
  * - parent_links: int,   1 per factor: link P, or -1 for the world;
@@ -69,7 +71,8 @@ class LoopClosureFactorBatch : public ArticulationFactorBatch {
   /** @brief The loop-closing joint type of every factor. */
   ArticulationJointType JointType() const { return joint_type_; }
 
-  /** @brief Rows of one factor for `joint_type` (3, 5, 5, 6); throws for other types. */
+  /** @brief Rows of one factor for `joint_type` (BALL 3, REVOLUTE 6, PRISMATIC 5, FIXED 6); throws
+   * for other types. */
   static size_t RowsOf(ArticulationJointType joint_type);
 
   /** @brief See FactorBatch::Evaluate. */

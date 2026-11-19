@@ -31,7 +31,9 @@ operations for applying tangent-space updates.
 
 ## Memory model
 
-- Backed by user-provided contiguous device memory.
+- Backed by user-provided contiguous device memory, except `ArticulationStateBatch`, which
+  allocates and owns its state storage; its custom bounds (`SetBounds`) and constant state IDs
+  are still borrowed from the caller.
 - Optional constant state IDs mark fixed states excluded from optimization.
 - Constructed with a capacity (states the buffer holds; `const_capacity` for
   the constant-id buffer), fixed for the batch's lifetime. The active counts

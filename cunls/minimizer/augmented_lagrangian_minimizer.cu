@@ -702,6 +702,11 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   ScatterPenalties(stream, constraints_, penalty_, num_problems_);
 
   const bool real_time = options_.real_time;
+  if (!real_time) {
+    // The objective reads derived data (articulation link poses): match it to the coordinates
+    // the caller or the bound projection above wrote (the inner solves refresh on their own).
+    for (StateBatch *batch : state_batches) RefreshDerivedStateData(batch, stream);
+  }
   summary.initial_cost = real_time ? std::numeric_limits<float>::quiet_NaN()
                                    : ComputeObjective(stream, problem, scratch_, partials_, d_out_);
   summary.final_cost = summary.initial_cost;

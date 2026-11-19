@@ -325,7 +325,8 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
                             delta = np.zeros((sb.num_active_states, sb.tangent_size), np.float32)
                             delta[:, k] = sign * step
                             moved = wp.empty_like(x)
-                            sb.apply_plus(x, _device(delta), moved, stream)
+                            # Unclamped: a step clamped at a bound gives a one-sided derivative.
+                            sb.apply_plus(x, _device(delta), moved, stream, ignore_bounds=True)
                             # Slot `slot` of the factors on batch j reads the moved copy.
                             shifted = pointers.reshape(n, len(sizes)).copy()
                             offset = np.uint64(moved.ptr) - base
@@ -447,6 +448,9 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     if error:
         return [Issue("error", error)]
     state_batches = problem.state_batches()
+    # Derived caches (articulation link poses) follow the coordinates, as in a solve: a cache
+    # left non-finite by an earlier evaluation does not hide repaired coordinates.
+    _refresh_derived_state_data(problem, stream)
     with _external(stream):
         for j, sb in enumerate(state_batches):
             if sb.num_active_states == 0:

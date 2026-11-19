@@ -80,7 +80,7 @@ manifold-generic, compile-time-deduced facade:
   (base: topology + residual size, state size = DOF count), `LinkPositionFactorBatch`,
   `LinkOrientationFactorBatch`, `LinkPoseFactorBatch` (one templated kernel in
   `link_target_factor_batch.cu`), `PostureFactorBatch`, `LoopClosureFactorBatch`
-  (BALL 3 / REVOLUTE 5 / PRISMATIC 5 / FIXED 6 rows, wrapped as equality),
+  (BALL 3 / REVOLUTE 6 / PRISMATIC 5 / FIXED 6 rows, wrapped as equality),
   `MimicJointFactorBatch`. They never run kinematics: they read the state's cache
   (link poses, DOF motion columns) and the topology's ancestor bitsets. Kernels use one
   group of 8/16/32 lanes per item (by DOF count): lane l writes Jacobian columns l, l+G, ...

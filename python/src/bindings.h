@@ -88,6 +88,18 @@ const T *device_items(nb::handle obj, const char *name, size_t count) {
 // minimum size. The size check is best-effort: it applies when the size is
 // known (__cuda_array_interface__); a raw int pointer or a .data.ptr-only object
 // passes unchecked.
+/**
+ * Keeps the bounds arrays of state batch `self` alive while they are its bounds: one
+ * attribute holds the current pair (None after removal), so replaced arrays are released
+ * instead of accumulating for the batch's lifetime. Queued GPU work that still reads replaced
+ * arrays needs them kept alive by the caller (or the stream synchronized) until it finishes.
+ */
+template <typename Batch>
+inline void hold_bounds(Batch &self, nb::handle lower, nb::handle upper) {
+  nb::setattr(nb::find(&self), "_bounds_arrays",
+              lower.is_none() ? nb::none() : nb::object(nb::make_tuple(lower, upper)));
+}
+
 inline const float *device_floats(nb::handle obj, const char *name, size_t count, size_t per_item,
                                   const char *item) {
   const std::string what =

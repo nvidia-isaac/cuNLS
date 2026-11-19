@@ -26,6 +26,8 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
+#include "cunls/factor/constraint_factor_batch.h"
+#include "cunls/factor/kinematics/articulation_factor_batch.h"
 #include "cunls/minimizer/problem_kernels.h"
 #include "cunls/state/vector_state_batch.h"
 
@@ -417,10 +419,18 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(used.data(), 0, used.size() * sizeof(int), stream));
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(error.data(), 0, sizeof(ValidationError), stream));
   for (size_t i = 0; i < residual_batches_.size(); ++i) {
-    const auto sizes = residual_batches_[i].GetFactorBatch()->StateSizes();
+    const FactorBatch *factor = residual_batches_[i].GetFactorBatch();
+    const auto sizes = factor->StateSizes();
     problem_internal::SlotTangents slots;
     slots.num_slots = static_cast<int>(std::min<size_t>(sizes.size(), problem_internal::kMaxSlots));
     for (int b = 0; b < slots.num_slots; ++b) slots.tangent[b] = static_cast<int>(sizes[b]);
+    // The tangent size does not fix an articulation state's layout (its cache depends on the
+    // topology): its factors also need the ambient size of their topology. A constraint reads
+    // its states through the factor it wraps.
+    const auto *constraint = dynamic_cast<const ConstraintFactorBatch *>(factor);
+    const auto *articulation = dynamic_cast<const ArticulationFactorBatch *>(
+        constraint != nullptr ? constraint->Inner() : factor);
+    if (articulation != nullptr) slots.ambient[0] = articulation->Topology().AmbientSize();
     if (slots.num_slots == 0) {
       continue;
     }
@@ -450,9 +460,10 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
              "correct the connectivity.";
     case 2:
       return "Residual batch " + batch + ": state pointer " + entry +
-             " points into a state batch whose tangent size differs from the state slot's "
-             "(the factor expects another state type there). Fix: connect the slot to a state "
-             "of the type the factor expects.";
+             " points into a state batch whose tangent or ambient size differs from the state "
+             "slot's (the factor expects another state type, or an articulation state of "
+             "another topology). Fix: connect the slot to a state of the type and topology the "
+             "factor expects.";
     case 3:
       return "State batch " + batch + ": state " + entry +
              " is not constrained by any factor, so the linear system is singular. Fix: add a "

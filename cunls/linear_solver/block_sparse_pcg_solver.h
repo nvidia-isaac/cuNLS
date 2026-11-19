@@ -425,6 +425,10 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
   /// MatrixStorage(): the values of the pattern of Initialize() (its layout: the identity map).
   dvector<float> values_;
   const BSRSparseMatrix *bsr_view_ = nullptr;
+  /** The matrix Initialize() received (one of the two is non-null): SolveStoredMatrix
+   *  reads its pattern, whatever matrix a matrix-taking Solve passed since. */
+  const CSRSparseMatrix *initialized_csr_ = nullptr;
+  const BSRSparseMatrix *initialized_bsr_ = nullptr;
 
   /** Bundle-adjustment `H p`, ready only when selected and applicable. */
   BaHessianProduct ba_product_;

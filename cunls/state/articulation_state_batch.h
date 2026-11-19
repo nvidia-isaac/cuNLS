@@ -112,6 +112,9 @@ class ArticulationStateBatch : public StateBatch, public BoxBoundedStates, publi
    * instances, from the cache (forward kinematics of the current joint_q): 7
    * floats per link, position then unit quaternion (x, y, z, w) as the factor
    * targets (Newton's body_q layout), links in topology order. Asynchronous.
+   * The cache is current for instances written with SetJointQ() and, after a
+   * direct StateDevicePtr() write, for the active ones RefreshDerivedData()
+   * recomputed; it skips inactive instances, so write those with SetJointQ().
    *
    * @param transforms Instance i's LinkCount() x 7 floats start at
    *        transforms + i * stride.

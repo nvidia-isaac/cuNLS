@@ -71,8 +71,9 @@ class LinkPositionFactorBatch : public ArticulationFactorBatch {
  * @endverbatim
  *
  * R_L(q): world rotation of link L; R_off: the frame's rotation in the link
- * frame; R*: the world target. Jacobian column of DOF j: W J_l⁻¹(r) ω_j for the
- * DOFs that move L. Newton: IKObjectiveRotation.
+ * frame; R*: the world target. With φ = Log(R_L(q) R_off R*ᵀ) the unweighted
+ * error (r = W φ), the Jacobian column of DOF j is W J_l⁻¹(φ) ω_j for the DOFs
+ * that move L. Newton: IKObjectiveRotation.
  *
  * Data per factor (user-owned device arrays):
  * - links:     int,   1 per factor;

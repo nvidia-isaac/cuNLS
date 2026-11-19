@@ -1349,8 +1349,8 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
                                       const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                       dvector<float> &result) {
-  bsr_view_ = &spd_matrix;
-  csr_view_ = nullptr;
+  bsr_view_ = initialized_bsr_ = &spd_matrix;
+  csr_view_ = initialized_csr_ = nullptr;
   values_.resize(spd_matrix.values.size());
   return InitializeCommon(stream, &problem, spd_matrix.NumRows(), rhs, result);
 }
@@ -1358,8 +1358,8 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
                                       const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                       dvector<float> &result) {
-  csr_view_ = &spd_matrix;
-  bsr_view_ = nullptr;
+  csr_view_ = initialized_csr_ = &spd_matrix;
+  bsr_view_ = initialized_bsr_ = nullptr;
   values_.resize(spd_matrix.values.size());
   if (!InitializeCommon(stream, &problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
     return false;
@@ -1575,7 +1575,10 @@ bool BlockSparsePCGSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<
     return false;
   }
   if (n == 0) return true;
-  // The pattern is the one Initialize() saw (its views); the values are the storage.
+  // The pattern is the one Initialize() saw, even after a matrix-taking Solve
+  // replaced the views; the values are the storage.
+  csr_view_ = initialized_csr_;
+  bsr_view_ = initialized_bsr_;
   if (csr_view_ != nullptr) mat_desc_.UpdatePointers(*csr_view_, values_.data());
   return SolveCommon(stream, n, values_.data(), rhs, result);
 }

@@ -265,6 +265,11 @@ std::vector<M4> ReferenceFK(const ArticulationDescription &d, const float *q) {
 }
 
 /** Random joint_q (normalized quaternions, scalars within their limits or ±1). */
+/** The larger of `worst` and `err`; infinity for a non-finite err (std::max would drop a NaN). */
+double Worst(double worst, double err) {
+  return std::isfinite(err) ? std::max(worst, err) : std::numeric_limits<double>::infinity();
+}
+
 std::vector<float> RandomQ(const ArticulationDescription &d, std::mt19937 &rng, float scale = 1.f) {
   std::uniform_real_distribution<float> u(-1.f, 1.f);
   std::vector<float> q(d.joint_q_start.back());
@@ -272,7 +277,10 @@ std::vector<float> RandomQ(const ArticulationDescription &d, std::mt19937 &rng, 
     const int q0 = d.joint_q_start[j], d0 = d.joint_qd_start[j];
     auto quat = [&](float *o) {
       float n = 0;
-      for (int i = 0; i < 3; ++i) n += (o[i] = scale * 0.5f * u(rng)) * o[i];
+      for (int i = 0; i < 3; ++i) {
+        o[i] = scale * 0.5f * u(rng);
+        n += o[i] * o[i];
+      }
       o[3] = 1.f;
       n = std::sqrt(n + 1.f);
       for (int i = 0; i < 4; ++i) o[i] /= n;
@@ -417,7 +425,7 @@ TEST(ArticulationStateBatch, ForwardKinematicsMatchesReference) {
     const auto ref = ReferenceFK(d, q.data() + size_t(s) * C);
     for (int l = 0; l < topo.LinkCount(); ++l) {
       const float *P = h.data() + size_t(s) * topo.AmbientSize() + topo.LinkPoseOffset(l);
-      for (int i = 0; i < 12; ++i) worst = std::max(worst, std::fabs(P[i] - ref[l][i]));
+      for (int i = 0; i < 12; ++i) worst = Worst(worst, std::fabs(P[i] - ref[l][i]));
     }
   }
   EXPECT_LT(worst, 2e-5);
@@ -457,7 +465,7 @@ TEST(ArticulationStateBatch, StridedJointQAndLinkTransforms) {
       const auto r = PoseOf(ref[l]);
       const float sign = X[3] * r[3] + X[4] * r[4] + X[5] * r[5] + X[6] * r[6] < 0 ? -1.f : 1.f;
       for (int i = 0; i < 7; ++i) {
-        worst = std::max(worst, double(std::fabs((i < 3 ? 1.f : sign) * X[i] - r[i])));
+        worst = Worst(worst, double(std::fabs((i < 3 ? 1.f : sign) * X[i] - r[i])));
       }
     }
     for (int i = 7 * L; i < x_stride; ++i) EXPECT_EQ(x[size_t(s) * x_stride + i], kSentinel);
@@ -536,8 +544,8 @@ void CheckJacobians(const FactorBatch &factor, ArticulationStateBatch &states, i
         const double numeric = (a[size_t(t) * m + r] - b[size_t(t) * m + r]) / (2.0 * h);
         const double analytic = J[(size_t(t) * m + r) * T + k];
         const double err = std::fabs(numeric - analytic) / (1.0 + std::fabs(analytic));
-        worst = std::max(worst, err);
-        if (err > tolerance) {
+        worst = Worst(worst, err);
+        if (!(err <= tolerance)) {  // NaN fails too
           ADD_FAILURE() << label << ": item " << t << " row " << r << " column " << k
                         << " analytic " << analytic << " numeric " << numeric;
           return;
@@ -648,9 +656,11 @@ TEST(KinematicFactors, LinkTargetJacobians) {
                            f.n);
   pose.SetNumActiveFactors(f.n);
   CheckJacobians(pose, f.states, f.n, "pose");
-  evaluate_items_test::CheckEvaluateItems(pose, 2, [&](int) {
+  // Each copy reads the instances in another order, so an item that looked its state up by
+  // factor id instead of by item index would read the wrong instance.
+  evaluate_items_test::CheckEvaluateItems(pose, 2, [&](int k) {
     std::vector<float *> p(f.n);
-    for (int t = 0; t < f.n; ++t) p[t] = f.states.StateDevicePtr(t);
+    for (int t = 0; t < f.n; ++t) p[t] = f.states.StateDevicePtr((t + 7 * k) % f.n);
     return p;
   });
 }
@@ -1071,7 +1081,7 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
         const float *tp = targets.data() + 7 * s;
         const double err = std::sqrt(std::pow(fk[3] - tp[0], 2) + std::pow(fk[7] - tp[1], 2) +
                                      std::pow(fk[11] - tp[2], 2));
-        ok += err < 5e-3 ? 1 : 0;
+        ok += inside && err < 5e-3 ? 1 : 0;  // a solution outside the limits is no success
       }
       printf("BENCH ik_arm7_%-6d %-20s median_ms=%8.3f success=%5.1f%% outside_limits=%d\n", n,
              solver_type == SparseLinearSolverType::BlockTridiagonal ? "BlockTridiagonal"
@@ -1079,6 +1089,93 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
              ms[ms.size() / 2], 100.0 * ok / n, violations);
     }
   }
+}
+
+// A factor built for one topology must not read the state of another with the same DOF count:
+// the cache layout (ambient size) differs, so the kernels would read the wrong floats.
+TEST(ArticulationSolve, ProblemRejectsStateOfAnotherLayout) {
+  ArticulationDescription one, two;
+  AddJoint(one, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  AddJoint(two, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  AddJoint(two, JT::kFixed, 0, Pose(0.3f, 0, 0), Pose(0, 0, 0), {});
+  ArticulationTopology topo_one(one), topo_two(two);
+  ASSERT_EQ(topo_one.DofCount(), topo_two.DofCount());
+  ASSERT_NE(topo_one.AmbientSize(), topo_two.AmbientSize());
+  ArticulationStateBatch states(topo_two, 1);
+  states.SetNumActiveStates(1);
+  dvector<float> targets(std::vector<float>{0.2f});
+  CudaStream stream;
+  for (const ArticulationTopology *topo : {&topo_one, &topo_two}) {
+    PostureFactorBatch posture(*topo, targets.data(), nullptr, 1);
+    posture.SetNumActiveFactors(1);
+    ConstraintFactorBatch constrained(&posture, ConstraintKind::kEquality);
+    for (FactorBatch *factor :
+         {static_cast<FactorBatch *>(&posture), static_cast<FactorBatch *>(&constrained)}) {
+      Problem problem;
+      problem.AddStateBatch(&states);
+      problem.AddFactorBatch(factor, std::vector<float *>{states.StateDevicePtr(0)});
+      EXPECT_EQ(problem.Validate(stream.GetStream()), topo == &topo_two);
+    }
+  }
+}
+
+// A REVOLUTE loop closure must not be satisfied by axes that point in opposite directions.
+TEST(KinematicFactors, RevoluteLoopRejectsOppositeAxes) {
+  ArticulationDescription d;  // link 0 turns about x; the loop joint (about z) ties it to the world
+  AddJoint(d, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{1, 0, 0}});
+  ArticulationTopology topo(d);
+  ArticulationStateBatch states(topo, 2);
+  states.SetNumActiveStates(2);
+  dvector<float> q(std::vector<float>{0.f, 3.14159265f});  // aligned, then flipped by π about x
+  CudaStream stream;
+  states.SetJointQ(q.data(), 2, stream.GetStream());
+  dvector<int> parents(std::vector<int>{-1}), children(std::vector<int>{0});
+  dvector<float> frames(std::vector<float>{0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1});
+  dvector<float> axes(std::vector<float>{0, 0, 1});
+  LoopClosureFactorBatch loop(topo, JT::kRevolute, parents.data(), children.data(), frames.data(),
+                              axes.data(), 1);
+  loop.SetNumActiveFactors(1);
+  dvector<float *> ptrs(std::vector<float *>{states.StateDevicePtr(0), states.StateDevicePtr(1)});
+  const int m = static_cast<int>(loop.ResidualsSize());
+  dvector<float> r(2 * m);
+  ASSERT_TRUE(loop.Evaluate(r.data(), nullptr, ptrs.data(), stream.GetStream(), nullptr, 2));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto h = Host(r);
+  double aligned = 0, flipped = 0;
+  for (int i = 0; i < m; ++i) {
+    aligned += h[i] * h[i];
+    flipped += h[m + i] * h[m + i];
+  }
+  EXPECT_LT(std::sqrt(aligned), 1e-6);
+  EXPECT_NEAR(std::sqrt(flipped), 2.0, 1e-5);  // |a_C - a_P| = |-z - z|
+}
+
+// A topology whose staged arrays and one instance exceed 48 KB of shared memory takes the
+// unstaged forward-kinematics path (one revolute joint, then 299 fixed links).
+TEST(ArticulationStateBatch, ForwardKinematicsBeyondSharedMemory) {
+  ArticulationDescription d;
+  AddJoint(d, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  for (int j = 1; j < 300; ++j)
+    AddJoint(d, JT::kFixed, j - 1, Pose(0.01f, 0, 0), Pose(0, 0, 0), {});
+  ArticulationTopology topo(d);
+  const int n = 3, C = topo.CoordCount();
+  ArticulationStateBatch states(topo, n);
+  states.SetNumActiveStates(n);
+  const std::vector<float> q = {0.f, 0.7f, -2.f};
+  dvector<float> d_q(q);
+  CudaStream stream;
+  states.SetJointQ(d_q.data(), n, stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto h = HostState(states, n);
+  double worst = 0;
+  for (int s = 0; s < n; ++s) {
+    const auto ref = ReferenceFK(d, q.data() + size_t(s) * C);
+    for (int l = 0; l < topo.LinkCount(); ++l) {
+      const float *P = h.data() + size_t(s) * topo.AmbientSize() + topo.LinkPoseOffset(l);
+      for (int i = 0; i < 12; ++i) worst = Worst(worst, std::fabs(P[i] - ref[l][i]));
+    }
+  }
+  EXPECT_LT(worst, 2e-5);
 }
 
 }  // namespace

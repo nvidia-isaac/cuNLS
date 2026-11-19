@@ -81,7 +81,7 @@ void JointSizes(const ArticulationDescription &d, int j, int *coords, int *dofs)
 void NormalizedQuat(const float *q, double *out, const std::string &what) {
   const double n = std::sqrt(double(q[0]) * q[0] + double(q[1]) * q[1] + double(q[2]) * q[2] +
                              double(q[3]) * q[3]);
-  if (!(n > 1e-6)) {
+  if (!(std::isfinite(n) && n > 1e-6)) {
     Fail(what + " has a zero or non-finite quaternion", "norm " + std::to_string(n),
          "a unit quaternion (x, y, z, w)", "pass a valid rotation");
   }
@@ -239,6 +239,11 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
     check_size("limit_upper", d.limit_upper.size(), T, "one per DOF");
     for (int k = 0; k < T; ++k) {
       const float lo = d.limit_lower[k], hi = d.limit_upper[k];
+      if (std::isnan(lo) || std::isnan(hi)) {
+        Fail("DOF " + std::to_string(k) + " has a NaN limit",
+             "[" + std::to_string(lo) + ", " + std::to_string(hi) + "]",
+             "numbers (±inf or a magnitude of 1e5 or more: unbounded)", "fix the limits");
+      }
       lower_[k] = (std::isfinite(lo) && std::fabs(lo) < kUnboundedLimit) ? lo : -kInf;
       upper_[k] = (std::isfinite(hi) && std::fabs(hi) < kUnboundedLimit) ? hi : kInf;
       if (lower_[k] > upper_[k]) {

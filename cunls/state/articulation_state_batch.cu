@@ -284,6 +284,29 @@ __device__ void JointCoordinates(const ArticulationTopology::DeviceView &v, int 
   }
 }
 
+/**
+ * Builds instance s into `row` joint by joint in parents-first order: the
+ * joint's coordinates (x ⊕ δ; δ null: x's; moved scalar coordinates clamped
+ * into [lower, upper], bounds entry (s % bound_states) * T + k), the child's
+ * world pose and the joint's motion columns.
+ */
+__device__ void BuildInstance(const ArticulationTopology::DeviceView &v, const float *x,
+                              const float *delta, const float *lower, const float *upper,
+                              size_t bound_states, size_t s, float *row) {
+  const int J = v.num_joints, T = v.num_dofs, C = v.num_coords;
+  const float *xs = x + s * v.ambient;
+  const float *ds = delta != nullptr ? delta + s * T : nullptr;
+  const float *lo = lower != nullptr ? lower + (s % bound_states) * T : nullptr;
+  const float *hi = upper != nullptr ? upper + (s % bound_states) * T : nullptr;
+  for (int k = 0; k < J; ++k) {
+    const int j = v.order[k];
+    const int q0 = v.q_start[j], parent = v.parent[j];
+    JointCoordinates(v, j, xs, ds, lo, hi, row + q0);
+    JointKinematics(v, j, parent < 0 ? v.root : row + C + 12 * parent, row + q0,
+                    row + C + 12 * v.child[j], row + C + 12 * J + 6 * v.qd_start[j]);
+  }
+}
+
 /** Shared ints of the staged topology: order, type, parent, child (J each), q/qd_start (J+1),
  * dof_dim (2J). */
 __host__ __device__ constexpr int TopologyIntCount(int J) { return 8 * J + 2; }
@@ -296,21 +319,26 @@ __host__ __device__ constexpr int TopologyFloatCount(int J, int T) {
 
 /**
  * One thread per instance of `num_states` (replicas included). The thread
- * builds its whole instance in a shared-memory row (stride `stride`, odd, so
- * rows sit on distinct banks), joint by joint in parents-first order: the
- * joint's coordinates (x ⊕ δ; δ null: x's; moved scalar coordinates clamped
- * into [lower, upper], bounds entry (s % bound_states) * T + k), the child's
- * world pose and the joint's motion columns. The block then writes its
+ * builds its whole instance (BuildInstance) in a shared-memory row (stride
+ * `stride`, odd, so rows sit on distinct banks). The block then writes its
  * instances, contiguous in `out`, with coalesced stores (full sectors).
  * x and out may be the same array only when delta is null. The topology's
  * arrays are staged in shared memory once per block.
+ * kStaged false (topologies too large for shared memory): no staging; each
+ * thread builds its instance in place in `out` from the global topology.
  */
+template <bool kStaged>
 __global__ void ArticulationPlusKernel(ArticulationTopology::DeviceView v, const float *x,
                                        const float *delta, float *out, size_t num_states,
                                        const float *lower, const float *upper, size_t bound_states,
                                        int stride) {
+  const int J = v.num_joints, T = v.num_dofs, A = v.ambient;
+  if constexpr (!kStaged) {
+    const size_t s = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+    if (s < num_states) BuildInstance(v, x, delta, lower, upper, bound_states, s, out + s * A);
+    return;
+  }
   extern __shared__ float shared[];
-  const int J = v.num_joints, T = v.num_dofs, A = v.ambient, C = v.num_coords;
   int *ints = reinterpret_cast<int *>(shared);
   float *floats = shared + TopologyIntCount(J);
   ArticulationTopology::DeviceView view = v;
@@ -349,18 +377,7 @@ __global__ void ArticulationPlusKernel(ArticulationTopology::DeviceView v, const
   const size_t first = blockIdx.x * static_cast<size_t>(blockDim.x);
   const size_t s = first + threadIdx.x;
   if (s < num_states) {
-    const float *xs = x + s * A;
-    float *row = staged + threadIdx.x * stride;
-    const float *ds = delta != nullptr ? delta + s * T : nullptr;
-    const float *lo = lower != nullptr ? lower + (s % bound_states) * T : nullptr;
-    const float *hi = upper != nullptr ? upper + (s % bound_states) * T : nullptr;
-    for (int k = 0; k < J; ++k) {
-      const int j = view.order[k];
-      const int q0 = view.q_start[j], parent = view.parent[j];
-      JointCoordinates(view, j, xs, ds, lo, hi, row + q0);
-      JointKinematics(view, j, parent < 0 ? view.root : row + C + 12 * parent, row + q0,
-                      row + C + 12 * view.child[j], row + C + 12 * J + 6 * view.qd_start[j]);
-    }
+    BuildInstance(view, x, delta, lower, upper, bound_states, s, staged + threadIdx.x * stride);
   }
   __syncthreads();
   // Coalesced copy of the block's instances (contiguous in out).
@@ -387,8 +404,8 @@ __global__ void ZeroConfigurationKernel(ArticulationTopology::DeviceView v, floa
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kBlockSize - 1) / kBlockSize); }
 
-/** Launches ArticulationPlusKernel with as many instances per block as fit 48 KB of shared memory.
- */
+/** Launches ArticulationPlusKernel with as many instances per block as fit 48 KB of shared memory,
+ * or unstaged when the topology and one instance do not fit. */
 void LaunchPlus(const ArticulationTopology::DeviceView &v, const float *x, const float *delta,
                 float *out, size_t num_states, const float *lower, const float *upper,
                 size_t bound_states, cudaStream_t stream) {
@@ -397,12 +414,19 @@ void LaunchPlus(const ArticulationTopology::DeviceView &v, const float *x, const
   const size_t topology_bytes = sizeof(float) * (TopologyIntCount(v.num_joints) +
                                                  TopologyFloatCount(v.num_joints, v.num_dofs));
   constexpr size_t kSharedBytes = 48 * 1024;
-  int per_block = static_cast<int>((kSharedBytes - topology_bytes) / (sizeof(float) * stride));
-  per_block = per_block >= 64 ? 64 : (per_block >= 32 ? 32 : (per_block > 0 ? per_block : 1));
+  const size_t row_bytes = sizeof(float) * stride;
+  if (topology_bytes + row_bytes > kSharedBytes) {
+    ArticulationPlusKernel<false><<<Blocks(num_states), kBlockSize, 0, stream>>>(
+        v, x, delta, out, num_states, lower, upper, bound_states, stride);
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
+    return;
+  }
+  int per_block = static_cast<int>((kSharedBytes - topology_bytes) / row_bytes);
+  per_block = per_block >= 64 ? 64 : (per_block >= 32 ? 32 : per_block);
   const unsigned blocks = static_cast<unsigned>((num_states + per_block - 1) / per_block);
-  ArticulationPlusKernel<<<blocks, per_block, topology_bytes + sizeof(float) * stride * per_block,
-                           stream>>>(v, x, delta, out, num_states, lower, upper, bound_states,
-                                     stride);
+  ArticulationPlusKernel<true>
+      <<<blocks, per_block, topology_bytes + row_bytes * per_block, stream>>>(
+          v, x, delta, out, num_states, lower, upper, bound_states, stride);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

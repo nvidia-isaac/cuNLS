@@ -82,26 +82,32 @@ Python example: bounded inverse kinematics from a URDF
 
    robot = topology_from_urdf("fr3.urdf")          # limits become hard bounds
    topo, n = robot.topology, 1024                    # 1024 IK problems
+   stream = pycunls.CudaStream()
+   # Warp work on the cuNLS stream: uploads, target updates and reads stay in order with solves.
+   wp_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=stream.get_stream())
+   with wp.ScopedStream(wp_stream):
+       q0 = wp.array(q_initial, dtype=wp.float32)      # (n, topo.coord_count)
+       targets = wp.array(target_poses, dtype=wp.float32)  # (n, 7)
+       links = wp.full(n, robot.link_names.index("fr3_hand"), dtype=wp.int32)
+       instance = wp.array(np.arange(n, dtype=np.int32))    # factor i acts on instance i
+
    states = pycunls.ArticulationStateBatch(topo, n)
    states.set_num_active_states(n)
-   stream = pycunls.CudaStream()
-   states.set_joint_q(wp.array(q_initial), n, stream)  # (n, topo.coord_count)
+   states.set_joint_q(q0, n, stream)
 
-   hand = robot.link_names.index("fr3_hand")
-   links = wp.full(n, hand, dtype=wp.int32)
-   pose = pycunls.LinkPoseFactorBatch(topo, links, None, wp.array(targets), None, n)  # (n, 7)
+   pose = pycunls.LinkPoseFactorBatch(topo, links, None, targets, None, n)
    pose.set_num_active_factors(n)
 
    problem = pycunls.Problem()
    problem.add_state_batch(states)
-   instance = wp.array(np.arange(n, dtype=np.int32))       # factor i acts on instance i
    problem.add_factor_batch(pose, [states], instance)
    problem.set_problem_partition(n, [instance])             # each problem converges and stops alone
 
    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
    summary = solver.minimize(stream, problem)
-   q = wp.zeros((n, topo.coord_count), dtype=float)
-   states.get_joint_q(q, n, stream)
+   with wp.ScopedStream(wp_stream):
+       q = wp.zeros((n, topo.coord_count), dtype=wp.float32)
+   states.get_joint_q(q, n, stream)   # asynchronous: read q on wp_stream (q.numpy() inside the scope)
 
 Joint limits are box bounds of the state: the iterates never leave them (projected Gauss-Newton,
 see :doc:`constraints`), so solve with ``AugmentedLagrangianMinimizer``; the plain minimizers
@@ -129,13 +135,23 @@ pieces that make that cheap:
   angle errors) or to pick the best of several seeds.
 * **Targets change, the problem does not.** Factors read their device arrays (targets, weights,
   links) at every evaluation: write the next targets into the same arrays (``wp.copy``, a
-  kernel) and call ``minimize`` again. With ``reuse_structure = True`` in the minimizer options,
+  kernel) on the cuNLS stream (``wp.ScopedStream`` as above; work on another stream is not
+  ordered with the solve) and call ``minimize`` again. With ``reuse_structure = True`` in the minimizer options,
   repeated solves skip the structure setup.
 * **Several seeds per problem.** Make ``problems x seeds`` instances (seeds next to each other),
   give each instance its own subproblem, solve once, then compare the link-pose errors of each
   problem's seeds and keep the best one.
-* **Frozen DOFs.** ``set_bounds(lower, upper)`` with ``lower == upper == q`` on a scalar DOF holds
-  it at ``q`` (a box of zero width); other DOFs keep their limits.
+* **Frozen DOFs.** A box of zero width, ``lower == upper == q``, holds a scalar DOF at ``q``.
+  ``set_bounds(lower, upper)`` replaces all bounds, so start from the joint limits and change only
+  the frozen entries:
+
+  .. code-block:: python
+
+     lower = np.tile(topo.lower_limits, (n, 1)).astype(np.float32)   # (n, topo.dof_count)
+     upper = np.tile(topo.upper_limits, (n, 1)).astype(np.float32)
+     lower[:, dof] = upper[:, dof] = q_frozen
+     with wp.ScopedStream(wp_stream):
+         states.set_bounds(wp.array(lower), wp.array(upper))
 * **Objectives are factors.** Position, orientation and pose targets (with per-row weights),
   posture regularization, loop-closing joints and mimic joints are factors; constraints are
   factors wrapped in ``ConstraintFactorBatch``. Several targets per instance are several factors
@@ -146,17 +162,17 @@ Closed loops and mimic joints
 ===============================================================================
 
 A loop-closing joint keeps two joint frames together in the directions its type does not allow
-(BALL 3 rows, REVOLUTE 5, PRISMATIC 5, FIXED 6). Wrap it as an equality constraint:
+(BALL 3 rows, REVOLUTE 6, PRISMATIC 5, FIXED 6). Wrap it as an equality constraint:
 
 .. code-block:: python
 
    loop = pycunls.LoopClosureFactorBatch(topo, pycunls.ArticulationJointType.Revolute,
                                          parent_links, child_links, frames, axes, n)
    problem.add_factor_batch(pycunls.ConstraintFactorBatch(loop, pycunls.ConstraintKind.Equality),
-                            ptrs)
+                            [states], instance)   # one loop factor per instance
 
 ``frames`` holds ``joint_X_p`` and ``joint_X_c`` of the loop-closing joint (14 floats per factor).
-Rows may be redundant (a planar four-bar has 5 rows of rank 2); the augmented Lagrangian
+Rows may be redundant (a planar four-bar has 6 rows of rank 2); the augmented Lagrangian
 tolerates that. To assemble a mechanism at given actuated angles, add a ``PostureFactorBatch``
 with a high weight on the actuated DOFs and a low one on the passive DOFs: the result is the
 nearest valid configuration.
@@ -170,7 +186,8 @@ Performance notes
 ===============================================================================
 
 * The state's ``Plus`` runs forward kinematics once per update and stores link poses and motion
-  columns; factors read them, so their cost does not grow with the chain length.
+  columns; factors read them, so evaluating a residual does not traverse the tree. Jacobians
+  still visit every DOF: their cost grows with the number of movable joints (dense rows).
 * One subproblem per IK problem (``set_problem_partition``): each one converges and stops on its
   own.
 * The Jacobian of a factor is dense over the articulation's DOFs; the Hessian assembler stages

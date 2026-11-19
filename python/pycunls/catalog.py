@@ -22,7 +22,8 @@ Use it to pick a class and to get its data layout right without reading the C++ 
 
 Conventions shared by every class:
 
-* All arrays are float32 GPU arrays (e.g. ``wp.array``), C-contiguous, one item after another.
+* Arrays are GPU arrays (e.g. ``wp.array``), C-contiguous, one item after another: float32 for
+  values, int32 for indices (links, DOFs, state ids); each argument's stated dtype rules.
 * Poses are ``world_from_body`` matrices stored row-major (SE3: 4x4 = 16 floats per pose,
   SE2: 3x3, SO3: 3x3, SO2: 2x2). The update is right-multiplicative, ``T' = T Exp(delta)``.
 * Tangent order: se(3) = ``[omega (3), v (3)]`` (rotation first), se(2) = ``[v_x, v_y, theta]``
@@ -43,10 +44,12 @@ class StateInfo:
 
     Attributes:
         name: Class name in :mod:`pycunls`.
-        ambient: float32 values stored per state.
-        tangent: Degrees of freedom (size of one update).
+        ambient: float32 values stored per state (0: set by the constructor's topology).
+        tangent: Degrees of freedom (size of one update; 0: set by the topology).
         layout: How one state is stored.
         tangent_order: Meaning of the tangent coordinates.
+        update: The update x' = x (+) delta, when it is not the Lie-group one.
+        constructor: The constructor's arguments, when it does not take a data array.
     """
     name: str
     ambient: int
@@ -54,6 +57,8 @@ class StateInfo:
     layout: str
     tangent_order: str
     kind: str = "state"
+    update: str = "x' = x (+) delta (right-multiplicative for Lie groups)"
+    constructor: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -247,9 +252,15 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
     entries.append(StateInfo(
         "ArticulationStateBatch", 0, 0,
         "owned: joint_q (topology.coord_count, Newton layout, quaternions x, y, z, w), then a cache "
-        "of link poses (12 floats each) and DOF motion columns (6 each); per topology",
+        "of link poses (12 floats each) and DOF motion columns (6 each)",
         "topology.dof_count values in joint_qd order: a scalar per PRISMATIC/REVOLUTE/D6 axis, "
-        "BALL a rotation vector and FREE (dp, dtheta) in the parent-anchor frame"))
+        "BALL a rotation vector and FREE (dp, dtheta) in the parent-anchor frame",
+        update="per joint: scalar coordinates add delta (clamped into the bounds), BALL "
+        "quat <- Exp(delta) * quat, FREE position += dp and quat <- Exp(dtheta) * quat; then "
+        "forward kinematics refreshes the cache",
+        constructor="topology (ArticulationTopology), capacity, and optionally const_state_ids "
+        "(int32 GPU array of the instances held fixed) with const_capacity, and "
+        "apply_joint_limits (default True); storage is owned: write joint_q with set_joint_q"))
     art = ["ArticulationStateBatch"]
     articulation_note = ("Build ArticulationTopology from the robot's joint arrays (Newton layout), "
                          "then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. "
@@ -283,7 +294,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                    "Regularizer / null-space posture / stay near a requested configuration.",
                    articulation_note),
         FactorInfo("LoopClosureFactorBatch", art, 0,
-                   "constraint rows between two joint frames (BALL 3, REVOLUTE 5, PRISMATIC 5, "
+                   "constraint rows between two joint frames (BALL 3, REVOLUTE 6, PRISMATIC 5, "
                    "FIXED 6)",
                    {"topology": "ArticulationTopology", "parent_links": "int32 (-1: world)",
                     "child_links": "int32", "frames": "14 floats: joint_X_p, joint_X_c",
@@ -386,12 +397,18 @@ def describe(name) -> str:
         hint = f" Did you mean: {', '.join(close[:8])}?" if close else ""
         raise KeyError(f"{name} is not a built-in state or factor batch.{hint}")
     if isinstance(entry, StateInfo):
-        return (f"{entry.name} (state)\n  stored: {entry.layout}, {entry.ambient} floats per state"
-                f"\n  tangent ({entry.tangent}): {entry.tangent_order}\n  update: x' = x (+) "
-                "delta (right-multiplicative for Lie groups)\n  constructor: data (float32 GPU "
-                f"array of capacity x {entry.ambient}), capacity, and optionally "
-                "const_state_ids (int32 GPU array of the states held fixed) with const_capacity "
-                "(entries it holds)")
+        if entry.ambient == 0:  # sized by the topology
+            sizes = ("topology.ambient_size floats per state (e.g. 19 for one revolute joint: "
+                     "1 coordinate, 12 pose floats, 6 motion-column floats)")
+            tangent = "topology.dof_count (e.g. 1 for one revolute joint)"
+        else:
+            sizes, tangent = f"{entry.ambient} floats per state", str(entry.tangent)
+        constructor = entry.constructor or (
+            f"data (float32 GPU array of capacity x {entry.ambient}), capacity, and optionally "
+            "const_state_ids (int32 GPU array of the states held fixed) with const_capacity "
+            "(entries it holds)")
+        return (f"{entry.name} (state)\n  stored: {entry.layout}, {sizes}\n  tangent ({tangent}): "
+                f"{entry.tangent_order}\n  update: {entry.update}\n  constructor: {constructor}")
     lines = [f"{entry.name} (factor)"]
     if entry.states:
         lines.append(f"  states: [{', '.join(entry.states)}]")
@@ -410,7 +427,8 @@ def describe(name) -> str:
 
 _CAPACITY_NOTE = ("capacity: how many factors (or states) the arrays hold. Batches start with 0 "
                   "active items: call set_num_active_factors(n) / set_num_active_states(n) "
-                  "before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.")
+                  "before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: "
+                  "float32 values, int32 indices, as each argument states.")
 
 
 def annotate_classes(module) -> None:

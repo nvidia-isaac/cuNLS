@@ -115,7 +115,7 @@ __global__ void __launch_bounds__(kBlockSize)
                       const int *__restrict__ factor_ids, int num_factors) {
   constexpr bool kRevolute = kType == 1, kPrismatic = kType == 0, kBall = kType == 2,
                  kFixed = kType == 3;
-  constexpr int m = kBall ? 3 : (kFixed ? 6 : 5);
+  constexpr int m = kBall ? 3 : ((kFixed || kRevolute) ? 6 : 5);
   const int t = static_cast<int>((blockIdx.x * static_cast<size_t>(kBlockSize) + threadIdx.x) / G);
   const int lane = threadIdx.x % G;
   if (t >= num_items) return;
@@ -132,7 +132,7 @@ __global__ void __launch_bounds__(kBlockSize)
   const float dp[3] = {pC[0] - pP[0], pC[1] - pP[1], pC[2] - pP[2]};
 
   float r[m];
-  float aC[3], bw[2][3], phi[3], JlInv[9], JrInv[9];
+  float aC[3], aP[3], bw[2][3], phi[3], JlInv[9], JrInv[9];
   if constexpr (!kPrismatic) {
 #pragma unroll
     for (int i = 0; i < 3; ++i) r[i] = dp[i];
@@ -143,15 +143,17 @@ __global__ void __launch_bounds__(kBlockSize)
     a[0] *= n;
     a[1] *= n;
     a[2] *= n;
-    float b1[3], b2[3];
-    Perpendiculars(a, b1, b2);
-    Rot(RP, b1, bw[0]);
-    Rot(RP, b2, bw[1]);
     if constexpr (kRevolute) {
+      // The full difference, not its projections ⊥ a_P: those also vanish for opposite axes.
       Rot(RC, a, aC);
-      r[3] = Dot(bw[0], aC);
-      r[4] = Dot(bw[1], aC);
+      Rot(RP, a, aP);
+#pragma unroll
+      for (int i = 0; i < 3; ++i) r[3 + i] = aC[i] - aP[i];
     } else {
+      float b1[3], b2[3];
+      Perpendiculars(a, b1, b2);
+      Rot(RP, b1, bw[0]);
+      Rot(RP, b2, bw[1]);
       r[3] = Dot(bw[0], dp);
       r[4] = Dot(bw[1], dp);
     }
@@ -206,13 +208,12 @@ __global__ void __launch_bounds__(kBlockSize)
           for (int i = 0; i < 3; ++i) col[i] = ddp[i];
         }
         if constexpr (kRevolute) {
-          // d(b·a_C) = dω_P·(b × a_C) + dω_C·(a_C × b)
+          // d(a_C - a_P) = dω_C × a_C - dω_P × a_P
+          float wxC[3], wxP[3];
+          Cross(om, aC, wxC);
+          Cross(om, aP, wxP);
 #pragma unroll
-          for (int k = 0; k < 2; ++k) {
-            float bxa[3];
-            Cross(bw[k], aC, bxa);
-            col[3 + k] = (sP - sC) * Dot(om, bxa);
-          }
+          for (int i = 0; i < 3; ++i) col[3 + i] = sC * wxC[i] - sP * wxP[i];
         }
         if constexpr (kPrismatic) {
           // d(b·Δp) = dω_P·(b × Δp) + b·dΔp
@@ -276,9 +277,9 @@ size_t LoopClosureFactorBatch::RowsOf(ArticulationJointType joint_type) {
   switch (joint_type) {
     case ArticulationJointType::kBall:
       return 3;
-    case ArticulationJointType::kRevolute:
     case ArticulationJointType::kPrismatic:
       return 5;
+    case ArticulationJointType::kRevolute:
     case ArticulationJointType::kFixed:
       return 6;
     default:

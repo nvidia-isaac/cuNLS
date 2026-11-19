@@ -72,6 +72,54 @@ def test_urdf_topology(arm):
     assert arm.mimic_joints[0].mimic_dof == 5 and arm.mimic_joints[0].reference_dof == 4
 
 
+def _urdf(body):
+    return f'<robot name="r"><link name="base"/>{body}</robot>'
+
+
+def test_urdf_limits_follow_the_specification(tmp_path):
+    """An omitted lower/upper is 0; |limit| >= 1e5 is the unbounded convention."""
+    path = tmp_path / "r.urdf"
+    path.write_text(_urdf(
+        '<link name="a"/><link name="b"/>'
+        '<joint name="ja" type="prismatic"><parent link="base"/><child link="a"/>'
+        '<limit upper="0.2" effort="1" velocity="1"/></joint>'
+        '<joint name="jb" type="revolute"><parent link="a"/><child link="b"/>'
+        '<limit lower="-1e16" upper="1e16" effort="1" velocity="1"/></joint>'))
+    topo = topology_from_urdf(str(path)).topology
+    assert list(topo.lower_limits[:1]) == [0.0] and topo.upper_limits[0] == pytest.approx(0.2)
+    assert math.isinf(topo.lower_limits[1]) and math.isinf(topo.upper_limits[1])
+
+
+@pytest.mark.parametrize("body, match", [
+    ('<link name="a"/><link name="a"/>', "more than once"),
+    ('<joint name="j" type="fixed"><parent link="base"/><child link="ghost"/></joint>',
+     "no <link> declares"),
+    ('<link name="a"/><joint name="j" type="revolute"><parent link="base"/><child link="a"/>'
+     '<mimic joint="missing"/></joint>', "mimics 'missing'"),
+    ('<link name="a"/><joint name="j" type="revolute"><parent link="base"/><child link="a"/>'
+     '<limit lower="nan" upper="1"/></joint>', "NaN"),
+])
+def test_urdf_rejects_inconsistent_files(tmp_path, body, match):
+    path = tmp_path / "r.urdf"
+    path.write_text(_urdf(body))
+    with pytest.raises(ValueError, match=match):
+        topology_from_urdf(str(path))
+
+
+def test_set_bounds_keeps_only_the_current_arrays(arm, stream):
+    """Replaced bounds arrays are released, not accumulated for the batch's lifetime."""
+    topo, n = arm.topology, 2
+    states = pycunls.ArticulationStateBatch(topo, n)
+    shape = n * topo.dof_count
+    first = (wp.full(shape, -1.0, dtype=float), wp.full(shape, 1.0, dtype=float))
+    second = (wp.full(shape, -0.5, dtype=float), wp.full(shape, 0.5, dtype=float))
+    states.set_bounds(*first)
+    states.set_bounds(*second)
+    assert states._bounds_arrays[0] is second[0] and states._bounds_arrays[1] is second[1]
+    states.use_joint_limits()
+    assert states._bounds_arrays is None and states.has_bounds
+
+
 def test_topology_errors_say_what_and_how_to_fix():
     with pytest.raises(ValueError, match="Fix:"):
         pycunls.ArticulationTopology(
@@ -93,9 +141,8 @@ def _fk_tool(states, arm, n, stream):
     return _link_transforms(states, n, stream)[:, arm.link_names.index("tool"), :3]
 
 
-def test_bounded_ik_with_mimic(arm):
+def test_bounded_ik_with_mimic(arm, stream):
     topo, n = arm.topology, 128
-    stream = pycunls.CudaStream()
     rng = np.random.default_rng(0)
     lo = np.where(np.isfinite(topo.lower_limits), topo.lower_limits, -1.0)
     hi = np.where(np.isfinite(topo.upper_limits), topo.upper_limits, 1.0)
@@ -155,9 +202,8 @@ def test_bounded_ik_with_mimic(arm):
     assert np.mean(err < 1e-3) > 0.95, np.sort(err)[-10:]
 
 
-def test_every_kinematic_factor_passes_check_jacobians(arm):
+def test_every_kinematic_factor_passes_check_jacobians(arm, stream):
     topo, n = arm.topology, 16
-    stream = pycunls.CudaStream()
     rng = np.random.default_rng(1)
     states = pycunls.ArticulationStateBatch(topo, n, apply_joint_limits=False)
     states.set_num_active_states(n)
@@ -197,7 +243,25 @@ def test_every_kinematic_factor_passes_check_jacobians(arm):
         assert check.ok, check
 
 
-def test_four_bar_closes(arm):
+def test_check_jacobians_at_a_joint_limit(arm, stream):
+    """Perturbations ignore the bounds: a central difference at a limit is not one-sided."""
+    topo, n = arm.topology, 4
+    states = pycunls.ArticulationStateBatch(topo, n)              # joint limits as bounds
+    states.set_num_active_states(n)
+    q = np.zeros((n, topo.coord_count), np.float32)
+    q[:, 4] = topo.upper_limits[4]                                # finger "fa" at its upper limit
+    states.set_joint_q(wp.array(q), n, stream)
+    target = wp.array(np.full(n * topo.coord_count, 0.01, np.float32))
+    posture = pycunls.PostureFactorBatch(topo, target, None, n)
+    posture.set_num_active_factors(n)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    problem.add_factor_batch(posture, [states.state_device_ptr(i) for i in range(n)])
+    for check in pycunls.check_jacobians(problem, stream):
+        assert check.ok, check
+
+
+def test_four_bar_closes(arm, stream):
     """Ground, crank, coupler, rocker; the coupler-rocker hinge closes the loop."""
     ident = [0, 0, 0, 0, 0, 0, 1]
     topo = pycunls.ArticulationTopology(
@@ -207,7 +271,6 @@ def test_four_bar_closes(arm):
         joint_X_c=ident * 4, joint_q_start=[0, 0, 1, 2, 3], joint_qd_start=[0, 0, 1, 2, 3],
         joint_axis=[0, 0, 1] * 3)
     n = 16
-    stream = pycunls.CudaStream()
     states = pycunls.ArticulationStateBatch(topo, n)
     states.set_num_active_states(n)
     q0 = np.stack([np.linspace(0.3, 1.5, n), np.zeros(n), np.full(n, 1.2)], 1).astype(np.float32)
@@ -234,11 +297,10 @@ def test_four_bar_closes(arm):
     assert summary.max_violation < 1e-5
 
 
-def test_strided_joint_q_and_link_transforms(arm):
+def test_strided_joint_q_and_link_transforms(arm, stream):
     """Instances inside a scene-wide array: read and written in place, gaps untouched."""
     topo, n, pad = arm.topology, 8, 3
     stride = topo.coord_count + pad
-    stream = pycunls.CudaStream()
     rng = np.random.default_rng(2)
     scene = np.full((n, stride), -7.0, np.float32)
     scene[:, :topo.coord_count] = rng.uniform(-0.5, 0.5, (n, topo.coord_count))
@@ -281,14 +343,13 @@ def test_topology_accepts_gpu_arrays():
     assert list(a.lower_limits) == list(b.lower_limits) == [-1.0]
 
 
-def test_inverse_kinematics_recipe(arm):
+def test_inverse_kinematics_recipe(arm, stream):
     """IK as an application builds it (docs/sphinx/articulations.rst, "Building an
     inverse-kinematics solver"): problems x seeds instances, one subproblem each, targets
     rewritten in place for a second solve with reuse_structure, the best seed per problem picked
     from the link transforms."""
     topo, problems, seeds = arm.topology, 32, 4
     n = problems * seeds
-    stream = pycunls.CudaStream()
     rng = np.random.default_rng(3)
     tool = arm.link_names.index("tool")
     lo = np.where(np.isfinite(topo.lower_limits), topo.lower_limits, -np.pi)
@@ -327,4 +388,9 @@ def test_inverse_kinematics_recipe(arm):
         err = np.linalg.norm(links[:, :3] - targets.numpy()[:, :3], axis=1)
         best = err.reshape(problems, seeds).min(axis=1)
         assert np.mean(best < 1e-3) > 0.95, np.sort(best)[-5:]
+        # The orientation of the picked seed follows the new targets too (q and -q: one rotation).
+        pick = err.reshape(problems, seeds).argmin(axis=1) + seeds * np.arange(problems)
+        dot = np.abs(np.sum(links[pick, 3:] * targets.numpy()[pick, 3:], axis=1))
+        angle = 2.0 * np.arccos(np.clip(dot, 0.0, 1.0))
+        assert np.mean(angle < 1e-2) > 0.95, np.sort(angle)[-5:]
         wp.copy(targets, wp.array(reachable_targets()))             # same array, new values

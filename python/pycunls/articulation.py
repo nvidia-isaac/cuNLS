@@ -107,8 +107,11 @@ def topology_from_urdf(path: str, floating_base: bool = False) -> UrdfArticulati
     The root link (the one that is no joint's child) is attached to the world by an added root
     joint: FIXED, or FREE with ``floating_base``. Joint types: revolute, continuous (revolute
     without limits), prismatic, fixed, floating (FREE). ``<limit lower upper>`` become joint
-    limits (hard bounds of :class:`pycunls.ArticulationStateBatch`); continuous joints and
-    revolute joints without ``<limit>`` are unbounded.
+    limits (hard bounds of :class:`pycunls.ArticulationStateBatch`); an omitted ``lower`` or
+    ``upper`` is 0, as the URDF specification defines. Continuous joints and revolute joints
+    without ``<limit>`` are unbounded, as are limits of magnitude 1e5 or more (the topology's
+    "unbounded" convention, which URDFs also use for "no limit"; ``topology.lower_limits`` /
+    ``upper_limits`` report them as infinite).
 
     Args:
         path: The URDF file.
@@ -118,11 +121,24 @@ def topology_from_urdf(path: str, floating_base: bool = False) -> UrdfArticulati
         :class:`UrdfArticulation`.
 
     Raises:
-        ValueError: An unsupported joint type (planar), several roots, or a malformed number.
+        ValueError: An unsupported joint type (planar), several roots, a duplicate link, a joint
+            naming an undeclared link, a mimic joint that names no revolute or prismatic joint,
+            or a malformed number.
     """
     root = ElementTree.parse(path).getroot()
     links = [link.get("name") for link in root.findall("link")]
+    duplicates = sorted({name for name in links if links.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"topology_from_urdf: links declared more than once (got {duplicates}, "
+                         "expected unique names). Fix: rename or remove the duplicates.")
     joints = root.findall("joint")
+    for j in joints:
+        for end in ("parent", "child"):
+            name = j.find(end).get("link")
+            if name not in links:
+                raise ValueError(f"topology_from_urdf: joint '{j.get('name')}' names {end} link "
+                                 f"'{name}', which no <link> declares. Fix: declare the link or "
+                                 "correct the joint.")
     children = {j.find("child").get("link") for j in joints}
     roots = [name for name in links if name not in children]
     if len(roots) != 1:
@@ -176,8 +192,8 @@ def topology_from_urdf(path: str, floating_base: bool = False) -> UrdfArticulati
         limit = j.find("limit")
         lo, hi = -inf, inf
         if kind in ("revolute", "prismatic") and limit is not None:
-            lo = float(limit.get("lower", "-inf"))
-            hi = float(limit.get("upper", "inf"))
+            lo = float(limit.get("lower", "0"))
+            hi = float(limit.get("upper", "0"))
         jtype = {"revolute": ArticulationJointType.Revolute,
                  "continuous": ArticulationJointType.Revolute,
                  "prismatic": ArticulationJointType.Prismatic,
@@ -201,7 +217,12 @@ def topology_from_urdf(path: str, floating_base: bool = False) -> UrdfArticulati
         joint_X_c=X_c, joint_q_start=q_start, joint_qd_start=qd_start,
         joint_axis=np.asarray(axes, dtype=np.float32), joint_dof_dim=dof_dim,
         limit_lower=lower, limit_upper=upper)
+    for m, r, _, _ in mimics:
+        if m not in dof_of_joint or r not in dof_of_joint:
+            raise ValueError(f"topology_from_urdf: joint '{m}' mimics '{r}', but both must be "
+                             "revolute, continuous or prismatic joints of the file (one DOF "
+                             "each). Fix: correct the <mimic joint> name or remove the coupling.")
     mimic_joints = [MimicJoint(dof_of_joint[m], dof_of_joint[r], off, mul)
-                    for m, r, off, mul in mimics if m in dof_of_joint and r in dof_of_joint]
+                    for m, r, off, mul in mimics]
     return UrdfArticulation(topology, [n for n in order], joint_names, dof_names, coord_names,
                             mimic_joints)

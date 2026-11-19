@@ -177,7 +177,7 @@ void bind_articulation(nb::module_ &m) {
            "Offset of a DOF's world motion column (omega, v: 6 floats) in an instance's storage.");
 
   nb::class_<cunls::ArticulationStateBatch, cunls::StateBatch>(
-      m, "ArticulationStateBatch",
+      m, "ArticulationStateBatch", nb::dynamic_attr(),
       "Instances of one articulation (topology): each instance's joint_q plus a cache of link "
       "poses and motion columns that the kinematic factors read. The storage is owned (capacity "
       "x topology.ambient_size); write coordinates with set_joint_q and read them with "
@@ -249,8 +249,10 @@ void bind_articulation(nb::module_ &m) {
           },
           nb::arg("transforms"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
           nb::arg("stride") = 0,
-          "Writes the world transform of every link of the first num_states instances (forward "
-          "kinematics of their current joint_q): 7 float32 per link, the pose convention of the "
+          "Writes the world transform of every link of the first num_states instances, read from "
+          "the cached poses (no forward kinematics runs: set_joint_q keeps the cache current; "
+          "after writing state_device_ptr storage directly, call refresh(stream) first): 7 "
+          "float32 per link, the pose convention of the "
           "factor targets (Newton's body_q layout), "
           "position then quaternion (x, y, z, w), links in topology order; instance i starts at "
           "i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A "
@@ -260,6 +262,7 @@ void bind_articulation(nb::module_ &m) {
           [](cunls::ArticulationStateBatch &self, nb::handle lower, nb::handle upper) {
             if (lower.is_none() && upper.is_none()) {
               self.SetBounds(nullptr, nullptr);
+              hold_bounds(self, lower, upper);
               return;
             }
             if (lower.is_none() || upper.is_none()) {
@@ -270,14 +273,22 @@ void bind_articulation(nb::module_ &m) {
             self.SetBounds(
                 device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
                 device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
+            hold_bounds(self, lower, upper);
           },
-          nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>(),
-          "Box bounds per instance and DOF (device float32 arrays of capacity x dof_count; "
-          "±inf: unbounded; BALL/FREE entries ignored), replacing the joint limits. None, None "
-          "removes them; use_joint_limits() restores the topology's limits.")
-      .def("use_joint_limits", &cunls::ArticulationStateBatch::UseJointLimits,
-           "Restores the topology's joint limits as the bounds (none if it has no finite limit).")
+          nb::arg("lower").none(), nb::arg("upper").none(),
+          "Box bounds per instance and DOF, replacing the joint limits: either two device "
+          "float32 arrays of capacity x dof_count (an unbounded side is a ±inf-filled array; "
+          "BALL/FREE entries ignored), or None, None to remove them (one None alone is "
+          "rejected); use_joint_limits() restores the topology's limits. Keeps only the current "
+          "arrays alive (replaced ones are released).")
+      .def(
+          "use_joint_limits",
+          [](cunls::ArticulationStateBatch &self) {
+            self.UseJointLimits();
+            hold_bounds(self, nb::none(), nb::none());
+          },
+          "Restores the topology's joint limits as the bounds (none if it has no finite limit) "
+          "and releases the arrays of set_bounds.")
       .def_prop_ro(
           "has_bounds",
           [](const cunls::ArticulationStateBatch &self) { return cunls::HasBoxBounds(&self); },
@@ -378,7 +389,7 @@ void bind_articulation(nb::module_ &m) {
   nb::class_<cunls::LoopClosureFactorBatch, cunls::FactorBatch>(
       m, "LoopClosureFactorBatch",
       "A loop-closing joint between two links of an articulation instance (parent -1: the "
-      "world): the constraint rows keeping its two joint frames together (BALL 3, REVOLUTE 5, "
+      "world): the constraint rows keeping its two joint frames together (BALL 3, REVOLUTE 6, "
       "PRISMATIC 5, FIXED 6). Wrap in ConstraintFactorBatch(..., ConstraintKind.Equality). "
       "joint_type: the ArticulationJointType of every factor. Device arrays per factor: "
       "parent_links, child_links (int32, 1 each), frames (14 floats: joint_X_p then joint_X_c, "

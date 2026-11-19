@@ -160,7 +160,7 @@ template <int Dim>
 void bind_vector_state_batch(nb::module_ &m, const char *name) {
   using Class = cunls::VectorStateBatch<Dim>;
   nb::class_<Class, cunls::StateBatch>(
-      m, name, "Euclidean vector state batch (Plus = element-wise addition).")
+      m, name, nb::dynamic_attr(), "Euclidean vector state batch (Plus = element-wise addition).")
       .def(
           "__init__",
           [](Class *self, nb::handle data, size_t capacity) {
@@ -184,6 +184,7 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
           [](Class &self, nb::handle lower, nb::handle upper) {
             if (lower.is_none() && upper.is_none()) {
               self.SetBounds(nullptr, nullptr);
+              hold_bounds(self, lower, upper);
               return;
             }
             if (lower.is_none() || upper.is_none()) {
@@ -195,9 +196,9 @@ void bind_vector_state_batch(nb::module_ &m, const char *name) {
             self.SetBounds(
                 device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
                 device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
+            hold_bounds(self, lower, upper);
           },
-          nb::arg("lower").none(), nb::arg("upper").none(), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 3>(),
+          nb::arg("lower").none(), nb::arg("upper").none(),
           "Box bounds lower <= x <= upper per component (device float32 arrays of "
           "capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem "
           "with AugmentedLagrangianMinimizer, which keeps the iterates in the box "
@@ -280,7 +281,7 @@ void bind_state(nb::module_ &m) {
       .def(
           "apply_plus",
           [](cunls::StateBatch &self, nb::handle x, nb::handle delta, nb::handle out,
-             cunls::CudaStream &stream) {
+             cunls::CudaStream &stream, bool ignore_bounds) {
             const size_t n = self.NumActiveStates();
             auto *px = reinterpret_cast<const float *>(extract_device_ptr(
                 x, "float32", "x", n * self.AmbientSize(), "num_active_states x ambient_size"));
@@ -290,12 +291,19 @@ void bind_state(nb::module_ &m) {
             auto *po = reinterpret_cast<float *>(extract_device_ptr(
                 out, "float32", "out", n * self.AmbientSize(), "num_active_states x ambient_size"));
             nb::gil_scoped_release release;
-            self.Plus(px, pd, po, stream.GetStream());
+            auto *bounded = dynamic_cast<cunls::BoxBoundedStates *>(&self);
+            if (ignore_bounds && bounded != nullptr) {
+              bounded->PlusIgnoringBounds(px, pd, po, stream.GetStream());
+            } else {
+              self.Plus(px, pd, po, stream.GetStream());
+            }
           },
           nb::arg("x"), nb::arg("delta"), nb::arg("out"), nb::arg("stream"),
+          nb::arg("ignore_bounds") = false,
           "out = x (+) delta for the num_active_states states of the given arrays (the "
           "manifold update the minimizers use; asynchronous on stream). x, out: float32 device "
           "arrays of num_active_states x ambient_size; delta: num_active_states x tangent_size. "
+          "ignore_bounds: do not clamp into box bounds (numeric differentiation at a bound). "
           "Used by pycunls.check_jacobians.");
 
   bind_vector_state_batch<1>(m, "VectorStateBatch1");
