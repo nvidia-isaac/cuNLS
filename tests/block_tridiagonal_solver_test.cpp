@@ -176,9 +176,9 @@ struct Trajectories {
 
 class BlockTridiagonalSolverTest : public ::testing::TestWithParam<int> {};
 
-// The stage layout of NormalEquations (H assembled into the solver's blocks,
-// damping, column scaling and the bound mask applied there) against the
-// dense solver's CSR layout.
+// The working left-hand side written into the solver's storage (damping,
+// column scaling and the bound mask applied on the way) against the dense
+// solver.
 TEST_P(BlockTridiagonalSolverTest, DampedScaledBoundedMatchesDenseCholesky) {
   const int B = GetParam();
   Trajectories a(B, 12), b(B, 12);

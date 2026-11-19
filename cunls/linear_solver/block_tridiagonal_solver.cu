@@ -40,14 +40,6 @@ unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kT
 /// Pivots below this are replaced (singular systems; no read-back reports them).
 constexpr float kPivotFloor = 1e-30f;
 
-__global__ void scatter_matrix_kernel(const float *values, const int *entry_slot, size_t nnz,
-                                      float *blocks) {
-  const size_t e = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (e >= nnz) return;
-  const int slot = entry_slot[e];
-  if (slot >= 0) blocks[slot] = values[e];
-}
-
 __global__ void gather_rhs_kernel(const float *rhs, const int *row_slot, size_t rows,
                                   float *vectors) {
   const size_t r = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
@@ -451,23 +443,14 @@ bool BlockTridiagonalSolver::Initialize(cudaStream_t stream, const Problem &prob
   return true;
 }
 
-bool BlockTridiagonalSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-                                   const dvector<float> &rhs, dvector<float> &result) {
-  if (spd_matrix.NumRows() != num_rows_ || rhs.size() != num_rows_ || result.size() != num_rows_ ||
-      entry_slot_.size() != spd_matrix.NumNonZeros()) {
-    return Fail("the system does not match the one the solver was initialized for");
-  }
-  if (num_rows_ == 0) return true;
-  const size_t nnz = spd_matrix.NumNonZeros();
-  THROW_ON_CUDA_ERROR(
-      cudaMemsetAsync(blocks_.data(), 0, NumUsedBlockValues() * sizeof(float), stream));
-  scatter_matrix_kernel<<<Blocks(nnz), kThreads, 0, stream>>>(
-      spd_matrix.values.data(), entry_slot_.data(), nnz, blocks_.data());
-  return SolveWorkingBlocks(stream, rhs, result);
+void BlockTridiagonalSolver::ClearMatrixStorage(cudaStream_t stream) {
+  // The C blocks are read only with several stages.
+  const size_t used = num_stages_ > 1 ? blocks_.size() : blocks_.size() / 2;
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(blocks_.data(), 0, used * sizeof(float), stream));
 }
 
-bool BlockTridiagonalSolver::SolveWorkingBlocks(cudaStream_t stream, const dvector<float> &rhs,
-                                                dvector<float> &result) {
+bool BlockTridiagonalSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                               dvector<float> &result) {
   if (rhs.size() != num_rows_ || result.size() != num_rows_) {
     return Fail("rhs / result size does not match the system the solver was initialized for");
   }

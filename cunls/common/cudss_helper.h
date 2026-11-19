@@ -181,6 +181,12 @@ class cuDSSDescription {
   cuDSSDescription(const CSRSparseMatrix &matrix);
 
   /**
+   * @brief Same, with @p matrix's structure and the given values (as many as
+   * @p matrix has entries) instead of its own.
+   */
+  cuDSSDescription(const CSRSparseMatrix &matrix, const float *values);
+
+  /**
    * @brief Constructs a cuDSS vector descriptor from a dense vector.
    *
    * @param vector The dense vector to wrap.

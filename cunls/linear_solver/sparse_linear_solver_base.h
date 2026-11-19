@@ -19,11 +19,34 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdint>
+
 #include "cunls/common/types.h"
 
 namespace cunls {
 
 class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
+
+/**
+ * @brief Where a solver keeps the matrix it factors (SparseLinearSolver::
+ * MatrixStorage()), so the caller writes the matrix there directly instead of
+ * handing over a CSR / BSR matrix that the solver copies.
+ *
+ * The caller writes value e of the pattern given to Initialize() (scalar CSR:
+ * entry e; BSR: tile-major value e, tile t = e / b², entry e % b² row-major in
+ * the tile) to `values[slot(e)]`, slot(e) = entry_slot[e] (or entry_slot64[e]),
+ * skipping slot -1; with both maps null, slot(e) = e (the storage has the
+ * pattern's layout). Slots no entry maps to (fill-in, padding) are zeroed by
+ * ClearMatrixStorage().
+ */
+struct SolverMatrixStorage {
+  /** @brief Device storage the next SolveStoredMatrix() reads (and may overwrite). */
+  float *values = nullptr;
+  /** @brief Per pattern value: its slot in `values`, or -1 (not stored); null: see entry_slot64. */
+  const int *entry_slot = nullptr;
+  /** @brief The same as 64-bit slots, for storage of more than 2^31 floats; null if unused. */
+  const int64_t *entry_slot64 = nullptr;
+};
 
 /**
  * @brief Base class for solvers of the sparse symmetric system `A x = b`.
@@ -32,13 +55,21 @@ class Problem;  // forward declaration; defined in cunls/minimizer/problem.h.
  * block-tridiagonal Cholesky, cuDSS direct factorization, dense pivoted LDLT /
  * Cholesky / QR, block-Jacobi PCG).
  *
- * `A` arrives in one of two layouts, and every backend must accept at least
- * scalar CSR: Initialize and Solve are pure virtual for @ref CSRSparseMatrix
- * and defaulted for @ref BSRSparseMatrix.  A backend opts into the block form
- * by overriding @ref SupportsBlockStorage together with the two BSR overloads;
- * one that does not is never handed a BSR matrix, so its defaults are dead.
- * The layout is decided once per problem in @ref NormalEquations, and no
- * conversion between the two ever runs on the solve path.
+ * Every backend has the same contract, so they are interchangeable:
+ * Initialize() analyzes the pattern of `A`; MatrixStorage() exposes where the
+ * solver keeps the matrix and how each pattern value maps into it;
+ * SolveStoredMatrix() factors what was written there and solves. The caller
+ * (@ref NormalEquations) writes the working matrix straight into that storage,
+ * so no matrix is copied on the solve path. Solve(matrix) is the convenience
+ * form that copies a matrix in and solves.
+ *
+ * The pattern arrives in one of two layouts, and every backend must accept at
+ * least scalar CSR: Initialize is pure virtual for @ref CSRSparseMatrix and
+ * defaulted for @ref BSRSparseMatrix.  A backend opts into the block form by
+ * overriding @ref SupportsBlockStorage together with the BSR Initialize; one
+ * that does not is never handed a BSR matrix. The layout is decided once per
+ * problem in @ref NormalEquations, and no conversion between the two ever runs
+ * on the solve path.
  *
  * Initialize receives the originating @ref Problem so solvers can adapt
  * to its block / factor-graph structure (e.g.
@@ -76,12 +107,12 @@ class SparseLinearSolver {
                           dvector<float> &result) = 0;
 
   /**
-   * @brief Solves a linear system Ax = b.
+   * @brief Solves A x = b for a matrix with the pattern given to Initialize().
    *
-   * Performs factorization and solve phases to compute the solution x.
-   * Both @p rhs and @p result must be pre-allocated with the same number of
-   * elements as the number of rows in @p spd_matrix; the solver does not
-   * resize them.
+   * The default copies A into MatrixStorage() (ClearMatrixStorage(), then
+   * every value through the entry map) and calls SolveStoredMatrix(); a
+   * solver that can read A where it is may override it. Both @p rhs and
+   * @p result must be pre-allocated with the number of rows of @p spd_matrix.
    *
    * @param stream CUDA stream for asynchronous GPU operations.
    * @param spd_matrix The coefficient matrix A in CSR format.
@@ -90,7 +121,7 @@ class SparseLinearSolver {
    * @return true on success, false if a dimension mismatch is detected.
    */
   virtual bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-                     const dvector<float> &rhs, dvector<float> &result) = 0;
+                     const dvector<float> &rhs, dvector<float> &result);
 
   /**
    * @brief Whether this backend can consume a block-stored matrix directly.
@@ -121,11 +152,9 @@ class SparseLinearSolver {
     return false;
   }
 
-  /** @brief BSR counterpart of Solve; only called when supported. */
+  /** @brief BSR counterpart of Solve (same default); only called when supported. */
   virtual bool Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix,
-                     const dvector<float> &rhs, dvector<float> &result) {
-    return false;
-  }
+                     const dvector<float> &rhs, dvector<float> &result);
 
   /**
    * @brief Advisory request to skip post-factorization safety checks.
@@ -161,6 +190,31 @@ class SparseLinearSolver {
    * (factorization, updates and substitutions); the other backends ignore it.
    */
   virtual void SetRowActivity(const int *row_active) {}
+
+  /**
+   * @brief The solver's storage of the matrix and the map from the values of
+   * the pattern given to Initialize() into it (see SolverMatrixStorage).
+   * Valid after a successful Initialize() until the next one. The caller
+   * (NormalEquations) writes each system there and calls
+   * SolveStoredMatrix(), so no matrix is copied on the solve path.
+   */
+  virtual SolverMatrixStorage MatrixStorage() = 0;
+
+  /**
+   * @brief Zeroes the storage before the caller writes the pattern's values:
+   * the slots no value maps to (fill-in, padding) must be zero for the solve.
+   * A storage that every value maps to may do nothing. Asynchronous on
+   * `stream`.
+   */
+  virtual void ClearMatrixStorage(cudaStream_t stream) = 0;
+
+  /**
+   * @brief Factors the matrix in MatrixStorage() (written since the last
+   * ClearMatrixStorage()) and solves for `rhs`. The storage may be
+   * overwritten by the factors. Same results and checks as Solve().
+   */
+  virtual bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                 dvector<float> &result) = 0;
 
   /** @brief Virtual destructor for proper cleanup of derived solver instances.
    */

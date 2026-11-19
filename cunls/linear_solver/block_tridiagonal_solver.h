@@ -68,60 +68,28 @@ namespace cunls {
 class BlockTridiagonalSolver : public SparseLinearSolver {
  public:
   using SparseLinearSolver::Initialize;  // the BSR overloads: block storage is not supported
-  using SparseLinearSolver::Solve;
 
   bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
                   const dvector<float> &rhs, dvector<float> &result) override;
-
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-             dvector<float> &result) override;
 
   void DisableSafetyChecks() override { safety_checks_enabled_ = false; }
 
   /** @brief Largest stage block size supported (one warp per subproblem). */
   static constexpr int kMaxStageSize = 32;
 
-  // Stage-block access, for NormalEquations' stage layout: it assembles H
-  // into the same slots and builds the working blocks itself, skipping the
-  // CSR scatter. Valid after a successful Initialize().
-
   /**
-   * @brief Per entry of the CSR pattern given to Initialize(): its slot in the
-   * block storage (D blocks, then C blocks at NumBlockValues() / 2), or -1 for
-   * an entry that is not stored (the lower block C_{k-1}ᵀ of a row).
+   * @brief The stage blocks: P*K*m*m D blocks, then as many C blocks; the
+   * entry map sends each CSR entry of the pattern to its block slot, or -1
+   * for an entry not stored (the lower block C_{k-1}ᵀ of a row).
    */
-  const dvector<int> &EntrySlots() const { return entry_slot_; }
+  SolverMatrixStorage MatrixStorage() override { return {blocks_.data(), entry_slot_.data()}; }
 
-  /** @brief Per row (unknown) of the system: its index (p, k, offset) in the stage vectors. */
-  const dvector<int> &RowSlots() const { return row_slot_; }
+  /** @brief Zeroes the blocks the solve reads (the D blocks only for K = 1). */
+  void ClearMatrixStorage(cudaStream_t stream) override;
 
-  /** @brief Floats of the block storage: P*K*m*m D blocks, then as many C blocks. */
-  size_t NumBlockValues() const { return blocks_.size(); }
-
-  /** @brief Floats of the block storage that the solve reads (the D blocks only for K = 1). */
-  size_t NumUsedBlockValues() const {
-    return num_stages_ > 1 ? blocks_.size() : blocks_.size() / 2;
-  }
-
-  /** @brief Number of subproblems P. */
-  int NumProblems() const { return num_problems_; }
-  /** @brief Number of stages K (the largest stage index + 1). */
-  int NumStages() const { return num_stages_; }
-  /** @brief Stage block size m (the largest stage). */
-  int StageSize() const { return stage_size_; }
-
-  /**
-   * @brief The working block storage (NumBlockValues() floats, layout of
-   * EntrySlots()): write the blocks of the left-hand side here, then call
-   * SolveWorkingBlocks(). The solve overwrites them with the factors.
-   */
-  float *WorkingBlocks() { return blocks_.data(); }
-
-  /**
-   * @brief Solve() for a left-hand side already in WorkingBlocks() (no CSR
-   * matrix, no scatter); same results and safety checks.
-   */
-  bool SolveWorkingBlocks(cudaStream_t stream, const dvector<float> &rhs, dvector<float> &result);
+  /** @brief Factors the blocks in MatrixStorage() and solves (see the class comment). */
+  bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                         dvector<float> &result) override;
 
  private:
   int num_problems_ = 0;  ///< P

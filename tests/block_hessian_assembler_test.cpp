@@ -86,14 +86,19 @@ class CSROnlySolver : public SparseLinearSolver {
   using SparseLinearSolver::Initialize;
   using SparseLinearSolver::Solve;
 
-  bool Initialize(cudaStream_t, const Problem &, const CSRSparseMatrix &, const dvector<float> &,
-                  dvector<float> &) override {
+  bool Initialize(cudaStream_t, const Problem &, const CSRSparseMatrix &matrix,
+                  const dvector<float> &, dvector<float> &) override {
+    values_.resize(matrix.values.size());
     return true;
   }
-  bool Solve(cudaStream_t, const CSRSparseMatrix &, const dvector<float> &,
-             dvector<float> &) override {
+  SolverMatrixStorage MatrixStorage() override { return {values_.data(), nullptr, nullptr}; }
+  void ClearMatrixStorage(cudaStream_t) override {}
+  bool SolveStoredMatrix(cudaStream_t, const dvector<float> &, dvector<float> &) override {
     return false;
   }
+
+ private:
+  dvector<float> values_;  ///< The matrix in the pattern of Initialize() (identity map).
 };
 
 /**

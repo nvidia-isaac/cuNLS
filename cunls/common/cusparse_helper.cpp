@@ -108,6 +108,12 @@ void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix &matrix) {
                                                  rows_ptr, cols_ptr, values_ptr));
 }
 
+void cuSPARSEMatrixDescription::UpdatePointers(const CSRSparseMatrix &matrix, const float *values) {
+  THROW_ON_CUSPARSE_ERROR(cusparseCsrSetPointers(
+      static_cast<cusparseSpMatDescr_t>(description_), const_cast<int *>(matrix.row_offsets.data()),
+      const_cast<int *>(matrix.col_ids.data()), const_cast<float *>(values)));
+}
+
 /** @copydoc cuSPARSEMatrixDescription::GetDescription */
 void *cuSPARSEMatrixDescription::GetDescription() { return description_; }
 

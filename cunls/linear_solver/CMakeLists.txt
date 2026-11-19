@@ -9,6 +9,7 @@ add_library(cunls_linear_solver OBJECT
   dense_linear_solver_base.cu
   dense_qr_solver.cu
   sparse_linear_solver.cpp
+  sparse_linear_solver_base.cu
 )
 
 if(CUNLS_ENABLE_CUDSS)

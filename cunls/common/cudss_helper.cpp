@@ -231,7 +231,10 @@ void *cuDSSHandle::GetHandle(cudaStream_t stream) {
  *
  * @param symmetric_matrix The CSR sparse matrix to wrap. Must be symmetric.
  */
-cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
+cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix)
+    : cuDSSDescription(symmetric_matrix, symmetric_matrix.values.data()) {}
+
+cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix, const float *values) {
   // Extract matrix dimensions from CSR format
   size_t matrix_size = symmetric_matrix.NumRows();
   size_t num_nonzeros = symmetric_matrix.NumNonZeros();
@@ -240,7 +243,7 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix) {
   // const_cast is required by cuDSS API but data is not modified
   auto rows_ptr = const_cast<int *>(symmetric_matrix.row_offsets.data());
   auto cols_ptr = const_cast<int *>(symmetric_matrix.col_ids.data());
-  auto values_ptr = const_cast<float *>(symmetric_matrix.values.data());
+  auto values_ptr = const_cast<float *>(values);
 
   cudssMatrix_t mat = nullptr;
   // Create cuDSS CSR matrix descriptor

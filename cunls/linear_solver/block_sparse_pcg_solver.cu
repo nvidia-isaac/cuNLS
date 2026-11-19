@@ -1351,6 +1351,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
                                       dvector<float> &result) {
   bsr_view_ = &spd_matrix;
   csr_view_ = nullptr;
+  values_.resize(spd_matrix.values.size());
   return InitializeCommon(stream, &problem, spd_matrix.NumRows(), rhs, result);
 }
 
@@ -1359,6 +1360,7 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
                                       dvector<float> &result) {
   csr_view_ = &spd_matrix;
   bsr_view_ = nullptr;
+  values_.resize(spd_matrix.values.size());
   if (!InitializeCommon(stream, &problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
     return false;
   }
@@ -1528,7 +1530,7 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd
       return false;
     }
   }
-  return SolveCommon(stream, n, rhs, result);
+  return SolveCommon(stream, n, spd_matrix.values.data(), rhs, result);
 }
 
 bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
@@ -1559,7 +1561,23 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
   // Refresh the cuSPARSE descriptor's value pointer; the matrix's
   // structure is unchanged so no re-preprocess is needed.
   mat_desc_.UpdatePointers(spd_matrix);
-  return SolveCommon(stream, n, rhs, result);
+  return SolveCommon(stream, n, spd_matrix.values.data(), rhs, result);
+}
+
+SolverMatrixStorage BlockSparsePCGSolver::MatrixStorage() { return {values_.data()}; }
+
+bool BlockSparsePCGSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                             dvector<float> &result) {
+  const int n = matrix_size_;
+  if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
+    LogError("BlockSparsePCGSolver: dim mismatch (initialized={}, rhs={}, result={})", n,
+             rhs.size(), result.size());
+    return false;
+  }
+  if (n == 0) return true;
+  // The pattern is the one Initialize() saw (its views); the values are the storage.
+  if (csr_view_ != nullptr) mat_desc_.UpdatePointers(*csr_view_, values_.data());
+  return SolveCommon(stream, n, values_.data(), rhs, result);
 }
 
 /**
@@ -1567,13 +1585,12 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
  * the preconditioner gather read the matrix, and both dispatch on which view
  * pointer is set.
  */
-bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs,
-                                       dvector<float> &result) {
+bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const float *vals,
+                                       const dvector<float> &rhs, dvector<float> &result) {
   const bool block_storage = bsr_view_ != nullptr;
   const int *row_off =
       block_storage ? bsr_view_->row_offsets.data() : csr_view_->row_offsets.data();
   const int *col_idx = block_storage ? bsr_view_->col_ids.data() : csr_view_->col_ids.data();
-  const float *vals = block_storage ? bsr_view_->values.data() : csr_view_->values.data();
   const int storage_block = block_storage ? bsr_view_->block_size : 1;
 
   // -----------------------------------------------------------------

@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#include <cstdint>
+
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/linear_solver/dense_linear_solver_base.h"
@@ -25,105 +27,36 @@ namespace {
 constexpr int kWarpSize = 32;
 constexpr int kScatterThreads = 256;
 
-/// @brief Scatters CSR values into a dense row-major matrix.
-///
-/// One warp per row; the warp's lanes stride over the row's non-zeros.  The
-/// caller zeroes @p dense_matrix first, so entries not stored stay zero.
-__global__ void ScatterCSRToDenseKernel(const int *__restrict__ row_offsets,
-                                        const int *__restrict__ col_ids,
-                                        const float *__restrict__ values, int num_rows,
-                                        float *__restrict__ dense_matrix) {
+/// @brief slot[e] = row * n + col for every entry e of a CSR pattern (one warp per row).
+template <typename Slot>
+__global__ void DenseSlotsCSRKernel(const int *__restrict__ row_offsets,
+                                    const int *__restrict__ col_ids, int num_rows,
+                                    Slot *__restrict__ slot) {
   const int row = (blockIdx.x * blockDim.x + threadIdx.x) / kWarpSize;
-  if (row >= num_rows) {
-    return;
-  }
+  if (row >= num_rows) return;
   const int lane = threadIdx.x % kWarpSize;
-  const int row_start = row_offsets[row];
-  const int row_end = row_offsets[row + 1];
-  float *const dense_row = dense_matrix + static_cast<size_t>(row) * num_rows;
-  for (int idx = row_start + lane; idx < row_end; idx += kWarpSize) {
-    dense_row[col_ids[idx]] = values[idx];
+  for (int idx = row_offsets[row] + lane; idx < row_offsets[row + 1]; idx += kWarpSize) {
+    slot[idx] = static_cast<Slot>(row) * num_rows + col_ids[idx];
   }
 }
 
-/// @brief Scatters BSR tiles into a dense row-major matrix.
-///
-/// One CUDA block per block row.  The row's tiles and their entries are walked
-/// as one flat range so a short row cannot leave most of the block idle, which
-/// matters for bundle-adjustment Hessians where tile counts per row differ by
-/// orders of magnitude.  Within a tile the flat index runs fastest over the
-/// tile's columns, so consecutive threads write consecutive dense columns.
-__global__ void ScatterBSRToDenseKernel(const int *__restrict__ row_offsets,
-                                        const int *__restrict__ col_ids,
-                                        const float *__restrict__ values, int block_size,
-                                        int num_rows, float *__restrict__ dense_matrix) {
+/// @brief slot[e] = row * n + col for every value e of a BSR pattern (one CUDA block per block
+/// row).
+template <typename Slot>
+__global__ void DenseSlotsBSRKernel(const int *__restrict__ row_offsets,
+                                    const int *__restrict__ col_ids, int block_size, int num_rows,
+                                    Slot *__restrict__ slot) {
   const int block_row = blockIdx.x;
   const int row_begin = row_offsets[block_row];
-  const int row_end = row_offsets[block_row + 1];
   const int tile_area = block_size * block_size;
-  const int total = (row_end - row_begin) * tile_area;
-
+  const int total = (row_offsets[block_row + 1] - row_begin) * tile_area;
   for (int idx = threadIdx.x; idx < total; idx += blockDim.x) {
     const int tile = row_begin + idx / tile_area;
     const int entry = idx % tile_area;
-    const int k = entry / block_size;
-    const int l = entry - k * block_size;
-    const size_t dense_row = static_cast<size_t>(block_row) * block_size + k;
-    const int dense_col = col_ids[tile] * block_size + l;
-    dense_matrix[dense_row * num_rows + dense_col] =
-        values[static_cast<size_t>(tile) * tile_area + entry];
+    const Slot row = static_cast<Slot>(block_row) * block_size + entry / block_size;
+    slot[static_cast<size_t>(tile) * tile_area + entry] =
+        row * num_rows + col_ids[tile] * block_size + entry % block_size;
   }
-}
-
-/**
- * @brief Scatters a CSR matrix into a zeroed dense row-major buffer.
- *
- * @param stream CUDA stream for the memset and kernel launch.
- * @param matrix Input CSR matrix; must be square and stored in full (both
- *        triangles), which is what HessianStructureBuilder produces.
- * @param[out] dense_matrix Destination, pre-allocated to `NumRows()^2`.
- */
-void ScatterToDense(cudaStream_t stream, const CSRSparseMatrix &matrix,
-                    dvector<float> &dense_matrix) {
-  const int num_rows = static_cast<int>(matrix.NumRows());
-  if (num_rows == 0) {
-    return;
-  }
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(
-      dense_matrix.data(), 0, static_cast<size_t>(num_rows) * num_rows * sizeof(float), stream));
-
-  constexpr int kWarpsPerBlock = kScatterThreads / kWarpSize;
-  const int blocks = (num_rows + kWarpsPerBlock - 1) / kWarpsPerBlock;
-  ScatterCSRToDenseKernel<<<blocks, kScatterThreads, 0, stream>>>(
-      matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(), num_rows,
-      dense_matrix.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-/**
- * @brief Scatters a BSR matrix into a zeroed dense row-major buffer.
- *
- * One CUDA block per block row walks that row's tiles and writes their
- * `block_size^2` entries out.  Consecutive threads cover consecutive columns
- * within a tile row, so the dense writes coalesce.
- *
- * @param stream CUDA stream for the memset and kernel launch.
- * @param matrix Input BSR matrix; must be square and stored in full.
- * @param[out] dense_matrix Destination, pre-allocated to `NumRows()^2`.
- */
-void ScatterToDense(cudaStream_t stream, const BSRSparseMatrix &matrix,
-                    dvector<float> &dense_matrix) {
-  const int num_rows = matrix.NumRows();
-  if (num_rows == 0 || matrix.num_block_rows == 0) {
-    return;
-  }
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(
-      dense_matrix.data(), 0, static_cast<size_t>(num_rows) * num_rows * sizeof(float), stream));
-
-  ScatterBSRToDenseKernel<<<matrix.num_block_rows, kScatterThreads, 0, stream>>>(
-      matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(), matrix.block_size,
-      num_rows, dense_matrix.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace
@@ -150,38 +83,77 @@ bool DenseLinearSolverBase::InitializeCommon(cudaStream_t stream, size_t num_row
 bool DenseLinearSolverBase::Initialize(cudaStream_t stream, const Problem & /*problem*/,
                                        const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                        dvector<float> &result) {
-  return InitializeCommon(stream, spd_matrix.NumRows(), rhs, result);
+  if (!InitializeCommon(stream, spd_matrix.NumRows(), rhs, result)) return false;
+  // The storage map: entry (row, col) of the pattern is dense element row * n + col.
+  const int n = static_cast<int>(spd_matrix.NumRows());
+  const size_t nnz = spd_matrix.NumNonZeros();
+  wide_slots_ = static_cast<size_t>(n) * n > static_cast<size_t>(INT32_MAX);
+  constexpr int kWarpsPerBlock = kScatterThreads / kWarpSize;
+  const int blocks = (n + kWarpsPerBlock - 1) / kWarpsPerBlock;
+  if (wide_slots_) {
+    entry_slot64_.resize(nnz);
+    if (n > 0) {
+      DenseSlotsCSRKernel<int64_t><<<blocks, kScatterThreads, 0, stream>>>(
+          spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), n, entry_slot64_.data());
+    }
+  } else {
+    entry_slot_.resize(nnz);
+    if (n > 0) {
+      DenseSlotsCSRKernel<int><<<blocks, kScatterThreads, 0, stream>>>(
+          spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), n, entry_slot_.data());
+    }
+  }
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  return true;
 }
 
 bool DenseLinearSolverBase::Initialize(cudaStream_t stream, const Problem & /*problem*/,
                                        const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                        dvector<float> &result) {
-  return InitializeCommon(stream, static_cast<size_t>(spd_matrix.NumRows()), rhs, result);
-}
-
-bool DenseLinearSolverBase::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-                                  const dvector<float> &rhs, dvector<float> &result) {
-  const size_t num_rows = spd_matrix.NumRows();
-  if (!InitializeCommon(stream, num_rows, rhs, result)) {
+  if (!InitializeCommon(stream, static_cast<size_t>(spd_matrix.NumRows()), rhs, result)) {
     return false;
   }
-  if (num_rows == 0) {
-    return true;  // vacuously solved; nothing to launch
+  const int n = spd_matrix.NumRows();
+  const size_t num_values = spd_matrix.values.size();
+  wide_slots_ = static_cast<size_t>(n) * n > static_cast<size_t>(INT32_MAX);
+  if (wide_slots_) {
+    entry_slot64_.resize(num_values);
+    if (spd_matrix.num_block_rows > 0) {
+      DenseSlotsBSRKernel<int64_t><<<spd_matrix.num_block_rows, kScatterThreads, 0, stream>>>(
+          spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), spd_matrix.block_size, n,
+          entry_slot64_.data());
+    }
+  } else {
+    entry_slot_.resize(num_values);
+    if (spd_matrix.num_block_rows > 0) {
+      DenseSlotsBSRKernel<int><<<spd_matrix.num_block_rows, kScatterThreads, 0, stream>>>(
+          spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(), spd_matrix.block_size, n,
+          entry_slot_.data());
+    }
   }
-  ScatterToDense(stream, spd_matrix, dense_matrix_);
-  return FactorizeAndSolve(stream, static_cast<int>(num_rows), rhs, result);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  return true;
 }
 
-bool DenseLinearSolverBase::Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix,
-                                  const dvector<float> &rhs, dvector<float> &result) {
-  const size_t num_rows = static_cast<size_t>(spd_matrix.NumRows());
-  if (!InitializeCommon(stream, num_rows, rhs, result)) {
+SolverMatrixStorage DenseLinearSolverBase::MatrixStorage() {
+  if (wide_slots_) return {dense_matrix_.data(), nullptr, entry_slot64_.data()};
+  return {dense_matrix_.data(), entry_slot_.data(), nullptr};
+}
+
+void DenseLinearSolverBase::ClearMatrixStorage(cudaStream_t stream) {
+  if (dense_matrix_.size() == 0) return;
+  THROW_ON_CUDA_ERROR(
+      cudaMemsetAsync(dense_matrix_.data(), 0, dense_matrix_.size() * sizeof(float), stream));
+}
+
+bool DenseLinearSolverBase::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                              dvector<float> &result) {
+  const size_t num_rows = rhs.size();
+  if (num_rows * num_rows != dense_matrix_.size() || result.size() != num_rows) {
+    LogError("Dense solver: rhs / result size does not match the system it was initialized for");
     return false;
   }
-  if (num_rows == 0) {
-    return true;  // vacuously solved; nothing to launch
-  }
-  ScatterToDense(stream, spd_matrix, dense_matrix_);
+  if (num_rows == 0) return true;
   return FactorizeAndSolve(stream, static_cast<int>(num_rows), rhs, result);
 }
 

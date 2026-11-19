@@ -294,6 +294,19 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
              dvector<float> &result) final;
 
   /**
+   * @brief The values of the pattern of Initialize(), in its layout (the
+   * identity map; CSR entries or BSR tile values).
+   */
+  SolverMatrixStorage MatrixStorage() final;
+
+  /** @brief Every slot is a pattern value: nothing to clear. */
+  void ClearMatrixStorage(cudaStream_t) final {}
+
+  /** @brief Solve() with the pattern of Initialize() and the values in MatrixStorage(). */
+  bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                         dvector<float> &result) final;
+
+  /**
    * @brief Number of PCG iterations consumed by the most recent
    *        @ref Solve call.  Useful for convergence diagnostics.
    */
@@ -352,8 +365,9 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
   /** @brief Logs why the bundle-adjustment product is not used, unless already logged. */
   void WarnBaProductNotUsed();
 
-  /** @brief The CG recurrence, shared by both storage layouts. */
-  bool SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs, dvector<float> &result);
+  /** @brief The CG recurrence, shared by both storage layouts, on the matrix values @p vals. */
+  bool SolveCommon(cudaStream_t stream, int n, const float *vals, const dvector<float> &rhs,
+                   dvector<float> &result);
 
   BlockSparsePCGOptions options_;
   /** Layout derived from the state batches of the last Initialize's
@@ -408,6 +422,8 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
   /** Non-owning view of the matrix passed to the current Solve; exactly one
    *  of the two is non-null and selects the storage layout. */
   const CSRSparseMatrix *csr_view_ = nullptr;
+  /// MatrixStorage(): the values of the pattern of Initialize() (its layout: the identity map).
+  dvector<float> values_;
   const BSRSparseMatrix *bsr_view_ = nullptr;
 
   /** Bundle-adjustment `H p`, ready only when selected and applicable. */

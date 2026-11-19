@@ -28,24 +28,18 @@
 
 namespace cunls {
 
-class BlockTridiagonalSolver;
 class Problem;
 class ProblemPartition;
 
 /**
  * @brief The assembled normal equations (LinearSystemType::Assembled).
  *
- * Holds two matrices: the Hessian `H` as assembled, and the working
- * left-hand side handed to the solver, rebuilt from `H` before every solver
- * call (PrepareSolver(), Solve()) with the declared column scale, damping and
- * mask. Both are stored in one of three
- * layouts, chosen once at Initialize():
- * - **Stage blocks** when the solver is BlockTridiagonalSolver: `H` is
- *   assembled straight into its dense D / C stage blocks (through the
- *   solver's entry-to-slot map) and the working left-hand side is built in
- *   the solver's blocks by one kernel, so no CSR matrix is filled, scattered
- *   or multiplied.
- *
+ * Holds the Hessian `H` as assembled. Before every solve the working
+ * left-hand side (H with the declared column scale, damping and mask) is
+ * written straight into the solver's own storage
+ * (SparseLinearSolver::MatrixStorage(): one pass over H through the solver's
+ * entry map) and solved there (SolveStoredMatrix()). H is stored in one of
+ * two layouts, chosen once at Initialize():
  * - **Block (BSR)** when the state tangent dimensions share a common factor and
  *   the solver can read tiles. One column index per dense tile instead of one
  *   per scalar entry, which is bandwidth the solver's SpMV no longer moves.
@@ -106,14 +100,19 @@ class NormalEquations : public LinearSystem {
   /** @brief True when the block layout is live for the current problem. */
   bool UsesBlockStorage() const { return block_size_ > 1; }
 
-  /** @brief True when the stage layout (BlockTridiagonalSolver's blocks) is live. */
-  bool UsesStageStorage() const { return stage_solver_ != nullptr; }
-
   /**
    * @brief Rebuilds the working left-hand side from H with the declared scale,
-   * damping and mask (PrepareSolver() and Solve() do this first).
+   * damping and mask as a matrix in H's layout (LhsCSR() / LhsBSR()): a test
+   * and inspection hook that copies H whole on every call (the solve path
+   * writes into the solver's storage instead).
    */
   void BuildWorkingLhs(cudaStream_t stream);
+
+  /**
+   * @brief Writes the working left-hand side (H with the declared scale,
+   * damping and mask) into the solver's MatrixStorage(), one pass over H.
+   */
+  void WriteWorkingLhsToSolver(cudaStream_t stream);
 
   /** @brief Working left-hand side in scalar storage; empty under block storage. */
   const CSRSparseMatrix &LhsCSR() const { return csr_lhs_; }
@@ -127,19 +126,13 @@ class NormalEquations : public LinearSystem {
   int block_size_ = 1;               ///< Tile size of the block layout; 1: scalar layout.
 
   // Exactly one layout is populated, decided by block_size_.
-  CSRSparseMatrix csr_hessian_;    ///< Scalar layout: H as assembled.
-  CSRSparseMatrix csr_lhs_;        ///< Scalar layout: the working left-hand side (H's pattern).
-  dvector<int> csr_diagonal_;      ///< Scalar layout: position of each diagonal entry.
-  BSRSparseMatrix bsr_hessian_;    ///< Block layout: H as assembled.
-  BSRSparseMatrix bsr_lhs_;        ///< Block layout: the working left-hand side.
-  dvector<int> tile_row_scratch_;  ///< Block layout: tile -> block row (column scaling).
-
-  // Stage layout (BlockTridiagonalSolver): H assembled straight into its block
-  // slots; the working blocks are the solver's own (WorkingBlocks()).
-  BlockTridiagonalSolver *stage_solver_ = nullptr;  ///< solver_ when the stage layout is live.
-  dvector<float> stage_hessian_;                    ///< H in the solver's block slots.
-  dvector<int> stage_vec_row_;                      ///< Stage-vector index -> unknown (-1: pad).
-  mutable dvector<float> stage_vector_;             ///< MultiplyHessian(): x in stage order.
+  CSRSparseMatrix csr_hessian_;  ///< Scalar layout: H as assembled.
+  CSRSparseMatrix csr_lhs_;      ///< Scalar layout: the working left-hand side (H's pattern).
+  dvector<int> csr_diagonal_;    ///< Scalar layout: position of each diagonal entry.
+  BSRSparseMatrix bsr_hessian_;  ///< Block layout: H as assembled.
+  BSRSparseMatrix bsr_lhs_;      ///< Block layout: the working left-hand side.
+  dvector<int> tile_rows_;       ///< Block layout: block row of each tile of H.
+  dvector<int> entry_row_;       ///< Scalar layout: row of each entry of H.
 
   // Scratch of MultiplyHessian() / StepCurvature().
   mutable cuSPARSEHandle cusparse_handle_;  ///< Scalar-layout SpMV.

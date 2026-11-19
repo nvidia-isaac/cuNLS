@@ -50,20 +50,6 @@ using UpdateItem = internal::CholeskyPlan::UpdateItem;
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
-/**
- * factor[dst[e]] = values[e] for the nonzeros with dst[e] >= 0 (the lower
- * triangle of PAPᵀ). Index: int, or int64_t for a factor of more than 2^31
- * entries.
- */
-template <typename Index>
-__global__ void AssembleKernel(int nnz, const Index *dst, const float *values, float *factor) {
-  const int e = blockIdx.x * blockDim.x + threadIdx.x;
-  if (e < nnz) {
-    const Index d = dst[e];
-    if (d >= 0) factor[d] = values[e];
-  }
-}
-
 /** One warp per row: flag[i] = 1 if row i starts a supervariable (its pattern differs from row i -
  * 1). */
 __global__ void SupervariableKernel(int n, const int *row_offsets, const int *col_ids, int *flag) {
@@ -191,15 +177,28 @@ __global__ void RelmapKernel(int num_runs, const Run *runs, const Panel *panels,
 
 /**
  * out[i] = in[perm[i]], and original[i] = the diagonal entry of A at permuted
- * column i (values[diagonal_index[i]], 0 without one).
+ * column i read from the assembled factor (factor[diagonal_slot[i]], 0 without
+ * one), before the factorization overwrites it.
  */
-__global__ void PermuteKernel(int n, const int *perm, const float *in, float *out,
-                              const int *diagonal_index, const float *values, float *original) {
+__global__ void PermuteFromFactorKernel(int n, const int *perm, const float *in, float *out,
+                                        const int64_t *diagonal_slot, const float *factor,
+                                        float *original) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
     out[i] = in[perm[i]];
+    const int64_t d = diagonal_slot[i];
+    original[i] = d >= 0 ? factor[d] : 0.f;
+  }
+}
+
+/** diagonal_slot[i] = the factor offset of A's diagonal entry at permuted column i, or -1. */
+template <typename Index>
+__global__ void DiagonalSlotKernel(int n, const int *diagonal_index, const Index *dst,
+                                   int64_t *diagonal_slot) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
     const int e = diagonal_index[i];
-    original[i] = e >= 0 ? values[e] : 0.f;
+    diagonal_slot[i] = e >= 0 ? static_cast<int64_t>(dst[e]) : -1;
   }
 }
 
@@ -769,6 +768,16 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
           assembly_dst_.data(), diagonal_index_.data());
     }
     THROW_ON_CUDA_ERROR(cudaGetLastError());
+    diagonal_slot_.resize(n);
+    if (wide_assembly_) {
+      DiagonalSlotKernel<<<Blocks(n), kThreads, 0, stream>>>(
+          static_cast<int>(n), diagonal_index_.data(), assembly_dst64_.data(),
+          diagonal_slot_.data());
+    } else {
+      DiagonalSlotKernel<<<Blocks(n), kThreads, 0, stream>>>(
+          static_cast<int>(n), diagonal_index_.data(), assembly_dst_.data(), diagonal_slot_.data());
+    }
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));  // before the temporaries go
   }
   relmap_.resize(plan.relmap_size);
@@ -798,27 +807,28 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
   return true;
 }
 
-bool BlockSparseCholeskySolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
-                                      const dvector<float> &rhs, dvector<float> &result) {
+SolverMatrixStorage BlockSparseCholeskySolver::MatrixStorage() {
+  if (wide_assembly_) return {factor_.data(), nullptr, assembly_dst64_.data()};
+  return {factor_.data(), assembly_dst_.data(), nullptr};
+}
+
+void BlockSparseCholeskySolver::ClearMatrixStorage(cudaStream_t stream) {
+  if (factor_.size() == 0) return;
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_.data(), 0, factor_.size() * sizeof(float), stream));
+}
+
+bool BlockSparseCholeskySolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                                  dvector<float> &result) {
   const auto &plan = plan_;
   const int n = plan.n;
   if (n == 0) return true;
   if (safety_checks_) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(failure_.data(), 0, sizeof(int), stream));
   }
-  // Assembly of PAPᵀ into the panels, and the permuted right-hand side.
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_.data(), 0, factor_.size() * sizeof(float), stream));
-  const int nnz = static_cast<int>(spd_matrix.col_ids.size());
-  if (wide_assembly_) {
-    AssembleKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, assembly_dst64_.data(),
-                                                         spd_matrix.values.data(), factor_.data());
-  } else {
-    AssembleKernel<<<Blocks(nnz), kThreads, 0, stream>>>(nnz, assembly_dst_.data(),
-                                                         spd_matrix.values.data(), factor_.data());
-  }
-  PermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), rhs.data(), work_.data(),
-                                                    diagonal_index_.data(),
-                                                    spd_matrix.values.data(), original_.data());
+  // The permuted right-hand side, and A's diagonal (zero-pivot test) from the assembled panels.
+  PermuteFromFactorKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), rhs.data(),
+                                                              work_.data(), diagonal_slot_.data(),
+                                                              factor_.data(), original_.data());
   // Panels whose rows are all idle (SetRowActivity) are skipped below.
   const int *panel_active = nullptr;
   if (row_active_ != nullptr) {

@@ -124,7 +124,24 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
              dvector<float> &result) final;
 
+  /** @brief The values of the pattern of Initialize(), in its layout (the identity map). */
+  SolverMatrixStorage MatrixStorage() final;
+
+  /** @brief Every slot is a pattern value: nothing to clear. */
+  void ClearMatrixStorage(cudaStream_t) final {}
+
+  /** @brief Solve() with the pattern of Initialize() and the values in MatrixStorage(). */
+  bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                         dvector<float> &result) final;
+
  private:
+  /** @brief The factorization and solve phases for @p spd_matrix's structure and @p values. */
+  bool SolveWithValues(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const float *values,
+                       const dvector<float> &rhs, dvector<float> &result);
+
+  const CSRSparseMatrix *pattern_ = nullptr;  ///< The pattern of Initialize() (not owned).
+  dvector<float> values_;                     ///< MatrixStorage(): its values.
+
   cuDSSLinearSolverOptions options_;  ///< Solver configuration.
 
   cuDSSHandle cudss_handle_;            ///< Owns the cuDSS handle used for all solver phases.
