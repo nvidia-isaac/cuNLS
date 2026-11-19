@@ -75,8 +75,16 @@ Path('pycunls/_build_provenance.json').write_text(json.dumps({
 }, sort_keys=True) + '\n')
 PY
 
+# PYTHON_VERSION (e.g. 3.13) builds for that Python; the default is the image's python3.
+PYTHON=python3
+if [ -n "${PYTHON_VERSION:-}" ]; then
+  uv venv --seed --python "$PYTHON_VERSION" "$WORK_DIR/venv"
+  PYTHON="$WORK_DIR/venv/bin/python"
+  uv pip install --python "$PYTHON" "scikit-build-core>=0.10" "nanobind>=2.4"
+fi
+
 export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}
-pip wheel . --no-build-isolation --no-deps --wheel-dir "$WORK_DIR/raw"
+"$PYTHON" -m pip wheel . --no-build-isolation --no-deps --wheel-dir "$WORK_DIR/raw"
 
 # The system CUDA toolkit supplies these linked runtime libraries. Match SONAME
 # families rather than assuming CUDA 12 and 13 use the same SONAME versions.

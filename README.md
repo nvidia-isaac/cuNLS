@@ -19,7 +19,7 @@
 
 ### Install with pip
 
-Prebuilt `pycunls` wheels are on PyPI for x86_64 Linux, Python 3.10 and 3.12, one package per
+Prebuilt `pycunls` wheels are on PyPI for x86_64 Linux, Python 3.10 to 3.14, one package per
 CUDA major version. `warp-lang` and `numpy` are installed as dependencies (there is no
 `[warp-lang]` extra). The wheel does not bundle the CUDA libraries it links against
 (`cudart`, `cublas`, `cusparse`, `cusolver`, `nvJitLink`): install them from NVIDIA's pip
