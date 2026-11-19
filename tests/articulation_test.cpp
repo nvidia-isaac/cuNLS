@@ -423,6 +423,53 @@ TEST(ArticulationStateBatch, ForwardKinematicsMatchesReference) {
   EXPECT_LT(worst, 2e-5);
 }
 
+// Instances inside a larger (scene-wide) array: joint_q read and written in place with a stride,
+// link transforms (position + quaternion) written with a stride; the gaps stay untouched.
+TEST(ArticulationStateBatch, StridedJointQAndLinkTransforms) {
+  const ArticulationDescription d = MixedTree();
+  ArticulationTopology topo(d);
+  const int n = 50, C = topo.CoordCount(), L = topo.LinkCount();
+  const int q_stride = C + 5, x_stride = 7 * L + 3;
+  constexpr float kSentinel = -123.f;
+  std::mt19937 rng(11);
+  std::vector<float> scene(size_t(n) * q_stride, kSentinel);
+  for (int s = 0; s < n; ++s) {
+    const auto q = RandomQ(d, rng);
+    std::copy(q.begin(), q.end(), scene.begin() + size_t(s) * q_stride);
+  }
+  dvector<float> d_scene(scene), d_back(std::vector<float>(scene.size(), kSentinel));
+  dvector<float> d_x(std::vector<float>(size_t(n) * x_stride, kSentinel));
+  ArticulationStateBatch states(topo, n);
+  states.SetNumActiveStates(n);
+  CudaStream stream;
+  states.SetJointQ(d_scene.data(), n, stream.GetStream(), q_stride);
+  states.GetJointQ(d_back.data(), n, stream.GetStream(), q_stride);
+  states.GetLinkTransforms(d_x.data(), n, stream.GetStream(), x_stride);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  EXPECT_EQ(Host(d_back), scene);  // same values, same untouched gaps
+
+  const auto x = Host(d_x);
+  double worst = 0;
+  for (int s = 0; s < n; ++s) {
+    const auto ref = ReferenceFK(d, scene.data() + size_t(s) * q_stride);
+    for (int l = 0; l < L; ++l) {
+      const float *X = x.data() + size_t(s) * x_stride + 7 * l;
+      const auto r = PoseOf(ref[l]);
+      const float sign = X[3] * r[3] + X[4] * r[4] + X[5] * r[5] + X[6] * r[6] < 0 ? -1.f : 1.f;
+      for (int i = 0; i < 7; ++i) {
+        worst = std::max(worst, double(std::fabs((i < 3 ? 1.f : sign) * X[i] - r[i])));
+      }
+    }
+    for (int i = 7 * L; i < x_stride; ++i) EXPECT_EQ(x[size_t(s) * x_stride + i], kSentinel);
+  }
+  EXPECT_LT(worst, 5e-5);
+
+  EXPECT_THROW(states.SetJointQ(d_scene.data(), n, stream.GetStream(), C - 1),
+               std::invalid_argument);
+  EXPECT_THROW(states.GetLinkTransforms(d_x.data(), n + 1, stream.GetStream()),
+               std::invalid_argument);
+}
+
 TEST(ArticulationStateBatch, ZeroStepKeepsStateAndBoundsClampMovedComponents) {
   const ArticulationDescription d = Arm();
   ArticulationTopology topo(d);
@@ -737,6 +784,74 @@ TEST(ArticulationSolve, BoundedIKReachesTargetsWithinLimits) {
   }
   EXPECT_GE(reached, n * 97 / 100) << reached << " of " << n;
   EXPECT_FLOAT_EQ(hq[1], 1.6f);  // the unreachable target ends at the limit
+}
+
+// A DOF held by a zero-width box (lower == upper == its start value) stays there while the others
+// move within their limits to reach the target.
+TEST(ArticulationSolve, ZeroWidthBoundsFreezeADof) {
+  const ArticulationDescription d = Arm();
+  ArticulationTopology topo(d);
+  const int n = 64, C = topo.CoordCount(), T = topo.DofCount(), ee = 6, frozen = 2;
+  std::mt19937 rng(9);
+  std::vector<float> targets, q0, lower, upper;
+  for (int s = 0; s < n; ++s) {
+    const auto q = RandomQ(d, rng);
+    const auto p = PoseOf(ReferenceFK(d, q.data())[ee]);
+    targets.insert(targets.end(), p.begin(), p.end());
+    std::uniform_real_distribution<float> u(-0.3f, 0.3f);
+    for (int k = 0; k < C; ++k) {
+      q0.push_back(k == frozen
+                       ? q[k]
+                       : std::clamp(q[k] + u(rng), topo.LowerLimits()[k], topo.UpperLimits()[k]));
+    }
+    for (int k = 0; k < T; ++k) {
+      lower.push_back(k == frozen ? q[k] : topo.LowerLimits()[k]);
+      upper.push_back(k == frozen ? q[k] : topo.UpperLimits()[k]);
+    }
+  }
+  dvector<float> d_targets(targets), d_q0(q0), d_lower(lower), d_upper(upper);
+  dvector<int> links(std::vector<int>(n, ee));
+  ArticulationStateBatch states(topo, n);
+  states.SetNumActiveStates(n);
+  states.SetBounds(d_lower.data(), d_upper.data());
+  CudaStream stream;
+  states.SetJointQ(d_q0.data(), n, stream.GetStream());
+  LinkPoseFactorBatch pose(topo, links.data(), nullptr, d_targets.data(), nullptr, n);
+  pose.SetNumActiveFactors(n);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  std::vector<float *> ptrs(n);
+  for (int s = 0; s < n; ++s) ptrs[s] = states.StateDevicePtr(s);
+  problem.AddFactorBatch(&pose, ptrs);
+  std::vector<int> ids(n);
+  for (int s = 0; s < n; ++s) ids[s] = s;
+  dvector<int> d_ids(ids);
+  problem.SetProblemPartition(n, {d_ids.data()});
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options.max_num_iterations = 100;
+  LevenbergMarquardtMinimizer inner(lm);
+  AugmentedLagrangianMinimizer solver(inner);
+  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  EXPECT_NE(summary.status, AugmentedLagrangianMinimizerStatus::kInnerSolveFailed);
+
+  dvector<float> q(size_t(n) * C);
+  states.GetJointQ(q.data(), n, stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto hq = Host(q);
+  int reached = 0;
+  for (int s = 0; s < n; ++s) {
+    EXPECT_EQ(hq[size_t(s) * C + frozen], q0[size_t(s) * C + frozen]) << "state " << s;
+    for (int k = 0; k < T; ++k) {
+      EXPECT_GE(hq[size_t(s) * C + k], lower[size_t(s) * T + k] - 1e-6f) << "state " << s;
+      EXPECT_LE(hq[size_t(s) * C + k], upper[size_t(s) * T + k] + 1e-6f) << "state " << s;
+    }
+    const auto fk = ReferenceFK(d, hq.data() + size_t(s) * C)[ee];
+    const float *tp = targets.data() + 7 * s;
+    const double err = std::sqrt(std::pow(fk[3] - tp[0], 2) + std::pow(fk[7] - tp[1], 2) +
+                                 std::pow(fk[11] - tp[2], 2));
+    if (err < 1e-3) ++reached;
+  }
+  EXPECT_GE(reached, n * 9 / 10) << reached << " of " << n;
 }
 
 TEST(ArticulationSolve, FourBarLoopClosureAssembles) {

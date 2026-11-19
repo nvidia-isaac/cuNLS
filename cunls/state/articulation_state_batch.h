@@ -84,18 +84,44 @@ class ArticulationStateBatch : public StateBatch, public BoxBoundedStates, publi
 
   /**
    * @brief Copies the coordinates of the first `num_states` instances from
-   * `joint_q` (device array, num_states x CoordCount() floats, Newton's
-   * layout) and recomputes their cache. Asynchronous on `stream`.
-   * @throws std::invalid_argument if num_states > Capacity().
+   * `joint_q` (device array, Newton's joint_q layout) and recomputes their
+   * cache. Asynchronous on `stream`.
+   *
+   * @param joint_q Instance i's CoordCount() coordinates start at
+   *        joint_q + i * stride.
+   * @param stride Floats from one instance to the next; 0: CoordCount()
+   *        (packed). A larger stride reads instances embedded in a larger
+   *        array in place (e.g. one articulation per world of a scene-wide
+   *        joint_q).
+   * @throws std::invalid_argument if num_states > Capacity() or 0 < stride <
+   *         CoordCount().
    */
-  void SetJointQ(const float *joint_q, size_t num_states, cudaStream_t stream);
+  void SetJointQ(const float *joint_q, size_t num_states, cudaStream_t stream, size_t stride = 0);
 
   /**
    * @brief Copies the coordinates of the first `num_states` instances into
-   * `joint_q` (device array, num_states x CoordCount() floats). Asynchronous.
-   * @throws std::invalid_argument if num_states > Capacity().
+   * `joint_q` (instance i at joint_q + i * stride; stride 0: CoordCount()),
+   * leaving the floats between instances untouched. Asynchronous.
+   * @throws std::invalid_argument if num_states > Capacity() or 0 < stride <
+   *         CoordCount().
    */
-  void GetJointQ(float *joint_q, size_t num_states, cudaStream_t stream) const;
+  void GetJointQ(float *joint_q, size_t num_states, cudaStream_t stream, size_t stride = 0) const;
+
+  /**
+   * @brief Writes the world transform of every link of the first `num_states`
+   * instances, from the cache (forward kinematics of the current joint_q): 7
+   * floats per link, position then unit quaternion (x, y, z, w) as the factor
+   * targets (Newton's body_q layout), links in topology order. Asynchronous.
+   *
+   * @param transforms Instance i's LinkCount() x 7 floats start at
+   *        transforms + i * stride.
+   * @param stride Floats from one instance to the next; 0: 7 x LinkCount()
+   *        (packed). The floats between instances are left untouched.
+   * @throws std::invalid_argument if num_states > Capacity() or 0 < stride <
+   *         7 x LinkCount().
+   */
+  void GetLinkTransforms(float *transforms, size_t num_states, cudaStream_t stream,
+                         size_t stride = 0) const;
 
   /**
    * @brief Box bounds per instance and DOF (device arrays of Capacity() x

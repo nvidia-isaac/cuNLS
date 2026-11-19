@@ -106,7 +106,9 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
 - **Reprojection observations are normalized** image coordinates (intrinsics removed).
 - **Keep arrays alive.** Batches read the arrays you pass; do not let them be garbage collected.
 - **Articulations.** `joint_q` follows Newton's layout (quaternions x, y, z, w); write it with
-  `ArticulationStateBatch.set_joint_q`, read it with `get_joint_q`. Joint limits are hard bounds
+  `ArticulationStateBatch.set_joint_q`, read it with `get_joint_q` (both take a `stride` for
+  instances inside a larger array); `get_link_transforms` gives every link's world pose
+  (position, quaternion x, y, z, w). Joint limits are hard bounds
   (solve with `AugmentedLagrangianMinimizer`). Loop-closing joints are not tree joints: add them
   as `LoopClosureFactorBatch` wrapped in an equality `ConstraintFactorBatch`.
 

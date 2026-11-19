@@ -94,18 +94,52 @@ Python example: bounded inverse kinematics from a URDF
 
    problem = pycunls.Problem()
    problem.add_state_batch(states)
-   problem.add_factor_batch(pose, [states.state_device_ptr(i) for i in range(n)])
-   problem.set_problem_partition(n, [wp.array(np.arange(n, dtype=np.int32))])  # stop each alone
+   instance = wp.array(np.arange(n, dtype=np.int32))       # factor i acts on instance i
+   problem.add_factor_batch(pose, [states], instance)
+   problem.set_problem_partition(n, [instance])             # each problem converges and stops alone
 
    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
    summary = solver.minimize(stream, problem)
-   q = wp.zeros(n * topo.coord_count, dtype=float)
+   q = wp.zeros((n, topo.coord_count), dtype=float)
    states.get_joint_q(q, n, stream)
 
 Joint limits are box bounds of the state: the iterates never leave them (projected Gauss-Newton,
 see :doc:`constraints`), so solve with ``AugmentedLagrangianMinimizer``; the plain minimizers
 reject a bounded problem. ``ArticulationStateBatch(topo, n, apply_joint_limits=False)`` leaves
 the coordinates unbounded.
+
+===============================================================================
+Building an inverse-kinematics solver
+===============================================================================
+
+cuNLS has no IK solver class: an application (a simulator, a robot stack) assembles one from the
+pieces above, which keeps its objectives, seeding and result selection in its own hands. The
+pieces that make that cheap:
+
+* **Scene arrays in place.** ``set_joint_q`` / ``get_joint_q`` take a ``stride`` (floats between
+  instances), so instances embedded in a larger array are read and written without a gather:
+  with one articulation per replicated world of a scene-wide ``joint_q``,
+  ``states.set_joint_q(scene_q[first:], worlds, stream, stride=coords_per_world)``.
+  ``ArticulationTopology`` accepts GPU arrays (copied once to the host), so the joint arrays of
+  a scene can be passed as they are.
+* **Forward kinematics and link poses.** ``set_joint_q`` runs forward kinematics;
+  ``get_link_transforms(out, n, stream, stride=0)`` writes every link's world pose (7 floats:
+  position, quaternion x, y, z, w; the convention of the factor targets) of every instance, with
+  a stride for writing into a scene-wide pose array. Use it to check a solution (position and
+  angle errors) or to pick the best of several seeds.
+* **Targets change, the problem does not.** Factors read their device arrays (targets, weights,
+  links) at every evaluation: write the next targets into the same arrays (``wp.copy``, a
+  kernel) and call ``minimize`` again. With ``reuse_structure = True`` in the minimizer options,
+  repeated solves skip the structure setup.
+* **Several seeds per problem.** Make ``problems x seeds`` instances (seeds next to each other),
+  give each instance its own subproblem, solve once, then compare the link-pose errors of each
+  problem's seeds and keep the best one.
+* **Frozen DOFs.** ``set_bounds(lower, upper)`` with ``lower == upper == q`` on a scalar DOF holds
+  it at ``q`` (a box of zero width); other DOFs keep their limits.
+* **Objectives are factors.** Position, orientation and pose targets (with per-row weights),
+  posture regularization, loop-closing joints and mimic joints are factors; constraints are
+  factors wrapped in ``ConstraintFactorBatch``. Several targets per instance are several factors
+  (or several rows of one batch) connected to the same instance.
 
 ===============================================================================
 Closed loops and mimic joints

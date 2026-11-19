@@ -504,37 +504,103 @@ void ArticulationStateBatch::RefreshDerivedData(cudaStream_t stream) {
              nullptr, nullptr, 1, stream);
 }
 
-void ArticulationStateBatch::SetJointQ(const float *joint_q, size_t num_states,
-                                       cudaStream_t stream) {
-  if (num_states > capacity_) {
-    throw std::invalid_argument("ArticulationStateBatch::SetJointQ: got " +
+namespace {
+
+/** Instance stride of a strided copy: `stride`, or `packed` for 0; checked against `packed`. */
+size_t CheckedStride(const char *method, size_t num_states, size_t capacity, size_t stride,
+                     size_t packed, const char *unit) {
+  if (num_states > capacity) {
+    throw std::invalid_argument(std::string("ArticulationStateBatch::") + method + ": got " +
                                 std::to_string(num_states) + " states, expected at most " +
-                                std::to_string(capacity_) +
+                                std::to_string(capacity) +
                                 " (the capacity). Fix: pass fewer states or a larger capacity.");
   }
-  if (num_states == 0) return;
+  if (stride != 0 && stride < packed) {
+    throw std::invalid_argument(std::string("ArticulationStateBatch::") + method + ": stride is " +
+                                std::to_string(stride) + " floats, expected 0 or at least " +
+                                std::to_string(packed) + " (" + unit +
+                                "). Fix: pass the distance between instances.");
+  }
+  return stride == 0 ? packed : stride;
+}
+
+/** Unit quaternion (x, y, z, w) of a rotation matrix (row-major 3x3, rows `pitch` floats apart). */
+__device__ __forceinline__ void MatrixToQuat(const float *R, int pitch, float *q) {
+  const float m00 = R[0], m01 = R[1], m02 = R[2];
+  const float m10 = R[pitch], m11 = R[pitch + 1], m12 = R[pitch + 2];
+  const float m20 = R[2 * pitch], m21 = R[2 * pitch + 1], m22 = R[2 * pitch + 2];
+  const float trace = m00 + m11 + m22;
+  float x, y, z, w;
+  if (trace > 0.f) {  // Shepperd: divide by the largest of 4w², 4x², 4y², 4z²
+    const float s = 2.f * sqrtf(trace + 1.f);
+    w = 0.25f * s, x = (m21 - m12) / s, y = (m02 - m20) / s, z = (m10 - m01) / s;
+  } else if (m00 > m11 && m00 > m22) {
+    const float s = 2.f * sqrtf(1.f + m00 - m11 - m22);
+    w = (m21 - m12) / s, x = 0.25f * s, y = (m01 + m10) / s, z = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    const float s = 2.f * sqrtf(1.f + m11 - m00 - m22);
+    w = (m02 - m20) / s, x = (m01 + m10) / s, y = 0.25f * s, z = (m12 + m21) / s;
+  } else {
+    const float s = 2.f * sqrtf(1.f + m22 - m00 - m11);
+    w = (m10 - m01) / s, x = (m02 + m20) / s, y = (m12 + m21) / s, z = 0.25f * s;
+  }
+  const float inv = rsqrtf(x * x + y * y + z * z + w * w);
+  q[0] = x * inv, q[1] = y * inv, q[2] = z * inv, q[3] = w * inv;
+}
+
+/** One thread per (instance, link): the cached 3x4 pose as position + quaternion. */
+__global__ void __launch_bounds__(kBlockSize)
+    LinkTransformsKernel(const float *__restrict__ storage, int ambient, int pose_offset,
+                         int num_links, long long num_items, float *__restrict__ out,
+                         long long stride) {
+  const long long t = blockIdx.x * static_cast<long long>(kBlockSize) + threadIdx.x;
+  if (t >= num_items) return;
+  const long long instance = t / num_links;
+  const int link = static_cast<int>(t % num_links);
+  const float *M = storage + instance * ambient + pose_offset + 12 * link;
+  float *X = out + instance * stride + 7 * link;
+  X[0] = M[3], X[1] = M[7], X[2] = M[11];
+  MatrixToQuat(M, 4, X + 3);
+}
+
+}  // namespace
+
+void ArticulationStateBatch::SetJointQ(const float *joint_q, size_t num_states, cudaStream_t stream,
+                                       size_t stride) {
   const size_t C = topology_.CoordCount(), A = AmbientSize();
+  stride = CheckedStride("SetJointQ", num_states, capacity_, stride, C, "CoordCount()");
+  if (num_states == 0) return;
   if (C > 0) {
     THROW_ON_CUDA_ERROR(cudaMemcpy2DAsync(storage_.data(), A * sizeof(float), joint_q,
-                                          C * sizeof(float), C * sizeof(float), num_states,
+                                          stride * sizeof(float), C * sizeof(float), num_states,
                                           cudaMemcpyDeviceToDevice, stream));
   }
   LaunchPlus(topology_.View(), storage_.data(), nullptr, storage_.data(), num_states, nullptr,
              nullptr, 1, stream);
 }
 
-void ArticulationStateBatch::GetJointQ(float *joint_q, size_t num_states,
-                                       cudaStream_t stream) const {
-  if (num_states > capacity_) {
-    throw std::invalid_argument("ArticulationStateBatch::GetJointQ: got " +
-                                std::to_string(num_states) + " states, expected at most " +
-                                std::to_string(capacity_) + " (the capacity). Fix: pass fewer.");
-  }
+void ArticulationStateBatch::GetJointQ(float *joint_q, size_t num_states, cudaStream_t stream,
+                                       size_t stride) const {
   const size_t C = topology_.CoordCount(), A = AmbientSize();
+  stride = CheckedStride("GetJointQ", num_states, capacity_, stride, C, "CoordCount()");
   if (num_states == 0 || C == 0) return;
-  THROW_ON_CUDA_ERROR(cudaMemcpy2DAsync(joint_q, C * sizeof(float), storage_.data(),
+  THROW_ON_CUDA_ERROR(cudaMemcpy2DAsync(joint_q, stride * sizeof(float), storage_.data(),
                                         A * sizeof(float), C * sizeof(float), num_states,
                                         cudaMemcpyDeviceToDevice, stream));
+}
+
+void ArticulationStateBatch::GetLinkTransforms(float *transforms, size_t num_states,
+                                               cudaStream_t stream, size_t stride) const {
+  const size_t L = static_cast<size_t>(topology_.LinkCount());
+  stride =
+      CheckedStride("GetLinkTransforms", num_states, capacity_, stride, 7 * L, "7 x LinkCount()");
+  const long long items = static_cast<long long>(num_states * L);
+  if (items == 0) return;
+  LinkTransformsKernel<<<static_cast<unsigned>((items + kBlockSize - 1) / kBlockSize), kBlockSize,
+                         0, stream>>>(storage_.data(), static_cast<int>(AmbientSize()),
+                                      topology_.LinkPoseOffset(0), static_cast<int>(L), items,
+                                      transforms, static_cast<long long>(stride));
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace cunls

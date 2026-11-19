@@ -77,14 +77,19 @@ class ArticulationStateBatch(StateBatch):
     def topology(self) -> ArticulationTopology:
         """The kinematic tree of every instance."""
 
-    def set_joint_q(self, joint_q: object, num_states: int, stream: CudaStream) -> None:
+    def set_joint_q(self, joint_q: object, num_states: int, stream: CudaStream, *, stride: int = 0) -> None:
         """
-        Copies the coordinates of the first num_states instances from joint_q (device float32, num_states x coord_count, Newton's layout) and recomputes their cache (asynchronous on stream).
+        Copies the coordinates of the first num_states instances from joint_q (device float32; instance i's coord_count values start at i * stride, stride 0: packed) and recomputes their cache (forward kinematics), asynchronous on stream. A stride reads instances embedded in a larger array in place, e.g. one articulation per replicated world of a scene-wide joint_q: set_joint_q(scene_q[first:], worlds, stream, stride=per_world).
         """
 
-    def get_joint_q(self, joint_q: object, num_states: int, stream: CudaStream) -> None:
+    def get_joint_q(self, joint_q: object, num_states: int, stream: CudaStream, *, stride: int = 0) -> None:
         """
-        Copies the coordinates of the first num_states instances into joint_q (device float32, num_states x coord_count; asynchronous on stream).
+        Copies the coordinates of the first num_states instances into joint_q (device float32; instance i at i * stride, stride 0: packed; the values between instances are left untouched), asynchronous on stream. A stride writes a solve back into a larger (scene-wide) array in place.
+        """
+
+    def get_link_transforms(self, transforms: object, num_states: int, stream: CudaStream, *, stride: int = 0) -> None:
+        """
+        Writes the world transform of every link of the first num_states instances (forward kinematics of their current joint_q): 7 float32 per link, the pose convention of the factor targets (Newton's body_q layout), position then quaternion (x, y, z, w), links in topology order; instance i starts at i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A wp.array(dtype=wp.transform) of shape (num_states * link_count,) is accepted.
         """
 
     def set_bounds(self, lower: object | None, upper: object | None) -> None:
@@ -110,7 +115,7 @@ class ArticulationStateBatch(StateBatch):
 
 class ArticulationTopology:
     """
-    An immutable kinematic tree (Newton's array layout), shared by every ArticulationStateBatch instance and kinematic factor built on it. Built once from host arrays (lists or numpy): joint_type, joint_parent (parent link, -1: root frame), joint_child (child link; link i is the child of exactly one joint), joint_X_p / joint_X_c (7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start (J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose (the frame root joints attach to). Loop-closing joints are not part of the tree: add them as LoopClosureFactorBatch. Forward kinematics: X_world(child) = X_world(parent) joint_X_p X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).
+    An immutable kinematic tree (Newton's array layout), shared by every ArticulationStateBatch instance and kinematic factor built on it. Built once from arrays (lists, numpy, or GPU arrays such as wp.array, copied to the host): joint_type, joint_parent (parent link, -1: root frame), joint_child (child link; link i is the child of exactly one joint), joint_X_p / joint_X_c (7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start (J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose (the frame root joints attach to). Loop-closing joints are not part of the tree: add them as LoopClosureFactorBatch. Forward kinematics: X_world(child) = X_world(parent) joint_X_p X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).
     """
 
     def __init__(self, joint_type: object, joint_parent: object, joint_child: object, joint_X_p: object, joint_X_c: object, joint_q_start: object, joint_qd_start: object, joint_axis: object, joint_dof_dim: object | None = None, limit_lower: object | None = None, limit_upper: object | None = None, root_pose: object | None = None) -> None: ...

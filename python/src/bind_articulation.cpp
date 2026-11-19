@@ -39,21 +39,27 @@
 
 namespace {
 
-// Host values of a sequence or numpy array as a std::vector of T (via numpy, so lists,
+// Host values of a sequence, numpy array or GPU array as a std::vector of T (via numpy, so lists,
 // tuples and arrays of any numeric dtype work). None gives an empty vector.
 template <typename T>
 std::vector<T> HostValues(nb::handle obj, const char *name) {
   if (obj.is_none()) return {};
   nb::module_ np = nb::module_::import_("numpy");
   nb::object flat;
+  nb::object source = nb::borrow(obj);
+  if (nb::hasattr(obj, "__cuda_array_interface__")) {  // GPU array: pycunls's host copy
+    source = nb::module_::import_("pycunls._arrays")
+                 .attr("to_numpy")(obj, std::is_same_v<T, int> ? "int32" : "float32", name,
+                                   "ArticulationTopology");
+  }
   try {
     flat = np.attr("ascontiguousarray")(
-                 obj, nb::arg("dtype") = std::is_same_v<T, int> ? "int32" : "float32")
+                 source, nb::arg("dtype") = std::is_same_v<T, int> ? "int32" : "float32")
                .attr("reshape")(-1);
   } catch (const nb::python_error &) {
     throw nb::value_error((std::string("ArticulationTopology: ") + name +
-                           " is not a numeric host array (expected a list or numpy array). Fix: "
-                           "pass host values, e.g. Newton's model.joint_type.numpy() slice.")
+                           " is not a numeric array (expected a list, numpy array or GPU array). "
+                           "Fix: pass numeric values.")
                               .c_str());
   }
   auto array = nb::cast<nb::ndarray<const T, nb::ndim<1>, nb::device::cpu>>(flat);
@@ -64,6 +70,18 @@ std::vector<T> HostValues(nb::handle obj, const char *name) {
 const float *OptionalFloats(nb::handle obj, const char *name, size_t count, size_t per_item,
                             const char *item) {
   return obj.is_none() ? nullptr : device_floats(obj, name, count, per_item, item);
+}
+
+// Device float32 array holding `num_states` instances of `per_instance` floats, instance i
+// starting at i * stride (stride 0: per_instance). Returns the base pointer.
+float *StridedFloats(nb::handle obj, const char *name, size_t num_states, size_t per_instance,
+                     size_t stride) {
+  const size_t pitch = stride == 0 ? per_instance : stride;
+  const size_t needed = num_states == 0 ? 0 : (num_states - 1) * pitch + per_instance;
+  const std::string what = std::to_string(num_states) + " instances of " +
+                           std::to_string(per_instance) + " floats, " + std::to_string(pitch) +
+                           " apart";
+  return reinterpret_cast<float *>(extract_device_ptr(obj, "float32", name, needed, what.c_str()));
 }
 
 }  // namespace
@@ -89,8 +107,9 @@ void bind_articulation(nb::module_ &m) {
   nb::class_<cunls::ArticulationTopology>(
       m, "ArticulationTopology",
       "An immutable kinematic tree (Newton's array layout), shared by every "
-      "ArticulationStateBatch instance and kinematic factor built on it. Built once from host "
-      "arrays (lists or numpy): joint_type, joint_parent (parent link, -1: root frame), "
+      "ArticulationStateBatch instance and kinematic factor built on it. Built once from "
+      "arrays (lists, numpy, or GPU arrays such as wp.array, copied to the host): joint_type, "
+      "joint_parent (parent link, -1: root frame), "
       "joint_child (child link; link i is the child of exactly one joint), joint_X_p / joint_X_c "
       "(7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start "
       "(J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, "
@@ -194,26 +213,48 @@ void bind_articulation(nb::module_ &m) {
       .def(
           "set_joint_q",
           [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
-             cunls::CudaStream &stream) {
-            const float *q = device_floats(joint_q, "joint_q", num_states,
-                                           self.Topology().CoordCount(), "state");
-            self.SetJointQ(q, num_states, stream.GetStream());
+             cunls::CudaStream &stream, size_t stride) {
+            const size_t C = self.Topology().CoordCount();
+            self.SetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
+                           stream.GetStream(), stride);
           },
-          nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"),
-          "Copies the coordinates of the first num_states instances from joint_q (device float32, "
-          "num_states x coord_count, Newton's layout) and recomputes their cache "
-          "(asynchronous on stream).")
+          nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
+          nb::arg("stride") = 0,
+          "Copies the coordinates of the first num_states instances from joint_q (device float32; "
+          "instance i's coord_count values start at i * stride, stride 0: packed) and recomputes "
+          "their cache (forward kinematics), asynchronous on stream. A stride reads instances "
+          "embedded in a larger array in place, e.g. one articulation per replicated world of a "
+          "scene-wide joint_q: set_joint_q(scene_q[first:], worlds, stream, stride=per_world).")
       .def(
           "get_joint_q",
           [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
-             cunls::CudaStream &stream) {
-            auto *q = const_cast<float *>(device_floats(joint_q, "joint_q", num_states,
-                                                        self.Topology().CoordCount(), "state"));
-            self.GetJointQ(q, num_states, stream.GetStream());
+             cunls::CudaStream &stream, size_t stride) {
+            const size_t C = self.Topology().CoordCount();
+            self.GetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
+                           stream.GetStream(), stride);
           },
-          nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"),
+          nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
+          nb::arg("stride") = 0,
           "Copies the coordinates of the first num_states instances into joint_q (device "
-          "float32, num_states x coord_count; asynchronous on stream).")
+          "float32; instance i at i * stride, stride 0: packed; the values between instances "
+          "are left untouched), asynchronous on stream. A stride writes a solve back into a "
+          "larger (scene-wide) array in place.")
+      .def(
+          "get_link_transforms",
+          [](cunls::ArticulationStateBatch &self, nb::handle transforms, size_t num_states,
+             cunls::CudaStream &stream, size_t stride) {
+            const size_t per = 7 * static_cast<size_t>(self.Topology().LinkCount());
+            self.GetLinkTransforms(StridedFloats(transforms, "transforms", num_states, per, stride),
+                                   num_states, stream.GetStream(), stride);
+          },
+          nb::arg("transforms"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
+          nb::arg("stride") = 0,
+          "Writes the world transform of every link of the first num_states instances (forward "
+          "kinematics of their current joint_q): 7 float32 per link, the pose convention of the "
+          "factor targets (Newton's body_q layout), "
+          "position then quaternion (x, y, z, w), links in topology order; instance i starts at "
+          "i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A "
+          "wp.array(dtype=wp.transform) of shape (num_states * link_count,) is accepted.")
       .def(
           "set_bounds",
           [](cunls::ArticulationStateBatch &self, nb::handle lower, nb::handle upper) {

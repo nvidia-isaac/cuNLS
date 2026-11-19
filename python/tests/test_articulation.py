@@ -54,8 +54,13 @@ def arm(tmp_path):
     return topology_from_urdf(str(path))
 
 
-def _partition(problem, states, n):
-    problem.set_problem_partition(n, [wp.array(np.arange(n, dtype=np.int32))])
+def _one_factor_per_instance(problem, states, factors, n):
+    """Factor i of every batch acts on instance i; each instance is its own subproblem."""
+    instance = wp.array(np.arange(n, dtype=np.int32))
+    for fb in factors:
+        problem.add_factor_batch(fb, [states], instance)
+    problem.set_problem_partition(n, [instance])
+    return instance
 
 
 def test_urdf_topology(arm):
@@ -75,14 +80,17 @@ def test_topology_errors_say_what_and_how_to_fix():
             joint_q_start=[0, 1], joint_qd_start=[0, 1], joint_axis=[0, 0, 2])
 
 
-def _fk_tool(states, arm, n):
-    """World position of the tool link of the first n instances (from the cache)."""
-    topo = arm.topology
-    tool = arm.link_names.index("tool")
-    view = wp.array(ptr=states.state_device_ptr(0), dtype=float, shape=(n, topo.ambient_size),
-                    device=wp.get_cuda_device(), copy=False).numpy()
-    pose = view[:, topo.link_pose_offset(tool):topo.link_pose_offset(tool) + 12]
-    return pose[:, [3, 7, 11]]
+def _link_transforms(states, n, stream):
+    """World pose (position, quaternion x, y, z, w) of every link: (n, link_count, 7)."""
+    out = wp.zeros((n, states.topology.link_count), dtype=wp.transform)
+    states.get_link_transforms(out, n, stream)
+    wp.synchronize()
+    return out.numpy()
+
+
+def _fk_tool(states, arm, n, stream):
+    """World position of the tool link of the first n instances."""
+    return _link_transforms(states, n, stream)[:, arm.link_names.index("tool"), :3]
 
 
 def test_bounded_ik_with_mimic(arm):
@@ -99,7 +107,7 @@ def test_bounded_ik_with_mimic(arm):
     probe.set_num_active_states(n)
     probe.set_joint_q(wp.array(q_true), n, stream)
     wp.synchronize()
-    targets = wp.array(_fk_tool(probe, arm, n).astype(np.float32))
+    targets = wp.array(_fk_tool(probe, arm, n, stream).astype(np.float32))
 
     states = pycunls.ArticulationStateBatch(topo, n)
     states.set_num_active_states(n)
@@ -123,10 +131,7 @@ def test_bounded_ik_with_mimic(arm):
 
     problem = pycunls.Problem()
     problem.add_state_batch(states)
-    ptrs = [states.state_device_ptr(i) for i in range(n)]
-    for fb in (position, posture, coupled):
-        problem.add_factor_batch(fb, ptrs)
-    _partition(problem, states, n)
+    _one_factor_per_instance(problem, states, (position, posture, coupled), n)
     lm = pycunls.LevenbergMarquardtMinimizerOptions()
     base = lm.base_options
     base.cost_tolerance = 1e-12  # absolute: residuals are millimeters
@@ -146,7 +151,7 @@ def test_bounded_ik_with_mimic(arm):
     assert np.all(q[:, finite] >= np.asarray(topo.lower_limits)[finite] - 1e-6)
     assert np.all(q[:, finite] <= np.asarray(topo.upper_limits)[finite] + 1e-6)
     np.testing.assert_allclose(q[:, 5], q[:, 4], atol=1e-4)
-    err = np.linalg.norm(_fk_tool(states, arm, n) - targets.numpy(), axis=1)
+    err = np.linalg.norm(_fk_tool(states, arm, n, stream) - targets.numpy(), axis=1)
     assert np.mean(err < 1e-3) > 0.95, np.sort(err)[-10:]
 
 
@@ -217,11 +222,9 @@ def test_four_bar_closes(arm):
         fb.set_num_active_factors(n)
     problem = pycunls.Problem()
     problem.add_state_batch(states)
-    ptrs = [states.state_device_ptr(i) for i in range(n)]
-    problem.add_factor_batch(posture, ptrs)
-    problem.add_factor_batch(pycunls.ConstraintFactorBatch(loop, pycunls.ConstraintKind.Equality),
-                             ptrs)
-    _partition(problem, states, n)
+    _one_factor_per_instance(
+        problem, states,
+        (posture, pycunls.ConstraintFactorBatch(loop, pycunls.ConstraintKind.Equality)), n)
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     options.constraint_tolerance = 1e-5
     solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), options)
@@ -229,3 +232,99 @@ def test_four_bar_closes(arm):
     summary = solver.minimize(stream, problem)
     assert summary.converged(), summary.message
     assert summary.max_violation < 1e-5
+
+
+def test_strided_joint_q_and_link_transforms(arm):
+    """Instances inside a scene-wide array: read and written in place, gaps untouched."""
+    topo, n, pad = arm.topology, 8, 3
+    stride = topo.coord_count + pad
+    stream = pycunls.CudaStream()
+    rng = np.random.default_rng(2)
+    scene = np.full((n, stride), -7.0, np.float32)
+    scene[:, :topo.coord_count] = rng.uniform(-0.5, 0.5, (n, topo.coord_count))
+    states = pycunls.ArticulationStateBatch(topo, n, apply_joint_limits=False)
+    states.set_num_active_states(n)
+    states.set_joint_q(wp.array(scene.reshape(-1)), n, stream, stride=stride)
+    back = wp.full(n * stride, -7.0, dtype=float)
+    states.get_joint_q(back, n, stream, stride=stride)
+    packed = _link_transforms(states, n, stream)
+    poses = wp.full(n * (7 * topo.link_count + 2), -7.0, dtype=float)
+    states.get_link_transforms(poses, n, stream, stride=7 * topo.link_count + 2)
+    wp.synchronize()
+    np.testing.assert_array_equal(back.numpy().reshape(n, stride), scene)
+    strided = poses.numpy().reshape(n, -1)
+    np.testing.assert_array_equal(strided[:, :7 * topo.link_count], packed.reshape(n, -1))
+    assert np.all(strided[:, 7 * topo.link_count:] == -7.0)
+    np.testing.assert_allclose(np.linalg.norm(packed[:, :, 3:], axis=2), 1.0, atol=1e-5)
+    # Joint j1 rotates link l1 about z at height 0.1: its pose is (0, 0, 0.1), Rz(q).
+    l1, q = arm.link_names.index("l1"), scene[:, 0]
+    np.testing.assert_allclose(packed[:, l1, :3], np.tile([0, 0, 0.1], (n, 1)), atol=1e-6)
+    np.testing.assert_allclose(np.abs(packed[:, l1, 5]), np.abs(np.sin(q / 2)), atol=1e-6)
+    with pytest.raises(ValueError, match="Fix:"):
+        states.set_joint_q(wp.zeros(n * topo.coord_count, dtype=float), n, stream, stride=stride)
+
+
+def test_topology_accepts_gpu_arrays():
+    ident = [0, 0, 0, 0, 0, 0, 1]
+    host = dict(joint_type=[JT.Fixed.value, JT.Revolute.value], joint_parent=[-1, 0],
+                joint_child=[0, 1], joint_X_p=ident + [0, 0, 0.5, 0, 0, 0, 1],
+                joint_X_c=ident * 2, joint_q_start=[0, 0, 1], joint_qd_start=[0, 0, 1],
+                joint_axis=[0, 0, 1], limit_lower=[-1.0], limit_upper=[1.0])
+    ints = ("joint_type", "joint_parent", "joint_child", "joint_q_start", "joint_qd_start")
+    gpu = {k: wp.array(np.asarray(v, np.int32 if k in ints else np.float32))
+           for k, v in host.items()}
+    gpu["joint_X_p"] = wp.array(np.asarray(host["joint_X_p"], np.float32).reshape(2, 7),
+                                dtype=wp.transform)                  # a scene's transform array
+    a, b = pycunls.ArticulationTopology(**host), pycunls.ArticulationTopology(**gpu)
+    assert (a.joint_count, a.coord_count, a.dof_count) == (b.joint_count, b.coord_count,
+                                                           b.dof_count)
+    assert list(a.lower_limits) == list(b.lower_limits) == [-1.0]
+
+
+def test_inverse_kinematics_recipe(arm):
+    """IK as an application builds it (docs/sphinx/articulations.rst, "Building an
+    inverse-kinematics solver"): problems x seeds instances, one subproblem each, targets
+    rewritten in place for a second solve with reuse_structure, the best seed per problem picked
+    from the link transforms."""
+    topo, problems, seeds = arm.topology, 32, 4
+    n = problems * seeds
+    stream = pycunls.CudaStream()
+    rng = np.random.default_rng(3)
+    tool = arm.link_names.index("tool")
+    lo = np.where(np.isfinite(topo.lower_limits), topo.lower_limits, -np.pi)
+    hi = np.where(np.isfinite(topo.upper_limits), topo.upper_limits, np.pi)
+
+    def reachable_targets():
+        q = (lo + (hi - lo) * rng.uniform(0.1, 0.9, (problems, topo.coord_count)))
+        probe = pycunls.ArticulationStateBatch(topo, problems, apply_joint_limits=False)
+        probe.set_num_active_states(problems)
+        probe.set_joint_q(wp.array(q.astype(np.float32)), problems, stream)
+        return np.repeat(_link_transforms(probe, problems, stream)[:, tool], seeds, axis=0)
+
+    targets = wp.array(reachable_targets())                         # (n, 7), seeds adjacent
+    states = pycunls.ArticulationStateBatch(topo, n)
+    states.set_num_active_states(n)
+    pose = pycunls.LinkPoseFactorBatch(topo, wp.full(n, tool, dtype=wp.int32), None, targets,
+                                       wp.array(np.tile([1, 1, 1, 0.1, 0.1, 0.1], n)
+                                                .astype(np.float32)), n)
+    pose.set_num_active_factors(n)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    _one_factor_per_instance(problem, states, (pose,), n)
+    lm = pycunls.LevenbergMarquardtMinimizerOptions()
+    base = lm.base_options
+    base.cost_tolerance, base.state_tolerance, base.max_num_iterations = 1e-12, 1e-12, 60
+    base.reuse_structure = True
+    lm.base_options = base
+    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm))
+
+    for _ in range(2):                                               # second round: new targets
+        seeds_q = lo + (hi - lo) * rng.uniform(0.0, 1.0, (n, topo.coord_count))
+        states.set_joint_q(wp.array(seeds_q.astype(np.float32)), n, stream)
+        wp.synchronize()
+        solver.minimize(stream, problem)
+        links = _link_transforms(states, n, stream)[:, tool]
+        err = np.linalg.norm(links[:, :3] - targets.numpy()[:, :3], axis=1)
+        best = err.reshape(problems, seeds).min(axis=1)
+        assert np.mean(best < 1e-3) > 0.95, np.sort(best)[-5:]
+        wp.copy(targets, wp.array(reachable_targets()))             # same array, new values
