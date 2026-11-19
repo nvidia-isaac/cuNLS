@@ -462,8 +462,8 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
       return "Residual batch " + batch + ": state pointer " + entry +
              " points into a state batch whose tangent or ambient size differs from the state "
              "slot's (the factor expects another state type, or an articulation state of "
-             "another topology). Fix: connect the slot to a state of the type and topology the "
-             "factor expects.";
+             "another layout). Fix: connect the slot to a state of the type the factor expects "
+             "(kinematic factors: states built on the factor's topology).";
     case 3:
       return "State batch " + batch + ": state " + entry +
              " is not constrained by any factor, so the linear system is singular. Fix: add a "

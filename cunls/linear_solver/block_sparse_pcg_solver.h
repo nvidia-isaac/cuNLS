@@ -426,7 +426,9 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
   dvector<float> values_;
   const BSRSparseMatrix *bsr_view_ = nullptr;
   /** The matrix Initialize() received (one of the two is non-null): SolveStoredMatrix
-   *  reads its pattern, whatever matrix a matrix-taking Solve passed since. */
+   *  reads its pattern, whatever matrix of that pattern a matrix-taking Solve passed
+   *  since. Both null when a matrix-taking Solve changed the pattern (stored solves
+   *  then fail until the next Initialize). */
   const CSRSparseMatrix *initialized_csr_ = nullptr;
   const BSRSparseMatrix *initialized_bsr_ = nullptr;
 

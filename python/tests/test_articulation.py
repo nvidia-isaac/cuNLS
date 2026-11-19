@@ -16,7 +16,9 @@
 """Articulations from Python: topology from arrays and URDF, bounded IK, a closed loop, Jacobian
 checks of every kinematic factor."""
 
+import gc
 import math
+import weakref
 
 import numpy as np
 import pytest
@@ -111,13 +113,22 @@ def test_set_bounds_keeps_only_the_current_arrays(arm, stream):
     topo, n = arm.topology, 2
     states = pycunls.ArticulationStateBatch(topo, n)
     shape = n * topo.dof_count
-    first = (wp.full(shape, -1.0, dtype=float), wp.full(shape, 1.0, dtype=float))
-    second = (wp.full(shape, -0.5, dtype=float), wp.full(shape, 0.5, dtype=float))
-    states.set_bounds(*first)
-    states.set_bounds(*second)
-    assert states._bounds_arrays[0] is second[0] and states._bounds_arrays[1] is second[1]
+
+    def install(lo, hi):  # the test keeps only weak references
+        lower, upper = wp.full(shape, lo, dtype=float), wp.full(shape, hi, dtype=float)
+        states.set_bounds(lower, upper)
+        return weakref.ref(lower), weakref.ref(upper)
+
+    first = install(-1.0, 1.0)
+    gc.collect()
+    assert all(r() is not None for r in first)          # held while they are the bounds
+    second = install(-0.5, 0.5)
+    gc.collect()
+    assert all(r() is None for r in first)              # released once replaced
+    assert all(r() is not None for r in second)
     states.use_joint_limits()
-    assert states._bounds_arrays is None and states.has_bounds
+    gc.collect()
+    assert all(r() is None for r in second) and states.has_bounds
 
 
 def test_topology_errors_say_what_and_how_to_fix():
@@ -377,7 +388,9 @@ def test_inverse_kinematics_recipe(arm, stream):
     base.cost_tolerance, base.state_tolerance, base.max_num_iterations = 1e-12, 1e-12, 60
     base.reuse_structure = True
     lm.base_options = base
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm))
+    al = pycunls.AugmentedLagrangianMinimizerOptions()
+    al.reuse_structure = True                                        # the wrapper's own flag
+    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm), al)
 
     for _ in range(2):                                               # second round: new targets
         seeds_q = lo + (hi - lo) * rng.uniform(0.0, 1.0, (n, topo.coord_count))

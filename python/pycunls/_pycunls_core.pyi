@@ -880,7 +880,7 @@ class CustomFactorBatch(FactorBatch):
 
     def evaluate(self, residuals_ptr: int, jacobians_ptr: int, state_pointers_ptr: int, stream_handle: int, factor_ids_ptr: int, num_factor_ids: int) -> bool:
         """
-        Override in a subclass. Evaluate n = num_factor_ids items (or num_active_factors when 0): item t is factor factor_ids[t] (or t when factor_ids_ptr is 0) at the states state_pointers[t * B + b] (B = len(state_sizes)). Write residuals[t * m + r] and, when jacobians_ptr is not 0, jacobians[(t * m + r) * J + c] (J = sum(state_sizes), derivative with respect to the tangent-space step). All pointers are ints; enqueue on stream_handle and return True. For one-call model fitting use pycunls.fit; check a custom Jacobian with pycunls.check_jacobians.
+        Override in a subclass. Evaluate n = num_factor_ids items (or num_active_factors when 0): item t is factor factor_ids[t] (or t % num_active_factors when factor_ids_ptr is 0: items past the active factors repeat the measurements) at the states state_pointers[t * B + b] (B = len(state_sizes)). Write residuals[t * m + r] and, when jacobians_ptr is not 0, jacobians[(t * m + r) * J + c] (J = sum(state_sizes), derivative with respect to the tangent-space step). All pointers are ints; enqueue on stream_handle and return True. For one-call model fitting use pycunls.fit; check a custom Jacobian with pycunls.check_jacobians.
         """
 
 class ReprojectionFactorBatch(FactorBatch):
@@ -3153,7 +3153,7 @@ class Problem:
     def factor_batch(self, index: int) -> FactorBatch:
         """The factor batch of residual batch `index` (as its concrete class)."""
 
-    def loss_function(self, index: int) -> LossFunctionBatch:
+    def loss_function(self, index: int) -> LossFunctionBatch | None:
         """The robust loss of residual batch `index`, or None (squared loss)."""
 
     def state_batches(self) -> list:

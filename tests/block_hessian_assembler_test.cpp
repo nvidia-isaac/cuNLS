@@ -1110,6 +1110,42 @@ TEST(HessianStorageTest, PcgStoredSolveOutlivesSolveMatrix) {
 }
 
 /**
+ * @brief A matrix-taking Solve with another pattern rebuilds the solver's layout for it, so
+ * SolveStoredMatrix (the storage of Initialize()) must refuse instead of mixing the two.
+ */
+TEST(HessianStorageTest, PcgStoredSolveRefusedAfterPatternChange) {
+  auto small = MakePoseGraph(64, /*fix_first_pose=*/true);
+  auto large = MakePoseGraph(128, /*fix_first_pose=*/true);
+  CudaStream stream;
+  cudaStream_t s = stream.GetStream();
+  SystemBuilder a, b;
+  a.Build(s, small->problem);
+  b.Build(s, large->problem);
+  CSRSparseMatrix csr_a, csr_b;
+  dvector<int> scratch;
+  test_utils::ExpandBSRToCSR(s, a.Equations().LhsBSR(), csr_a, scratch);
+  test_utils::ExpandBSRToCSR(s, b.Equations().LhsBSR(), csr_b, scratch);
+  const size_t na = a.Rhs().size(), nb = b.Rhs().size();
+  ASSERT_NE(na, nb);
+  dvector<float> rhs_a(na), rhs_b(nb), x_a(na), x_b(nb);
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs_a.data(), a.Rhs().data(), na * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, s));
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs_b.data(), b.Rhs().data(), nb * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, s));
+  BlockSparsePCGOptions pcg_options;
+  pcg_options.block_size = 6;
+  BlockSparsePCGSolver solver(pcg_options);
+  ASSERT_TRUE(solver.Initialize(s, small->problem, csr_a, rhs_a, x_a));
+  ASSERT_TRUE(solver.SolveStoredMatrix(s, rhs_a, x_a));
+  ASSERT_TRUE(solver.Solve(s, csr_b, rhs_b, x_b));
+  EXPECT_FALSE(solver.SolveStoredMatrix(s, rhs_a, x_a));
+  EXPECT_FALSE(solver.SolveStoredMatrix(s, rhs_b, x_b));
+  ASSERT_TRUE(solver.Initialize(s, small->problem, csr_a, rhs_a, x_a));  // stored solves resume
+  EXPECT_TRUE(solver.SolveStoredMatrix(s, rhs_a, x_a));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
+}
+
+/**
  * @brief One PCG iteration must be bit-comparable across storage layouts.
  *
  * After a single iteration the iterate depends only on the preconditioner and

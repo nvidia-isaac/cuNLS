@@ -49,6 +49,7 @@ def test_every_catalog_entry_exists():
 def test_state_sizes_match(name):
     info = state_info(name)
     if name == "ArticulationStateBatch":  # sized by its topology: one revolute joint here
+        assert (info.ambient, info.tangent) == (0, 0)  # the catalog's "set by the topology"
         ident = [0, 0, 0, 0, 0, 0, 1]
         topo = pycunls.ArticulationTopology(
             joint_type=[pycunls.ArticulationJointType.Revolute.value], joint_parent=[-1],

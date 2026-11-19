@@ -39,7 +39,7 @@ import warp as wp
 from pycunls._arrays import warp_stream
 from pycunls._summary import _plain
 from pycunls.catalog import effective_factor
-from pycunls._pycunls_core import CudaStream, Problem
+from pycunls._pycunls_core import ArticulationStateBatch, CudaStream, Problem
 
 
 # ---------------------------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def _refresh_derived_state_data(problem: Problem, stream: CudaStream) -> None:
     """Recomputes cached state data (ArticulationStateBatch link poses) from the coordinates, as
     the minimizers do at the start of a solve, so an evaluation sees what a solve would."""
     for batch in problem.state_batches():
-        if hasattr(batch, "refresh"):
+        if isinstance(batch, ArticulationStateBatch):  # not a user's own refresh(...)
             batch.refresh(stream)
 
 

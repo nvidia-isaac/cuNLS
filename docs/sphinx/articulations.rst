@@ -136,8 +136,15 @@ pieces that make that cheap:
 * **Targets change, the problem does not.** Factors read their device arrays (targets, weights,
   links) at every evaluation: write the next targets into the same arrays (``wp.copy``, a
   kernel) on the cuNLS stream (``wp.ScopedStream`` as above; work on another stream is not
-  ordered with the solve) and call ``minimize`` again. With ``reuse_structure = True`` in the minimizer options,
-  repeated solves skip the structure setup.
+  ordered with the solve) and call ``minimize`` again. Repeated solves skip the structure
+  setup with ``reuse_structure`` set on the augmented Lagrangian's own options (it passes its
+  flag to the inner solves):
+
+  .. code-block:: python
+
+     al = pycunls.AugmentedLagrangianMinimizerOptions()
+     al.reuse_structure = True
+     solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), al)
 * **Several seeds per problem.** Make ``problems x seeds`` instances (seeds next to each other),
   give each instance its own subproblem, solve once, then compare the link-pose errors of each
   problem's seeds and keep the best one.
@@ -168,6 +175,7 @@ A loop-closing joint keeps two joint frames together in the directions its type 
 
    loop = pycunls.LoopClosureFactorBatch(topo, pycunls.ArticulationJointType.Revolute,
                                          parent_links, child_links, frames, axes, n)
+   loop.set_num_active_factors(n)                   # batches start with 0 active factors
    problem.add_factor_batch(pycunls.ConstraintFactorBatch(loop, pycunls.ConstraintKind.Equality),
                             [states], instance)   # one loop factor per instance
 

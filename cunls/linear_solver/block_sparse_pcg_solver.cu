@@ -1526,6 +1526,9 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd
   if (n != matrix_size_ ||
       BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
                        spd_matrix.block_size, spd_matrix.col_ids.size())) {
+    // The layout now follows this matrix: the storage of Initialize() no longer fits it.
+    initialized_csr_ = nullptr;
+    initialized_bsr_ = nullptr;
     if (!InitializeCommon(stream, nullptr, n, rhs, result)) {
       return false;
     }
@@ -1551,7 +1554,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
                        spd_matrix.col_ids.size())) {
     // Recovery path: matrix dim (or, with the bundle-adjustment product, the
     // pattern) changed since the last Initialize. Keep the derived layout
-    // while it covers the matrix (see InitializeCommon).
+    // while it covers the matrix (see InitializeCommon). The storage of
+    // Initialize() no longer fits that layout.
+    initialized_csr_ = nullptr;
+    initialized_bsr_ = nullptr;
     if (!InitializeCommon(stream, nullptr, n, rhs, result) ||
         !InitializeCsrSpMV(stream, spd_matrix)) {
       return false;
@@ -1568,6 +1574,13 @@ SolverMatrixStorage BlockSparsePCGSolver::MatrixStorage() { return {values_.data
 
 bool BlockSparsePCGSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
                                              dvector<float> &result) {
+  if (initialized_csr_ == nullptr && initialized_bsr_ == nullptr) {
+    LogError(
+        "BlockSparsePCGSolver::SolveStoredMatrix: no stored pattern (got none: not initialized, "
+        "or a matrix-taking Solve changed the pattern since Initialize, expected the pattern of "
+        "Initialize). Fix: call Initialize() with the matrix whose values MatrixStorage() holds.");
+    return false;
+  }
   const int n = matrix_size_;
   if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
     LogError("BlockSparsePCGSolver: dim mismatch (initialized={}, rhs={}, result={})", n,

@@ -273,7 +273,8 @@ void bind_factor(nb::module_ &m) {
           nb::arg("residuals_ptr"), nb::arg("jacobians_ptr"), nb::arg("state_pointers_ptr"),
           nb::arg("stream_handle"), nb::arg("factor_ids_ptr"), nb::arg("num_factor_ids"),
           "Override in a subclass. Evaluate n = num_factor_ids items (or num_active_factors when "
-          "0): item t is factor factor_ids[t] (or t when factor_ids_ptr is 0) at the states "
+          "0): item t is factor factor_ids[t] (or t % num_active_factors when factor_ids_ptr is 0: "
+          "items past the active factors repeat the measurements) at the states "
           "state_pointers[t * B + b] (B = len(state_sizes)). Write residuals[t * m + r] and, "
           "when jacobians_ptr is not 0, jacobians[(t * m + r) * J + c] (J = sum(state_sizes), "
           "derivative with respect to the tangent-space step). All pointers are ints; enqueue "
