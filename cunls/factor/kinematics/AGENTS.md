@@ -8,7 +8,11 @@
 ## Purpose
 
 Factors on articulated robots (`ArticulationStateBatch`): link targets, posture, closed loops,
-mimic joints, and a wrapper that puts any SE(3) factor on robot links.
+mimic joints, and a wrapper that puts existing SE(3), vector and SO(3) factors on robot links.
+Closed loops have no class of their own: they are equality constraints on `LinkFrameFactorBatch`
+views (between factors, plus `SE3AxisAlignmentFactorBatch` / `SE3AxisOffsetFactorBatch` from
+`cunls/factor/se3_joint_axis_factor_batch.h` for revolute / prismatic loops), built by
+`pycunls.articulation.loop_closure` (`python/pycunls/articulation.py`).
 
 ## Files
 
@@ -18,8 +22,6 @@ mimic joints, and a wrapper that puts any SE(3) factor on robot links.
 - `link_target_factor_batch.{h,cu}`: `LinkPositionFactorBatch` (3 rows),
   `LinkOrientationFactorBatch` (3), `LinkPoseFactorBatch` (6); one templated kernel.
 - `posture_factor_batch.{h,cu}`: `PostureFactorBatch`, `W (q - q*)` per DOF (DOF-count rows).
-- `loop_closure_factor_batch.{h,cu}`: `LoopClosureFactorBatch`, a loop-closing joint as
-  constraint rows (BALL 3, REVOLUTE 6, PRISMATIC 5, FIXED 6), wrapped as an equality.
 - `mimic_joint_factor_batch.{h,cu}`: `MimicJointFactorBatch`, `q_m - (a + b q_ref)`.
 - `link_frame_factor_batch.{h,cu}`: `LinkFrameFactorBatch`, see below.
 
@@ -51,27 +53,41 @@ assembler's shared-memory staging (about 140 DOFs for 6-row factors, about 85 wi
 
 ## LinkFrameFactorBatch
 
-Wraps an inner factor over SE(3) poses (built-in or `CustomFactorBatch` /
-`pycunls.warp.WarpFactorBatch`). Terms: `pose_slots` = inner state slots that receive a link
-frame pose instead of a problem state; `topology_links` = per factor and pose slot, the link
-carrying the frame; `frame_offsets` = the frame in that link (7 floats, optional).
+Wraps an inner factor (built-in or `CustomFactorBatch` / `pycunls.warp.WarpFactorBatch`) whose
+frame slots receive a **view** of a frame on a link instead of a problem state. Terms:
+`frame_slots` = (inner state slot, `FrameView`) pairs; `topology_links` = per factor and frame
+slot, the link carrying the frame; `frame_offsets` = the frame in that link (7 floats, optional).
+Views use the layout and tangent convention of an existing state type, so that type's factors
+work unchanged:
+
+| `FrameView` | Scratch layout | As | Motion per unit of DOF `j` |
+|---|---|---|---|
+| `kPose` | 16, row-major 4x4 | `SE3StateBatch` | `(R^T omega_j, R^T (omega_j x p + v_j))` |
+| `kPosition` | 3, world point | `VectorStateBatch<3>` | `omega_j x p + v_j` |
+| `kOrientation` | 9, row-major 3x3 | `SO3StateBatch` | `R^T omega_j` |
 
 Evaluation, all on the stream:
 
-1. `GatherLinkFramesKernel` (one thread per item): `F_s = X_L X_off` as a row-major 4x4 into
-   scratch `poses_` (NaN for an out-of-range link), and the inner state-pointer table (pose
-   slots -> scratch, other slots -> this item's own pointers).
+1. `GatherLinkFramesKernel` (one thread per item): `F_s = X_L X_off`, written as the slot's view
+   into scratch `frames_` (16 floats per item and slot; NaN for an out-of-range link), and the
+   inner state-pointer table (frame slots -> scratch, other slots -> this item's own pointers).
+   Each view holds what its motion needs (pose: R and p; position: p; orientation: R), so no
+   second copy of the frame is kept.
 2. `inner->Evaluate(...)` with the same `factor_ids` / item count: its residuals are this batch's;
    its Jacobian goes to scratch `inner_jacobians_`.
-3. `CarryJacobianKernel` (one thread per item and output column): DOF column `j` =
-   sum over pose slots whose link DOF `j` moves of `J_inner[:, slot] . b`, with the body twist
-   `b = (R^T omega_j, R^T (omega_j x p + v_j))` of `F_s = (R, p)`; columns of the other slots
-   are copied.
+3. `CarryJacobianKernel` (one thread per item and output column): DOF column `j` = sum over frame
+   slots whose link DOF `j` moves of `J_inner[:, slot] . b` with the view's motion `b` above;
+   columns of the other slots are copied.
 
-Invariants: pose slots follow `SE3StateBatch`'s convention (right perturbation, body tangent
-`[omega, v]`); the inner factor must not be a constraint batch (AL finds constraints by type; the
-constructor throws); scratch grows to the largest item count and is never shrunk; the problem's
+Invariants: the view of a slot is explicit and must match the slot's tangent size (6 / 3 / 3);
+the inner factor must not be a constraint batch (AL finds constraints by type; the constructor
+throws); scratch grows to the largest item count and is never shrunk; the problem's
 state-layout check covers slot 0 because this class derives from `ArticulationFactorBatch`.
+
+Performance (7-DOF IK, 32k problems, Blackwell): a `kPosition` prior plus a `kOrientation` prior
+cost 1.26x the fused `LinkPoseFactorBatch` (gather ~23% of the gap, the rest the extra batch,
+the carry and the inner factors), so the fused link factors stay the fast path; measurements in
+`ArticulationBenchmark.DISABLED_IkThroughput` (`IK_BENCH_OBJECTIVES=fused,views,pose_view`).
 
 ## Tests
 

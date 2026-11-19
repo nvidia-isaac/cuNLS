@@ -120,8 +120,8 @@ try:
         LinkOrientationFactorBatch,
         LinkPoseFactorBatch,
         LinkFrameFactorBatch,
+        FrameView,
         PostureFactorBatch,
-        LoopClosureFactorBatch,
         MimicJointFactorBatch,
         # --- Built-in factor batches ---
         ReprojectionFactorBatch,
@@ -205,6 +205,8 @@ try:
         ImuFactorBatch,
         SE2DiskClearanceFactorBatch,
         SE3SphereClearanceFactorBatch,
+        SE3AxisAlignmentFactorBatch,
+        SE3AxisOffsetFactorBatch,
         # --- Custom state trampoline ---
         CustomStateBatch,
         # --- Custom factor trampoline ---
@@ -305,8 +307,8 @@ __all__ = [
     "LinkOrientationFactorBatch",
     "LinkPoseFactorBatch",
     "LinkFrameFactorBatch",
+    "FrameView",
     "PostureFactorBatch",
-    "LoopClosureFactorBatch",
     "MimicJointFactorBatch",
     "ReprojectionFactorBatch",
     "PnPFactorBatch",
@@ -386,6 +388,8 @@ __all__ = [
     "ImuFactorBatch",
     "SE2DiskClearanceFactorBatch",
     "SE3SphereClearanceFactorBatch",
+    "SE3AxisAlignmentFactorBatch",
+    "SE3AxisOffsetFactorBatch",
     "CustomStateBatch",
     "CustomFactorBatch",
     "TrivialLossFunctionBatch",

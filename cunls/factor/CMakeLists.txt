@@ -25,7 +25,6 @@ add_library(cunls_factor OBJECT
   information/motion_prior_information.cu
   kinematics/link_frame_factor_batch.cu
   kinematics/link_target_factor_batch.cu
-  kinematics/loop_closure_factor_batch.cu
   kinematics/mimic_joint_factor_batch.cu
   kinematics/posture_factor_batch.cu
   motion/constant_acceleration_se2_factor_batch.cu
@@ -37,6 +36,7 @@ add_library(cunls_factor OBJECT
   motion/constant_velocity_so2_factor_batch.cu
   motion/constant_velocity_so3_factor_batch.cu
   point_to_plane_factor_batch.cu
+  se3_joint_axis_factor_batch.cu
   point_to_point_factor_batch.cu
   prior/prior_vector_factor_batch.cu
   prior/se2_prior_factor_batch.cu

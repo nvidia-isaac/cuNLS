@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -38,13 +39,18 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/se3_between_factor_batch.h"
+#include "cunls/factor/between/so3_between_factor_batch.h"
+#include "cunls/factor/between/vector_between_factor_batch.h"
 #include "cunls/factor/constraint_factor_batch.h"
+#include "cunls/factor/halfspace_factor_batch.h"
 #include "cunls/factor/kinematics/link_frame_factor_batch.h"
 #include "cunls/factor/kinematics/link_target_factor_batch.h"
-#include "cunls/factor/kinematics/loop_closure_factor_batch.h"
 #include "cunls/factor/kinematics/mimic_joint_factor_batch.h"
 #include "cunls/factor/kinematics/posture_factor_batch.h"
+#include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
+#include "cunls/factor/prior/so3_prior_factor_batch.h"
+#include "cunls/factor/se3_joint_axis_factor_batch.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -310,6 +316,11 @@ std::vector<float> RandomQ(const ArticulationDescription &d, std::mt19937 &rng, 
 }
 
 /** Pose of link `link` (position + quaternion xyzw) from a float64 reference pose. */
+/** Row-major 4x4 floats of `T`, appended to `out`. */
+void AppendMatrix(const M4 &T, std::vector<float> &out) {
+  for (double v : T) out.push_back(static_cast<float>(v));
+}
+
 std::array<float, 7> PoseOf(const M4 &T) {
   const double tr = T[0] + T[5] + T[10];
   double x, y, z, w;
@@ -696,33 +707,6 @@ TEST(KinematicFactors, PostureJacobians) {
   CheckJacobians(posture, f.states, f.n, "posture");
 }
 
-TEST(KinematicFactors, LoopClosureJacobians) {
-  MixedFixture f;
-  std::vector<int> parents(f.n), children(f.n);
-  std::vector<float> frames;
-  for (int t = 0; t < f.n; ++t) {
-    parents[t] = (t % 3 == 0) ? -1 : (t % f.topo.LinkCount());
-    children[t] = (t * 5 + 3) % f.topo.LinkCount();
-    // X_c chosen so that F_C's rotation is near F_P's (rotation rows away from π).
-    const M4 Xp = f.SmallTransform(0.2f);
-    const M4 FP = Mul(parents[t] >= 0 ? f.LinkPose(t, parents[t]) : Identity(), Xp);
-    const M4 FC = Mul(FP, f.SmallTransform(0.3f));
-    const M4 Xc = Mul(Inverse(f.LinkPose(t, children[t])), FC);
-    const auto pp = PoseOf(Xp), pc = PoseOf(Xc);
-    frames.insert(frames.end(), pp.begin(), pp.end());
-    frames.insert(frames.end(), pc.begin(), pc.end());
-  }
-  dvector<int> d_parents(parents), d_children(children);
-  dvector<float> d_frames(frames), axes(f.Uniform(3 * f.n, -1.f, 1.f));
-  for (JT type : {JT::kBall, JT::kRevolute, JT::kPrismatic, JT::kFixed}) {
-    LoopClosureFactorBatch loop(f.topo, type, d_parents.data(), d_children.data(), d_frames.data(),
-                                axes.data(), f.n);
-    loop.SetNumActiveFactors(f.n);
-    CheckJacobians(loop, f.states, f.n,
-                   ("loop closure type " + std::to_string(static_cast<int>(type))).c_str());
-  }
-}
-
 TEST(KinematicFactors, MimicJacobian) {
   MixedFixture f;
   // Scalar DOFs of MixedTree: 9 (revolute), 10 (prismatic), 11..13 (D6), 14..16 (D6), 17.
@@ -882,81 +866,6 @@ TEST(ArticulationSolve, ZeroWidthBoundsFreezeADof) {
   EXPECT_GE(reached, n * 9 / 10) << reached << " of " << n;
 }
 
-TEST(ArticulationSolve, FourBarLoopClosureAssembles) {
-  // Ground (link 0, fixed root), crank (1) at the origin, coupler (2) at the
-  // crank tip, rocker (3) at (G, 0, 0); the coupler tip and the rocker tip are
-  // joined by a loop-closing REVOLUTE joint about z.
-  const float G = 1.0f, L1 = 0.4f, L2 = 1.0f, L3 = 0.8f;
-  ArticulationDescription d;
-  AddJoint(d, JT::kFixed, -1, Pose(0, 0, 0), Pose(0, 0, 0), {});
-  AddJoint(d, JT::kRevolute, 0, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
-  AddJoint(d, JT::kRevolute, 1, Pose(L1, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
-  AddJoint(d, JT::kRevolute, 0, Pose(G, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
-  ArticulationTopology topo(d);
-  const int n = 32, C = topo.CoordCount();
-  ArticulationStateBatch states(topo, n);
-  states.SetNumActiveStates(n);
-  std::vector<float> q0, nominal;
-  for (int s = 0; s < n; ++s) {
-    const float crank = 0.3f + 0.08f * s;
-    q0.insert(q0.end(), {crank, 0.f, 1.2f});  // coupler and rocker angles: rough guess
-    nominal.insert(nominal.end(), {crank, 0.f, 1.2f});
-  }
-  dvector<float> d_q0(q0), d_nominal(nominal);
-  std::vector<float> w;
-  for (int s = 0; s < n; ++s) w.insert(w.end(), {100.f, 1e-2f, 1e-2f});
-  dvector<float> d_w(w);
-  CudaStream stream;
-  states.SetJointQ(d_q0.data(), n, stream.GetStream());
-  PostureFactorBatch posture(topo, d_nominal.data(), d_w.data(), n);
-  posture.SetNumActiveFactors(n);
-  dvector<int> parents(std::vector<int>(n, 2)), children(std::vector<int>(n, 3));
-  std::vector<float> frames;
-  for (int s = 0; s < n; ++s)
-    frames.insert(frames.end(), {L2, 0, 0, 0, 0, 0, 1, L3, 0, 0, 0, 0, 0, 1});
-  dvector<float> d_frames(frames);
-  std::vector<float> axes;
-  for (int s = 0; s < n; ++s) axes.insert(axes.end(), {0.f, 0.f, 1.f});
-  dvector<float> d_axes(axes);
-  LoopClosureFactorBatch loop(topo, JT::kRevolute, parents.data(), children.data(), d_frames.data(),
-                              d_axes.data(), n);
-  loop.SetNumActiveFactors(n);
-  ConstraintFactorBatch closed(&loop, ConstraintKind::kEquality);
-
-  Problem problem;
-  problem.AddStateBatch(&states);
-  std::vector<float *> ptrs(n);
-  for (int s = 0; s < n; ++s) ptrs[s] = states.StateDevicePtr(s);
-  problem.AddFactorBatch(&posture, ptrs);
-  problem.AddFactorBatch(&closed, ptrs);
-  std::vector<int> ids(n);
-  for (int s = 0; s < n; ++s) ids[s] = s;
-  dvector<int> d_ids(ids);
-  problem.SetProblemPartition(n, {d_ids.data()});
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options.max_num_iterations = 100;
-  LevenbergMarquardtMinimizer inner(lm);
-  AugmentedLagrangianMinimizerOptions al;
-  al.constraint_tolerance = 1e-5f;
-  AugmentedLagrangianMinimizer solver(inner, al);
-  const auto summary = solver.Minimize(stream.GetStream(), problem);
-  EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged) << summary.message;
-  EXPECT_LT(summary.max_violation, 1e-5f);
-
-  dvector<float> q(size_t(n) * C);
-  states.GetJointQ(q.data(), n, stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const auto hq = Host(q);
-  for (int s = 0; s < n; ++s) {
-    const auto poses = ReferenceFK(d, hq.data() + size_t(s) * C);
-    // Coupler tip (link 2 at (L2, 0, 0)) and rocker tip (link 3 at (L3, 0, 0)) coincide.
-    const double cx = poses[2][0] * L2 + poses[2][3], cy = poses[2][4] * L2 + poses[2][7];
-    const double rx = poses[3][0] * L3 + poses[3][3], ry = poses[3][4] * L3 + poses[3][7];
-    EXPECT_LT(std::hypot(cx - rx, cy - ry), 1e-4) << "state " << s;
-    EXPECT_NEAR(hq[size_t(s) * C], 0.3f + 0.08f * s, 1e-3f) << "crank moved, state " << s;
-  }
-}
-
 TEST(ArticulationSolve, MimicJointHolds) {
   ArticulationDescription d;
   AddJoint(d, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
@@ -1012,7 +921,10 @@ std::vector<int> IkBenchSizes() {
 /**
  * Throughput of batched bounded IK on the 7-DOF arm: N problems, one subproblem each, a LinkPose
  * target, a fixed budget of 16 LM iterations, plain LM: no line search and no bound refinement
- * (real time); IK_BENCH_LS / IK_BENCH_REFINE override them.
+ * (real time); IK_BENCH_LS / IK_BENCH_REFINE override them. Objectives (IK_BENCH_OBJECTIVES, a
+ * comma list, default all): "fused" LinkPoseFactorBatch; "views" a Position-view vector prior plus
+ * an Orientation-view SO(3) prior through LinkFrameFactorBatch (the same decoupled objective);
+ * "pose_view" an SE(3) prior on a Pose view (coupled SE(3) log residual).
  * Prints the median over 10 solves; success = position error < 5 mm and limits respected.
  */
 TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
@@ -1022,88 +934,125 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
   std::vector<SparseLinearSolverType> solvers = {SparseLinearSolverType::BlockTridiagonal,
                                                  SparseLinearSolverType::BlockSparseCholesky};
   if (std::getenv("IK_BENCH_TRIDIAGONAL_ONLY")) solvers.pop_back();
+  std::vector<std::string> objectives = {"fused", "views", "pose_view"};
+  if (const char *o = std::getenv("IK_BENCH_OBJECTIVES")) {
+    objectives.clear();
+    std::string list(o);
+    for (size_t at = 0; at <= list.size();) {
+      const size_t comma = std::min(list.find(',', at), list.size());
+      if (comma > at) objectives.push_back(list.substr(at, comma - at));
+      at = comma + 1;
+    }
+  }
   for (SparseLinearSolverType solver_type : solvers) {
-    for (int n : IkBenchSizes()) {
-      ArticulationStateBatch states(topo, n);
-      states.SetNumActiveStates(n);
-      std::mt19937 rng(9);
-      std::vector<float> targets, q0;
-      for (int s = 0; s < n; ++s) {
-        const auto q = RandomQ(d, rng);
-        const auto p = PoseOf(ReferenceFK(d, q.data())[ee]);
-        targets.insert(targets.end(), p.begin(), p.end());
-        std::uniform_real_distribution<float> u(-0.4f, 0.4f);
-        for (int k = 0; k < C; ++k) q0.push_back(q[k] + u(rng));
-      }
-      dvector<float> d_targets(targets), d_q0(q0);
-      dvector<int> links(std::vector<int>(n, ee));
-      LinkPoseFactorBatch pose(topo, links.data(), nullptr, d_targets.data(), nullptr, n);
-      pose.SetNumActiveFactors(n);
-      Problem problem;
-      problem.AddStateBatch(&states);
-      std::vector<float *> ptrs(n);
-      for (int s = 0; s < n; ++s) ptrs[s] = states.StateDevicePtr(s);
-      problem.AddFactorBatch(&pose, ptrs);
-      std::vector<int> ids(n);
-      for (int s = 0; s < n; ++s) ids[s] = s;
-      dvector<int> d_ids(ids), stages(std::vector<int>(n, 0));
-      problem.SetProblemPartition(n, {d_ids.data()});
-      if (solver_type == SparseLinearSolverType::BlockTridiagonal) {
-        problem.SetStateStages({stages.data()});
-      }
-      LevenbergMarquardtMinimizerOptions lm;
-      lm.base_options.max_num_iterations = 16;
-      lm.base_options.sparse_linear_solver_type = solver_type;
-      LevenbergMarquardtMinimizer inner(lm);
-      AugmentedLagrangianMinimizerOptions al;
-      al.real_time = true;
-      al.max_outer_iterations = 1;
-      al.inner_iterations = 16;
-      al.final_inner_iterations = 16;
-      al.inner_line_search_steps =
-          std::getenv("IK_BENCH_LS") ? std::atoi(std::getenv("IK_BENCH_LS")) : 0;
-      al.max_bound_refinements =
-          std::getenv("IK_BENCH_REFINE") ? std::atoi(std::getenv("IK_BENCH_REFINE")) : 0;
-      al.reuse_structure = true;
-      AugmentedLagrangianMinimizer solver(inner, al);
-      CudaStream stream;
-      std::vector<double> ms;
-      for (int rep = 0; rep < 11; ++rep) {
-        states.SetJointQ(d_q0.data(), n, stream.GetStream());
-        THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-        const auto start = std::chrono::steady_clock::now();
-        solver.Minimize(stream.GetStream(), problem);
-        THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-        if (rep > 0) {
-          ms.push_back(
-              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
-                  .count());
+    for (const std::string &objective : objectives) {
+      for (int n : IkBenchSizes()) {
+        ArticulationStateBatch states(topo, n);
+        states.SetNumActiveStates(n);
+        std::mt19937 rng(9);
+        std::vector<float> targets, q0, positions, rotations, matrices;
+        for (int s = 0; s < n; ++s) {
+          const auto q = RandomQ(d, rng);
+          const M4 X = ReferenceFK(d, q.data())[ee];
+          const auto p = PoseOf(X);
+          targets.insert(targets.end(), p.begin(), p.end());
+          positions.insert(positions.end(), {float(X[3]), float(X[7]), float(X[11])});
+          for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) rotations.push_back(float(X[4 * r + c]));
+          AppendMatrix(X, matrices);
+          std::uniform_real_distribution<float> u(-0.4f, 0.4f);
+          for (int k = 0; k < C; ++k) q0.push_back(q[k] + u(rng));
         }
-      }
-      std::sort(ms.begin(), ms.end());
-      dvector<float> q(size_t(n) * C);
-      states.GetJointQ(q.data(), n, stream.GetStream());
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-      const auto hq = Host(q);
-      int ok = 0, violations = 0;
-      for (int s = 0; s < n; ++s) {
-        bool inside = true;
-        for (int k = 0; k < T; ++k) {
-          const float v = hq[size_t(s) * C + k];
-          inside =
-              inside && v >= topo.LowerLimits()[k] - 1e-6f && v <= topo.UpperLimits()[k] + 1e-6f;
+        dvector<float> d_targets(targets), d_q0(q0), d_positions(positions), d_rotations(rotations),
+            d_matrices(matrices);
+        dvector<int> links(std::vector<int>(n, ee));
+        LinkPoseFactorBatch pose(topo, links.data(), nullptr, d_targets.data(), nullptr, n);
+        PriorVectorFactorBatch<3> position_prior(
+            reinterpret_cast<const Vector<3> *>(d_positions.data()), n);
+        SO3PriorFactorBatch rotation_prior(
+            reinterpret_cast<const SO3Rotation *>(d_rotations.data()), n);
+        SE3PriorFactorBatch pose_prior(reinterpret_cast<const SE3Transform *>(d_matrices.data()),
+                                       n);
+        LinkFrameFactorBatch position_view(topo, &position_prior, {{0, FrameView::kPosition}},
+                                           links.data());
+        LinkFrameFactorBatch orientation_view(topo, &rotation_prior, {{0, FrameView::kOrientation}},
+                                              links.data());
+        LinkFrameFactorBatch pose_view(topo, &pose_prior, {{0, FrameView::kPose}}, links.data());
+        Problem problem;
+        problem.AddStateBatch(&states);
+        std::vector<float *> ptrs(n);
+        for (int s = 0; s < n; ++s) ptrs[s] = states.StateDevicePtr(s);
+        std::vector<FactorBatch *> factors;
+        if (objective == "fused") factors = {&pose};
+        if (objective == "views") factors = {&position_view, &orientation_view};
+        if (objective == "pose_view") factors = {&pose_view};
+        ASSERT_FALSE(factors.empty()) << "unknown objective " << objective;
+        for (FactorBatch *factor : factors) {
+          factor->SetNumActiveFactors(n);
+          problem.AddFactorBatch(factor, ptrs);
         }
-        violations += inside ? 0 : 1;
-        const auto fk = ReferenceFK(d, hq.data() + size_t(s) * C)[ee];
-        const float *tp = targets.data() + 7 * s;
-        const double err = std::sqrt(std::pow(fk[3] - tp[0], 2) + std::pow(fk[7] - tp[1], 2) +
-                                     std::pow(fk[11] - tp[2], 2));
-        ok += inside && err < 5e-3 ? 1 : 0;  // a solution outside the limits is no success
+        std::vector<int> ids(n);
+        for (int s = 0; s < n; ++s) ids[s] = s;
+        dvector<int> d_ids(ids), stages(std::vector<int>(n, 0));
+        problem.SetProblemPartition(n, {d_ids.data()});
+        if (solver_type == SparseLinearSolverType::BlockTridiagonal) {
+          problem.SetStateStages({stages.data()});
+        }
+        LevenbergMarquardtMinimizerOptions lm;
+        lm.base_options.max_num_iterations = 16;
+        lm.base_options.sparse_linear_solver_type = solver_type;
+        LevenbergMarquardtMinimizer inner(lm);
+        AugmentedLagrangianMinimizerOptions al;
+        al.real_time = true;
+        al.max_outer_iterations = 1;
+        al.inner_iterations = 16;
+        al.final_inner_iterations = 16;
+        al.inner_line_search_steps =
+            std::getenv("IK_BENCH_LS") ? std::atoi(std::getenv("IK_BENCH_LS")) : 0;
+        al.max_bound_refinements =
+            std::getenv("IK_BENCH_REFINE") ? std::atoi(std::getenv("IK_BENCH_REFINE")) : 0;
+        al.reuse_structure = true;
+        AugmentedLagrangianMinimizer solver(inner, al);
+        CudaStream stream;
+        std::vector<double> ms;
+        for (int rep = 0; rep < 11; ++rep) {
+          states.SetJointQ(d_q0.data(), n, stream.GetStream());
+          THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+          const auto start = std::chrono::steady_clock::now();
+          solver.Minimize(stream.GetStream(), problem);
+          THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+          if (rep > 0) {
+            ms.push_back(
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                    .count());
+          }
+        }
+        std::sort(ms.begin(), ms.end());
+        dvector<float> q(size_t(n) * C);
+        states.GetJointQ(q.data(), n, stream.GetStream());
+        THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+        const auto hq = Host(q);
+        int ok = 0, violations = 0;
+        for (int s = 0; s < n; ++s) {
+          bool inside = true;
+          for (int k = 0; k < T; ++k) {
+            const float v = hq[size_t(s) * C + k];
+            inside =
+                inside && v >= topo.LowerLimits()[k] - 1e-6f && v <= topo.UpperLimits()[k] + 1e-6f;
+          }
+          violations += inside ? 0 : 1;
+          const auto fk = ReferenceFK(d, hq.data() + size_t(s) * C)[ee];
+          const float *tp = targets.data() + 7 * s;
+          const double err = std::sqrt(std::pow(fk[3] - tp[0], 2) + std::pow(fk[7] - tp[1], 2) +
+                                       std::pow(fk[11] - tp[2], 2));
+          ok += inside && err < 5e-3 ? 1 : 0;  // a solution outside the limits is no success
+        }
+        printf("BENCH ik_arm7_%-6d %-20s %-10s median_ms=%8.3f success=%5.1f%% outside_limits=%d\n",
+               n,
+               solver_type == SparseLinearSolverType::BlockTridiagonal ? "BlockTridiagonal"
+                                                                       : "BlockSparseCholesky",
+               objective.c_str(), ms[ms.size() / 2], 100.0 * ok / n, violations);
       }
-      printf("BENCH ik_arm7_%-6d %-20s median_ms=%8.3f success=%5.1f%% outside_limits=%d\n", n,
-             solver_type == SparseLinearSolverType::BlockTridiagonal ? "BlockTridiagonal"
-                                                                     : "BlockSparseCholesky",
-             ms[ms.size() / 2], 100.0 * ok / n, violations);
     }
   }
 }
@@ -1134,37 +1083,6 @@ TEST(ArticulationSolve, ProblemRejectsStateOfAnotherLayout) {
       EXPECT_EQ(problem.Validate(stream.GetStream()), topo == &topo_two);
     }
   }
-}
-
-// A REVOLUTE loop closure must not be satisfied by axes that point in opposite directions.
-TEST(KinematicFactors, RevoluteLoopRejectsOppositeAxes) {
-  ArticulationDescription d;  // link 0 turns about x; the loop joint (about z) ties it to the world
-  AddJoint(d, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{1, 0, 0}});
-  ArticulationTopology topo(d);
-  ArticulationStateBatch states(topo, 2);
-  states.SetNumActiveStates(2);
-  dvector<float> q(std::vector<float>{0.f, 3.14159265f});  // aligned, then flipped by π about x
-  CudaStream stream;
-  states.SetJointQ(q.data(), 2, stream.GetStream());
-  dvector<int> parents(std::vector<int>{-1}), children(std::vector<int>{0});
-  dvector<float> frames(std::vector<float>{0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1});
-  dvector<float> axes(std::vector<float>{0, 0, 1});
-  LoopClosureFactorBatch loop(topo, JT::kRevolute, parents.data(), children.data(), frames.data(),
-                              axes.data(), 1);
-  loop.SetNumActiveFactors(1);
-  dvector<float *> ptrs(std::vector<float *>{states.StateDevicePtr(0), states.StateDevicePtr(1)});
-  const int m = static_cast<int>(loop.ResidualsSize());
-  dvector<float> r(2 * m);
-  ASSERT_TRUE(loop.Evaluate(r.data(), nullptr, ptrs.data(), stream.GetStream(), nullptr, 2));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const auto h = Host(r);
-  double aligned = 0, flipped = 0;
-  for (int i = 0; i < m; ++i) {
-    aligned += h[i] * h[i];
-    flipped += h[m + i] * h[m + i];
-  }
-  EXPECT_LT(std::sqrt(aligned), 1e-6);
-  EXPECT_NEAR(std::sqrt(flipped), 2.0, 1e-5);  // |a_C - a_P| = |-z - z|
 }
 
 // A topology whose staged arrays and one instance exceed 48 KB of shared memory takes the
@@ -1281,15 +1199,15 @@ TEST(KinematicFactors, OutOfRangeIndicesGiveNaN) {
   pose.SetNumActiveFactors(k);
   check(pose, {false, false, true}, "pose");
 
-  dvector<int> parents(std::vector<int>{-2, 0, -1}), children(std::vector<int>{1, L, 2});
-  std::vector<float> frame = {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1};
-  std::vector<float> frames;
-  for (int t = 0; t < k; ++t) frames.insert(frames.end(), frame.begin(), frame.end());
-  dvector<float> d_frames(frames);
-  LoopClosureFactorBatch loop(topo, JT::kBall, parents.data(), children.data(), d_frames.data(),
-                              nullptr, k);
-  loop.SetNumActiveFactors(k);
-  check(loop, {false, false, true}, "loop");
+  // A link frame with topology links -2 (below the world, -1) and L; the third is valid.
+  dvector<int> frame_links(std::vector<int>{-2, L, L - 1});
+  std::vector<float> zero_targets(3 * k, 0.f);
+  dvector<float> d_zero_targets(zero_targets);
+  PriorVectorFactorBatch<3> point_prior(reinterpret_cast<const Vector<3> *>(d_zero_targets.data()),
+                                        k);
+  LinkFrameFactorBatch frame(topo, &point_prior, {{0, FrameView::kPosition}}, frame_links.data());
+  frame.SetNumActiveFactors(k);
+  check(frame, {false, false, true}, "link frame");
 
   // DOF T: out of range; DOF 6: a BALL DOF (no scalar coordinate); 9 -> 10: revolute, prismatic.
   dvector<int> mimic(std::vector<int>{T, 6, 9}), ref(std::vector<int>{9, 9, 10});
@@ -1302,11 +1220,6 @@ TEST(KinematicFactors, OutOfRangeIndicesGiveNaN) {
 // ---------------------------------------------------------------------------
 // LinkFrameFactorBatch: SE(3) factors on link frames
 // ---------------------------------------------------------------------------
-
-/** Row-major 4x4 floats of `T`, appended to `out`. */
-void AppendMatrix(const M4 &T, std::vector<float> &out) {
-  for (double v : T) out.push_back(static_cast<float>(v));
-}
 
 // An SE(3) prior on a frame of a link: the residuals equal the prior evaluated on that frame's
 // pose, the DOF columns match central differences, and items follow the item contract.
@@ -1325,7 +1238,8 @@ TEST(LinkFrameFactor, PriorOnLinkFrames) {
   dvector<int> links(link_ids);
   dvector<float> d_frames(frames), d_targets(targets), d_poses(poses);
   SE3PriorFactorBatch prior(reinterpret_cast<const SE3Transform *>(d_targets.data()), f.n);
-  LinkFrameFactorBatch frame(f.topo, &prior, {0}, links.data(), d_frames.data());
+  LinkFrameFactorBatch frame(f.topo, &prior, {{0, FrameView::kPose}}, links.data(),
+                             d_frames.data());
   frame.SetNumActiveFactors(f.n);
   EXPECT_EQ(prior.NumActiveFactors(), size_t(f.n));
   EXPECT_EQ(frame.ResidualsSize(), 6u);
@@ -1370,7 +1284,8 @@ TEST(LinkFrameFactor, RelativePoseOfTwoLinks) {
   dvector<int> links(link_ids);
   dvector<float> d_deltas(deltas);
   SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(d_deltas.data()), f.n);
-  LinkFrameFactorBatch frame(f.topo, &between, {0, 1}, links.data());
+  LinkFrameFactorBatch frame(f.topo, &between, {{0, FrameView::kPose}, {1, FrameView::kPose}},
+                             links.data());
   frame.SetNumActiveFactors(f.n);
   EXPECT_EQ(frame.StateSizes(), std::vector<size_t>{size_t(f.topo.DofCount())});
   CheckJacobians(frame, f.states, f.n, "two links");
@@ -1393,7 +1308,7 @@ TEST(LinkFrameFactor, LinkToObjectPose) {
   dvector<int> links(link_ids);
   dvector<float> d_objects(objects), d_deltas(deltas), d_poses(poses);
   SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(d_deltas.data()), f.n);
-  LinkFrameFactorBatch frame(f.topo, &between, {0}, links.data());
+  LinkFrameFactorBatch frame(f.topo, &between, {{0, FrameView::kPose}}, links.data());
   frame.SetNumActiveFactors(f.n);
   EXPECT_EQ(frame.StateSizes(), (std::vector<size_t>{size_t(T), 6}));
 
@@ -1430,8 +1345,11 @@ TEST(LinkFrameFactor, RejectsInvalidSlots) {
   dvector<int> links(std::vector<int>(2 * f.n, 0));
   dvector<float> deltas(std::vector<float>(16 * f.n, 0.f));
   SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(deltas.data()), f.n);
-  auto make = [&](std::vector<int> slots, FactorBatch *inner, const int *l) {
-    LinkFrameFactorBatch frame(f.topo, inner, slots, l);
+  auto make = [&](std::vector<int> slots, FactorBatch *inner, const int *l,
+                  FrameView view = FrameView::kPose) {
+    std::vector<LinkFrameSlot> frame_slots;
+    for (int s : slots) frame_slots.push_back({s, view});
+    LinkFrameFactorBatch frame(f.topo, inner, frame_slots, l);
   };
   EXPECT_THROW(make({}, &between, links.data()), std::invalid_argument);
   EXPECT_THROW(make({2}, &between, links.data()), std::invalid_argument);
@@ -1442,12 +1360,394 @@ TEST(LinkFrameFactor, RejectsInvalidSlots) {
   EXPECT_THROW(make({0}, &mimic, links.data()), std::invalid_argument);  // tangent T, not 6
   ConstraintFactorBatch constraint(&between, ConstraintKind::kEquality);
   EXPECT_THROW(make({0}, &constraint, links.data()), std::invalid_argument);  // hidden from AL
+  // A view must match its slot's tangent: SE(3) slots (6) cannot take kPosition / kOrientation.
+  EXPECT_THROW(make({0}, &between, links.data(), FrameView::kPosition), std::invalid_argument);
+  EXPECT_THROW(make({0}, &between, links.data(), FrameView::kOrientation), std::invalid_argument);
+  EXPECT_THROW(make({0}, &between, links.data(), static_cast<FrameView>(7)), std::invalid_argument);
   try {
     make({1, 3}, &between, links.data());
     FAIL() << "expected a throw";
   } catch (const std::invalid_argument &e) {
     EXPECT_NE(std::string(e.what()).find("Fix:"), std::string::npos) << e.what();
   }
+}
+
+// The Position view with a vector prior is LinkPositionFactorBatch: same residuals and the same
+// Jacobian (both are W (X_L c - p*) in the world frame).
+TEST(LinkFrameFactor, PositionViewMatchesLinkPosition) {
+  MixedFixture f;
+  const std::vector<int> link_ids = f.Links();
+  const std::vector<float> points = f.Uniform(3 * f.n, -0.2f, 0.2f);
+  const std::vector<float> targets = f.Uniform(3 * f.n, -1.f, 1.f);
+  std::vector<float> offsets;
+  for (int t = 0; t < f.n; ++t) {
+    offsets.insert(offsets.end(), {points[3 * t], points[3 * t + 1], points[3 * t + 2]});
+    offsets.insert(offsets.end(), {0.f, 0.f, 0.f, 1.f});
+  }
+  dvector<int> links(link_ids);
+  dvector<float> d_points(points), d_targets(targets), d_offsets(offsets);
+  PriorVectorFactorBatch<3> prior(reinterpret_cast<const Vector<3> *>(d_targets.data()), f.n);
+  LinkFrameFactorBatch frame(f.topo, &prior, {{0, FrameView::kPosition}}, links.data(),
+                             d_offsets.data());
+  frame.SetNumActiveFactors(f.n);
+  LinkPositionFactorBatch position(f.topo, links.data(), d_points.data(), d_targets.data(), nullptr,
+                                   f.n);
+  position.SetNumActiveFactors(f.n);
+  EXPECT_EQ(frame.StateSizes(), std::vector<size_t>{size_t(f.topo.DofCount())});
+
+  CudaStream stream;
+  const int T = f.topo.DofCount();
+  std::vector<float *> art(f.n);
+  for (int t = 0; t < f.n; ++t) art[t] = f.states.StateDevicePtr(t);
+  dvector<float *> ptrs(art);
+  dvector<float> r1(3 * f.n), r2(3 * f.n), j1(size_t(f.n) * 3 * T), j2(size_t(f.n) * 3 * T);
+  ASSERT_TRUE(frame.Evaluate(r1.data(), j1.data(), ptrs.data(), stream.GetStream()));
+  ASSERT_TRUE(position.Evaluate(r2.data(), j2.data(), ptrs.data(), stream.GetStream()));
+  const auto hr1 = Host(r1), hr2 = Host(r2), hj1 = Host(j1), hj2 = Host(j2);
+  for (size_t i = 0; i < hr1.size(); ++i) EXPECT_NEAR(hr1[i], hr2[i], 1e-5) << "residual " << i;
+  for (size_t i = 0; i < hj1.size(); ++i) EXPECT_NEAR(hj1[i], hj2[i], 1e-5) << "jacobian " << i;
+  CheckJacobians(frame, f.states, f.n, "position view");
+  evaluate_items_test::CheckEvaluateItems(frame, 2, [&](int k) {
+    std::vector<float *> p(f.n);
+    for (int t = 0; t < f.n; ++t) p[t] = f.states.StateDevicePtr((t + 3 * k) % f.n);
+    return p;
+  });
+}
+
+// The Orientation view: an SO(3) prior on a frame's rotation (body-frame residual), and an
+// SO(3) between of two links' orientations; DOF columns against central differences.
+TEST(LinkFrameFactor, OrientationView) {
+  MixedFixture f;
+  const int L = f.topo.LinkCount();
+  const std::vector<int> link_ids = f.Links();
+  std::vector<float> offsets, targets, rotations;
+  for (int t = 0; t < f.n; ++t) {
+    const M4 off = f.SmallTransform(0.2f);
+    const M4 frame = Mul(f.LinkPose(t, link_ids[t]), off);
+    const auto po = PoseOf(off);
+    offsets.insert(offsets.end(), po.begin(), po.end());
+    const M4 target = Mul(frame, f.SmallTransform(0.3f));
+    const M4 *both[2] = {&target, &frame};
+    for (int k = 0; k < 2; ++k) {
+      for (int a = 0; a < 3; ++a) {
+        for (int b = 0; b < 3; ++b) {
+          (k == 0 ? targets : rotations).push_back(static_cast<float>((*both[k])[4 * a + b]));
+        }
+      }
+    }
+  }
+  dvector<int> links(link_ids);
+  dvector<float> d_offsets(offsets), d_targets(targets), d_rotations(rotations);
+  SO3PriorFactorBatch prior(reinterpret_cast<const SO3Rotation *>(d_targets.data()), f.n);
+  LinkFrameFactorBatch frame(f.topo, &prior, {{0, FrameView::kOrientation}}, links.data(),
+                             d_offsets.data());
+  frame.SetNumActiveFactors(f.n);
+
+  // Residuals equal the prior evaluated on the frames' rotations.
+  CudaStream stream;
+  std::vector<float *> art(f.n), direct(f.n);
+  for (int t = 0; t < f.n; ++t) {
+    art[t] = f.states.StateDevicePtr(t);
+    direct[t] = d_rotations.data() + 9 * size_t(t);
+  }
+  dvector<float *> d_art(art), d_direct(direct);
+  dvector<float> r1(3 * f.n), r2(3 * f.n);
+  ASSERT_TRUE(frame.Evaluate(r1.data(), nullptr, d_art.data(), stream.GetStream()));
+  ASSERT_TRUE(prior.Evaluate(r2.data(), nullptr, d_direct.data(), stream.GetStream()));
+  const auto a = Host(r1), b = Host(r2);
+  for (size_t i = 0; i < a.size(); ++i) EXPECT_NEAR(a[i], b[i], 2e-5) << i;
+  CheckJacobians(frame, f.states, f.n, "orientation view");
+
+  // Relative orientation of two links of one instance.
+  std::vector<int> pair_ids;
+  std::vector<float> deltas;
+  for (int t = 0; t < f.n; ++t) {
+    const int l0 = t % L, l1 = (t * 3 + 2) % L;
+    pair_ids.insert(pair_ids.end(), {l0, l1});
+    const M4 rel = Mul(Inverse(f.LinkPose(t, l1)), f.LinkPose(t, l0));  // Delta = R_1^T R_0
+    const M4 delta = Mul(f.SmallTransform(0.f), rel);
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) deltas.push_back(static_cast<float>(delta[4 * r + c]));
+  }
+  dvector<int> pairs(pair_ids);
+  dvector<float> d_deltas(deltas);
+  SO3BetweenFactorBatch between(reinterpret_cast<const SO3Rotation *>(d_deltas.data()), f.n);
+  LinkFrameFactorBatch relative(
+      f.topo, &between, {{0, FrameView::kOrientation}, {1, FrameView::kOrientation}}, pairs.data());
+  relative.SetNumActiveFactors(f.n);
+  CheckJacobians(relative, f.states, f.n, "relative orientation");
+}
+
+// Position views with existing vector factors: a halfspace on a frame's origin, and a ball loop
+// closure as a vector between of two frames' origins (against the host frames).
+TEST(LinkFrameFactor, PositionViewHalfspaceAndBallLoop) {
+  MixedFixture f;
+  const int L = f.topo.LinkCount();
+  const std::vector<int> link_ids = f.Links();
+  std::vector<float> normals = f.Uniform(3 * f.n, -1.f, 1.f), offsets_b = f.Uniform(f.n, -1, 1);
+  dvector<int> links(link_ids);
+  dvector<float> d_normals(normals), d_b(offsets_b);
+  HalfspaceFactorBatch<3> halfspace(d_normals.data(), d_b.data(), f.n);
+  LinkFrameFactorBatch above(f.topo, &halfspace, {{0, FrameView::kPosition}}, links.data());
+  above.SetNumActiveFactors(f.n);
+  CheckJacobians(above, f.states, f.n, "halfspace");
+
+  // Ball loop: the origins of child frame X_C X_c and parent frame X_P X_p coincide.
+  std::vector<int> pc;
+  std::vector<float> frame_offsets, expected;
+  for (int t = 0; t < f.n; ++t) {
+    const int parent = t % L, child = (t * 5 + 3) % L;
+    pc.insert(pc.end(), {child, parent});  // left = child, right = parent
+    const auto xp = f.Uniform(3, -0.2f, 0.2f), xc = f.Uniform(3, -0.2f, 0.2f);
+    frame_offsets.insert(frame_offsets.end(), {xc[0], xc[1], xc[2], 0, 0, 0, 1});
+    frame_offsets.insert(frame_offsets.end(), {xp[0], xp[1], xp[2], 0, 0, 0, 1});
+    const M4 XC = f.LinkPose(t, child), XP = f.LinkPose(t, parent);
+    for (int i = 0; i < 3; ++i) {  // VectorBetween: left - right - delta = p(F_C) - p(F_P)
+      const double pc_i =
+          XC[4 * i] * xc[0] + XC[4 * i + 1] * xc[1] + XC[4 * i + 2] * xc[2] + XC[4 * i + 3];
+      const double pp_i =
+          XP[4 * i] * xp[0] + XP[4 * i + 1] * xp[1] + XP[4 * i + 2] * xp[2] + XP[4 * i + 3];
+      expected.push_back(static_cast<float>(pc_i - pp_i));
+    }
+  }
+  dvector<int> d_pc(pc);
+  dvector<float> d_frame_offsets(frame_offsets);
+  dvector<float> zeros(std::vector<float>(3 * f.n, 0.f));
+  VectorBetweenFactorBatch<3> between(reinterpret_cast<const Vector<3> *>(zeros.data()), f.n);
+  LinkFrameFactorBatch ball(f.topo, &between,
+                            {{0, FrameView::kPosition}, {1, FrameView::kPosition}}, d_pc.data(),
+                            d_frame_offsets.data());
+  ball.SetNumActiveFactors(f.n);
+  CheckJacobians(ball, f.states, f.n, "ball loop");
+
+  CudaStream stream;
+  std::vector<float *> art(f.n);
+  for (int t = 0; t < f.n; ++t) art[t] = f.states.StateDevicePtr(t);
+  dvector<float *> ptrs(art);
+  dvector<float> r(3 * f.n);
+  ASSERT_TRUE(ball.Evaluate(r.data(), nullptr, ptrs.data(), stream.GetStream()));
+  const auto a = Host(r);
+  for (size_t i = 0; i < a.size(); ++i) EXPECT_NEAR(a[i], expected[i], 2e-5) << i;
+}
+
+// ---------------------------------------------------------------------------
+// Loop closures as compositions of existing factors on link-frame views
+// ---------------------------------------------------------------------------
+
+/**
+ * A loop-closing joint of type `type` as equality constraints on frame views (what
+ * pycunls.articulation.loop_closure builds): slot 0 the parent frame X_P X_p, slot 1 the child
+ * frame X_C X_c. `links` holds (parent, child) per factor (parent -1: the world), `frames`
+ * (X_p, X_c) per factor (14 floats: exactly frame_offsets), `axes` 3 floats per factor.
+ */
+struct LoopComposition {
+  dvector<float> zeros, identity3, identity4;
+  std::vector<std::unique_ptr<FactorBatch>> inner, views;
+  std::vector<std::unique_ptr<ConstraintFactorBatch>> constraints;
+
+  LoopComposition(const ArticulationTopology &topo, JT type, const int *links, const float *frames,
+                  const float *axes, int n) {
+    std::vector<float> z(3 * n, 0.f), i3, i4;
+    for (int t = 0; t < n; ++t) {
+      i3.insert(i3.end(), {1, 0, 0, 0, 1, 0, 0, 0, 1});
+      i4.insert(i4.end(), {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1});
+    }
+    zeros = dvector<float>(z);
+    identity3 = dvector<float>(i3);
+    identity4 = dvector<float>(i4);
+    auto add = [&](std::unique_ptr<FactorBatch> factor, FrameView view) {
+      auto frame = std::make_unique<LinkFrameFactorBatch>(
+          topo, factor.get(), std::vector<LinkFrameSlot>{{0, view}, {1, view}}, links, frames);
+      frame->SetNumActiveFactors(n);
+      constraints.push_back(
+          std::make_unique<ConstraintFactorBatch>(frame.get(), ConstraintKind::kEquality));
+      inner.push_back(std::move(factor));
+      views.push_back(std::move(frame));
+    };
+    const auto *z3 = reinterpret_cast<const Vector<3> *>(zeros.data());
+    if (type == JT::kBall || type == JT::kRevolute) {
+      add(std::make_unique<VectorBetweenFactorBatch<3>>(z3, n), FrameView::kPosition);
+    }
+    if (type == JT::kRevolute) {
+      add(std::make_unique<SE3AxisAlignmentFactorBatch>(axes, n), FrameView::kPose);
+    }
+    if (type == JT::kPrismatic) {
+      add(std::make_unique<SO3BetweenFactorBatch>(
+              reinterpret_cast<const SO3Rotation *>(identity3.data()), n),
+          FrameView::kOrientation);
+      add(std::make_unique<SE3AxisOffsetFactorBatch>(axes, n), FrameView::kPose);
+    }
+    if (type == JT::kFixed) {
+      add(std::make_unique<SE3BetweenFactorBatch>(
+              reinterpret_cast<const SE3Transform *>(identity4.data()), n),
+          FrameView::kPose);
+    }
+    for (auto &factor : inner) factor->SetNumActiveFactors(n);
+  }
+};
+
+/**
+ * The four-bar (ground, crank at the origin, coupler at the crank tip, rocker at (1, 0, 0)), crank
+ * angles held by a heavy posture weight, closed by the constraints `add_loop` returns; returns
+ * the summary and the solved joint_q.
+ */
+template <typename AddLoop>
+std::pair<AugmentedLagrangianMinimizerSummary, std::vector<float>> SolveFourBar(AddLoop add_loop) {
+  const float G = 1.0f, L1 = 0.4f, L2 = 1.0f, L3 = 0.8f;
+  ArticulationDescription d;
+  AddJoint(d, JT::kFixed, -1, Pose(0, 0, 0), Pose(0, 0, 0), {});
+  AddJoint(d, JT::kRevolute, 0, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  AddJoint(d, JT::kRevolute, 1, Pose(L1, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  AddJoint(d, JT::kRevolute, 0, Pose(G, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  ArticulationTopology topo(d);
+  const int n = 32, C = topo.CoordCount();
+  ArticulationStateBatch states(topo, n);
+  states.SetNumActiveStates(n);
+  std::vector<float> q0, w;
+  for (int s = 0; s < n; ++s) {
+    q0.insert(q0.end(), {0.3f + 0.08f * s, 0.f, 1.2f});
+    w.insert(w.end(), {100.f, 1e-2f, 1e-2f});
+  }
+  dvector<float> d_q0(q0), d_w(w);
+  CudaStream stream;
+  states.SetJointQ(d_q0.data(), n, stream.GetStream());
+  PostureFactorBatch posture(topo, d_q0.data(), d_w.data(), n);
+  posture.SetNumActiveFactors(n);
+  std::vector<float> frames, axes;
+  std::vector<int> pc;
+  for (int s = 0; s < n; ++s) {
+    frames.insert(frames.end(), {L2, 0, 0, 0, 0, 0, 1, L3, 0, 0, 0, 0, 0, 1});
+    axes.insert(axes.end(), {0.f, 0.f, 1.f});
+    pc.insert(pc.end(), {2, 3});
+  }
+  dvector<float> d_frames(frames), d_axes(axes);
+  dvector<int> d_pc(pc);
+
+  Problem problem;
+  problem.AddStateBatch(&states);
+  std::vector<float *> ptrs(n);
+  for (int s = 0; s < n; ++s) ptrs[s] = states.StateDevicePtr(s);
+  problem.AddFactorBatch(&posture, ptrs);
+  auto keep = add_loop(topo, d_pc.data(), d_frames.data(), d_axes.data(), n);
+  for (FactorBatch *c : keep.second) problem.AddFactorBatch(c, ptrs);
+  std::vector<int> ids(n);
+  for (int s = 0; s < n; ++s) ids[s] = s;
+  dvector<int> d_ids(ids);
+  problem.SetProblemPartition(n, {d_ids.data()});
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options.max_num_iterations = 100;
+  LevenbergMarquardtMinimizer inner(lm);
+  AugmentedLagrangianMinimizerOptions al;
+  al.constraint_tolerance = 1e-5f;
+  AugmentedLagrangianMinimizer solver(inner, al);
+  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  dvector<float> q(size_t(n) * C);
+  states.GetJointQ(q.data(), n, stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  return {summary, Host(q)};
+}
+
+// A four-bar linkage (crank, coupler, rocker) closed by a revolute loop composition (position
+// equality of the two joint frames + SE3AxisAlignmentFactorBatch) assembles at the requested
+// crank angles. (Before LoopClosureFactorBatch was removed this matched it exactly: 5 outer / 20
+// inner iterations each, joint angles within 1e-4.)
+TEST(LoopComposition, FourBarAssembles) {
+  const float L2 = 1.0f, L3 = 0.8f;
+  std::unique_ptr<LoopComposition> composition;
+  const auto result = SolveFourBar([&](const ArticulationTopology &topo, const int *pc,
+                                       const float *frames, const float *axes, int n) {
+    composition = std::make_unique<LoopComposition>(topo, JT::kRevolute, pc, frames, axes, n);
+    std::vector<FactorBatch *> out;
+    for (auto &c : composition->constraints) out.push_back(c.get());
+    return std::make_pair(0, out);
+  });
+  EXPECT_EQ(result.first.status, AugmentedLagrangianMinimizerStatus::kConverged)
+      << result.first.message;
+  EXPECT_LT(result.first.max_violation, 1e-5f);
+  ArticulationDescription d;
+  AddJoint(d, JT::kFixed, -1, Pose(0, 0, 0), Pose(0, 0, 0), {});
+  AddJoint(d, JT::kRevolute, 0, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  AddJoint(d, JT::kRevolute, 1, Pose(0.4f, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  AddJoint(d, JT::kRevolute, 0, Pose(1.0f, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
+  const int C = 3, n = static_cast<int>(result.second.size()) / C;
+  for (int s = 0; s < n; ++s) {
+    const auto poses = ReferenceFK(d, result.second.data() + size_t(s) * C);
+    // Coupler tip (link 2 at (L2, 0, 0)) and rocker tip (link 3 at (L3, 0, 0)) coincide.
+    const double cx = poses[2][0] * L2 + poses[2][3], cy = poses[2][4] * L2 + poses[2][7];
+    const double rx = poses[3][0] * L3 + poses[3][3], ry = poses[3][4] * L3 + poses[3][7];
+    EXPECT_LT(std::hypot(cx - rx, cy - ry), 1e-4) << "state " << s;
+    EXPECT_NEAR(result.second[size_t(s) * C], 0.3f + 0.08f * s, 1e-3f)
+        << "crank moved, state " << s;
+  }
+}
+
+// Every loop type's composition (parents including the world, -1) against central differences,
+// and every row vanishing at a closed configuration.
+TEST(LoopComposition, JacobiansAndZeroSets) {
+  MixedFixture f;
+  std::vector<int> parents(f.n), children(f.n), pc;
+  std::vector<float> frames, closed_frames;
+  for (int t = 0; t < f.n; ++t) {
+    parents[t] = (t % 3 == 0) ? -1 : (t % f.topo.LinkCount());
+    children[t] = (t * 5 + 3) % f.topo.LinkCount();
+    pc.insert(pc.end(), {parents[t], children[t]});
+    const M4 Xp = f.SmallTransform(0.2f);
+    const M4 FP = Mul(parents[t] >= 0 ? f.LinkPose(t, parents[t]) : Identity(), Xp);
+    const M4 FC = Mul(FP, f.SmallTransform(0.3f));  // near, not on, the closed configuration
+    const M4 Xc = Mul(Inverse(f.LinkPose(t, children[t])), FC);
+    const M4 Xc_closed = Mul(Inverse(f.LinkPose(t, children[t])), FP);  // F_C == F_P: closed
+    for (const M4 *X : {&Xp, &Xc}) {
+      const auto pose = PoseOf(*X);
+      frames.insert(frames.end(), pose.begin(), pose.end());
+    }
+    for (const M4 *X : {&Xp, &Xc_closed}) {
+      const auto pose = PoseOf(*X);
+      closed_frames.insert(closed_frames.end(), pose.begin(), pose.end());
+    }
+  }
+  dvector<int> d_pc(pc);
+  dvector<float> d_frames(frames), d_closed(closed_frames), axes(f.Uniform(3 * f.n, -1.f, 1.f));
+  CudaStream stream;
+  std::vector<float *> art(f.n);
+  for (int t = 0; t < f.n; ++t) art[t] = f.states.StateDevicePtr(t);
+  dvector<float *> ptrs(art);
+  for (JT type : {JT::kBall, JT::kRevolute, JT::kPrismatic, JT::kFixed}) {
+    const std::string label = "loop composition type " + std::to_string(static_cast<int>(type));
+    LoopComposition loop(f.topo, type, d_pc.data(), d_frames.data(), axes.data(), f.n);
+    for (auto &view : loop.views) CheckJacobians(*view, f.states, f.n, label.c_str());
+    // At a closed configuration (F_C == F_P) every row is zero.
+    LoopComposition closed(f.topo, type, d_pc.data(), d_closed.data(), axes.data(), f.n);
+    for (auto &view : closed.views) {
+      const int m = static_cast<int>(view->ResidualsSize());
+      dvector<float> r(size_t(f.n) * m);
+      ASSERT_TRUE(view->Evaluate(r.data(), nullptr, ptrs.data(), stream.GetStream()));
+      for (float v : Host(r)) EXPECT_NEAR(v, 0.f, 2e-5f) << label;
+    }
+  }
+}
+
+// The revolute composition does not accept a flipped axis (rotation by pi about a perpendicular):
+// SE3AxisAlignmentFactorBatch compares the axes whole.
+TEST(LoopComposition, RevoluteRejectsOppositeAxes) {
+  ArticulationDescription d;  // link 0 turns about x; the loop joint (about z) ties it to the world
+  AddJoint(d, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{1, 0, 0}});
+  ArticulationTopology topo(d);
+  ArticulationStateBatch states(topo, 2);
+  states.SetNumActiveStates(2);
+  dvector<float> q(std::vector<float>{0.f, 3.14159265f});  // aligned, then flipped by π about x
+  CudaStream stream;
+  states.SetJointQ(q.data(), 2, stream.GetStream());
+  dvector<int> pc(std::vector<int>{-1, 0});
+  dvector<float> frames(std::vector<float>{0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1});
+  dvector<float> axes(std::vector<float>{0, 0, 1});
+  LoopComposition loop(topo, JT::kRevolute, pc.data(), frames.data(), axes.data(), 1);
+  dvector<float *> ptrs(std::vector<float *>{states.StateDevicePtr(0), states.StateDevicePtr(1)});
+  LinkFrameFactorBatch &alignment = *static_cast<LinkFrameFactorBatch *>(loop.views[1].get());
+  dvector<float> r(6);
+  ASSERT_TRUE(alignment.Evaluate(r.data(), nullptr, ptrs.data(), stream.GetStream(), nullptr, 2));
+  const auto h = Host(r);
+  EXPECT_LT(std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]), 1e-6);
+  EXPECT_NEAR(std::sqrt(h[3] * h[3] + h[4] * h[4] + h[5] * h[5]), 2.0, 1e-5);  // |-z - z|
 }
 
 }  // namespace

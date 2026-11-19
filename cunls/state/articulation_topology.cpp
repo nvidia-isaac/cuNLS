@@ -73,8 +73,8 @@ void JointSizes(const ArticulationDescription &d, int j, int *coords, int *dofs)
   }
   Fail("joint " + std::to_string(j) + " has an unsupported type", std::to_string(d.joint_type[j]),
        "PRISMATIC=0, REVOLUTE=1, BALL=2, FIXED=3, FREE=4 or D6=6",
-       "model DISTANCE/ROD joints differently, or loop-closing joints with "
-       "LoopClosureFactorBatch");
+       "model DISTANCE/ROD joints differently, and loop-closing joints as constraints "
+       "(pycunls.articulation.loop_closure; docs/sphinx/articulations.rst)");
 }
 
 /** Unit quaternion (x, y, z, w) from `q`, or an error naming `what`. */
@@ -162,8 +162,8 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
       Fail("link " + std::to_string(c) + " is the child of two tree joints",
            "joints " + std::to_string(link_joint[c]) + " and " + std::to_string(j),
            "exactly one tree joint per link",
-           "leave the loop-closing joint out of the tree and add it as a "
-           "LoopClosureFactorBatch");
+           "leave the loop-closing joint out of the tree and add it as constraints "
+           "(pycunls.articulation.loop_closure; docs/sphinx/articulations.rst)");
     }
     if (p < -1 || p >= J || p == c) {
       Fail("joint " + std::to_string(j) + " has an invalid parent link", std::to_string(p),
@@ -188,7 +188,7 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
     Fail("the joints do not form a tree rooted at the root frame",
          std::to_string(order.size()) + " of " + std::to_string(J) + " joints reachable",
          "every joint reachable from a joint with parent -1",
-         "remove the cycle (close loops with LoopClosureFactorBatch)");
+         "remove the cycle (close loops with constraints: pycunls.articulation.loop_closure)");
   }
 
   // Axes: unit length; D6 angular axes orthogonal (they are used as given, not orthonormalized).

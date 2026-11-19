@@ -30,10 +30,14 @@ from numpy.typing import NDArray
 
 class CudaStream:
     """
-    A CUDA stream for cuNLS work (created on construction, destroyed with the object). sync_on_destroy: synchronize before destroying. minimize() synchronizes it before returning; use wp.Stream(cuda_stream=stream.get_stream()) to order Warp work with it.
+    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. minimize() synchronizes the stream before returning.
     """
 
+    @overload
     def __init__(self, sync_on_destroy: bool = False) -> None: ...
+
+    @overload
+    def __init__(self, other: object) -> None: ...
 
     def get_stream(self) -> int:
         """Returns the underlying cudaStream_t as an integer handle."""
@@ -2513,6 +2517,38 @@ class SE3SphereClearanceFactorBatch(FactorBatch):
 
     def __init__(self, obstacles: object, margin: float, capacity: int) -> None: ...
 
+class SE3AxisAlignmentFactorBatch(FactorBatch):
+    """
+    r = R_1 a - R_0 a (3 rows, world frame): two SE(3) poses keep the local axis a aligned (r = 0 iff the axes point the same way). The rows of a hinge (revolute) joint that a position equality does not cover; usually an equality constraint (wrap it, or the LinkFrameFactorBatch around it, in ConstraintFactorBatch). States: two SE(3) poses (slot 0, slot 1; SE3StateBatch or LinkFrameFactorBatch FrameView.Pose views). axes: device buffer of 3 floats per factor (the axis in each pose's frame; normalized when read).
+
+    SE3AxisAlignmentFactorBatch (factor)
+      states: [SE3StateBatch, SE3StateBatch]
+      residual (3): R_1 a - R_0 a
+      axes: 3 floats per factor: the axis a in each pose's frame
+      relative: yes (needs an anchor: a constant state or a prior)
+      use: Hinge rows: two poses keep a local axis aligned (with a position equality: a revolute joint); usually an equality constraint.
+      notes: On robot links through LinkFrameFactorBatch (FrameView.Pose); pycunls.articulation.loop_closure builds revolute loops from it.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
+    """
+
+    def __init__(self, axes: object, capacity: int) -> None: ...
+
+class SE3AxisOffsetFactorBatch(FactorBatch):
+    """
+    r_k = (R_0 b_k) . (p_1 - p_0), k = 1, 2 (2 rows): the origin of pose 1 stays on the axis a through pose 0 (b_1, b_2: unit vectors perpendicular to a). The rows of a slider (prismatic) joint that an orientation equality does not cover; usually an equality constraint. States: two SE(3) poses (slot 0, slot 1). axes: device buffer of 3 floats per factor (the axis in pose 0's frame; normalized when read).
+
+    SE3AxisOffsetFactorBatch (factor)
+      states: [SE3StateBatch, SE3StateBatch]
+      residual (2): (R_0 b_k) . (p_1 - p_0), b_1, b_2 perpendicular to a
+      axes: 3 floats per factor: the axis a in pose 0's frame
+      relative: yes (needs an anchor: a constant state or a prior)
+      use: Slider rows: pose 1's origin stays on the axis through pose 0 (with an orientation equality: a prismatic joint); usually an equality constraint.
+      notes: On robot links through LinkFrameFactorBatch (FrameView.Pose); pycunls.articulation.loop_closure builds prismatic loops from it.
+      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
+    """
+
+    def __init__(self, axes: object, capacity: int) -> None: ...
+
 class ArticulationJointType(enum.Enum):
     """
     Joint types of an articulation (the integer values of ArticulationTopology's joint_type).
@@ -2540,7 +2576,7 @@ class ArticulationJointType(enum.Enum):
 
 class ArticulationTopology:
     """
-    An immutable kinematic tree (flat joint arrays), shared by every ArticulationStateBatch instance and kinematic factor built on it. Built once from arrays (lists, numpy, or GPU arrays such as wp.array, copied to the host): joint_type, joint_parent (parent link, -1: root frame), joint_child (child link; link i is the child of exactly one joint), joint_X_p / joint_X_c (7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start (J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose (the frame root joints attach to). Loop-closing joints are not part of the tree: add them as LoopClosureFactorBatch. Forward kinematics: X_world(child) = X_world(parent) joint_X_p X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).
+    An immutable kinematic tree (flat joint arrays), shared by every ArticulationStateBatch instance and kinematic factor built on it. Built once from arrays (lists, numpy, or GPU arrays such as wp.array, copied to the host): joint_type, joint_parent (parent link, -1: root frame), joint_child (child link; link i is the child of exactly one joint), joint_X_p / joint_X_c (7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start (J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose (the frame root joints attach to). Loop-closing joints are not part of the tree: add them as constraints with pycunls.articulation.loop_closure. Forward kinematics: X_world(child) = X_world(parent) joint_X_p X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).
     """
 
     def __init__(self, joint_type: object, joint_parent: object, joint_child: object, joint_X_p: object, joint_X_c: object, joint_q_start: object, joint_qd_start: object, joint_axis: object, joint_dof_dim: object | None = None, limit_lower: object | None = None, limit_upper: object | None = None, root_pose: object | None = None) -> None: ...
@@ -2675,53 +2711,76 @@ class LinkPositionFactorBatch(FactorBatch):
 
     def __init__(self, topology: ArticulationTopology, links: object, points: object, targets: object, weights: object | None, capacity: int) -> None: ...
 
+class FrameView(enum.Enum):
+    """
+    What a frame slot of LinkFrameFactorBatch hands its inner factor, in the layout and tangent convention of an existing state type, so that factors of that type work on robot links unchanged.
+    """
+
+    Pose = 0
+    """
+    The frame's pose as an SE3StateBatch state: row-major 4x4 world_from_frame, tangent [omega, v] in the frame, X' = X Exp(delta). Slot tangent 6.
+    """
+
+    Position = 1
+    """
+    The frame's origin in the world as a VectorStateBatch3 state (3 floats, additive world-frame step). Slot tangent 3.
+    """
+
+    Orientation = 2
+    """
+    The frame's rotation as an SO3StateBatch state: row-major 3x3 world_from_frame, tangent omega in the frame, R' = R Exp(omega). Slot tangent 3.
+    """
+
 class LinkFrameFactorBatch(FactorBatch):
     """
-    Puts the SE(3) pose states of any factor on a robot, for custom kinematic objectives. The wrapped inner_factor is an ordinary factor over SE(3) poses (a built-in one such as SE3PriorFactorBatch, SE3BetweenFactorBatch, SE3SphereClearanceFactorBatch, or a pycunls.warp.WarpFactorBatch) that knows nothing about robots. The state slots of inner_factor listed in pose_slots do not connect to states of the problem: each receives the world pose of a frame fixed on a link of the articulation instance, and the inner Jacobian is carried to the joint DOFs (chain rule through the forward-kinematics cache).
+    Puts the pose, position or orientation states of any factor on a robot, for custom kinematic objectives. The wrapped inner_factor is an ordinary factor over SE(3) poses, 3D points or SO(3) rotations (built-in: SE3PriorFactorBatch, SE3BetweenFactorBatch, SE3SphereClearanceFactorBatch, PriorVectorFactorBatch3, HalfspaceFactorBatch3, VectorBetweenFactorBatch3, SO3PriorFactorBatch, SO3BetweenFactorBatch, ...; or a pycunls.warp.WarpFactorBatch) that knows nothing about robots. Each frame slot (an inner state slot with a FrameView) does not connect to a state of the problem: it receives a view of a frame fixed on a link of the articulation instance, and the inner Jacobian is carried to the joint DOFs (chain rule through the forward-kinematics cache).
 
-    Pose slots use SE3StateBatch's convention: a row-major 4x4 world_from_body matrix, tangent [omega, v] in the body frame, update X' = X Exp(delta); write inner_factor exactly as for SE3StateBatch states. For factor f and pose slot s (the position in pose_slots, nP = len(pose_slots)) the pose is X_L(q) X_off with L = topology_links[f * nP + s] and X_off = frame_offsets[f * nP + s].
+    For factor f and frame slot s (the position in frame_slots, nF = len(frame_slots)) the frame is X_L(q) X_off with L = topology_links[f * nF + s] and X_off = frame_offsets[f * nF + s]; FrameView.Pose hands it as SE3StateBatch does, FrameView.Position its origin (VectorStateBatch3), FrameView.Orientation its rotation (SO3StateBatch). Write inner_factor exactly as for those states.
 
-    States of this batch: [articulation instance] followed by inner_factor's slots that are not pose slots, in order (e.g. an object pose solved with the joints). Size and active count are inner_factor's. A topology link out of range gives a NaN pose. For a constraint, wrap this batch in ConstraintFactorBatch, never inner_factor. Guide: docs/sphinx/articulations.rst, 'Custom kinematic objectives'.
+    States of this batch: [articulation instance] followed by inner_factor's slots that are not frame slots, in order (e.g. an object pose solved with the joints). Size and active count are inner_factor's. A topology link out of range gives a NaN view. For a constraint (e.g. a halfspace as an inequality), wrap this batch in ConstraintFactorBatch, never inner_factor. The fused LinkPose / LinkPosition / LinkOrientation factors are faster for what they cover. Guide: docs/sphinx/articulations.rst, 'Custom kinematic objectives'.
 
     Parameters
     ----------
     topology : ArticulationTopology
         Kinematic tree of the articulation state.
     inner_factor : FactorBatch
-        The factor over SE(3) poses (kept alive by this batch).
-    pose_slots : list[int]
-        State slots of inner_factor (positions in its state_sizes) that receive a link frame
-        pose; distinct, each of tangent size 6. Example: [0] for a factor over one pose.
+        The factor over the views (kept alive by this batch).
+    frame_slots : list[tuple[int, FrameView]]
+        (inner state slot, view) pairs: the slots of inner_factor (positions in its
+        state_sizes) that receive a view of a link frame; distinct, each of its view's tangent
+        size (Pose 6, Position 3, Orientation 3). Example: [(0, FrameView.Position)].
     topology_links : int32 GPU array
-        capacity x nP link indices of the topology (positions in UrdfArticulation.link_names):
-        the link carrying the frame of each pose slot, factor-major.
+        capacity x nF link indices of the topology (positions in UrdfArticulation.link_names):
+        the link carrying the frame of each frame slot, factor-major.
     frame_offsets : float32 GPU array or None
-        capacity x nP x 7: each frame in its link frame (position, quaternion x, y, z, w;
+        capacity x nF x 7: each frame in its link frame (position, quaternion x, y, z, w;
         e.g. a camera mount or a tool tip), or None for the link frames themselves.
 
     LinkFrameFactorBatch (factor)
       states: [ArticulationStateBatch]
-      residual: the inner factor's residual, its pose slots fed X_L(q) X_off
+      residual: the inner factor's residual, its frame slots fed a view of X_L(q) X_off
       topology: ArticulationTopology
-      inner_factor: factor over SE(3) poses (built-in or WarpFactorBatch)
-      pose_slots: list: inner_factor's SE(3) state slots that receive a link frame pose instead of a state
-      topology_links: int32, len(pose_slots) per factor: topology link index (position in link_names) carrying each frame
-      frame_offsets: 7 floats (position, quaternion) per pose slot: the frame in its link, or None
+      inner_factor: factor over SE(3) poses, 3D points or SO(3) rotations (built-in or WarpFactorBatch)
+      frame_slots: list of (inner state slot, FrameView): Pose (SE3, 6), Position (3-vector, 3) or Orientation (SO3, 3)
+      topology_links: int32, len(frame_slots) per factor: topology link index (position in link_names) carrying each frame
+      frame_offsets: 7 floats (position, quaternion) per frame slot: the frame in its link, or None
       relative: no
-      use: Custom kinematic objectives: any SE(3) factor (prior, between, sphere clearance, reprojection, a Warp factor) on frames of robot links; the inner factor's other slots (an object pose, a camera) stay states.
-      notes: States: [articulation instance] + inner_factor's slots that are not pose slots. Pose slots use SE3StateBatch's convention (row-major 4x4 world_from_body, body tangent [omega, v], X' = X Exp(delta)). For constraints wrap this batch in ConstraintFactorBatch, never the inner one. Build ArticulationTopology from the robot's joint arrays or a URDF, then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
+      use: Custom kinematic objectives: existing factors on frames of robot links (SE3 prior/between/sphere clearance on a Pose, vector prior/halfspace/between on a Position, SO3 prior/between on an Orientation, a Warp factor); the inner factor's other slots (an object pose, a camera) stay states.
+      notes: States: [articulation instance] + inner_factor's slots that are not frame slots. Views use the convention of their state type (Pose: row-major 4x4, body tangent [omega, v], X' = X Exp(delta); Position: world 3-vector; Orientation: row-major 3x3, R' = R Exp(omega)). For constraints wrap this batch in ConstraintFactorBatch, never the inner one. LinkPose/Position/OrientationFactorBatch are faster for what they cover. Build ArticulationTopology from the robot's joint arrays or a URDF, then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    def __init__(self, topology: ArticulationTopology, inner_factor: FactorBatch, pose_slots: Sequence[int], topology_links: object, frame_offsets: object | None = None) -> None: ...
+    def __init__(self, topology: ArticulationTopology, inner_factor: FactorBatch, frame_slots: Sequence[tuple[int, FrameView]], topology_links: object, frame_offsets: object | None = None) -> None: ...
 
     @property
     def inner_factor(self) -> FactorBatch:
-        """The wrapped factor over SE(3) poses."""
+        """The wrapped factor over the views."""
 
     @property
-    def pose_slots(self) -> list[int]:
-        """State slots of inner_factor that receive a link frame pose."""
+    def frame_slots(self) -> list[tuple[int, FrameView]]:
+        """
+        (inner state slot, FrameView) pairs: the inner slots that receive a view of a link frame.
+        """
 
 class LinkOrientationFactorBatch(FactorBatch):
     """
@@ -2780,26 +2839,6 @@ class PostureFactorBatch(FactorBatch):
     """
 
     def __init__(self, topology: ArticulationTopology, targets: object, weights: object | None, capacity: int) -> None: ...
-
-class LoopClosureFactorBatch(FactorBatch):
-    """
-    A loop-closing joint between two links of an articulation instance (parent -1: the world): the constraint rows keeping its two joint frames together (BALL 3, REVOLUTE 6, PRISMATIC 5, FIXED 6). Wrap in ConstraintFactorBatch(..., ConstraintKind.Equality). joint_type: the ArticulationJointType of every factor. Device arrays per factor: parent_links, child_links (int32, 1 each), frames (14 floats: joint_X_p then joint_X_c, each position + quaternion x, y, z, w), axes (3 floats; None allowed for BALL/FIXED).
-
-    LoopClosureFactorBatch (factor)
-      states: [ArticulationStateBatch]
-      residual: constraint rows between two joint frames (BALL 3, REVOLUTE 6, PRISMATIC 5, FIXED 6)
-      topology: ArticulationTopology
-      parent_links: int32 (-1: world)
-      child_links: int32
-      frames: 14 floats: joint_X_p, joint_X_c
-      axes: 3 floats per factor (REVOLUTE/PRISMATIC) or None
-      relative: no
-      use: Closed kinematic loops (four-bars, parallel mechanisms); wrap in ConstraintFactorBatch(..., ConstraintKind.Equality).
-      notes: Build ArticulationTopology from the robot's joint arrays or a URDF, then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, topology: ArticulationTopology, joint_type: ArticulationJointType, parent_links: object, child_links: object, frames: object, axes: object | None, capacity: int) -> None: ...
 
 class MimicJointFactorBatch(FactorBatch):
     """

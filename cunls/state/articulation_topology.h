@@ -46,8 +46,9 @@ enum class ArticulationJointType : int {
  *
  * J joints and J links: link i is the child of exactly one tree joint. Joints
  * may be listed in any order; the topology sorts them parents first. A
- * loop-closing joint is not part of the tree: model it with
- * LoopClosureFactorBatch.
+ * loop-closing joint is not part of the tree: model it as equality constraints
+ * on LinkFrameFactorBatch views of its two joint frames
+ * (pycunls.articulation.loop_closure; docs/sphinx/articulations.rst).
  *
  * Forward kinematics, per joint, with A the parent-anchor frame:
  *

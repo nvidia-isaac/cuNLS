@@ -236,6 +236,19 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                    "(radius + margin) - |p - center|",
                    {"obstacles": "4 floats per factor: center x, y, z, radius"},
                    False, "Obstacle avoidance constraint (wrap in ConstraintFactorBatch)."),
+        FactorInfo("SE3AxisAlignmentFactorBatch", ["SE3StateBatch", "SE3StateBatch"], 3,
+                   "R_1 a - R_0 a", {"axes": "3 floats per factor: the axis a in each pose's frame"},
+                   True, "Hinge rows: two poses keep a local axis aligned (with a position "
+                   "equality: a revolute joint); usually an equality constraint.",
+                   "On robot links through LinkFrameFactorBatch (FrameView.Pose); "
+                   "pycunls.articulation.loop_closure builds revolute loops from it."),
+        FactorInfo("SE3AxisOffsetFactorBatch", ["SE3StateBatch", "SE3StateBatch"], 2,
+                   "(R_0 b_k) . (p_1 - p_0), b_1, b_2 perpendicular to a",
+                   {"axes": "3 floats per factor: the axis a in pose 0's frame"},
+                   True, "Slider rows: pose 1's origin stays on the axis through pose 0 (with an "
+                   "orientation equality: a prismatic joint); usually an equality constraint.",
+                   "On robot links through LinkFrameFactorBatch (FrameView.Pose); "
+                   "pycunls.articulation.loop_closure builds prismatic loops from it."),
         FactorInfo("InformationFactorBatch", [], 0, "L_f * r_inner",
                    {"sqrt_information_matrices": "residual_size^2 floats per factor (row-major)"},
                    False, "Weight any factor by a per-factor square-root information matrix "
@@ -288,37 +301,32 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                    "Inverse kinematics: a link frame should reach a world pose.",
                    articulation_note),
         FactorInfo("LinkFrameFactorBatch", art, 0,
-                   "the inner factor's residual, its pose slots fed X_L(q) X_off",
+                   "the inner factor's residual, its frame slots fed a view of X_L(q) X_off",
                    {"topology": "ArticulationTopology",
-                    "inner_factor": "factor over SE(3) poses (built-in or WarpFactorBatch)",
-                    "pose_slots": "list: inner_factor's SE(3) state slots that receive a link "
-                                  "frame pose instead of a state",
-                    "topology_links": "int32, len(pose_slots) per factor: topology link index "
+                    "inner_factor": "factor over SE(3) poses, 3D points or SO(3) rotations "
+                                    "(built-in or WarpFactorBatch)",
+                    "frame_slots": "list of (inner state slot, FrameView): Pose (SE3, 6), "
+                                   "Position (3-vector, 3) or Orientation (SO3, 3)",
+                    "topology_links": "int32, len(frame_slots) per factor: topology link index "
                                       "(position in link_names) carrying each frame",
-                    "frame_offsets": "7 floats (position, quaternion) per pose slot: the frame "
+                    "frame_offsets": "7 floats (position, quaternion) per frame slot: the frame "
                                      "in its link, or None"}, False,
-                   "Custom kinematic objectives: any SE(3) factor (prior, between, sphere "
-                   "clearance, reprojection, a Warp factor) on frames of robot links; the inner "
+                   "Custom kinematic objectives: existing factors on frames of robot links (SE3 "
+                   "prior/between/sphere clearance on a Pose, vector prior/halfspace/between on "
+                   "a Position, SO3 prior/between on an Orientation, a Warp factor); the inner "
                    "factor's other slots (an object pose, a camera) stay states.",
-                   "States: [articulation instance] + inner_factor's slots that are not pose "
-                   "slots. Pose slots use SE3StateBatch's convention (row-major 4x4 "
-                   "world_from_body, body tangent [omega, v], X' = X Exp(delta)). For "
-                   "constraints wrap this batch in ConstraintFactorBatch, never the inner one. "
-                   + articulation_note),
+                   "States: [articulation instance] + inner_factor's slots that are not frame "
+                   "slots. Views use the convention of their state type (Pose: row-major 4x4, "
+                   "body tangent [omega, v], X' = X Exp(delta); Position: world 3-vector; "
+                   "Orientation: row-major 3x3, R' = R Exp(omega)). For constraints wrap this "
+                   "batch in ConstraintFactorBatch, never the inner one. LinkPose/Position/"
+                   "OrientationFactorBatch are faster for what they cover. " + articulation_note),
         FactorInfo("PostureFactorBatch", art, 0, "W (q (-) q*)  (topology.dof_count rows)",
                    {"topology": "ArticulationTopology",
                     "targets": "topology.coord_count floats per factor (joint_q layout)",
                     "weights": "topology.dof_count floats per factor or None"}, False,
                    "Regularizer / null-space posture / stay near a requested configuration.",
                    articulation_note),
-        FactorInfo("LoopClosureFactorBatch", art, 0,
-                   "constraint rows between two joint frames (BALL 3, REVOLUTE 6, PRISMATIC 5, "
-                   "FIXED 6)",
-                   {"topology": "ArticulationTopology", "parent_links": "int32 (-1: world)",
-                    "child_links": "int32", "frames": "14 floats: joint_X_p, joint_X_c",
-                    "axes": "3 floats per factor (REVOLUTE/PRISMATIC) or None"}, False,
-                   "Closed kinematic loops (four-bars, parallel mechanisms); wrap in "
-                   "ConstraintFactorBatch(..., ConstraintKind.Equality).", articulation_note),
         FactorInfo("MimicJointFactorBatch", art, 1, "q_m - (a + b q_ref)",
                    {"topology": "ArticulationTopology", "mimic_dofs": "int32 DOF per factor",
                     "reference_dofs": "int32 DOF per factor",

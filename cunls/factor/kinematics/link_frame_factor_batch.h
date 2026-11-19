@@ -28,84 +28,125 @@
 namespace cunls {
 
 /**
- * @brief Puts the SE(3) pose states of any factor on a robot: chosen pose
- * slots of a wrapped factor receive the world pose of a frame fixed on a link
- * of an articulation instance, and the wrapped factor's Jacobian is carried to
- * the instance's joint DOFs. A custom kinematic objective is then an ordinary
- * factor over SE(3) poses that knows nothing about robots.
+ * @brief What a frame slot of LinkFrameFactorBatch hands its inner factor: the
+ * pose of a frame on a link, its origin or its orientation, each in the layout
+ * and tangent convention of an existing state type, so that the factors of that
+ * state type work on robot links unchanged.
+ */
+enum class FrameView : int {
+  /**
+   * The frame's pose as an SE3StateBatch state: row-major 4x4 world_from_frame,
+   * tangent [ω, v] in the frame (body), update X' = X Exp(δ). Slot tangent 6.
+   */
+  kPose = 0,
+  /**
+   * The frame's origin p in the world, as a VectorStateBatch<3> state (3 floats,
+   * tangent: an additive world-frame step). Slot tangent 3.
+   */
+  kPosition = 1,
+  /**
+   * The frame's orientation R as an SO3StateBatch state: row-major 3x3
+   * world_from_frame, tangent ω in the frame (body), update R' = R Exp(ω).
+   * Slot tangent 3.
+   */
+  kOrientation = 2,
+};
+
+/** @brief One frame slot of LinkFrameFactorBatch: which inner state slot, fed with which view. */
+struct LinkFrameSlot {
+  int inner_slot = 0;                 ///< Position in the inner factor's StateSizes().
+  FrameView view = FrameView::kPose;  ///< What the slot receives.
+};
+
+/**
+ * @brief Puts the pose, position or orientation states of any factor on a
+ * robot: chosen state slots of a wrapped factor (the frame slots) receive a
+ * view of a frame fixed on a link of an articulation instance, and the wrapped
+ * factor's Jacobian is carried to the instance's joint DOFs. A custom kinematic
+ * objective is then an ordinary factor over SE(3) poses, 3D points or SO(3)
+ * rotations that knows nothing about robots.
  *
  * <b>Terms</b>
  *
- * - <b>Inner factor</b>: the wrapped factor (a built-in SE(3) factor such as
- *   SE3PriorFactorBatch, SE3BetweenFactorBatch, SE3SphereClearanceFactorBatch,
- *   or a custom one: C++, CustomFactorBatch, pycunls.warp.WarpFactorBatch).
+ * - <b>Inner factor</b>: the wrapped factor, built-in (SE3PriorFactorBatch,
+ *   SE3BetweenFactorBatch, SE3SphereClearanceFactorBatch,
+ *   PriorVectorFactorBatch<3>, HalfspaceFactorBatch<3>,
+ *   VectorBetweenFactorBatch<3>, SO3PriorFactorBatch, SO3BetweenFactorBatch,
+ *   ...) or custom (C++, CustomFactorBatch, pycunls.warp.WarpFactorBatch).
  * - <b>State slot</b> k of the inner factor: its k-th state, in the order of
  *   its StateSizes() (the order of the pointers it is connected with).
- * - <b>Pose slots</b> (`pose_slots`): the inner state slots that do not
- *   connect to a state of the problem but receive a link frame pose instead.
- *   Each must be an SE(3) slot (tangent 6) in SE3StateBatch's convention: a
- *   row-major 4x4 world_from_body matrix, tangent [ω, v] in the body frame,
- *   update X' = X Exp(δ). Write the inner factor exactly as for SE3 states.
+ * - <b>Frame slots</b> (`frame_slots`): the inner state slots that do not
+ *   connect to a state of the problem but receive a view of a link frame, each
+ *   with its FrameView (kPose: tangent 6; kPosition, kOrientation: tangent 3).
+ *   The view is explicit because the tangent size alone is ambiguous (6: SE(3)
+ *   or a 6-vector; 3: SO(3) or a 3-vector).
  * - <b>Topology link</b>: a link index of the articulation topology,
- *   0 .. LinkCount()-1 (pycunls: the position in `link_names`).
+ *   0 .. LinkCount()-1 (pycunls: the position in `link_names`), or -1 for the
+ *   world (identity pose, moved by no DOF: the frame is the frame offset itself,
+ *   e.g. the fixed side of a loop closed to the world).
  * - <b>Frame offset</b>: where the frame sits on its link, in the link frame
  *   (position, quaternion x, y, z, w; e.g. a camera mount or a tool tip).
  *
- * <b>Example</b> (nP = pose_slots.size() = 1): a look-at factor over one
+ * <b>Example</b> (nF = frame_slots.size() = 1): a look-at factor over one
  * SE(3) pose, put on a wrist camera, one factor per articulation instance:
  *
  * @verbatim
  *   inner factor state slots:   [0: camera pose (SE3, 6)]
- *   pose_slots      = {0}       slot 0 receives a link frame pose
- *   topology_links  = [wrist, wrist, ...]           1 int per factor (nP per factor)
- *   frame_offsets   = [camera mount, ...]           7 floats per factor (7 nP per factor)
+ *   frame_slots     = {{0, kPose}}                  slot 0 receives a link frame pose
+ *   topology_links  = [wrist, wrist, ...]           1 int per factor (nF per factor)
+ *   frame_offsets   = [camera mount, ...]           7 floats per factor (7 nF per factor)
  *   this batch's state slots:   [0: articulation instance (DofCount())]
  * @endverbatim
  *
- * With an object pose as a second inner slot (pose_slots = {0}, inner slots
- * [0: link frame, 1: object (SE3, 6)]), this batch's slots are
- * [0: articulation instance, 1: object] and the object stays a state of the
- * problem, solved together with the joints.
+ * "The tool tip stays above the table" is HalfspaceFactorBatch<3> with
+ * frame_slots = {{0, kPosition}} and the tip as the frame offset, wrapped as
+ * an inequality. With an object pose as a second inner slot (frame_slots =
+ * {{0, kPose}}, inner slots [0: link frame, 1: object (SE3, 6)]), this
+ * batch's slots are [0: articulation instance, 1: object] and the object stays
+ * a state of the problem, solved together with the joints.
  *
- * <b>Per factor f and pose slot s</b> (s = position in pose_slots):
+ * <b>Per factor f and frame slot s</b> (s = position in frame_slots):
  *
  * @verbatim
- *   L   = topology_links[f nP + s]
- *   F_s = X_L(q) X_off            X_off = frame_offsets[(f nP + s) 7 ..] (identity when null)
+ *   L   = topology_links[f nF + s]
+ *   F_s = X_L(q) X_off = (R, p)    X_off = frame_offsets[(f nF + s) 7 ..] (identity when null)
+ *   kPose: F_s (4x4)    kPosition: p    kOrientation: R (3x3)
  * @endverbatim
  *
  * with X_L(q) the world pose of link L of the instance in slot 0, read from
- * its forward-kinematics cache. Several pose slots of one factor are frames
+ * its forward-kinematics cache. Several frame slots of one factor are frames
  * on the same instance (e.g. the relative pose of two links).
  *
  * <b>States of this batch</b>: slot 0 is the articulation instance
  * (TangentSize() = the topology's DOF count), followed by the inner factor's
- * slots that are not pose slots, in their order.
+ * slots that are not frame slots, in their order.
  *
  * <b>Jacobian</b>: for DOF j with world motion column (ω_j, v_j) (see
- * ArticulationTopology), the body twist of F_s = (R, p) per unit of q_j is
- * b_s,j = (Rᵀω_j, Rᵀ(ω_j × p + v_j)), so
+ * ArticulationTopology), the frame moves per unit of q_j by
  *
  * @verbatim
+ *   kPose:        b = (Rᵀω_j, Rᵀ(ω_j × p + v_j))     (body twist)
+ *   kPosition:    b = ω_j × p + v_j                  (world velocity of p)
+ *   kOrientation: b = Rᵀω_j                          (body angular velocity)
  *   ∂r/∂q_j = Σ_s [DOF j moves link L_s] (∂r/∂δ_s) b_s,j
  * @endverbatim
  *
  * and the columns of the other slots are those of the inner factor.
  *
- * <b>Evaluation</b>: three steps on the stream, per item: write each F_s
- * into a scratch pose and build the inner factor's state pointers, evaluate
- * the inner factor (its residuals are this batch's), then carry its Jacobian
- * to the DOFs. The scratch is sized for the largest item count seen
- * (allocated on the first evaluation and when that count grows). A topology
- * link outside 0 .. LinkCount()-1 gives a NaN pose (so, usually, a NaN
- * residual) and zero DOF columns.
+ * <b>Evaluation</b>: three steps on the stream, per item: write each view
+ * into scratch and build the inner factor's state pointers, evaluate the inner
+ * factor (its residuals are this batch's), then carry its Jacobian to the
+ * DOFs. The scratch is sized for the largest item count seen (allocated on the
+ * first evaluation and when that count grows). A topology link outside
+ * -1 .. LinkCount()-1 gives a NaN view (so, usually, a NaN residual) and zero
+ * DOF columns.
  *
  * <b>Sizes</b>: ResidualsSize(), the active count and the capacity are the
  * inner factor's (SetNumActiveFactors() sets the inner one). `topology_links`
  * and `frame_offsets` are read at every evaluation and may be rewritten in
  * place between solves, like any factor data. For constraints, wrap this
- * batch in ConstraintFactorBatch (e.g. clearance as an inequality), never the
- * inner factor.
+ * batch in ConstraintFactorBatch (e.g. a halfspace as an inequality), never
+ * the inner factor.
  */
 class LinkFrameFactorBatch : public ArticulationFactorBatch {
  public:
@@ -114,33 +155,33 @@ class LinkFrameFactorBatch : public ArticulationFactorBatch {
 
   /**
    * @param topology Kinematic tree of the articulation state (must outlive the batch).
-   * @param inner Factor over SE(3) poses (not owned; must outlive the batch).
-   * @param pose_slots State slots of `inner` that receive a link frame pose:
-   *        distinct, each of tangent size 6 (an SE(3) pose); nP =
-   *        pose_slots.size() >= 1.
-   * @param topology_links Device array of nP ints per factor: the topology
-   *        link carrying the frame of each pose slot (factor f, pose slot s at
-   *        f nP + s).
-   * @param frame_offsets Device array of 7 nP floats per factor: the frame of
-   *        each pose slot in its link frame (position, quaternion x, y, z, w),
+   * @param inner Factor over the views (not owned; must outlive the batch).
+   * @param frame_slots Inner state slots that receive a view of a link frame:
+   *        distinct, each with the tangent size of its view (kPose 6,
+   *        kPosition 3, kOrientation 3); nF = frame_slots.size() >= 1.
+   * @param topology_links Device array of nF ints per factor: the topology
+   *        link carrying the frame of each frame slot (factor f, frame slot s
+   *        at f nF + s), or -1 for the world.
+   * @param frame_offsets Device array of 7 nF floats per factor: the frame of
+   *        each frame slot in its link frame (position, quaternion x, y, z, w),
    *        or nullptr for the link frames themselves.
    * @throws std::invalid_argument if inner or topology_links is null, inner is
    *         a constraint batch (wrap this batch in ConstraintFactorBatch
-   *         instead), `pose_slots` is empty, repeats a slot, names a slot
-   *         `inner` does not have or one whose tangent size is not 6, or
-   *         `inner` has more than kMaxInnerSlots slots.
+   *         instead), `frame_slots` is empty, repeats a slot, names a slot
+   *         `inner` does not have or one whose tangent size does not match its
+   *         view, or `inner` has more than kMaxInnerSlots slots.
    */
   LinkFrameFactorBatch(const ArticulationTopology &topology, FactorBatch *inner,
-                       const std::vector<int> &pose_slots, const int *topology_links,
+                       const std::vector<LinkFrameSlot> &frame_slots, const int *topology_links,
                        const float *frame_offsets = nullptr);
 
   /** @brief The wrapped (inner) factor. */
   FactorBatch *Inner() const { return inner_; }
 
-  /** @brief State slots of the inner factor that receive a link frame pose. */
-  const std::vector<int> &PoseSlots() const { return pose_slots_; }
+  /** @brief Inner state slots that receive a view of a link frame, with their views. */
+  const std::vector<LinkFrameSlot> &FrameSlots() const { return frame_slots_; }
 
-  /** @brief The articulation instance, then the inner factor's slots that are not pose slots. */
+  /** @brief The articulation instance, then the inner factor's slots that are not frame slots. */
   std::vector<size_t> StateSizes() const override;
 
   /** @brief The inner factor's active count. */
@@ -160,11 +201,15 @@ class LinkFrameFactorBatch : public ArticulationFactorBatch {
                 size_t num_factor_ids = 0) const override;
 
  private:
+  /** @brief Whether inner state slot `k` is a frame slot. */
+  bool IsFrameSlot(int k) const;
+
   FactorBatch *inner_;
-  std::vector<int> pose_slots_;
+  std::vector<LinkFrameSlot> frame_slots_;
   const int *topology_links_;
   const float *frame_offsets_;
-  mutable dvector<float> poses_;             ///< 16 floats per item and pose slot: F_s.
+  /** 16 floats per item and frame slot: the view for the inner factor, in its state layout. */
+  mutable dvector<float> frames_;
   mutable dvector<float *> inner_pointers_;  ///< Inner state pointers, item-major.
   mutable dvector<float> inner_jacobians_;   ///< The inner factor's Jacobians.
 };

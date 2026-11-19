@@ -34,6 +34,10 @@ CudaStream::CudaStream(bool sync_on_destroy) : sync_on_destroy_(sync_on_destroy)
   THROW_ON_CUDA_ERROR(cudaStreamCreate(&stream));
 }
 
+/** @brief Wraps `external` without owning it (see the header). */
+CudaStream::CudaStream(cudaStream_t external)
+    : stream(external), sync_on_destroy_(false), owned_(false) {}
+
 /**
  * @brief Destroys the CudaStream and releases the underlying CUDA stream.
  *
@@ -42,6 +46,7 @@ CudaStream::CudaStream(bool sync_on_destroy) : sync_on_destroy_(sync_on_destroy)
  * from a destructor.
  */
 CudaStream::~CudaStream() {
+  if (!owned_) return;
   if (sync_on_destroy_) {
     WARN_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   }

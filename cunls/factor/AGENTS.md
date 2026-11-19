@@ -35,9 +35,10 @@ changing that folder.
   (`cunls/factor/clearance/AGENTS.md`).
 - `dynamics/`: vehicle and rigid-body models as shooting defects
   (`cunls/factor/dynamics/AGENTS.md`).
-- `kinematics/`: articulated robots (`ArticulationStateBatch`): link targets, posture, loops,
-  mimic joints, and `LinkFrameFactorBatch` for SE(3) factors on links
-  (`cunls/factor/kinematics/AGENTS.md`).
+- `kinematics/`: articulated robots (`ArticulationStateBatch`): link targets, posture, mimic
+  joints, and `LinkFrameFactorBatch`, which feeds existing SE(3), vector and SO(3) factors a
+  view of a frame on a link (closed loops are built from it, see
+  `cunls/factor/kinematics/AGENTS.md`).
 
 ## Factors in this directory
 
@@ -46,6 +47,10 @@ changing that folder.
 - Registration: `point_to_point_factor_batch.h`, `point_to_plane_factor_batch.h`,
   `symmetric_point_to_plane_factor_batch.h`
 - Generic weighting wrapper: `weighted_factor_batch.h`
+- Joint-axis rows between two SE(3) poses: `se3_joint_axis_factor_batch.h`
+  (`SE3AxisAlignmentFactorBatch`: `R_1 a - R_0 a`, hinge rows; `SE3AxisOffsetFactorBatch`:
+  `(R_0 b_k) . (p_1 - p_0)`, slider rows). Generic (any two SE(3) poses); with
+  `LinkFrameFactorBatch` views they close revolute / prismatic loops of articulations.
 - IMU: `imu_factor_batch.h` (`ImuFactorBatch`, `ImuParameters`): keyframe pair
   (T_a, v_a, b_a, T_b, v_b, b_b; T = world_from_rig, as reprojection / PnP), raw samples in a ragged CSR device array
   (7 floats each, `sample_offsets`); the intermediate states of the Euler chain

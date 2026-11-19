@@ -329,7 +329,8 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
                             sb.apply_plus(x, _device(delta), moved, stream, ignore_bounds=True)
                             # Slot `slot` of the factors on batch j reads the moved copy.
                             shifted = pointers.reshape(n, len(sizes)).copy()
-                            offset = np.uint64(moved.ptr) - base
+                            # Modulo 2^64: the copy may sit below the batch in memory.
+                            offset = np.uint64((int(moved.ptr) - int(base)) % (1 << 64))
                             shifted[rows, slot] = shifted[rows, slot] + offset
                             out = wp.empty((n, m), dtype=float, device=device)
                             fb.evaluate_batch(out, None, _device(shifted.reshape(-1)), stream)
@@ -470,7 +471,7 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
             _, info, _ = effective_factor(problem.factor_batch(b.index))
             kinematic = info is not None and "ArticulationStateBatch" in info.states
             hint = (" Kinematic factors also give NaN for a link or DOF index outside the "
-                    "topology (links 0 .. link_count-1, parent -1 for the world; DOFs 0 .. "
+                    "topology (links 0 .. link_count-1, or -1 for the world in LinkFrameFactorBatch; DOFs 0 .. "
                     "dof_count-1, scalar ones for mimic joints)." if kinematic else "")
             issues.append(Issue(
                 "error",

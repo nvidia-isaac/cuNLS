@@ -25,8 +25,8 @@ import pytest
 import warp as wp
 
 import pycunls
-from pycunls.articulation import topology_from_urdf
-from pycunls.warp import WarpFactorBatch
+from pycunls.articulation import loop_closure, topology_from_joint_arrays, topology_from_urdf
+from pycunls.warp import WarpFactorBatch, WarpPoseFactorBatch
 
 JT = pycunls.ArticulationJointType
 
@@ -238,13 +238,26 @@ def test_every_kinematic_factor_passes_check_jacobians(arm, stream):
         pycunls.LinkOrientationFactorBatch(topo, links, None, wp.array(quats(n)), None, n),
         pycunls.LinkPoseFactorBatch(topo, links, None, wp.array(poses), None, n),
         pycunls.PostureFactorBatch(topo, wp.zeros(n * topo.coord_count, dtype=float), None, n),
-        pycunls.LoopClosureFactorBatch(topo, JT.Revolute, wp.array(np.full(n, 2, np.int32)),
-                                       wp.array(np.full(n, 5, np.int32)), wp.array(frames),
-                                       wp.array(np.tile([0, 0, 1], n).astype(np.float32)), n),
         pycunls.MimicJointFactorBatch(topo, wp.full(n, 5, dtype=wp.int32),
                                       wp.full(n, 4, dtype=wp.int32),
                                       wp.array(np.tile([0.1, 2.0], n).astype(np.float32)), n),
     ]
+    # Existing vector / SO(3) factors on link-frame views.
+    FV = pycunls.FrameView
+    factors.append(pycunls.LinkFrameFactorBatch(
+        topo, pycunls.PriorVectorFactorBatch3(wp.array(rng.uniform(-1, 1, 3 * n)
+                                                       .astype(np.float32)), n),
+        frame_slots=[(0, FV.Position)], topology_links=links, frame_offsets=wp.array(poses)))
+    rotations = np.tile(np.eye(3, dtype=np.float32).reshape(-1), n)
+    factors.append(pycunls.LinkFrameFactorBatch(
+        topo, pycunls.SO3PriorFactorBatch(wp.array(rotations), n),
+        frame_slots=[(0, FV.Orientation)], topology_links=links))
+    # Loop closures of every type (parent link 2 or the world, child link 5).
+    pc = wp.array(np.stack([np.where(np.arange(n) % 2 == 0, 2, -1), np.full(n, 5)], 1)
+                  .astype(np.int32).reshape(-1))
+    axes = wp.array(np.tile([0, 0, 1], n).astype(np.float32))
+    for joint_type in (JT.Ball, JT.Revolute, JT.Prismatic, JT.Fixed):
+        factors += loop_closure(topo, joint_type, pc, wp.array(frames), axes).factors
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     ptrs = [states.state_device_ptr(i) for i in range(n)]
@@ -291,16 +304,14 @@ def test_four_bar_closes(arm, stream):
     posture = pycunls.PostureFactorBatch(topo, wp.array(q0), wp.array(
         np.tile([100.0, 0.01, 0.01], n).astype(np.float32)), n)
     frames = np.tile([1.0, 0, 0, 0, 0, 0, 1, 0.8, 0, 0, 0, 0, 0, 1], n).astype(np.float32)
-    loop = pycunls.LoopClosureFactorBatch(topo, JT.Revolute, wp.full(n, 2, dtype=wp.int32),
-                                          wp.full(n, 3, dtype=wp.int32), wp.array(frames),
-                                          wp.array(np.tile([0, 0, 1], n).astype(np.float32)), n)
-    for fb in (posture, loop):
-        fb.set_num_active_factors(n)
+    links = wp.array(np.tile([2, 3], n).astype(np.int32))      # (parent, child) per loop
+    loop = loop_closure(topo, JT.Revolute, links, wp.array(frames),
+                        wp.array(np.tile([0, 0, 1], n).astype(np.float32)))
+    posture.set_num_active_factors(n)
+    loop.set_num_active_factors(n)
     problem = pycunls.Problem()
     problem.add_state_batch(states)
-    _one_factor_per_instance(
-        problem, states,
-        (posture, pycunls.ConstraintFactorBatch(loop, pycunls.ConstraintKind.Equality)), n)
+    _one_factor_per_instance(problem, states, (posture, *loop.constraints), n)
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     options.constraint_tolerance = 1e-5
     solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), options)
@@ -379,18 +390,10 @@ class _FrameHeight(WarpFactorBatch):
         super().__init__(residual_size=1, state_sizes=[6], capacity=capacity)
         self.heights = heights
 
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-                 factor_ids_ptr, num_factor_ids):
-        n = num_factor_ids
-        write = 1 if jacobians_ptr != 0 else 0
-        jac = (self.wrap_array(jacobians_ptr, wp.float32, 6 * n) if write
-               else wp.zeros(1, dtype=float, device=self._device))
-        wp.launch(_frame_height_kernel, dim=n,
-                  inputs=[self.heights, self.factor_ids(factor_ids_ptr, n),
-                          self.wrap_array(state_pointers_ptr, wp.uint64, n),
-                          self.wrap_array(residuals_ptr, wp.float32, n), jac, write],
-                  stream=self.make_warp_stream(stream_handle))
-        return True
+    def evaluate(self, *args):
+        """Item t looks up its factor's data by ids[t] and reads its state through the
+        pointer table (see WarpFactorBatch.items)."""
+        return self.launch(_frame_height_kernel, self.items(*args), [self.heights])
 
 
 def test_link_frame_factor_with_a_warp_factor(arm, stream):
@@ -424,11 +427,12 @@ def test_link_frame_factor_with_a_warp_factor(arm, stream):
         return problem, before, summary, q.numpy()
 
     inner = _FrameHeight(wp.array(heights), n)
-    frame = pycunls.LinkFrameFactorBatch(topo, inner, pose_slots=[0], topology_links=tools,
+    frame = pycunls.LinkFrameFactorBatch(topo, inner, frame_slots=[(0, pycunls.FrameView.Pose)],
+                                         topology_links=tools,
                                          frame_offsets=wp.array(np.tile(offset, n)))
     problem, before, summary, q_frame = solve(frame)
     assert inner.num_active_factors == n and frame.inner_factor is inner
-    assert frame.pose_slots == [0]
+    assert frame.frame_slots == [(0, pycunls.FrameView.Pose)]
     for check in pycunls.check_jacobians(problem, stream):
         assert check.ok, check
     assert not pycunls.diagnose(problem, stream)
@@ -442,6 +446,144 @@ def test_link_frame_factor_with_a_warp_factor(arm, stream):
     _, _, builtin_summary, q_builtin = solve(builtin)
     assert summary.num_iterations == builtin_summary.num_iterations
     np.testing.assert_allclose(q_frame, q_builtin, atol=1e-3)  # float32 rounding over the solve
+
+
+@wp.func
+def _frame_height_residual(X: wp.transform, height: float) -> float:
+    return wp.transform_get_translation(X)[2] - height
+
+
+@wp.func
+def _look_at_residual(X: wp.transform, target: wp.vec3) -> wp.vec4:
+    d = wp.quat_rotate_inv(wp.transform_get_rotation(X), target - wp.transform_get_translation(X))
+    u = wp.normalize(d)
+    return wp.vec4(u[0], u[1], u[2] - 1.0, wp.length(d) - 0.35)
+
+
+def _pose_problem(arm, stream, inner, n, rng):
+    """Instance i of the arm, inner on a Pose view of a point on its tool, plus a weak posture."""
+    topo = arm.topology
+    states = pycunls.ArticulationStateBatch(topo, n, apply_joint_limits=False)
+    states.set_num_active_states(n)
+    states.set_joint_q(wp.array(rng.uniform(-0.6, 0.6, (n, topo.coord_count)).astype(np.float32)),
+                       n, stream)
+    offset = np.array([0.05, 0.0, 0.1, 0.0, 0.0, 0.0, 1.0], np.float32)
+    frame = pycunls.LinkFrameFactorBatch(
+        topo, inner, frame_slots=[(0, pycunls.FrameView.Pose)],
+        topology_links=wp.full(n, arm.link_names.index("tool"), dtype=wp.int32),
+        frame_offsets=wp.array(np.tile(offset, n)))
+    frame.set_num_active_factors(n)
+    posture = pycunls.PostureFactorBatch(topo, wp.zeros(n * topo.coord_count, dtype=float),
+                                         wp.full(n * topo.dof_count, 0.1, dtype=float), n)
+    posture.set_num_active_factors(n)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    _one_factor_per_instance(problem, states, [frame, posture], n)
+    wp.synchronize()
+    return problem, states
+
+
+def test_warp_pose_factor_autodiff_matches_analytic(arm, stream):
+    """WarpPoseFactorBatch (residual function only, Warp autodiff Jacobian) solves like the
+    analytic _FrameHeight factor; a vector residual passes check_jacobians in every mode."""
+    n = 16
+    heights = np.random.default_rng(6).uniform(0.3, 0.6, n).astype(np.float32)
+    results = []
+    for inner in (_FrameHeight(wp.array(heights), n),
+                  WarpPoseFactorBatch(_frame_height_residual, wp.array(heights), n)):
+        problem, states = _pose_problem(arm, stream, inner, n, np.random.default_rng(4))
+        for check in pycunls.check_jacobians(problem, stream):
+            assert check.ok, check
+        summary = pycunls.LevenbergMarquardtMinimizer().minimize(stream, problem)
+        q = wp.zeros(n * arm.topology.coord_count, dtype=float)
+        states.get_joint_q(q, n, stream)
+        wp.synchronize()
+        results.append((summary.num_iterations, q.numpy()))
+    assert results[0][0] == results[1][0]
+    np.testing.assert_allclose(results[0][1], results[1][1], atol=1e-3)
+
+    targets = wp.array(np.random.default_rng(7).uniform(-0.5, 0.5, (n, 3)).astype(np.float32)
+                       + np.array([0.3, 0.0, 0.6], np.float32), dtype=wp.vec3)
+    for mode in ("auto", "autodiff", "numeric"):
+        inner = WarpPoseFactorBatch(_look_at_residual, targets, n, jacobian=mode)
+        problem, _ = _pose_problem(arm, stream, inner, n, np.random.default_rng(5))
+        for check in pycunls.check_jacobians(problem, stream):
+            assert check.ok, (mode, check)
+        if mode == "auto":
+            assert inner.mode == "autodiff"   # the one-time check accepted the autodiff Jacobian
+
+
+def test_warp_pose_factor_rejects_wrong_signatures():
+    @wp.func
+    def two_floats(a: float, b: float) -> float:
+        return a + b
+
+    with pytest.raises(TypeError, match="Fix:"):
+        WarpPoseFactorBatch(two_floats, wp.zeros(4, dtype=float), 4)
+    with pytest.raises(TypeError, match="Fix:"):
+        WarpPoseFactorBatch(lambda X, d: 0.0, wp.zeros(4, dtype=float), 4)
+    with pytest.raises(ValueError, match="Fix:"):
+        WarpPoseFactorBatch(_frame_height_residual, wp.zeros(4, dtype=float), 4, jacobian="fd")
+
+
+def _scene_arrays():
+    """Two replicated 3-joint arms in scene arrays (world A: joints 0-2, bodies 0-2; world B:
+    joints 3-5, bodies 3-5) plus a loop-closing joint 6 in world B (body 3 to body 5)."""
+    jt = [JT.Revolute.value] * 7
+    parent = [-1, 0, 1, -1, 3, 4, 3]
+    child = [0, 1, 2, 3, 4, 5, 5]
+    xp = np.tile([0, 0, 0.2, 0, 0, 0, 1], (7, 1)).astype(np.float32)
+    xp[3, :3] = [1.0, 0.0, 0.2]                   # world B's arm stands 1 m further in x
+    xc = np.tile([0, 0, 0, 0, 0, 0, 1], (7, 1)).astype(np.float32)
+    q_start = np.arange(8, dtype=np.int32)
+    axis = np.tile([[0, 0, 1], [0, 1, 0], [0, 1, 0]], (3, 1))[:7].astype(np.float32)
+    lower, upper = np.full(7, -2.0, np.float32), np.full(7, 2.0, np.float32)
+    return (jt, parent, child, xp, xc, q_start, q_start, axis), dict(limit_lower=lower,
+                                                                    limit_upper=upper)
+
+
+def test_topology_from_joint_arrays_maps_scene_indices(stream):
+    """World B's arm selected from scene arrays: local indices, maps, loop joints; its forward
+    kinematics equals world A's arm placed at world B's root."""
+    arrays, limits = _scene_arrays()
+    art = topology_from_joint_arrays(*arrays, joints=range(3, 7), **limits)
+    topo = art.topology
+    assert topo.joint_count == 3 and topo.dof_count == 3 and topo.coord_count == 3
+    np.testing.assert_array_equal(art.joints, [3, 4, 5])
+    np.testing.assert_array_equal(art.bodies, [3, 4, 5])
+    np.testing.assert_array_equal(art.link_of_body, [-1, -1, -1, 0, 1, 2])
+    np.testing.assert_array_equal(art.coord_index, [3, 4, 5])
+    np.testing.assert_array_equal(art.dof_index, [3, 4, 5])
+    assert art.coord_start == 3
+    np.testing.assert_array_equal(art.loop_joints, [6])
+    np.testing.assert_allclose(topo.lower_limits, [-2.0] * 3)
+
+    # Same joint angles in both worlds: world B's links are world A's shifted by 1 m in x.
+    scene_q = wp.array(np.tile([0.3, -0.5, 0.8], 2).astype(np.float32))
+    world_a = topology_from_joint_arrays(*arrays, joints=range(0, 3), **limits)
+    poses = []
+    for a in (world_a, art):
+        states = pycunls.ArticulationStateBatch(a.topology, 1)
+        states.set_num_active_states(1)
+        states.set_joint_q(scene_q[a.coord_start:], 1, stream)
+        out = wp.zeros(3, dtype=wp.transform)
+        states.get_link_transforms(out, 1, stream)
+        wp.synchronize()
+        poses.append(out.numpy())
+    np.testing.assert_allclose(poses[1][:, :3] - poses[0][:, :3],
+                               np.tile([1.0, 0.0, 0.0], (3, 1)), atol=1e-5)
+    np.testing.assert_allclose(poses[1][:, 3:], poses[0][:, 3:], atol=1e-6)
+
+    with pytest.raises(ValueError, match="Fix:"):   # cut off from the root (joint 3 missing)
+        topology_from_joint_arrays(*arrays, joints=[4, 5])
+    with pytest.raises(ValueError, match="Fix:"):
+        topology_from_joint_arrays(*arrays, joints=[9])
+
+
+def test_warp_factor_batch_helpers_cache_streams():
+    inner = _FrameHeight(wp.zeros(4, dtype=float), 4)
+    s = wp.Stream(wp.get_cuda_device())
+    assert inner.make_warp_stream(s.cuda_stream) is inner.make_warp_stream(s.cuda_stream)
 
 
 def test_topology_accepts_gpu_arrays():

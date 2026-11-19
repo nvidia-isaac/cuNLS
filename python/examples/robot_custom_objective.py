@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Custom kinematic objectives on a robot arm: a Warp factor and a built-in SE(3) factor on
-link frames (``LinkFrameFactorBatch``).
+"""Custom kinematic objectives on a robot arm: a Warp factor and built-in SE(3) and vector factors
+on link frames (``LinkFrameFactorBatch``).
 
 A 7-DOF arm carries a camera on its wrist. For each of 512 inspection points, find joint angles
 such that
@@ -22,15 +22,18 @@ such that
 * the camera looks at the point from 0.35 m: a **custom Warp factor** ``LookAtFactor`` over one
   SE(3) pose (the camera), with r = (u - e_z, |d| - 0.35), d = R^T (target - p), u = d / |d|;
 * the elbow keeps 0.15 m from a spherical obstacle: the **built-in**
-  ``SE3SphereClearanceFactorBatch``, an inequality constraint;
+  ``SE3SphereClearanceFactorBatch`` on the elbow's pose, an inequality constraint;
+* the camera stays above a table plane: the **built-in** ``HalfspaceFactorBatch3`` on the
+  camera's *position*, an inequality constraint;
 * the joints stay within their limits (hard bounds of the state);
 * the arm stays near a nominal posture (a weak ``PostureFactorBatch``, for redundancy).
 
-Neither SE(3) factor knows about robots. ``LinkFrameFactorBatch`` feeds each one the pose of a
-frame on a link (X_link(q) X_offset, from the state's forward-kinematics cache) and carries its
-6-column SE(3) Jacobian to the joint angles through the chain rule. So a custom objective is an
-ordinary SE(3) factor: body-frame tangent [omega, v] and update X' = X Exp(delta), the
-convention of ``SE3StateBatch``.
+None of these factors knows about robots. ``LinkFrameFactorBatch`` feeds each one a view of a
+frame on a link (X_link(q) X_offset, from the state's forward-kinematics cache): its pose
+(``FrameView.Pose``, as an ``SE3StateBatch`` state), its position (``FrameView.Position``, as a
+``VectorStateBatch3`` state) or its rotation (``FrameView.Orientation``, as an ``SO3StateBatch``
+state), and carries the factor's Jacobian to the joint angles through the chain rule. So a custom
+objective is an ordinary factor written for one of those state types.
 """
 
 import os
@@ -41,7 +44,7 @@ import warp as wp
 
 import pycunls
 from pycunls.articulation import topology_from_urdf
-from pycunls.warp import WarpFactorBatch
+from pycunls.warp import WarpFactorBatch, jacobian_index, pose_at
 from example_utils import report
 
 wp.init()
@@ -50,6 +53,7 @@ NUM_PROBLEMS = 512
 STANDOFF = 0.35                                   # camera-to-point distance [m]
 OBSTACLE = np.array([0.35, 0.0, 0.55, 0.08], np.float32)  # center (x, y, z), radius [m]
 ELBOW_MARGIN = 0.07                               # elbow radius: clearance = 0.15 m
+TABLE_HEIGHT = 0.42                               # the camera stays above z = 0.42 m
 CAMERA_ON_WRIST = np.array([0.0, 0.05, 0.08, 0.0, 0.0, 0.0, 1.0], np.float32)  # p, quat xyzw
 
 # A 7-DOF arm: revolute joints alternating about z and y, then a flange.
@@ -83,9 +87,9 @@ def look_at_kernel(targets: wp.array(dtype=wp.vec3), standoff: float,
                    residuals: wp.array(dtype=float), jacobians: wp.array(dtype=float),
                    write_jacobians: int):
     t = wp.tid()
-    X = wp.array(ptr=state_pointers[t], shape=(16,), dtype=float)  # camera pose, row-major 4x4
-    R = wp.mat33(X[0], X[1], X[2], X[4], X[5], X[6], X[8], X[9], X[10])
-    p = wp.vec3(X[3], X[7], X[11])
+    X = pose_at(state_pointers, t)                 # camera pose: item t's only state (K = 1)
+    R = wp.quat_to_matrix(wp.transform_get_rotation(X))
+    p = wp.transform_get_translation(X)
     d = wp.transpose(R) * (targets[ids[t]] - p)                    # target in the camera frame
     dist = wp.length(d)
     u = d / dist
@@ -100,11 +104,11 @@ def look_at_kernel(targets: wp.array(dtype=wp.vec3), standoff: float,
         Jw = P * wp.skew(d)
         for r in range(3):
             for k in range(3):
-                jacobians[(4 * t + r) * 6 + k] = Jw[r, k]
-                jacobians[(4 * t + r) * 6 + 3 + k] = -P[r, k]
+                jacobians[jacobian_index(t, r, k, 4, 6)] = Jw[r, k]          # columns 0-2: w
+                jacobians[jacobian_index(t, r, 3 + k, 4, 6)] = -P[r, k]      # columns 3-5: v
         for k in range(3):
-            jacobians[(4 * t + 3) * 6 + k] = 0.0
-            jacobians[(4 * t + 3) * 6 + 3 + k] = -u[k]
+            jacobians[jacobian_index(t, 3, k, 4, 6)] = 0.0
+            jacobians[jacobian_index(t, 3, 3 + k, 4, 6)] = -u[k]
 
 
 class LookAtFactor(WarpFactorBatch):
@@ -114,18 +118,10 @@ class LookAtFactor(WarpFactorBatch):
         super().__init__(residual_size=4, state_sizes=[6], capacity=capacity)
         self.targets, self.standoff = targets, standoff
 
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-                 factor_ids_ptr, num_factor_ids):
-        n = num_factor_ids
-        write = 1 if jacobians_ptr != 0 else 0
-        jac = (self.wrap_array(jacobians_ptr, wp.float32, n * 24) if write
-               else wp.zeros(1, dtype=float, device=self._device))
-        wp.launch(look_at_kernel, dim=n,
-                  inputs=[self.targets, self.standoff, self.factor_ids(factor_ids_ptr, n),
-                          self.wrap_array(state_pointers_ptr, wp.uint64, n),
-                          self.wrap_array(residuals_ptr, wp.float32, 4 * n), jac, write],
-                  stream=self.make_warp_stream(stream_handle))
-        return True
+    def evaluate(self, *args):
+        """Item t looks up its factor's data by ids[t] and reads its state through the
+        pointer table (see WarpFactorBatch.items)."""
+        return self.launch(look_at_kernel, self.items(*args), [self.targets, self.standoff])
 
 
 # ── Checks in NumPy ──────────────────────────────────────────────────────────────────────────
@@ -156,28 +152,39 @@ def main():
 
     # 2. States: one arm per problem, from a bent nominal posture; joint limits are hard bounds.
     nominal = np.array([0.0, 0.6, 0.0, -1.6, 0.0, 1.6, 0.0], np.float32)
-    stream = pycunls.CudaStream()
+    stream = wp.get_stream()   # solve on Warp's stream: uploads, solve and reads stay in order
     states = pycunls.ArticulationStateBatch(topo, n)
     states.set_num_active_states(n)
     states.set_joint_q(wp.array(np.tile(nominal, n)), n, stream)
 
-    # 3. Factors. LookAtFactor and SE3SphereClearanceFactorBatch are factors over one SE(3) pose
-    #    (state slot 0). LinkFrameFactorBatch feeds that slot (pose_slots=[0]) the world pose of
-    #    a frame on a robot link instead of a pose state: topology_links names the link per
-    #    factor (an index into robot.link_names), frame_offsets where the frame sits on it.
+    # 3. Factors. Each one is an ordinary factor over one state (slot 0). LinkFrameFactorBatch
+    #    feeds that slot a view of a frame on a robot link instead of a state: frame_slots names
+    #    the slot and the view, topology_links the link per factor (an index into
+    #    robot.link_names), frame_offsets where the frame sits on the link.
     look_at = LookAtFactor(wp.array(points, dtype=wp.vec3), STANDOFF, n)
+    wrist_links = wp.full(n, wrist, dtype=wp.int32)                # the camera is on the wrist
+    camera_mounts = wp.array(np.tile(CAMERA_ON_WRIST, n))          # ... at this mount
     camera = pycunls.LinkFrameFactorBatch(
-        topo, look_at, pose_slots=[0],
-        topology_links=wp.full(n, wrist, dtype=wp.int32),          # the camera is on the wrist
-        frame_offsets=wp.array(np.tile(CAMERA_ON_WRIST, n)))       # ... at this mount
+        topo, look_at, frame_slots=[(0, pycunls.FrameView.Pose)],   # an SE(3) factor: the pose
+        topology_links=wrist_links, frame_offsets=camera_mounts)
     camera.set_num_active_factors(n)                               # sets look_at's count
 
     obstacles = wp.array(np.tile(OBSTACLE, n))
     sphere = pycunls.SE3SphereClearanceFactorBatch(obstacles, ELBOW_MARGIN, n)
     elbow_frame = pycunls.LinkFrameFactorBatch(
-        topo, sphere, pose_slots=[0],
+        topo, sphere, frame_slots=[(0, pycunls.FrameView.Pose)],
         topology_links=wp.full(n, elbow, dtype=wp.int32))          # the elbow link's own frame
     elbow_frame.set_num_active_factors(n)
+
+    # a^T p - b <= 0 with a = (0, 0, -1), b = -TABLE_HEIGHT: the camera's z stays above the table.
+    plane = pycunls.HalfspaceFactorBatch3(
+        wp.array(np.tile([0.0, 0.0, -1.0], n).astype(np.float32)),
+        wp.full(n, -TABLE_HEIGHT, dtype=float), n)
+    camera_height = pycunls.LinkFrameFactorBatch(
+        topo, plane, frame_slots=[(0, pycunls.FrameView.Position)],  # a vector factor: the origin
+        topology_links=wrist_links, frame_offsets=camera_mounts)
+    camera_height.set_num_active_factors(n)
+    above_table = pycunls.ConstraintFactorBatch(camera_height, pycunls.ConstraintKind.Inequality)
     clearance = pycunls.ConstraintFactorBatch(elbow_frame, pycunls.ConstraintKind.Inequality)
 
     posture = pycunls.PostureFactorBatch(topo, wp.array(np.tile(nominal, n)),
@@ -188,10 +195,9 @@ def main():
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     instance = wp.array(np.arange(n, dtype=np.int32))
-    for factor in (camera, clearance, posture):
+    for factor in (camera, clearance, above_table, posture):
         problem.add_factor_batch(factor, [states], instance)
     problem.set_problem_partition(n, [instance])
-    wp.synchronize()
     for issue in pycunls.diagnose(problem, stream):
         print(issue)
 
@@ -206,7 +212,6 @@ def main():
     q = wp.zeros(n * topo.coord_count, dtype=float)
     states.get_link_transforms(poses, n, stream)
     states.get_joint_q(q, n, stream)
-    wp.synchronize()  # the reads above run on the cuNLS stream
     poses, q = poses.numpy(), q.numpy().reshape(n, -1)
     R_wrist = rotation(poses[:, wrist, 3:])
     cam_p = poses[:, wrist, :3] + R_wrist @ CAMERA_ON_WRIST[:3]
@@ -218,17 +223,22 @@ def main():
                  - OBSTACLE[3] - ELBOW_MARGIN)
     lower, upper = np.asarray(topo.lower_limits), np.asarray(topo.upper_limits)
     in_limits = np.all((q >= lower - 1e-5) & (q <= upper + 1e-5), axis=1)
-    solved = (view_error < 0.5) & (np.abs(dist - STANDOFF) < 2e-3) & (elbow_gap > -2e-3)
+    above = cam_p[:, 2] - TABLE_HEIGHT
+    solved = ((view_error < 0.5) & (np.abs(dist - STANDOFF) < 2e-3) & (elbow_gap > -2e-3)
+              & (above > -2e-3))
 
-    print(f"Wrist camera aims at {n} points (custom Warp factor + SE(3) clearance on links)")
+    print(f"Wrist camera aims at {n} points (custom Warp factor, SE(3) clearance and a table "
+          "halfspace on links)")
     print(f"  Outcome      : {summary.status.name}, {summary.num_converged} / {n} subproblems "
           f"converged, {summary.outer_iterations} outer / {summary.inner_iterations} inner "
           "iterations")
     print(f"  Solved       : {int(solved.sum())} / {n} (view < 0.5 deg, standoff +-2 mm, "
-          "clear elbow)")
+          "clear elbow, above the table)")
     print(f"  View error   : median {np.median(view_error):.3f} deg, max {view_error.max():.3f} deg")
     print(f"  Standoff     : max |dist - {STANDOFF}| = {np.abs(dist - STANDOFF).max() * 1e3:.2f} mm")
     print(f"  Elbow gap    : min {elbow_gap.min() * 1e3:.2f} mm (>= 0 is clear)")
+    print(f"  Table gap    : min {above.min() * 1e3:.2f} mm, {int((above < 1e-3).sum())} cameras "
+          "on the plane")
     print(f"  In limits    : {int(in_limits.sum())} / {n}")
     report.check(bool(np.all(in_limits)), "a solution left the joint limits")
     report.check(solved.mean() >= 0.9, f"only {int(solved.sum())} of {n} problems solved")

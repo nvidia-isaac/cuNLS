@@ -19,12 +19,13 @@
  *  @brief Tests for the DeviceVector CUDA device memory wrapper class.
  */
 
+#include "cunls/common/device_vector.h"
+
 #include <gtest/gtest.h>
 
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
-#include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
 
 namespace cunls {
@@ -32,7 +33,7 @@ namespace cunls {
 /** @brief Test fixture for DeviceVector tests; ensures CUDA device is
  * initialized. */
 class DeviceVectorTest : public ::testing::Test {
-protected:
+ protected:
   void SetUp() override {
     // Ensure CUDA is initialized
     THROW_ON_CUDA_ERROR(cudaSetDevice(0));
@@ -146,10 +147,8 @@ TEST_F(DeviceVectorTest, AsyncCopyRoundTrip) {
   // Allocate pinned host memory for true async operation
   float *pinned_src = nullptr;
   float *pinned_dst = nullptr;
-  THROW_ON_CUDA_ERROR(
-      cudaMallocHost(&pinned_src, num_elements * sizeof(float)));
-  THROW_ON_CUDA_ERROR(
-      cudaMallocHost(&pinned_dst, num_elements * sizeof(float)));
+  THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned_src, num_elements * sizeof(float)));
+  THROW_ON_CUDA_ERROR(cudaMallocHost(&pinned_dst, num_elements * sizeof(float)));
 
   // Initialize source data
   for (size_t i = 0; i < num_elements; ++i) {
@@ -158,7 +157,7 @@ TEST_F(DeviceVectorTest, AsyncCopyRoundTrip) {
 
   // Create device vector and stream
   DeviceVector<float> vec(num_elements);
-  CudaStream stream(true); // sync on destroy
+  CudaStream stream(true);  // sync on destroy
 
   // Async copy to device
   vec.CopyFromHostAsync(pinned_src, num_elements, stream);
@@ -193,7 +192,7 @@ TEST_F(DeviceVectorTest, CopyFromHostExceedsCapacity) {
 TEST_F(DeviceVectorTest, CopyToHostExceedsSize) {
   DeviceVector<float> vec(10);
   std::vector<float> host_data(10, 1.0f);
-  vec.CopyFromHost(host_data.data(), 5); // Only copy 5 elements
+  vec.CopyFromHost(host_data.data(), 5);  // Only copy 5 elements
 
   std::vector<float> result(10);
   EXPECT_THROW(vec.CopyToHost(result.data(), 10), std::runtime_error);
@@ -239,7 +238,7 @@ TEST_F(DeviceVectorTest, ResizeSmallerKeepsCapacity) {
   vec.resize(new_size);
 
   EXPECT_EQ(vec.size(), new_size);
-  EXPECT_EQ(vec.capacity(), initial_size); // Capacity unchanged
+  EXPECT_EQ(vec.capacity(), initial_size);  // Capacity unchanged
 }
 
 /** @brief Verifies that resizing without the preserve flag still allocates
@@ -270,7 +269,7 @@ TEST_F(DeviceVectorTest, ReserveIncreasesCapacity) {
 
   vec.reserve(reserved_capacity);
 
-  EXPECT_EQ(vec.size(), initial_size); // Size unchanged
+  EXPECT_EQ(vec.size(), initial_size);  // Size unchanged
   EXPECT_EQ(vec.capacity(), reserved_capacity);
 
   // Verify data is preserved
@@ -292,7 +291,7 @@ TEST_F(DeviceVectorTest, ReserveSmallerDoesNothing) {
   vec.reserve(50);
 
   EXPECT_EQ(vec.capacity(), initial_capacity);
-  EXPECT_EQ(vec.data(), original_data); // Pointer unchanged
+  EXPECT_EQ(vec.data(), original_data);  // Pointer unchanged
 }
 
 /** @brief Verifies that clear sets size to 0 but retains allocated capacity. */
@@ -505,8 +504,7 @@ TEST_F(DeviceVectorTest, WorksWithStructType) {
   std::vector<TestStruct> host_data(num_elements);
 
   for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = {static_cast<float>(i), static_cast<float>(i * 2),
-                    static_cast<int>(i)};
+    host_data[i] = {static_cast<float>(i), static_cast<float>(i * 2), static_cast<int>(i)};
   }
 
   DeviceVector<TestStruct> vec(host_data);
@@ -561,4 +559,24 @@ TEST_F(DeviceVectorTest, PartialCopyOperations) {
   }
 }
 
-} // namespace cunls
+// A CudaStream wrapping a stream created elsewhere runs work on it and leaves it alive.
+TEST(CudaStreamTest, WrapsAnExternalStreamWithoutOwningIt) {
+  cudaStream_t external;
+  THROW_ON_CUDA_ERROR(cudaStreamCreate(&external));
+  std::vector<float> host(256, 3.f);
+  DeviceVector<float> d(host.size());
+  {
+    CudaStream wrapped(external);
+    EXPECT_EQ(wrapped.GetStream(), external);
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(d.data(), host.data(), host.size() * sizeof(float),
+                                        cudaMemcpyHostToDevice, wrapped.GetStream()));
+  }  // the wrapper is gone; the stream must still be valid
+  EXPECT_EQ(cudaStreamSynchronize(external), cudaSuccess);
+  std::vector<float> back(host.size());
+  THROW_ON_CUDA_ERROR(
+      cudaMemcpy(back.data(), d.data(), back.size() * sizeof(float), cudaMemcpyDeviceToHost));
+  EXPECT_EQ(back, host);
+  EXPECT_EQ(cudaStreamDestroy(external), cudaSuccess);
+}
+
+}  // namespace cunls

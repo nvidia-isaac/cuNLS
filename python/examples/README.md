@@ -14,8 +14,8 @@ renders of large problems ([gallery](#gallery-large-problems-one-iteration-per-f
 | [`ransac_pnp.py`](#robust-pnp-with-ransac-ransac_pnppy) | PnP with 50% wrong matches: `RansacLevenbergMarquardtMinimizer` vs least squares | - |
 | [`imu_bundle_adjustment.py`](#visual-inertial-bundle-adjustment-imu_bundle_adjustmentpy) | `ImuFactorBatch` + reprojection factors: poses, velocities, IMU biases | - |
 | [`custom_warp_factor.py`](#custom-factor-in-warp-custom_warp_factorpy) | A factor written as a Warp kernel, with an analytic or a numeric Jacobian | - |
-| [`robot_custom_objective.py`](#custom-kinematic-objectives-robot_custom_objectivepy) | A Warp look-at factor and SE(3) clearance on a robot arm's links (`LinkFrameFactorBatch`), 512 problems with joint limits | - |
 | [`custom_warp_state.py`](#custom-state-in-warp-custom_warp_statepy) | A state type written in Warp: positive scalars with a multiplicative retraction | - |
+| [`robot_custom_objective.py`](#custom-kinematic-objectives-robot_custom_objectivepy) | A Warp look-at factor, SE(3) clearance and a table halfspace on a robot arm's links (`LinkFrameFactorBatch` views), 512 problems with joint limits | - |
 | [`tartan_vio.py`](#visual-inertial-odometry-with-ransac-on-tartanground) | RGB-D inertial odometry on TartanGround with injected outliers: IMU factor + RANSAC | data, OpenCV, Rerun |
 | [`supermarket_drones.py`](#a-drone-fleet-in-a-supermarket-batched-mpc) | A fleet of quadrotors in a real store with walking shoppers: batched MPC | data, SciPy, Rerun |
 
@@ -214,26 +214,29 @@ Custom Warp State Batch Example (positive-scalar manifold)
 
 ## Custom kinematic objectives (`robot_custom_objective.py`)
 
-Objectives of your own on a robot arm, written as ordinary SE(3) factors. A 7-DOF arm aims a
-wrist camera at 512 points, one inverse-kinematics problem per point: a Warp factor
-(`LookAtFactor`, 4 rows on one SE(3) pose) asks the camera to look at the point from 0.35 m, and
-the built-in `SE3SphereClearanceFactorBatch`, wrapped as an inequality, keeps the elbow off an
-obstacle. `LinkFrameFactorBatch` hands each factor the pose of a frame on a link and carries its
-SE(3) Jacobian to the joint angles; the joint limits are hard bounds
-(`AugmentedLagrangianMinimizer`). The script checks every solution in NumPy from the link
-transforms.
+Objectives of your own on a robot arm, written as ordinary factors. A 7-DOF arm aims a wrist
+camera at 512 points, one inverse-kinematics problem per point: a Warp factor (`LookAtFactor`,
+4 rows on one SE(3) pose, written with the `pycunls.warp` helpers `pose_at` and
+`jacobian_index`) asks the camera to look at the point from 0.35 m; the built-in
+`SE3SphereClearanceFactorBatch` keeps the elbow off an obstacle, and the built-in
+`HalfspaceFactorBatch3` keeps the camera above a table, both wrapped as inequalities.
+`LinkFrameFactorBatch` hands each factor a view of a frame on a link (`FrameView.Pose` for the
+SE(3) factors, `FrameView.Position` for the halfspace) and carries its Jacobian to the joint
+angles; the joint limits are hard bounds (`AugmentedLagrangianMinimizer`). The script checks
+every solution in NumPy from the link transforms.
 
 ```bash
 python robot_custom_objective.py
 ```
 
 ```text
-Wrist camera aims at 512 points (custom Warp factor + SE(3) clearance on links)
-  Outcome      : Converged, 512 / 512 subproblems converged, 3 outer / 168 inner iterations
-  Solved       : 512 / 512 (view < 0.5 deg, standoff +-2 mm, clear elbow)
-  View error   : median 0.020 deg, max 0.059 deg
-  Standoff     : max |dist - 0.35| = 0.41 mm
-  Elbow gap    : min -0.01 mm (>= 0 is clear)
+Wrist camera aims at 512 points (custom Warp factor, SE(3) clearance and a table halfspace on links)
+  Outcome      : Converged, 512 / 512 subproblems converged, 4 outer / 214 inner iterations
+  Solved       : 512 / 512 (view < 0.5 deg, standoff +-2 mm, clear elbow, above the table)
+  View error   : median 0.020 deg, max 0.066 deg
+  Standoff     : max |dist - 0.35| = 0.32 mm
+  Elbow gap    : min -0.00 mm (>= 0 is clear)
+  Table gap    : min -0.09 mm, 2 cameras on the plane
   In limits    : 512 / 512
 ```
 

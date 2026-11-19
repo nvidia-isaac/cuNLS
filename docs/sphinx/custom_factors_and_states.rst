@@ -227,14 +227,19 @@ With NVIDIA Warp
 -------------------------------------------------------------------------------
 
 ``pycunls.warp.WarpFactorBatch`` and ``WarpStateBatch`` wrap the raw pointers
-as ``warp.array`` objects (``wrap_array``) and cuNLS's stream as a
-``warp.Stream`` (``make_warp_stream``), so the kernel is ordered with the rest
-of the minimizer's work. ``WarpFactorBatch.factor_ids(factor_ids_ptr, n)``
-returns the factor of every item as an ``int32`` array, so a kernel can always
-read ``ids[t]``, whether or not the caller passed factor ids. The state
-pointers arrive as a table of 64-bit addresses: wrap it as a ``wp.uint64``
-array, and read item ``t``'s state inside the kernel with
-``wp.array(ptr=state_ptrs[t], shape=(J,), dtype=wp.float32)``:
+as ``warp.array`` objects and cuNLS's stream as a ``warp.Stream``, so the kernel
+is ordered with the rest of the minimizer's work. For a factor,
+``WarpFactorBatch.items(*args)`` turns the arguments of ``evaluate`` into Warp
+arrays: the factor of every item (``ids``, so a kernel can always read
+``ids[t]``, whether or not the caller passed factor ids), the state pointer
+table, the residuals, the Jacobians (or a stand-in with ``write_jacobians = 0``)
+and the stream. ``WarpFactorBatch.launch(kernel, items, inputs)`` launches one
+thread per item with the factor's own ``inputs`` followed by those standard
+arguments. The state pointers arrive as a table of 64-bit addresses: read item
+``t``'s state inside the kernel with
+``wp.array(ptr=state_ptrs[t], shape=(J,), dtype=wp.float32)`` (or
+``pycunls.warp.pose_at`` / ``point_at`` / ``rotation_at`` for poses, points and
+rotations):
 
 .. code-block:: python
 
@@ -263,18 +268,14 @@ array, and read item ``t``'s state inside the kernel with
            super().__init__(residual_size=1, state_sizes=[2], capacity=xs.shape[0])
            self.xs, self.ys = xs, ys                     # wp.arrays; keep them alive
 
-       def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr,
-                    num_factor_ids):
-           n = num_factor_ids                            # number of items, always > 0
-           write_jac = 1 if jac_ptr != 0 else 0
-           jac = (self.wrap_array(jac_ptr, wp.float32, 2 * n) if write_jac
-                  else wp.empty(1, dtype=wp.float32, device=self._device))
-           wp.launch(line_kernel, dim=n,
-                     inputs=[self.xs, self.ys, self.factor_ids(factor_ids_ptr, n),
-                             self.wrap_array(sp_ptr, wp.uint64, n),   # one state per item
-                             self.wrap_array(res_ptr, wp.float32, n), jac, write_jac],
-                     stream=self.make_warp_stream(stream_handle))
-           return True
+       def evaluate(self, *args):
+           # line_kernel(xs, ys, ids, state_ptrs, res, jac, write_jac): the factor's inputs,
+           # then the standard arguments launch() appends.
+           return self.launch(line_kernel, self.items(*args), [self.xs, self.ys])
+
+For anything ``items`` does not cover, ``evaluate`` receives the raw arguments
+``(res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids)``;
+``wrap_array``, ``factor_ids`` and ``make_warp_stream`` convert them one by one.
 
 The state pointer table holds ``n * B`` entries, item-major (item ``t``'s
 ``k``-th state is ``state_ptrs[t * B + k]``): read **per item**, not per

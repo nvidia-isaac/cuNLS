@@ -18,9 +18,11 @@ Relative-pose factors: a measured transform between two states of the same manif
 
 ## Conventions
 
-- Two states (left, right), residual `Log(Delta * T_left^-1 * T_right)` in the group's tangent
-  (SE3: `[omega, v]`); `Delta` is the measurement, one per factor.
-- `Delta = T_right^-1 * T_left` at the solution: the **inverse** of the usual relative pose
+- Two states (left, right) and a measurement `Delta` per factor. Residuals: SE2 / SE3 / Sim /
+  SL4 `Log(Delta * T_left^-1 * T_right)`; SO3 `Log(R_left^T * R_right * Delta)`; SO2
+  `Log(R_left^T * R_right * R_delta)`; vector `left - right - delta`. Each is in the group's
+  tangent (SE3: `[omega, v]`).
+- For every group, `Delta = T_right^-1 * T_left` at the solution: the **inverse** of the usual relative pose
   `T_left^-1 * T_right`. Users get this wrong most often (`python/pycunls/AGENT_GUIDE.md`,
   section 4).
 - Right perturbation of both states (`T Exp(delta)`), as every pose factor here.

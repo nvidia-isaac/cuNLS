@@ -20,6 +20,7 @@
 // batches (link targets, posture, loop closure, mimic joint).
 
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/vector.h>
 
 #include <stdexcept>
@@ -32,7 +33,6 @@
 #include "cunls/common/log.h"
 #include "cunls/factor/kinematics/link_frame_factor_batch.h"
 #include "cunls/factor/kinematics/link_target_factor_batch.h"
-#include "cunls/factor/kinematics/loop_closure_factor_batch.h"
 #include "cunls/factor/kinematics/mimic_joint_factor_batch.h"
 #include "cunls/factor/kinematics/posture_factor_batch.h"
 #include "cunls/state/articulation_state_batch.h"
@@ -116,7 +116,8 @@ void bind_articulation(nb::module_ &m) {
       "(J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, "
       "for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose "
       "(the frame root joints attach to). Loop-closing joints are not part of the tree: add them "
-      "as LoopClosureFactorBatch. Forward kinematics: X_world(child) = X_world(parent) joint_X_p "
+      "as constraints with pycunls.articulation.loop_closure. Forward kinematics: X_world(child) = "
+      "X_world(parent) joint_X_p "
       "X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).")
       .def(
           "__init__",
@@ -329,61 +330,90 @@ void bind_articulation(nb::module_ &m) {
           nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>(),
           nb::keep_alive<1, 6>());
 
+  nb::enum_<cunls::FrameView>(
+      m, "FrameView",
+      "What a frame slot of LinkFrameFactorBatch hands its inner factor, in the layout and "
+      "tangent convention of an existing state type, so that factors of that type work on robot "
+      "links unchanged.")
+      .value("Pose", cunls::FrameView::kPose,
+             "The frame's pose as an SE3StateBatch state: row-major 4x4 world_from_frame, tangent "
+             "[omega, v] in the frame, X' = X Exp(delta). Slot tangent 6.")
+      .value("Position", cunls::FrameView::kPosition,
+             "The frame's origin in the world as a VectorStateBatch3 state (3 floats, additive "
+             "world-frame step). Slot tangent 3.")
+      .value("Orientation", cunls::FrameView::kOrientation,
+             "The frame's rotation as an SO3StateBatch state: row-major 3x3 world_from_frame, "
+             "tangent omega in the frame, R' = R Exp(omega). Slot tangent 3.");
+
   nb::class_<cunls::LinkFrameFactorBatch, cunls::FactorBatch>(
       m, "LinkFrameFactorBatch",
-      "Puts the SE(3) pose states of any factor on a robot, for custom kinematic objectives. "
-      "The wrapped inner_factor is an ordinary factor over SE(3) poses (a built-in one such as "
-      "SE3PriorFactorBatch, SE3BetweenFactorBatch, SE3SphereClearanceFactorBatch, or a "
-      "pycunls.warp.WarpFactorBatch) that knows nothing about robots. The state slots of "
-      "inner_factor listed in pose_slots do not connect to states of the problem: each receives "
-      "the world pose of a frame fixed on a link of the articulation instance, and the inner "
-      "Jacobian is carried to the joint DOFs (chain rule through the forward-kinematics "
-      "cache).\n\n"
-      "Pose slots use SE3StateBatch's convention: a row-major 4x4 world_from_body matrix, "
-      "tangent [omega, v] in the body frame, update X' = X Exp(delta); write inner_factor "
-      "exactly as for SE3StateBatch states. For factor f and pose slot s (the position in "
-      "pose_slots, nP = len(pose_slots)) the pose is X_L(q) X_off with L = "
-      "topology_links[f * nP + s] and X_off = frame_offsets[f * nP + s].\n\n"
+      "Puts the pose, position or orientation states of any factor on a robot, for custom "
+      "kinematic objectives. The wrapped inner_factor is an ordinary factor over SE(3) poses, 3D "
+      "points or SO(3) rotations (built-in: SE3PriorFactorBatch, SE3BetweenFactorBatch, "
+      "SE3SphereClearanceFactorBatch, PriorVectorFactorBatch3, HalfspaceFactorBatch3, "
+      "VectorBetweenFactorBatch3, SO3PriorFactorBatch, SO3BetweenFactorBatch, ...; or a "
+      "pycunls.warp.WarpFactorBatch) that knows nothing about robots. Each frame slot (an inner "
+      "state slot with a FrameView) does not connect to a state of the problem: it receives a view "
+      "of a frame fixed on a link of the articulation instance, and the inner Jacobian is carried "
+      "to the joint DOFs (chain rule through the forward-kinematics cache).\n\n"
+      "For factor f and frame slot s (the position in frame_slots, nF = len(frame_slots)) the "
+      "frame is X_L(q) X_off with L = topology_links[f * nF + s] and X_off = "
+      "frame_offsets[f * nF + s]; FrameView.Pose hands it as SE3StateBatch does, "
+      "FrameView.Position its origin (VectorStateBatch3), FrameView.Orientation its rotation "
+      "(SO3StateBatch). Write inner_factor exactly as for those states.\n\n"
       "States of this batch: [articulation instance] followed by inner_factor's slots that are "
-      "not pose slots, in order (e.g. an object pose solved with the joints). Size and active "
-      "count are inner_factor's. A topology link out of range gives a NaN pose. For a "
-      "constraint, wrap this batch in ConstraintFactorBatch, never inner_factor. Guide: "
-      "docs/sphinx/articulations.rst, 'Custom kinematic objectives'.\n\n"
+      "not frame slots, in order (e.g. an object pose solved with the joints). Size and active "
+      "count are inner_factor's. A topology link out of range gives a NaN view. For a "
+      "constraint (e.g. a halfspace as an inequality), wrap this batch in ConstraintFactorBatch, "
+      "never inner_factor. The fused LinkPose / LinkPosition / LinkOrientation factors are "
+      "faster for what they cover. Guide: docs/sphinx/articulations.rst, 'Custom kinematic "
+      "objectives'.\n\n"
       "Parameters\n"
       "----------\n"
       "topology : ArticulationTopology\n"
       "    Kinematic tree of the articulation state.\n"
       "inner_factor : FactorBatch\n"
-      "    The factor over SE(3) poses (kept alive by this batch).\n"
-      "pose_slots : list[int]\n"
-      "    State slots of inner_factor (positions in its state_sizes) that receive a link frame\n"
-      "    pose; distinct, each of tangent size 6. Example: [0] for a factor over one pose.\n"
+      "    The factor over the views (kept alive by this batch).\n"
+      "frame_slots : list[tuple[int, FrameView]]\n"
+      "    (inner state slot, view) pairs: the slots of inner_factor (positions in its\n"
+      "    state_sizes) that receive a view of a link frame; distinct, each of its view's tangent\n"
+      "    size (Pose 6, Position 3, Orientation 3). Example: [(0, FrameView.Position)].\n"
       "topology_links : int32 GPU array\n"
-      "    capacity x nP link indices of the topology (positions in UrdfArticulation.link_names):\n"
-      "    the link carrying the frame of each pose slot, factor-major.\n"
+      "    capacity x nF link indices of the topology (positions in UrdfArticulation.link_names):\n"
+      "    the link carrying the frame of each frame slot, factor-major.\n"
       "frame_offsets : float32 GPU array or None\n"
-      "    capacity x nP x 7: each frame in its link frame (position, quaternion x, y, z, w;\n"
+      "    capacity x nF x 7: each frame in its link frame (position, quaternion x, y, z, w;\n"
       "    e.g. a camera mount or a tool tip), or None for the link frames themselves.")
       .def(
           "__init__",
           [](cunls::LinkFrameFactorBatch *self, const cunls::ArticulationTopology &topology,
-             cunls::FactorBatch *inner, const std::vector<int> &pose_slots,
+             cunls::FactorBatch *inner,
+             const std::vector<std::pair<int, cunls::FrameView>> &frame_slots,
              nb::handle topology_links, nb::handle frame_offsets) {
-            const size_t capacity = inner->Capacity(), nP = pose_slots.size();
+            std::vector<cunls::LinkFrameSlot> slots;
+            for (const auto &[inner_slot, view] : frame_slots) slots.push_back({inner_slot, view});
+            const size_t capacity = inner->Capacity(), nF = slots.size();
             new (self) cunls::LinkFrameFactorBatch(
-                topology, inner, pose_slots,
-                device_ints(topology_links, "topology_links", capacity * nP,
-                            "capacity x len(pose_slots) links"),
-                OptionalFloats(frame_offsets, "frame_offsets", capacity, 7 * nP, "factor"));
+                topology, inner, slots,
+                device_ints(topology_links, "topology_links", capacity * nF,
+                            "capacity x len(frame_slots) links"),
+                OptionalFloats(frame_offsets, "frame_offsets", capacity, 7 * nF, "factor"));
           },
-          nb::arg("topology"), nb::arg("inner_factor"), nb::arg("pose_slots"),
+          nb::arg("topology"), nb::arg("inner_factor"), nb::arg("frame_slots"),
           nb::arg("topology_links"), nb::arg("frame_offsets").none() = nb::none(),
           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(), nb::keep_alive<1, 5>(),
           nb::keep_alive<1, 6>())
       .def_prop_ro("inner_factor", &cunls::LinkFrameFactorBatch::Inner, nb::rv_policy::reference,
-                   "The wrapped factor over SE(3) poses.")
-      .def_prop_ro("pose_slots", &cunls::LinkFrameFactorBatch::PoseSlots,
-                   "State slots of inner_factor that receive a link frame pose.");
+                   "The wrapped factor over the views.")
+      .def_prop_ro(
+          "frame_slots",
+          [](const cunls::LinkFrameFactorBatch &self) {
+            std::vector<std::pair<int, cunls::FrameView>> out;
+            for (const auto &slot : self.FrameSlots()) out.emplace_back(slot.inner_slot, slot.view);
+            return out;
+          },
+          "(inner state slot, FrameView) pairs: the inner slots that receive a view of a link "
+          "frame.");
 
   nb::class_<cunls::LinkOrientationFactorBatch, cunls::FactorBatch>(
       m, "LinkOrientationFactorBatch",
@@ -447,31 +477,6 @@ void bind_articulation(nb::module_ &m) {
           },
           nb::arg("topology"), nb::arg("targets"), nb::arg("weights").none(), nb::arg("capacity"),
           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>());
-
-  nb::class_<cunls::LoopClosureFactorBatch, cunls::FactorBatch>(
-      m, "LoopClosureFactorBatch",
-      "A loop-closing joint between two links of an articulation instance (parent -1: the "
-      "world): the constraint rows keeping its two joint frames together (BALL 3, REVOLUTE 6, "
-      "PRISMATIC 5, FIXED 6). Wrap in ConstraintFactorBatch(..., ConstraintKind.Equality). "
-      "joint_type: the ArticulationJointType of every factor. Device arrays per factor: "
-      "parent_links, child_links (int32, 1 each), frames (14 floats: joint_X_p then joint_X_c, "
-      "each position + quaternion x, y, z, w), axes (3 floats; None allowed for BALL/FIXED).")
-      .def(
-          "__init__",
-          [](cunls::LoopClosureFactorBatch *self, const cunls::ArticulationTopology &topology,
-             cunls::ArticulationJointType joint_type, nb::handle parent_links,
-             nb::handle child_links, nb::handle frames, nb::handle axes, size_t capacity) {
-            new (self) cunls::LoopClosureFactorBatch(
-                topology, joint_type,
-                device_ints(parent_links, "parent_links", capacity, "capacity links"),
-                device_ints(child_links, "child_links", capacity, "capacity links"),
-                device_floats(frames, "frames", capacity, 14, "factor"),
-                OptionalFloats(axes, "axes", capacity, 3, "factor"), capacity);
-          },
-          nb::arg("topology"), nb::arg("joint_type"), nb::arg("parent_links"),
-          nb::arg("child_links"), nb::arg("frames"), nb::arg("axes").none(), nb::arg("capacity"),
-          nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>(),
-          nb::keep_alive<1, 6>(), nb::keep_alive<1, 7>());
 
   nb::class_<cunls::MimicJointFactorBatch, cunls::FactorBatch>(
       m, "MimicJointFactorBatch",
