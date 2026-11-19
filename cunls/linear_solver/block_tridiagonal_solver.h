@@ -81,12 +81,53 @@ class BlockTridiagonalSolver : public SparseLinearSolver {
   /** @brief Largest stage block size supported (one warp per subproblem). */
   static constexpr int kMaxStageSize = 32;
 
+  // Stage-block access, for NormalEquations' stage layout: it assembles H
+  // into the same slots and builds the working blocks itself, skipping the
+  // CSR scatter. Valid after a successful Initialize().
+
+  /**
+   * @brief Per entry of the CSR pattern given to Initialize(): its slot in the
+   * block storage (D blocks, then C blocks at NumBlockValues() / 2), or -1 for
+   * an entry that is not stored (the lower block C_{k-1}ᵀ of a row).
+   */
+  const dvector<int> &EntrySlots() const { return entry_slot_; }
+
+  /** @brief Per row (unknown) of the system: its index (p, k, offset) in the stage vectors. */
+  const dvector<int> &RowSlots() const { return row_slot_; }
+
+  /** @brief Floats of the block storage: P*K*m*m D blocks, then as many C blocks. */
+  size_t NumBlockValues() const { return blocks_.size(); }
+
+  /** @brief Floats of the block storage that the solve reads (the D blocks only for K = 1). */
+  size_t NumUsedBlockValues() const {
+    return num_stages_ > 1 ? blocks_.size() : blocks_.size() / 2;
+  }
+
+  /** @brief Number of subproblems P. */
+  int NumProblems() const { return num_problems_; }
+  /** @brief Number of stages K (the largest stage index + 1). */
+  int NumStages() const { return num_stages_; }
+  /** @brief Stage block size m (the largest stage). */
+  int StageSize() const { return stage_size_; }
+
+  /**
+   * @brief The working block storage (NumBlockValues() floats, layout of
+   * EntrySlots()): write the blocks of the left-hand side here, then call
+   * SolveWorkingBlocks(). The solve overwrites them with the factors.
+   */
+  float *WorkingBlocks() { return blocks_.data(); }
+
+  /**
+   * @brief Solve() for a left-hand side already in WorkingBlocks() (no CSR
+   * matrix, no scatter); same results and safety checks.
+   */
+  bool SolveWorkingBlocks(cudaStream_t stream, const dvector<float> &rhs, dvector<float> &result);
+
  private:
   int num_problems_ = 0;  ///< P
-  int num_sms_ =
-      1;  ///< SMs of the device (Initialize): packs subproblems per block when P is large
-  int num_stages_ = 0;  ///< K (the largest stage index + 1)
-  int stage_size_ = 0;  ///< m (the largest stage block)
+  int num_sms_ = 1;       ///< SMs of the device (Initialize); P > 16 SMs packs warps per block
+  int num_stages_ = 0;    ///< K (the largest stage index + 1)
+  int stage_size_ = 0;    ///< m (the largest stage block)
   size_t num_rows_ = 0;
   /// Per CSR entry: index into blocks_ (D blocks, then C blocks), or -1 (lower half).
   dvector<int> entry_slot_;

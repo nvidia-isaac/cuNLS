@@ -106,6 +106,21 @@ class BlockHessianAssembler {
   void Assemble(cudaStream_t stream, const Problem &problem, const float *jacobian_values,
                 const float *residuals, BSRSparseMatrix &hessian, dvector<float> &rhs);
 
+  /**
+   * @brief Scatter-accumulates `H = J^T J` into caller-defined slots instead of
+   * a matrix: the entry the CSR overload would write at position e of the
+   * pattern goes to `values[entry_slot[e]]` (skipped when -1). Used for the
+   * stage blocks of BlockTridiagonalSolver (NormalEquations' stage layout).
+   * @param pattern CSR pattern initialized by the CSR Initialize() (values unused).
+   * @param entry_slot Device array, one slot (or -1) per entry of `pattern`.
+   * @param values Device array of `num_values` floats; zeroed, then accumulated.
+   * @param[out] rhs Right-hand side `-J^T r`; resized to `num_cols`.
+   */
+  void AssembleIntoSlots(cudaStream_t stream, const Problem &problem, const float *jacobian_values,
+                         const float *residuals, const CSRSparseMatrix &pattern,
+                         const int *entry_slot, float *values, size_t num_values,
+                         dvector<float> &rhs);
+
   /** @brief Total floats needed for the per-factor Jacobian value buffer. */
   size_t JacobianValuesSize() const { return structure_builder_.JacobianValuesSize(); }
 

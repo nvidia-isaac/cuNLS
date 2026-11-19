@@ -58,7 +58,7 @@ constexpr size_t kMaxSharedBytes = 48 * 1024;
  *
  * @tparam kBlockStorage Selects BSR addressing.
  */
-template <bool kBlockStorage>
+template <bool kBlockStorage, bool kRemap = false>
 __global__ void AssembleBlockHessianKernel(
     int num_factors, int residual_dim, int tangent_dim, int num_blocks, int block_size,
     const float *__restrict__ jacobians, const float *__restrict__ residuals,
@@ -66,7 +66,8 @@ __global__ void AssembleBlockHessianKernel(
     const int *__restrict__ tile_of_col, const int *__restrict__ sub_of_col,
     const int *__restrict__ triangular_pairs, const int *__restrict__ factor_cols,
     const int *__restrict__ write_offsets, const int *__restrict__ row_offsets,
-    float *__restrict__ hessian_values, float *__restrict__ rhs) {
+    float *__restrict__ hessian_values, float *__restrict__ rhs,
+    const int *__restrict__ entry_slot = nullptr) {
   extern __shared__ int s_arena[];
 
   const int lane = threadIdx.x & (kWarpSize - 1);
@@ -182,6 +183,18 @@ __global__ void AssembleBlockHessianKernel(
                                 tile_area +
                             s_sub_of_col[q] * block_size + s_sub_of_col[p]],
             acc);
+      }
+    } else if (kRemap) {
+      // CSR entry e of the pattern goes to slot entry_slot[e] (-1: not stored).
+      const int e =
+          s_row_start[p] + s_write_offset[block_p * num_blocks + block_q] + s_offset_in_block[q];
+      const int slot = entry_slot[e];
+      if (slot >= 0) atomicAdd(&hessian_values[slot], acc);
+      if (p != q) {
+        const int et =
+            s_row_start[q] + s_write_offset[block_q * num_blocks + block_p] + s_offset_in_block[p];
+        const int slot_t = entry_slot[et];
+        if (slot_t >= 0) atomicAdd(&hessian_values[slot_t], acc);
       }
     } else {
       atomicAdd(&hessian_values[s_row_start[p] + s_write_offset[block_p * num_blocks + block_q] +
@@ -322,6 +335,35 @@ void BlockHessianAssembler::Assemble(cudaStream_t stream, const Problem &problem
   PrepareOutputs(stream, hessian.values, rhs);
   LaunchAssembly(stream, jacobian_values, residuals, hessian.row_offsets.data(),
                  hessian.values.data(), rhs.data(), /*block_storage=*/true);
+}
+
+void BlockHessianAssembler::AssembleIntoSlots(cudaStream_t stream, const Problem &problem,
+                                              const float *jacobian_values, const float *residuals,
+                                              const CSRSparseMatrix &pattern, const int *entry_slot,
+                                              float *values, size_t num_values,
+                                              dvector<float> &rhs) {
+  auto range = profiler_domain_.CreateDomainRange("Assemble");
+  rhs.resize(static_cast<size_t>(num_cols_));
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(rhs.data(), 0, rhs.size() * sizeof(float), stream));
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(values, 0, num_values * sizeof(float), stream));
+  const int *factor_cols = structure_builder_.FactorCols().data();
+  const int *write_offsets = structure_builder_.WriteOffsets().data();
+  for (const BatchPlan &plan : plans_) {
+    const HessianBatchLayout &layout = plan.layout;
+    if (layout.num_factors == 0 || layout.tangent_dim == 0) continue;
+    size_t shared_bytes = 0;
+    const int warps =
+        PickWarpsPerBlock(layout.residual_dim, layout.tangent_dim, layout.num_blocks, shared_bytes);
+    const int grid = (layout.num_factors + warps - 1) / warps;
+    AssembleBlockHessianKernel<false, true><<<grid, warps * kWarpSize, shared_bytes, stream>>>(
+        layout.num_factors, layout.residual_dim, layout.tangent_dim, layout.num_blocks, 1,
+        jacobian_values + layout.jacobian_offset, residuals + layout.residual_offset,
+        plan.block_of_col.data(), plan.offset_in_block.data(), plan.tile_of_col.data(),
+        plan.sub_of_col.data(), plan.triangular_pairs.data(), factor_cols + layout.col_offset,
+        write_offsets + layout.pair_offset, pattern.row_offsets.data(), values, rhs.data(),
+        entry_slot);
+    THROW_ON_CUDA_ERROR(cudaGetLastError());
+  }
 }
 
 void BlockHessianAssembler::PrepareOutputs(cudaStream_t stream, dvector<float> &values,

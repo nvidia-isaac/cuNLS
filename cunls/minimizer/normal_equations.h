@@ -28,6 +28,7 @@
 
 namespace cunls {
 
+class BlockTridiagonalSolver;
 class Problem;
 class ProblemPartition;
 
@@ -37,8 +38,13 @@ class ProblemPartition;
  * Holds two matrices: the Hessian `H` as assembled, and the working
  * left-hand side handed to the solver, rebuilt from `H` before every solver
  * call (PrepareSolver(), Solve()) with the declared column scale, damping and
- * mask. Both are stored in one of two
+ * mask. Both are stored in one of three
  * layouts, chosen once at Initialize():
+ * - **Stage blocks** when the solver is BlockTridiagonalSolver: `H` is
+ *   assembled straight into its dense D / C stage blocks (through the
+ *   solver's entry-to-slot map) and the working left-hand side is built in
+ *   the solver's blocks by one kernel, so no CSR matrix is filled, scattered
+ *   or multiplied.
  *
  * - **Block (BSR)** when the state tangent dimensions share a common factor and
  *   the solver can read tiles. One column index per dense tile instead of one
@@ -100,6 +106,9 @@ class NormalEquations : public LinearSystem {
   /** @brief True when the block layout is live for the current problem. */
   bool UsesBlockStorage() const { return block_size_ > 1; }
 
+  /** @brief True when the stage layout (BlockTridiagonalSolver's blocks) is live. */
+  bool UsesStageStorage() const { return stage_solver_ != nullptr; }
+
   /**
    * @brief Rebuilds the working left-hand side from H with the declared scale,
    * damping and mask (PrepareSolver() and Solve() do this first).
@@ -124,6 +133,13 @@ class NormalEquations : public LinearSystem {
   BSRSparseMatrix bsr_hessian_;    ///< Block layout: H as assembled.
   BSRSparseMatrix bsr_lhs_;        ///< Block layout: the working left-hand side.
   dvector<int> tile_row_scratch_;  ///< Block layout: tile -> block row (column scaling).
+
+  // Stage layout (BlockTridiagonalSolver): H assembled straight into its block
+  // slots; the working blocks are the solver's own (WorkingBlocks()).
+  BlockTridiagonalSolver *stage_solver_ = nullptr;  ///< solver_ when the stage layout is live.
+  dvector<float> stage_hessian_;                    ///< H in the solver's block slots.
+  dvector<int> stage_vec_row_;                      ///< Stage-vector index -> unknown (-1: pad).
+  mutable dvector<float> stage_vector_;             ///< MultiplyHessian(): x in stage order.
 
   // Scratch of MultiplyHessian() / StepCurvature().
   mutable cuSPARSEHandle cusparse_handle_;  ///< Scalar-layout SpMV.

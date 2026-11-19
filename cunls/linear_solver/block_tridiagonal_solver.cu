@@ -459,12 +459,22 @@ bool BlockTridiagonalSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &s
   }
   if (num_rows_ == 0) return true;
   const size_t nnz = spd_matrix.NumNonZeros();
-  const size_t c_offset = blocks_.size() / 2;
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(blocks_.data(), 0, blocks_.size() * sizeof(float), stream));
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(vectors_.data(), 0, vectors_.size() * sizeof(float), stream));
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(num_singular_.data(), 0, sizeof(int), stream));
+  THROW_ON_CUDA_ERROR(
+      cudaMemsetAsync(blocks_.data(), 0, NumUsedBlockValues() * sizeof(float), stream));
   scatter_matrix_kernel<<<Blocks(nnz), kThreads, 0, stream>>>(
       spd_matrix.values.data(), entry_slot_.data(), nnz, blocks_.data());
+  return SolveWorkingBlocks(stream, rhs, result);
+}
+
+bool BlockTridiagonalSolver::SolveWorkingBlocks(cudaStream_t stream, const dvector<float> &rhs,
+                                                dvector<float> &result) {
+  if (rhs.size() != num_rows_ || result.size() != num_rows_) {
+    return Fail("rhs / result size does not match the system the solver was initialized for");
+  }
+  if (num_rows_ == 0) return true;
+  const size_t c_offset = blocks_.size() / 2;
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(vectors_.data(), 0, vectors_.size() * sizeof(float), stream));
+  THROW_ON_CUDA_ERROR(cudaMemsetAsync(num_singular_.data(), 0, sizeof(int), stream));
   gather_rhs_kernel<<<Blocks(num_rows_), kThreads, 0, stream>>>(rhs.data(), row_slot_.data(),
                                                                 num_rows_, vectors_.data());
   // Pack several subproblems per block only when the one-warp blocks would
