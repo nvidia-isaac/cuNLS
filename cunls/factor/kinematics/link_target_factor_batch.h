@@ -35,11 +35,11 @@ namespace cunls {
  * X_L(q): world pose of link L of the articulation instance; c: the point in
  * the link frame; p*: the world target; W = diag(weights). Jacobian column of
  * DOF j: W (ω_j × x + v_j) for the DOFs that move L (x = X_L c), 0 otherwise.
- * Newton: IKObjectivePosition.
  *
  * Data per factor (user-owned device arrays, read at every evaluation, not
  * copied; factor f at the offsets shown):
- * - links:   int,   1 per factor: the link L (0 .. LinkCount()-1);
+ * - links:   int,   1 per factor: the link L (0 .. LinkCount()-1; another value gives a NaN
+ *            residual);
  * - points:  float, 3 per factor: c in the link frame;
  * - targets: float, 3 per factor: p* in the world frame;
  * - weights: float, 3 per factor, or nullptr for 1.
@@ -73,10 +73,10 @@ class LinkPositionFactorBatch : public ArticulationFactorBatch {
  * R_L(q): world rotation of link L; R_off: the frame's rotation in the link
  * frame; R*: the world target. With φ = Log(R_L(q) R_off R*ᵀ) the unweighted
  * error (r = W φ), the Jacobian column of DOF j is W J_l⁻¹(φ) ω_j for the DOFs
- * that move L. Newton: IKObjectiveRotation.
+ * that move L.
  *
  * Data per factor (user-owned device arrays):
- * - links:     int,   1 per factor;
+ * - links:     int,   1 per factor: the link L (out of range: NaN residual);
  * - offsets:   float, 4 per factor: R_off as a quaternion (x, y, z, w), or nullptr for identity;
  * - targets:   float, 4 per factor: R* as a quaternion (x, y, z, w);
  * - weights:   float, 3 per factor, or nullptr for 1.
@@ -110,7 +110,7 @@ class LinkOrientationFactorBatch : public ArticulationFactorBatch {
  * @endverbatim
  *
  * Data per factor (user-owned device arrays):
- * - links:   int,   1 per factor;
+ * - links:   int,   1 per factor: the link L (out of range: NaN residual);
  * - offsets: float, 7 per factor: the frame in the link frame, (p_off, quaternion x, y, z, w),
  *            or nullptr for the link frame itself;
  * - targets: float, 7 per factor: (p*, quaternion R*) in the world frame;

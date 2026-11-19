@@ -32,7 +32,7 @@ namespace cunls {
  *   c = q_m - (a + b q_ref)                         1 row
  * @endverbatim
  *
- * as in Newton's joint_mimic_joint / joint_mimic_coeffs and URDF `<mimic>`
+ * as in URDF `<mimic>`
  * (offset a, multiplier b). Usually a hard constraint: wrap it as
  * ConstraintFactorBatch(&factor, ConstraintKind::kEquality). Jacobian: 1 at
  * the mimic DOF, -b at the reference DOF.
@@ -41,7 +41,7 @@ namespace cunls {
  * - mimic_dofs:     int,   1 per factor: the DOF m (a PRISMATIC, REVOLUTE or D6 DOF);
  * - reference_dofs: int,   1 per factor: the DOF ref (scalar as well);
  * - coefficients:   float, 2 per factor: (a, b).
- * A DOF of a BALL or FREE joint gives a NaN residual.
+ * A DOF of a BALL or FREE joint, or outside 0 .. DofCount()-1, gives a NaN residual.
  */
 class MimicJointFactorBatch : public ArticulationFactorBatch {
  public:

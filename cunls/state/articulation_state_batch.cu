@@ -65,6 +65,23 @@ __device__ __forceinline__ void QuatLeftExp(const float *phi, float *q) {
   for (int i = 0; i < 4; ++i) q[i] = r[i] * inv;
 }
 
+/**
+ * q ← q / |q| for the quaternion (x, y, z, w); a zero or non-finite norm
+ * (an uninitialized quaternion) becomes the identity. Coordinates written by
+ * the caller may have drifted from unit length, and the kinematics assume it.
+ */
+__device__ __forceinline__ void NormalizeQuat(float *q) {
+  const float n2 = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+  if (!(n2 > 1e-20f) || !isfinite(n2)) {
+    q[0] = q[1] = q[2] = 0.f;
+    q[3] = 1.f;
+    return;
+  }
+  const float inv = rsqrtf(n2);
+#pragma unroll
+  for (int i = 0; i < 4; ++i) q[i] *= inv;
+}
+
 /** R (row-major 3x3) = rotation about the unit axis a by angle t. */
 __device__ __forceinline__ void AxisAngleMatrix(const float *a, float t, float *R) {
   float s, c;
@@ -245,34 +262,37 @@ __device__ void JointKinematics(const ArticulationTopology::DeviceView &v, int j
 /**
  * The coordinates of joint j after the step: x ⊕ δ per joint type (δ null:
  * x's coordinates), moved scalar coordinates clamped into [lo, hi] (null:
- * no bounds). Writes q_start[j+1] - q_start[j] floats to `q`.
+ * no bounds). BALL and FREE quaternions are normalized first (a zero one
+ * becomes the identity). Writes q_start[j+1] - q_start[j] floats to `q`.
  */
 __device__ void JointCoordinates(const ArticulationTopology::DeviceView &v, int j, const float *xs,
                                  const float *ds, const float *lo, const float *hi, float *q) {
   const int q0 = v.q_start[j], d0 = v.qd_start[j];
   const int nc = v.q_start[j + 1] - q0;
-  if (ds == nullptr) {
-    for (int i = 0; i < nc; ++i) q[i] = xs[q0 + i];
-    return;
-  }
   switch (v.type[j]) {
     case kBall: {
 #pragma unroll
       for (int i = 0; i < 4; ++i) q[i] = xs[q0 + i];
-      QuatLeftExp(ds + d0, q);
+      NormalizeQuat(q);
+      if (ds != nullptr) QuatLeftExp(ds + d0, q);
       break;
     }
     case kFree: {
 #pragma unroll
-      for (int i = 0; i < 3; ++i) q[i] = xs[q0 + i] + ds[d0 + i];
+      for (int i = 0; i < 3; ++i) q[i] = xs[q0 + i] + (ds != nullptr ? ds[d0 + i] : 0.f);
 #pragma unroll
       for (int i = 0; i < 4; ++i) q[3 + i] = xs[q0 + 3 + i];
-      QuatLeftExp(ds + d0 + 3, q + 3);
+      NormalizeQuat(q + 3);
+      if (ds != nullptr) QuatLeftExp(ds + d0 + 3, q + 3);
       break;
     }
     case kFixed:
       break;
     default: {  // scalar coordinates
+      if (ds == nullptr) {
+        for (int i = 0; i < nc; ++i) q[i] = xs[q0 + i];
+        break;
+      }
       for (int i = 0; i < nc; ++i) {
         const float d = ds[d0 + i];
         float value = xs[q0 + i] + d;

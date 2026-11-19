@@ -18,7 +18,7 @@
 :func:`topology_from_urdf` reads the kinematic tree of a URDF file (joints, origins, axes,
 limits, mimic joints; no meshes, inertias or transmissions) into an
 :class:`pycunls.ArticulationTopology`, so cuNLS can be used for inverse kinematics without a
-simulator. Robots already loaded elsewhere (Newton, MuJoCo) pass their joint arrays to
+simulator. Robots already loaded elsewhere (a simulator, a robot description library) pass their joint arrays to
 ``ArticulationTopology`` directly.
 
 Example::

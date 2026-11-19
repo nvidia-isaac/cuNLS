@@ -28,8 +28,8 @@
 namespace cunls {
 
 /**
- * @brief Joint types of an articulation. The values are Newton's `JointType`
- * values, so Newton's `joint_type` array can be passed unchanged.
+ * @brief Joint types of an articulation; `ArticulationDescription::joint_type`
+ * holds these integer values.
  */
 enum class ArticulationJointType : int {
   kPrismatic = 0,  ///< 1 coordinate: translation along the axis.
@@ -41,8 +41,8 @@ enum class ArticulationJointType : int {
 };
 
 /**
- * @brief Host description of one kinematic tree, in Newton's array layout
- * (the cuNLS articulation convention; docs/sphinx/articulations.rst).
+ * @brief Host description of one kinematic tree as flat joint arrays (the
+ * cuNLS articulation convention; docs/sphinx/articulations.rst).
  *
  * J joints and J links: link i is the child of exactly one tree joint. Joints
  * may be listed in any order; the topology sorts them parents first. A
@@ -60,7 +60,7 @@ enum class ArticulationJointType : int {
  * BALL rotation quat; FREE (p, quat); FIXED identity; D6 translation
  * Σ axis_k q_k along the linear axes, then the angular axes composed as
  * intrinsic rotations, R = R(a_n, q_n) ··· R(a_0, q_0) with a_k the k-th axis
- * rotated by the rotations before it (Newton's compute_3d_rotational_dofs).
+ * rotated by the rotations before it.
  */
 struct ArticulationDescription {
   /** @brief Joint type per joint (ArticulationJointType values), J entries. */
@@ -85,8 +85,8 @@ struct ArticulationDescription {
   /** @brief Axis of each DOF in the joint frame, 3 floats per DOF (read for scalar DOFs). */
   std::vector<float> joint_axis;
   /**
-   * @brief Lower and upper limit per DOF. ±inf, or |value| >= 1e5 (Newton's
-   * MAXVAL convention), means unbounded. Empty: no limits. BALL and FREE DOFs
+   * @brief Lower and upper limit per DOF. ±inf, or |value| >= 1e5, means
+   * unbounded. Empty: no limits. BALL and FREE DOFs
    * must be unbounded.
    */
   std::vector<float> limit_lower, limit_upper;
@@ -100,7 +100,7 @@ struct ArticulationDescription {
  *
  * Built once on the host from an ArticulationDescription (validated, sorted
  * parents first) and uploaded. It holds no state values. Sizes:
- * CoordCount() floats of joint_q per instance (Newton's layout),
+ * CoordCount() floats of joint_q per instance,
  * DofCount() tangent dimensions, LinkCount() links (== joints).
  *
  * The state ambient layout per instance (ArticulationStateBatch) is

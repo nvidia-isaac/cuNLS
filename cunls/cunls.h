@@ -57,6 +57,7 @@
 #include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/information/motion_prior_information.h"
 #include "cunls/factor/kinematics/articulation_factor_batch.h"
+#include "cunls/factor/kinematics/link_frame_factor_batch.h"
 #include "cunls/factor/kinematics/link_target_factor_batch.h"
 #include "cunls/factor/kinematics/loop_closure_factor_batch.h"
 #include "cunls/factor/kinematics/mimic_joint_factor_batch.h"

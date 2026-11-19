@@ -45,7 +45,8 @@ namespace cunls {
  * order of joint_qd: PRISMATIC, REVOLUTE and D6 one scalar per axis; BALL a
  * rotation vector δθ in the parent-anchor frame A (quat ← Exp(δθ) ⊗ quat);
  * FREE (δp, δθ) in A (p ← p + δp, quat ← Exp(δθ) ⊗ quat); FIXED none. This is
- * cuNLS's own chart: FREE's δp is not Newton's COM-referenced joint_qd.
+ * cuNLS's own chart: FREE's δp is the change of the joint position in A, not a
+ * velocity referenced to a center of mass.
  *
  * <b>Plus</b> applies the step per joint, clamps the moved scalar
  * coordinates into the bounds (when there are any) and recomputes the cache
@@ -84,8 +85,10 @@ class ArticulationStateBatch : public StateBatch, public BoxBoundedStates, publi
 
   /**
    * @brief Copies the coordinates of the first `num_states` instances from
-   * `joint_q` (device array, Newton's joint_q layout) and recomputes their
-   * cache. Asynchronous on `stream`.
+   * `joint_q` (device array, ArticulationTopology's joint_q layout) and recomputes their
+   * cache. BALL and FREE quaternions are stored normalized (a zero or
+   * non-finite one becomes the identity), so GetJointQ() may differ from the
+   * input there. Asynchronous on `stream`.
    *
    * @param joint_q Instance i's CoordCount() coordinates start at
    *        joint_q + i * stride.
@@ -111,7 +114,7 @@ class ArticulationStateBatch : public StateBatch, public BoxBoundedStates, publi
    * @brief Writes the world transform of every link of the first `num_states`
    * instances, from the cache (forward kinematics of the current joint_q): 7
    * floats per link, position then unit quaternion (x, y, z, w) as the factor
-   * targets (Newton's body_q layout), links in topology order. Asynchronous.
+   * targets, links in topology order. Asynchronous.
    * The cache is current for instances written with SetJointQ() and, after a
    * direct StateDevicePtr() write, for the active ones RefreshDerivedData()
    * recomputed; it skips inactive instances, so write those with SetJointQ().
@@ -179,7 +182,10 @@ class ArticulationStateBatch : public StateBatch, public BoxBoundedStates, publi
                           cudaStream_t stream) override;
 
   // --- DerivedStateData --------------------------------------------------
-  /** @brief Recomputes the cache of the active instances from their joint_q. */
+  /**
+   * @brief Recomputes the cache of the active instances from their joint_q,
+   * normalizing BALL and FREE quaternions in place (as SetJointQ()).
+   */
   void RefreshDerivedData(cudaStream_t stream) override;
 
  private:

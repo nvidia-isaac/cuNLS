@@ -6,31 +6,115 @@ cuNLS optimizes over the generalized coordinates of articulated mechanisms (robo
 humanoids, closed-chain linkages): inverse kinematics with hard joint limits, closed loops and
 mimic joints, many problems per call.
 
-* ``ArticulationTopology``: the kinematic tree, built once from joint arrays (Newton's layout)
+* ``ArticulationTopology``: the kinematic tree, built once from flat joint arrays
   or a URDF file (``pycunls.articulation.topology_from_urdf``).
 * ``ArticulationStateBatch``: many instances of one topology; each holds its ``joint_q`` and a
   cache of link poses that the factors read.
 * Kinematic factors: ``LinkPositionFactorBatch``, ``LinkOrientationFactorBatch``,
   ``LinkPoseFactorBatch``, ``PostureFactorBatch``, ``LoopClosureFactorBatch`` and
   ``MimicJointFactorBatch``. Every Jacobian is analytic.
+* ``LinkFrameFactorBatch``: any factor over SE(3) poses (built-in or a Warp kernel) on frames of
+  links, for objectives of your own (see `Custom kinematic objectives`_).
+
+Read `Conventions`_ first: an articulation has several frames, four index spaces and three pose
+layouts, and most mistakes come from mixing them up.
 
 ===============================================================================
-The convention
+Conventions
 ===============================================================================
 
-A topology has J joints and J links: link *i* is the child of exactly one tree joint. Per joint:
-``joint_type``, ``joint_parent`` (a link, or -1 for the root frame ``root_pose``),
-``joint_child``, ``joint_X_p`` and ``joint_X_c`` (the joint frame in the parent and in the child
-link frame: position, quaternion x, y, z, w), ``joint_q_start`` / ``joint_qd_start`` (coordinate
-and DOF offsets, J + 1 entries), ``joint_dof_dim`` (linear and angular axis counts of D6 joints);
-per DOF ``joint_axis`` and the limits. These are Newton's ``Model`` arrays for one articulation.
+-------------------------------------------------------------------------------
+Frames
+-------------------------------------------------------------------------------
 
-Forward kinematics, with A the parent-anchor frame:
+All poses are ``world_from_frame`` transforms: a pose :math:`X = (R, p)` maps a point from the
+frame into the world, :math:`x_{world} = R\,x + p`. Lengths are in meters, angles in radians.
+
+* **World**: the frame every target, link pose and motion column is expressed in.
+* **Root frame** ``root_pose``: where joints with parent -1 attach (the identity by default; set
+  it to place a fixed-base robot on a table). A loop closure with parent -1 means the world.
+* **Link frame**: each link's own frame; :math:`X_L(q)` is its world pose.
+* **Joint frame**: each joint has a frame fixed on its parent link, ``joint_X_p``, and one fixed
+  on its child link, ``joint_X_c``; the joint motion :math:`X_{joint}(q)` happens between them.
+  :math:`A = X_{parent}(q)\,X_p` is the **parent-anchor frame**: the joint frame as the parent
+  carries it, in which the joint axes, BALL rotations and FREE positions are expressed.
+* **A frame on a link** (a tool tip, a camera mount): an offset :math:`X_{off}` in the link
+  frame; its world pose is :math:`X_L(q)\,X_{off}` (the ``offsets`` / ``points`` /
+  ``frame_offsets`` arguments of the link factors).
+
+Forward kinematics, joint by joint from the root (parents first):
 
 .. math::
 
    A = X_{world}(\text{parent})\; X_p, \qquad
    X_{world}(\text{child}) = A\; X_{joint}(q)\; X_c^{-1}
+
+-------------------------------------------------------------------------------
+Index spaces
+-------------------------------------------------------------------------------
+
+Four kinds of integer indices describe one articulation; each argument says which one it takes.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Index
+     - Range
+     - Where it comes from
+     - Taken by
+   * - joint *j*
+     - 0 .. ``joint_count`` - 1
+     - order of the joint arrays (``joint_type``, ...); URDF: ``joint_names``
+     - the topology arrays
+   * - link *l*
+     - 0 .. ``link_count`` - 1 (= ``joint_count``)
+     - link *l* is the child of the joint with ``joint_child[j] == l``; URDF: ``link_names``
+     - ``links``, ``parent_links``, ``child_links``, ``topology_links``, ``link_pose_offset``,
+       ``get_link_transforms`` output order
+   * - coordinate *c*
+     - 0 .. ``coord_count`` - 1
+     - joint *j* owns ``joint_q[joint_q_start[j] : joint_q_start[j+1]]``
+     - ``set_joint_q`` / ``get_joint_q``, ``PostureFactorBatch`` targets
+   * - DOF *d*
+     - 0 .. ``dof_count`` - 1
+     - joint *j* owns ``joint_qd_start[j] : joint_qd_start[j+1]``; URDF: ``dof_names``
+     - bounds and limits, posture weights, ``MimicJointFactorBatch`` DOFs, Jacobian columns
+
+Joint *j* and link *j* are the same index only when ``joint_child[j] == j`` (always true for
+``topology_from_urdf``, not required for joint arrays). Coordinates and DOFs differ for BALL (4
+coordinates, 3 DOFs) and FREE (7, 6) joints; ``topology.scalar_coord[d]`` maps a scalar DOF to its
+coordinate (-1 for BALL and FREE DOFs). Two more indices belong to the problem, not the robot:
+the **instance** (which articulation of the state batch, ``0 .. capacity - 1``) and the **state
+slot** (a factor's *k*-th state, in the order of its ``state_sizes``).
+
+-------------------------------------------------------------------------------
+Pose layouts
+-------------------------------------------------------------------------------
+
+The same pose appears in three layouts. Quaternions are always (x, y, z, w), as in
+Warp's ``wp.transform`` and SciPy's ``Rotation.as_quat()``; libraries that put w first (Eigen's
+constructor, MuJoCo) need reordering.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Layout
+     - Floats
+     - Used by
+   * - position, quaternion
+     - 7: ``px, py, pz, qx, qy, qz, qw``
+     - ``joint_X_p`` / ``joint_X_c``, ``root_pose``, link factor targets and offsets,
+       ``frame_offsets``, ``get_link_transforms`` (one ``wp.transform`` per link)
+   * - row-major 3x4 ``[R | p]``
+     - 12
+     - the state's cache of link poses (``link_pose_offset``); read-only for factors
+   * - row-major 4x4
+     - 16
+     - ``SE3StateBatch`` states, and the pose a ``LinkFrameFactorBatch`` hands its inner factor
+
+-------------------------------------------------------------------------------
+Joint types, coordinates and tangents
+-------------------------------------------------------------------------------
 
 .. list-table::
    :header-rows: 1
@@ -66,8 +150,53 @@ Forward kinematics, with A the parent-anchor frame:
        rotated by the rotations before it); angular axes must be orthogonal
 
 The tangent is cuNLS's own chart: FREE's :math:`\delta p` is the change of the joint position in
-A, not Newton's center-of-mass referenced ``joint_qd``. Loop-closing joints are **not** part of the
-tree; add each one as a ``LoopClosureFactorBatch``.
+A, not a velocity referenced to a center of mass. BALL and FREE quaternions are stored
+normalized (a zero one becomes the identity). Loop-closing joints are **not** part of the tree;
+add each one as a ``LoopClosureFactorBatch``.
+
+-------------------------------------------------------------------------------
+Perturbations: which side, which frame
+-------------------------------------------------------------------------------
+
+A Jacobian is a derivative with respect to a small step :math:`\delta`; what :math:`\delta`
+means differs between the pieces, and a custom factor must use the right one.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Quantity
+     - Step :math:`\delta`
+     - Frame
+   * - articulation scalar DOF
+     - :math:`q \leftarrow q + \delta`
+     - (scalar)
+   * - articulation BALL / FREE rotation
+     - left: :math:`quat \leftarrow Exp(\delta) \otimes quat`
+     - parent-anchor frame A
+   * - ``SE3StateBatch`` pose, ``LinkFrameFactorBatch`` pose slot
+     - right: :math:`X \leftarrow X\,Exp(\delta)`, :math:`\delta = [\omega, v]`
+     - body frame of the pose
+   * - motion column of DOF *j* (the cache)
+     - world twist :math:`(\omega_j, v_j)` per unit of :math:`q_j`
+     - world, at the world origin: a point *x* moves with :math:`\omega_j \times x + v_j`
+
+The built-in orientation residuals (``LinkOrientationFactorBatch``, ``LinkPoseFactorBatch``) are
+world-frame rotation vectors :math:`Log(R_{cur} R^{*T})`; ``PostureFactorBatch``'s rotation rows
+live in each joint's frame A.
+
+-------------------------------------------------------------------------------
+Common mistakes
+-------------------------------------------------------------------------------
+
+* Passing a joint index where a link index is expected (or a DOF where a coordinate is
+  expected): they coincide only for simple chains of 1-DOF joints.
+* Quaternions w first: the rotation is silently wrong. cuNLS reads (x, y, z, w) everywhere.
+* Reading the cache as 4x4: link poses are 12 floats (3x4); only pose slots of
+  ``LinkFrameFactorBatch`` are 4x4.
+* A custom SE(3) factor with a world-frame or left Jacobian: pose slots use the right (body)
+  perturbation, like ``SE3StateBatch``. ``pycunls.check_jacobians`` catches it.
+* Writing ``state_device_ptr`` coordinates without ``refresh(stream)``: the cache keeps the old
+  link poses until the next solve.
 
 ===============================================================================
 Python example: bounded inverse kinematics from a URDF
@@ -165,6 +294,94 @@ pieces that make that cheap:
   (or several rows of one batch) connected to the same instance.
 
 ===============================================================================
+Custom kinematic objectives
+===============================================================================
+
+An objective the built-in factors do not cover (look at a point, stay on a plane, keep clear of
+an obstacle, match an object's pose) is written as an **ordinary factor over SE(3) poses**, which
+knows nothing about robots. ``LinkFrameFactorBatch`` puts it on the robot.
+
+-------------------------------------------------------------------------------
+How it works
+-------------------------------------------------------------------------------
+
+The wrapped factor (the *inner* factor) has state slots, e.g. ``state_sizes=[6]`` for one SE(3)
+pose. Normally each slot connects to a state of the problem. ``pose_slots`` lists the slots that
+do **not**: each receives, at every evaluation, the world pose of a frame on a link instead.
+
+.. code-block:: text
+
+   inner factor slots          [0: SE3 pose]                [0: SE3 pose, 1: SE3 pose]
+   pose_slots                  [0]                          [0]
+   LinkFrameFactorBatch slots  [0: articulation instance]   [0: articulation instance,
+                                                             1: SE3 pose (a problem state)]
+
+For factor *f* and pose slot *s* (the position of the slot in ``pose_slots``; nP =
+``len(pose_slots)``):
+
+#. ``L = topology_links[f * nP + s]``: the topology link that carries the frame (a **link**
+   index, e.g. ``robot.link_names.index("wrist")``).
+#. ``X_off = frame_offsets[f * nP + s]``: where the frame sits on that link, in the link frame
+   (7 floats: position, quaternion x, y, z, w; ``None``: the link frame itself).
+#. The inner factor receives :math:`F_s = X_L(q)\,X_{off}` as a row-major 4x4 matrix and
+   evaluates as if it were an ``SE3StateBatch`` state, returning its residual and its 6
+   Jacobian columns for that slot (body tangent :math:`[\omega, v]`).
+#. The wrapper turns those columns into joint columns: DOF *j* moves the frame by the body
+   twist :math:`b_j = (R^T\omega_j,\; R^T(\omega_j \times p + v_j))` (with :math:`F_s = (R,
+   p)` and :math:`(\omega_j, v_j)` the DOF's world motion column), so
+   :math:`\partial r / \partial q_j = \sum_s (\partial r / \partial \delta_s)\, b_j` over the
+   pose slots whose link DOF *j* moves.
+
+The residual size and active count are the inner factor's (``set_num_active_factors`` on the
+wrapper sets the inner one).
+
+-------------------------------------------------------------------------------
+Writing the inner factor
+-------------------------------------------------------------------------------
+
+A ``pycunls.warp.WarpFactorBatch`` with ``state_sizes=[6]`` per pose (see
+:doc:`custom_factors_and_states`). In the kernel, item *t*'s pose slot is a pointer to 16 floats:
+
+.. code-block:: python
+
+   X = wp.array(ptr=state_pointers[t], shape=(16,), dtype=float)   # row-major 4x4
+   R = wp.mat33(X[0], X[1], X[2], X[4], X[5], X[6], X[8], X[9], X[10])
+   p = wp.vec3(X[3], X[7], X[11])
+
+Jacobian columns are with respect to the right perturbation :math:`X\,Exp([\omega, v])`, under
+which, to first order, :math:`p \to p + R\,v` and :math:`R \to R\,(I + [\omega]_\times)`. Two
+useful consequences: a world point fixed in the frame, :math:`x = R c + p`, has
+:math:`\partial x / \partial \omega = -R [c]_\times` and :math:`\partial x / \partial v = R`; a
+world point *t* seen in the frame, :math:`d = R^T (t - p)`, has
+:math:`\partial d / \partial \omega = [d]_\times` and :math:`\partial d / \partial v = -I`.
+Check the result with ``pycunls.check_jacobians(problem)`` before solving.
+
+-------------------------------------------------------------------------------
+Recipes
+-------------------------------------------------------------------------------
+
+* **A frame target or relation, built in**: ``SE3PriorFactorBatch`` (a frame should reach a
+  pose), ``SE3BetweenFactorBatch`` with ``pose_slots=[0, 1]`` (the relative pose of two links of
+  one instance; ``topology_links`` then holds 2 links per factor),
+  ``SE3SphereClearanceFactorBatch`` (keep a frame's origin off a sphere; wrap the
+  ``LinkFrameFactorBatch`` in ``ConstraintFactorBatch(..., ConstraintKind.Inequality)``).
+* **A link and an object pose solved together** (grasping, hand-eye): an
+  ``SE3BetweenFactorBatch`` with ``pose_slots=[0]`` keeps slot 1 as a state, so connect
+  ``[articulation_states, object_poses]``; the object is an ``SE3StateBatch``.
+* **Constraints**: always wrap the ``LinkFrameFactorBatch`` (``ConstraintFactorBatch`` around
+  it), never its inner factor: a constraint inside would be hidden from the augmented Lagrangian,
+  and the constructor rejects it.
+* **Joint-space objectives** (soft limits, joint velocity between instances) need no wrapper:
+  a custom factor on the articulation state reads DOF *d* of a scalar joint at float
+  ``topology.scalar_coord[d]`` of its instance's storage.
+
+``python/examples/robot_custom_objective.py`` puts it together: a 7-DOF arm aims a wrist camera
+at 512 points with a Warp look-at factor while ``SE3SphereClearanceFactorBatch`` keeps the elbow
+off an obstacle, under hard joint limits. An evaluation runs three steps (gather the frames, the
+inner factor, the chain rule), so a built-in kinematic factor stays the faster choice for what it
+covers.
+
+===============================================================================
 Closed loops and mimic joints
 ===============================================================================
 
@@ -185,7 +402,7 @@ tolerates that. To assemble a mechanism at given actuated angles, add a ``Postur
 with a high weight on the actuated DOFs and a low one on the passive DOFs: the result is the
 nearest valid configuration.
 
-A mimic joint ``q_m = a + b q_ref`` (URDF ``<mimic>``, Newton ``joint_mimic_*``) is a
+A mimic joint ``q_m = a + b q_ref`` (URDF ``<mimic>``) is a
 ``MimicJointFactorBatch`` wrapped the same way; ``topology_from_urdf`` returns the couplings in
 ``mimic_joints``.
 
@@ -199,6 +416,7 @@ Performance notes
 * One subproblem per IK problem (``set_problem_partition``): each one converges and stops on its
   own.
 * The Jacobian of a factor is dense over the articulation's DOFs; the Hessian assembler stages
-  each factor's block in shared memory, which bounds an articulation at roughly 140 DOFs.
+  each factor's block in shared memory, which bounds an articulation at roughly 140 DOFs for
+  6-row factors and roughly 85 DOFs with ``PostureFactorBatch`` (one row per DOF).
 * After writing coordinates through ``state_device_ptr`` directly, call ``refresh(stream)``
   before ``pycunls.evaluate``; ``set_joint_q`` and the minimizers refresh on their own.

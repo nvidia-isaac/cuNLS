@@ -76,6 +76,19 @@ __global__ void __launch_bounds__(kBlockSize)
   const int f = FactorIndex(t, factor_ids, num_factors);
   const float *x = state_ptrs[t];
   const int link = __ldg(links + f);
+  if (link < 0 || link >= v.num_joints) {
+    // Not a link of the topology: NaN residual (diagnose reports it), zero Jacobian, and no read
+    // past the instance's cache.
+    if (lane == 0) {
+#pragma unroll
+      for (int i = 0; i < m; ++i) residuals[static_cast<size_t>(t) * m + i] = NAN;
+    }
+    if constexpr (kJacobian) {
+      float *J = jacobians + static_cast<size_t>(t) * m * v.num_dofs;
+      for (int j = lane; j < m * v.num_dofs; j += G) J[j] = 0.f;
+    }
+    return;
+  }
   const float *P = x + v.num_coords + 12 * link;
   const float RL[9] = {P[0], P[1], P[2], P[4], P[5], P[6], P[8], P[9], P[10]};
 

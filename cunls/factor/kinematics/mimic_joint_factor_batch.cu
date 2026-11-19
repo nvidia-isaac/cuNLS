@@ -49,7 +49,9 @@ __global__ void __launch_bounds__(kBlockSize)
   const int f = FactorIndex(t, factor_ids, num_factors);
   const int dm = __ldg(mimic_dofs + f), dr = __ldg(reference_dofs + f);
   const float a = __ldg(coefficients + 2 * f), b = __ldg(coefficients + 2 * f + 1);
-  const int cm = v.scalar_coord[dm], cr = v.scalar_coord[dr];
+  // A DOF outside the topology, or of a BALL / FREE joint, has no scalar coordinate: NaN residual.
+  const bool in_range = dm >= 0 && dm < v.num_dofs && dr >= 0 && dr < v.num_dofs;
+  const int cm = in_range ? v.scalar_coord[dm] : -1, cr = in_range ? v.scalar_coord[dr] : -1;
   const float *x = state_ptrs[t];
   if (lane == 0) {
     residuals[t] = (cm < 0 || cr < 0) ? NAN : x[cm] - (a + b * x[cr]);

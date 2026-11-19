@@ -19,6 +19,7 @@ the environment. Every class and function also documents itself: `help(pycunls.X
 | gross outliers in geometric matches (PnP, registration) | `RansacLevenbergMarquardtMinimizer` | `python/examples/ransac_pnp.py` |
 | hard constraints, MPC | `AugmentedLagrangianMinimizer`, `pycunls.mpc` | `python/examples/supermarket_drones.py` |
 | a robot (URDF or joint arrays): inverse kinematics with hard joint limits | `ArticulationTopology`, `ArticulationStateBatch`, `LinkPoseFactorBatch` + `AugmentedLagrangianMinimizer` | `python/tests/test_articulation.py`, `docs/sphinx/articulations.rst` |
+| a robot objective of your own (look-at, clearance, a frame relative to an object pose) | an SE(3) factor (built-in, or a `WarpFactorBatch` with `state_sizes=[6]`) wrapped in `LinkFrameFactorBatch` | `python/examples/robot_custom_objective.py`, `docs/sphinx/articulations.rst` |
 | a robot with closed loops or mimic joints | the same, plus `LoopClosureFactorBatch` / `MimicJointFactorBatch` wrapped in `ConstraintFactorBatch(..., ConstraintKind.Equality)` | `docs/sphinx/articulations.rst` |
 | a residual no built-in factor computes, inside a larger graph | a Warp factor (`pycunls.warp.WarpFactorBatch`) | `python/examples/custom_warp_factor.py` |
 
@@ -106,7 +107,7 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   "converged" early (the message says which criterion fired).
 - **Reprojection observations are normalized** image coordinates (intrinsics removed).
 - **Keep arrays alive.** Batches read the arrays you pass; do not let them be garbage collected.
-- **Articulations.** `joint_q` follows Newton's layout (quaternions x, y, z, w); write it with
+- **Articulations.** `joint_q` holds each joint's coordinates in joint order (quaternions x, y, z, w); write it with
   `ArticulationStateBatch.set_joint_q`, read it with `get_joint_q` (both take a `stride` for
   instances inside a larger array); `get_link_transforms` gives every link's world pose
   (position, quaternion x, y, z, w). Joint limits are hard bounds

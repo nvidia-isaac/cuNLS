@@ -21,13 +21,16 @@ operations for applying tangent-space updates.
 - Rigid transforms: `se2_state_batch.h`, `se3_state_batch.h`
 - Similarities: `similarity2_state_batch.h`, `similarity3_state_batch.h`
 - Projective: `sl4_state_batch.h` (SL(4) homographies)
-- Articulations: `articulation_topology.h` (`ArticulationDescription`: Newton's joint
+- Articulations: `articulation_topology.h` (`ArticulationDescription`: flat joint
   arrays; `ArticulationTopology`: validated, parents-first, uploaded; `DeviceView` for
   kernels) and `articulation_state_batch.h` (`ArticulationStateBatch`: owned storage,
   ambient = joint_q + link poses (12/link) + DOF motion columns (6/DOF); `Plus` applies the
   per-joint step, clamps moved scalar coordinates, then runs forward kinematics into the
   cache). Implements `BoxBoundedStates` (bounds per DOF; `BoundedComponentOffsets` =
-  coordinate of each scalar DOF, -1 for BALL/FREE) and `DerivedStateData`.
+  coordinate of each scalar DOF, -1 for BALL/FREE) and `DerivedStateData`. BALL / FREE
+  quaternions are normalized whenever coordinates are read into the cache (`SetJointQ`,
+  `RefreshDerivedData`, `Plus`); a zero one becomes the identity. The factors that read the
+  cache, and the index-space and frame conventions they share: `cunls/factor/kinematics/AGENTS.md`.
 
 ## Memory model
 

@@ -23,6 +23,7 @@ add_library(cunls_factor OBJECT
   imu_factor_batch.cu
   information/information_factor_batch_kernels.cu
   information/motion_prior_information.cu
+  kinematics/link_frame_factor_batch.cu
   kinematics/link_target_factor_batch.cu
   kinematics/loop_closure_factor_batch.cu
   kinematics/mimic_joint_factor_batch.cu

@@ -30,6 +30,7 @@
 #include "bindings.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/log.h"
+#include "cunls/factor/kinematics/link_frame_factor_batch.h"
 #include "cunls/factor/kinematics/link_target_factor_batch.h"
 #include "cunls/factor/kinematics/loop_closure_factor_batch.h"
 #include "cunls/factor/kinematics/mimic_joint_factor_batch.h"
@@ -91,7 +92,7 @@ using cunls::LogError;  // used by THROW_ON_CUDA_ERROR
 void bind_articulation(nb::module_ &m) {
   nb::enum_<cunls::ArticulationJointType>(
       m, "ArticulationJointType",
-      "Joint types of an articulation; the values are Newton's JointType values.")
+      "Joint types of an articulation (the integer values of ArticulationTopology's joint_type).")
       .value("Prismatic", cunls::ArticulationJointType::kPrismatic,
              "1 coordinate: translation along the axis.")
       .value("Revolute", cunls::ArticulationJointType::kRevolute,
@@ -106,7 +107,7 @@ void bind_articulation(nb::module_ &m) {
 
   nb::class_<cunls::ArticulationTopology>(
       m, "ArticulationTopology",
-      "An immutable kinematic tree (Newton's array layout), shared by every "
+      "An immutable kinematic tree (flat joint arrays), shared by every "
       "ArticulationStateBatch instance and kinematic factor built on it. Built once from "
       "arrays (lists, numpy, or GPU arrays such as wp.array, copied to the host): joint_type, "
       "joint_parent (parent link, -1: root frame), "
@@ -158,7 +159,7 @@ void bind_articulation(nb::module_ &m) {
       .def_prop_ro("link_count", &cunls::ArticulationTopology::LinkCount,
                    "Number of links (== joint_count).")
       .def_prop_ro("coord_count", &cunls::ArticulationTopology::CoordCount,
-                   "Coordinates per instance (joint_q floats, Newton's layout).")
+                   "Coordinates per instance (joint_q floats).")
       .def_prop_ro("dof_count", &cunls::ArticulationTopology::DofCount,
                    "Degrees of freedom per instance: the tangent size of an articulation state.")
       .def_prop_ro("ambient_size", &cunls::ArticulationTopology::AmbientSize,
@@ -166,6 +167,11 @@ void bind_articulation(nb::module_ &m) {
                    "motion column.")
       .def_prop_ro("has_limits", &cunls::ArticulationTopology::HasLimits,
                    "Whether any DOF has a finite limit.")
+      .def_prop_ro("scalar_coord", &cunls::ArticulationTopology::ScalarCoord,
+                   "Per DOF, the joint_q coordinate holding it for a scalar DOF (PRISMATIC, "
+                   "REVOLUTE, D6), -1 for BALL and FREE DOFs. In a state, DOF j of a scalar "
+                   "joint is the float at scalar_coord[j] of its instance (the joint_q part "
+                   "comes first), which is what joint-space custom factors read.")
       .def_prop_ro("lower_limits", &cunls::ArticulationTopology::LowerLimits,
                    "Lower limit per DOF (-inf: unbounded).")
       .def_prop_ro("upper_limits", &cunls::ArticulationTopology::UpperLimits,
@@ -253,7 +259,7 @@ void bind_articulation(nb::module_ &m) {
           "the cached poses (no forward kinematics runs: set_joint_q keeps the cache current; "
           "after writing state_device_ptr storage directly, call refresh(stream) first): 7 "
           "float32 per link, the pose convention of the "
-          "factor targets (Newton's body_q layout), "
+          "factor targets, "
           "position then quaternion (x, y, z, w), links in topology order; instance i starts at "
           "i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A "
           "wp.array(dtype=wp.transform) of shape (num_states * link_count,) is accepted.")
@@ -322,6 +328,62 @@ void bind_articulation(nb::module_ &m) {
           nb::arg("weights").none(), nb::arg("capacity"), nb::keep_alive<1, 2>(),
           nb::keep_alive<1, 3>(), nb::keep_alive<1, 4>(), nb::keep_alive<1, 5>(),
           nb::keep_alive<1, 6>());
+
+  nb::class_<cunls::LinkFrameFactorBatch, cunls::FactorBatch>(
+      m, "LinkFrameFactorBatch",
+      "Puts the SE(3) pose states of any factor on a robot, for custom kinematic objectives. "
+      "The wrapped inner_factor is an ordinary factor over SE(3) poses (a built-in one such as "
+      "SE3PriorFactorBatch, SE3BetweenFactorBatch, SE3SphereClearanceFactorBatch, or a "
+      "pycunls.warp.WarpFactorBatch) that knows nothing about robots. The state slots of "
+      "inner_factor listed in pose_slots do not connect to states of the problem: each receives "
+      "the world pose of a frame fixed on a link of the articulation instance, and the inner "
+      "Jacobian is carried to the joint DOFs (chain rule through the forward-kinematics "
+      "cache).\n\n"
+      "Pose slots use SE3StateBatch's convention: a row-major 4x4 world_from_body matrix, "
+      "tangent [omega, v] in the body frame, update X' = X Exp(delta); write inner_factor "
+      "exactly as for SE3StateBatch states. For factor f and pose slot s (the position in "
+      "pose_slots, nP = len(pose_slots)) the pose is X_L(q) X_off with L = "
+      "topology_links[f * nP + s] and X_off = frame_offsets[f * nP + s].\n\n"
+      "States of this batch: [articulation instance] followed by inner_factor's slots that are "
+      "not pose slots, in order (e.g. an object pose solved with the joints). Size and active "
+      "count are inner_factor's. A topology link out of range gives a NaN pose. For a "
+      "constraint, wrap this batch in ConstraintFactorBatch, never inner_factor. Guide: "
+      "docs/sphinx/articulations.rst, 'Custom kinematic objectives'.\n\n"
+      "Parameters\n"
+      "----------\n"
+      "topology : ArticulationTopology\n"
+      "    Kinematic tree of the articulation state.\n"
+      "inner_factor : FactorBatch\n"
+      "    The factor over SE(3) poses (kept alive by this batch).\n"
+      "pose_slots : list[int]\n"
+      "    State slots of inner_factor (positions in its state_sizes) that receive a link frame\n"
+      "    pose; distinct, each of tangent size 6. Example: [0] for a factor over one pose.\n"
+      "topology_links : int32 GPU array\n"
+      "    capacity x nP link indices of the topology (positions in UrdfArticulation.link_names):\n"
+      "    the link carrying the frame of each pose slot, factor-major.\n"
+      "frame_offsets : float32 GPU array or None\n"
+      "    capacity x nP x 7: each frame in its link frame (position, quaternion x, y, z, w;\n"
+      "    e.g. a camera mount or a tool tip), or None for the link frames themselves.")
+      .def(
+          "__init__",
+          [](cunls::LinkFrameFactorBatch *self, const cunls::ArticulationTopology &topology,
+             cunls::FactorBatch *inner, const std::vector<int> &pose_slots,
+             nb::handle topology_links, nb::handle frame_offsets) {
+            const size_t capacity = inner->Capacity(), nP = pose_slots.size();
+            new (self) cunls::LinkFrameFactorBatch(
+                topology, inner, pose_slots,
+                device_ints(topology_links, "topology_links", capacity * nP,
+                            "capacity x len(pose_slots) links"),
+                OptionalFloats(frame_offsets, "frame_offsets", capacity, 7 * nP, "factor"));
+          },
+          nb::arg("topology"), nb::arg("inner_factor"), nb::arg("pose_slots"),
+          nb::arg("topology_links"), nb::arg("frame_offsets").none() = nb::none(),
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(), nb::keep_alive<1, 5>(),
+          nb::keep_alive<1, 6>())
+      .def_prop_ro("inner_factor", &cunls::LinkFrameFactorBatch::Inner, nb::rv_policy::reference,
+                   "The wrapped factor over SE(3) poses.")
+      .def_prop_ro("pose_slots", &cunls::LinkFrameFactorBatch::PoseSlots,
+                   "State slots of inner_factor that receive a link frame pose.");
 
   nb::class_<cunls::LinkOrientationFactorBatch, cunls::FactorBatch>(
       m, "LinkOrientationFactorBatch",
@@ -413,7 +475,7 @@ void bind_articulation(nb::module_ &m) {
 
   nb::class_<cunls::MimicJointFactorBatch, cunls::FactorBatch>(
       m, "MimicJointFactorBatch",
-      "c = q_m - (a + b q_ref): a mimic (coupled) scalar DOF, as Newton's joint_mimic_* and URDF "
+      "c = q_m - (a + b q_ref): a mimic (coupled) scalar DOF, as URDF "
       "<mimic>. Wrap in ConstraintFactorBatch(..., ConstraintKind.Equality). Device arrays per "
       "factor: mimic_dofs, reference_dofs (int32 DOF indices, 1 each), coefficients (a, b: 2 "
       "floats).")

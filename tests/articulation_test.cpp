@@ -37,11 +37,14 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
+#include "cunls/factor/between/se3_between_factor_batch.h"
 #include "cunls/factor/constraint_factor_batch.h"
+#include "cunls/factor/kinematics/link_frame_factor_batch.h"
 #include "cunls/factor/kinematics/link_target_factor_batch.h"
 #include "cunls/factor/kinematics/loop_closure_factor_batch.h"
 #include "cunls/factor/kinematics/mimic_joint_factor_batch.h"
 #include "cunls/factor/kinematics/posture_factor_batch.h"
+#include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -454,7 +457,15 @@ TEST(ArticulationStateBatch, StridedJointQAndLinkTransforms) {
   states.GetJointQ(d_back.data(), n, stream.GetStream(), q_stride);
   states.GetLinkTransforms(d_x.data(), n, stream.GetStream(), x_stride);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  EXPECT_EQ(Host(d_back), scene);  // same values, same untouched gaps
+  const auto back = Host(d_back);  // same values (quaternions renormalized), untouched gaps
+  ASSERT_EQ(back.size(), scene.size());
+  for (size_t i = 0; i < scene.size(); ++i) {
+    if (scene[i] == kSentinel) {
+      EXPECT_EQ(back[i], kSentinel) << i;
+    } else {
+      EXPECT_NEAR(back[i], scene[i], 1e-6) << i;
+    }
+  }
 
   const auto x = Host(d_x);
   double worst = 0;
@@ -506,21 +517,28 @@ TEST(ArticulationStateBatch, ZeroStepKeepsStateAndBoundsClampMovedComponents) {
 // ---------------------------------------------------------------------------
 
 /**
- * Evaluates `factor` (one factor per instance t of `states`, state t) and
- * compares its Jacobian with central differences of PlusIgnoringBounds.
+ * Evaluates `factor` (one factor per instance t of `states`, state t, then
+ * extra[t] when `extra` is given: a second state of `extra_cols` tangent
+ * columns, held fixed) and compares its DOF columns with central differences
+ * of PlusIgnoringBounds.
  */
 void CheckJacobians(const FactorBatch &factor, ArticulationStateBatch &states, int n,
-                    const char *label, double tolerance = 3e-3) {
+                    const char *label, double tolerance = 3e-3,
+                    const std::vector<float *> &extra = {}, int extra_cols = 0) {
   CudaStream stream;
   const int m = static_cast<int>(factor.ResidualsSize());
   const int T = static_cast<int>(states.TangentSize()), A = static_cast<int>(states.AmbientSize());
+  const int Jc = T + extra_cols;
   auto pointers = [&](float *base) {
-    std::vector<float *> p(n);
-    for (int t = 0; t < n; ++t) p[t] = base + size_t(t) * A;
+    std::vector<float *> p;
+    for (int t = 0; t < n; ++t) {
+      p.push_back(base + size_t(t) * A);
+      if (!extra.empty()) p.push_back(extra[t]);
+    }
     return dvector<float *>(p);
   };
   dvector<float *> ptrs = pointers(states.StateDevicePtr(0));
-  dvector<float> res(size_t(n) * m), jac(size_t(n) * m * T);
+  dvector<float> res(size_t(n) * m), jac(size_t(n) * m * Jc);
   ASSERT_TRUE(factor.Evaluate(res.data(), jac.data(), ptrs.data(), stream.GetStream()));
   const auto J = Host(jac);
   dvector<float> plus(size_t(n) * A), minus(size_t(n) * A), rp(size_t(n) * m), rm(size_t(n) * m);
@@ -542,7 +560,7 @@ void CheckJacobians(const FactorBatch &factor, ArticulationStateBatch &states, i
     for (int t = 0; t < n; ++t) {
       for (int r = 0; r < m; ++r) {
         const double numeric = (a[size_t(t) * m + r] - b[size_t(t) * m + r]) / (2.0 * h);
-        const double analytic = J[(size_t(t) * m + r) * T + k];
+        const double analytic = J[(size_t(t) * m + r) * Jc + k];
         const double err = std::fabs(numeric - analytic) / (1.0 + std::fabs(analytic));
         worst = Worst(worst, err);
         if (!(err <= tolerance)) {  // NaN fails too
@@ -992,10 +1010,9 @@ std::vector<int> IkBenchSizes() {
 }
 
 /**
- * Throughput of batched bounded IK on the 7-DOF arm (the size of Newton's FastIKSolve FR3
- * benchmark): N problems, one subproblem each, a LinkPose target, a fixed budget of 16 LM
- * iterations, plain LM: no line search and no bound refinement (real time), as Newton's captured
- * IKSolver.step(iterations=16); IK_BENCH_LS / IK_BENCH_REFINE override them.
+ * Throughput of batched bounded IK on the 7-DOF arm: N problems, one subproblem each, a LinkPose
+ * target, a fixed budget of 16 LM iterations, plain LM: no line search and no bound refinement
+ * (real time); IK_BENCH_LS / IK_BENCH_REFINE override them.
  * Prints the median over 10 solves; success = position error < 5 mm and limits respected.
  */
 TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
@@ -1176,6 +1193,261 @@ TEST(ArticulationStateBatch, ForwardKinematicsBeyondSharedMemory) {
     }
   }
   EXPECT_LT(worst, 2e-5);
+}
+
+// Written BALL / FREE quaternions are stored normalized and the cache is rigid; a zero quaternion
+// (an uninitialized root) becomes the identity and stays finite through a step.
+TEST(ArticulationStateBatch, NormalizesWrittenQuaternions) {
+  const ArticulationDescription d = MixedTree();  // coords: FREE 0..6 (quat 3..6), BALL 7..10
+  ArticulationTopology topo(d);
+  const int n = 2, C = topo.CoordCount(), T = topo.DofCount();
+  std::mt19937 rng(5);
+  std::vector<float> unit(size_t(n) * C);
+  for (int s = 0; s < n; ++s) {
+    const auto qs = RandomQ(d, rng);
+    std::copy(qs.begin(), qs.end(), unit.begin() + size_t(s) * C);
+  }
+  std::vector<float> q = unit;
+  for (int i = 3; i < 7; ++i) q[i] *= 2.5f;    // instance 0: drifted FREE quaternion
+  for (int i = 7; i < 11; ++i) q[i] *= 0.3f;   // and BALL quaternion
+  for (int i = 3; i < 7; ++i) q[C + i] = 0.f;  // instance 1: zero FREE quaternion
+  dvector<float> d_q(q), d_back(q.size());
+  ArticulationStateBatch states(topo, n, /*apply_joint_limits=*/false);
+  states.SetNumActiveStates(n);
+  CudaStream stream;
+  states.SetJointQ(d_q.data(), n, stream.GetStream());
+  states.GetJointQ(d_back.data(), n, stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto back = Host(d_back);
+  for (int i = 0; i < C; ++i) EXPECT_NEAR(back[i], unit[i], 1e-6) << "instance 0, coord " << i;
+  const std::vector<float> identity = {0.f, 0.f, 0.f, 1.f};
+  for (int i = 0; i < 4; ++i) EXPECT_EQ(back[C + 3 + i], identity[i]);
+
+  const auto h = HostState(states, 1);
+  const auto ref = ReferenceFK(d, unit.data());
+  double worst = 0;
+  for (int l = 0; l < topo.LinkCount(); ++l) {
+    const float *P = h.data() + topo.LinkPoseOffset(l);
+    for (int i = 0; i < 12; ++i) worst = Worst(worst, std::fabs(P[i] - ref[l][i]));
+  }
+  EXPECT_LT(worst, 2e-5);
+
+  dvector<float> delta(std::vector<float>(size_t(n) * T, 0.1f)),
+      out(size_t(n) * topo.AmbientSize());
+  states.Plus(states.StateDevicePtr(0), delta.data(), out.data(), stream.GetStream());
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  for (float v : Host(out)) ASSERT_TRUE(std::isfinite(v));
+}
+
+// Link and DOF indices outside the topology give NaN residuals and zero Jacobians instead of
+// reading past an instance's cache; valid factors of the same batch are unaffected.
+TEST(KinematicFactors, OutOfRangeIndicesGiveNaN) {
+  const ArticulationDescription d = MixedTree();
+  ArticulationTopology topo(d);
+  const int L = topo.LinkCount(), T = topo.DofCount(), k = 3;
+  ArticulationStateBatch states(topo, 1);
+  states.SetNumActiveStates(1);
+  CudaStream stream;
+  std::vector<float *> ptr_host(k, states.StateDevicePtr(0));
+  dvector<float *> ptrs(ptr_host);
+
+  auto check = [&](const FactorBatch &factor, const std::vector<bool> &valid, const char *what) {
+    const int m = static_cast<int>(factor.ResidualsSize());
+    dvector<float> r(std::vector<float>(size_t(k) * m, 7.f));
+    dvector<float> J(std::vector<float>(size_t(k) * m * T, 7.f));
+    ASSERT_TRUE(factor.Evaluate(r.data(), J.data(), ptrs.data(), stream.GetStream()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    const auto hr = Host(r), hJ = Host(J);
+    for (int t = 0; t < k; ++t) {
+      for (int i = 0; i < m; ++i) {
+        EXPECT_EQ(std::isfinite(hr[size_t(t) * m + i]), bool(valid[t])) << what << " factor " << t;
+      }
+      for (int i = 0; i < m * T; ++i) {
+        const float v = hJ[size_t(t) * m * T + i];
+        if (valid[t]) {
+          EXPECT_TRUE(std::isfinite(v)) << what;
+        } else if (std::string(what) != "mimic") {  // mimic keeps its constant Jacobian
+          EXPECT_EQ(v, 0.f) << what << " factor " << t;
+        }
+      }
+    }
+  };
+
+  dvector<int> links(std::vector<int>{-1, L, L - 1});
+  std::vector<float> target_poses;
+  for (int t = 0; t < k; ++t) target_poses.insert(target_poses.end(), {0, 0, 0, 0, 0, 0, 1});
+  dvector<float> targets(target_poses);
+  LinkPoseFactorBatch pose(topo, links.data(), nullptr, targets.data(), nullptr, k);
+  pose.SetNumActiveFactors(k);
+  check(pose, {false, false, true}, "pose");
+
+  dvector<int> parents(std::vector<int>{-2, 0, -1}), children(std::vector<int>{1, L, 2});
+  std::vector<float> frame = {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1};
+  std::vector<float> frames;
+  for (int t = 0; t < k; ++t) frames.insert(frames.end(), frame.begin(), frame.end());
+  dvector<float> d_frames(frames);
+  LoopClosureFactorBatch loop(topo, JT::kBall, parents.data(), children.data(), d_frames.data(),
+                              nullptr, k);
+  loop.SetNumActiveFactors(k);
+  check(loop, {false, false, true}, "loop");
+
+  // DOF T: out of range; DOF 6: a BALL DOF (no scalar coordinate); 9 -> 10: revolute, prismatic.
+  dvector<int> mimic(std::vector<int>{T, 6, 9}), ref(std::vector<int>{9, 9, 10});
+  dvector<float> coeffs(std::vector<float>{0.f, 1.f, 0.f, 1.f, 0.f, 1.f});
+  MimicJointFactorBatch mimic_factor(topo, mimic.data(), ref.data(), coeffs.data(), k);
+  mimic_factor.SetNumActiveFactors(k);
+  check(mimic_factor, {false, false, true}, "mimic");
+}
+
+// ---------------------------------------------------------------------------
+// LinkFrameFactorBatch: SE(3) factors on link frames
+// ---------------------------------------------------------------------------
+
+/** Row-major 4x4 floats of `T`, appended to `out`. */
+void AppendMatrix(const M4 &T, std::vector<float> &out) {
+  for (double v : T) out.push_back(static_cast<float>(v));
+}
+
+// An SE(3) prior on a frame of a link: the residuals equal the prior evaluated on that frame's
+// pose, the DOF columns match central differences, and items follow the item contract.
+TEST(LinkFrameFactor, PriorOnLinkFrames) {
+  MixedFixture f;
+  const std::vector<int> link_ids = f.Links();
+  std::vector<float> frames, targets, poses;
+  for (int t = 0; t < f.n; ++t) {
+    const M4 off = f.SmallTransform(0.2f);
+    const M4 F = Mul(f.LinkPose(t, link_ids[t]), off);
+    const auto po = PoseOf(off);
+    frames.insert(frames.end(), po.begin(), po.end());
+    AppendMatrix(Mul(F, f.SmallTransform(0.3f)), targets);
+    AppendMatrix(F, poses);
+  }
+  dvector<int> links(link_ids);
+  dvector<float> d_frames(frames), d_targets(targets), d_poses(poses);
+  SE3PriorFactorBatch prior(reinterpret_cast<const SE3Transform *>(d_targets.data()), f.n);
+  LinkFrameFactorBatch frame(f.topo, &prior, {0}, links.data(), d_frames.data());
+  frame.SetNumActiveFactors(f.n);
+  EXPECT_EQ(prior.NumActiveFactors(), size_t(f.n));
+  EXPECT_EQ(frame.ResidualsSize(), 6u);
+  EXPECT_EQ(frame.StateSizes(), std::vector<size_t>{size_t(f.topo.DofCount())});
+
+  CudaStream stream;
+  std::vector<float *> art(f.n), direct(f.n);
+  for (int t = 0; t < f.n; ++t) {
+    art[t] = f.states.StateDevicePtr(t);
+    direct[t] = d_poses.data() + 16 * size_t(t);
+  }
+  dvector<float *> d_art(art), d_direct(direct);
+  dvector<float> r_frame(6 * f.n), r_direct(6 * f.n);
+  ASSERT_TRUE(frame.Evaluate(r_frame.data(), nullptr, d_art.data(), stream.GetStream()));
+  ASSERT_TRUE(prior.Evaluate(r_direct.data(), nullptr, d_direct.data(), stream.GetStream()));
+  const auto a = Host(r_frame), b = Host(r_direct);
+  for (size_t i = 0; i < a.size(); ++i) EXPECT_NEAR(a[i], b[i], 2e-5) << i;
+
+  CheckJacobians(frame, f.states, f.n, "frame prior");
+  evaluate_items_test::CheckEvaluateItems(frame, 2, [&](int k) {
+    std::vector<float *> p(f.n);
+    for (int t = 0; t < f.n; ++t) p[t] = f.states.StateDevicePtr((t + 5 * k) % f.n);
+    return p;
+  });
+}
+
+// Two link slots of one factor (the relative pose of two links of an instance): DOFs that move
+// both links contribute through both slots.
+TEST(LinkFrameFactor, RelativePoseOfTwoLinks) {
+  MixedFixture f;
+  const int L = f.topo.LinkCount();
+  std::vector<int> link_ids;
+  std::vector<float> deltas;
+  for (int t = 0; t < f.n; ++t) {
+    const int a = t % L, b = (t * 3 + 2) % L;
+    link_ids.push_back(a);
+    link_ids.push_back(b);
+    // Delta near the current relative pose: rotation residuals well below π.
+    const M4 rel = Mul(Inverse(f.LinkPose(t, b)), f.LinkPose(t, a));
+    AppendMatrix(Mul(f.SmallTransform(0.1f), rel), deltas);
+  }
+  dvector<int> links(link_ids);
+  dvector<float> d_deltas(deltas);
+  SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(d_deltas.data()), f.n);
+  LinkFrameFactorBatch frame(f.topo, &between, {0, 1}, links.data());
+  frame.SetNumActiveFactors(f.n);
+  EXPECT_EQ(frame.StateSizes(), std::vector<size_t>{size_t(f.topo.DofCount())});
+  CheckJacobians(frame, f.states, f.n, "two links");
+}
+
+// A link frame related to a free SE(3) state (an object pose): the object's columns and the
+// residuals are the inner factor's, the DOF columns match central differences.
+TEST(LinkFrameFactor, LinkToObjectPose) {
+  MixedFixture f;
+  const int T = f.topo.DofCount();
+  const std::vector<int> link_ids = f.Links();
+  std::vector<float> objects, deltas, poses;
+  for (int t = 0; t < f.n; ++t) {
+    const M4 X = f.LinkPose(t, link_ids[t]);
+    const M4 object = Mul(X, f.SmallTransform(0.5f));
+    AppendMatrix(object, objects);
+    AppendMatrix(Mul(f.SmallTransform(0.1f), Mul(Inverse(object), X)), deltas);
+    AppendMatrix(X, poses);
+  }
+  dvector<int> links(link_ids);
+  dvector<float> d_objects(objects), d_deltas(deltas), d_poses(poses);
+  SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(d_deltas.data()), f.n);
+  LinkFrameFactorBatch frame(f.topo, &between, {0}, links.data());
+  frame.SetNumActiveFactors(f.n);
+  EXPECT_EQ(frame.StateSizes(), (std::vector<size_t>{size_t(T), 6}));
+
+  std::vector<float *> object_ptrs(f.n), outer, direct;
+  for (int t = 0; t < f.n; ++t) {
+    object_ptrs[t] = d_objects.data() + 16 * size_t(t);
+    outer.push_back(f.states.StateDevicePtr(t));
+    outer.push_back(object_ptrs[t]);
+    direct.push_back(d_poses.data() + 16 * size_t(t));
+    direct.push_back(object_ptrs[t]);
+  }
+  CheckJacobians(frame, f.states, f.n, "link to object", 3e-3, object_ptrs, 6);
+
+  CudaStream stream;
+  dvector<float *> d_outer(outer), d_direct(direct);
+  dvector<float> r1(6 * f.n), r2(6 * f.n), j1(size_t(f.n) * 6 * (T + 6)), j2(size_t(f.n) * 36 * 2);
+  ASSERT_TRUE(frame.Evaluate(r1.data(), j1.data(), d_outer.data(), stream.GetStream()));
+  ASSERT_TRUE(between.Evaluate(r2.data(), j2.data(), d_direct.data(), stream.GetStream()));
+  const auto hr1 = Host(r1), hr2 = Host(r2), hj1 = Host(j1), hj2 = Host(j2);
+  for (size_t i = 0; i < hr1.size(); ++i) EXPECT_NEAR(hr1[i], hr2[i], 2e-5) << i;
+  for (int t = 0; t < f.n; ++t) {
+    for (int r = 0; r < 6; ++r) {
+      for (int k = 0; k < 6; ++k) {
+        EXPECT_NEAR(hj1[(size_t(t) * 6 + r) * (T + 6) + T + k],
+                    hj2[(size_t(t) * 6 + r) * 12 + 6 + k], 2e-5)
+            << "item " << t << " row " << r << " object column " << k;
+      }
+    }
+  }
+}
+
+TEST(LinkFrameFactor, RejectsInvalidSlots) {
+  MixedFixture f;
+  dvector<int> links(std::vector<int>(2 * f.n, 0));
+  dvector<float> deltas(std::vector<float>(16 * f.n, 0.f));
+  SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(deltas.data()), f.n);
+  auto make = [&](std::vector<int> slots, FactorBatch *inner, const int *l) {
+    LinkFrameFactorBatch frame(f.topo, inner, slots, l);
+  };
+  EXPECT_THROW(make({}, &between, links.data()), std::invalid_argument);
+  EXPECT_THROW(make({2}, &between, links.data()), std::invalid_argument);
+  EXPECT_THROW(make({0, 0}, &between, links.data()), std::invalid_argument);
+  EXPECT_THROW(make({0}, nullptr, links.data()), std::invalid_argument);
+  EXPECT_THROW(make({0}, &between, nullptr), std::invalid_argument);
+  MimicJointFactorBatch mimic(f.topo, links.data(), links.data(), deltas.data(), f.n);
+  EXPECT_THROW(make({0}, &mimic, links.data()), std::invalid_argument);  // tangent T, not 6
+  ConstraintFactorBatch constraint(&between, ConstraintKind::kEquality);
+  EXPECT_THROW(make({0}, &constraint, links.data()), std::invalid_argument);  // hidden from AL
+  try {
+    make({1, 3}, &between, links.data());
+    FAIL() << "expected a throw";
+  } catch (const std::invalid_argument &e) {
+    EXPECT_NE(std::string(e.what()).find("Fix:"), std::string::npos) << e.what();
+  }
 }
 
 }  // namespace

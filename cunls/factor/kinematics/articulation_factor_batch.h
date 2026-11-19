@@ -27,9 +27,9 @@ namespace cunls {
 
 /**
  * @brief Base of the kinematic factors: every factor of the batch reads one
- * instance of an ArticulationStateBatch built on `Topology()` (state size =
- * the topology's DOF count) and only its cache (link poses, motion columns),
- * never running kinematics itself. Holds what all kinematic factors share:
+ * instance of an ArticulationStateBatch built on `Topology()` as its state 0
+ * (state size = the topology's DOF count) and only its cache (link poses,
+ * motion columns), never running kinematics itself. Holds what all kinematic factors share:
  * the topology and the residual size.
  *
  * The Jacobian of a factor is ResidualsSize() x DofCount(), row-major; only
@@ -43,8 +43,12 @@ class ArticulationFactorBatch : public FactorBatch {
   /** @brief Residual rows per factor. */
   size_t ResidualsSize() const final { return residual_size_; }
 
-  /** @brief One state: an articulation instance (tangent = the topology's DOF count). */
-  std::vector<size_t> StateSizes() const final {
+  /**
+   * @brief State 0 is an articulation instance (tangent = the topology's DOF
+   * count); the built-in kinematic factors read no other state.
+   * LinkFrameFactorBatch appends the other states of the factor it wraps.
+   */
+  std::vector<size_t> StateSizes() const override {
     return {static_cast<size_t>(topology_.DofCount())};
   }
 

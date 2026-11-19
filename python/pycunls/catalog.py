@@ -251,7 +251,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
     # Articulations: sizes depend on the ArticulationTopology (0 = per topology).
     entries.append(StateInfo(
         "ArticulationStateBatch", 0, 0,
-        "owned: joint_q (topology.coord_count, Newton layout, quaternions x, y, z, w), then a cache "
+        "owned: joint_q (topology.coord_count, quaternions x, y, z, w), then a cache "
         "of link poses (12 floats each) and DOF motion columns (6 each)",
         "topology.dof_count values in joint_qd order: a scalar per PRISMATIC/REVOLUTE/D6 axis, "
         "BALL a rotation vector and FREE (dp, dtheta) in the parent-anchor frame",
@@ -262,7 +262,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
         "(int32 GPU array of the instances held fixed) with const_capacity, and "
         "apply_joint_limits (default True); storage is owned: write joint_q with set_joint_q"))
     art = ["ArticulationStateBatch"]
-    articulation_note = ("Build ArticulationTopology from the robot's joint arrays (Newton layout), "
+    articulation_note = ("Build ArticulationTopology from the robot's joint arrays or a URDF, "
                          "then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. "
                          "Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.")
     entries += [
@@ -287,6 +287,24 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                     "weights": "6 floats per factor or None"}, False,
                    "Inverse kinematics: a link frame should reach a world pose.",
                    articulation_note),
+        FactorInfo("LinkFrameFactorBatch", art, 0,
+                   "the inner factor's residual, its pose slots fed X_L(q) X_off",
+                   {"topology": "ArticulationTopology",
+                    "inner_factor": "factor over SE(3) poses (built-in or WarpFactorBatch)",
+                    "pose_slots": "list: inner_factor's SE(3) state slots that receive a link "
+                                  "frame pose instead of a state",
+                    "topology_links": "int32, len(pose_slots) per factor: topology link index "
+                                      "(position in link_names) carrying each frame",
+                    "frame_offsets": "7 floats (position, quaternion) per pose slot: the frame "
+                                     "in its link, or None"}, False,
+                   "Custom kinematic objectives: any SE(3) factor (prior, between, sphere "
+                   "clearance, reprojection, a Warp factor) on frames of robot links; the inner "
+                   "factor's other slots (an object pose, a camera) stay states.",
+                   "States: [articulation instance] + inner_factor's slots that are not pose "
+                   "slots. Pose slots use SE3StateBatch's convention (row-major 4x4 "
+                   "world_from_body, body tangent [omega, v], X' = X Exp(delta)). For "
+                   "constraints wrap this batch in ConstraintFactorBatch, never the inner one. "
+                   + articulation_note),
         FactorInfo("PostureFactorBatch", art, 0, "W (q (-) q*)  (topology.dof_count rows)",
                    {"topology": "ArticulationTopology",
                     "targets": "topology.coord_count floats per factor (joint_q layout)",
@@ -305,7 +323,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                    {"topology": "ArticulationTopology", "mimic_dofs": "int32 DOF per factor",
                     "reference_dofs": "int32 DOF per factor",
                     "coefficients": "2 floats per factor (a, b)"}, False,
-                   "Coupled joints (Newton joint_mimic_*, URDF <mimic>); wrap in "
+                   "Coupled joints (URDF <mimic>); wrap in "
                    "ConstraintFactorBatch(..., ConstraintKind.Equality).", articulation_note),
     ]
     return {e.name: e for e in entries}
@@ -330,7 +348,8 @@ def effective_factor(batch) -> Tuple[object, Optional[FactorInfo], str]:
     """What a factor batch in a problem does, seen through its wrappers.
 
     Follows ``inner_factor`` of ``WeightedFactorBatch``, ``InformationFactorBatch`` and
-    ``ConstraintFactorBatch`` (nested too) to the wrapped batch.
+    ``ConstraintFactorBatch`` (nested too) to the wrapped batch; stops at a
+    ``LinkFrameFactorBatch`` (its inner factor reads link frames, not the problem's states).
 
     Returns:
         ``(inner batch, its FactorInfo or None, role)`` with role ``"relative"`` (constrains its
@@ -344,6 +363,8 @@ def effective_factor(batch) -> Tuple[object, Optional[FactorInfo], str]:
     while True:
         kind = getattr(inner, "kind", None)
         inequality |= getattr(kind, "name", None) == "Inequality"
+        if type(inner).__name__ == "LinkFrameFactorBatch":
+            break  # its inner factor reads link frames, not the problem's states
         nested = getattr(inner, "inner_factor", None)
         if nested is None:
             break

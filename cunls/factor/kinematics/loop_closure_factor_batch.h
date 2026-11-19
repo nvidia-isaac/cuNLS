@@ -52,7 +52,8 @@ namespace cunls {
  *
  * Data per factor (user-owned device arrays):
  * - parent_links: int,   1 per factor: link P, or -1 for the world;
- * - child_links:  int,   1 per factor: link C;
+ * - child_links:  int,   1 per factor: link C (a link outside the topology, here or
+ *                 in parent_links, gives a NaN residual);
  * - frames:       float, 14 per factor: X_p (position, quaternion x, y, z, w) then X_c;
  * - axes:         float, 3 per factor: the unit joint axis a (REVOLUTE, PRISMATIC; may be
  *                 nullptr for BALL and FIXED).

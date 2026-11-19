@@ -467,12 +467,17 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     evaluation = evaluate(problem, stream)
     for b in evaluation.batches:
         if b.num_non_finite:
+            _, info, _ = effective_factor(problem.factor_batch(b.index))
+            kinematic = info is not None and "ArticulationStateBatch" in info.states
+            hint = (" Kinematic factors also give NaN for a link or DOF index outside the "
+                    "topology (links 0 .. link_count-1, parent -1 for the world; DOFs 0 .. "
+                    "dof_count-1, scalar ones for mimic joints)." if kinematic else "")
             issues.append(Issue(
                 "error",
                 f"Factor batch {b.name}: {b.num_non_finite} of {b.num_factors} factors have NaN "
                 f"or Inf residuals at the current states, first factor {b.first_non_finite}. Fix: "
                 "check the measurement data and layout for that factor and that its states are "
-                "in the factor's domain (e.g. points in front of the camera)."))
+                f"in the factor's domain (e.g. points in front of the camera).{hint}"))
         if not b.evaluate_ok:
             issues.append(Issue("error", f"Factor batch {b.name} reported an evaluation failure."))
     issues.extend(_gauge_issues(problem, state_batches))

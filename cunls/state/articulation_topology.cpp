@@ -27,7 +27,7 @@ namespace cunls {
 namespace {
 
 constexpr float kInf = std::numeric_limits<float>::infinity();
-/** Newton's MAXVAL convention: limits at or beyond this magnitude mean "unbounded". */
+/** Limits at or beyond this magnitude mean "unbounded" (a common simulator sentinel). */
 constexpr float kUnboundedLimit = 1e5f;
 
 [[noreturn]] void Fail(const std::string &what, const std::string &got, const std::string &expected,
@@ -59,7 +59,7 @@ void JointSizes(const ArticulationDescription &d, int j, int *coords, int *dofs)
         Fail("joint_dof_dim is required with D6 joints",
              std::to_string(d.joint_dof_dim.size()) + " entries",
              std::to_string(2 * d.joint_type.size()) + " (linear, angular) per joint",
-             "pass Newton's joint_dof_dim");
+             "pass joint_dof_dim with a (linear, angular) axis count per joint");
       }
       const int lin = d.joint_dof_dim[2 * j], ang = d.joint_dof_dim[2 * j + 1];
       if (lin < 0 || lin > 3 || ang < 0 || ang > 3) {
@@ -143,7 +143,7 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
            std::to_string(d.joint_q_start[j + 1] - d.joint_q_start[j]) + " coordinates, " +
                std::to_string(d.joint_qd_start[j + 1] - d.joint_qd_start[j]) + " DOFs",
            std::to_string(coords) + " coordinates, " + std::to_string(dofs) + " DOFs",
-           "list each joint's coordinates consecutively, in joint order (Newton's layout)");
+           "list each joint's coordinates consecutively, in joint order");
     }
   }
   const int C = d.joint_q_start[J], T = d.joint_qd_start[J];
@@ -191,7 +191,7 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
          "remove the cycle (close loops with LoopClosureFactorBatch)");
   }
 
-  // Axes: unit length; D6 angular axes orthonormal (as Newton orthonormalizes them).
+  // Axes: unit length; D6 angular axes orthogonal (they are used as given, not orthonormalized).
   std::vector<float> axis(3 * size_t(T), 0.f);
   std::vector<int> scalar_coord(T, -1), dof_joint(T, -1);
   for (int j = 0; j < J; ++j) {
@@ -223,8 +223,7 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
           const double dot = double(a[0]) * b[0] + double(a[1]) * b[1] + double(a[2]) * b[2];
           if (std::fabs(dot) > 1e-3) {
             Fail("D6 joint " + std::to_string(j) + " has non-orthogonal angular axes",
-                 "dot " + std::to_string(dot), "orthogonal axes",
-                 "use orthogonal angular axes (Newton orthonormalizes them)");
+                 "dot " + std::to_string(dot), "orthogonal axes", "use orthogonal angular axes");
           }
         }
       }

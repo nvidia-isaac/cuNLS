@@ -18,49 +18,34 @@ Every factor reads pose states (SE2/SE3/SO2/SO3) as world_from_rig T (the
 rig's pose in the world), perturbed on the right (T Exp(δ), δ in the rig
 frame). Reprojection / PnP see a world point at E T^-1 P.
 
-## Built-in factor families
+## Subfolders
 
-Per-manifold implementations live in kind-named subfolders; each also has a
-manifold-generic, compile-time-deduced facade:
+Each has its own `AGENTS.md` with its files, conventions and invariants; read it before
+changing that folder.
 
-- `between/`: relative-pose factors (`<group>_between_factor_batch.h` for so2, so3, se2, se3,
-  similarity2, similarity3, sl4, vector)
-  plus the facade `between/between_factor_batch.h` (`BetweenFactorBatch<Manifold>`,
-  manifold deduced from the deltas pointer's type — no `<Manifold>` needed).
-- `prior/`: prior factors (`<group>_prior_factor_batch.h` for so2, so3, se2, se3,
-  similarity2, similarity3, sl4, and `prior_vector_factor_batch.h`)
-  plus the facade `prior/prior_factor_batch.h` (`PriorFactorBatch<Manifold>`, same deduction).
-- `motion/`: constant-velocity/-acceleration motion-prior factors
-  (`motion/constant_velocity_<group>_factor_batch.h`,
-  `motion/constant_acceleration_<group>_factor_batch.h` for so2, so3, se2, se3) plus the facades
-  `motion/constant_velocity_factor_batch.h`/`constant_acceleration_factor_batch.h`
-  (`ConstantVelocityFactorBatch<Manifold>`/`ConstantAccelerationFactorBatch<Manifold>` —
-  manifold is an explicit template argument, not deduced).
-- `information/`: covariance/weight fusion — `information/information_factor_batch.h`
-  (generic `InformationFactorBatch<T>` wrapper) and
-  `information/motion_prior_information.h` (closed-form `Q(dt)^-1` for the
-  `motion/` factors, plus `MotionPriorInformationFactorBatch<T, Dim>`).
+- `between/`: relative-pose factors, one per manifold, and the `BetweenFactorBatch<Manifold>`
+  facade (`cunls/factor/between/AGENTS.md`).
+- `prior/`: prior factors and the `PriorFactorBatch<Manifold>` facade
+  (`cunls/factor/prior/AGENTS.md`).
+- `motion/`: constant-velocity / constant-acceleration motion priors
+  (`cunls/factor/motion/AGENTS.md`).
+- `information/`: sqrt-information weighting, including the closed-form motion-prior noise
+  (`cunls/factor/information/AGENTS.md`).
+- `clearance/`: disk / sphere obstacle clearance as constraint functions
+  (`cunls/factor/clearance/AGENTS.md`).
+- `dynamics/`: vehicle and rigid-body models as shooting defects
+  (`cunls/factor/dynamics/AGENTS.md`).
+- `kinematics/`: articulated robots (`ArticulationStateBatch`): link targets, posture, loops,
+  mimic joints, and `LinkFrameFactorBatch` for SE(3) factors on links
+  (`cunls/factor/kinematics/AGENTS.md`).
+
+## Factors in this directory
+
 - Reprojection: `reprojection_factor_batch.h`
 - PnP (fixed 3D points, pose-only Jacobian): `pnp_factor_batch.h`
 - Registration: `point_to_point_factor_batch.h`, `point_to_plane_factor_batch.h`,
   `symmetric_point_to_plane_factor_batch.h`
 - Generic weighting wrapper: `weighted_factor_batch.h`
-- Clearance (`clearance/`): `SE2DiskClearanceFactorBatch` and
-  `SE3SphereClearanceFactorBatch` — distance from a pose's origin to disk /
-  sphere obstacles as a constraint function (wrap in `ConstraintFactorBatch`);
-  guide: `docs/sphinx/dynamics.rst`.
-- Dynamics (`dynamics/`): `SE2DifferentialDriveFactorBatch` (Carter: SE2 pose,
-  wheel speeds, next pose) and `SE2KinematicBicycleFactorBatch` (car: pose, (v, δ),
-  (a, δ̇), next pose, next (v, δ)), and their terrain versions
-  `SE3DifferentialDriveFactorBatch` / `SE3KinematicBicycleFactorBatch` (SE3 pose;
-  residual rows yaw, forward, lateral, vertical; roll/pitch left to terrain
-  factors); `SE2/SO3/SE3KinematicsFactorBatch` (X_{k+1} = X_k Exp(dt ξ_k), the
-  twist a vector state); `QuadrotorFactorBatch` (SE3 pose, velocity, rates, 4
-  rotor thrusts; `QuadrotorParameters`) and `QuadrupedFactorBatch` (single rigid
-  body, 4 foot forces, per-step contacts and foot positions;
-  `QuadrupedParameters`): Euler multiple-shooting defect with
-  per-factor time steps, analytic Jacobians; each kernel in its factor's own
-  `.cu`, Lie operations from `cunls/math/lie_device.cuh`. Guide: `docs/sphinx/dynamics.rst`.
 - IMU: `imu_factor_batch.h` (`ImuFactorBatch`, `ImuParameters`): keyframe pair
   (T_a, v_a, b_a, T_b, v_b, b_b; T = world_from_rig, as reprojection / PnP), raw samples in a ragged CSR device array
   (7 floats each, `sample_offsets`); the intermediate states of the Euler chain
@@ -75,16 +60,9 @@ manifold-generic, compile-time-deduced facade:
   wrapper turning any batch's rows into `s*r = 0` / `s*r <= 0`),
   `bound_factor_batch.h` (`BoundFactorBatch<Dim>`: box bounds on a vector
   state, itself an inequality batch), `halfspace_factor_batch.h`
-  (`HalfspaceFactorBatch<Dim>`: `a^T x - b`, to be wrapped)
-- Kinematics (`kinematics/`, on `ArticulationStateBatch`): `ArticulationFactorBatch`
-  (base: topology + residual size, state size = DOF count), `LinkPositionFactorBatch`,
-  `LinkOrientationFactorBatch`, `LinkPoseFactorBatch` (one templated kernel in
-  `link_target_factor_batch.cu`), `PostureFactorBatch`, `LoopClosureFactorBatch`
-  (BALL 3 / REVOLUTE 6 / PRISMATIC 5 / FIXED 6 rows, wrapped as equality),
-  `MimicJointFactorBatch`. They never run kinematics: they read the state's cache
-  (link poses, DOF motion columns) and the topology's ancestor bitsets. Kernels use one
-  group of 8/16/32 lanes per item (by DOF count): lane l writes Jacobian columns l, l+G, ...
-  of every row (coalesced rows). Guide: `docs/sphinx/articulations.rst`.
+  (`HalfspaceFactorBatch<Dim>`: `a^T x - b`, to be wrapped). A constraint must be the
+  outermost wrapper: AL finds constraints by type, so one wrapped inside another batch
+  (information, weighting, `LinkFrameFactorBatch`) would be solved as a plain residual.
 
 ## Data contracts
 

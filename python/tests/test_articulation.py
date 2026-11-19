@@ -26,6 +26,7 @@ import warp as wp
 
 import pycunls
 from pycunls.articulation import topology_from_urdf
+from pycunls.warp import WarpFactorBatch
 
 JT = pycunls.ArticulationJointType
 
@@ -72,6 +73,7 @@ def test_urdf_topology(arm):
     assert arm.dof_names == ["j1", "j2", "j3", "j4", "fa", "fb"]
     assert math.isinf(topo.lower_limits[3])  # continuous
     assert arm.mimic_joints[0].mimic_dof == 5 and arm.mimic_joints[0].reference_dof == 4
+    assert list(topo.scalar_coord) == list(range(6))  # all scalar DOFs, coordinate = DOF here
 
 
 def _urdf(body):
@@ -335,6 +337,111 @@ def test_strided_joint_q_and_link_transforms(arm, stream):
     np.testing.assert_allclose(np.abs(packed[:, l1, 5]), np.abs(np.sin(q / 2)), atol=1e-6)
     with pytest.raises(ValueError, match="Fix:"):
         states.set_joint_q(wp.zeros(n * topo.coord_count, dtype=float), n, stream, stride=stride)
+
+
+def test_diagnose_names_out_of_range_links(arm, stream):
+    """A link index outside the topology gives a NaN residual; diagnose says which index to check."""
+    topo, n = arm.topology, 2
+    states = pycunls.ArticulationStateBatch(topo, n, apply_joint_limits=False)
+    states.set_num_active_states(n)
+    states.set_joint_q(wp.zeros(n * topo.coord_count, dtype=float), n, stream)
+    links = wp.array(np.array([topo.link_count - 1, topo.link_count], np.int32))
+    targets = wp.array(np.tile([0, 0, 0.5], n).astype(np.float32))
+    position = pycunls.LinkPositionFactorBatch(topo, links, wp.zeros(3 * n, dtype=float), targets,
+                                               None, n)
+    position.set_num_active_factors(n)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    _one_factor_per_instance(problem, states, [position], n)
+    issues = [str(i) for i in pycunls.diagnose(problem, stream)]
+    assert any("1 of 2 factors" in i and "first factor 1" in i and "link_count" in i
+               for i in issues), issues
+
+
+@wp.kernel
+def _frame_height_kernel(heights: wp.array(dtype=float), ids: wp.array(dtype=wp.int32),
+                         state_pointers: wp.array(dtype=wp.uint64),
+                         residuals: wp.array(dtype=float), jacobians: wp.array(dtype=float),
+                         write_jacobians: int):
+    t = wp.tid()
+    pose = wp.array(ptr=state_pointers[t], shape=(16,), dtype=float)  # row-major 4x4
+    residuals[t] = pose[11] - heights[ids[t]]                           # p_z - h
+    if write_jacobians != 0:
+        for k in range(3):
+            jacobians[6 * t + k] = 0.0               # d p_z / d omega (body)
+            jacobians[6 * t + 3 + k] = pose[8 + k]   # d p_z / d v (body): row z of R
+
+
+class _FrameHeight(WarpFactorBatch):
+    """r = p_z - h on one SE(3) pose: a custom factor that knows nothing about robots."""
+
+    def __init__(self, heights, capacity):
+        super().__init__(residual_size=1, state_sizes=[6], capacity=capacity)
+        self.heights = heights
+
+    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+                 factor_ids_ptr, num_factor_ids):
+        n = num_factor_ids
+        write = 1 if jacobians_ptr != 0 else 0
+        jac = (self.wrap_array(jacobians_ptr, wp.float32, 6 * n) if write
+               else wp.zeros(1, dtype=float, device=self._device))
+        wp.launch(_frame_height_kernel, dim=n,
+                  inputs=[self.heights, self.factor_ids(factor_ids_ptr, n),
+                          self.wrap_array(state_pointers_ptr, wp.uint64, n),
+                          self.wrap_array(residuals_ptr, wp.float32, n), jac, write],
+                  stream=self.make_warp_stream(stream_handle))
+        return True
+
+
+def test_link_frame_factor_with_a_warp_factor(arm, stream):
+    """A Warp SE(3) factor on a tool frame: correct DOF Jacobian, and the same solve as the
+    built-in LinkPositionFactorBatch with only its z row weighted."""
+    topo, n = arm.topology, 16
+    rng = np.random.default_rng(4)
+    q0 = wp.array(rng.uniform(-0.6, 0.6, (n, topo.coord_count)).astype(np.float32))
+    tool = arm.link_names.index("tool")
+    offset = np.array([0.05, 0.0, 0.1, 0.0, 0.0, 0.0, 1.0], np.float32)  # a point on the tool
+    heights = rng.uniform(0.3, 0.6, n).astype(np.float32)
+    tools = wp.full(n, tool, dtype=wp.int32)
+
+    def solve(height_factor):
+        states = pycunls.ArticulationStateBatch(topo, n, apply_joint_limits=False)
+        states.set_num_active_states(n)
+        states.set_joint_q(q0, n, stream)
+        height_factor.set_num_active_factors(n)
+        posture = pycunls.PostureFactorBatch(topo, wp.zeros(n * topo.coord_count, dtype=float),
+                                             wp.full(n * topo.dof_count, 0.1, dtype=float), n)
+        posture.set_num_active_factors(n)
+        problem = pycunls.Problem()
+        problem.add_state_batch(states)
+        _one_factor_per_instance(problem, states, [height_factor, posture], n)
+        wp.synchronize()
+        before = pycunls.evaluate(problem, stream).batches[0].cost
+        summary = pycunls.LevenbergMarquardtMinimizer().minimize(stream, problem)
+        q = wp.zeros(n * topo.coord_count, dtype=float)
+        states.get_joint_q(q, n, stream)
+        wp.synchronize()
+        return problem, before, summary, q.numpy()
+
+    inner = _FrameHeight(wp.array(heights), n)
+    frame = pycunls.LinkFrameFactorBatch(topo, inner, pose_slots=[0], topology_links=tools,
+                                         frame_offsets=wp.array(np.tile(offset, n)))
+    problem, before, summary, q_frame = solve(frame)
+    assert inner.num_active_factors == n and frame.inner_factor is inner
+    assert frame.pose_slots == [0]
+    for check in pycunls.check_jacobians(problem, stream):
+        assert check.ok, check
+    assert not pycunls.diagnose(problem, stream)
+    assert pycunls.evaluate(problem, stream).batches[0].cost < 1e-2 * before  # posture trades off
+
+    targets = np.zeros((n, 3), np.float32)
+    targets[:, 2] = heights
+    builtin = pycunls.LinkPositionFactorBatch(
+        topo, tools, wp.array(np.tile(offset[:3], n)), wp.array(targets.ravel()),
+        wp.array(np.tile([0.0, 0.0, 1.0], n).astype(np.float32)), n)
+    _, _, builtin_summary, q_builtin = solve(builtin)
+    assert summary.num_iterations == builtin_summary.num_iterations
+    np.testing.assert_allclose(q_frame, q_builtin, atol=1e-3)  # float32 rounding over the solve
 
 
 def test_topology_accepts_gpu_arrays():
