@@ -194,7 +194,11 @@ the panel's part of the right-hand side. This is the shape of batches of many sm
 independent subproblems (inverse kinematics of a batch of robots, many small
 pose graphs) and of the leaves of chains and grids, where a CTA per panel would
 leave most of its threads idle. With fewer such panels, a level keeps the CTA
-kernels, which finish them in about one wave with less latency per panel.
+kernels, which finish them in about one wave with less latency per panel. A
+small panel without rows below it (the root of its subproblem, e.g. a whole
+inverse-kinematics problem) is solved backward by the same warp right after its
+factorization, so a batch of single-block subproblems takes one kernel per
+solve.
 
 The cost of a level is mostly latency for small problems (each level is two
 dependent launches) and throughput for large ones, so the number of levels

@@ -94,12 +94,24 @@ Sparse linear system abstraction and implementation used by minimizers.
   `UpdateKernelByWarp`, `BackwardKernelByWarp`: a row per lane in registers,
   shuffles; `CholeskyPlan::small_panels` / `small_runs` by level instead of
   factor / update items): batches of small subproblems. Fewer stay on the
-  CTA kernels (less latency per panel, no extra launches). Measured lessons:
+  CTA kernels (less latency per panel, no extra launches). Small panels
+  without rows below (roots, `small_root_offsets`: e.g. a whole IK problem)
+  are also solved backward by their factor warp (it gathers its columns of L
+  by shuffles; no L_D store, no backward launch), so a batch of single-block
+  subproblems is one kernel per solve between the permutations. The warp
+  kernels check their own panel's row activity (`PanelActivityKernel` runs
+  only for CTA panels), and the first level's small panels read A's diagonal
+  from their registers (`diagonal_columns_` lists the columns that still need
+  `OriginalDiagonalKernel`). Measured lessons:
   keep the warp factorization's column loop rolled (rows shift down a
-  register per column; widths 8 / 16 / 32 compiled apart, also for the update
-  and backward kernels): a fully unrolled 32 x 32 loop nest is bound by
+  register per column): a fully unrolled 32 x 32 loop nest is bound by
   instruction fetch when few warps run it (3x slower than the CTA kernel on
-  16 panels). Keep the inner loops predicated, not early-exited: a branch per
+  16 panels). The factor and backward kernels are compiled per width class
+  (8 / 16 / 32 columns) and a level launches the one of its widest small panel
+  (`small_width_class`; each warp still runs its own panel's width): one
+  kernel for all widths took the 32-wide registers (96, half the resident
+  warps) for 7-wide IK panels, and a launch per class and level cost single
+  large graphs (mixed widths, many levels) 2-4%. Keep the inner loops predicated, not early-exited: a branch per
   column serializes the shuffles (2x slower). The lanes of the diagonal-block
   rows own the forward-substitution entries (a copy of y_p per lane cost
   5-25%). Small panels store L_D column-major (each column one coalesced

@@ -128,12 +128,15 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   dvector<int64_t> assembly_dst64_;  ///< The same for a factor of more than 2^31 entries.
   bool wide_assembly_ = false;       ///< assembly_dst64_ is in use (not assembly_dst_).
   dvector<int> diagonal_index_;      ///< Per permuted column: its diagonal nonzero of A, or -1.
-  dvector<int64_t> diagonal_slot_;  ///< Per permuted column: that entry's offset in factor_, or -1.
+  /// Permuted columns whose diagonal entry of A the factorization reads from original_: all
+  /// but those of the first level's small panels (their warps read it from the panel).
+  dvector<int> diagonal_columns_;
+  dvector<int64_t> diagonal_slot_;  ///< Per diagonal_columns_ entry: its offset in factor_, or -1.
 
   // Numeric storage.
   dvector<float> factor_;    ///< Panels of L (column-major).
   dvector<float> diagonal_;  ///< Per panel: L_D, row-major.
-  dvector<float> original_;  ///< Per permuted column: the diagonal entry of A (zero pivots).
+  dvector<float> original_;  ///< Per diagonal_columns_ column: the diagonal entry of A.
   dvector<float> work_;      ///< Permuted right-hand side, reduced by the forward substitution.
   dvector<float> solution_;  ///< Permuted L^{-1} b, then the solution.
   /// Backward substitution: L_bᵀ x per column (zero between solves).

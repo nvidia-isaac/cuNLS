@@ -686,9 +686,20 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
     plan.update_items.insert(plan.update_items.end(), update_by_level[l].begin(),
                              update_by_level[l].end());
     plan.update_offsets.push_back(static_cast<int>(plan.update_items.size()));
+    // The panels with rows below, then the roots (no rows below); the widest width class.
+    const auto roots =
+        std::stable_partition(small_by_level[l].begin(), small_by_level[l].end(),
+                              [&](int p) { return plan.panels[p].height > plan.panels[p].width; });
+    plan.small_root_offsets.push_back(
+        static_cast<int>(plan.small_panels.size() + (roots - small_by_level[l].begin())));
     plan.small_panels.insert(plan.small_panels.end(), small_by_level[l].begin(),
                              small_by_level[l].end());
     plan.small_panel_offsets.push_back(static_cast<int>(plan.small_panels.size()));
+    int width_class = 0;
+    for (int p : small_by_level[l]) {
+      width_class = std::max(width_class, CholeskySmallWidthClass(plan.panels[p].width));
+    }
+    plan.small_width_class.push_back(width_class);
     plan.small_runs.insert(plan.small_runs.end(), small_runs_by_level[l].begin(),
                            small_runs_by_level[l].end());
     plan.small_run_offsets.push_back(static_cast<int>(plan.small_runs.size()));
@@ -704,6 +715,7 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
   plan.n = n;
   plan.factor_offsets = {0};
   plan.update_offsets = {0};
+
   plan.small_panel_offsets = {0};
   plan.small_run_offsets = {0};
   if (n == 0) return plan;

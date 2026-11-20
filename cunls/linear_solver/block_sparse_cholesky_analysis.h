@@ -38,6 +38,16 @@ constexpr int kCholeskyTileRows = 64;
 constexpr int kCholeskySmallPanelRows = 32;
 
 /**
+ * @brief Width classes of small panels (at most 8, 16 or 32 columns): a level's warp kernels
+ * are compiled for its widest class, so the registers of a batch of narrow panels stay few
+ * (more resident warps).
+ */
+constexpr int kCholeskySmallWidthClasses = 3;
+
+/** @brief The width class (kCholeskySmallWidthClasses) of a small panel of `width` columns. */
+inline int CholeskySmallWidthClass(int width) { return width <= 8 ? 0 : width <= 16 ? 1 : 2; }
+
+/**
  * @brief Small panels a level needs before they take the warp kernels: a warp works through
  * its panel serially, so it wins on throughput (many panels per SM), while with fewer panels
  * the CTA kernels finish them in about one wave with less latency each (e.g. the levels of a
@@ -124,8 +134,13 @@ struct CholeskyPlan {
   std::vector<char> update_exclusive;
   /// The small panels (at most kCholeskySmallPanelRows rows) by level that take one warp each in
   /// the factor and backward kernels (no factor items; see kCholeskyMinSmallPanelsPerLevel).
+  /// Within a level those with rows below come before the roots (no rows below, e.g. a whole
+  /// subproblem of one block), which the factor kernel also solves backward.
   std::vector<int> small_panels;
   std::vector<int> small_panel_offsets;  ///< num_levels + 1 offsets into small_panels.
+  std::vector<int> small_root_offsets;   ///< Per level: its first root in small_panels.
+  /// Per level: the widest CholeskySmallWidthClass among its small panels (the kernels' size).
+  std::vector<int> small_width_class;
   /// The runs of the small panels by level: one warp each in the update kernel (no update items).
   std::vector<int> small_runs;
   std::vector<int> small_run_offsets;  ///< num_levels + 1 offsets into small_runs.
