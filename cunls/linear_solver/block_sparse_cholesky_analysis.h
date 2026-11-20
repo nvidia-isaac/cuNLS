@@ -38,14 +38,11 @@ constexpr int kCholeskyTileRows = 64;
 constexpr int kCholeskySmallPanelRows = 32;
 
 /**
- * @brief Width classes of small panels (at most 8, 16 or 32 columns): a level's warp kernels
- * are compiled for its widest class, so the registers of a batch of narrow panels stay few
- * (more resident warps).
+ * @brief The warp width of a small panel of `width` columns: the warp kernels are compiled for at
+ * most 8, 16 or 32 columns, so a launch of narrow panels needs fewer registers (more resident
+ * warps). A launch is compiled for the widest panel of its level.
  */
-constexpr int kCholeskySmallWidthClasses = 3;
-
-/** @brief The width class (kCholeskySmallWidthClasses) of a small panel of `width` columns. */
-inline int CholeskySmallWidthClass(int width) { return width <= 8 ? 0 : width <= 16 ? 1 : 2; }
+inline int CholeskyWarpWidth(int width) { return width <= 8 ? 8 : width <= 16 ? 16 : 32; }
 
 /**
  * @brief Small panels a level needs before they take the warp kernels: a warp works through
@@ -58,19 +55,24 @@ constexpr int kCholeskyMinSmallPanelsPerLevel = 256;
 /**
  * @brief The symbolic analysis of a sparse SPD matrix for BlockSparseCholeskySolver:
  * the fill-reducing ordering, the supernodal structure of the factor L, and
- * the level schedule and index maps of the numeric phase.
+ * the program of the numeric phase with its index maps.
  *
  * L is stored as panels: groups of at most kCholeskyPanelWidth consecutive
  * columns (in the permuted order) with identical structure below their
  * diagonal block. Panel p is a dense column-major height_p x width_p block
  * whose first width_p rows are its own columns (the diagonal block, lower
  * triangle used) and whose remaining rows are its below rows (`below_rows`
- * from `rows_offset`, ascending, all after the panel's columns). The numeric
- * phase processes the panels level by level: a panel's level is one more than
- * the highest level among the panels that update it, so the panels of a level
- * are independent. Small panels (at most kCholeskySmallPanelRows rows) are
- * scheduled apart from the others, one warp each instead of factor and update
- * items, in the levels with enough of them (kCholeskyMinSmallPanelsPerLevel).
+ * from `rows_offset`, ascending, all after the panel's columns). A panel's
+ * level is one more than the highest level among the panels that update it,
+ * so the panels of a level are independent.
+ *
+ * The numeric phase runs `program`, a list of kernel launches: per level the
+ * factor launches, then the update launches; then the backward launches,
+ * levels in reverse. Every policy of the numeric phase is decided here, once:
+ * which panels take a warp instead of CTAs (kCholeskySmallPanelRows,
+ * kCholeskyMinSmallPanelsPerLevel), the warp width of a launch, and that a
+ * root panel (no rows below) is solved backward by its factor task (it has no
+ * backward task).
  */
 struct CholeskyPlan {
   /** @brief A panel of L. */
@@ -79,10 +81,13 @@ struct CholeskyPlan {
     int width;        ///< Columns, at most kCholeskyPanelWidth.
     int height;       ///< Rows: width plus the rows below the diagonal block.
     int rows_offset;  ///< Offset of its below rows in below_rows.
-    int64_t offset;   ///< Offset of its column-major values in the factor storage.
-    /// Offset of its factored diagonal block L_D (width x width, the reciprocals
-    /// of its diagonal on the diagonal): row-major, column-major for the panels in
-    /// small_panels (written and read by the warp kernels only).
+    /// No panel updates it (level 0): its diagonal block is still A's when it is factored, so
+    /// the zero-pivot test reads A's diagonal there (no copy of it is needed).
+    bool leaf;
+    int64_t offset;  ///< Offset of its column-major values in the factor storage.
+    /// Offset of its factored diagonal block L_D (width x width, column-major, the reciprocals
+    /// of its diagonal on the diagonal), for the backward substitution; -1 for a root (no rows
+    /// below), which its factor task solves backward.
     int64_t diagonal_offset;
   };
 
@@ -100,20 +105,28 @@ struct CholeskyPlan {
                             ///< rows begin... of the source (the map is built on the device).
   };
 
-  /**
-   * @brief One CTA of the factor kernel: a panel not factored by a warp (not in small_panels)
-   * and the first of its <= 64 below rows.
-   */
-  struct FactorItem {
-    int panel;      ///< The panel.
-    int row_begin;  ///< First of its below rows (position) handled by the CTA.
+  /** @brief What a launch does with each of its tasks. */
+  enum class Phase : char {
+    kFactor,    ///< Factor a panel and take its step of the forward substitution (a root: also
+                ///< its backward solve).
+    kUpdate,    ///< Apply a run's update to its target panel.
+    kBackward,  ///< Take a panel's step of the backward substitution.
   };
 
-  /** @brief One CTA of the update kernel: a run of a CTA panel and the first of its <= 64 rows. */
-  struct UpdateItem {
-    int panel;      ///< The source panel.
-    int run;        ///< Its run (index into runs): the target and the columns.
-    int row_begin;  ///< First below row (position, at or after the run) handled by the CTA.
+  /** @brief One task of a launch: for a CTA, a tile of at most kCholeskyTileRows below rows. */
+  struct Task {
+    int index;      ///< The panel (factor, backward) or the run (update).
+    int row_begin;  ///< First below row (position) of the CTA's tile, at or after an update's
+                    ///< run; 0 for a warp, which handles the whole panel or run.
+  };
+
+  /** @brief One kernel launch of the numeric phase: tasks [first_task, first_task + num_tasks). */
+  struct Launch {
+    Phase phase;     ///< What each task does.
+    int warp_width;  ///< 0: a CTA per task; 8, 16 or 32: a warp per task, the kernel compiled for
+                     ///< panels of at most that many columns (CholeskyWarpWidth of the widest).
+    int first_task;  ///< Offset of its tasks in `tasks`.
+    int num_tasks;   ///< Tasks (CTAs or warps).
   };
 
   int n = 0;                    ///< Matrix size.
@@ -125,29 +138,14 @@ struct CholeskyPlan {
   std::vector<Run> runs;        ///< Update runs of all panels.
   int64_t relmap_size = 0;      ///< Entries of the relative map (see Run).
 
-  int num_levels = 0;                    ///< Levels of the schedule.
-  std::vector<FactorItem> factor_items;  ///< Factor CTAs by level.
-  std::vector<int> factor_offsets;       ///< num_levels + 1 offsets into factor_items.
-  std::vector<UpdateItem> update_items;  ///< Update CTAs by level.
-  std::vector<int> update_offsets;       ///< num_levels + 1 offsets into update_items.
-  /** @brief Per level: whether no two panels of the level update the same target (no atomics). */
-  std::vector<char> update_exclusive;
-  /// The small panels (at most kCholeskySmallPanelRows rows) by level that take one warp each in
-  /// the factor and backward kernels (no factor items; see kCholeskyMinSmallPanelsPerLevel).
-  /// Within a level those with rows below come before the roots (no rows below, e.g. a whole
-  /// subproblem of one block), which the factor kernel also solves backward.
-  std::vector<int> small_panels;
-  std::vector<int> small_panel_offsets;  ///< num_levels + 1 offsets into small_panels.
-  std::vector<int> small_root_offsets;   ///< Per level: its first root in small_panels.
-  /// Per level: the widest CholeskySmallWidthClass among its small panels (the kernels' size).
-  std::vector<int> small_width_class;
-  /// The runs of the small panels by level: one warp each in the update kernel (no update items).
-  std::vector<int> small_runs;
-  std::vector<int> small_run_offsets;  ///< num_levels + 1 offsets into small_runs.
+  int num_levels = 0;           ///< Levels of the schedule.
+  std::vector<Task> tasks;      ///< The tasks of all launches, launch by launch.
+  std::vector<Launch> program;  ///< The numeric phase, in order (see the struct comment).
 
   // Statistics of the analysis (for logs and tests).
   int num_supervariables = 0;  ///< Groups of consecutive columns with identical structure.
   int num_supernodes = 0;      ///< Supernodes before splitting into panels.
+  int num_small_panels = 0;    ///< Panels that take a warp.
   double flops = 0.0;          ///< Factorization flops (multiply-add counted as 2).
   const char *ordering = "";   ///< Name of the chosen ordering.
 };

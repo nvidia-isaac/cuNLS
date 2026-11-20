@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <tuple>
 #include <utility>
 
 namespace cunls {
@@ -596,9 +595,12 @@ std::vector<int> BuildPanels(const Graph &g, const Symbolic &s, CholeskyPlan &pl
       plan.below_rows.insert(plan.below_rows.end(), below.begin(), below.end());
       panel.height = panel.width + static_cast<int>(plan.below_rows.size()) - panel.rows_offset;
       panel.offset = plan.factor_size;
-      panel.diagonal_offset = plan.diagonal_size;
       plan.factor_size += static_cast<int64_t>(panel.height) * panel.width;
-      plan.diagonal_size += static_cast<int64_t>(panel.width) * panel.width;
+      // A root (no rows below) is solved backward by its factor task: no L_D to keep.
+      panel.diagonal_offset = panel.height > panel.width ? plan.diagonal_size : -1;
+      if (panel.height > panel.width) {
+        plan.diagonal_size += static_cast<int64_t>(panel.width) * panel.width;
+      }
       std::fill(col_panel.begin() + c, col_panel.begin() + c + panel.width,
                 static_cast<int>(plan.panels.size()));
       plan.panels.push_back(panel);
@@ -608,15 +610,16 @@ std::vector<int> BuildPanels(const Graph &g, const Symbolic &s, CholeskyPlan &pl
 }
 
 /**
- * The level schedule: a panel's level is one more than the highest level of
- * the panels that update it. Then per level the factor items, the runs of
- * each panel's below rows by target panel with their update items, and
- * whether no two panels of the level update the same target. Small panels
- * (kCholeskySmallPanelRows) and their runs are listed per level instead of
- * getting items, in the levels with enough of them
- * (kCholeskyMinSmallPanelsPerLevel).
+ * The level schedule and the program: a panel's level is one more than the highest level of
+ * the panels that update it. Per level, the factor tasks and the runs of each panel's below rows
+ * by target panel with their update tasks; then the launches. Small panels
+ * (kCholeskySmallPanelRows) take a warp each, in the levels with enough of them
+ * (kCholeskyMinSmallPanelsPerLevel), the others a CTA per kCholeskyTileRows below rows. A root
+ * panel (no rows below) gets no backward task: its factor task solves it backward.
  */
 void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
+  using Phase = CholeskyPlan::Phase;
+  using Task = CholeskyPlan::Task;
   const int np = static_cast<int>(plan.panels.size());
   auto below_of = [&](int p) {
     const auto &panel = plan.panels[p];
@@ -630,29 +633,36 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
       l = std::max(l, level[p] + 1);
     }
   }
-  plan.num_levels = np > 0 ? *std::max_element(level.begin(), level.end()) + 1 : 0;
+  const int num_levels = np > 0 ? *std::max_element(level.begin(), level.end()) + 1 : 0;
+  plan.num_levels = num_levels;
+  for (int p = 0; p < np; ++p) plan.panels[p].leaf = level[p] == 0;
 
-  std::vector<std::vector<CholeskyPlan::FactorItem>> factor_by_level(plan.num_levels);
-  std::vector<std::vector<CholeskyPlan::UpdateItem>> update_by_level(plan.num_levels);
-  std::vector<std::vector<int>> small_by_level(plan.num_levels),
-      small_runs_by_level(plan.num_levels);
-  std::vector<int> num_small(plan.num_levels, 0);
+  // Per level and phase: the CTA tasks and the warp tasks.
+  struct Level {
+    std::vector<Task> factor[2], update[2], backward[2];  // [0]: CTA, [1]: warp
+    int warp_width = 0;                                   // widest small panel (warp kernels)
+  };
+  std::vector<Level> levels(num_levels);
+  std::vector<int> num_small(num_levels, 0);
   for (int p = 0; p < np; ++p) {
     if (plan.panels[p].height <= kCholeskySmallPanelRows) ++num_small[level[p]];
   }
-  std::vector<std::tuple<int, int, int>> targets;  // (level, target, source)
   int64_t relmap_size = 0;
   for (int p = 0; p < np; ++p) {
-    const int l = level[p];
+    Level &lv = levels[level[p]];
     const auto [rows, count] = below_of(p);
-    const bool small = plan.panels[p].height <= kCholeskySmallPanelRows &&
-                       num_small[l] >= kCholeskyMinSmallPanelsPerLevel;
-    if (small) {
-      small_by_level[l].push_back(p);
-    } else if (count == 0) {
-      factor_by_level[l].push_back({p, 0});
+    const bool warp = plan.panels[p].height <= kCholeskySmallPanelRows &&
+                      num_small[level[p]] >= kCholeskyMinSmallPanelsPerLevel;
+    if (warp) {
+      ++plan.num_small_panels;
+      lv.warp_width = std::max(lv.warp_width, CholeskyWarpWidth(plan.panels[p].width));
+      lv.factor[1].push_back({p, 0});
+      if (count > 0) lv.backward[1].push_back({p, 0});
     } else {
-      for (int r = 0; r < count; r += kCholeskyTileRows) factor_by_level[l].push_back({p, r});
+      for (int r = 0; r == 0 || r < count; r += kCholeskyTileRows) {
+        lv.factor[0].push_back({p, r});
+        if (count > 0) lv.backward[0].push_back({p, r});
+      }
     }
     for (int a = 0; a < count;) {
       const int q = col_panel[rows[a]];
@@ -661,49 +671,28 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
       const int run = static_cast<int>(plan.runs.size());
       plan.runs.push_back({p, q, a, b, relmap_size});
       relmap_size += count - a;
-      if (small) {
-        small_runs_by_level[l].push_back(run);
+      if (warp) {
+        lv.update[1].push_back({run, 0});
       } else {
-        for (int r = a; r < count; r += kCholeskyTileRows)
-          update_by_level[l].push_back({p, run, r});
+        for (int r = a; r < count; r += kCholeskyTileRows) lv.update[0].push_back({run, r});
       }
-      targets.emplace_back(l, q, p);
       a = b;
     }
   }
   plan.relmap_size = relmap_size;
-  std::sort(targets.begin(), targets.end());
-  plan.update_exclusive.assign(plan.num_levels, 1);
-  for (size_t i = 1; i < targets.size(); ++i) {
-    const auto &[l0, q0, p0] = targets[i - 1];
-    const auto &[l1, q1, p1] = targets[i];
-    if (l0 == l1 && q0 == q1 && p0 != p1) plan.update_exclusive[l1] = 0;
-  }
-  for (int l = 0; l < plan.num_levels; ++l) {
-    plan.factor_items.insert(plan.factor_items.end(), factor_by_level[l].begin(),
-                             factor_by_level[l].end());
-    plan.factor_offsets.push_back(static_cast<int>(plan.factor_items.size()));
-    plan.update_items.insert(plan.update_items.end(), update_by_level[l].begin(),
-                             update_by_level[l].end());
-    plan.update_offsets.push_back(static_cast<int>(plan.update_items.size()));
-    // The panels with rows below, then the roots (no rows below); the widest width class.
-    const auto roots =
-        std::stable_partition(small_by_level[l].begin(), small_by_level[l].end(),
-                              [&](int p) { return plan.panels[p].height > plan.panels[p].width; });
-    plan.small_root_offsets.push_back(
-        static_cast<int>(plan.small_panels.size() + (roots - small_by_level[l].begin())));
-    plan.small_panels.insert(plan.small_panels.end(), small_by_level[l].begin(),
-                             small_by_level[l].end());
-    plan.small_panel_offsets.push_back(static_cast<int>(plan.small_panels.size()));
-    int width_class = 0;
-    for (int p : small_by_level[l]) {
-      width_class = std::max(width_class, CholeskySmallWidthClass(plan.panels[p].width));
+  auto emit = [&](Phase phase, const Level &lv, const std::vector<Task>(&tasks)[2]) {
+    for (int warp = 0; warp < 2; ++warp) {
+      if (tasks[warp].empty()) continue;
+      plan.program.push_back({phase, warp ? lv.warp_width : 0, static_cast<int>(plan.tasks.size()),
+                              static_cast<int>(tasks[warp].size())});
+      plan.tasks.insert(plan.tasks.end(), tasks[warp].begin(), tasks[warp].end());
     }
-    plan.small_width_class.push_back(width_class);
-    plan.small_runs.insert(plan.small_runs.end(), small_runs_by_level[l].begin(),
-                           small_runs_by_level[l].end());
-    plan.small_run_offsets.push_back(static_cast<int>(plan.small_runs.size()));
+  };
+  for (const Level &lv : levels) {
+    emit(Phase::kFactor, lv, lv.factor);
+    emit(Phase::kUpdate, lv, lv.update);
   }
+  for (int l = num_levels - 1; l >= 0; --l) emit(Phase::kBackward, levels[l], levels[l].backward);
 }
 
 }  // namespace
@@ -713,11 +702,6 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
                              const std::vector<int> &adjacency) {
   CholeskyPlan plan;
   plan.n = n;
-  plan.factor_offsets = {0};
-  plan.update_offsets = {0};
-
-  plan.small_panel_offsets = {0};
-  plan.small_run_offsets = {0};
   if (n == 0) return plan;
   const Graph g = MakeGraph(supervariable_start, adjacency_offsets, adjacency);
   plan.num_supervariables = g.Size();

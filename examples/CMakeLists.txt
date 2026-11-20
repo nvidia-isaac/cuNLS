@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89" CACHE STRING "CUDA architectures to compile")
-endif()
 if(NOT DEFINED CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX} AND EXISTS "/usr/local/cuda/bin/nvcc")
   set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 endif()
+# Native code for every GPU generation the toolkit supports (no PTX JIT at load time).
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/CudaArchitectures.cmake)
 
 project(cunls_examples LANGUAGES CXX CUDA)
 

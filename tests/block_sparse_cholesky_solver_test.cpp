@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <random>
 #include <set>
 #include <string>
@@ -341,7 +342,26 @@ TEST(BlockSparseCholeskyPlanTest, PanelsCoverTheColumns) {
   EXPECT_GT(plan.num_levels, 1);
 }
 
+/**
+ * Per panel (factor, backward) or run (update): the tasks of the program's launches of that
+ * phase that start it (a warp, or the CTA of its first tile).
+ */
+std::vector<int> Started(const internal::CholeskyPlan &plan, internal::CholeskyPlan::Phase phase) {
+  using Phase = internal::CholeskyPlan::Phase;
+  std::vector<int> started(phase == Phase::kUpdate ? plan.runs.size() : plan.panels.size(), 0);
+  for (const auto &launch : plan.program) {
+    if (launch.phase != phase) continue;
+    for (int k = 0; k < launch.num_tasks; ++k) {
+      const auto &task = plan.tasks[launch.first_task + k];
+      const int first = phase == Phase::kUpdate ? plan.runs[task.index].begin : 0;
+      if (launch.warp_width != 0 || task.row_begin == first) ++started[task.index];
+    }
+  }
+  return started;
+}
+
 TEST(BlockSparseCholeskyPlanTest, SmallPanelsOfBatchesTakeWarps) {
+  using Phase = internal::CholeskyPlan::Phase;
   auto plan_of = [](const BlockPattern &pattern) {
     const HostSystem s = MakeSystem(pattern, 1);
     DeviceSystem d(s);
@@ -351,33 +371,33 @@ TEST(BlockSparseCholeskyPlanTest, SmallPanelsOfBatchesTakeWarps) {
     return solver.Plan();
   };
   constexpr int kBatch = internal::kCholeskyMinSmallPanelsPerLevel;
-  // A batch of 32-row blocks: every panel a warp, no CTA items.
+  // A batch of 32-row blocks: every panel a warp; roots, so one factor launch is the program.
   const internal::CholeskyPlan blocks = plan_of(Replicate({{32}, {}}, kBatch));
-  EXPECT_EQ(blocks.small_panels.size(), blocks.panels.size());
-  EXPECT_TRUE(blocks.factor_items.empty());
-  // 33 rows, or too few panels in the level: the CTA kernels.
-  EXPECT_TRUE(plan_of(Replicate({{33}, {}}, kBatch)).small_panels.empty());
-  EXPECT_TRUE(plan_of(Replicate({{9}, {}}, kBatch - 1)).small_panels.empty());
-  // Chains and grids: the small panels' updates are warp runs, a grid's partly to shared
-  // targets (atomics); every panel is in exactly one list, every run in at most one.
+  EXPECT_EQ(blocks.num_small_panels, static_cast<int>(blocks.panels.size()));
+  ASSERT_EQ(blocks.program.size(), 1u);
+  EXPECT_EQ(blocks.program[0].phase, Phase::kFactor);
+  EXPECT_EQ(blocks.program[0].warp_width, 32);
+  EXPECT_EQ(plan_of(Replicate({{6}, {}}, kBatch)).program[0].warp_width, 8);
+  // 33 rows, or too few panels in the level: the CTA kernels, the roots again in one launch.
+  const internal::CholeskyPlan tall = plan_of(Replicate({{33}, {}}, kBatch));
+  EXPECT_EQ(tall.num_small_panels, 0);
+  ASSERT_EQ(tall.program.size(), 1u);
+  EXPECT_EQ(tall.program[0].warp_width, 0);
+  EXPECT_EQ(plan_of(Replicate({{9}, {}}, kBatch - 1)).num_small_panels, 0);
+  // Chains and grids: every panel factored once, every run applied once, every panel but a
+  // root (solved backward by its factor task) solved backward once.
   for (const BlockPattern &one : {BlockChain(40, 6), Grid(4, 4, 2)}) {
     const internal::CholeskyPlan plan = plan_of(Replicate(one, kBatch));
-    EXPECT_FALSE(plan.small_runs.empty());
-    std::vector<int> seen(plan.panels.size(), 0), runs(plan.runs.size(), 0);
-    for (int p : plan.small_panels) ++seen[p];
-    for (const auto &item : plan.factor_items) {
-      if (item.row_begin == 0) ++seen[item.panel];
+    EXPECT_GT(plan.num_small_panels, 0);
+    const std::vector<int> factored = Started(plan, Phase::kFactor);
+    const std::vector<int> backward = Started(plan, Phase::kBackward);
+    const std::vector<int> updated = Started(plan, Phase::kUpdate);
+    for (size_t p = 0; p < plan.panels.size(); ++p) {
+      EXPECT_EQ(factored[p], 1) << "panel " << p;
+      EXPECT_EQ(backward[p], plan.panels[p].height > plan.panels[p].width ? 1 : 0) << "panel " << p;
     }
-    for (size_t p = 0; p < seen.size(); ++p) EXPECT_EQ(seen[p], 1) << "panel " << p;
-    for (int r : plan.small_runs) ++runs[r];
-    for (const auto &item : plan.update_items) {
-      if (item.row_begin == plan.runs[item.run].begin) ++runs[item.run];
-    }
-    for (size_t r = 0; r < runs.size(); ++r) EXPECT_EQ(runs[r], 1) << "run " << r;
+    for (size_t r = 0; r < updated.size(); ++r) EXPECT_EQ(updated[r], 1) << "run " << r;
   }
-  const internal::CholeskyPlan grids = plan_of(Replicate(Grid(4, 4, 2), kBatch));
-  EXPECT_NE(std::count(grids.update_exclusive.begin(), grids.update_exclusive.end(), 0), 0)
-      << "a level with two updates of one target (the atomic warp update)";
 }
 
 /**
@@ -567,6 +587,65 @@ TEST(BlockSparseCholeskySolverTest, CreatedByTheFactory) {
   SparseLinearSolverPtr solver =
       CreateSparseLinearSolver(SparseLinearSolverType::BlockSparseCholesky, {});
   EXPECT_NE(dynamic_cast<BlockSparseCholeskySolver *>(solver.get()), nullptr);
+}
+
+/**
+ * Solve time per structure (clear, assembly through the entry map, factorization and solve,
+ * without safety checks as in real-time use): minimum and median over repeated solves of one
+ * system, by CUDA events. The structures span the solver's workload classes: deep trees
+ * (chains, windows, grids), large factors, dense reduced systems, batches of small
+ * subproblems. Run: nls_tests --gtest_also_run_disabled_tests --gtest_filter='*SolveTime'.
+ */
+TEST(BlockSparseCholeskyBenchmark, DISABLED_SolveTime) {
+  const std::vector<Case> cases = {
+      {"chain_6x10000", BlockChain(10000, 6)},
+      {"vio_window_300", Chain(300, 3)},
+      {"pgo_window_300", Covisibility(300, 0.02, 11)},
+      {"pgo_random_5000", Covisibility(5000, 1.6e-4, 5)},
+      {"grid_6_100x100", Grid(100, 100, 6)},
+      {"grid_3_200x200", Grid(200, 200, 3)},
+      {"grid_1_300x300", Grid(300, 300, 1)},
+      {"covisibility_720", Covisibility(720, 0.15, 7)},
+      {"dense_6x300", Dense(300, 6)},
+      {"bundle_adjustment_200x10000", BundleAdjustment(200, 10000, 5)},
+      {"batch_7x32768", Replicate({{7}, {}}, 32768)},
+      {"batch_36x1024", Replicate({{36}, {}}, 1024)},
+      {"batch_grid_4x4x3x512", Replicate(Grid(4, 4, 3), 512)},
+      {"batch_chain_12x3x256", Replicate(BlockChain(12, 3), 256)},
+      {"batch_chain_16x6x1024", Replicate(BlockChain(16, 6), 1024)},
+  };
+  CudaStream stream;
+  cudaEvent_t start, stop;
+  THROW_ON_CUDA_ERROR(cudaEventCreate(&start));
+  THROW_ON_CUDA_ERROR(cudaEventCreate(&stop));
+  for (const Case &c : cases) {
+    const HostSystem s = MakeSystem(c.pattern, 1);
+    DeviceSystem d(s);
+    const std::vector<float> ones(s.n, 1.f);
+    d.rhs.CopyFromHost(ones.data(), ones.size());
+    BlockSparseCholeskySolver solver;
+    solver.DisableSafetyChecks();
+    ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), d.matrix, d.rhs, d.result));
+    std::vector<float> times;
+    constexpr int kWarmUp = 3;
+    for (int rep = 0, reps = kWarmUp + 1; rep < reps; ++rep) {
+      THROW_ON_CUDA_ERROR(cudaEventRecord(start, stream.GetStream()));
+      solver.Solve(stream.GetStream(), d.matrix, d.rhs, d.result);
+      THROW_ON_CUDA_ERROR(cudaEventRecord(stop, stream.GetStream()));
+      THROW_ON_CUDA_ERROR(cudaEventSynchronize(stop));
+      float ms = 0.f;
+      THROW_ON_CUDA_ERROR(cudaEventElapsedTime(&ms, start, stop));
+      if (rep < kWarmUp) continue;
+      times.push_back(1e3f * ms);
+      // About 0.3 s per structure, 20 to 300 solves.
+      if (rep == kWarmUp) reps += std::clamp(static_cast<int>(3e5f / times[0]), 20, 300);
+    }
+    std::sort(times.begin(), times.end());
+    std::printf("BENCH chol_solve %-28s min_us=%10.1f median_us=%10.1f n=%d levels=%d\n", c.name,
+                times.front(), times[times.size() / 2], s.n, solver.Plan().num_levels);
+  }
+  THROW_ON_CUDA_ERROR(cudaEventDestroy(start));
+  THROW_ON_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 }  // namespace

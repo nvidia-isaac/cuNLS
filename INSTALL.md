@@ -169,8 +169,11 @@ By default this builds a shared library. Pass `-DBUILD_SHARED_LIBS=OFF` to build
 instead.
 
 CUDA compiler and architecture selections supplied by the caller are preserved. Without one,
-`/usr/local/cuda/bin/nvcc` is used when it exists. For example, a native Jetson Orin build can
-avoid PTX JIT compatibility requirements by compiling an SM 87 cubin:
+`/usr/local/cuda/bin/nvcc` is used when it exists, and the build compiles native code for every
+GPU generation that toolkit supports (`cmake/CudaArchitectures.cmake`): SM 75, 80, 86, 89 and 90;
+100 and 120 from CUDA 12.8; on Arm hosts 87 (Jetson Orin, CUDA 12) or 110 (Jetson Thor, CUDA 13).
+PTX is kept only for the newest, so no supported GPU compiles kernels at load time. A build for one
+GPU is faster, for example a native Jetson Orin build:
 
 ```bash
 cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=87-real

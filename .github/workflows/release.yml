@@ -26,16 +26,16 @@ env:
   # One cell per wheel, all built on Ubuntu 22.04: the wheel tag follows the build's glibc
   # (manylinux_2_35), which also installs on newer distributions.
   PYPI_PUBLISH_CELLS: &release_cells >-
-    [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.10"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.11","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.11"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.12","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.12"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.13","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.13"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.14","arch":"x86_64","archs":"75;80;86;89","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.14"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.10"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.11","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.11"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.12","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.12"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.13","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.13"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.14","arch":"x86_64","archs":"75;80;86;89;100","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.14"}]
+    [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.10"},
+     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.11","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.11"},
+     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.12","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.12"},
+     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.13","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.13"},
+     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.14","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.14"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.10"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.11","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.11"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.12","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.12"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.13","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.13"},
+     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.14","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.14"}]
   RELEASE_TAG: ${{ github.ref_name }}
   RELEASE_COMMIT: ${{ github.sha }}
 

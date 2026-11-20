@@ -6,16 +6,14 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89" CACHE STRING "CUDA architectures to compile")
-endif()
-
 # /usr/local/cuda/bin is often not on PATH, and distro packages such as Ubuntu's
 # nvidia-cuda-toolkit install an older nvcc in /usr/bin that PATH lookup would find
 # first. Prefer the standard toolkit location unless the caller chose a compiler.
 if(NOT DEFINED CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX} AND EXISTS "/usr/local/cuda/bin/nvcc")
   set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 endif()
+# Native code for every GPU generation the toolkit supports (no PTX JIT at load time).
+include(cmake/CudaArchitectures.cmake)
 
 project(cunls VERSION 0.4.3 LANGUAGES CXX CUDA)
 
