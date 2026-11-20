@@ -45,6 +45,9 @@ namespace cunls {
  *     panels of the level update the same target);
  *   - backward substitution, level by level in reverse, one CTA per 64 rows
  *     of a panel; the last CTA of a panel solves its diagonal block.
+ * Small panels (at most 32 rows: diagonal block plus the rows below it, e.g.
+ * the systems of many small independent subproblems) take one warp each
+ * instead, in all three steps, with a row per lane in registers.
  *
  * Meant for the reduced systems of bundle adjustment (Schur complements),
  * where it replaces a general sparse direct solver: dense covisibility (a
@@ -119,6 +122,8 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   dvector<int> relmap_;  ///< Target row positions of the runs (built on the device).
   dvector<internal::CholeskyPlan::FactorItem> factor_items_;  ///< Factor CTAs by level.
   dvector<internal::CholeskyPlan::UpdateItem> update_items_;  ///< Update CTAs by level.
+  dvector<int> small_panels_;        ///< Small panels by level (one warp each).
+  dvector<int> small_runs_;          ///< Runs of the small panels by level (one warp each).
   dvector<int> assembly_dst_;        ///< Per nonzero of A: its factor offset, or -1 (upper).
   dvector<int64_t> assembly_dst64_;  ///< The same for a factor of more than 2^31 entries.
   bool wide_assembly_ = false;       ///< assembly_dst64_ is in use (not assembly_dst_).

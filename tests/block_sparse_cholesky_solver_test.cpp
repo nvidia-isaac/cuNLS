@@ -28,10 +28,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <random>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -50,11 +53,20 @@ struct BlockPattern {
   std::set<std::pair<int, int>> pairs;
 };
 
-/** A host SPD matrix (full, double) on a block pattern, diagonally dominant. */
+/**
+ * A host SPD matrix (double) on a block pattern, diagonally dominant. Sparse: batches of
+ * many subproblems have far too many columns for a dense copy.
+ */
 struct HostSystem {
   int n = 0;
-  std::vector<double> a;  // row-major n x n
+  std::unordered_map<int64_t, double> a;  // (i, j) at i * n + j; absent entries are 0
   std::vector<int> row_offsets, col_ids;
+
+  double &At(int i, int j) { return a[static_cast<int64_t>(i) * n + j]; }
+  double Get(int i, int j) const {
+    const auto it = a.find(static_cast<int64_t>(i) * n + j);
+    return it == a.end() ? 0.0 : it->second;
+  }
 };
 
 HostSystem MakeSystem(const BlockPattern &pattern, unsigned seed) {
@@ -63,7 +75,7 @@ HostSystem MakeSystem(const BlockPattern &pattern, unsigned seed) {
   for (int size : pattern.sizes) start.push_back(start.back() + size);
   s.n = start.back();
   const int n = s.n;
-  s.a.assign(static_cast<size_t>(n) * n, 0.0);
+  std::vector<double> off(n, 0.0);  // per row: sum of |off-diagonal entries|
   std::mt19937 rng(seed);
   std::uniform_real_distribution<double> u(-1.0, 1.0);
   auto fill = [&](int bi, int bj) {
@@ -71,30 +83,29 @@ HostSystem MakeSystem(const BlockPattern &pattern, unsigned seed) {
       for (int j = start[bj]; j < start[bj + 1]; ++j) {
         if (bi == bj && j > i) continue;
         const double v = u(rng);
-        s.a[static_cast<size_t>(i) * n + j] = v;
-        s.a[static_cast<size_t>(j) * n + i] = v;
+        s.At(i, j) = v;
+        s.At(j, i) = v;
+        if (i != j) {
+          off[i] += std::fabs(v);
+          off[j] += std::fabs(v);
+        }
       }
     }
   };
   for (size_t b = 0; b < pattern.sizes.size(); ++b) fill(static_cast<int>(b), static_cast<int>(b));
   for (const auto &[bi, bj] : pattern.pairs) fill(bi, bj);
-  for (int i = 0; i < n; ++i) {
-    double off = 0.0;
-    for (int j = 0; j < n; ++j) {
-      if (j != i) off += std::fabs(s.a[static_cast<size_t>(i) * n + j]);
-    }
-    s.a[static_cast<size_t>(i) * n + i] = off + 1.0 + std::fabs(u(rng));
-  }
+  for (int i = 0; i < n; ++i) s.At(i, i) = off[i] + 1.0 + std::fabs(u(rng));
   // Pattern CSR: the blocks, not the values (explicit zeros allowed).
-  std::vector<std::vector<char>> coupled(pattern.sizes.size(),
-                                         std::vector<char>(pattern.sizes.size(), 0));
-  for (size_t b = 0; b < pattern.sizes.size(); ++b) coupled[b][b] = 1;
-  for (const auto &[bi, bj] : pattern.pairs) coupled[bi][bj] = coupled[bj][bi] = 1;
+  std::vector<std::set<int>> coupled(pattern.sizes.size());
+  for (size_t b = 0; b < pattern.sizes.size(); ++b) coupled[b].insert(static_cast<int>(b));
+  for (const auto &[bi, bj] : pattern.pairs) {
+    coupled[bi].insert(bj);
+    coupled[bj].insert(bi);
+  }
   s.row_offsets.push_back(0);
   for (size_t bi = 0; bi < pattern.sizes.size(); ++bi) {
     for (int i = start[bi]; i < start[bi + 1]; ++i) {
-      for (size_t bj = 0; bj < pattern.sizes.size(); ++bj) {
-        if (!coupled[bi][bj]) continue;
+      for (int bj : coupled[bi]) {
         for (int j = start[bj]; j < start[bj + 1]; ++j) s.col_ids.push_back(j);
       }
       s.row_offsets.push_back(static_cast<int>(s.col_ids.size()));
@@ -107,7 +118,7 @@ std::vector<float> CsrValues(const HostSystem &s) {
   std::vector<float> values;
   for (int i = 0; i < s.n; ++i) {
     for (int e = s.row_offsets[i]; e < s.row_offsets[i + 1]; ++e) {
-      values.push_back(static_cast<float>(s.a[static_cast<size_t>(i) * s.n + s.col_ids[e]]));
+      values.push_back(static_cast<float>(s.Get(i, s.col_ids[e])));
     }
   }
   return values;
@@ -150,7 +161,7 @@ double SolveError(BlockSparseCholeskySolver &solver, cudaStream_t stream, const 
   for (int i = 0; i < s.n; ++i) {
     double r = -b[i];
     for (int e = s.row_offsets[i]; e < s.row_offsets[i + 1]; ++e) {
-      r += s.a[static_cast<size_t>(i) * s.n + s.col_ids[e]] * x[s.col_ids[e]];
+      r += s.Get(i, s.col_ids[e]) * x[s.col_ids[e]];
     }
     num += r * r;
     den += b[i] * b[i];
@@ -230,6 +241,25 @@ BlockPattern BundleAdjustment(int poses, int landmarks, unsigned seed) {
   return p;
 }
 
+/** `blocks` blocks of `size` columns, each coupled to the next. */
+BlockPattern BlockChain(int blocks, int size) {
+  BlockPattern p;
+  p.sizes.assign(blocks, size);
+  for (int i = 0; i + 1 < blocks; ++i) p.pairs.insert({i, i + 1});
+  return p;
+}
+
+/** `copies` disconnected copies of a pattern (a batch of independent subproblems). */
+BlockPattern Replicate(const BlockPattern &one, int copies) {
+  BlockPattern p;
+  const int blocks = static_cast<int>(one.sizes.size());
+  for (int c = 0; c < copies; ++c) {
+    p.sizes.insert(p.sizes.end(), one.sizes.begin(), one.sizes.end());
+    for (const auto &[i, j] : one.pairs) p.pairs.insert({c * blocks + i, c * blocks + j});
+  }
+  return p;
+}
+
 struct Case {
   const char *name;
   BlockPattern pattern;
@@ -254,6 +284,18 @@ std::vector<Case> Cases() {
   two.sizes.insert(two.sizes.end(), other.sizes.begin(), other.sizes.end());
   for (const auto &[i, j] : other.pairs) two.pairs.insert({i + offset, j + offset});
   cases.push_back({"Disconnected", two});
+  // Batches: at least kCholeskyMinSmallPanelsPerLevel small panels per level take the warp
+  // kernels (a single dense block, panels of exactly 32 rows, chains and grids with updates
+  // between small panels, some of them to a shared target, small and tall panels together).
+  cases.push_back({"BatchOfBlocks", Replicate({{9}, {}}, 400)});
+  cases.push_back({"BatchOf32Blocks", Replicate({{32}, {}}, 300)});
+  cases.push_back(
+      {"BatchOfMixedBlocks", Replicate({{1, 5, 16, 31}, {{0, 1}, {1, 2}, {2, 3}}}, 260)});
+  cases.push_back({"BatchOfChains", Replicate(BlockChain(20, 3), 300)});
+  cases.push_back({"BatchOfGrids", Replicate(Grid(4, 4, 2), 260)});
+  cases.push_back({"BatchOfSmallAndTall", Replicate({{30, 2, 40}, {{0, 1}, {1, 2}}}, 300)});
+  cases.push_back({"BatchOfBundleAdjustments", Replicate(BundleAdjustment(3, 10, 5), 260)});
+  cases.push_back({"BatchOfMixedChains", Replicate(BlockChain(40, 6), 260)});
   return cases;
 }
 
@@ -299,14 +341,59 @@ TEST(BlockSparseCholeskyPlanTest, PanelsCoverTheColumns) {
   EXPECT_GT(plan.num_levels, 1);
 }
 
+TEST(BlockSparseCholeskyPlanTest, SmallPanelsOfBatchesTakeWarps) {
+  auto plan_of = [](const BlockPattern &pattern) {
+    const HostSystem s = MakeSystem(pattern, 1);
+    DeviceSystem d(s);
+    CudaStream stream;
+    BlockSparseCholeskySolver solver;
+    EXPECT_TRUE(solver.Initialize(stream.GetStream(), Problem(), d.matrix, d.rhs, d.result));
+    return solver.Plan();
+  };
+  constexpr int kBatch = internal::kCholeskyMinSmallPanelsPerLevel;
+  // A batch of 32-row blocks: every panel a warp, no CTA items.
+  const internal::CholeskyPlan blocks = plan_of(Replicate({{32}, {}}, kBatch));
+  EXPECT_EQ(blocks.small_panels.size(), blocks.panels.size());
+  EXPECT_TRUE(blocks.factor_items.empty());
+  // 33 rows, or too few panels in the level: the CTA kernels.
+  EXPECT_TRUE(plan_of(Replicate({{33}, {}}, kBatch)).small_panels.empty());
+  EXPECT_TRUE(plan_of(Replicate({{9}, {}}, kBatch - 1)).small_panels.empty());
+  // Chains and grids: the small panels' updates are warp runs, a grid's partly to shared
+  // targets (atomics); every panel is in exactly one list, every run in at most one.
+  for (const BlockPattern &one : {BlockChain(40, 6), Grid(4, 4, 2)}) {
+    const internal::CholeskyPlan plan = plan_of(Replicate(one, kBatch));
+    EXPECT_FALSE(plan.small_runs.empty());
+    std::vector<int> seen(plan.panels.size(), 0), runs(plan.runs.size(), 0);
+    for (int p : plan.small_panels) ++seen[p];
+    for (const auto &item : plan.factor_items) {
+      if (item.row_begin == 0) ++seen[item.panel];
+    }
+    for (size_t p = 0; p < seen.size(); ++p) EXPECT_EQ(seen[p], 1) << "panel " << p;
+    for (int r : plan.small_runs) ++runs[r];
+    for (const auto &item : plan.update_items) {
+      if (item.row_begin == plan.runs[item.run].begin) ++runs[item.run];
+    }
+    for (size_t r = 0; r < runs.size(); ++r) EXPECT_EQ(runs[r], 1) << "run " << r;
+  }
+  const internal::CholeskyPlan grids = plan_of(Replicate(Grid(4, 4, 2), kBatch));
+  EXPECT_NE(std::count(grids.update_exclusive.begin(), grids.update_exclusive.end(), 0), 0)
+      << "a level with two updates of one target (the atomic warp update)";
+}
+
 /**
  * SetRowActivity: a block-diagonal system of three independent chains with
  * the middle chain declared idle. Its panels are skipped (an indefinite
  * matrix there does not fail the solve), its solution entries are 0, and the
  * other chains get the solution of the full system.
  */
-TEST(BlockSparseCholeskySolverTest, SkipsIdleComponents) {
-  constexpr int kChains = 3, kBlocks = 12, kSize = 6;
+class BlockSparseCholeskyBatchTest : public ::testing::TestWithParam<int> {};
+
+/** The tests below run on one system (CTA kernels) and on a batch of copies (warp kernels). */
+INSTANTIATE_TEST_SUITE_P(Copies, BlockSparseCholeskyBatchTest,
+                         ::testing::Values(1, internal::kCholeskyMinSmallPanelsPerLevel));
+
+TEST_P(BlockSparseCholeskyBatchTest, SkipsIdleComponents) {
+  const int kChains = 3 * GetParam(), kBlocks = 12, kSize = 6;
   BlockPattern pattern;
   for (int b = 0; b < kChains * kBlocks; ++b) {
     pattern.sizes.push_back(kSize);
@@ -316,7 +403,7 @@ TEST(BlockSparseCholeskySolverTest, SkipsIdleComponents) {
   const int n = healthy.n, chain = kBlocks * kSize;
   // The middle chain made indefinite: a full solve of it fails.
   HostSystem broken = healthy;
-  broken.a[static_cast<size_t>(chain + 5) * n + chain + 5] = -10.0;
+  broken.At(chain + 5, chain + 5) = -10.0;
 
   CudaStream stream;
   DeviceSystem d(healthy);
@@ -329,7 +416,7 @@ TEST(BlockSparseCholeskySolverTest, SkipsIdleComponents) {
   d.result.CopyToHost(full.data(), n);
 
   std::vector<int> active(n, 1);
-  for (int i = chain; i < 2 * chain; ++i) active[i] = 0;
+  for (int i = chain; i < 2 * chain; ++i) active[i] = 0;  // the second chain
   dvector<int> row_active(active);
   d.SetValues(broken);
   SolveError(solver, stream.GetStream(), broken, d, 7, &ok);
@@ -364,9 +451,10 @@ TEST(BlockSparseCholeskySolverTest, EmptySystem) {
 }
 
 /** A negative pivot is reported with safety checks; without them the result is non-finite. */
-TEST(BlockSparseCholeskySolverTest, ReportsNonPositiveDefinite) {
-  HostSystem s = MakeSystem(Chain(30, 3), 1);
-  s.a[static_cast<size_t>(200) * s.n + 200] = -1.0;
+TEST_P(BlockSparseCholeskyBatchTest, ReportsNonPositiveDefinite) {
+  HostSystem s =
+      MakeSystem(GetParam() == 1 ? Chain(30, 3) : Replicate(BlockChain(20, 3), GetParam()), 1);
+  s.At(200, 200) = -1.0;
   for (bool checks : {true, false}) {
     DeviceSystem d(s);
     CudaStream stream;
@@ -394,11 +482,12 @@ TEST(BlockSparseCholeskySolverTest, ReportsNonPositiveDefinite) {
  * gauge): the vanishing pivots fix their unknowns, and the solution
  * satisfies the system.
  */
-TEST(BlockSparseCholeskySolverTest, SolvesConsistentSemidefiniteSystems) {
-  const BlockPattern pattern = Covisibility(40, 0.1, 3);
+TEST_P(BlockSparseCholeskyBatchTest, SolvesConsistentSemidefiniteSystems) {
+  const BlockPattern pattern =
+      GetParam() == 1 ? Covisibility(40, 0.1, 3) : Replicate(Covisibility(4, 0.0, 3), GetParam());
   HostSystem s = MakeSystem(pattern, 1);
   const int n = s.n;
-  std::fill(s.a.begin(), s.a.end(), 0.0);
+  s.a.clear();
   std::mt19937 rng(9);
   std::uniform_real_distribution<double> u(-1.0, 1.0);
   for (const auto &[bi, bj] : pattern.pairs) {
@@ -414,10 +503,10 @@ TEST(BlockSparseCholeskySolverTest, SolvesConsistentSemidefiniteSystems) {
     }
     for (int i = 0; i < 6; ++i) {
       for (int j = 0; j < 6; ++j) {
-        s.a[static_cast<size_t>(6 * bi + i) * n + 6 * bi + j] += rtr[i][j];
-        s.a[static_cast<size_t>(6 * bj + i) * n + 6 * bj + j] += rtr[i][j];
-        s.a[static_cast<size_t>(6 * bi + i) * n + 6 * bj + j] -= rtr[i][j];
-        s.a[static_cast<size_t>(6 * bj + i) * n + 6 * bi + j] -= rtr[i][j];
+        s.At(6 * bi + i, 6 * bi + j) += rtr[i][j];
+        s.At(6 * bj + i, 6 * bj + j) += rtr[i][j];
+        s.At(6 * bi + i, 6 * bj + j) -= rtr[i][j];
+        s.At(6 * bj + i, 6 * bi + j) -= rtr[i][j];
       }
     }
   }
@@ -425,7 +514,9 @@ TEST(BlockSparseCholeskySolverTest, SolvesConsistentSemidefiniteSystems) {
   std::vector<double> y(n), b(n, 0.0);
   for (double &v : y) v = u(rng);
   for (int i = 0; i < n; ++i) {
-    for (int j = 0; j < n; ++j) b[i] += s.a[static_cast<size_t>(i) * n + j] * y[j];
+    for (int e = s.row_offsets[i]; e < s.row_offsets[i + 1]; ++e) {
+      b[i] += s.Get(i, s.col_ids[e]) * y[s.col_ids[e]];
+    }
   }
   std::vector<float> bf(b.begin(), b.end());
   DeviceSystem d(s);
@@ -439,7 +530,9 @@ TEST(BlockSparseCholeskySolverTest, SolvesConsistentSemidefiniteSystems) {
   double num = 0.0, den = 0.0;
   for (int i = 0; i < n; ++i) {
     double r = -b[i];
-    for (int j = 0; j < n; ++j) r += s.a[static_cast<size_t>(i) * n + j] * x[j];
+    for (int e = s.row_offsets[i]; e < s.row_offsets[i + 1]; ++e) {
+      r += s.Get(i, s.col_ids[e]) * x[s.col_ids[e]];
+    }
     num += r * r;
     den += b[i] * b[i];
   }
@@ -453,7 +546,8 @@ TEST(BlockSparseCholeskySolverTest, SolvesConsistentSemidefiniteSystems) {
 TEST(BlockSparseCholeskySolverTest, KeepsSmallRegularPivots) {
   HostSystem s = MakeSystem(Dense(2, 1), 1);
   const double c = 1.0 - 5e-5;  // second pivot 1 - c^2 = 1e-4
-  s.a = {1.0, c, c, 1.0};
+  s.At(0, 0) = s.At(1, 1) = 1.0;
+  s.At(0, 1) = s.At(1, 0) = c;
   DeviceSystem d(s);
   const std::vector<float> b = {1.f, -1.f};
   d.rhs.CopyFromHost(b.data(), 2);

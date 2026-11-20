@@ -662,6 +662,215 @@ __global__ void __launch_bounds__(kThreads)
   if (t < w) x[col + t] = v[t];
 }
 
+/// Small panels (or runs) per CTA of the warp kernels below, one warp each.
+constexpr int kWarpsPerBlock = 4;
+static_assert(internal::kCholeskySmallPanelRows == 32, "the warp kernels hold a row per lane");
+constexpr unsigned kFullMask = 0xffffffffu;
+
+unsigned WarpBlocks(int count) {
+  return static_cast<unsigned>((count + kWarpsPerBlock - 1) / kWarpsPerBlock);
+}
+
+/**
+ * Factors one small panel of at most W columns with one warp (the warp version of
+ * FactorKernel). Lane i holds row i of the stacked panel [D; B] (diagonal block, then the
+ * rows below it) from the current column on, shifted down after every column, so the
+ * column loop stays rolled (a fully unrolled loop nest is bound by instruction fetch when
+ * few warps run it). Column j takes its pivot from lane j and the multipliers L(j + l, j)
+ * by shuffles, then every row takes the rank-1 update, predicated rather than branched so
+ * the shuffles issue back to back. The lanes of the diagonal-block rows also hold the
+ * panel's part y_p of the forward substitution and update it like a column:
+ * z_j = y_j / L(j, j), y_i -= L(i, j) z_j. Each column's results are stored as soon as
+ * they are final: its column of L_D (column-major for small panels, one coalesced store;
+ * the reciprocal on the diagonal), of B L_D^{-T} (in place) and z_j; at the end
+ * y[rows of B] -= (B L_D^{-T}) z_p.
+ */
+template <int W>
+__device__ void FactorPanelByWarp(const Panel &info, const int *below_rows, const float *original,
+                                  float *factor, float *diagonal, float *y, float *z,
+                                  int *failure) {
+  const int col = info.col, w = info.width, h = info.height;
+  const int lane = threadIdx.x % 32;  // the row
+  float *panel = factor + info.offset;
+  float *d = diagonal + info.diagonal_offset;
+  float s[W];  // the lane's row from column j on
+#pragma unroll
+  for (int c = 0; c < W; ++c) {
+    s[c] = c < w && lane < h ? panel[static_cast<int64_t>(c) * h + lane] : 0.f;
+  }
+  float y_own = lane < w ? y[col + lane] : 0.f;
+  const float limit = lane < w ? kZeroPivot * original[col + lane] : 0.f;
+  float below_dot = 0.f;  // a row below: its row of B L_D^{-T} times z_p
+  bool failed = false;
+#pragma unroll 1
+  for (int j = 0; j < w; ++j) {
+    const float pivot = __shfl_sync(kFullMask, s[0], j);
+    const bool zero = fabsf(pivot) <= __shfl_sync(kFullMask, limit, j);
+    float scale;
+    asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(scale) : "f"(pivot));
+    if (zero) scale = 0.f;  // a rank deficiency fixes the unknown (zero column)
+    const float zj = __shfl_sync(kFullMask, y_own, j) * scale;
+    const float lij = lane > j ? s[0] * scale : 0.f;
+    if (lane == j) failed = !zero && (!(pivot > 0.f) || !isfinite(pivot));
+    if (lane < w) {
+      d[j * w + lane] = lane > j ? lij : lane == j ? scale : 0.f;  // column j, coalesced
+      y_own -= lij * zj;
+    } else if (lane < h) {
+      panel[static_cast<int64_t>(j) * h + lane] = lij;
+      below_dot += lij * zj;
+    }
+    if (lane == 0) z[col + j] = zj;
+#pragma unroll
+    for (int l = 1; l < W; ++l) {
+      const float llj = __shfl_sync(kFullMask, lij, (j + l) & 31);  // L(j + l, j)
+      if (j + l < w && lane >= j + l) s[l] -= lij * llj;
+    }
+#pragma unroll
+    for (int l = 1; l < W; ++l) s[l - 1] = s[l];
+  }
+  if (failed) *failure = 1;
+  if (lane >= w && lane < h) atomicAdd(y + below_rows[info.rows_offset + lane - w], -below_dot);
+}
+
+/** FactorKernel for the small panels of a level, one warp each (FactorPanelByWarp). */
+__global__ void __launch_bounds__(32 * kWarpsPerBlock)
+    FactorKernelByWarp(int count, const int *small_panels, const Panel *panels,
+                       const int *below_rows, const float *original, float *factor, float *diagonal,
+                       float *y, float *z, int *failure, const int *panel_active) {
+  const int item = blockIdx.x * kWarpsPerBlock + threadIdx.x / 32;
+  if (item >= count) return;  // the whole warp
+  const int p = small_panels[item];
+  if (panel_active != nullptr && panel_active[p] == 0) return;  // idle panel
+  const Panel info = panels[p];
+  if (info.width <= 8) {
+    FactorPanelByWarp<8>(info, below_rows, original, factor, diagonal, y, z, failure);
+  } else if (info.width <= 16) {
+    FactorPanelByWarp<16>(info, below_rows, original, factor, diagonal, y, z, failure);
+  } else {
+    FactorPanelByWarp<32>(info, below_rows, original, factor, diagonal, y, z, failure);
+  }
+}
+
+/**
+ * The update of one run of a small panel of at most W columns (the warp version of
+ * UpdateKernel): lane i holds below row i of the source's L_b and its target position;
+ * per column of the run, that row's L_b and position come by shuffles (no memory access
+ * in the loop), and every row at or after the run subtracts its product from its target
+ * entry (the lower triangle of the target's diagonal block only). L_b is zero past the
+ * panel's width, so the products need no guard.
+ */
+template <int W, bool kAtomic>
+__device__ void UpdateRunByWarp(const Run &run, const int *relmap, const Panel *panels,
+                                float *factor) {
+  const Panel source = panels[run.source];
+  const int w = source.width, h = source.height, below = h - w;
+  const int lane = threadIdx.x % 32;  // the below row
+  const float *src = factor + source.offset + w;
+  float lb[W];
+#pragma unroll
+  for (int k = 0; k < W; ++k) {
+    lb[k] = k < w && lane < below ? src[static_cast<int64_t>(k) * h + lane] : 0.f;
+  }
+  // Target position of the lane's row (relmap from the run's first row on), -1 before it.
+  const int row_pos =
+      lane >= run.begin && lane < below ? relmap[run.relmap_offset + lane - run.begin] : -1;
+  const Panel target = panels[run.target];
+  float *dst = factor + target.offset;
+  for (int j = run.begin; j < run.end; ++j) {
+    float acc = 0.f;
+#pragma unroll
+    for (int k = 0; k < W; ++k) acc += lb[k] * __shfl_sync(kFullMask, lb[k], j);
+    const int col_pos = __shfl_sync(kFullMask, row_pos, j);
+    if (row_pos >= col_pos) {
+      float *entry = dst + static_cast<int64_t>(col_pos) * target.height + row_pos;
+      if (kAtomic) {
+        atomicAdd(entry, -acc);
+      } else {
+        *entry -= acc;
+      }
+    }
+  }
+}
+
+/** UpdateKernel for the runs of the small panels of a level, one warp per run. */
+template <bool kAtomic>
+__global__ void __launch_bounds__(32 * kWarpsPerBlock)
+    UpdateKernelByWarp(int count, const int *small_runs, const Run *runs, const int *relmap,
+                       const Panel *panels, float *factor, const int *panel_active) {
+  const int item = blockIdx.x * kWarpsPerBlock + threadIdx.x / 32;
+  if (item >= count) return;  // the whole warp
+  const Run run = runs[small_runs[item]];
+  // An idle source updates only panels of its own (idle) subproblem.
+  if (panel_active != nullptr && panel_active[run.source] == 0) return;
+  const int w = panels[run.source].width;
+  if (w <= 8) {
+    UpdateRunByWarp<8, kAtomic>(run, relmap, panels, factor);
+  } else if (w <= 16) {
+    UpdateRunByWarp<16, kAtomic>(run, relmap, panels, factor);
+  } else {
+    UpdateRunByWarp<32, kAtomic>(run, relmap, panels, factor);
+  }
+}
+
+/**
+ * The backward substitution of one small panel of at most W columns (the warp version
+ * of BackwardKernel, no accumulator: the warp holds the whole panel). Lane c loads column
+ * c of L_b and of L_D and the lanes the solution at the rows below, all before any
+ * arithmetic; then lane c takes z_c - L_b[:, c]ᵀ x[rows below], and the warp solves with
+ * L_Dᵀ by shuffles. L_b and L_D are zero past the panel's rows and width, so neither step
+ * needs a guard.
+ */
+template <int W>
+__device__ void BackwardPanelByWarp(const Panel &info, const int *below_rows, const float *factor,
+                                    const float *diagonal, float *x) {
+  const int col = info.col, w = info.width, h = info.height, below = h - w;
+  const int lane = threadIdx.x % 32;  // the column
+  const float x_below = lane < below ? x[below_rows[info.rows_offset + lane]] : 0.f;
+  const bool own = lane < w;
+  const float *lb = factor + info.offset + static_cast<int64_t>(own ? lane : 0) * h + w;
+  const float *d = diagonal + info.diagonal_offset + (own ? lane : 0) * w;  // column-major
+  float l_col[32 - 1];  // L_b(r, lane): at most 31 rows below (w >= 1)
+  float d_col[W];       // L_D(k, lane), 1 / L_D at k = lane
+#pragma unroll
+  for (int r = 0; r < 32 - 1; ++r) l_col[r] = own && r < below ? lb[r] : 0.f;
+#pragma unroll
+  for (int k = 0; k < W; ++k) d_col[k] = own && k < w ? d[k] : 0.f;
+  float t = own ? x[col + lane] : 0.f;
+#pragma unroll
+  for (int r = 0; r < 32 - 1; ++r) t -= l_col[r] * __shfl_sync(kFullMask, x_below, r);
+  float own_x = 0.f;
+#pragma unroll
+  for (int k = W - 1; k >= 0; --k) {
+    const float xk = __shfl_sync(kFullMask, t * d_col[k], k);
+    if (lane == k) own_x = xk;
+    if (lane < k) t -= d_col[k] * xk;
+  }
+  if (own) x[col + lane] = own_x;
+}
+
+/** BackwardKernel for the small panels of a level, one warp each (BackwardPanelByWarp). */
+__global__ void __launch_bounds__(32 * kWarpsPerBlock)
+    BackwardKernelByWarp(int count, const int *small_panels, const Panel *panels,
+                         const int *below_rows, const float *factor, const float *diagonal,
+                         float *x, const int *panel_active) {
+  const int item = blockIdx.x * kWarpsPerBlock + threadIdx.x / 32;
+  if (item >= count) return;  // the whole warp
+  const int p = small_panels[item];
+  const Panel info = panels[p];
+  if (panel_active != nullptr && panel_active[p] == 0) {
+    // Idle panel (not factored): a zero solution.
+    if (threadIdx.x % 32 < info.width) x[info.col + threadIdx.x % 32] = 0.f;
+    return;
+  }
+  if (info.width <= 8) {
+    BackwardPanelByWarp<8>(info, below_rows, factor, diagonal, x);
+  } else if (info.width <= 16) {
+    BackwardPanelByWarp<16>(info, below_rows, factor, diagonal, x);
+  } else {
+    BackwardPanelByWarp<32>(info, below_rows, factor, diagonal, x);
+  }
+}
+
 /** The supervariables of a symmetric pattern and their adjacency (no self loops). */
 struct SupervariableGraph {
   std::vector<int> start{0};              ///< Per supervariable: first row; plus n.
@@ -739,6 +948,8 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
   runs_ = dvector<Run>(plan.runs);
   factor_items_ = dvector<FactorItem>(plan.factor_items);
   update_items_ = dvector<UpdateItem>(plan.update_items);
+  small_panels_ = dvector<int>(plan.small_panels);
+  small_runs_ = dvector<int>(plan.small_runs);
 
   // Where each nonzero of A goes in the factor, and the target positions of the updates.
   // 32-bit factor offsets unless the factor is larger (then 64-bit, twice the map's memory).
@@ -800,10 +1011,10 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
   }
   if (np > 0) THROW_ON_CUDA_ERROR(cudaMemsetAsync(counter_.data(), 0, np * sizeof(int), stream));
   LogMessage(
-      "BlockSparseCholesky: n {}, {} supervariables, {} ordering, {} supernodes, {} panels, {} "
-      "levels, factor {:.2f} M entries, relative map {:.2f} M entries, {:.3f} GFLOP",
-      n, plan.num_supervariables, plan.ordering, plan.num_supernodes, np, plan.num_levels,
-      plan.factor_size / 1e6, plan.relmap_size / 1e6, plan.flops / 1e9);
+      "BlockSparseCholesky: n {}, {} supervariables, {} ordering, {} supernodes, {} panels ({} "
+      "small), {} levels, factor {:.2f} M entries, relative map {:.2f} M entries, {:.3f} GFLOP",
+      n, plan.num_supervariables, plan.ordering, plan.num_supernodes, np, plan.small_panels.size(),
+      plan.num_levels, plan.factor_size / 1e6, plan.relmap_size / 1e6, plan.flops / 1e9);
   return true;
 }
 
@@ -838,16 +1049,27 @@ bool BlockSparseCholeskySolver::SolveStoredMatrix(cudaStream_t stream, const dve
                                                              row_active_, panel_active_.data());
     panel_active = panel_active_.data();
   }
-  // Factorization and forward substitution, level by level.
+  // Factorization and forward substitution, level by level: the tall panels by CTAs, the
+  // small ones by warps (independent within the level), then the updates of both.
   for (int l = 0; l < plan.num_levels; ++l) {
     const int f0 = plan.factor_offsets[l], f1 = plan.factor_offsets[l + 1];
-    FactorKernel<<<f1 - f0, kThreads, 0, stream>>>(factor_items_.data() + f0, panels_.data(),
-                                                   below_rows_.data(), original_.data(),
-                                                   factor_.data(), diagonal_.data(), work_.data(),
-                                                   solution_.data(), failure_.data(), panel_active);
+    if (f1 > f0) {
+      FactorKernel<<<f1 - f0, kThreads, 0, stream>>>(
+          factor_items_.data() + f0, panels_.data(), below_rows_.data(), original_.data(),
+          factor_.data(), diagonal_.data(), work_.data(), solution_.data(), failure_.data(),
+          panel_active);
+    }
+    const int s0 = plan.small_panel_offsets[l], s1 = plan.small_panel_offsets[l + 1];
+    if (s1 > s0) {
+      FactorKernelByWarp<<<WarpBlocks(s1 - s0), 32 * kWarpsPerBlock, 0, stream>>>(
+          s1 - s0, small_panels_.data() + s0, panels_.data(), below_rows_.data(), original_.data(),
+          factor_.data(), diagonal_.data(), work_.data(), solution_.data(), failure_.data(),
+          panel_active);
+    }
+    const bool exclusive = plan.update_exclusive[l];
     const int u0 = plan.update_offsets[l], u1 = plan.update_offsets[l + 1];
     if (u1 > u0) {
-      if (plan.update_exclusive[l]) {
+      if (exclusive) {
         UpdateKernel<false><<<u1 - u0, kThreads, 0, stream>>>(
             update_items_.data() + u0, runs_.data(), relmap_.data(), panels_.data(), factor_.data(),
             panel_active);
@@ -857,13 +1079,28 @@ bool BlockSparseCholeskySolver::SolveStoredMatrix(cudaStream_t stream, const dve
             panel_active);
       }
     }
+    const int r0 = plan.small_run_offsets[l], r1 = plan.small_run_offsets[l + 1];
+    if (r1 > r0) {
+      auto kernel = exclusive ? UpdateKernelByWarp<false> : UpdateKernelByWarp<true>;
+      kernel<<<WarpBlocks(r1 - r0), 32 * kWarpsPerBlock, 0, stream>>>(
+          r1 - r0, small_runs_.data() + r0, runs_.data(), relmap_.data(), panels_.data(),
+          factor_.data(), panel_active);
+    }
   }
   // Backward substitution, levels in reverse.
   for (int l = plan.num_levels - 1; l >= 0; --l) {
     const int f0 = plan.factor_offsets[l], f1 = plan.factor_offsets[l + 1];
-    BackwardKernel<<<f1 - f0, kThreads, 0, stream>>>(
-        factor_items_.data() + f0, panels_.data(), below_rows_.data(), factor_.data(),
-        diagonal_.data(), solution_.data(), accumulator_.data(), counter_.data(), panel_active);
+    if (f1 > f0) {
+      BackwardKernel<<<f1 - f0, kThreads, 0, stream>>>(
+          factor_items_.data() + f0, panels_.data(), below_rows_.data(), factor_.data(),
+          diagonal_.data(), solution_.data(), accumulator_.data(), counter_.data(), panel_active);
+    }
+    const int s0 = plan.small_panel_offsets[l], s1 = plan.small_panel_offsets[l + 1];
+    if (s1 > s0) {
+      BackwardKernelByWarp<<<WarpBlocks(s1 - s0), 32 * kWarpsPerBlock, 0, stream>>>(
+          s1 - s0, small_panels_.data() + s0, panels_.data(), below_rows_.data(), factor_.data(),
+          diagonal_.data(), solution_.data(), panel_active);
+    }
   }
   UnpermuteKernel<<<Blocks(n), kThreads, 0, stream>>>(n, perm_.data(), solution_.data(),
                                                       result.data());

@@ -186,6 +186,16 @@ with the host unless safety checks are on:
    :math:`L_B^T` by the solution below, and the last CTA of a panel solves the
    diagonal block.
 
+**Small panels.** A level with at least 256 panels of at most 32 rows (diagonal
+block plus the rows below it) gives each of them one warp instead of a CTA, in
+all three steps: a lane holds one row of the stacked panel in registers, pivots
+and multipliers move by warp shuffles, and the lanes of the diagonal block hold
+the panel's part of the right-hand side. This is the shape of batches of many small
+independent subproblems (inverse kinematics of a batch of robots, many small
+pose graphs) and of the leaves of chains and grids, where a CTA per panel would
+leave most of its threads idle. With fewer such panels, a level keeps the CTA
+kernels, which finish them in about one wave with less latency per panel.
+
 The cost of a level is mostly latency for small problems (each level is two
 dependent launches) and throughput for large ones, so the number of levels
 matters as much as the flops; this is what the cost model of the ordering

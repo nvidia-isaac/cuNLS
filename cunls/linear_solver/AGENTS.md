@@ -88,6 +88,26 @@ Sparse linear system abstraction and implementation used by minimizers.
   `SolveStoredMatrix`: per level a factor kernel (one
   CTA per panel and 64 rows; forward substitution folded in) and an update
   kernel (64 x 64 tiles), then a level-scheduled backward substitution.
+  Small panels (`kCholeskySmallPanelRows` = 32 rows: diagonal block plus
+  rows below) in a level with at least `kCholeskyMinSmallPanelsPerLevel`
+  (256) of them take warp kernels instead (`FactorKernelByWarp`,
+  `UpdateKernelByWarp`, `BackwardKernelByWarp`: a row per lane in registers,
+  shuffles; `CholeskyPlan::small_panels` / `small_runs` by level instead of
+  factor / update items): batches of small subproblems. Fewer stay on the
+  CTA kernels (less latency per panel, no extra launches). Measured lessons:
+  keep the warp factorization's column loop rolled (rows shift down a
+  register per column; widths 8 / 16 / 32 compiled apart, also for the update
+  and backward kernels): a fully unrolled 32 x 32 loop nest is bound by
+  instruction fetch when few warps run it (3x slower than the CTA kernel on
+  16 panels). Keep the inner loops predicated, not early-exited: a branch per
+  column serializes the shuffles (2x slower). The lanes of the diagonal-block
+  rows own the forward-substitution entries (a copy of y_p per lane cost
+  5-25%). Small panels store L_D column-major (each column one coalesced
+  store; row-major scattered every store over 32 lines and, with the panels
+  larger than L2, cost 2x on an A6000); only the warp kernels read it. Panels
+  of 33-64 rows on one warp (two rows per lane) were tried and lost to the
+  CTA kernels except for narrow ones (<= 16 columns): a 64-row panel is what
+  the CTA kernel is sized for.
   `SetRowActivity` (advisory, from the minimizers of partitioned problems)
   skips panels whose rows are all idle: no factorization, no updates from
   them, zero solution. Exact because a panel never mixes connected components

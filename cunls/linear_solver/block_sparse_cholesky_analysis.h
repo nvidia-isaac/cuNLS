@@ -30,6 +30,22 @@ constexpr int kCholeskyPanelWidth = 64;
 constexpr int kCholeskyTileRows = 64;
 
 /**
+ * @brief Most rows (its diagonal block plus the rows below it) of a small panel: one warp,
+ * a lane per row, factors it, applies its updates and solves it backward (many small
+ * independent subproblems, e.g. batched inverse kinematics, and the small supernodes of
+ * chains and graphs). Taller panels take the CTA kernels.
+ */
+constexpr int kCholeskySmallPanelRows = 32;
+
+/**
+ * @brief Small panels a level needs before they take the warp kernels: a warp works through
+ * its panel serially, so it wins on throughput (many panels per SM), while with fewer panels
+ * the CTA kernels finish them in about one wave with less latency each (e.g. the levels of a
+ * single chain).
+ */
+constexpr int kCholeskyMinSmallPanelsPerLevel = 256;
+
+/**
  * @brief The symbolic analysis of a sparse SPD matrix for BlockSparseCholeskySolver:
  * the fill-reducing ordering, the supernodal structure of the factor L, and
  * the level schedule and index maps of the numeric phase.
@@ -42,7 +58,9 @@ constexpr int kCholeskyTileRows = 64;
  * from `rows_offset`, ascending, all after the panel's columns). The numeric
  * phase processes the panels level by level: a panel's level is one more than
  * the highest level among the panels that update it, so the panels of a level
- * are independent.
+ * are independent. Small panels (at most kCholeskySmallPanelRows rows) are
+ * scheduled apart from the others, one warp each instead of factor and update
+ * items, in the levels with enough of them (kCholeskyMinSmallPanelsPerLevel).
  */
 struct CholeskyPlan {
   /** @brief A panel of L. */
@@ -52,8 +70,9 @@ struct CholeskyPlan {
     int height;       ///< Rows: width plus the rows below the diagonal block.
     int rows_offset;  ///< Offset of its below rows in below_rows.
     int64_t offset;   ///< Offset of its column-major values in the factor storage.
-    /// Offset of its factored diagonal block L_D (row-major width x width, the
-    /// reciprocals of its diagonal on the diagonal).
+    /// Offset of its factored diagonal block L_D (width x width, the reciprocals
+    /// of its diagonal on the diagonal): row-major, column-major for the panels in
+    /// small_panels (written and read by the warp kernels only).
     int64_t diagonal_offset;
   };
 
@@ -71,13 +90,16 @@ struct CholeskyPlan {
                             ///< rows begin... of the source (the map is built on the device).
   };
 
-  /** @brief One CTA of the factor kernel: a panel and the first of its <= 64 below rows. */
+  /**
+   * @brief One CTA of the factor kernel: a panel not factored by a warp (not in small_panels)
+   * and the first of its <= 64 below rows.
+   */
   struct FactorItem {
     int panel;      ///< The panel.
     int row_begin;  ///< First of its below rows (position) handled by the CTA.
   };
 
-  /** @brief One CTA of the update kernel: a run and the first of its <= 64 rows. */
+  /** @brief One CTA of the update kernel: a run of a CTA panel and the first of its <= 64 rows. */
   struct UpdateItem {
     int panel;      ///< The source panel.
     int run;        ///< Its run (index into runs): the target and the columns.
@@ -100,6 +122,13 @@ struct CholeskyPlan {
   std::vector<int> update_offsets;       ///< num_levels + 1 offsets into update_items.
   /** @brief Per level: whether no two panels of the level update the same target (no atomics). */
   std::vector<char> update_exclusive;
+  /// The small panels (at most kCholeskySmallPanelRows rows) by level that take one warp each in
+  /// the factor and backward kernels (no factor items; see kCholeskyMinSmallPanelsPerLevel).
+  std::vector<int> small_panels;
+  std::vector<int> small_panel_offsets;  ///< num_levels + 1 offsets into small_panels.
+  /// The runs of the small panels by level: one warp each in the update kernel (no update items).
+  std::vector<int> small_runs;
+  std::vector<int> small_run_offsets;  ///< num_levels + 1 offsets into small_runs.
 
   // Statistics of the analysis (for logs and tests).
   int num_supervariables = 0;  ///< Groups of consecutive columns with identical structure.

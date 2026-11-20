@@ -239,8 +239,9 @@ Cholesky factorization ``P A Pᵀ = L Lᵀ`` on the GPU without external
 dependencies: ``Initialize`` analyzes the pattern once (fill-reducing
 ordering, supernodes cut into panels of at most 64 columns, a level
 schedule), every ``Solve`` factors the current values and solves, with no
-host synchronization unless safety checks are on. The design is described in
-:doc:`../linear_solvers`.
+host synchronization unless safety checks are on. Levels with many small
+panels (batches of small subproblems) factor them one warp per panel. The
+design is described in :doc:`../linear_solvers`.
 
 A pivot within ``1e-5`` of its original diagonal entry (relative) is a rank
 deficiency, such as a free gauge under Gauss-Newton: its unknown is fixed at

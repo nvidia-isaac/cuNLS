@@ -611,7 +611,10 @@ std::vector<int> BuildPanels(const Graph &g, const Symbolic &s, CholeskyPlan &pl
  * The level schedule: a panel's level is one more than the highest level of
  * the panels that update it. Then per level the factor items, the runs of
  * each panel's below rows by target panel with their update items, and
- * whether no two panels of the level update the same target.
+ * whether no two panels of the level update the same target. Small panels
+ * (kCholeskySmallPanelRows) and their runs are listed per level instead of
+ * getting items, in the levels with enough of them
+ * (kCholeskyMinSmallPanelsPerLevel).
  */
 void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
   const int np = static_cast<int>(plan.panels.size());
@@ -631,16 +634,26 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
 
   std::vector<std::vector<CholeskyPlan::FactorItem>> factor_by_level(plan.num_levels);
   std::vector<std::vector<CholeskyPlan::UpdateItem>> update_by_level(plan.num_levels);
+  std::vector<std::vector<int>> small_by_level(plan.num_levels),
+      small_runs_by_level(plan.num_levels);
+  std::vector<int> num_small(plan.num_levels, 0);
+  for (int p = 0; p < np; ++p) {
+    if (plan.panels[p].height <= kCholeskySmallPanelRows) ++num_small[level[p]];
+  }
   std::vector<std::tuple<int, int, int>> targets;  // (level, target, source)
   int64_t relmap_size = 0;
   for (int p = 0; p < np; ++p) {
     const int l = level[p];
     const auto [rows, count] = below_of(p);
-    if (count == 0) {
+    const bool small = plan.panels[p].height <= kCholeskySmallPanelRows &&
+                       num_small[l] >= kCholeskyMinSmallPanelsPerLevel;
+    if (small) {
+      small_by_level[l].push_back(p);
+    } else if (count == 0) {
       factor_by_level[l].push_back({p, 0});
-      continue;
+    } else {
+      for (int r = 0; r < count; r += kCholeskyTileRows) factor_by_level[l].push_back({p, r});
     }
-    for (int r = 0; r < count; r += kCholeskyTileRows) factor_by_level[l].push_back({p, r});
     for (int a = 0; a < count;) {
       const int q = col_panel[rows[a]];
       int b = a + 1;
@@ -648,7 +661,12 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
       const int run = static_cast<int>(plan.runs.size());
       plan.runs.push_back({p, q, a, b, relmap_size});
       relmap_size += count - a;
-      for (int r = a; r < count; r += kCholeskyTileRows) update_by_level[l].push_back({p, run, r});
+      if (small) {
+        small_runs_by_level[l].push_back(run);
+      } else {
+        for (int r = a; r < count; r += kCholeskyTileRows)
+          update_by_level[l].push_back({p, run, r});
+      }
       targets.emplace_back(l, q, p);
       a = b;
     }
@@ -668,6 +686,12 @@ void Schedule(const std::vector<int> &col_panel, CholeskyPlan &plan) {
     plan.update_items.insert(plan.update_items.end(), update_by_level[l].begin(),
                              update_by_level[l].end());
     plan.update_offsets.push_back(static_cast<int>(plan.update_items.size()));
+    plan.small_panels.insert(plan.small_panels.end(), small_by_level[l].begin(),
+                             small_by_level[l].end());
+    plan.small_panel_offsets.push_back(static_cast<int>(plan.small_panels.size()));
+    plan.small_runs.insert(plan.small_runs.end(), small_runs_by_level[l].begin(),
+                           small_runs_by_level[l].end());
+    plan.small_run_offsets.push_back(static_cast<int>(plan.small_runs.size()));
   }
 }
 
@@ -680,6 +704,8 @@ CholeskyPlan AnalyzeCholesky(int n, const std::vector<int> &supervariable_start,
   plan.n = n;
   plan.factor_offsets = {0};
   plan.update_offsets = {0};
+  plan.small_panel_offsets = {0};
+  plan.small_run_offsets = {0};
   if (n == 0) return plan;
   const Graph g = MakeGraph(supervariable_start, adjacency_offsets, adjacency);
   plan.num_supervariables = g.Size();
