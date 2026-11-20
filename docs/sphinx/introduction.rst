@@ -213,13 +213,11 @@ to the capacity.
    pts_gpu = wp.zeros((max_points, 3), dtype=wp.float32)
    pnp = pycunls.PnPFactorBatch(obs_gpu, pts_gpu, max_points)   # capacity
    # ... state batch, problem, minimizer ...
-   solver_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=stream.get_stream())
+   stream = wp.get_stream()   # solve on Warp's stream: uploads and solves stay in order
 
-   # Every frame: write the first num_points entries (on the solver's stream),
-   # then set the active count.
-   with wp.ScopedStream(solver_stream):
-       obs_gpu[:num_points].assign(observations)   # NumPy (num_points, 2)
-       pts_gpu[:num_points].assign(points)         # NumPy (num_points, 3)
+   # Every frame: write the first num_points entries, then set the active count.
+   obs_gpu[:num_points].assign(observations)   # NumPy (num_points, 2)
+   pts_gpu[:num_points].assign(points)         # NumPy (num_points, 3)
    pnp.set_num_active_factors(num_points)       # num_points <= max_points
    pose_state.set_num_active_states(1)
    minimizer.minimize(stream, problem)

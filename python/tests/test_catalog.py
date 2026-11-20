@@ -48,6 +48,17 @@ def test_every_catalog_entry_exists():
 @pytest.mark.parametrize("name", _exported(core.StateBatch))
 def test_state_sizes_match(name):
     info = state_info(name)
+    if name == "ArticulationStateBatch":  # sized by its topology: one revolute joint here
+        assert (info.ambient, info.tangent) == (0, 0)  # the catalog's "set by the topology"
+        ident = [0, 0, 0, 0, 0, 0, 1]
+        topo = pycunls.ArticulationTopology(
+            joint_type=[pycunls.ArticulationJointType.Revolute.value], joint_parent=[-1],
+            joint_child=[0], joint_X_p=ident, joint_X_c=ident, joint_q_start=[0, 1],
+            joint_qd_start=[0, 1], joint_axis=[0, 0, 1])
+        batch = pycunls.ArticulationStateBatch(topo, 4)
+        assert (batch.ambient_size, batch.tangent_size) == (topo.ambient_size, topo.dof_count)
+        assert (topo.ambient_size, topo.dof_count) == (19, 1)  # as describe() states
+        return
     batch = getattr(pycunls, name)(wp.zeros(4 * info.ambient, wp.float32), 4)
     assert (batch.ambient_size, batch.tangent_size) == (info.ambient, info.tangent)
 
@@ -60,7 +71,7 @@ def _simple_factors():
             continue
         args = list(e["arrays"])
         if any(a in ("imu_samples", "time_steps", "obstacles", "poses_camera_from_rig",
-                     "lower") for a in args):
+                     "lower", "topology") for a in args):
             continue
         out.append(e["name"])
     return out

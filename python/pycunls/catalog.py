@@ -22,7 +22,8 @@ Use it to pick a class and to get its data layout right without reading the C++ 
 
 Conventions shared by every class:
 
-* All arrays are float32 GPU arrays (e.g. ``wp.array``), C-contiguous, one item after another.
+* Arrays are GPU arrays (e.g. ``wp.array``), C-contiguous, one item after another: float32 for
+  values, int32 for indices (links, DOFs, state ids); each argument's stated dtype rules.
 * Poses are ``world_from_body`` matrices stored row-major (SE3: 4x4 = 16 floats per pose,
   SE2: 3x3, SO3: 3x3, SO2: 2x2). The update is right-multiplicative, ``T' = T Exp(delta)``.
 * Tangent order: se(3) = ``[omega (3), v (3)]`` (rotation first), se(2) = ``[v_x, v_y, theta]``
@@ -43,10 +44,12 @@ class StateInfo:
 
     Attributes:
         name: Class name in :mod:`pycunls`.
-        ambient: float32 values stored per state.
-        tangent: Degrees of freedom (size of one update).
+        ambient: float32 values stored per state (0: set by the constructor's topology).
+        tangent: Degrees of freedom (size of one update; 0: set by the topology).
         layout: How one state is stored.
         tangent_order: Meaning of the tangent coordinates.
+        update: The update x' = x (+) delta, when it is not the Lie-group one.
+        constructor: The constructor's arguments, when it does not take a data array.
     """
     name: str
     ambient: int
@@ -54,6 +57,8 @@ class StateInfo:
     layout: str
     tangent_order: str
     kind: str = "state"
+    update: str = "x' = x (+) delta (right-multiplicative for Lie groups)"
+    constructor: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -231,6 +236,19 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                    "(radius + margin) - |p - center|",
                    {"obstacles": "4 floats per factor: center x, y, z, radius"},
                    False, "Obstacle avoidance constraint (wrap in ConstraintFactorBatch)."),
+        FactorInfo("SE3AxisAlignmentFactorBatch", ["SE3StateBatch", "SE3StateBatch"], 3,
+                   "R_1 a - R_0 a", {"axes": "3 floats per factor: the axis a in each pose's frame"},
+                   True, "Hinge rows: two poses keep a local axis aligned (with a position "
+                   "equality: a revolute joint); usually an equality constraint.",
+                   "On robot links through LinkFrameFactorBatch (FrameView.Pose); "
+                   "pycunls.articulation.loop_closure builds revolute loops from it."),
+        FactorInfo("SE3AxisOffsetFactorBatch", ["SE3StateBatch", "SE3StateBatch"], 2,
+                   "(R_0 b_k) . (p_1 - p_0), b_1, b_2 perpendicular to a",
+                   {"axes": "3 floats per factor: the axis a in pose 0's frame"},
+                   True, "Slider rows: pose 1's origin stays on the axis through pose 0 (with an "
+                   "orientation equality: a prismatic joint); usually an equality constraint.",
+                   "On robot links through LinkFrameFactorBatch (FrameView.Pose); "
+                   "pycunls.articulation.loop_closure builds prismatic loops from it."),
         FactorInfo("InformationFactorBatch", [], 0, "L_f * r_inner",
                    {"sqrt_information_matrices": "residual_size^2 floats per factor (row-major)"},
                    False, "Weight any factor by a per-factor square-root information matrix "
@@ -242,6 +260,80 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
         FactorInfo("ConstraintFactorBatch", [], 0, "scale * r_inner = 0 or <= 0", {}, False,
                    "Turn any factor into hard equality / inequality constraints "
                    "(AugmentedLagrangianMinimizer)."),
+    ]
+    # Articulations: sizes depend on the ArticulationTopology (0 = per topology).
+    entries.append(StateInfo(
+        "ArticulationStateBatch", 0, 0,
+        "owned: joint_q (topology.coord_count, quaternions x, y, z, w), then a cache "
+        "of link poses (12 floats each) and DOF motion columns (6 each)",
+        "topology.dof_count values in joint_qd order: a scalar per PRISMATIC/REVOLUTE/D6 axis, "
+        "BALL a rotation vector and FREE (dp, dtheta) in the parent-anchor frame",
+        update="per joint: scalar coordinates add delta (clamped into the bounds), BALL "
+        "quat <- Exp(delta) * quat, FREE position += dp and quat <- Exp(dtheta) * quat; then "
+        "forward kinematics refreshes the cache",
+        constructor="topology (ArticulationTopology), capacity, and optionally const_state_ids "
+        "(int32 GPU array of the instances held fixed) with const_capacity, and "
+        "apply_joint_limits (default True); storage is owned: write joint_q with set_joint_q"))
+    art = ["ArticulationStateBatch"]
+    articulation_note = ("Build ArticulationTopology from the robot's joint arrays or a URDF, "
+                         "then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. "
+                         "Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.")
+    entries += [
+        FactorInfo("LinkPositionFactorBatch", art, 3, "W (X_L(q) c - p*)",
+                   {"topology": "ArticulationTopology", "links": "int32 link per factor",
+                    "points": "3 floats per factor (link frame)",
+                    "targets": "3 floats per factor (world)",
+                    "weights": "3 floats per factor or None"}, False,
+                   "Inverse kinematics: a point on a link should reach a world position.",
+                   articulation_note),
+        FactorInfo("LinkOrientationFactorBatch", art, 3, "W Log(R_L(q) R_off R*^T)",
+                   {"topology": "ArticulationTopology", "links": "int32 link per factor",
+                    "offsets": "quaternion x, y, z, w per factor or None",
+                    "targets": "quaternion x, y, z, w per factor",
+                    "weights": "3 floats per factor or None"}, False,
+                   "Inverse kinematics: a link frame should reach a world orientation.",
+                   articulation_note),
+        FactorInfo("LinkPoseFactorBatch", art, 6, "W [X_L p_off - p*; Log(R_L R_off R*^T)]",
+                   {"topology": "ArticulationTopology", "links": "int32 link per factor",
+                    "offsets": "7 floats (position, quaternion) per factor or None",
+                    "targets": "7 floats (position, quaternion) per factor",
+                    "weights": "6 floats per factor or None"}, False,
+                   "Inverse kinematics: a link frame should reach a world pose.",
+                   articulation_note),
+        FactorInfo("LinkFrameFactorBatch", art, 0,
+                   "the inner factor's residual, its frame slots fed a view of X_L(q) X_off",
+                   {"topology": "ArticulationTopology",
+                    "inner_factor": "factor over SE(3) poses, 3D points or SO(3) rotations "
+                                    "(built-in or WarpFactorBatch)",
+                    "frame_slots": "list of (inner state slot, FrameView): Pose (SE3, 6), "
+                                   "Position (3-vector, 3) or Orientation (SO3, 3)",
+                    "topology_links": "int32, len(frame_slots) per factor: topology link index "
+                                      "(position in link_names) carrying each frame",
+                    "frame_offsets": "capacity x len(frame_slots) x 7 floats (position, "
+                                     "quaternion per factor and frame slot, not broadcast): the "
+                                     "frame in its link, or None"}, False,
+                   "Custom kinematic objectives: existing factors on frames of robot links (SE3 "
+                   "prior/between/sphere clearance on a Pose, vector prior/halfspace/between on "
+                   "a Position, SO3 prior/between on an Orientation, a Warp factor); the inner "
+                   "factor's other slots (an object pose, a camera) stay states.",
+                   "States: [articulation instance] + inner_factor's slots that are not frame "
+                   "slots. Views use the convention of their state type (Pose: row-major 4x4, "
+                   "body tangent [omega, v], X' = X Exp(delta); Position: world 3-vector; "
+                   "Orientation: row-major 3x3, R' = R Exp(omega)). For constraints wrap this "
+                   "batch in ConstraintFactorBatch, never the inner one. LinkPose/Position/"
+                   "OrientationFactorBatch are faster for what they cover. " + articulation_note),
+        FactorInfo("PostureFactorBatch", art, 0, "W (q (-) q*)  (topology.dof_count rows)",
+                   {"topology": "ArticulationTopology",
+                    "targets": "topology.coord_count floats per factor (joint_q layout)",
+                    "weights": "topology.dof_count floats per factor or None"}, False,
+                   "Regularizer / null-space posture / stay near a requested configuration.",
+                   articulation_note),
+        FactorInfo("MimicJointFactorBatch", art, 1, "q_m - (a + b q_ref)",
+                   {"topology": "ArticulationTopology", "mimic_dofs": "int32 DOF per factor",
+                    "reference_dofs": "int32 DOF per factor",
+                    "coefficients": "2 floats per factor (a, b)"}, False,
+                   "Coupled joints (URDF <mimic>); wrap in "
+                   "ConstraintFactorBatch(..., ConstraintKind.Equality).", articulation_note),
     ]
     return {e.name: e for e in entries}
 
@@ -265,7 +357,8 @@ def effective_factor(batch) -> Tuple[object, Optional[FactorInfo], str]:
     """What a factor batch in a problem does, seen through its wrappers.
 
     Follows ``inner_factor`` of ``WeightedFactorBatch``, ``InformationFactorBatch`` and
-    ``ConstraintFactorBatch`` (nested too) to the wrapped batch.
+    ``ConstraintFactorBatch`` (nested too) to the wrapped batch; stops at a
+    ``LinkFrameFactorBatch`` (its inner factor reads link frames, not the problem's states).
 
     Returns:
         ``(inner batch, its FactorInfo or None, role)`` with role ``"relative"`` (constrains its
@@ -279,6 +372,8 @@ def effective_factor(batch) -> Tuple[object, Optional[FactorInfo], str]:
     while True:
         kind = getattr(inner, "kind", None)
         inequality |= getattr(kind, "name", None) == "Inequality"
+        if type(inner).__name__ == "LinkFrameFactorBatch":
+            break  # its inner factor reads link frames, not the problem's states
         nested = getattr(inner, "inner_factor", None)
         if nested is None:
             break
@@ -332,12 +427,18 @@ def describe(name) -> str:
         hint = f" Did you mean: {', '.join(close[:8])}?" if close else ""
         raise KeyError(f"{name} is not a built-in state or factor batch.{hint}")
     if isinstance(entry, StateInfo):
-        return (f"{entry.name} (state)\n  stored: {entry.layout}, {entry.ambient} floats per state"
-                f"\n  tangent ({entry.tangent}): {entry.tangent_order}\n  update: x' = x (+) "
-                "delta (right-multiplicative for Lie groups)\n  constructor: data (float32 GPU "
-                f"array of capacity x {entry.ambient}), capacity, and optionally "
-                "const_state_ids (int32 GPU array of the states held fixed) with const_capacity "
-                "(entries it holds)")
+        if entry.ambient == 0:  # sized by the topology
+            sizes = ("topology.ambient_size floats per state (e.g. 19 for one revolute joint: "
+                     "1 coordinate, 12 pose floats, 6 motion-column floats)")
+            tangent = "topology.dof_count (e.g. 1 for one revolute joint)"
+        else:
+            sizes, tangent = f"{entry.ambient} floats per state", str(entry.tangent)
+        constructor = entry.constructor or (
+            f"data (float32 GPU array of capacity x {entry.ambient}), capacity, and optionally "
+            "const_state_ids (int32 GPU array of the states held fixed) with const_capacity "
+            "(entries it holds)")
+        return (f"{entry.name} (state)\n  stored: {entry.layout}, {sizes}\n  tangent ({tangent}): "
+                f"{entry.tangent_order}\n  update: {entry.update}\n  constructor: {constructor}")
     lines = [f"{entry.name} (factor)"]
     if entry.states:
         lines.append(f"  states: [{', '.join(entry.states)}]")
@@ -356,7 +457,8 @@ def describe(name) -> str:
 
 _CAPACITY_NOTE = ("capacity: how many factors (or states) the arrays hold. Batches start with 0 "
                   "active items: call set_num_active_factors(n) / set_num_active_states(n) "
-                  "before solving. Arrays are float32 GPU arrays (e.g. wp.array), C-contiguous.")
+                  "before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: "
+                  "float32 values, int32 indices, as each argument states.")
 
 
 def annotate_classes(module) -> None:

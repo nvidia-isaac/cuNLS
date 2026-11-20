@@ -67,15 +67,10 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   BlockSparseCholeskySolver();
 
   using SparseLinearSolver::Initialize;  // the BSR overloads: block storage is not supported
-  using SparseLinearSolver::Solve;
 
   /** @brief Analyzes the pattern of @p spd_matrix (host) and allocates the factor. */
   bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
                   const dvector<float> &rhs, dvector<float> &result) override;
-
-  /** @brief Factors @p spd_matrix (the pattern of Initialize()) and solves for @p rhs. */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-             dvector<float> &result) override;
 
   /** @brief Skips reading back the pivot-failure flag after each factorization. */
   void DisableSafetyChecks() override { safety_checks_ = false; }
@@ -91,6 +86,21 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
    * i.e. whole components.
    */
   void SetRowActivity(const int *row_active) override { row_active_ = row_active; }
+
+  /**
+   * @brief The panels of L (column-major), which the factorization overwrites;
+   * the entry map is the assembly map: each lower-triangle entry of A to its
+   * position in the panels of PAPᵀ, -1 for the upper triangle (64-bit for a
+   * factor of more than 2^31 entries).
+   */
+  SolverMatrixStorage MatrixStorage() override;
+
+  /** @brief Zeroes the panels (fill-in starts at 0). */
+  void ClearMatrixStorage(cudaStream_t stream) override;
+
+  /** @brief Factors the panels in MatrixStorage() and solves (see the class comment). */
+  bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                         dvector<float> &result) override;
 
   /** @brief The analysis of the last Initialize() (host side). */
   const internal::CholeskyPlan &Plan() const { return plan_; }
@@ -113,6 +123,7 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   dvector<int64_t> assembly_dst64_;  ///< The same for a factor of more than 2^31 entries.
   bool wide_assembly_ = false;       ///< assembly_dst64_ is in use (not assembly_dst_).
   dvector<int> diagonal_index_;      ///< Per permuted column: its diagonal nonzero of A, or -1.
+  dvector<int64_t> diagonal_slot_;  ///< Per permuted column: that entry's offset in factor_, or -1.
 
   // Numeric storage.
   dvector<float> factor_;    ///< Panels of L (column-major).

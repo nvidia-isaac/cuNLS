@@ -143,15 +143,72 @@ uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name
   return a.ptr;
 }
 
+namespace {
+
+// The cudaStream_t of `other`: its integer `cuda_stream` attribute (wp.Stream), the handle of
+// its CUDA stream protocol `__cuda_stream__()` (version, handle), or `other` itself if it is an
+// integer.
+uintptr_t ExternalStreamHandle(nb::handle other) {
+  if (nb::hasattr(other, "cuda_stream")) return nb::cast<uintptr_t>(other.attr("cuda_stream"));
+  if (nb::hasattr(other, "__cuda_stream__")) {
+    nb::tuple protocol = nb::cast<nb::tuple>(other.attr("__cuda_stream__")());
+    return nb::cast<uintptr_t>(protocol[1]);
+  }
+  if (PyLong_Check(other.ptr()) && !PyBool_Check(other.ptr())) return nb::cast<uintptr_t>(other);
+  throw nb::type_error(
+      "CudaStream: cannot wrap this object as a CUDA stream (expected a wp.Stream, an object "
+      "with __cuda_stream__, or an integer cudaStream_t handle). Fix: pass one of those.");
+}
+
+}  // namespace
+
+// Marker type for the implicit conversion to CudaStream (any stream= argument): its caster
+// accepts the stream objects of other libraries (an integer `cuda_stream` attribute, e.g.
+// wp.Stream, or `__cuda_stream__`); nanobind then calls CudaStream(other). Plain integers convert
+// only explicitly, by CudaStream(handle).
+struct ExternalCudaStream {};
+
+NAMESPACE_BEGIN(NB_NAMESPACE)
+NAMESPACE_BEGIN(detail)
+template <>
+struct type_caster<ExternalCudaStream> {
+  NB_TYPE_CASTER(ExternalCudaStream, const_name("ExternalCudaStream"))
+  bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
+    return PyObject_HasAttrString(src.ptr(), "cuda_stream") ||
+           PyObject_HasAttrString(src.ptr(), "__cuda_stream__");
+  }
+  static handle from_cpp(const ExternalCudaStream &, rv_policy, cleanup_list *) noexcept {
+    return none().release();
+  }
+};
+NAMESPACE_END(detail)
+NAMESPACE_END(NB_NAMESPACE)
+
 void bind_types(nb::module_ &m) {
   // --- CUDA stream wrapper ---
 
   nb::class_<cunls::CudaStream>(
       m, "CudaStream",
-      "A CUDA stream for cuNLS work (created on construction, destroyed with the object). "
-      "sync_on_destroy: synchronize before destroying. minimize() synchronizes it before "
-      "returning; use wp.Stream(cuda_stream=stream.get_stream()) to order Warp work with it.")
+      "A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; "
+      "sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created "
+      "elsewhere without owning it: other is a wp.Stream (any object with an integer "
+      "cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ "
+      "(PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls "
+      "also accepts such an object directly, so Warp work and cuNLS work can share one "
+      "wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other "
+      "alive. minimize() synchronizes the stream before returning, except on the real-time "
+      "paths (fixed_iterations, AugmentedLagrangianMinimizerOptions.real_time), which read "
+      "nothing back: read their results on the same stream, or synchronize it first.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)
+      .def(
+          "__init__",
+          [](cunls::CudaStream *self, nb::handle other) {
+            new (self)
+                cunls::CudaStream(reinterpret_cast<cudaStream_t>(ExternalStreamHandle(other)));
+          },
+          // The wrapper keeps `other` alive: a Warp stream object destroys its stream when it is
+          // collected. A raw integer handle stays the caller's to keep valid.
+          nb::arg("other"), nb::keep_alive<1, 2>())
       .def(
           "get_stream",
           [](cunls::CudaStream &self) -> uintptr_t {
@@ -165,6 +222,7 @@ void bind_types(nb::module_ &m) {
           },
           "CUDA stream protocol (version 0, handle): libraries that accept it (e.g. PyTorch, "
           "CuPy) can enqueue work on this stream.");
+  nb::implicitly_convertible<ExternalCudaStream, cunls::CudaStream>();
 
   // --- Logging ---
 

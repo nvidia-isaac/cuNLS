@@ -37,6 +37,7 @@ CASES = {
     "ransac_pnp.py": [],
     "custom_warp_factor.py": [],
     "custom_warp_state.py": [],
+    "robot_custom_objective.py": [],
 }
 
 

@@ -108,10 +108,14 @@ quality. ``minimize`` updates the state memory in-place and returns a
 workspace during initialization before the first linearized solve.
 
 The uploads above ran on Warp's stream, the solve runs on ``stream``:
-synchronize Warp's stream first so the solver reads the uploaded values (or
-upload inside ``with wp.ScopedStream(wp.Stream(wp.get_cuda_device(),
-cuda_stream=stream.get_stream())):``). ``minimize`` synchronizes ``stream``
-before it returns, so the results can be read right after it.
+synchronize Warp's stream first so the solver reads the uploaded values, or
+solve on Warp's stream itself (every ``stream`` argument accepts a
+``wp.Stream``: ``minimizer.minimize(wp.get_stream(), problem)``), which keeps
+uploads and solve in order without synchronizing. ``minimize`` synchronizes
+its stream before it returns, so the results can be read right after it (the
+real-time paths, ``fixed_iterations`` and the augmented Lagrangian's
+``real_time``, do not: read their results on the same stream, or synchronize
+it first).
 
 .. code-block:: python
 

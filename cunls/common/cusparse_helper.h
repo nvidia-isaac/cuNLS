@@ -164,6 +164,12 @@ class cuSPARSEMatrixDescription {
   void UpdatePointers(const CSRSparseMatrix &matrix);
 
   /**
+   * @brief Points the descriptor at @p matrix's structure and at @p values
+   * (the same number of entries) instead of its own values.
+   */
+  void UpdatePointers(const CSRSparseMatrix &matrix, const float *values);
+
+  /**
    * @brief Get the cuSPARSE matrix descriptor
    *
    * Returns the underlying cuSPARSE sparse matrix descriptor for use with

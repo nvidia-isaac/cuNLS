@@ -7,5 +7,7 @@ auditwheel
 # Ubuntu 22.04's patchelf 0.14.3 is below auditwheel's repair minimum.
 patchelf>=0.14.5
 packaging
+# Provides the Python versions the image lacks (PYTHON_VERSION in build_pycunls.sh).
+uv
 actionlint-py
 shellcheck-py

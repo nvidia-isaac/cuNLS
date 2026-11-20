@@ -94,6 +94,15 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
   }
   SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
 
+  // MatrixStorage(): values in the pattern's layout, starting as the given matrix's values.
+  pattern_ = &spd_matrix;
+  values_.resize(spd_matrix.values.size());
+  if (values_.size() > 0) {
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(values_.data(), spd_matrix.values.data(),
+                                        values_.size() * sizeof(float), cudaMemcpyDeviceToDevice,
+                                        stream));
+  }
+
   // Create cuDSS descriptors for the matrix and vectors
   cuDSSDescription m_desc(spd_matrix);
   cuDSSDescription rhs_desc(rhs);
@@ -125,6 +134,23 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
 /** @copydoc cuDSSLinearSolver::Solve */
 bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
                               const dvector<float> &rhs, dvector<float> &result) {
+  return SolveWithValues(stream, spd_matrix, spd_matrix.values.data(), rhs, result);
+}
+
+SolverMatrixStorage cuDSSLinearSolver::MatrixStorage() { return {values_.data()}; }
+
+bool cuDSSLinearSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                          dvector<float> &result) {
+  if (pattern_ == nullptr) {
+    LogError("cuDSSLinearSolver::SolveStoredMatrix: not initialized. Fix: call Initialize().");
+    return false;
+  }
+  return SolveWithValues(stream, *pattern_, values_.data(), rhs, result);
+}
+
+bool cuDSSLinearSolver::SolveWithValues(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
+                                        const float *values, const dvector<float> &rhs,
+                                        dvector<float> &result) {
   size_t matrix_size = spd_matrix.NumRows();
 
   if (matrix_size != rhs.size()) {
@@ -147,7 +173,7 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
   auto cudss_data = reinterpret_cast<cudssData_t>(cudss_data_.GetData(dss_handle));
 
   // Create cuDSS descriptors for the matrix and vectors
-  cuDSSDescription m_desc(spd_matrix);
+  cuDSSDescription m_desc(spd_matrix, values);
   cuDSSDescription rhs_desc(rhs);
   cuDSSDescription result_desc(result);
 

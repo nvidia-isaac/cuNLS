@@ -130,6 +130,9 @@ class FactorBatch {
    * - Size any internal per-factor scratch for n items, not N.
    * - Do not assume n == N or f(t) == t: the RANSAC minimizers rely on both
    *   parameters, and the regular minimizers pass the defaults.
+   * - Batches may keep scratch between calls (e.g. LinkFrameFactorBatch,
+   *   SE3BetweenFactorBatch): one batch is not evaluated concurrently on
+   *   several streams (callers order its evaluations on one stream).
    */
   virtual bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                         cudaStream_t stream, const int *factor_ids = nullptr,

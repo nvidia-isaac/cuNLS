@@ -462,22 +462,38 @@ __global__ void add_scaled_diagonal_at_kernel(float scale, const float *__restri
   if (e >= 0) values[e] += scale * diagonal[i];
 }
 
-/** One warp per row; masked rows zero their entries and the mirrored column entries. */
+/** Zeroes entry e of masked row `row` (its mirror too); keeps a positive diagonal. */
+__device__ __forceinline__ void ZeroMaskedEntry(const int *__restrict__ row_offsets,
+                                                const int *__restrict__ col_ids,
+                                                float *__restrict__ values, int row, int e) {
+  const int col = col_ids[e];
+  if (col == row) {
+    if (!(values[e] > 0.f)) values[e] = 1.f;
+    return;
+  }
+  values[e] = 0.f;
+  const int mirror = FindColumn(col_ids, row_offsets[col], row_offsets[col + 1], row);
+  if (mirror >= 0) values[mirror] = 0.f;
+}
+
+/** Lanes per row of zero_masked_csr_kernel. */
+constexpr int kMaskLanes = 8;
+
+/**
+ * A group of kMaskLanes lanes per row: a masked row zeroes its entries (the
+ * group's lanes stride over them) and the mirrored column entries, keeping a
+ * positive diagonal. Unmasked rows cost one mask read; groups smaller than a
+ * warp keep the launch small when few rows are masked, while many masked
+ * rows (saturated controls) still proceed in parallel.
+ */
 __global__ void zero_masked_csr_kernel(const int *__restrict__ row_offsets,
                                        const int *__restrict__ col_ids, float *__restrict__ values,
                                        const float *__restrict__ mask, int num_rows) {
-  const int row = blockIdx.x * blockDim.y + threadIdx.y;
+  const int t = blockIdx.x * blockDim.x + threadIdx.x;
+  const int row = t / kMaskLanes, lane = t % kMaskLanes;
   if (row >= num_rows || mask[row] != 0.f) return;
-  const int lane = threadIdx.x;
-  for (int e = row_offsets[row] + lane; e < row_offsets[row + 1]; e += WARP_SIZE) {
-    const int col = col_ids[e];
-    if (col == row) {
-      if (!(values[e] > 0.f)) values[e] = 1.f;
-      continue;
-    }
-    values[e] = 0.f;
-    const int mirror = FindColumn(col_ids, row_offsets[col], row_offsets[col + 1], row);
-    if (mirror >= 0) values[mirror] = 0.f;
+  for (int e = row_offsets[row] + lane; e < row_offsets[row + 1]; e += kMaskLanes) {
+    ZeroMaskedEntry(row_offsets, col_ids, values, row, e);
   }
 }
 
@@ -550,9 +566,8 @@ void ZeroMaskedRowsColumns(cudaStream_t stream, CSRSparseMatrix &matrix,
                            const dvector<float> &mask) {
   const int n = static_cast<int>(matrix.NumRows());
   if (n == 0) return;
-  dim3 block(WARP_SIZE, 4);
-  dim3 grid((n + block.y - 1) / block.y);
-  zero_masked_csr_kernel<<<grid, block, 0, stream>>>(
+  const size_t threads = static_cast<size_t>(n) * kMaskLanes;
+  zero_masked_csr_kernel<<<static_cast<unsigned>((threads + 255) / 256), 256, 0, stream>>>(
       matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(), mask.data(), n);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }

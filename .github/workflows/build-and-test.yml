@@ -7,7 +7,9 @@ on:
         description: >
           JSON array of matrix entries. Each entry must have: ubuntu, cuda, archs.
           Optional: platform (default "x86_64"), runner (default ["self-hosted","gpu"]),
-          base_image (overrides the Docker base image), ports_mirror (Ubuntu Ports mirror URL).
+          base_image (overrides the Docker base image), ports_mirror (Ubuntu Ports mirror URL),
+          python (build and test only a wheel for this Python version, e.g. "3.13";
+          without it, the C++ libraries too and a wheel for the image's python3).
           Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"}]
         type: string
         required: true
@@ -35,7 +37,7 @@ jobs:
   build-matrix:
     # No " / " here: the jobs list shows called-workflow jobs as "build-matrix / <name>"
     # and keeps only the text after the last slash.
-    name: "${{ matrix.config.platform || 'x86_64' }}, ubuntu-${{ matrix.config.ubuntu }}, cuda-${{ matrix.config.cuda }}"
+    name: "${{ matrix.config.platform || 'x86_64' }}, ubuntu-${{ matrix.config.ubuntu }}, cuda-${{ matrix.config.cuda }}${{ matrix.config.python && format(', python-{0}', matrix.config.python) || '' }}"
     runs-on: ${{ matrix.config.runner || fromJson('["self-hosted","gpu"]') }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     strategy:
@@ -43,11 +45,12 @@ jobs:
       matrix:
         config: ${{ fromJson(inputs.matrix_json) }}
     env:
-      CONFIG_NAME: ${{ matrix.config.platform || 'x86_64' }}-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}
+      CONFIG_NAME: ${{ matrix.config.platform || 'x86_64' }}-cuda${{ matrix.config.cuda }}-ubuntu${{ matrix.config.ubuntu }}${{ matrix.config.python && format('-py{0}', matrix.config.python) || '' }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_COMMIT: ${{ github.sha }}
       CUDA_VERSION: ${{ matrix.config.cuda }}
       UBUNTU_VERSION: ${{ matrix.config.ubuntu }}
+      PYTHON_VERSION: ${{ matrix.config.python }}
       BASE_IMAGE: ${{ matrix.config.base_image }}
       UBUNTU_PORTS_MIRROR: ${{ matrix.config.ports_mirror }}
 
@@ -57,12 +60,16 @@ jobs:
 
       - uses: actions/checkout@v5
 
+      # A cell that names a Python version builds and tests only its wheel (built from
+      # source): its C++ libraries and tests repeat those of the cell with the image's Python.
       - name: Build C++ libraries
+        if: ${{ !matrix.config.python }}
         run: |
           EXTRA_CMAKE_ARGS="-DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.config.archs }}" \
           ./scripts/build_cunls_in_docker.sh Release ./output
 
       - name: Run C++ tests
+        if: ${{ !matrix.config.python }}
         run: ./scripts/test_cunls_in_docker.sh ./output
 
       - name: Build Python wheel
@@ -72,7 +79,7 @@ jobs:
         run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
 
       - name: Upload C++ test results
-        if: always()
+        if: ${{ always() && !matrix.config.python }}
         uses: actions/upload-artifact@v6
         with:
           name: test-results-cpp-${{ env.CONFIG_NAME }}
@@ -90,7 +97,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload C++ libraries
-        if: ${{ always() && inputs.upload_binaries }}
+        if: ${{ always() && inputs.upload_binaries && !matrix.config.python }}
         uses: actions/upload-artifact@v6
         with:
           name: cunls-${{ env.CONFIG_NAME }}
@@ -104,7 +111,7 @@ jobs:
       # into cunls); ship it as its own artifact, separate from the cunls
       # C++ libraries and Python wheel above.
       - name: Upload cuDSS binaries
-        if: ${{ always() && inputs.upload_binaries }}
+        if: ${{ always() && inputs.upload_binaries && !matrix.config.python }}
         uses: actions/upload-artifact@v6
         with:
           name: cudss-${{ env.CONFIG_NAME }}

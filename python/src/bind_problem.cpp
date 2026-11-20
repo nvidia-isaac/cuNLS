@@ -195,6 +195,7 @@ void bind_problem(nb::module_ &m) {
             return rbs[index].GetLossFunction();
           },
           nb::arg("index"), nb::rv_policy::reference_internal,
+          nb::sig("def loss_function(self, index: int) -> LossFunctionBatch | None"),
           "The robust loss of residual batch `index`, or None (squared loss).")
       .def(
           "state_batches",

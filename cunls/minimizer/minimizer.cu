@@ -562,6 +562,9 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     SetUpStructure(stream, problem, options, m.state_ops_, system);
   }
 
+  // Derived state data (articulation link poses) must match the coordinates
+  // the caller or the bound projection wrote, before the states are copied.
+  for (StateBatch *batch : problem.GetStateBatches()) RefreshDerivedStateData(batch, stream);
   current.Recreate(stream, problem);
   updated.Recreate(stream, problem);
 

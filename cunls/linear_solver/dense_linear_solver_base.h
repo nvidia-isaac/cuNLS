@@ -70,16 +70,22 @@ class DenseLinearSolverBase : public SparseLinearSolver {
   bool Initialize(cudaStream_t stream, const Problem &problem, const BSRSparseMatrix &spd_matrix,
                   const dvector<float> &rhs, dvector<float> &result) final;
 
-  /** @copydoc SparseLinearSolver::Solve */
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-             dvector<float> &result) final;
-
-  /** @copydoc SparseLinearSolver::Solve */
-  bool Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-             dvector<float> &result) final;
-
   /** @copydoc SparseLinearSolver::DisableSafetyChecks */
   void DisableSafetyChecks() final { safety_checks_enabled_ = false; }
+
+  /**
+   * @brief The dense row-major n x n matrix; the entry map sends value
+   * (row, col) of the pattern to element row * n + col (64-bit beyond 2^31
+   * elements).
+   */
+  SolverMatrixStorage MatrixStorage() final;
+
+  /** @brief Zeroes the dense matrix (the entries outside the pattern stay 0). */
+  void ClearMatrixStorage(cudaStream_t stream) final;
+
+  /** @brief Factorizes the dense matrix in MatrixStorage() and solves against it. */
+  bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                         dvector<float> &result) final;
 
  protected:
   /**
@@ -115,6 +121,13 @@ class DenseLinearSolverBase : public SparseLinearSolver {
 
   /** @brief Whether to run post-factorization numerical checks. */
   bool safety_checks_enabled_ = true;
+
+  /** @brief Per pattern value: its element of dense_matrix_ (Initialize()). */
+  dvector<int> entry_slot_;
+  /** @brief The same as 64-bit indices, when n * n exceeds 2^31 (wide_slots_). */
+  dvector<int64_t> entry_slot64_;
+  /** @brief entry_slot64_ (not entry_slot_) is in use. */
+  bool wide_slots_ = false;
 
  private:
   /**

@@ -9,17 +9,27 @@ Sparse linear system abstraction and implementation used by minimizers.
 
 ## Key types
 
-- `sparse_linear_solver_base.h`: abstract `SparseLinearSolver` — CSR
-  `Initialize`/`Solve` are pure virtual; BSR counterparts are defaulted and
-  guarded by `SupportsBlockStorage()`.
+- `sparse_linear_solver_base.h`: abstract `SparseLinearSolver`, one
+  contract for every backend (so they are interchangeable): `Initialize`
+  analyzes the pattern (CSR pure virtual; BSR defaulted and guarded by
+  `SupportsBlockStorage()`); `MatrixStorage()` returns the solver's own
+  matrix buffer plus the map from each pattern value to its slot
+  (`SolverMatrixStorage`, null map = identity); `ClearMatrixStorage` zeroes
+  it; `SolveStoredMatrix` factors what was written and solves.
+  `NormalEquations` writes the working matrix straight into the storage (one
+  kernel), so no matrix is copied on the solve path. `Solve(matrix)` is the
+  default convenience form (clear, copy through the map, solve;
+  `sparse_linear_solver_base.cu`), used by `SchurSystem`; PCG and cuDSS
+  override it to read the matrix in place.
 - `sparse_linear_solver.h`:
   - `SparseLinearSolverType`
   - `SparseLinearSolverConfig`
   - `CreateSparseLinearSolver(...)`
 - `dense_linear_solver_base.h`:
   - `DenseLinearSolverBase` — shared machinery for the backends that densify
-    before factorizing.  Owns `dense_matrix_`, dimension validation, the
-    CSR/BSR scatter and the layout dispatch; subclasses supply only
+    before factorizing.  Owns `dense_matrix_` (its `MatrixStorage()`),
+    dimension validation and the entry -> dense slot map built in
+    `Initialize` (64-bit when n² > 2^31); subclasses supply only
     `EnsureBuffersSize` and `FactorizeAndSolve`.  `SupportsBlockStorage()` is
     `true`: the sparse layout does not survive the scatter, so neither layout
     can be better for them.
@@ -58,11 +68,12 @@ Sparse linear system abstraction and implementation used by minimizers.
   `Problem::SetStateStages` (stage = time index per state) and optionally the
   subproblem partition. `Initialize` maps every CSR entry to a stage block on
   the host (once per structure; rejects couplings of non-adjacent stages);
-  `Solve` scatters into D_k / C_k blocks and runs the block Cholesky (Riccati)
+  the map is its `MatrixStorage()` into the D_k / C_k blocks;
+  `SolveStoredMatrix` runs the block Cholesky (Riccati)
   recursion, one warp per subproblem, registers + shuffles, cp.async
   prefetch of the next stage, kernel templated on the stage block size
   M <= 32 (dispatch table). No host synchronization (graph-capturable) unless
-  safety checks are on: then `Solve` reads back the singular-pivot count.
+  safety checks are on: then the solve reads back the singular-pivot count.
 - `block_sparse_cholesky_solver.h` / `block_sparse_cholesky_analysis.h`:
   `BlockSparseCholeskySolver` — supernodal sparse Cholesky, no external
   dependency; the default backend (`MinimizerOptions::sparse_linear_solver_type`)
@@ -72,8 +83,9 @@ Sparse linear system abstraction and implementation used by minimizers.
   nested dissection (balanced BFS level-set separators) by a cost model
   (`AnalyzeCholesky`, host),
   amalgamates supernodes and cuts them into panels of <= 64 columns, and
-  builds the assembly map and the relative map of the updates on the GPU.
-  `Solve`: per level a factor kernel (one
+  builds the assembly map (its `MatrixStorage()` map into the permuted panels)
+  and the relative map of the updates on the GPU.
+  `SolveStoredMatrix`: per level a factor kernel (one
   CTA per panel and 64 rows; forward substitution folded in) and an update
   kernel (64 x 64 tiles), then a level-scheduled backward substitution.
   `SetRowActivity` (advisory, from the minimizers of partitioned problems)
@@ -87,7 +99,8 @@ Sparse linear system abstraction and implementation used by minimizers.
 - Solves SPD systems given as `CSRSparseMatrix` or, for backends that report
   `SupportsBlockStorage()`, `BSRSparseMatrix` — typically normal equations
   assembled by `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`.  The
-  layout is chosen in `NormalEquations`; no conversion runs on the solve path.
+  layout is chosen in `NormalEquations`; no conversion runs on the solve path,
+  and the matrix is written into the solver's `MatrixStorage()`, not passed.
 
 ## cuDSS performance modes (`cuDSSLinearSolverOptions::mode`)
 

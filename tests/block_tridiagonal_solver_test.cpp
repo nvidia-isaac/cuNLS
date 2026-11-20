@@ -42,7 +42,9 @@
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
+#include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
@@ -145,9 +147,51 @@ struct Trajectories {
     controls.CopyToHost(out.data() + poses.size(), controls.size());
     return out;
   }
+
+  /**
+   * Levenberg-Marquardt (damping) with Jacobi column scaling and box bounds
+   * on the controls (the augmented Lagrangian holds the active ones: masked
+   * rows and columns): every modification of the working left-hand side.
+   */
+  std::vector<float> SolveBounded(SparseLinearSolverType type) {
+    std::vector<float> lo(2 * B * N, -0.3f), hi(2 * B * N, 0.4f);
+    bounds_lo = dvector<float>(lo);
+    bounds_hi = dvector<float>(hi);
+    control_states->SetBounds(bounds_lo.data(), bounds_hi.data());
+    LevenbergMarquardtMinimizerOptions lm;
+    lm.base_options.sparse_linear_solver_type = type;
+    lm.base_options.column_scaling = ColumnScaling::HessianDiagonal;
+    lm.base_options.max_num_iterations = 6;
+    LevenbergMarquardtMinimizer inner(lm);
+    AugmentedLagrangianMinimizer minimizer(inner);
+    CudaStream stream;
+    minimizer.Minimize(stream.GetStream(), problem);
+    std::vector<float> out(poses.size() + controls.size());
+    poses.CopyToHost(out.data(), poses.size());
+    controls.CopyToHost(out.data() + poses.size(), controls.size());
+    return out;
+  }
+  dvector<float> bounds_lo, bounds_hi;
 };
 
 class BlockTridiagonalSolverTest : public ::testing::TestWithParam<int> {};
+
+// The working left-hand side written into the solver's storage (damping,
+// column scaling and the bound mask applied on the way) against the dense
+// solver.
+TEST_P(BlockTridiagonalSolverTest, DampedScaledBoundedMatchesDenseCholesky) {
+  const int B = GetParam();
+  Trajectories a(B, 12), b(B, 12);
+  const auto tridiagonal = a.SolveBounded(SparseLinearSolverType::BlockTridiagonal);
+  const auto dense = b.SolveBounded(SparseLinearSolverType::DenseCholesky);
+  ASSERT_EQ(tridiagonal.size(), dense.size());
+  int at_bound = 0;
+  for (size_t i = 0; i < dense.size(); ++i) {
+    EXPECT_NEAR(tridiagonal[i], dense[i], 1e-3f) << "entry " << i;
+    if (i >= a.poses.size() && (dense[i] <= -0.3f + 1e-6f || dense[i] >= 0.4f - 1e-6f)) ++at_bound;
+  }
+  EXPECT_GT(at_bound, 0) << "no control reached a bound: the mask is not exercised";
+}
 
 TEST_P(BlockTridiagonalSolverTest, MatchesDenseCholesky) {
   const int B = GetParam();

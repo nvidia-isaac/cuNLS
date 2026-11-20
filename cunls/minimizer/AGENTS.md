@@ -50,8 +50,9 @@ optimization.
   `docs/sphinx/constraints.rst`.
 - `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
 - `sparse_matrix.h`: CSR diagonal ops, scaling, norms (free functions)
-- `normal_equations.h`: `NormalEquations` (owns H, the working LHS, and their
-  storage layout; the only place either layout is named)
+- `normal_equations.h`: `NormalEquations` (owns H and its storage layout, the
+  only place either layout is named; writes the working LHS, H with scale,
+  damping and mask, into the solver's `MatrixStorage()` in one kernel)
 - `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
 - `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
 - `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
@@ -145,5 +146,5 @@ optimization.
 - `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`;
   `SetOptions` keeps the warm state. A real-time call reads its status back
   once, at the end.
-- `NormalEquations`: cached CSR diagonal positions, value-only lhs copies,
-  `ZeroMaskedRowsColumns` (held bounds touch only the held rows).
+- `NormalEquations`: one fused kernel writes the working LHS straight into
+  the solver's storage (no lhs copy); per-entry rows cached at `Initialize`.

@@ -14,6 +14,7 @@ nanobind_add_module(_pycunls_core
   src/pycunls_module.cpp
   src/bind_types.cpp
   src/bind_state.cpp
+  src/bind_articulation.cpp
   src/py_factor_wrappers.cpp
   src/bind_factor.cpp
   src/bind_loss.cpp

@@ -49,7 +49,17 @@ def to_device(a, dtype, name: str, owner: str) -> wp.array:
 
 
 def warp_stream(stream) -> wp.Stream:
-    """A ``wp.Stream`` view of a :class:`pycunls.CudaStream` (or a raw ``cudaStream_t``); it does
-    not own the stream."""
-    handle = stream if isinstance(stream, int) else stream.get_stream()
+    """A ``wp.Stream`` for any stream pycunls accepts: a ``wp.Stream`` itself, a
+    :class:`pycunls.CudaStream`, an object with the CUDA stream protocol ``__cuda_stream__``, or a
+    raw ``cudaStream_t``; it does not own the stream."""
+    if isinstance(stream, wp.Stream):
+        return stream
+    if isinstance(stream, int):
+        handle = stream
+    elif hasattr(stream, "get_stream"):
+        handle = stream.get_stream()
+    elif hasattr(stream, "cuda_stream"):
+        handle = int(stream.cuda_stream)
+    else:
+        handle = int(stream.__cuda_stream__()[1])
     return wp.Stream(wp.get_cuda_device(), cuda_stream=handle)

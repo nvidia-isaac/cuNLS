@@ -178,4 +178,33 @@ class StateBatch {
   }
 };
 
+/**
+ * @brief Interface of state batches whose ambient storage holds, besides the
+ * coordinates, data derived from them (ArticulationStateBatch: link poses and
+ * motion columns computed by forward kinematics). Plus() keeps the derived
+ * data consistent with the coordinates it writes; this refreshes it after the
+ * coordinates were written some other way (by the caller, or by
+ * AugmentedLagrangianMinimizer's projection into the bounds).
+ *
+ * Read through dynamic_cast from StateBatch (like BoxBoundedStates). The
+ * minimizers call RefreshDerivedStateData() on the problem's batches at the
+ * start of every (inner) solve, before copying the states.
+ */
+class DerivedStateData {
+ public:
+  virtual ~DerivedStateData() = default;
+
+  /**
+   * @brief Recomputes the derived data of the active states (constant ones
+   * included) in the batch's own storage from their coordinates.
+   * Asynchronous on `stream`.
+   */
+  virtual void RefreshDerivedData(cudaStream_t stream) = 0;
+};
+
+/** @brief Refreshes `batch`'s derived data if it has any (see DerivedStateData). */
+inline void RefreshDerivedStateData(StateBatch *batch, cudaStream_t stream) {
+  if (auto *derived = dynamic_cast<DerivedStateData *>(batch)) derived->RefreshDerivedData(stream);
+}
+
 }  // namespace cunls

@@ -83,6 +83,18 @@ const T *device_items(nb::handle obj, const char *name, size_t count) {
       extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
 }
 
+/**
+ * Keeps the bounds arrays of state batch `self` alive while they are its bounds: one
+ * attribute holds the current pair (None after removal), so replaced arrays are released
+ * instead of accumulating for the batch's lifetime. Queued GPU work that still reads replaced
+ * arrays needs them kept alive by the caller (or the stream synchronized) until it finishes.
+ */
+template <typename Batch>
+inline void hold_bounds(Batch &self, nb::handle lower, nb::handle upper) {
+  nb::setattr(nb::find(&self), "_bounds_arrays",
+              lower.is_none() ? nb::none() : nb::object(nb::make_tuple(lower, upper)));
+}
+
 // Device float32 array of `count` items of `per_item` values each ("<per_item>
 // float32 per <item>" in the error), checked like extract_device_ptr with a
 // minimum size. The size check is best-effort: it applies when the size is
@@ -104,10 +116,11 @@ inline const int *device_ints(nb::handle obj, const char *name, size_t count, co
 
 // --- Binding registration entry points (one per translation unit) ----------
 
-void bind_types(nb::module_ &m);      // CudaStream, enums, options
-void bind_state(nb::module_ &m);      // StateBatch hierarchy (vector, Lie groups)
-void bind_factor(nb::module_ &m);     // FactorBatch hierarchy + CustomFactorBatch
-void bind_loss(nb::module_ &m);       // LossFunctionBatch hierarchy
-void bind_minimizer(nb::module_ &m);  // GaussNewton / LevenbergMarquardt
-void bind_ransac(nb::module_ &m);     // RANSAC minimizers, options, summary
-void bind_problem(nb::module_ &m);    // Problem (assembles states + factors)
+void bind_types(nb::module_ &m);         // CudaStream, enums, options
+void bind_state(nb::module_ &m);         // StateBatch hierarchy (vector, Lie groups)
+void bind_articulation(nb::module_ &m);  // ArticulationTopology, state and kinematic factors
+void bind_factor(nb::module_ &m);        // FactorBatch hierarchy + CustomFactorBatch
+void bind_loss(nb::module_ &m);          // LossFunctionBatch hierarchy
+void bind_minimizer(nb::module_ &m);     // GaussNewton / LevenbergMarquardt
+void bind_ransac(nb::module_ &m);        // RANSAC minimizers, options, summary
+void bind_problem(nb::module_ &m);       // Problem (assembles states + factors)

@@ -18,6 +18,9 @@ the environment. Every class and function also documents itself: `help(pycunls.X
 | poses / points / velocities linked by built-in factors (pose graph, bundle adjustment, ICP, PnP) | `pycunls.ProblemBuilder` or the one-call `pycunls.solve` | below |
 | gross outliers in geometric matches (PnP, registration) | `RansacLevenbergMarquardtMinimizer` | `python/examples/ransac_pnp.py` |
 | hard constraints, MPC | `AugmentedLagrangianMinimizer`, `pycunls.mpc` | `python/examples/supermarket_drones.py` |
+| a robot (URDF or joint arrays): inverse kinematics with hard joint limits | `ArticulationTopology` (`pycunls.articulation.topology_from_urdf`, or `topology_from_joint_arrays` for one articulation of a simulator scene's joint arrays), `ArticulationStateBatch`, `LinkPoseFactorBatch` + `AugmentedLagrangianMinimizer` | `python/tests/test_articulation.py`, `docs/sphinx/articulations.rst` |
+| a robot objective of your own (look-at, stay above a table, clearance, a frame relative to an object pose) | an existing factor on a link frame view through `LinkFrameFactorBatch` (`FrameView.Pose`: SE3 factors; `Position`: vector factors such as `HalfspaceFactorBatch3`; `Orientation`: SO3 factors), or your own: `pycunls.warp.WarpPoseFactorBatch` (residual function, autodiff Jacobian) or a `WarpFactorBatch` (analytic) | `python/examples/robot_custom_objective.py`, `docs/sphinx/articulations.rst` |
+| a robot with closed loops or mimic joints | the same, plus `pycunls.articulation.loop_closure(...)` constraints / `MimicJointFactorBatch` wrapped in `ConstraintFactorBatch(..., ConstraintKind.Equality)` | `docs/sphinx/articulations.rst` |
 | a residual no built-in factor computes, inside a larger graph | a Warp factor (`pycunls.warp.WarpFactorBatch`) | `python/examples/custom_warp_factor.py` |
 
 `pycunls.catalog("factor")` lists the built-in factors; `pycunls.describe(name)` gives one's
@@ -84,10 +87,14 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   (any `__cuda_array_interface__` array such as PyTorch or CuPy works too) or int device
   pointers. `fit` and `ProblemBuilder` convert NumPy for you. Read results back with
   `a.numpy()`; write into a bound buffer with `a.assign(np_array)`.
-- **Streams.** Warp work (uploads, `assign`, kernels) runs on Warp's current stream, the solve on
-  a `CudaStream`. Order them: `wp.synchronize_stream(wp.get_stream())` before `minimize`, or
-  upload inside `with wp.ScopedStream(wp.Stream(wp.get_cuda_device(),
-  cuda_stream=stream.get_stream())):`. `minimize` synchronizes its stream before returning.
+- **Streams.** Warp work (uploads, `assign`, kernels) runs on Warp's current stream. Every
+  `stream=` argument of pycunls accepts a `wp.Stream` (or any `__cuda_stream__` object, or a
+  `CudaStream`), so the simplest order is to solve on Warp's stream itself:
+  `stream = wp.get_stream()`; uploads, solves and reads then run in order without extra
+  synchronization. With a separate `pycunls.CudaStream()`, call
+  `wp.synchronize_stream(wp.get_stream())` before `minimize`. `minimize` synchronizes its stream
+  before returning, except on the real-time paths (`fixed_iterations`, the augmented Lagrangian's
+  `real_time`): read their results on the same stream, or synchronize it first.
 - **Poses are `world_from_body`, row-major 4x4 (SE3) or 3x3 (SE2).** Updates are on the right:
   `T' = T Exp(delta)`; se(3) tangent order is `[omega, v]` (rotation first), se(2) `[v_x, v_y,
   theta]`.
@@ -104,6 +111,12 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   "converged" early (the message says which criterion fired).
 - **Reprojection observations are normalized** image coordinates (intrinsics removed).
 - **Keep arrays alive.** Batches read the arrays you pass; do not let them be garbage collected.
+- **Articulations.** `joint_q` holds each joint's coordinates in joint order (quaternions x, y, z, w); write it with
+  `ArticulationStateBatch.set_joint_q`, read it with `get_joint_q` (both take a `stride` for
+  instances inside a larger array); `get_link_transforms` gives every link's world pose
+  (position, quaternion x, y, z, w). Joint limits are hard bounds
+  (solve with `AugmentedLagrangianMinimizer`). Loop-closing joints are not tree joints: add them
+  as the equality constraints `pycunls.articulation.loop_closure` returns.
 
 ## 5. After a solve: check, do not assume
 

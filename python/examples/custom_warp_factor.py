@@ -23,9 +23,12 @@ Solves a chain of scalars x_0..x_{N-1} from difference measurements
 plus a built-in prior on x_0, twice:
 
 * Part 1 (``ScalarDiffFactor``): the Warp kernel computes the residual and
-  its (constant) analytic Jacobian [-1, +1].
+  its (constant) analytic Jacobian [-1, +1]; ``evaluate`` is one line with
+  ``WarpFactorBatch.items`` (the call's arguments as Warp arrays) and
+  ``WarpFactorBatch.launch`` (one thread per item, standard arguments appended).
 * Part 2 (``ScalarDiffResidualOnlyFactor``): the kernel computes only the
-  residual; the factor is registered with
+  residual (and ``evaluate`` shows the raw arguments: ``wrap_array``,
+  ``factor_ids``, ``make_warp_stream``); the factor is registered with
   ``jacobian_mode_override=pycunls.JacobianMode.numeric`` and pycunls
   differentiates it by finite differences.
 
@@ -71,22 +74,10 @@ class ScalarDiffFactor(WarpFactorBatch):
         super().__init__(residual_size=1, state_sizes=[1, 1], capacity=capacity)
         self.measurements = measurements
 
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-                 factor_ids_ptr, num_factor_ids):
-        n = num_factor_ids                                  # number of items
-        ids = self.factor_ids(factor_ids_ptr, n)            # factor of each item
-        # Item t's states are state_pointers[2t] (x_i) and [2t + 1] (x_{i+1}).
-        state_pointers = self.wrap_array(state_pointers_ptr, wp.uint64, 2 * n)
-
-        write_jacobians = 1 if jacobians_ptr != 0 else 0    # 0 = residuals only
-        jacobians = (self.wrap_array(jacobians_ptr, wp.float32, 2 * n) if write_jacobians
-                     else wp.zeros(1, dtype=wp.float32, device=self._device))
-        wp.launch(scalar_diff_kernel, dim=n,
-                  inputs=[self.measurements, ids, state_pointers,
-                          self.wrap_array(residuals_ptr, wp.float32, n), jacobians,
-                          write_jacobians],
-                  stream=self.make_warp_stream(stream_handle))
-        return True
+    def evaluate(self, *args):
+        """Item t looks up its factor's data by ids[t] and reads its state through the
+        pointer table (see WarpFactorBatch.items)."""
+        return self.launch(scalar_diff_kernel, self.items(*args), [self.measurements])
 
 
 # ── Part 2: residual only, numeric Jacobian ─────────────────────────────────

@@ -68,21 +68,32 @@ namespace cunls {
 class BlockTridiagonalSolver : public SparseLinearSolver {
  public:
   using SparseLinearSolver::Initialize;  // the BSR overloads: block storage is not supported
-  using SparseLinearSolver::Solve;
 
   bool Initialize(cudaStream_t stream, const Problem &problem, const CSRSparseMatrix &spd_matrix,
                   const dvector<float> &rhs, dvector<float> &result) override;
-
-  bool Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
-             dvector<float> &result) override;
 
   void DisableSafetyChecks() override { safety_checks_enabled_ = false; }
 
   /** @brief Largest stage block size supported (one warp per subproblem). */
   static constexpr int kMaxStageSize = 32;
 
+  /**
+   * @brief The stage blocks: P*K*m*m D blocks, then as many C blocks; the
+   * entry map sends each CSR entry of the pattern to its block slot, or -1
+   * for an entry not stored (the lower block C_{k-1}ᵀ of a row).
+   */
+  SolverMatrixStorage MatrixStorage() override { return {blocks_.data(), entry_slot_.data()}; }
+
+  /** @brief Zeroes the blocks the solve reads (the D blocks only for K = 1). */
+  void ClearMatrixStorage(cudaStream_t stream) override;
+
+  /** @brief Factors the blocks in MatrixStorage() and solves (see the class comment). */
+  bool SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                         dvector<float> &result) override;
+
  private:
   int num_problems_ = 0;  ///< P
+  int num_sms_ = 1;       ///< SMs of the device (Initialize); P > 16 SMs packs warps per block
   int num_stages_ = 0;    ///< K (the largest stage index + 1)
   int stage_size_ = 0;    ///< m (the largest stage block)
   size_t num_rows_ = 0;

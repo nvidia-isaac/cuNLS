@@ -26,7 +26,9 @@ namespace cunls {
  *
  * Manages the lifecycle of a cudaStream_t, creating it on construction
  * and destroying it on destruction. Optionally synchronizes the stream
- * before destruction to ensure all queued work completes.
+ * before destruction to ensure all queued work completes. The second
+ * constructor wraps a stream created elsewhere (e.g. by another library's
+ * stream object) without owning it.
  *
  * Non-copyable to prevent accidental sharing of stream ownership.
  */
@@ -41,7 +43,14 @@ class CudaStream {
   CudaStream(bool sync_on_destroy = false);
 
   /**
-   * @brief Destroys the CUDA stream.
+   * @brief Wraps an existing stream without owning it: work goes to `external`,
+   * which is neither synchronized nor destroyed with this object and must
+   * outlive it.
+   */
+  explicit CudaStream(cudaStream_t external);
+
+  /**
+   * @brief Destroys the CUDA stream (an owned one only).
    *
    * If sync_on_destroy was set to true at construction, synchronizes
    * the stream before destruction to ensure all pending work completes.
@@ -58,5 +67,6 @@ class CudaStream {
  private:
   cudaStream_t stream;    ///< The underlying CUDA stream handle.
   bool sync_on_destroy_;  ///< Whether to synchronize on destruction.
+  bool owned_ = true;     ///< Created here (destroyed with the object), not wrapped.
 };
 }  // namespace cunls

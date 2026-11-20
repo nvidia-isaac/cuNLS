@@ -39,7 +39,7 @@ import warp as wp
 from pycunls._arrays import warp_stream
 from pycunls._summary import _plain
 from pycunls.catalog import effective_factor
-from pycunls._pycunls_core import CudaStream, Problem
+from pycunls._pycunls_core import ArticulationStateBatch, CudaStream, Problem
 
 
 # ---------------------------------------------------------------------------------------------
@@ -78,6 +78,14 @@ def _device(a: np.ndarray) -> wp.array:
 
 def _pointer_table(problem: Problem, index: int) -> np.ndarray:
     return np.asarray(problem.host_state_pointers(index), dtype=np.uint64)
+
+
+def _refresh_derived_state_data(problem: Problem, stream: CudaStream) -> None:
+    """Recomputes cached state data (ArticulationStateBatch link poses) from the coordinates, as
+    the minimizers do at the start of a solve, so an evaluation sees what a solve would."""
+    for batch in problem.state_batches():
+        if isinstance(batch, ArticulationStateBatch):  # not a user's own refresh(...)
+            batch.refresh(stream)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -164,7 +172,11 @@ class Evaluation:
 
 def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
              keep_residuals: bool = False) -> Evaluation:
-    """Evaluates every factor batch at the current states (no solve, states unchanged).
+    """Evaluates every factor batch at the current states (no solve).
+
+    The coordinates are not changed, except that derived state data is refreshed in place as a
+    solve would: an ``ArticulationStateBatch`` recomputes its forward-kinematics cache and
+    stores BALL / FREE quaternions normalized (a zero or non-finite one becomes the identity).
 
     Before solving, it checks the data and the initial guess: a NaN residual, a huge cost in one
     batch, or a residual far larger than the measurement noise points at a wrong layout (e.g. a
@@ -180,6 +192,7 @@ def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
         :class:`Evaluation`; ``print()`` it for a table, ``to_dict()`` for JSON.
     """
     stream = _stream(stream)
+    _refresh_derived_state_data(problem, stream)
     batches = []
     with _external(stream):
         for i in range(problem.num_residual_batches):
@@ -281,6 +294,7 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
         One :class:`JacobianCheck` per checked batch.
     """
     stream = _stream(stream)
+    _refresh_derived_state_data(problem, stream)
     state_batches = problem.state_batches()
     indices = range(problem.num_residual_batches) if batches is None else batches
     results = []
@@ -315,10 +329,12 @@ def check_jacobians(problem: Problem, stream: Optional[CudaStream] = None, step:
                             delta = np.zeros((sb.num_active_states, sb.tangent_size), np.float32)
                             delta[:, k] = sign * step
                             moved = wp.empty_like(x)
-                            sb.apply_plus(x, _device(delta), moved, stream)
+                            # Unclamped: a step clamped at a bound gives a one-sided derivative.
+                            sb.apply_plus(x, _device(delta), moved, stream, ignore_bounds=True)
                             # Slot `slot` of the factors on batch j reads the moved copy.
                             shifted = pointers.reshape(n, len(sizes)).copy()
-                            offset = np.uint64(moved.ptr) - base
+                            # Modulo 2^64: the copy may sit below the batch in memory.
+                            offset = np.uint64((int(moved.ptr) - int(base)) % (1 << 64))
                             shifted[rows, slot] = shifted[rows, slot] + offset
                             out = wp.empty((n, m), dtype=float, device=device)
                             fb.evaluate_batch(out, None, _device(shifted.reshape(-1)), stream)
@@ -414,6 +430,10 @@ def _gauge_issues(problem: Problem, state_batches) -> List[Issue]:
 def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issue]:
     """Checks a problem without solving it; returns the issues found (empty: nothing found).
 
+    Derived state data is refreshed in place first, as a solve would (``evaluate``): an
+    ``ArticulationStateBatch`` stores its quaternions normalized, so a zero or non-finite BALL /
+    FREE quaternion written directly to the state is reported only through its effect.
+
     Checks, in order: the structure (``Problem.find_structure_error``: active counts,
     connectivity, unconstrained states), non-finite state values, non-finite residuals at the
     current states (per factor batch, with the first bad factor), and gauge freedoms (groups of
@@ -437,6 +457,9 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     if error:
         return [Issue("error", error)]
     state_batches = problem.state_batches()
+    # Derived caches (articulation link poses) follow the coordinates, as in a solve: a cache
+    # left non-finite by an earlier evaluation does not hide repaired coordinates.
+    _refresh_derived_state_data(problem, stream)
     with _external(stream):
         for j, sb in enumerate(state_batches):
             if sb.num_active_states == 0:
@@ -453,12 +476,17 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     evaluation = evaluate(problem, stream)
     for b in evaluation.batches:
         if b.num_non_finite:
+            _, info, _ = effective_factor(problem.factor_batch(b.index))
+            kinematic = info is not None and "ArticulationStateBatch" in info.states
+            hint = (" Kinematic factors also give NaN for a link or DOF index outside the "
+                    "topology (links 0 .. link_count-1, or -1 for the world in LinkFrameFactorBatch; DOFs 0 .. "
+                    "dof_count-1, scalar ones for mimic joints)." if kinematic else "")
             issues.append(Issue(
                 "error",
                 f"Factor batch {b.name}: {b.num_non_finite} of {b.num_factors} factors have NaN "
                 f"or Inf residuals at the current states, first factor {b.first_non_finite}. Fix: "
                 "check the measurement data and layout for that factor and that its states are "
-                "in the factor's domain (e.g. points in front of the camera)."))
+                f"in the factor's domain (e.g. points in front of the camera).{hint}"))
         if not b.evaluate_ok:
             issues.append(Issue("error", f"Factor batch {b.name} reported an evaluation failure."))
     issues.extend(_gauge_issues(problem, state_batches))

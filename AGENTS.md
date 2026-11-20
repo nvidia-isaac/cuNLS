@@ -66,7 +66,10 @@ CI runs the exact same 4 commands with `CUDA_VERSION` and `UBUNTU_VERSION` env v
 ### What the library is
 
 - `StateBatch` implementations hold manifold-aware variables (vectors, SO/SE(2/3), Sim(2/3),
-  SL(4)); `FactorBatch` implementations evaluate batched residuals and analytic Jacobians;
+  SL(4), and articulated robots: `ArticulationTopology` + `ArticulationStateBatch`, joint
+  coordinates with a forward-kinematics cache); `FactorBatch` implementations evaluate batched
+  residuals and analytic Jacobians (kinematic factors in `cunls/factor/kinematics/`, including
+  `LinkFrameFactorBatch`, which puts existing pose / point / rotation factors on robot links);
   `Problem` composes them; `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer` solve,
   `RansacGaussNewtonMinimizer` / `RansacLevenbergMarquardtMinimizer` add robust estimation,
   `AugmentedLagrangianMinimizer` adds constraints and box bounds. Public umbrella include:
@@ -74,7 +77,11 @@ CI runs the exact same 4 commands with `CUDA_VERSION` and `UBUNTU_VERSION` env v
 - Python (`python/pycunls`): the nanobind bindings plus pure-Python layers -- `fitting.py`
   (`fit`), `builder.py` (`ProblemBuilder`, `solve`), `diagnostics.py` (`diagnose`,
   `evaluate`, `check_jacobians`), `catalog.py` (`catalog`, `describe`, class docstrings),
-  `mpc.py`, `warp.py`. `AGENT_GUIDE.md` ships in the wheel (`python -m pycunls guide`).
+  `articulation.py` (`topology_from_urdf`, `topology_from_joint_arrays`, `loop_closure`),
+  `mpc.py`, `warp.py` (`WarpFactorBatch` with `items` / `launch`, `WarpStateBatch`,
+  `WarpPoseFactorBatch`, slot readers). Every `stream=` argument also accepts a `wp.Stream` or
+  any `__cuda_stream__` object (implicit conversion to a non-owning `CudaStream`,
+  `python/src/bind_types.cpp`). `AGENT_GUIDE.md` ships in the wheel (`python -m pycunls guide`).
 - Conventions users must get right are listed in `python/pycunls/AGENT_GUIDE.md` (section 4):
   capacity vs. active count, `world_from_body` row-major poses, between factors measure
   `T_right^-1 T_left`, gauge freedom, absolute tolerances.

@@ -1349,16 +1349,18 @@ bool BlockSparsePCGSolver::BuildSegmentTables(int matrix_dim) {
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
                                       const BSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                       dvector<float> &result) {
-  bsr_view_ = &spd_matrix;
-  csr_view_ = nullptr;
+  bsr_view_ = initialized_bsr_ = &spd_matrix;
+  csr_view_ = initialized_csr_ = nullptr;
+  values_.resize(spd_matrix.values.size());
   return InitializeCommon(stream, &problem, spd_matrix.NumRows(), rhs, result);
 }
 
 bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &problem,
                                       const CSRSparseMatrix &spd_matrix, const dvector<float> &rhs,
                                       dvector<float> &result) {
-  csr_view_ = &spd_matrix;
-  bsr_view_ = nullptr;
+  csr_view_ = initialized_csr_ = &spd_matrix;
+  bsr_view_ = initialized_bsr_ = nullptr;
+  values_.resize(spd_matrix.values.size());
   if (!InitializeCommon(stream, &problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
     return false;
   }
@@ -1524,11 +1526,14 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd
   if (n != matrix_size_ ||
       BaPatternChanged(spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
                        spd_matrix.block_size, spd_matrix.col_ids.size())) {
+    // The layout now follows this matrix: the storage of Initialize() no longer fits it.
+    initialized_csr_ = nullptr;
+    initialized_bsr_ = nullptr;
     if (!InitializeCommon(stream, nullptr, n, rhs, result)) {
       return false;
     }
   }
-  return SolveCommon(stream, n, rhs, result);
+  return SolveCommon(stream, n, spd_matrix.values.data(), rhs, result);
 }
 
 bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_matrix,
@@ -1549,7 +1554,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
                        spd_matrix.col_ids.size())) {
     // Recovery path: matrix dim (or, with the bundle-adjustment product, the
     // pattern) changed since the last Initialize. Keep the derived layout
-    // while it covers the matrix (see InitializeCommon).
+    // while it covers the matrix (see InitializeCommon). The storage of
+    // Initialize() no longer fits that layout.
+    initialized_csr_ = nullptr;
+    initialized_bsr_ = nullptr;
     if (!InitializeCommon(stream, nullptr, n, rhs, result) ||
         !InitializeCsrSpMV(stream, spd_matrix)) {
       return false;
@@ -1559,7 +1567,33 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
   // Refresh the cuSPARSE descriptor's value pointer; the matrix's
   // structure is unchanged so no re-preprocess is needed.
   mat_desc_.UpdatePointers(spd_matrix);
-  return SolveCommon(stream, n, rhs, result);
+  return SolveCommon(stream, n, spd_matrix.values.data(), rhs, result);
+}
+
+SolverMatrixStorage BlockSparsePCGSolver::MatrixStorage() { return {values_.data()}; }
+
+bool BlockSparsePCGSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
+                                             dvector<float> &result) {
+  if (initialized_csr_ == nullptr && initialized_bsr_ == nullptr) {
+    LogError(
+        "BlockSparsePCGSolver::SolveStoredMatrix: no stored pattern (got none: not initialized, "
+        "or a matrix-taking Solve changed the pattern since Initialize, expected the pattern of "
+        "Initialize). Fix: call Initialize() with the matrix whose values MatrixStorage() holds.");
+    return false;
+  }
+  const int n = matrix_size_;
+  if (n != static_cast<int>(rhs.size()) || n != static_cast<int>(result.size())) {
+    LogError("BlockSparsePCGSolver: dim mismatch (initialized={}, rhs={}, result={})", n,
+             rhs.size(), result.size());
+    return false;
+  }
+  if (n == 0) return true;
+  // The pattern is the one Initialize() saw, even after a matrix-taking Solve
+  // replaced the views; the values are the storage.
+  csr_view_ = initialized_csr_;
+  bsr_view_ = initialized_bsr_;
+  if (csr_view_ != nullptr) mat_desc_.UpdatePointers(*csr_view_, values_.data());
+  return SolveCommon(stream, n, values_.data(), rhs, result);
 }
 
 /**
@@ -1567,13 +1601,12 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
  * the preconditioner gather read the matrix, and both dispatch on which view
  * pointer is set.
  */
-bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const dvector<float> &rhs,
-                                       dvector<float> &result) {
+bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const float *vals,
+                                       const dvector<float> &rhs, dvector<float> &result) {
   const bool block_storage = bsr_view_ != nullptr;
   const int *row_off =
       block_storage ? bsr_view_->row_offsets.data() : csr_view_->row_offsets.data();
   const int *col_idx = block_storage ? bsr_view_->col_ids.data() : csr_view_->col_ids.data();
-  const float *vals = block_storage ? bsr_view_->values.data() : csr_view_->values.data();
   const int storage_block = block_storage ? bsr_view_->block_size : 1;
 
   // -----------------------------------------------------------------

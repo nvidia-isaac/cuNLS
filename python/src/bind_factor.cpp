@@ -68,6 +68,7 @@
 #include "cunls/factor/prior/so2_prior_factor_batch.h"
 #include "cunls/factor/prior/so3_prior_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
+#include "cunls/factor/se3_joint_axis_factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
 #include "cunls/factor/symmetric_point_to_plane_factor_batch.h"
 #include "py_factor_wrappers.h"
@@ -273,7 +274,8 @@ void bind_factor(nb::module_ &m) {
           nb::arg("residuals_ptr"), nb::arg("jacobians_ptr"), nb::arg("state_pointers_ptr"),
           nb::arg("stream_handle"), nb::arg("factor_ids_ptr"), nb::arg("num_factor_ids"),
           "Override in a subclass. Evaluate n = num_factor_ids items (or num_active_factors when "
-          "0): item t is factor factor_ids[t] (or t when factor_ids_ptr is 0) at the states "
+          "0): item t is factor factor_ids[t] (or t % num_active_factors when factor_ids_ptr is 0: "
+          "items past the active factors repeat the measurements) at the states "
           "state_pointers[t * B + b] (B = len(state_sizes)). Write residuals[t * m + r] and, "
           "when jacobians_ptr is not 0, jacobians[(t * m + r) * J + c] (J = sum(state_sizes), "
           "derivative with respect to the tangent-space step). All pointers are ints; enqueue "
@@ -1111,4 +1113,35 @@ void bind_factor(nb::module_ &m) {
                 device_floats(obstacles, "obstacles", capacity, 4, "factor"), margin, capacity);
           },
           nb::arg("obstacles"), nb::arg("margin"), nb::arg("capacity"), nb::keep_alive<1, 2>());
+
+  nb::class_<cunls::SE3AxisAlignmentFactorBatch, cunls::FactorBatch>(
+      m, "SE3AxisAlignmentFactorBatch",
+      "r = R_1 a - R_0 a (3 rows, world frame): two SE(3) poses keep the local axis a aligned (r = "
+      "0 iff the axes point the same way). The rows of a hinge (revolute) joint that a position "
+      "equality does not cover; usually an equality constraint (wrap it, or the "
+      "LinkFrameFactorBatch around it, in ConstraintFactorBatch). States: two SE(3) poses (slot 0, "
+      "slot 1; SE3StateBatch or LinkFrameFactorBatch FrameView.Pose views). axes: device buffer "
+      "of 3 floats per factor (the axis in each pose's frame; normalized when read).")
+      .def(
+          "__init__",
+          [](cunls::SE3AxisAlignmentFactorBatch *self, nb::handle axes, size_t capacity) {
+            new (self) cunls::SE3AxisAlignmentFactorBatch(
+                device_floats(axes, "axes", capacity, 3, "factor"), capacity);
+          },
+          nb::arg("axes"), nb::arg("capacity"), nb::keep_alive<1, 2>());
+
+  nb::class_<cunls::SE3AxisOffsetFactorBatch, cunls::FactorBatch>(
+      m, "SE3AxisOffsetFactorBatch",
+      "r_k = (R_0 b_k) . (p_1 - p_0), k = 1, 2 (2 rows): the origin of pose 1 stays on the axis a "
+      "through pose 0 (b_1, b_2: unit vectors perpendicular to a). The rows of a slider "
+      "(prismatic) joint that an orientation equality does not cover; usually an equality "
+      "constraint. States: two SE(3) poses (slot 0, slot 1). axes: device buffer of 3 floats per "
+      "factor (the axis in pose 0's frame; normalized when read).")
+      .def(
+          "__init__",
+          [](cunls::SE3AxisOffsetFactorBatch *self, nb::handle axes, size_t capacity) {
+            new (self) cunls::SE3AxisOffsetFactorBatch(
+                device_floats(axes, "axes", capacity, 3, "factor"), capacity);
+          },
+          nb::arg("axes"), nb::arg("capacity"), nb::keep_alive<1, 2>());
 }

@@ -86,14 +86,19 @@ class CSROnlySolver : public SparseLinearSolver {
   using SparseLinearSolver::Initialize;
   using SparseLinearSolver::Solve;
 
-  bool Initialize(cudaStream_t, const Problem &, const CSRSparseMatrix &, const dvector<float> &,
-                  dvector<float> &) override {
+  bool Initialize(cudaStream_t, const Problem &, const CSRSparseMatrix &matrix,
+                  const dvector<float> &, dvector<float> &) override {
+    values_.resize(matrix.values.size());
     return true;
   }
-  bool Solve(cudaStream_t, const CSRSparseMatrix &, const dvector<float> &,
-             dvector<float> &) override {
+  SolverMatrixStorage MatrixStorage() override { return {values_.data(), nullptr, nullptr}; }
+  void ClearMatrixStorage(cudaStream_t) override {}
+  bool SolveStoredMatrix(cudaStream_t, const dvector<float> &, dvector<float> &) override {
     return false;
   }
+
+ private:
+  dvector<float> values_;  ///< The matrix in the pattern of Initialize() (identity map).
 };
 
 /**
@@ -1059,6 +1064,85 @@ TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
   for (size_t i = 0; i < n; i++) {
     ASSERT_NEAR(a[i], b[i], tol) << "solution mismatch at " << i;
   }
+}
+
+/**
+ * @brief SolveStoredMatrix reads the pattern Initialize() received, even after a
+ * matrix-taking Solve with another matrix of that pattern that no longer exists.
+ */
+TEST(HessianStorageTest, PcgStoredSolveOutlivesSolveMatrix) {
+  auto data = MakePoseGraph(256, /*fix_first_pose=*/true);
+  CudaStream stream;
+  cudaStream_t s = stream.GetStream();
+  SystemBuilder block;
+  block.Build(s, data->problem);
+  CSRSparseMatrix csr;
+  dvector<int> expand_scratch;
+  test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
+  const size_t n = block.Rhs().size();
+  dvector<float> rhs(n);
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs.data(), block.Rhs().data(), n * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, s));
+  BlockSparsePCGOptions pcg_options;
+  pcg_options.block_size = 6;
+  pcg_options.max_iterations = 500;
+  pcg_options.relative_tolerance = 1e-4f;
+  BlockSparsePCGSolver solver(pcg_options);
+  dvector<float> x_direct(n), x_stored(n);
+  ASSERT_TRUE(solver.Initialize(s, data->problem, csr, rhs, x_direct));
+  {
+    CSRSparseMatrix other;  // same pattern, destroyed before the stored solve
+    test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), other, expand_scratch);
+    ASSERT_TRUE(solver.Solve(s, other, rhs, x_direct));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
+  }
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(solver.MatrixStorage().values, csr.values.data(),
+                                      csr.values.size() * sizeof(float), cudaMemcpyDeviceToDevice,
+                                      s));
+  ASSERT_TRUE(solver.SolveStoredMatrix(s, rhs, x_stored));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
+  std::vector<float> a(n), b(n);
+  x_direct.CopyToHost(a.data(), n);
+  x_stored.CopyToHost(b.data(), n);
+  // PCG's reductions are not bitwise reproducible: agree to the requested tolerance.
+  const float tol = 1e-3f * std::max(MaxAbs(a), 1e-6f);
+  for (size_t i = 0; i < n; i++) ASSERT_NEAR(a[i], b[i], tol) << "solution mismatch at " << i;
+}
+
+/**
+ * @brief A matrix-taking Solve with another pattern rebuilds the solver's layout for it, so
+ * SolveStoredMatrix (the storage of Initialize()) must refuse instead of mixing the two.
+ */
+TEST(HessianStorageTest, PcgStoredSolveRefusedAfterPatternChange) {
+  auto small = MakePoseGraph(64, /*fix_first_pose=*/true);
+  auto large = MakePoseGraph(128, /*fix_first_pose=*/true);
+  CudaStream stream;
+  cudaStream_t s = stream.GetStream();
+  SystemBuilder a, b;
+  a.Build(s, small->problem);
+  b.Build(s, large->problem);
+  CSRSparseMatrix csr_a, csr_b;
+  dvector<int> scratch;
+  test_utils::ExpandBSRToCSR(s, a.Equations().LhsBSR(), csr_a, scratch);
+  test_utils::ExpandBSRToCSR(s, b.Equations().LhsBSR(), csr_b, scratch);
+  const size_t na = a.Rhs().size(), nb = b.Rhs().size();
+  ASSERT_NE(na, nb);
+  dvector<float> rhs_a(na), rhs_b(nb), x_a(na), x_b(nb);
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs_a.data(), a.Rhs().data(), na * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, s));
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs_b.data(), b.Rhs().data(), nb * sizeof(float),
+                                      cudaMemcpyDeviceToDevice, s));
+  BlockSparsePCGOptions pcg_options;
+  pcg_options.block_size = 6;
+  BlockSparsePCGSolver solver(pcg_options);
+  ASSERT_TRUE(solver.Initialize(s, small->problem, csr_a, rhs_a, x_a));
+  ASSERT_TRUE(solver.SolveStoredMatrix(s, rhs_a, x_a));
+  ASSERT_TRUE(solver.Solve(s, csr_b, rhs_b, x_b));
+  EXPECT_FALSE(solver.SolveStoredMatrix(s, rhs_a, x_a));
+  EXPECT_FALSE(solver.SolveStoredMatrix(s, rhs_b, x_b));
+  ASSERT_TRUE(solver.Initialize(s, small->problem, csr_a, rhs_a, x_a));  // stored solves resume
+  EXPECT_TRUE(solver.SolveStoredMatrix(s, rhs_a, x_a));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 }
 
 /**
