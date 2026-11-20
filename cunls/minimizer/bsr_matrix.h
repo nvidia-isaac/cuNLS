@@ -38,8 +38,9 @@ class Problem;
  * Block column offsets are cumulative sums of tangent dimensions, so they are
  * automatically multiples of the gcd.
  *
- * The edge is capped at 16, the largest tile the block SpMV accumulates
- * (MultiplyBSRByDenseVector).
+ * The edge is capped at 16, the largest tile the warp SpMV kernels accumulate
+ * (MultiplyBSRByDenseVector): a larger gcd gives its largest divisor up to 16
+ * (12 for 36, 5 for 25).
  *
  * @param problem The optimization problem.
  * @return The tile edge, or 1 when block storage is not worthwhile.

@@ -133,10 +133,19 @@ inline const float *device_floats(nb::handle obj, const char *name, size_t count
       extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
 }
 
-// The optional const_state_ids argument of a state batch constructor: nullptr for None, else a
-// device int32 array of at least `const_capacity` ids.
+// The optional const_state_ids argument of a state batch constructor: nullptr for None (only with
+// const_capacity 0: no ids to read), else a device int32 array of at least `const_capacity` ids.
 inline const int *const_state_ids(nb::handle ids, size_t const_capacity) {
-  if (ids.is_none()) return nullptr;
+  if (ids.is_none()) {
+    if (const_capacity != 0) {
+      throw nb::value_error(("const_state_ids is None but const_capacity is " +
+                             std::to_string(const_capacity) +
+                             " (expected 0 without ids). Fix: pass the constant state ids, or "
+                             "const_capacity=0.")
+                                .c_str());
+    }
+    return nullptr;
+  }
   return reinterpret_cast<const int *>(
       extract_device_ptr(ids, "int32", "const_state_ids", const_capacity, "const_capacity ids"));
 }

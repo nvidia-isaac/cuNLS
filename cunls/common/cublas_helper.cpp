@@ -27,25 +27,24 @@ const char *cublasGetErrorString(int status) {
 
 namespace {
 
-void *CreateCublasHandle(cudaStream_t stream) {
+void *CreateCublasHandle() {
   cublasHandle_t handle = nullptr;
   THROW_ON_CUBLAS_ERROR(cublasCreate(&handle));
-  THROW_ON_CUBLAS_ERROR(cublasSetStream(handle, stream));
   return handle;
 }
 
-void DestroyCublasHandle(void *handle, bool may_throw) {
-  const cublasStatus_t status = cublasDestroy(static_cast<cublasHandle_t>(handle));
-  if (may_throw) {
-    THROW_ON_CUBLAS_ERROR(status);
-  } else {
-    WARN_ON_CUBLAS_ERROR(status);
-  }
+void SetCublasStream(void *handle, cudaStream_t stream) {
+  THROW_ON_CUBLAS_ERROR(cublasSetStream(static_cast<cublasHandle_t>(handle), stream));
+}
+
+void DestroyCublasHandle(void *handle) {
+  WARN_ON_CUBLAS_ERROR(cublasDestroy(static_cast<cublasHandle_t>(handle)));
 }
 
 }  // namespace
 
 cuBLASHandle::cuBLASHandle()
-    : StreamBoundHandle("cuBLASHandle", &CreateCublasHandle, &DestroyCublasHandle) {}
+    : StreamBoundHandle("cuBLASHandle", &CreateCublasHandle, &SetCublasStream,
+                        &DestroyCublasHandle) {}
 
 }  // namespace cunls

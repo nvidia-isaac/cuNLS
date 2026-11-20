@@ -31,6 +31,8 @@
  * each other cannot catch an error common to both.
  */
 
+#include "cunls/minimizer/block_hessian_assembler.h"
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -39,6 +41,8 @@
 #include <numeric>
 #include <random>
 #include <set>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -1549,6 +1553,36 @@ TEST(BlockHessianAssemblerTest, AllConstantStatesProduceZeroSystem) {
   }
   for (float v : snapshot.rhs) {
     EXPECT_EQ(v, 0.f);
+  }
+}
+
+/**
+ * A factor whose staging does not fit the assembler's shared memory (a prior on one vector state
+ * of 160 components; 88 is the most) fails at setup with the limits and the fix.
+ */
+TEST(HessianAssemblyLimits, TooWideFactorFailsWithTheFix) {
+  constexpr int kDim = 160;
+  dvector<float> x(kDim), target(kDim);
+  THROW_ON_CUDA_ERROR(cudaMemset(x.data(), 0, kDim * sizeof(float)));
+  THROW_ON_CUDA_ERROR(cudaMemset(target.data(), 0, kDim * sizeof(float)));
+  DynamicVectorStateBatch states(kDim, x.data(), 1);
+  states.SetNumActiveStates(1);
+  DynamicPriorVectorFactorBatch prior(kDim, target.data(), 1);
+  prior.SetNumActiveFactors(1);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, std::vector<float *>{states.StateDevicePtr(0)});
+  CudaStream stream;
+  CSRSparseMatrix hessian;
+  BlockHessianAssembler assembler;
+  try {
+    assembler.Initialize(stream.GetStream(), problem, kDim, hessian);
+    FAIL() << "expected the staging of a 160-component prior not to fit";
+  } catch (const std::runtime_error &e) {
+    const std::string what = e.what();
+    EXPECT_NE(what.find("too large for shared-memory assembly"), std::string::npos) << what;
+    EXPECT_NE(what.find("Fix:"), std::string::npos) << what;
+    EXPECT_NE(what.find("88"), std::string::npos) << what;
   }
 }
 

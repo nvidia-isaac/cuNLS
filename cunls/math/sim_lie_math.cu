@@ -144,9 +144,10 @@ static __device__ bool mat3_inv(const float *__restrict__ M, float *__restrict__
 /**
  * @brief Sim(3) logarithm map: 4x4 matrix -> tangent [w, u, lambda].
  *
- * Extracts w = Log_SO3(R) (using the angle-axis formula on the rotation block),
- * lambda = log(s) from the (3,3) entry, and u = V^{-1} * t where V is the
- * Sim(3) V-matrix built from (theta, lambda).
+ * Extracts w = Log_SO3(R) with the shared lie_device::LogSO3 (accurate at
+ * every angle, half-turns included: there the axis comes from the symmetric
+ * part of R), lambda = log(s) from the (3,3) entry, and u = V^{-1} * t where V
+ * is the Sim(3) V-matrix built from (theta^2 = |w|^2, lambda).
  *
  * V is assembled as V = diag*I + Q*[w]_x + R_c*w*w^T, then inverted
  * via cofactor expansion of the resulting 3x3 matrix.
@@ -167,23 +168,11 @@ __global__ void log_sim3_kernel(const float *transforms, size_t transform_stride
   float s_val = 1.0f / inv_s;
   float lambda = logf(s_val);
 
-  float trace = R[0] + R[4] + R[8];
-  float cos_a = fmaxf(-1.0f, fminf(1.0f, (trace - 1.0f) * 0.5f));
-  float theta = acosf(cos_a);
-  float theta2 = theta * theta;
-
-  float vee[3] = {R[7] - R[5], R[2] - R[6], R[3] - R[1]};
+  // The shared rotation log: R - R^T vanishes at a half-turn, so the axis
+  // cannot come from the skew part alone (|w| = theta, 0 <= theta <= pi).
   float w[3];
-  if (fabsf(theta) < 1e-4f) {
-    w[0] = 0.5f * vee[0];
-    w[1] = 0.5f * vee[1];
-    w[2] = 0.5f * vee[2];
-  } else {
-    float k = theta / (2.0f * sinf(theta));
-    w[0] = k * vee[0];
-    w[1] = k * vee[1];
-    w[2] = k * vee[2];
-  }
+  lie_device::LogSO3(R, 3, w);
+  const float theta2 = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
 
   float A1, A2, P_c, Q_c, R_c;
   lie_device::Sim3VCoefficients(theta2, lambda, &A1, &A2, &P_c, &Q_c, &R_c);

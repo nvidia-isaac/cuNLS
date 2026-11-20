@@ -12,7 +12,9 @@ SE(3) axis factors for revolute / prismatic loops), built by `pycunls.articulati
   = DOF count). `StateSizes()` is overridable only for `LinkFrameFactorBatch`'s extra slots.
 - `link_target_factor_batch.{h,cu}`: `LinkPosition` (3 rows), `LinkOrientation` (3), `LinkPose`
   (6) factor batches; one templated kernel.
-- `posture_factor_batch.{h,cu}` (`W (q - q*)` per DOF), `mimic_joint_factor_batch.{h,cu}`
+- `posture_factor_batch.{h,cu}` (`W (q ⊟ q*)` per DOF: `q - q*` for scalar coordinates,
+  `Log(R(q) R(q*)ᵀ)` in the parent-anchor frame for BALL and the FREE rotation rows),
+  `mimic_joint_factor_batch.{h,cu}`
   (`q_m - (a + b q_ref)`), `link_frame_factor_batch.{h,cu}`.
 
 ## Conventions every kernel relies on

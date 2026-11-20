@@ -24,6 +24,8 @@
 #include <cmath>
 #include <numeric>
 #include <random>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -243,7 +245,14 @@ TEST(DynamicProblem, ValidationCatchesBadConnectivity) {
 // A short host list is rejected by SizeCheck.HostListMustCoverActiveFactors.
 TEST(DynamicProblem, SetStatePointersRejectsIndexTables) {
   BoundProblem bound(BoundProblem::Form::kHostList);
-  EXPECT_THROW(bound.problem.SetStatePointers(1, {}), std::logic_error);  // index-table batch
+  try {
+    bound.problem.SetStatePointers(1, {});  // batch 1: the prior, with an index table
+    FAIL() << "expected the index-table batch to be rejected";
+  } catch (const std::logic_error &e) {
+    // Not the std::out_of_range (a std::logic_error too) of a missing batch.
+    EXPECT_NE(std::string(e.what()).find("registered with a device table"), std::string::npos)
+        << e.what();
+  }
 }
 
 TEST(DynamicProblem, NumericJacobiansFollowConnectivityChanges) {

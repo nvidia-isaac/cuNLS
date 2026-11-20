@@ -133,10 +133,10 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
 
 void *cuDSSLinearSolver::Handle(cudaStream_t stream) {
   void *handle = cudss_handle_.GetHandle(stream);
-  // cudss_handle_ creates a new handle exactly when the stream changes.
-  if (stream != pooled_stream_) {
+  // cudss_handle_ keeps one handle (rebound on a stream change): attach the pool once.
+  if (!pool_attached_) {
     SetcuDSSDeviceMemHandler(handle, device_mem_pool_);
-    pooled_stream_ = stream;
+    pool_attached_ = true;
   }
   return handle;
 }

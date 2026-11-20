@@ -53,12 +53,13 @@ const char *cusparseGetErrorString(int status);
 
 /**
  * @brief The cuSPARSE handle of a CUDA stream (see StreamBoundHandle): created
- * on the first GetHandle(), recreated when the stream changes, destroyed with
- * the object. Each instance owns its handle; non-copyable.
+ * on the first GetHandle(), rebound with cusparseSetStream when the stream
+ * changes, destroyed with the object. Each instance owns its handle;
+ * non-copyable.
  */
 class cuSPARSEHandle : public StreamBoundHandle {
  public:
-  /** @brief No handle yet: GetHandle() creates a cusparseHandle_t for its stream. */
+  /** @brief No handle yet: the first GetHandle() creates a cusparseHandle_t. */
   cuSPARSEHandle();
 };
 

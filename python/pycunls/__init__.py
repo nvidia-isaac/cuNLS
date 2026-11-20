@@ -51,6 +51,7 @@ For user-defined GPU factors implemented in NVIDIA Warp, see
 """
 
 import sys as _sys
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 try:
     from pycunls import _pycunls_core
@@ -64,6 +65,8 @@ try:
     from pycunls.builder import ProblemBuilder, SolveResult, solve
 
     globals().update(_NUMBERED)
+    if _TYPE_CHECKING:  # the numbered names for type checkers (declared in _vectors.pyi)
+        from pycunls._vectors import *  # noqa: F401,F403
     _annotate_classes(_pycunls_core)
     __all__ = ([n for n in vars(_pycunls_core) if not n.startswith("_")] + list(_NUMBERED) +
                ["log_to_python", "catalog", "describe", "diagnose", "evaluate", "check_jacobians",

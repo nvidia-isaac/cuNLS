@@ -20,7 +20,9 @@ namespace cunls {
 
 /**
  * @brief tangent[i] = Log(T_i) = [u_x, u_y, theta, lambda] for 3x3 transforms
- * T = [R t; 0 0 1/s] (lambda = log s).
+ * T = [R t; 0 0 1/s] (lambda = log s): the principal logarithm, theta =
+ * atan2(R10, R00) in [-pi, pi] (a half-turn gives +-pi; either exponentiates
+ * back to T), u = V(theta, lambda)^{-1} t.
  */
 void ComputeLogSim2(cudaStream_t stream, const float *transforms, size_t transform_stride,
                     size_t tangent_stride, size_t size, float *tangent);
@@ -36,7 +38,10 @@ void ComputeJacobianRightInverseSim2(cudaStream_t stream, const float *tangent,
 
 /**
  * @brief tangent[i] = Log(T_i) = [w, u, lambda] for 4x4 transforms
- * T = [R t; 0 1/s] (lambda = log s).
+ * T = [R t; 0 1/s] (lambda = log s): the principal logarithm, w = Log(R) of
+ * SO(3) with |w| in [0, pi], accurate at every angle including half-turns
+ * (|w| = pi; the axis sign is either one, both exponentiate back to T), and
+ * u = V(w, lambda)^{-1} t with the V of the Sim(3) exponential.
  */
 void ComputeLogSim3(cudaStream_t stream, const float *transforms, size_t transform_stride,
                     size_t tangent_stride, size_t size, float *tangent);

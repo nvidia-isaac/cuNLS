@@ -59,11 +59,12 @@ CudaStream::~CudaStream() {
 /** @brief Returns a reference to the underlying cudaStream_t handle. */
 cudaStream_t &CudaStream::GetStream() { return stream; }
 
-StreamBoundHandle::StreamBoundHandle(const char *name, CreateFn create, DestroyFn destroy)
-    : name_(name), create_(create), destroy_(destroy) {}
+StreamBoundHandle::StreamBoundHandle(const char *name, CreateFn create, SetStreamFn set_stream,
+                                     DestroyFn destroy)
+    : name_(name), create_(create), set_stream_(set_stream), destroy_(destroy) {}
 
 StreamBoundHandle::~StreamBoundHandle() {
-  if (handle_ != nullptr) destroy_(handle_, false);
+  if (handle_ != nullptr) destroy_(handle_);
 }
 
 void *StreamBoundHandle::GetHandle(cudaStream_t stream) {
@@ -74,13 +75,10 @@ void *StreamBoundHandle::GetHandle(cudaStream_t stream) {
     LogError(msg);
     throw std::invalid_argument(msg);
   }
-  if (stream == stream_ && handle_ != nullptr) return handle_;
-  if (handle_ != nullptr) {
-    void *old = handle_;
-    handle_ = nullptr;  // not destroyed twice if destroy_ throws
-    destroy_(old, true);
-  }
-  handle_ = create_(stream);
+  if (stream == stream_) return handle_;        // stream_ is set only once handle_ is bound to it
+  if (handle_ == nullptr) handle_ = create_();  // stored first: the destructor releases it
+  stream_ = nullptr;                            // unbound until set_stream_ succeeds
+  set_stream_(handle_, stream);
   stream_ = stream;
   return handle_;
 }

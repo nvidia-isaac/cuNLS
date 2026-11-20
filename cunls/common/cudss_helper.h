@@ -105,7 +105,8 @@ class cuDSSDeviceMemPool {
  * @brief Makes cuDSS allocate its device memory from @p pool for @p handle.
  *
  * Call it once per handle, after the handle is created and before its first
- * cuDSS phase; @p pool must outlive the handle's use.
+ * cuDSS phase; @p pool must outlive the handle (declare the pool before the
+ * cuDSSHandle).
  *
  * @param handle Opaque cuDSS handle (cudssHandle_t); nothing happens when null.
  * @param pool The pool cuDSS allocates from.
@@ -114,12 +115,13 @@ void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool);
 
 /**
  * @brief The cuDSS handle of a CUDA stream (see StreamBoundHandle): created on
- * the first GetHandle(), recreated when the stream changes, destroyed with the
- * object. Each instance owns its handle; non-copyable.
+ * the first GetHandle(), rebound with cudssSetStream when the stream changes
+ * (so a cuDSSData made with it stays valid), destroyed with the object. Each
+ * instance owns its handle; non-copyable.
  */
 class cuDSSHandle : public StreamBoundHandle {
  public:
-  /** @brief No handle yet: GetHandle() creates a cudssHandle_t for its stream. */
+  /** @brief No handle yet: the first GetHandle() creates a cudssHandle_t. */
   cuDSSHandle();
 };
 
@@ -195,7 +197,8 @@ class cuDSSConfig {
  * @brief RAII wrapper for cuDSS data object.
  *
  * This class manages a cuDSS data object that stores internal solver state
- * and working memory during the factorization and solve phases.
+ * and working memory during the factorization and solve phases. The handle it
+ * was made with must outlive it (declare the cuDSSData after the cuDSSHandle).
  */
 class cuDSSData {
  public:

@@ -28,26 +28,25 @@ const char *cusparseGetErrorString(int status) {
 
 namespace {
 
-void *CreateCusparseHandle(cudaStream_t stream) {
+void *CreateCusparseHandle() {
   cusparseHandle_t handle = nullptr;
   THROW_ON_CUSPARSE_ERROR(cusparseCreate(&handle));
-  THROW_ON_CUSPARSE_ERROR(cusparseSetStream(handle, stream));
   return handle;
 }
 
-void DestroyCusparseHandle(void *handle, bool may_throw) {
-  const cusparseStatus_t status = cusparseDestroy(static_cast<cusparseHandle_t>(handle));
-  if (may_throw) {
-    THROW_ON_CUSPARSE_ERROR(status);
-  } else {
-    WARN_ON_CUSPARSE_ERROR(status);
-  }
+void SetCusparseStream(void *handle, cudaStream_t stream) {
+  THROW_ON_CUSPARSE_ERROR(cusparseSetStream(static_cast<cusparseHandle_t>(handle), stream));
+}
+
+void DestroyCusparseHandle(void *handle) {
+  WARN_ON_CUSPARSE_ERROR(cusparseDestroy(static_cast<cusparseHandle_t>(handle)));
 }
 
 }  // namespace
 
 cuSPARSEHandle::cuSPARSEHandle()
-    : StreamBoundHandle("cuSPARSEHandle", &CreateCusparseHandle, &DestroyCusparseHandle) {}
+    : StreamBoundHandle("cuSPARSEHandle", &CreateCusparseHandle, &SetCusparseStream,
+                        &DestroyCusparseHandle) {}
 
 /** @copydoc cuSPARSEMatrixDescription::operator=(cuSPARSEMatrixDescription&&)
  */

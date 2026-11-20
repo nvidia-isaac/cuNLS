@@ -147,20 +147,18 @@ int PoolDealloc(void *ctx, void *ptr, size_t size, cudaStream_t stream) {
   return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Dealloc(ptr, size, stream);
 }
 
-void *CreateCudssHandle(cudaStream_t stream) {
+void *CreateCudssHandle() {
   cudssHandle_t handle = nullptr;
   THROW_ON_CUDSS_ERROR(GetCudssApi().Create(&handle));
-  THROW_ON_CUDSS_ERROR(GetCudssApi().SetStream(handle, stream));
   return handle;
 }
 
-void DestroyCudssHandle(void *handle, bool may_throw) {
-  const cudssStatus_t status = GetCudssApi().Destroy(static_cast<cudssHandle_t>(handle));
-  if (may_throw) {
-    THROW_ON_CUDSS_ERROR(status);
-  } else {
-    WARN_ON_CUDSS_ERROR(status);
-  }
+void SetCudssStream(void *handle, cudaStream_t stream) {
+  THROW_ON_CUDSS_ERROR(GetCudssApi().SetStream(static_cast<cudssHandle_t>(handle), stream));
+}
+
+void DestroyCudssHandle(void *handle) {
+  WARN_ON_CUDSS_ERROR(GetCudssApi().Destroy(static_cast<cudssHandle_t>(handle)));
 }
 
 }  // namespace
@@ -180,7 +178,7 @@ void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool) {
 }
 
 cuDSSHandle::cuDSSHandle()
-    : StreamBoundHandle("cuDSSHandle", &CreateCudssHandle, &DestroyCudssHandle) {}
+    : StreamBoundHandle("cuDSSHandle", &CreateCudssHandle, &SetCudssStream, &DestroyCudssHandle) {}
 
 /**
  * @brief Constructs a cuDSS matrix descriptor from a CSR sparse matrix.

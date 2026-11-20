@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <random>
 #include <set>
 #include <string>
@@ -502,6 +503,27 @@ TEST_P(BlockSparseCholeskyBatchTest, ReportsNonPositiveDefinite) {
  * gauge): the vanishing pivots fix their unknowns, and the solution
  * satisfies the system.
  */
+/**
+ * An infinite diagonal entry (an overflowed assembly) fails the checked solve: the pivot is not
+ * finite, so it is not mistaken for a zero pivot (a free gauge) whatever its threshold, also on a
+ * leaf panel, which reads its threshold from the same entry.
+ */
+TEST_P(BlockSparseCholeskyBatchTest, ReportsInfiniteDiagonal) {
+  const HostSystem healthy =
+      MakeSystem(GetParam() == 1 ? Chain(30, 3) : Replicate(BlockChain(20, 3), GetParam()), 1);
+  for (int i : {0, 200, healthy.n - 1}) {
+    HostSystem s = healthy;
+    s.At(i, i) = std::numeric_limits<double>::infinity();
+    DeviceSystem d(s);
+    CudaStream stream;
+    BlockSparseCholeskySolver solver;
+    ASSERT_TRUE(solver.Initialize(stream.GetStream(), Problem(), d.matrix, d.rhs, d.result));
+    bool ok = true;
+    SolveError(solver, stream.GetStream(), s, d, 2, &ok);
+    EXPECT_FALSE(ok) << "infinite diagonal at " << i;
+  }
+}
+
 TEST_P(BlockSparseCholeskyBatchTest, SolvesConsistentSemidefiniteSystems) {
   const BlockPattern pattern =
       GetParam() == 1 ? Covisibility(40, 0.1, 3) : Replicate(Covisibility(4, 0.0, 3), GetParam());

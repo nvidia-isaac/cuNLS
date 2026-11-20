@@ -51,12 +51,12 @@ const char *cublasGetErrorString(int status);
 
 /**
  * @brief The cuBLAS handle of a CUDA stream (see StreamBoundHandle): created on
- * the first GetHandle(), recreated when the stream changes, destroyed with the
- * object. Each instance owns its handle; non-copyable.
+ * the first GetHandle(), rebound with cublasSetStream when the stream changes,
+ * destroyed with the object. Each instance owns its handle; non-copyable.
  */
 class cuBLASHandle : public StreamBoundHandle {
  public:
-  /** @brief No handle yet: GetHandle() creates a cublasHandle_t for its stream. */
+  /** @brief No handle yet: the first GetHandle() creates a cublasHandle_t. */
   cuBLASHandle();
 };
 

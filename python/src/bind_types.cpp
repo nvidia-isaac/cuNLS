@@ -63,6 +63,12 @@ std::string DtypeName(const std::string &typestr) {
 
 DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *name) {
   DeviceArray out;
+  if (PyBool_Check(obj.ptr())) {  // an int to Python, but never a pointer (e.g. a misplaced flag)
+    throw nb::type_error((std::string(name) +
+                          " must be a device array or a raw device pointer, got a bool. Fix: "
+                          "pass the array, or pass the flag by keyword.")
+                             .c_str());
+  }
   if (nb::isinstance<nb::int_>(obj)) {  // a raw device pointer: nothing to check
     out.ptr = nb::cast<uintptr_t>(obj);
     return out;

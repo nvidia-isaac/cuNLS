@@ -757,4 +757,3 @@ def _reason_name(code: int) -> str:
         return _core.TerminationReason(int(code)).name
     except ValueError:
         return "NotDetermined"
-

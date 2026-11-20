@@ -30,8 +30,16 @@ void ComputeExpSL4(cudaStream_t stream, const float *twist, const size_t twist_s
                    float *transform);
 
 /**
- * @brief twist[i] = Vee(log(T_i)): matrix logarithm with inverse
- * scaling-and-squaring near the identity.
+ * @brief twist[i] = Vee(log(T_i)): the principal matrix logarithm, by inverse
+ * scaling-and-squaring (Denman-Beavers square roots until T is near the
+ * identity, then a series).
+ *
+ * Supported domain: transforms with no eigenvalues on the closed negative real
+ * axis (-inf, 0]. For others the square-root iteration breaks down and the
+ * result is wrong, with no error reported: zero when an iterate turns singular
+ * and the identity is substituted for the root (e.g. diag(-1, -1, 1, 1), a
+ * half-turn in a plane), otherwise whatever the non-converging iteration leaves
+ * (e.g. diag(-2, -0.5, 1, 1)).
  */
 void ComputeLogSL4(cudaStream_t stream, const float *transform, const size_t transform_pitch,
                    const size_t transform_stride, const size_t twist_stride, size_t size,

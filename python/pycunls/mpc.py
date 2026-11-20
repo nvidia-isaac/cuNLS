@@ -550,10 +550,17 @@ class Controller:
 
         With ``real_time`` (see :meth:`Horizon.build`), the first call converges
         and switches the solver to the fixed budget for the following calls.
+        The solve runs on ``stream`` after the work queued on Warp's current
+        stream, and later work on Warp's current stream (:meth:`shift`,
+        :meth:`set_initial_state`, reading the buffers) runs after the solve, so
+        a real-time solve, which returns without waiting for the GPU, needs no
+        synchronization, also when the two streams differ.
         """
+        device_stream = wp.get_stream(self.horizon.controls.device)
         # Buffer writes (assign, Horizon setup) run on Warp's stream: the solve waits for them.
-        warp_stream(stream).wait_stream(wp.get_stream(self.horizon.controls.device))
+        warp_stream(stream).wait_stream(device_stream)
         self.summary = self.solver.minimize(stream, self.problem)
+        device_stream.wait_stream(warp_stream(stream))  # later writes and reads wait for the solve
         if self._real_time is not None and not self.solver.options.real_time:
             outer, inner = self._real_time
             o = self.solver.options
@@ -606,12 +613,12 @@ class Controller:
         """Shift, set the measured state, solve; returns the first controls ``[B, nu]``.
 
         The shift and the state writes run on Warp's current stream, the solve on
-        ``stream``; stream waits order them (the solve after the writes, the
-        returned copy after the solve), also when the two streams differ.
+        ``stream``; :meth:`solve` orders them (the solve after the writes, the
+        returned copy and the next writes after the solve), also when the two
+        streams differ.
         """
         if self._started:
             self.shift()
         self.set_initial_state(pose, **vectors)
-        self.solve(stream)  # waits for the writes
-        wp.get_stream(self.horizon.controls.device).wait_stream(warp_stream(stream))
+        self.solve(stream)
         return wp.clone(self.horizon.controls[:, 0])

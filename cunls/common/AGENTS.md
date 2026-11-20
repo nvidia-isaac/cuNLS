@@ -14,8 +14,9 @@ Shared infrastructure used across cuNLS modules:
 - `device_vector.h`: `DeviceVector<T>` (`dvector<T>` alias in `types.h`)
 - `types.h`: `Vector`, `Matrix`, `SE3Transform`, `CSRSparseMatrix`, `BSRSparseMatrix`,
   `PerFactorJacobians`
-- `cuda_stream.h`: RAII CUDA stream wrapper; `StreamBoundHandle`, the base of the per-stream
-  cuBLAS / cuSPARSE / cuSOLVER / cuDSS handles
+- `cuda_stream.h`: RAII CUDA stream wrapper; `StreamBoundHandle`, the base of the cuBLAS /
+  cuSPARSE / cuSOLVER / cuDSS handles: created once, rebound (SetStream) when the stream
+  changes, never recreated (cuDSS data belongs to its handle)
 - `cublas_helper.h`, `cusparse_helper.h`, `cusolver_helper.h`, `cudss_helper.h`
 - `profiler.h`: NVTX range/domain wrappers
 - `cudss_dynamic.h`: cuDSS entry points resolved with dlopen() from libcudss.so

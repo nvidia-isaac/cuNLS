@@ -136,8 +136,12 @@ if(NOT BUILD_SHARED_LIBS)
 endif()
 
 if(BUILD_SHARED_LIBS)
+  # Before 1.0 any release may change the ABI (CHANGELOG.md): the SONAME carries the full
+  # version, so a program built against another release does not load this one.
   set_target_properties(cunls PROPERTIES
-      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+      VERSION ${PROJECT_VERSION}
+      SOVERSION ${PROJECT_VERSION})
 else()
   set_target_properties(cunls PROPERTIES
       ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

@@ -79,26 +79,25 @@ const char *cusolverGetErrorString(int status) {
 
 namespace {
 
-void *CreateCusolverHandle(cudaStream_t stream) {
+void *CreateCusolverHandle() {
   cusolverDnHandle_t handle = nullptr;
   THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&handle));
-  THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(handle, stream));
   return handle;
 }
 
-void DestroyCusolverHandle(void *handle, bool may_throw) {
-  const cusolverStatus_t status = cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle));
-  if (may_throw) {
-    THROW_ON_CUSOLVER_ERROR(status);
-  } else {
-    WARN_ON_CUSOLVER_ERROR(status);
-  }
+void SetCusolverStream(void *handle, cudaStream_t stream) {
+  THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(static_cast<cusolverDnHandle_t>(handle), stream));
+}
+
+void DestroyCusolverHandle(void *handle) {
+  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle)));
 }
 
 }  // namespace
 
 cuSolverHandle::cuSolverHandle()
-    : StreamBoundHandle("cuSolverHandle", &CreateCusolverHandle, &DestroyCusolverHandle) {}
+    : StreamBoundHandle("cuSolverHandle", &CreateCusolverHandle, &SetCusolverStream,
+                        &DestroyCusolverHandle) {}
 
 cuSolverInfo::cuSolverInfo() {
   syevjInfo_t info = nullptr;

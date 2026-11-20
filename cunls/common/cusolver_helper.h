@@ -51,12 +51,13 @@ const char *cusolverGetErrorString(int status);
 
 /**
  * @brief The cuSOLVER dense handle of a CUDA stream (see StreamBoundHandle):
- * created on the first GetHandle(), recreated when the stream changes,
- * destroyed with the object. Each instance owns its handle; non-copyable.
+ * created on the first GetHandle(), rebound with cusolverDnSetStream when the
+ * stream changes, destroyed with the object. Each instance owns its handle;
+ * non-copyable.
  */
 class cuSolverHandle : public StreamBoundHandle {
  public:
-  /** @brief No handle yet: GetHandle() creates a cusolverDnHandle_t for its stream. */
+  /** @brief No handle yet: the first GetHandle() creates a cusolverDnHandle_t. */
   cuSolverHandle();
 };
 

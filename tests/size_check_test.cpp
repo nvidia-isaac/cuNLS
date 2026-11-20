@@ -129,5 +129,27 @@ TEST(SizeCheck, NumActiveFactorsAboveCapacityIsRejected) {
                 "exceeds Capacity()");
 }
 
+/** A custom factor whose residual reads no states: a constant cost. */
+class StatelessFactor : public FactorBatch {
+ public:
+  bool Evaluate(float *, float *, float const *const *, cudaStream_t, const int *,
+                size_t) const override {
+    return true;
+  }
+  size_t ResidualsSize() const override { return 1; }
+  std::vector<size_t> StateSizes() const override { return {}; }
+  size_t NumActiveFactors() const override { return 2; }
+};
+
+TEST(SizeCheck, FactorsWithoutStatesAreRejected) {
+  PriorProblem p;
+  p.SetSizes(kCapacity);
+  StatelessFactor constant;
+  p.problem.AddFactorBatch(&constant, std::vector<float *>{});
+  CudaStream stream;
+  ExpectInvalid([&] { GaussNewtonMinimizer().Minimize(stream.GetStream(), p.problem); },
+                "read no states");
+}
+
 }  // namespace
 }  // namespace cunls

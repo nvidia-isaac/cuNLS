@@ -15,9 +15,8 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <numeric>
-#include <stdexcept>
-#include <string>
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/bsr_matrix.h"
@@ -224,7 +223,9 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
   constexpr int kThreads = 128;
   constexpr int kSkewThreshold = 32;
 
-  if (max_tiles_per_row < kSkewThreshold) {
+  // The warp kernels accumulate a tile edge in a fixed per-lane array (kMaxSpMVBlockSize):
+  // a larger edge takes the row kernel whatever the skew.
+  if (max_tiles_per_row < kSkewThreshold || block_size > kMaxSpMVBlockSize) {
     const int num_rows = num_block_rows * block_size;
     const int grid = (num_rows + kThreads - 1) / kThreads;
     switch (block_size) {
@@ -266,13 +267,7 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
     LAUNCH_WARP(7);
     LAUNCH_WARP(8);
 #undef LAUNCH_WARP
-    default:
-      // The generic kernel accumulates into a fixed-size per-lane array; a
-      // larger edge would write past it, silently, so refuse instead.
-      if (block_size > kMaxSpMVBlockSize) {
-        throw std::runtime_error("BSR SpMV: block size exceeds " +
-                                 std::to_string(kMaxSpMVBlockSize));
-      }
+    default:  // at most kMaxSpMVBlockSize (larger edges took the row kernel)
       BsrMultiplyWarpGenericKernel<<<grid, kThreads, 0, stream>>>(
           num_block_rows, block_size, row_offsets, col_ids, values, x, y);
       break;
@@ -310,19 +305,12 @@ int ChooseHessianBlockSize(const Problem &problem) {
       return 1;
     }
   }
-  if (block_size <= 1) {
-    return 1;
+  // The largest divisor of the common tangent size within kMaxSpMVBlockSize (e.g. 12 for 36, 5
+  // for 25); 1 is scalar storage.
+  for (int edge = std::min(block_size, kMaxSpMVBlockSize); edge > 1; --edge) {
+    if (block_size % edge == 0) return edge;
   }
-  while (block_size > kMaxSpMVBlockSize) {
-    // Fall back to the largest divisor within budget; halving keeps the
-    // divisibility invariant for the even sizes cuNLS actually uses and
-    // otherwise bails out to scalar storage.
-    if (block_size % 2 != 0) {
-      return 1;
-    }
-    block_size /= 2;
-  }
-  return block_size;
+  return 1;
 }
 
 void ExtractDiagonal(cudaStream_t stream, const BSRSparseMatrix &matrix, dvector<float> &diagonal) {

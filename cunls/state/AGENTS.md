@@ -22,7 +22,8 @@ Batched optimization variables and their `Plus` (tangent update).
 ## Memory model
 
 - States live in caller-provided device memory (except `ArticulationStateBatch`, which owns its
-  storage but still borrows bounds and constant ids). Constant state ids mark fixed states.
+  storage and its topology joint limits but borrows custom bounds (`SetBounds`, which must
+  outlive the solves) and constant ids). Constant state ids mark fixed states.
 - Capacity is fixed at construction; active counts start at 0 and `SetNumActiveStates(n,
   num_const)` (host) sets them before a solve. `StateDevicePtr(i)` is valid for i < `Capacity()`.
 - `Plus(x, delta, out, stream, num_replicas = 1)` updates `num_replicas` contiguous copies

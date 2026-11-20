@@ -944,6 +944,11 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
                                                  SparseLinearSolverType::BlockSparseCholesky};
   if (std::getenv("IK_BENCH_TRIDIAGONAL_ONLY")) solvers.pop_back();
   if (T > BlockTridiagonalSolver::kMaxStageSize) solvers.erase(solvers.begin());
+  if (solvers.empty()) {
+    GTEST_SKIP() << "IK_BENCH_TRIDIAGONAL_ONLY with " << T
+                 << " DOF (BlockTridiagonal takes at most " << BlockTridiagonalSolver::kMaxStageSize
+                 << "): no solver to measure";
+  }
   std::vector<std::string> objectives = {"fused", "views", "pose_view"};
   if (const char *o = std::getenv("IK_BENCH_OBJECTIVES")) {
     objectives.clear();

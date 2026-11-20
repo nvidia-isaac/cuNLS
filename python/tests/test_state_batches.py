@@ -94,6 +94,17 @@ def test_vector_const_ids():
         sb.set_num_active_states(10, 3)
 
 
+def test_const_ids_must_match_the_capacity_and_be_arrays():
+    data = wp.zeros(30, dtype=wp.float32)
+    # A constant-id capacity needs the ids.
+    with pytest.raises(ValueError, match="const_state_ids is None but const_capacity is 2"):
+        pycunls.VectorStateBatch3(data, 10, None, 2)
+    pycunls.VectorStateBatch3(data, 10, None, 0)
+    # A bool is not a device pointer (e.g. a flag passed in the ids' position).
+    with pytest.raises(TypeError, match="got a bool"):
+        pycunls.VectorStateBatch3(data, 10, False)
+
+
 def test_se3_const_ids():
     data = wp.zeros(3 * 16, dtype=wp.float32)
     const_ids = wp.array([0], dtype=wp.int32)

@@ -48,7 +48,9 @@ namespace cunls {
  *     panel (no rows below) is solved backward by its factor task instead.
  * Small panels (at most 32 rows: diagonal block plus the rows below it, e.g.
  * the systems of many small independent subproblems) take one warp each
- * instead, in all three steps, with a row per lane in registers. The analysis
+ * instead, in all three steps, with a row per lane in registers, in the levels
+ * with at least internal::kCholeskyMinSmallPanelsPerLevel (256) of them (fewer
+ * stay on CTAs, which finish them with less latency each). The analysis
  * compiles all of this into a list of launches (internal::CholeskyPlan::program),
  * which every solve replays.
  *

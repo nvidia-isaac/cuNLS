@@ -417,7 +417,8 @@ __global__ void __launch_bounds__(kThreads) FactorKernel(Args args, const Task *
             float pivot = a[b][b];
 #pragma unroll
             for (int q = 0; q < b; ++q) pivot -= lg[b][q] * lg[b][q];
-            const bool zero = fabsf(pivot) <= lim[c0 + b];
+            // Only a finite pivot can be a rank deficiency; an infinite one fails below.
+            const bool zero = isfinite(pivot) && fabsf(pivot) <= lim[c0 + b];
             asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(scale[b]) : "f"(pivot));
             if (zero) scale[b] = 0.f;
             const bool own = lane == c0 + b;
@@ -463,7 +464,7 @@ __global__ void __launch_bounds__(kThreads) FactorKernel(Args args, const Task *
         }
       }
       if (lane < bw) reciprocal[kb + lane] = own_scale;
-      if (own_failure) *args.failure = 1;
+      if (own_failure) atomicOr(args.failure, 1);
       if (lane < bw) {
 #pragma unroll
         for (int c = 0; c < kB; ++c) {
@@ -793,7 +794,8 @@ __device__ void FactorPanelByWarp(const Panel &info, const Args &args, float *l_
 #pragma unroll 1
   for (int j = 0; j < w; ++j) {
     const float pivot = __shfl_sync(kFullMask, s[0], j);
-    const bool zero = fabsf(pivot) <= __shfl_sync(kFullMask, limit, j);
+    // Only a finite pivot can be a rank deficiency; an infinite one fails below.
+    const bool zero = isfinite(pivot) && fabsf(pivot) <= __shfl_sync(kFullMask, limit, j);
     float scale;
     asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(scale) : "f"(pivot));
     if (zero) scale = 0.f;  // a rank deficiency fixes the unknown (zero column)
@@ -825,7 +827,7 @@ __device__ void FactorPanelByWarp(const Panel &info, const Args &args, float *l_
 #pragma unroll
     for (int l = 1; l < W; ++l) s[l - 1] = s[l];
   }
-  if (failed) *args.failure = 1;
+  if (failed) atomicOr(args.failure, 1);
   if (root) {
     // L_Dᵀ x = z_p, lane c for x_c (L(k, c) from l_root; columns past the width never read).
     __syncwarp();

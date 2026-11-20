@@ -170,7 +170,7 @@ bool Similarity2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
   errors_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
-  // Fused: L^{-1} (inline), then (L^{-1} * R) * D, in one kernel.
+  // Fused: L^{-1} (inline), then D * (L^{-1} * R), in one kernel.
   compute_sim2_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
       state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());

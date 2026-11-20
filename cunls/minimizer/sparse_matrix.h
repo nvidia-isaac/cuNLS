@@ -36,6 +36,8 @@ void ElementwiseMultiplyInPlace(cudaStream_t stream, float *a, const float *b, s
 /**
  * @brief positions[i] = index of the diagonal entry (i, i) in the values of a
  * square CSR matrix, or -1 when the row has none. Once per sparsity pattern.
+ * The column ids of each row must be ascending (a binary search; the Hessian
+ * builders produce such rows).
  */
 void FindDiagonalPositions(cudaStream_t stream, const CSRSparseMatrix &matrix,
                            dvector<int> &positions);

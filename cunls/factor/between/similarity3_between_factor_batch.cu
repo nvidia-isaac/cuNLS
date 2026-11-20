@@ -36,7 +36,7 @@ constexpr size_t kSim3JacobianPitch = 14;
 constexpr size_t kSim3JacobianStride = 98;
 
 /**
- * @brief Fused kernel: collect L/R Sim(3), compute (L^{-1} * R) * Delta.
+ * @brief Fused kernel: collect L/R Sim(3), compute Delta * (L^{-1} * R).
  *
  * Full 4x4 row-major multiply (128 FMAs for 2 matmuls). Inline Sim(3) inverse.
  */

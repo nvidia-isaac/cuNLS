@@ -117,7 +117,10 @@ solves, and returns the first controls ``[B, nu]`` (a ``wp.array``;
 ``.numpy()`` reads it). The first call fills the
 whole horizon with the measured state ("stay where you are"). ``solve``,
 ``shift`` and ``set_initial_state`` are the individual parts; ``summary`` is
-the last ``AugmentedLagrangianMinimizerSummary``.
+the last ``AugmentedLagrangianMinimizerSummary``. ``solve`` orders itself
+with Warp's current stream both ways (after the writes queued there, and
+before the work queued there later), so the parts can be called in any order
+and on any streams without synchronizing.
 
 The solver is local: it finds the solution near the initial guess (the
 shifted previous plan). An obstacle almost centered on the reference path is
