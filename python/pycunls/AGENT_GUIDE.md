@@ -93,7 +93,8 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   `stream = wp.get_stream()`; uploads, solves and reads then run in order without extra
   synchronization. With a separate `pycunls.CudaStream()`, call
   `wp.synchronize_stream(wp.get_stream())` before `minimize`. `minimize` synchronizes its stream
-  before returning.
+  before returning, except on the real-time paths (`fixed_iterations`, the augmented Lagrangian's
+  `real_time`): read their results on the same stream, or synchronize it first.
 - **Poses are `world_from_body`, row-major 4x4 (SE3) or 3x3 (SE2).** Updates are on the right:
   `T' = T Exp(delta)`; se(3) tangent order is `[omega, v]` (rotation first), se(2) `[v_x, v_y,
   theta]`.

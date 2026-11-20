@@ -154,8 +154,8 @@ __global__ void GatherLinkFramesKernel(ArticulationTopology::DeviceView v, SlotM
  * One thread per (item, output column): column c < T is DOF c, the sum over
  * frame slots of the inner columns of the slot times the motion of its view
  * per unit of DOF c (see the class comment); a later column copies the inner
- * column of its passed-through slot. Threads of one item write consecutive
- * columns.
+ * column of its passed-through slot. An item with a link outside the topology
+ * gets zero columns. Threads of one item write consecutive columns.
  */
 __global__ void CarryJacobianKernel(ArticulationTopology::DeviceView v, SlotMap map, int m,
                                     const int *__restrict__ topology_links,
@@ -170,6 +170,17 @@ __global__ void CarryJacobianKernel(ArticulationTopology::DeviceView v, SlotMap 
   if (t >= num_items) return;
   const float *Jin = inner_jac + static_cast<size_t>(t) * m * Ji;
   float *Jout = jac + static_cast<size_t>(t) * m * Jo;
+  const int f = factor_ids != nullptr ? factor_ids[t] : (t < num_factors ? t : t % num_factors);
+  const int nF = map.num_frame_slots;
+  for (int s = 0; s < nF; ++s) {
+    const int link = __ldg(topology_links + static_cast<size_t>(f) * nF + s);
+    if (link < -1 || link >= v.num_joints) {
+      // A link outside the topology: the residual is NaN, so the whole Jacobian row block is
+      // zero, the inner factor's columns for the other slots included.
+      for (int r = 0; r < m; ++r) Jout[static_cast<size_t>(r) * Jo + c] = 0.f;
+      return;
+    }
+  }
   if (c >= T) {  // a passed-through slot
     int o = 1;
     while (o + 1 < map.num_outer && c >= map.outer_col[o + 1]) ++o;
@@ -178,13 +189,11 @@ __global__ void CarryJacobianKernel(ArticulationTopology::DeviceView v, SlotMap 
       Jout[static_cast<size_t>(r) * Jo + c] = Jin[static_cast<size_t>(r) * Ji + ci];
     return;
   }
-  const int f = factor_ids != nullptr ? factor_ids[t] : (t < num_factors ? t : t % num_factors);
   const float *x = state_ptrs[static_cast<size_t>(t) * map.num_outer];
   const float *col = x + v.num_coords + 12 * v.num_joints + 6 * c;
   const float om[3] = {col[0], col[1], col[2]}, vl[3] = {col[3], col[4], col[5]};
   float b[kMaxSlots][6];
   bool moves[kMaxSlots];
-  const int nF = map.num_frame_slots;
   for (int s = 0; s < nF; ++s) {
     const int link = __ldg(topology_links + static_cast<size_t>(f) * nF + s);
     moves[s] = link >= 0 && link < v.num_joints &&
@@ -381,7 +390,9 @@ bool LinkFrameFactorBatch::Evaluate(float *residuals, float *jacobians,
                         num_factor_ids)) {
     return false;
   }
-  if (jacobians == nullptr) return true;
+  // No output columns (a zero-DOF topology whose inner slots are all frame slots): nothing to
+  // carry, and a zero-size launch would fail.
+  if (jacobians == nullptr || map.outer_cols == 0) return true;
   const size_t threads = n * static_cast<size_t>(map.outer_cols);
   CarryJacobianKernel<<<static_cast<unsigned>((threads + kBlockSize - 1) / kBlockSize), kBlockSize,
                         0, stream>>>(

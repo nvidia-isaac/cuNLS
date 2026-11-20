@@ -199,6 +199,10 @@ def topology_from_urdf(path: str, floating_base: bool = False) -> UrdfArticulati
         if kind in ("revolute", "prismatic") and limit is not None:
             lo = float(limit.get("lower", "0"))
             hi = float(limit.get("upper", "0"))
+            if math.isnan(lo) or math.isnan(hi):
+                raise ValueError(f"topology_from_urdf: joint '{name}' has a NaN limit (got lower "
+                                 f"{lo}, upper {hi}, expected numbers). Fix: correct the "
+                                 "<limit> or remove it for an unbounded joint.")
         jtype = {"revolute": ArticulationJointType.Revolute,
                  "continuous": ArticulationJointType.Revolute,
                  "prismatic": ArticulationJointType.Prismatic,
@@ -306,7 +310,15 @@ def loop_closure(topology: ArticulationTopology, joint_type: ArticulationJointTy
                          "floats per loop: the joint axis). Fix: pass the axes array.")
     size = getattr(links, "size", None)
     n = int(capacity) if capacity else int(size if size is not None else len(links)) // 2
-    device = getattr(links, "device", None)
+    # The Warp device of `links` (a zero-copy view also resolves CuPy / PyTorch arrays).
+    device = links.device if isinstance(links, wp.array) else None
+    if device is None:
+        try:
+            device = wp.array(links, dtype=wp.int32, copy=False).device
+        except Exception:
+            device = None
+        if device is None or not device.is_cuda:
+            device = wp.get_cuda_device()
     keep: List[object] = []
 
     def identity(rows: int) -> wp.array:
@@ -435,6 +447,14 @@ def topology_from_joint_arrays(joint_type, joint_parent, joint_child, joint_X_p,
     qd_start = to_numpy(joint_qd_start, np.int32, "joint_qd_start", owner).reshape(-1)
     axis = to_numpy(joint_axis, np.float32, "joint_axis", owner).reshape(-1, 3)
     num_joints = jt.size
+    for name, offsets, total in (("joint_q_start", q_start, None),
+                                 ("joint_qd_start", qd_start, axis.shape[0])):
+        if (offsets.size != num_joints + 1 or offsets[0] < 0 or np.any(np.diff(offsets) < 0)
+                or (total is not None and offsets[-1] > total)):
+            raise ValueError(f"{owner}: {name} is not a valid offset array (got {offsets.size} "
+                             f"entries from {int(offsets[0]) if offsets.size else 'none'}, expected "
+                             f"{num_joints + 1} nonnegative, nondecreasing offsets, one per joint "
+                             "plus the total). Fix: pass the scene's offset arrays unchanged.")
     selected = (np.arange(num_joints, dtype=np.int32) if joints is None
                 else np.asarray(list(joints) if isinstance(joints, range) else
                                 to_numpy(joints, np.int32, "joints", owner)).reshape(-1)

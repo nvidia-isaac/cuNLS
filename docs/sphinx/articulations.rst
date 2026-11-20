@@ -107,8 +107,14 @@ constructor, MuJoCo) need reordering.
      - Used by
    * - position, quaternion
      - 7: ``px, py, pz, qx, qy, qz, qw``
-     - ``joint_X_p`` / ``joint_X_c``, ``root_pose``, link factor targets and offsets,
-       ``frame_offsets``, ``get_link_transforms`` (one ``wp.transform`` per link)
+     - ``joint_X_p`` / ``joint_X_c``, ``root_pose``, ``LinkPoseFactorBatch`` targets and
+       offsets, ``frame_offsets``, ``get_link_transforms`` (one ``wp.transform`` per link)
+   * - position
+     - 3: ``px, py, pz``
+     - ``LinkPositionFactorBatch`` points (in the link frame) and targets (in the world)
+   * - quaternion
+     - 4: ``qx, qy, qz, qw``
+     - ``LinkOrientationFactorBatch`` offsets and targets
    * - row-major 3x4 ``[R | p]``
      - 12
      - the state's cache of link poses (``link_pose_offset``); read-only for factors
@@ -527,7 +533,11 @@ redundant (a planar four-bar's revolute loop has 6 rows of rank 2); the augmente
 tolerates that, and constraint rows only define where the loop is closed, so their
 parameterization does not change the solution. To assemble a mechanism at given actuated
 angles, add a ``PostureFactorBatch`` with a high weight on the actuated DOFs and a low one on
-the passive DOFs: the result is the nearest valid configuration.
+the passive DOFs: when the solve converges, the result is a nearby closed configuration. The
+posture is a soft preference, so the actuated angles may move if the loop cannot close at them;
+to hold them exactly, give the actuated DOFs zero-width bounds (``lower == upper``) and check
+that the solve converged (a loop that cannot close at those angles then fails the
+constraints).
 
 A mimic joint ``q_m = a + b q_ref`` (URDF ``<mimic>``) is a
 ``MimicJointFactorBatch`` wrapped the same way; ``topology_from_urdf`` returns the couplings in

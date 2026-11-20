@@ -513,6 +513,26 @@ def test_warp_pose_factor_autodiff_matches_analytic(arm, stream):
             assert inner.mode == "autodiff"   # the one-time check accepted the autodiff Jacobian
 
 
+def test_warp_pose_factor_accepts_postponed_annotations_and_bounds_its_buffers(tmp_path,
+                                                                                monkeypatch):
+    """A residual from a module with `from __future__ import annotations` (string annotations);
+    work buffers of only the two most recent item counts are kept."""
+    import importlib
+    (tmp_path / "postponed_residual.py").write_text(
+        "from __future__ import annotations\n"
+        "import warp as wp\n\n\n"
+        "@wp.func\n"
+        "def height(X: wp.transform, h: float) -> float:\n"
+        "    return wp.transform_get_translation(X)[2] - h\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = importlib.import_module("postponed_residual")
+    factor = WarpPoseFactorBatch(module.height, wp.zeros(8, dtype=float), 8)
+    assert factor.residuals_size == 1
+    for n in range(1, 6):
+        factor._buffers(n)
+    assert sorted(factor._work) == [4, 5]
+
+
 def test_warp_pose_factor_rejects_wrong_signatures():
     @wp.func
     def two_floats(a: float, b: float) -> float:
@@ -578,6 +598,10 @@ def test_topology_from_joint_arrays_maps_scene_indices(stream):
         topology_from_joint_arrays(*arrays, joints=[4, 5])
     with pytest.raises(ValueError, match="Fix:"):
         topology_from_joint_arrays(*arrays, joints=[9])
+    bad = list(arrays)
+    bad[5] = np.arange(-1, 7, dtype=np.int32)       # a negative coordinate offset
+    with pytest.raises(ValueError, match="joint_q_start"):
+        topology_from_joint_arrays(*bad, joints=range(0, 3))
 
 
 def test_warp_factor_batch_helpers_cache_streams():

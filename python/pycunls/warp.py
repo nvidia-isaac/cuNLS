@@ -39,6 +39,7 @@ Requires ``warp-lang`` (``pip install warp-lang``).
 """
 
 
+import typing
 from typing import Any, List, NamedTuple, Sequence, Tuple, Union
 
 import numpy as np
@@ -403,11 +404,10 @@ class WarpStateBatch(CustomStateBatch):
         minimizers update one replica per hypothesis in a single call.
         Process all ``num_replicas * N`` states, each independently.
 
-        Override this method in your subclass. :meth:`items` converts the
-        arguments into Warp arrays and :meth:`launch` launches a kernel with
-        them (see the class docstring); for anything else, :meth:`wrap_array`
-        wraps a raw device pointer and :meth:`make_warp_stream` gives the
-        ``warp.Stream`` for ``wp.launch(..., stream=...)``.
+        Override this method in your subclass. Use :meth:`wrap_array` to
+        convert the raw device pointers into ``warp.array`` objects and
+        :meth:`make_warp_stream` to obtain a ``warp.Stream`` suitable for
+        ``wp.launch(..., stream=...)``.
 
         Parameters
         ----------
@@ -525,7 +525,12 @@ class WarpPoseFactorBatch(WarpFactorBatch):
             raise TypeError("WarpPoseFactorBatch: residual is not a Warp function (got "
                             f"{type(residual).__name__}). Fix: decorate it with @wp.func.")
         types = list(residual.input_types.values())
-        ret = getattr(residual, "func", None) and residual.func.__annotations__.get("return")
+        ret = None
+        if getattr(residual, "func", None) is not None:
+            try:   # resolves string annotations (`from __future__ import annotations`)
+                ret = typing.get_type_hints(residual.func).get("return")
+            except Exception:   # an annotation Python cannot evaluate: fall back to Warp's view
+                ret = residual.func.__annotations__.get("return")
         ret = ret or residual.value_type or float
         m = _warp_length(ret)
         if len(types) != 2 or not wp.types.types_equal(types[0], wp.transform) or m == 0:
@@ -539,7 +544,10 @@ class WarpPoseFactorBatch(WarpFactorBatch):
         super().__init__(residual_size=m, state_sizes=[6], capacity=capacity, device=device)
         self.residual, self.data, self.mode, self.m = residual, data, jacobian, m
         self._kernels = self._make_kernels(residual, types[1], m)
-        self._work = {}   # item count -> work arrays (kept: in-flight kernels may read them)
+        # Item count -> work arrays, for the current and the previous count only (in-flight
+        # kernels of the previous evaluation may still read its arrays; older sets are released,
+        # so a changing active count does not accumulate GPU memory).
+        self._work = {}
 
     @staticmethod
     def _make_kernels(fn, DT, M):
@@ -597,9 +605,11 @@ class WarpPoseFactorBatch(WarpFactorBatch):
                     set_step=set_step, store_difference=store_difference)
 
     def _buffers(self, n: int) -> dict:
-        """Work arrays for n items, made once per item count and kept (kernels in flight may
-        still read them; the minimizers use one or two item counts)."""
+        """Work arrays for n items, made once per item count; the arrays of the two most
+        recently used counts are kept (kernels in flight may still read the previous ones)."""
         work = self._work.get(n)
+        if work is not None:
+            self._work[n] = self._work.pop(n)   # most recent last
         if work is None:
             d, m = self._device, self.m
             work = dict(poses=wp.empty(n, dtype=wp.transform, device=d),
@@ -610,6 +620,8 @@ class WarpPoseFactorBatch(WarpFactorBatch):
                         minus=wp.zeros((n, m), dtype=float, device=d),
                         step=wp.zeros(n, dtype=wp.spatial_vector, device=d))
             self._work[n] = work
+            while len(self._work) > 2:
+                del self._work[next(iter(self._work))]   # the least recently used count
         return work
 
     def _autodiff(self, w, n, ids, jac) -> None:

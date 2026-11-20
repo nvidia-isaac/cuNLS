@@ -138,8 +138,10 @@ struct LinkFrameSlot {
  * factor (its residuals are this batch's), then carry its Jacobian to the
  * DOFs. The scratch is sized for the largest item count seen (allocated on the
  * first evaluation and when that count grows). A topology link outside
- * -1 .. LinkCount()-1 gives a NaN view (so, usually, a NaN residual) and zero
- * DOF columns.
+ * -1 .. LinkCount()-1 gives a NaN view (so, usually, a NaN residual) and an
+ * all-zero Jacobian for that item (the other slots' columns included).
+ * Evaluate() reuses the scratch, so one batch must not be evaluated
+ * concurrently on several streams (the library's batches are not reentrant).
  *
  * <b>Sizes</b>: ResidualsSize(), the active count and the capacity are the
  * inner factor's (SetNumActiveFactors() sets the inner one). `topology_links`

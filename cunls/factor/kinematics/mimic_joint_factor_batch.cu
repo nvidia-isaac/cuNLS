@@ -58,8 +58,10 @@ __global__ void __launch_bounds__(kBlockSize)
   }
   if constexpr (kJacobian) {
     float *J = jacobians + static_cast<size_t>(t) * v.num_dofs;
+    // A DOF without a scalar coordinate (out of range, BALL or FREE): NaN residual, zero row.
+    const bool valid = cm >= 0 && cr >= 0;
     for (int c = lane; c < v.num_dofs; c += kGroup) {
-      J[c] = (c == dm ? 1.f : 0.f) - (c == dr ? b : 0.f);
+      J[c] = valid ? (c == dm ? 1.f : 0.f) - (c == dr ? b : 0.f) : 0.f;
     }
   }
 }

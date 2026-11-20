@@ -54,6 +54,9 @@ struct StateRange {
   int ambient = 0;
   int tangent = 0;
   int used_offset = 0;  ///< Offset of the batch's flags in the `used` array.
+  /// Layout identity beyond the sizes: an articulation batch's ArticulationTopology (two
+  /// topologies of equal sizes lay out their caches differently), nullptr otherwise.
+  const void *layout = nullptr;
 };
 
 /** @brief First validation failure found on the device (code 0 = none). */
@@ -64,18 +67,20 @@ struct ValidationError {
   long long entry = 0;  ///< Table entry (1, 2), state (3) or constant-id slot (4).
 };
 
-/** @brief Tangent size and required ambient size (0: any) of each state slot of one residual batch.
+/**
+ * @brief Tangent size and required layout (StateRange::layout; nullptr: any) of each state slot
+ * of one residual batch.
  */
 struct SlotTangents {
   int tangent[kMaxSlots] = {};
-  int ambient[kMaxSlots] = {};
+  const void *layout[kMaxSlots] = {};
   int num_slots = 0;
 };
 
 /**
  * @brief Checks `count` pointers of residual batch `batch`: each must point at
- * the start of an active state of a state batch whose tangent size (and ambient
- * size, where the slot names one) matches the slot's; marks used[range.used_offset + state] = 1.
+ * the start of an active state of a state batch whose tangent size (and layout,
+ * where the slot names one) matches the slot's; marks used[range.used_offset + state] = 1.
  */
 void LaunchCheckPointers(cudaStream_t stream, float *const *pointers, size_t count, int batch,
                          const SlotTangents &slots, const StateRange *ranges, int num_ranges,

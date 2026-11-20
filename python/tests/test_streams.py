@@ -48,6 +48,17 @@ def test_a_warp_stream_is_accepted_as_the_solver_stream():
     np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
 
 
+def test_cuda_stream_keeps_a_temporary_warp_stream_alive():
+    """CudaStream(wp.Stream(...)): the temporary Warp stream must outlive the wrapper's use."""
+    import gc
+    wrapped = pycunls.CudaStream(wp.Stream(wp.get_cuda_device()))
+    gc.collect()
+    with wp.ScopedStream(wp.Stream(wp.get_cuda_device(), cuda_stream=wrapped.get_stream())):
+        problem, x, targets = _prior_problem(8)
+    pycunls.LevenbergMarquardtMinimizer().minimize(wrapped, problem)
+    np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
+
+
 def test_cuda_stream_wraps_other_streams_without_owning_them():
     s = wp.Stream(wp.get_cuda_device())
     assert pycunls.CudaStream(s).get_stream() == s.cuda_stream            # .cuda_stream
@@ -60,7 +71,8 @@ def test_cuda_stream_wraps_other_streams_without_owning_them():
     wrapped = pycunls.CudaStream(Protocol())
     assert wrapped.get_stream() == s.cuda_stream
     del wrapped                                   # must not destroy s
-    problem, x, targets = _prior_problem(8)
+    with wp.ScopedStream(s):                      # uploads on s, ordered before the solve
+        problem, x, targets = _prior_problem(8)
     pycunls.LevenbergMarquardtMinimizer().minimize(Protocol(), problem)   # implicit conversion
     np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
     with pytest.raises(TypeError, match="Fix:"):

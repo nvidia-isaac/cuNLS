@@ -30,7 +30,7 @@ from numpy.typing import NDArray
 
 class CudaStream:
     """
-    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. minimize() synchronizes the stream before returning.
+    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other alive. minimize() synchronizes the stream before returning, except on the real-time paths (fixed_iterations, AugmentedLagrangianMinimizerOptions.real_time), which read nothing back: read their results on the same stream, or synchronize it first.
     """
 
     @overload
@@ -2763,7 +2763,7 @@ class LinkFrameFactorBatch(FactorBatch):
       inner_factor: factor over SE(3) poses, 3D points or SO(3) rotations (built-in or WarpFactorBatch)
       frame_slots: list of (inner state slot, FrameView): Pose (SE3, 6), Position (3-vector, 3) or Orientation (SO3, 3)
       topology_links: int32, len(frame_slots) per factor: topology link index (position in link_names) carrying each frame
-      frame_offsets: 7 floats (position, quaternion) per frame slot: the frame in its link, or None
+      frame_offsets: capacity x len(frame_slots) x 7 floats (position, quaternion per factor and frame slot, not broadcast): the frame in its link, or None
       relative: no
       use: Custom kinematic objectives: existing factors on frames of robot links (SE3 prior/between/sphere clearance on a Pose, vector prior/halfspace/between on a Position, SO3 prior/between on an Orientation, a Warp factor); the inner factor's other slots (an object pose, a camera) stay states.
       notes: States: [articulation instance] + inner_factor's slots that are not frame slots. Views use the convention of their state type (Pose: row-major 4x4, body tangent [omega, v], X' = X Exp(delta); Position: world 3-vector; Orientation: row-major 3x3, R' = R Exp(omega)). For constraints wrap this batch in ConstraintFactorBatch, never the inner one. LinkPose/Position/OrientationFactorBatch are faster for what they cover. Build ArticulationTopology from the robot's joint arrays or a URDF, then ArticulationStateBatch(topology, n); write joint_q with set_joint_q. Joint limits are hard bounds: solve with AugmentedLagrangianMinimizer.

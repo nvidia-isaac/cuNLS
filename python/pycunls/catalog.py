@@ -309,8 +309,9 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
                                    "Position (3-vector, 3) or Orientation (SO3, 3)",
                     "topology_links": "int32, len(frame_slots) per factor: topology link index "
                                       "(position in link_names) carrying each frame",
-                    "frame_offsets": "7 floats (position, quaternion) per frame slot: the frame "
-                                     "in its link, or None"}, False,
+                    "frame_offsets": "capacity x len(frame_slots) x 7 floats (position, "
+                                     "quaternion per factor and frame slot, not broadcast): the "
+                                     "frame in its link, or None"}, False,
                    "Custom kinematic objectives: existing factors on frames of robot links (SE3 "
                    "prior/between/sphere clearance on a Pose, vector prior/halfspace/between on "
                    "a Position, SO3 prior/between on an Orientation, a Warp factor); the inner "

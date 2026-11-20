@@ -29,6 +29,7 @@
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/kinematics/articulation_factor_batch.h"
 #include "cunls/minimizer/problem_kernels.h"
+#include "cunls/state/articulation_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
@@ -396,9 +397,13 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
   int total_blocks = 0;
   for (size_t j = 0; j < state_batches_.size(); ++j) {
     const StateBatch *sb = state_batches_[j];
-    ranges[j] = {sb->StateDevicePtr(0), static_cast<int>(sb->NumActiveStates()),
-                 static_cast<int>(sb->AmbientSize()), static_cast<int>(sb->TangentSize()),
-                 total_blocks};
+    const auto *articulation = dynamic_cast<const ArticulationStateBatch *>(sb);
+    ranges[j] = {sb->StateDevicePtr(0),
+                 static_cast<int>(sb->NumActiveStates()),
+                 static_cast<int>(sb->AmbientSize()),
+                 static_cast<int>(sb->TangentSize()),
+                 total_blocks,
+                 articulation != nullptr ? &articulation->Topology() : nullptr};
     total_blocks += ranges[j].num_blocks;
   }
   for (size_t a = 0; a < ranges.size(); ++a) {
@@ -424,13 +429,14 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
     problem_internal::SlotTangents slots;
     slots.num_slots = static_cast<int>(std::min<size_t>(sizes.size(), problem_internal::kMaxSlots));
     for (int b = 0; b < slots.num_slots; ++b) slots.tangent[b] = static_cast<int>(sizes[b]);
-    // The tangent size does not fix an articulation state's layout (its cache depends on the
-    // topology): its factors also need the ambient size of their topology. A constraint reads
-    // its states through the factor it wraps.
+    // The sizes do not fix an articulation state's layout (its cache follows its topology; two
+    // topologies of equal sizes, e.g. mirrored arms, lay it out differently): its factors need
+    // a state built on their own topology. A constraint reads its states through the factor it
+    // wraps.
     const auto *constraint = dynamic_cast<const ConstraintFactorBatch *>(factor);
     const auto *articulation = dynamic_cast<const ArticulationFactorBatch *>(
         constraint != nullptr ? constraint->Inner() : factor);
-    if (articulation != nullptr) slots.ambient[0] = articulation->Topology().AmbientSize();
+    if (articulation != nullptr) slots.layout[0] = &articulation->Topology();
     if (slots.num_slots == 0) {
       continue;
     }
@@ -460,10 +466,11 @@ std::string Problem::FindStructureError(cudaStream_t stream) const {
              "correct the connectivity.";
     case 2:
       return "Residual batch " + batch + ": state pointer " + entry +
-             " points into a state batch whose tangent or ambient size differs from the state "
-             "slot's (the factor expects another state type, or an articulation state of "
-             "another layout). Fix: connect the slot to a state of the type the factor expects "
-             "(kinematic factors: states built on the factor's topology).";
+             " points into a state batch whose tangent size differs from the state slot's, or "
+             "an articulation state built on another topology than the factor's (the factor "
+             "expects another state type or robot). Fix: connect the slot to a state of the type "
+             "the factor expects (kinematic factors: states built on the factor's "
+             "ArticulationTopology object).";
     case 3:
       return "State batch " + batch + ": state " + entry +
              " is not constrained by any factor, so the linear system is singular. Fix: add a "

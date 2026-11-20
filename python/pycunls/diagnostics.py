@@ -172,7 +172,11 @@ class Evaluation:
 
 def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
              keep_residuals: bool = False) -> Evaluation:
-    """Evaluates every factor batch at the current states (no solve, states unchanged).
+    """Evaluates every factor batch at the current states (no solve).
+
+    The coordinates are not changed, except that derived state data is refreshed in place as a
+    solve would: an ``ArticulationStateBatch`` recomputes its forward-kinematics cache and
+    stores BALL / FREE quaternions normalized (a zero or non-finite one becomes the identity).
 
     Before solving, it checks the data and the initial guess: a NaN residual, a huge cost in one
     batch, or a residual far larger than the measurement noise points at a wrong layout (e.g. a
@@ -425,6 +429,10 @@ def _gauge_issues(problem: Problem, state_batches) -> List[Issue]:
 
 def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issue]:
     """Checks a problem without solving it; returns the issues found (empty: nothing found).
+
+    Derived state data is refreshed in place first, as a solve would (``evaluate``): an
+    ``ArticulationStateBatch`` stores its quaternions normalized, so a zero or non-finite BALL /
+    FREE quaternion written directly to the state is reported only through its effect.
 
     Checks, in order: the structure (``Problem.find_structure_error``: active counts,
     connectivity, unconstrained states), non-finite state values, non-finite residuals at the

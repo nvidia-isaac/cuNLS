@@ -1057,21 +1057,24 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
   }
 }
 
-// A factor built for one topology must not read the state of another with the same DOF count:
-// the cache layout (ambient size) differs, so the kernels would read the wrong floats.
-TEST(ArticulationSolve, ProblemRejectsStateOfAnotherLayout) {
+// A factor built for one topology must not read the state of another, even one of the same DOF
+// count or the same sizes: the cache layout differs, so the kernels would read the wrong floats.
+TEST(ArticulationSolve, ProblemRejectsStateOfAnotherTopology) {
   ArticulationDescription one, two;
   AddJoint(one, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
   AddJoint(two, JT::kRevolute, -1, Pose(0, 0, 0), Pose(0, 0, 0), {{0, 0, 1}});
   AddJoint(two, JT::kFixed, 0, Pose(0.3f, 0, 0), Pose(0, 0, 0), {});
-  ArticulationTopology topo_one(one), topo_two(two);
+  // topo_twin: another robot of exactly the same sizes (e.g. the mirrored arm of a bimanual
+  // robot); sizes alone cannot tell it apart, the topology object does.
+  ArticulationTopology topo_one(one), topo_two(two), topo_twin(two);
   ASSERT_EQ(topo_one.DofCount(), topo_two.DofCount());
   ASSERT_NE(topo_one.AmbientSize(), topo_two.AmbientSize());
+  ASSERT_EQ(topo_twin.AmbientSize(), topo_two.AmbientSize());
   ArticulationStateBatch states(topo_two, 1);
   states.SetNumActiveStates(1);
   dvector<float> targets(std::vector<float>{0.2f});
   CudaStream stream;
-  for (const ArticulationTopology *topo : {&topo_one, &topo_two}) {
+  for (const ArticulationTopology *topo : {&topo_one, &topo_two, &topo_twin}) {
     PostureFactorBatch posture(*topo, targets.data(), nullptr, 1);
     posture.SetNumActiveFactors(1);
     ConstraintFactorBatch constrained(&posture, ConstraintKind::kEquality);
@@ -1184,7 +1187,7 @@ TEST(KinematicFactors, OutOfRangeIndicesGiveNaN) {
         const float v = hJ[size_t(t) * m * T + i];
         if (valid[t]) {
           EXPECT_TRUE(std::isfinite(v)) << what;
-        } else if (std::string(what) != "mimic") {  // mimic keeps its constant Jacobian
+        } else {
           EXPECT_EQ(v, 0.f) << what << " factor " << t;
         }
       }
@@ -1208,6 +1211,16 @@ TEST(KinematicFactors, OutOfRangeIndicesGiveNaN) {
   LinkFrameFactorBatch frame(topo, &point_prior, {{0, FrameView::kPosition}}, frame_links.data());
   frame.SetNumActiveFactors(k);
   check(frame, {false, false, true}, "link frame");
+
+  // Two position slots, one valid and one not: the whole row block is zero, not only the
+  // invalid slot's contribution (VectorBetween writes [I, -I] for the two slots).
+  dvector<int> pair_links(std::vector<int>{L - 1, -2, L - 1, L, 0, L - 1});
+  dvector<float> zero_deltas(std::vector<float>(3 * k, 0.f));
+  VectorBetweenFactorBatch<3> between(reinterpret_cast<const Vector<3> *>(zero_deltas.data()), k);
+  LinkFrameFactorBatch pair(topo, &between, {{0, FrameView::kPosition}, {1, FrameView::kPosition}},
+                            pair_links.data());
+  pair.SetNumActiveFactors(k);
+  check(pair, {false, false, true}, "link frame pair");
 
   // DOF T: out of range; DOF 6: a BALL DOF (no scalar coordinate); 9 -> 10: revolute, prismatic.
   dvector<int> mimic(std::vector<int>{T, 6, 9}), ref(std::vector<int>{9, 9, 10});
@@ -1338,6 +1351,31 @@ TEST(LinkFrameFactor, LinkToObjectPose) {
       }
     }
   }
+}
+
+// A zero-DOF topology (one FIXED joint) whose inner slots are all frame slots has no Jacobian
+// columns: evaluating with a Jacobian buffer must succeed (no zero-size launch).
+TEST(LinkFrameFactor, ZeroDofTopologyEvaluates) {
+  ArticulationDescription d;
+  AddJoint(d, JT::kFixed, -1, Pose(0.1f, 0.2f, 0.3f), Pose(0, 0, 0), {});
+  ArticulationTopology topo(d);
+  ASSERT_EQ(topo.DofCount(), 0);
+  ArticulationStateBatch states(topo, 1);
+  states.SetNumActiveStates(1);
+  std::vector<float> target;
+  AppendMatrix(Identity(), target);
+  dvector<float> d_target(target);
+  dvector<int> links(std::vector<int>{0});
+  SE3PriorFactorBatch prior(reinterpret_cast<const SE3Transform *>(d_target.data()), 1);
+  LinkFrameFactorBatch frame(topo, &prior, {{0, FrameView::kPose}}, links.data());
+  frame.SetNumActiveFactors(1);
+  CudaStream stream;
+  dvector<float *> ptrs(std::vector<float *>{states.StateDevicePtr(0)});
+  dvector<float> r(6), J(1);
+  ASSERT_TRUE(frame.Evaluate(r.data(), J.data(), ptrs.data(), stream.GetStream()));
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+  const auto h = Host(r);
+  EXPECT_NEAR(h[3], 0.1f, 1e-6);  // translation part of Log(I^-1 X): X is a pure translation
 }
 
 TEST(LinkFrameFactor, RejectsInvalidSlots) {

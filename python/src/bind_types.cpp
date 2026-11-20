@@ -195,8 +195,10 @@ void bind_types(nb::module_ &m) {
       "cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ "
       "(PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls "
       "also accepts such an object directly, so Warp work and cuNLS work can share one "
-      "wp.Stream without wait_stream or ScopedStream juggling. minimize() synchronizes the "
-      "stream before returning.")
+      "wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other "
+      "alive. minimize() synchronizes the stream before returning, except on the real-time "
+      "paths (fixed_iterations, AugmentedLagrangianMinimizerOptions.real_time), which read "
+      "nothing back: read their results on the same stream, or synchronize it first.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)
       .def(
           "__init__",
@@ -204,7 +206,9 @@ void bind_types(nb::module_ &m) {
             new (self)
                 cunls::CudaStream(reinterpret_cast<cudaStream_t>(ExternalStreamHandle(other)));
           },
-          nb::arg("other"))
+          // The wrapper keeps `other` alive: a Warp stream object destroys its stream when it is
+          // collected. A raw integer handle stays the caller's to keep valid.
+          nb::arg("other"), nb::keep_alive<1, 2>())
       .def(
           "get_stream",
           [](cunls::CudaStream &self) -> uintptr_t {
