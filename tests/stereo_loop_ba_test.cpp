@@ -749,16 +749,16 @@ TEST_F(StereoLoopBaTest, CuDssClosesTheLoop) {
  */
 TEST_F(StereoLoopBaTest, SchurClosesTheLoop) {
   std::vector<double> before, after;
-  const MinimizerSummary summary = Solve(SparseLinearSolverType::BlockSparsePCG, &before, &after,
-                                         LinearSystemType::SchurComplement);
+  const MinimizerSummary summary = Solve(SparseLinearSolverType::BlockSparseCholesky, &before,
+                                         &after, LinearSystemType::SchurComplement);
   EXPECT_LT(summary.final_cost, summary.initial_cost);
   EXPECT_LT(summary.num_iterations, 200u) << "LM should converge before the iteration cap";
   EXPECT_LT(MeanMax(after).second, 0.02) << "max position error [m]";
 }
 
 /**
- * The default inner solver (block-Jacobi PCG on the full system, 200
- * iterations, relative tolerance 1e-3) under-solves the loop closure mode and
+ * Block-Jacobi PCG on the full system (200 iterations, relative tolerance
+ * 1e-3) under-solves the loop closure mode and
  * creeps: it reaches the iteration cap with most of the drift left (use the
  * Schur complement or cuDSS for such problems). Disabled; run it with
  * --gtest_also_run_disabled_tests to see the gap.

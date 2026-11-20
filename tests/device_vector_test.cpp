@@ -16,17 +16,35 @@
  */
 
 /** @file device_vector_test.cpp
- *  @brief Tests for the DeviceVector CUDA device memory wrapper class.
+ *  @brief Tests for the DeviceVector CUDA device memory wrapper class, the
+ *  CudaStream wrapper and the library handles bound to a stream (including a
+ *  cuDSS solver used on more than one stream).
  */
 
 #include "cunls/common/device_vector.h"
 
+#include <cublas_v2.h>
+#include <cusolverDn.h>
+#include <cusparse.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 #include <vector>
 
+#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
+#include "cunls/common/cusolver_helper.h"
+#include "cunls/common/cusparse_helper.h"
 #include "cunls/common/helper.h"
+#include "cunls/common/log.h"
+#include "cunls/linear_solver/sparse_linear_solver.h"
+#include "cunls/minimizer/problem.h"
+#include "tests/utils.h"
 
 namespace cunls {
 
@@ -111,32 +129,6 @@ TEST_F(DeviceVectorTest, ConstructorFromEmptyStdVector) {
   EXPECT_EQ(vec.capacity(), 0);
   EXPECT_EQ(vec.data(), nullptr);
   EXPECT_TRUE(vec.empty());
-}
-
-/** @brief Verifies synchronous host-to-device and device-to-host copy preserves
- * data. */
-TEST_F(DeviceVectorTest, SyncCopyRoundTrip) {
-  const size_t num_elements = 100;
-  std::vector<float> host_data(num_elements);
-
-  // Initialize host data with test values
-  for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = static_cast<float>(i) * 1.5f;
-  }
-
-  // Create device vector from host data
-  DeviceVector<float> vec(host_data);
-
-  EXPECT_EQ(vec.size(), num_elements);
-
-  // Copy data back to host
-  std::vector<float> result(num_elements);
-  vec.CopyToHost(result.data(), num_elements);
-
-  // Verify data integrity
-  for (size_t i = 0; i < num_elements; ++i) {
-    EXPECT_FLOAT_EQ(result[i], host_data[i]);
-  }
 }
 
 /** @brief Verifies asynchronous host-to-device and device-to-host copy with
@@ -453,44 +445,6 @@ TEST_F(DeviceVectorTest, SelfMoveAssignment) {
   }
 }
 
-/** @brief Verifies that DeviceVector works correctly with int data type. */
-TEST_F(DeviceVectorTest, WorksWithIntType) {
-  const size_t num_elements = 100;
-  std::vector<int> host_data(num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = static_cast<int>(i * 7);
-  }
-
-  DeviceVector<int> vec(host_data);
-
-  std::vector<int> result(num_elements);
-  vec.CopyToHost(result.data(), num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    EXPECT_EQ(result[i], host_data[i]);
-  }
-}
-
-/** @brief Verifies that DeviceVector works correctly with double data type. */
-TEST_F(DeviceVectorTest, WorksWithDoubleType) {
-  const size_t num_elements = 100;
-  std::vector<double> host_data(num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = static_cast<double>(i) * 3.14159;
-  }
-
-  DeviceVector<double> vec(host_data);
-
-  std::vector<double> result(num_elements);
-  vec.CopyToHost(result.data(), num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    EXPECT_DOUBLE_EQ(result[i], host_data[i]);
-  }
-}
-
 /** @brief Verifies that DeviceVector works correctly with a custom struct type.
  */
 TEST_F(DeviceVectorTest, WorksWithStructType) {
@@ -558,6 +512,123 @@ TEST_F(DeviceVectorTest, PartialCopyOperations) {
     EXPECT_FLOAT_EQ(result[i], host_data[i]);
   }
 }
+
+// StreamBoundHandle is a base for the handle wrappers only: its destructor is protected, so an
+// object is never destroyed through it.
+static_assert(!std::is_destructible_v<StreamBoundHandle>);
+static_assert(std::is_destructible_v<cuBLASHandle>);
+
+// A library handle (StreamBoundHandle) rejects a null stream and is kept for its stream.
+TEST(StreamBoundHandleTest, KeepsTheHandleOfItsStream) {
+  CudaStream a;
+  cuBLASHandle handle;
+  EXPECT_THROW(handle.GetHandle(nullptr), std::invalid_argument);
+  void *first = handle.GetHandle(a.GetStream());
+  ASSERT_NE(first, nullptr);
+  EXPECT_EQ(handle.GetHandle(a.GetStream()), first);
+}
+
+// Another stream rebinds the handle (the library reports the new stream) instead of recreating
+// it: the address stays, and so does a setting made on the handle (a new cuBLAS handle would
+// start in host pointer mode, whatever address it gets).
+TEST(StreamBoundHandleTest, RebindsTheHandleToAnotherStream) {
+  CudaStream a;
+  CudaStream b;
+  cuBLASHandle cublas;
+  cuSPARSEHandle cusparse;
+  cuSolverHandle cusolver;
+  auto blas = static_cast<cublasHandle_t>(cublas.GetHandle(a.GetStream()));
+  THROW_ON_CUBLAS_ERROR(cublasSetPointerMode(blas, CUBLAS_POINTER_MODE_DEVICE));
+  auto sparse = static_cast<cusparseHandle_t>(cusparse.GetHandle(a.GetStream()));
+  auto solver = static_cast<cusolverDnHandle_t>(cusolver.GetHandle(a.GetStream()));
+  for (cudaStream_t stream : {b.GetStream(), a.GetStream()}) {
+    ASSERT_EQ(cublas.GetHandle(stream), blas);
+    ASSERT_EQ(cusparse.GetHandle(stream), sparse);
+    ASSERT_EQ(cusolver.GetHandle(stream), solver);
+    cublasPointerMode_t mode = CUBLAS_POINTER_MODE_HOST;
+    THROW_ON_CUBLAS_ERROR(cublasGetPointerMode(blas, &mode));
+    EXPECT_EQ(mode, CUBLAS_POINTER_MODE_DEVICE);
+    cudaStream_t bound = nullptr;
+    THROW_ON_CUBLAS_ERROR(cublasGetStream(blas, &bound));
+    EXPECT_EQ(bound, stream);
+    THROW_ON_CUSPARSE_ERROR(cusparseGetStream(sparse, &bound));
+    EXPECT_EQ(bound, stream);
+    THROW_ON_CUSOLVER_ERROR(cusolverDnGetStream(solver, &bound));
+    EXPECT_EQ(bound, stream);
+  }
+}
+
+#ifdef CUNLS_ENABLE_CUDSS
+// A cuDSS solver initialized on stream A solves on stream B and again on A: its handle is
+// rebound, so the analysis and the cuDSS data made with the handle stay valid, and teardown
+// releases the data with the live handle (no cuNLS error is logged).
+TEST(StreamBoundHandleTest, CudssSolverSolvesOnAnotherStream) {
+  // Tridiagonal SPD matrix (4 on the diagonal, -1 beside it), a known solution and its rhs.
+  constexpr int n = 500;
+  std::vector<int> row_offsets{0};
+  std::vector<int> col_ids;
+  std::vector<float> values;
+  std::vector<float> x_true(n);
+  for (int i = 0; i < n; ++i) {
+    x_true[i] = 2.f + std::sin(0.1f * i);
+    for (int j = std::max(i - 1, 0); j <= std::min(i + 1, n - 1); ++j) {
+      col_ids.push_back(j);
+      values.push_back(i == j ? 4.f : -1.f);
+    }
+    row_offsets.push_back(static_cast<int>(col_ids.size()));
+  }
+  std::vector<float> b_host(n, 0.f);
+  for (int i = 0; i < n; ++i) {
+    for (int k = row_offsets[i]; k < row_offsets[i + 1]; ++k) {
+      b_host[i] += values[k] * x_true[col_ids[k]];
+    }
+  }
+  CSRSparseMatrix matrix;
+  test_utils::CreateCSRSparseMatrix(row_offsets, col_ids, values, matrix);
+  dvector<float> rhs(b_host);
+  dvector<float> result(n);
+
+  // The log callback is global: restore the default sinks and level even if a check fails.
+  const char *level = std::getenv("CUNLS_LOG_LEVEL");
+  struct RestoreLogger {
+    Verbosity level;
+    ~RestoreLogger() {
+      SetLogCallback({});
+      SetLoggerOptions(level);
+    }
+  } restore{level != nullptr ? ParseVerbosity(level) : Verbosity::Silent};
+  std::vector<std::string> errors;
+  SetLoggerOptions(Verbosity::Error);
+  SetLogCallback([&errors](Verbosity, std::string_view msg) { errors.emplace_back(msg); });
+
+  for (auto mode :
+       {cuDSSLinearSolverMode::SlowInitFastSolve, cuDSSLinearSolverMode::FastInitSlowSolve}) {
+    SCOPED_TRACE(mode == cuDSSLinearSolverMode::SlowInitFastSolve ? "SlowInitFastSolve"
+                                                                  : "FastInitSlowSolve");
+    {
+      CudaStream a;
+      CudaStream b;
+      SparseLinearSolverConfig config;
+      config.cudss_solver_options.mode = mode;
+      SparseLinearSolverPtr solver =
+          CreateSparseLinearSolver(SparseLinearSolverType::cuDSS, config);
+      ASSERT_TRUE(solver->Initialize(a.GetStream(), Problem(), matrix, rhs, result));
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(a.GetStream()));
+      for (CudaStream *stream : {&b, &a}) {
+        THROW_ON_CUDA_ERROR(
+            cudaMemsetAsync(result.data(), 0, n * sizeof(float), stream->GetStream()));
+        ASSERT_TRUE(solver->Solve(stream->GetStream(), matrix, rhs, result));
+        THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream->GetStream()));
+        std::vector<float> x(n);
+        result.CopyToHost(x.data(), n);
+        for (int i = 0; i < n; ++i) ASSERT_NEAR(x[i], x_true[i], 1e-4f) << "row " << i;
+      }
+    }  // the solver is destroyed here, before its streams
+    for (const std::string &e : errors) ADD_FAILURE() << e;
+    errors.clear();
+  }
+}
+#endif  // CUNLS_ENABLE_CUDSS
 
 // A CudaStream wrapping a stream created elsewhere runs work on it and leaves it alive.
 TEST(CudaStreamTest, WrapsAnExternalStreamWithoutOwningIt) {

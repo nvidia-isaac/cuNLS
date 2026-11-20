@@ -2,10 +2,10 @@
 
 cuNLS ships as a Python package (`pycunls`) and as a CUDA/C++ library (`cunls`). Both need an
 NVIDIA GPU. Prebuilt Python wheels are on PyPI as `pycunls-cu12` and `pycunls-cu13`
-([Install with pip](README.md#install-with-pip)); this page covers building from source.
+([from PyPI](#from-pypi)); the rest of this page covers building from source.
 
-- [Python package](#python-package-pycunls): build the wheel in Docker or locally, install it,
-  check it with `python -m pycunls doctor`.
+- [Python package](#python-package-pycunls): install from PyPI, or build the wheel in Docker or
+  locally, and check it with `python -m pycunls doctor`.
 - [C++ library](#c-library): shared and static builds, Jetson, cuDSS.
 - [Testing](#testing) and [building the documentation](#building-the-documentation).
 
@@ -34,6 +34,28 @@ are Warp kernels and functions. The bindings accept any GPU array with
 `__cuda_array_interface__` (Warp, PyTorch, CuPy, ...) or a raw device pointer. The wheel
 statically links the cuNLS core library and dynamically links the CUDA runtime libraries, so it
 is specific to the CUDA version it was built with.
+
+### From PyPI
+
+Wheels for x86_64 Linux, Python 3.10 to 3.14, one package per CUDA major version. They do not
+bundle the CUDA libraries they link against (`cudart`, `cublas`, `cusparse`, `cusolver`,
+`nvJitLink`): install them from NVIDIA's pip packages (pycunls finds them in the same
+environment, no `LD_LIBRARY_PATH`) or use a system CUDA toolkit.
+
+```bash
+# CUDA 13 (driver R580 or newer); CUDA 12 (R525 or newer): -cu12 and ==12.8.*
+pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
+pip install "nvidia-cudss-cu13==0.8.*"   # optional, only for SparseLinearSolverType.cuDSS
+python -m pycunls doctor                 # checks the GPU, the native module, a solve, cuDSS
+```
+
+Install the CUDA libraries through the `cuda-toolkit` metapackage, which pins one CUDA release:
+unpinned `nvidia-*` packages can mix releases (the newest `nvidia-cusolver-cu12` needs the newest
+`nvidia-cublas-cu12`), and the import then fails with `undefined symbol`. A directory on
+`LD_LIBRARY_PATH` takes precedence over the pip packages. pycunls 0.4.0 does not search the pip
+packages: add `<site-packages>/nvidia/cu13/lib` (CUDA 13) or the
+`nvidia/{cuda_runtime,cublas,cusparse,cusolver,cu12}/lib` directories (CUDA 12) to
+`LD_LIBRARY_PATH`, or upgrade.
 
 ### Build the wheel in Docker
 
@@ -147,8 +169,11 @@ By default this builds a shared library. Pass `-DBUILD_SHARED_LIBS=OFF` to build
 instead.
 
 CUDA compiler and architecture selections supplied by the caller are preserved. Without one,
-`/usr/local/cuda/bin/nvcc` is used when it exists. For example, a native Jetson Orin build can
-avoid PTX JIT compatibility requirements by compiling an SM 87 cubin:
+`/usr/local/cuda/bin/nvcc` is used when it exists, and the build compiles native code for every
+GPU generation that toolkit supports (`cmake/CudaArchitectures.cmake`): SM 75, 80, 86, 89 and 90;
+100 and 120 from CUDA 12.8; on Arm hosts 87 (Jetson Orin, CUDA 12) or 110 (Jetson Thor, CUDA 13).
+PTX is kept only for the newest, so no supported GPU compiles kernels at load time. A build for one
+GPU is faster, for example a native Jetson Orin build:
 
 ```bash
 cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=87-real

@@ -48,13 +48,13 @@
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
-#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/minimizer/ransac/ransac_kernels.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
 #include "tests/ransac_test_support.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
@@ -67,23 +67,8 @@ using ransac_test::RandomTwist;
 using ransac_test::RotationErrorDeg;
 using ransac_test::TranslationError;
 
-template <typename T>
-std::vector<T> ToHost(const dvector<T> &d) {
-  std::vector<T> h(d.size());
-  if (!h.empty()) {
-    d.CopyToHost(h.data(), h.size());
-  }
-  return h;
-}
-
-template <typename T>
-dvector<T> ToDevice(const std::vector<T> &h) {
-  dvector<T> d(h.size());
-  if (!h.empty()) {
-    d.CopyFromHost(h.data(), h.size());
-  }
-  return d;
-}
+using test_utils::ToDevice;
+using test_utils::ToHost;
 
 // ============================================================================
 // Kernel-level tests
@@ -687,8 +672,10 @@ struct PnPSetup {
   }
 };
 
-/** 0.5 * sum |proj(pose * X) - obs|^2 in double over a scene's inliers. */
-/** Inlier cost of the world_from_camera pose state `pose`. */
+/**
+ * Inlier cost of the world_from_camera pose state `pose`: 0.5 * sum
+ * |proj(pose * X) - obs|^2 in double over a scene's inliers.
+ */
 double HostInlierCost(const PnPScene &s, const SE3Transform &pose) {
   const SE3Transform cam_from_world = ransac_test::Inverse(pose);
   double c = 0;
@@ -798,8 +785,9 @@ INSTANTIATE_TEST_SUITE_P(OutlierRatios, RansacPnPTest,
                                            OutlierCase{0.7, false}, OutlierCase{0.0, true},
                                            OutlierCase{0.3, true}, OutlierCase{0.7, true}));
 
-TEST(RansacMinimizer, PlainGaussNewtonFailsWhereRansacSucceeds) {
-  // Sanity check of the test setup itself: outliers ruin the non-robust solve.
+TEST(RansacMinimizer, PlainGaussNewtonFailsOnOutliers) {
+  // Sanity check of the test setup itself: outliers ruin the non-robust solve
+  // (RansacPnPTest solves such scenes).
   const PnPScene scene = ransac_test::MakePnPScene(600, 0.4, kNoise, kMinOutlier, 22);
   const SE3Transform init = Perturb(scene.world_from_cam, 4, 0.1, 0.3);
   CudaStream stream;
@@ -807,11 +795,6 @@ TEST(RansacMinimizer, PlainGaussNewtonFailsWhereRansacSucceeds) {
   GaussNewtonMinimizer gn;
   gn.Minimize(stream.GetStream(), plain.problem);
   EXPECT_GT(RotationErrorDeg(plain.Pose(), scene.world_from_cam), 0.5);
-
-  PnPSetup robust(scene, init);
-  RansacGaussNewtonMinimizer ransac(PnPOptions());
-  ransac.Minimize(stream.GetStream(), robust.problem);
-  EXPECT_LT(RotationErrorDeg(robust.Pose(), scene.world_from_cam), 0.2);
 }
 
 TEST(RansacMinimizer, AlwaysOnPriorIsHonoredAndNeverClassified) {
@@ -829,18 +812,26 @@ TEST(RansacMinimizer, AlwaysOnPriorIsHonoredAndNeverClassified) {
   EXPECT_EQ(s.num_inliers, cls.tp + cls.fp);
 }
 
+// Also with initial_lambda = 0 (a Gauss-Newton start), which stays valid:
+// rejected steps then escalate the damping from lambda_min, as in
+// LevenbergMarquardtMinimizer.
 TEST(RansacMinimizer, LargeInitialErrorWithLevenbergMarquardt) {
   const PnPScene scene = ransac_test::MakePnPScene(500, 0.3, kNoise, kMinOutlier, 24);
   const SE3Transform init = Perturb(scene.world_from_cam, 6, 0.35, 0.8);
-  CudaStream stream;
-  PnPSetup setup(scene, init);
-  RansacLevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = PnPOptions();
-  lm.base_options.hypothesis_iterations = 10;
-  RansacLevenbergMarquardtMinimizer ransac(lm);
-  ransac.Minimize(stream.GetStream(), setup.problem);
-  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2);
-  EXPECT_LT(TranslationError(setup.Pose(), scene.world_from_cam), 0.02);
+  for (const float initial_lambda :
+       {RansacLevenbergMarquardtMinimizerOptions().initial_lambda, 0.f}) {
+    SCOPED_TRACE(initial_lambda);
+    CudaStream stream;
+    PnPSetup setup(scene, init);
+    RansacLevenbergMarquardtMinimizerOptions lm;
+    lm.base_options = PnPOptions();
+    lm.base_options.hypothesis_iterations = 10;
+    lm.initial_lambda = initial_lambda;
+    RansacLevenbergMarquardtMinimizer ransac(lm);
+    ransac.Minimize(stream.GetStream(), setup.problem);
+    EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2);
+    EXPECT_LT(TranslationError(setup.Pose(), scene.world_from_cam), 0.02);
+  }
 }
 
 // ============================================================================
@@ -950,51 +941,10 @@ TEST(RansacMinimizer, ReprojectionWithConstantLandmarkBatch) {
             std::memcmp(after.data(), scene.points_world.data(), after.size() * sizeof(Vector<3>)));
 }
 
-TEST(RansacMinimizer, CustomFocalFactorConvergesWithRegularMinimizer) {
-  // Validates the custom factor itself (Jacobians, conventions) on clean data.
-  const PnPScene scene = ransac_test::MakePnPScene(300, 0.0, kNoise, kMinOutlier, 52);
-  const float focal = 480.f;
-  std::vector<Vector<2>> pixels(scene.observations.size());
-  for (size_t i = 0; i < pixels.size(); ++i) {
-    pixels[i][0] = scene.observations[i][0] * focal;
-    pixels[i][1] = scene.observations[i][1] * focal;
-  }
-  const SE3Transform init = Perturb(scene.world_from_cam, 8, 0.05, 0.15);
-  dvector<SE3Transform> pose(1);
-  pose.CopyFromHost(&init, 1);
-  std::vector<float> f0 = {focal * 1.08f};
-  auto fdev = ToDevice(f0);
-  SE3StateBatch pose_state(reinterpret_cast<float *>(pose.data()), 1);
-  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
-  VectorStateBatch<1> focal_state(fdev.data(), 1);
-  focal_state.SetNumActiveStates(focal_state.Capacity(), focal_state.ConstCapacity());
-  auto obs = ToDevice(pixels);
-  auto pts = ToDevice(scene.points_world);
-  ransac_test::FocalPnPFactorBatch factor(obs.data(), pts.data(), pixels.size());
-  factor.SetNumActiveFactors(factor.Capacity());
-  std::vector<float *> ptrs;
-  for (size_t i = 0; i < pixels.size(); ++i) {
-    ptrs.push_back(pose_state.StateDevicePtr(0));
-    ptrs.push_back(focal_state.StateDevicePtr(0));
-  }
-  Problem problem;
-  problem.AddStateBatch(&pose_state);
-  problem.AddStateBatch(&focal_state);
-  problem.AddFactorBatch(&factor, ptrs);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
-  LevenbergMarquardtMinimizer minimizer(lm);
-  CudaStream stream;
-  minimizer.Minimize(stream.GetStream(), problem);
-  SE3Transform est;
-  pose.CopyToHost(&est, 1);
-  EXPECT_NEAR(ToHost(fdev)[0], focal, 2.0);
-  EXPECT_LT(RotationErrorDeg(est, scene.world_from_cam), 0.3);
-}
-
 TEST(RansacMinimizer, CustomFactorMixedStateTypes) {
   // SE3 pose + Vector<1> focal length (D = 7), custom factor reading two states
-  // from two state batches of different manifold types.
+  // from two state batches of different manifold types (a wrong Jacobian or
+  // convention in the custom factor fails the estimate too).
   const PnPScene scene = ransac_test::MakePnPScene(500, 0.4, kNoise, kMinOutlier, 51);
   const float focal = 480.f;
   std::vector<Vector<2>> pixels(scene.observations.size());
@@ -1150,23 +1100,6 @@ TEST(RansacMinimizer, RejectsDampingThatCannotWork) {
   }
 }
 
-// initial_lambda = 0 (a Gauss-Newton start) stays valid; rejected steps then
-// escalate the damping from lambda_min, as in LevenbergMarquardtMinimizer.
-TEST(RansacMinimizer, ZeroInitialLambdaIsAccepted) {
-  const PnPScene scene = ransac_test::MakePnPScene(500, 0.3, kNoise, kMinOutlier, 24);
-  const SE3Transform init = Perturb(scene.world_from_cam, 6, 0.35, 0.8);
-  CudaStream stream;
-  PnPSetup setup(scene, init);
-  RansacLevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = PnPOptions();
-  lm.base_options.hypothesis_iterations = 10;
-  lm.initial_lambda = 0.f;
-  RansacLevenbergMarquardtMinimizer ransac(lm);
-  ransac.Minimize(stream.GetStream(), setup.problem);
-  EXPECT_LT(RotationErrorDeg(setup.Pose(), scene.world_from_cam), 0.2);
-  EXPECT_LT(TranslationError(setup.Pose(), scene.world_from_cam), 0.02);
-}
-
 TEST(RansacMinimizer, RejectsDimensionAboveLimit) {
   LinearProblem<65> lp(200, 0.0, 71);
   RansacGaussNewtonMinimizer ransac;
@@ -1286,16 +1219,12 @@ TEST(RansacMinimizer, RejectsBadConfigurations) {
   }
 }
 
-TEST(RansacMinimizer, InlierMaskIsNullBeforeAnyRun) {
-  RansacGaussNewtonMinimizer r;
-  EXPECT_EQ(r.InlierMask(0), nullptr);
-  EXPECT_EQ(r.InlierMaskSize(0), 0u);
-}
-
 TEST(RansacMinimizer, InlierMaskSizeIsTheBatchSizeOfTheLastRun) {
   const PnPScene scene = ransac_test::MakePnPScene(300, 0.3, kNoise, kMinOutlier, 77);
   PnPSetup s(scene, scene.world_from_cam);
   RansacGaussNewtonMinimizer r(PnPOptions());
+  EXPECT_EQ(r.InlierMask(0), nullptr);  // before any run
+  EXPECT_EQ(r.InlierMaskSize(0), 0u);
   CudaStream stream;
   r.Minimize(stream.GetStream(), s.problem);
   EXPECT_NE(r.InlierMask(0), nullptr);
@@ -1429,8 +1358,10 @@ TEST(RansacMinimizer, LargeProblemTwoStageScoringAndEarlyExit) {
 }
 
 TEST(RansacMinimizer, TwoStageScoringWithWrappedCustomFactorIsIdentical) {
-  // The two-stage subset evaluates items with explicit factor ids; a custom
-  // wrapper that forwards them must reproduce the built-in factor exactly.
+  // A custom factor may do anything inside Evaluate (here: synchronize). The
+  // two-stage subset evaluates items with explicit factor ids, the other calls
+  // without: a custom wrapper that forwards them must reproduce the built-in
+  // factor exactly.
   const PnPScene scene = ransac_test::MakePnPScene(40000, 0.4, kNoise, kMinOutlier, 89);
   const SE3Transform init = Perturb(scene.world_from_cam, 17, 0.1, 0.3);
   RansacMinimizerOptions two_stage = PnPOptions();
@@ -1449,15 +1380,6 @@ TEST(RansacMinimizer, SameSeedIsBitwiseReproducible) {
     const RunResult b = RunPnP(scene, init, PnPOptions(), lm);
     ExpectIdentical(a, b);
   }
-}
-
-TEST(RansacMinimizer, CustomFactorThatSynchronizesGivesIdenticalResults) {
-  // A custom factor may do anything inside Evaluate (here: synchronize).
-  const PnPScene scene = ransac_test::MakePnPScene(300, 0.3, kNoise, kMinOutlier, 83);
-  const SE3Transform init = Perturb(scene.world_from_cam, 11, 0.1, 0.3);
-  const RunResult direct = RunPnP(scene, init, PnPOptions());
-  const RunResult syncing = RunPnP(scene, init, PnPOptions(), false, /*syncing_factor=*/true);
-  ExpectIdentical(direct, syncing);
 }
 
 TEST(RansacMinimizer, ScoringChunkSizeDoesNotChangeResults) {

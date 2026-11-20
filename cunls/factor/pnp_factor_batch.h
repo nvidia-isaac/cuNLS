@@ -56,8 +56,6 @@ class PnPFactorBatch : public SizedFactorBatch<2, 6> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  PnPFactorBatch() = delete;
-
   const Vector<2> *observations_;
   const Vector<3> *points_world_;
   const SE3Transform *poses_camera_from_rig_ = nullptr;

@@ -18,6 +18,7 @@
 #include "cunls/minimizer/ransac/ransac_layout.h"
 
 #include <algorithm>
+#include <cassert>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -146,7 +147,6 @@ void RansacLayout::BuildResiduals(const Problem &problem, const RansacMinimizerO
   residuals_.resize(batches.size());
   total_sampled_ = 0;
   m_max_ = 1;
-  max_factors_ = 1;
   int m_min_sampled = 1 << 30;
   for (size_t b = 0; b < batches.size(); ++b) {
     const RansacFactorBatchOptions role =
@@ -208,18 +208,17 @@ void RansacLayout::BuildResidual(const Problem &problem, size_t index,
     r.n += r.block_size[k];
   }
   m_max_ = std::max(m_max_, r.m);
-  max_factors_ = std::max(max_factors_, r.num_factors);
   r.u_offset = r.sampled ? total_sampled_ : -1;
   total_sampled_ += r.sampled ? r.num_factors : 0;
-  ResolveBlocks(r, index, problem.HostStatePointers(index));
+  ResolveBlocks(r, problem.HostStatePointers(index));
 }
 
-void RansacLayout::ResolveBlocks(ResidualLayout &r, size_t index,
-                                 const std::vector<float *> &pointers) {
+void RansacLayout::ResolveBlocks(ResidualLayout &r, const std::vector<float *> &pointers) {
+  // Every pointer is the start of an active state whose tangent matches its
+  // slot: Problem::FindStructureError (RunRansac's Prepare) rejects the rest.
   std::vector<int2> blocks(pointers.size());
   std::vector<int> local(pointers.size(), -1);
   for (size_t e = 0; e < pointers.size(); ++e) {
-    const int slot_block = static_cast<int>(e % r.nb);
     bool found = false;
     for (size_t j = 0; j < states_.size() && !found; ++j) {
       const StateLayout &s = states_[j];
@@ -227,27 +226,18 @@ void RansacLayout::ResolveBlocks(ResidualLayout &r, size_t index,
       if (diff < 0 || diff >= static_cast<ptrdiff_t>(s.slot_floats) || diff % s.ambient != 0) {
         continue;
       }
-      if (s.tangent != r.block_size[slot_block]) {
-        FailConfiguration("RANSAC: residual batch " + Str(index) + " state slot " +
-                          Str(slot_block) + " has size " + Str(r.block_size[slot_block]) +
-                          " but state batch " + Str(j) + " has tangent size " + Str(s.tangent));
-      }
+      assert(s.tangent == r.block_size[e % r.nb]);
       const int k = static_cast<int>(diff / s.ambient);
       blocks[e] = make_int2(static_cast<int>(j), k);
       local[e] = s.block_col_host[k];
       found = true;
     }
-    if (!found) {
-      FailConfiguration("RANSAC: residual batch " + Str(index) +
-                        " references a state that belongs to no registered state batch");
-    }
+    assert(found);
   }
   r.blocks.resize(blocks.size());
   r.blocks.CopyFromHost(blocks.data(), blocks.size());
   r.local_col.resize(local.size());
   r.local_col.CopyFromHost(local.data(), local.size());
-  r.x0_table.resize(pointers.size());
-  r.x0_table.CopyFromHost(const_cast<float *const *>(pointers.data()), pointers.size());
 }
 
 void RansacLayout::ChooseSampleSize(const RansacMinimizerOptions &options, int m_min_sampled) {

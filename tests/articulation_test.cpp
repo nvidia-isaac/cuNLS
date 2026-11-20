@@ -51,6 +51,7 @@
 #include "cunls/factor/prior/se3_prior_factor_batch.h"
 #include "cunls/factor/prior/so3_prior_factor_batch.h"
 #include "cunls/factor/se3_joint_axis_factor_batch.h"
+#include "cunls/linear_solver/block_tridiagonal_solver.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
@@ -134,10 +135,11 @@ ArticulationDescription MixedTree() {
   return d;
 }
 
-/** A 7-DOF arm: revolute joints alternating about z and y, 0.3 m links, limits ±(2.4, 1.6). */
-ArticulationDescription Arm() {
+/** A 7-DOF arm (or `joints`): revolute joints alternating about z and y, 0.3 m links, limits
+ * ±(2.4, 1.6). */
+ArticulationDescription Arm(int joints = 7) {
   ArticulationDescription d;
-  for (int j = 0; j < 7; ++j) {
+  for (int j = 0; j < joints; ++j) {
     const bool z = j % 2 == 0;
     AddJoint(d, JT::kRevolute, j - 1, Pose(0.f, 0.f, j == 0 ? 0.1f : 0.3f), Pose(0, 0, 0),
              {{0.f, z ? 0.f : 1.f, z ? 1.f : 0.f}}, {{z ? -2.4f : -1.6f, z ? 2.4f : 1.6f}});
@@ -912,6 +914,12 @@ TEST(ArticulationSolve, MimicJointHolds) {
 namespace cunls {
 namespace {
 
+/** Joints of the arm of DISABLED_IkThroughput: IK_BENCH_JOINTS or 7. */
+int IkBenchJoints() {
+  const char *joints = std::getenv("IK_BENCH_JOINTS");
+  return joints ? std::atoi(joints) : 7;
+}
+
 /** Problem counts of DISABLED_IkThroughput: IK_BENCH_N (one value) or 512, 4096, 32768. */
 std::vector<int> IkBenchSizes() {
   if (const char *n = std::getenv("IK_BENCH_N")) return {std::atoi(n)};
@@ -919,7 +927,8 @@ std::vector<int> IkBenchSizes() {
 }
 
 /**
- * Throughput of batched bounded IK on the 7-DOF arm: N problems, one subproblem each, a LinkPose
+ * Throughput of batched bounded IK on the 7-DOF arm (IK_BENCH_JOINTS: another joint count): N
+ * problems, one subproblem each, a LinkPose
  * target, a fixed budget of 16 LM iterations, plain LM: no line search and no bound refinement
  * (real time); IK_BENCH_LS / IK_BENCH_REFINE override them. Objectives (IK_BENCH_OBJECTIVES, a
  * comma list, default all): "fused" LinkPoseFactorBatch; "views" a Position-view vector prior plus
@@ -928,12 +937,18 @@ std::vector<int> IkBenchSizes() {
  * Prints the median over 10 solves; success = position error < 5 mm and limits respected.
  */
 TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
-  const ArticulationDescription d = Arm();
+  const ArticulationDescription d = Arm(IkBenchJoints());
   ArticulationTopology topo(d);
-  const int C = topo.CoordCount(), T = topo.DofCount(), ee = 6;
+  const int C = topo.CoordCount(), T = topo.DofCount(), ee = T - 1;
   std::vector<SparseLinearSolverType> solvers = {SparseLinearSolverType::BlockTridiagonal,
                                                  SparseLinearSolverType::BlockSparseCholesky};
   if (std::getenv("IK_BENCH_TRIDIAGONAL_ONLY")) solvers.pop_back();
+  if (T > BlockTridiagonalSolver::kMaxStageSize) solvers.erase(solvers.begin());
+  if (solvers.empty()) {
+    GTEST_SKIP() << "IK_BENCH_TRIDIAGONAL_ONLY with " << T
+                 << " DOF (BlockTridiagonal takes at most " << BlockTridiagonalSolver::kMaxStageSize
+                 << "): no solver to measure";
+  }
   std::vector<std::string> objectives = {"fused", "views", "pose_view"};
   if (const char *o = std::getenv("IK_BENCH_OBJECTIVES")) {
     objectives.clear();
@@ -1047,11 +1062,12 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
                                        std::pow(fk[11] - tp[2], 2));
           ok += inside && err < 5e-3 ? 1 : 0;  // a solution outside the limits is no success
         }
-        printf("BENCH ik_arm7_%-6d %-20s %-10s median_ms=%8.3f success=%5.1f%% outside_limits=%d\n",
-               n,
-               solver_type == SparseLinearSolverType::BlockTridiagonal ? "BlockTridiagonal"
-                                                                       : "BlockSparseCholesky",
-               objective.c_str(), ms[ms.size() / 2], 100.0 * ok / n, violations);
+        printf(
+            "BENCH ik_arm%d_%-6d %-20s %-10s median_ms=%8.3f success=%5.1f%% outside_limits=%d\n",
+            T, n,
+            solver_type == SparseLinearSolverType::BlockTridiagonal ? "BlockTridiagonal"
+                                                                    : "BlockSparseCholesky",
+            objective.c_str(), ms[ms.size() / 2], 100.0 * ok / n, violations);
       }
     }
   }

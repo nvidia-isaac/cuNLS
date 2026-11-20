@@ -9,8 +9,9 @@ Motion priors between consecutive trajectory steps: constant velocity or constan
 
 ## Files
 
-- `constant_velocity_<group>_factor_batch.{h,cu}` and
-  `constant_acceleration_<group>_factor_batch.{h,cu}` for so2, so3, se2, se3.
+- `constant_velocity_<group>_factor_batch.h` and `constant_acceleration_<group>_factor_batch.h`
+  for so2, so3, se2, se3; all eight are implemented in `motion_prior_factor_batches.cu` (one
+  kernel `MotionPriorKernel<Group, Order>`, coalesced writes, no scratch state).
 - Facades `constant_velocity_factor_batch.h` / `constant_acceleration_factor_batch.h`:
   `ConstantVelocityFactorBatch<Manifold>` / `ConstantAccelerationFactorBatch<Manifold>`. The
   manifold is an **explicit** template argument: the constructor takes only time steps

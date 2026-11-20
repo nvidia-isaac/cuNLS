@@ -263,18 +263,6 @@ class Problem {
   const std::vector<StateBatch *> &GetStateBatches() const;
 
   /**
-   * @brief Host copies of the active connectivity of every residual batch.
-   *
-   * Element i holds the first `NumActiveFactors() * B` state pointers of
-   * residual batch i. Host-list batches are returned as stored; device tables
-   * are expanded and downloaded first, which synchronizes the device (call it
-   * only where a host copy is really needed).
-   *
-   * @return Const reference to the per-batch host pointer lists.
-   */
-  const std::vector<std::vector<float *>> &GetStatePointers() const;
-
-  /**
    * @brief Resolves the effective Jacobian mode for a residual batch.
    *
    * Returns the per-group override registered via `AddFactorBatch` if one
@@ -365,13 +353,6 @@ class Problem {
   }
 
  private:
-  /**
-   * @brief Validates that all inputs are non-null and sizes are consistent.
-   *
-   * @return True if all inputs are valid, false otherwise.
-   */
-  bool CheckForValidInputs() const;
-
   /** @brief The error CheckSizes() reports, or an empty string. */
   std::string SizeError() const;
 
@@ -398,8 +379,8 @@ class Problem {
   std::vector<ResidualBatch> residual_batches_;  ///< Registered residual batches.
   std::vector<StateBatch *> state_batches_;      ///< Registered state batches.
   std::vector<Connectivity> connectivity_;       ///< Index-aligned with residual_batches_.
-  /// Host pointer lists returned by GetStatePointers(): the user's lists for
-  /// host-list batches, downloads of the device tables otherwise.
+  /// Per residual batch: the host view HostStatePointers() returns when it
+  /// cannot return the user's list (an active prefix, or a device-table download).
   mutable std::vector<std::vector<float *>> state_pointers_;
   size_t num_problems_ = 0;                                   ///< SetProblemPartition().
   std::vector<const int *> state_problem_ids_;                ///< SetProblemPartition().

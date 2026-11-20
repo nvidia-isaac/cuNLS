@@ -82,36 +82,15 @@ void Prepare(cudaStream_t stream, const Problem &problem, const RansacMinimizerO
   c.cost_history.resize(std::max<size_t>(options.final_iterations, 1));
 }
 
-float InitialCost(cudaStream_t stream, RansacContext &c) {
-  const auto &residuals = c.layout.residuals();
-  const size_t max_factors = static_cast<size_t>(c.layout.max_factors());
-  c.initial_res.resize(max_factors * c.layout.m_max());
-  c.initial_cost.resize(max_factors);
-  c.initial_workspace.resize(ResidualBatchWorkspaceNumFloats(max_factors));
-  c.initial_sums.resize(residuals.size() + ReducePartialCount(max_factors));
-  THROW_ON_CUDA_ERROR(
-      cudaMemsetAsync(c.initial_sums.data(), 0, residuals.size() * sizeof(float), stream));
-  float *partials = c.initial_sums.data() + residuals.size();
-  for (size_t b = 0; b < residuals.size(); ++b) {
-    const ResidualLayout &r = residuals[b];
-    if (r.num_factors > 0) {
-      CheckEvaluate(
-          r.residual_batch->Evaluate(stream, c.initial_workspace.data(), c.initial_res.data(),
-                                     r.x0_table.data(), c.initial_cost.data(), nullptr),
-          b);
-      ReduceSumToDevice(stream, c.initial_cost.data(), r.num_factors, c.initial_sums.data() + b,
-                        partials);
-    }
-  }
-  std::vector<float> sums(residuals.size());
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(sums.data(), c.initial_sums.data(),
-                                      sums.size() * sizeof(float), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  double total = 0.0;
-  for (float v : sums) {
-    total += v;
-  }
-  return static_cast<float>(total);
+/** Total cost at the problem's states (the initial guess), read back. */
+float InitialCost(cudaStream_t stream, const Problem &problem, RansacContext &c) {
+  const size_t num_costs = EvaluateFactorCosts(
+      stream, problem.GetResidualBatches(),
+      [&](size_t i) { return problem.DeviceStatePointers(i); }, c.initial_scratch);
+  c.initial_sums.resize(1 + ReducePartialCount(num_costs));
+  ReduceSumToDevice(stream, c.initial_scratch.data(), num_costs, c.initial_sums.data(),
+                    c.initial_sums.data() + 1);
+  return CopyScalarToHost(stream, c.initial_sums.data());
 }
 
 void ReadStats(cudaStream_t stream, RansacContext &c) {
@@ -229,7 +208,7 @@ void Refine(cudaStream_t stream, const RansacMinimizerOptions &options,
   c.refinement.Classify(stream, c.layout);
   c.refinement.EvaluateCost(stream, c.layout);
   RevertRefinementIfWorse(stream, c, summary);
-  c.refinement.WriteBack(stream, c.layout, 0);
+  c.refinement.WriteBack(stream, c.layout);
   ReadRefinement(stream, options, c, summary);
 }
 
@@ -290,7 +269,7 @@ RansacSummary RunRansac(cudaStream_t stream, Problem &problem,
   Prepare(stream, problem, options, c);
   const auto start = std::chrono::steady_clock::now();
   RansacSummary summary;
-  summary.initial_cost = InitialCost(stream, c);
+  summary.initial_cost = InitialCost(stream, problem, c);
   RunRounds(stream, options, settings, c, summary);
   Refine(stream, options, settings, c, summary);
   c.has_run = true;

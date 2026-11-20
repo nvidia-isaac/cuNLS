@@ -81,9 +81,6 @@ class SE3BetweenFactorBatch : public SizedFactorBatch<6, 6, 6> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  /// Private default constructor to prevent default construction
-  SE3BetweenFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing pose deltas.
   const SE3Transform *pose_deltas_ptr_;
 

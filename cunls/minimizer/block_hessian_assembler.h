@@ -33,24 +33,16 @@ class Problem;
  * @brief Assembles the normal equations directly from per-factor Jacobian
  * blocks.
  *
- * The classic path materializes the whole sparse Jacobian `J` in CSR, forms
- * `H = J^T J` with one warp per *residual row* (`m * n^2` scattered global
- * atomics per factor), and then runs a separate cuSPARSE SpMV for
- * `b = -J^T r`.
+ * Each factor is contracted locally: a factor batch writes its Jacobian as
+ * `NumActiveFactors()` dense row-major `m x n` blocks, so a single kernel can
+ * read `J_f`, form `H_f = J_f^T J_f` and `b_f = -J_f^T r_f` in shared memory,
+ * and scatter both into the global matrix (`n^2 + n` atomics per factor, never
+ * the global Jacobian).
  *
- * This class instead contracts each factor locally.  A factor batch already
- * writes its Jacobian as `NumActiveFactors()` dense row-major `m x n` blocks, so a
- * single kernel can read `J_f`, form `H_f = J_f^T J_f` and `b_f = -J_f^T r_f`
- * in shared memory, and scatter both into the global CSR.  That drops the
- * atomic count by exactly a factor of `m` and removes the triplet-to-CSR
- * conversion, the `J^T J` kernel and the RHS SpMV from every iteration.
- *
- * The saving above is layout-independent: it comes from contracting per factor
- * rather than per residual row, and it is the same whether the target is scalar
- * CSR or block BSR.  Both are supported, selected by NormalEquations and passed
- * in via the `block_size` overload of Initialize().  There is no intermediate
- * Hessian and no conversion between the two — the assembler scatters straight
- * into whichever layout it was initialized for.
+ * The target is scalar CSR or block BSR.  Both are supported, selected by NormalEquations and
+ * passed in via the `block_size` overload of Initialize().  There is no intermediate Hessian and no
+ * conversion between the two — the assembler scatters straight into whichever layout it was
+ * initialized for.
  *
  * Scattering is direct in either case because the pattern produced by
  * HessianStructureBuilder lays out each block pair contiguously within a row
@@ -91,7 +83,6 @@ class BlockHessianAssembler {
    * @brief Scatter-accumulates `H = J^T J` and `rhs = -J^T r`.
    *
    * @param stream CUDA stream for GPU operations.
-   * @param problem The optimization problem (must match Initialize).
    * @param jacobian_values Per-factor dense Jacobian blocks, batches
    *        concatenated in problem order; see JacobianValuesSize().
    * @param residuals Residual vector, batches concatenated in problem order.
@@ -99,12 +90,12 @@ class BlockHessianAssembler {
    *        zeroed and then accumulated.
    * @param[out] rhs Right-hand side `-J^T r`; resized to `num_cols`.
    */
-  void Assemble(cudaStream_t stream, const Problem &problem, const float *jacobian_values,
-                const float *residuals, CSRSparseMatrix &hessian, dvector<float> &rhs);
+  void Assemble(cudaStream_t stream, const float *jacobian_values, const float *residuals,
+                CSRSparseMatrix &hessian, dvector<float> &rhs);
 
   /** @brief Same, into the BSR Hessian prepared by the block-size overload. */
-  void Assemble(cudaStream_t stream, const Problem &problem, const float *jacobian_values,
-                const float *residuals, BSRSparseMatrix &hessian, dvector<float> &rhs);
+  void Assemble(cudaStream_t stream, const float *jacobian_values, const float *residuals,
+                BSRSparseMatrix &hessian, dvector<float> &rhs);
 
   /** @brief Total floats needed for the per-factor Jacobian value buffer. */
   size_t JacobianValuesSize() const { return structure_builder_.JacobianValuesSize(); }

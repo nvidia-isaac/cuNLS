@@ -349,7 +349,7 @@ class BlockSparsePCGSolver : public SparseLinearSolver {
                         const dvector<float> &rhs, dvector<float> &result);
 
   /** @brief Builds the generic-API SpMV plan used by the CSR path only. */
-  bool InitializeCsrSpMV(cudaStream_t stream, const CSRSparseMatrix &spd_matrix);
+  void InitializeCsrSpMV(cudaStream_t stream, const CSRSparseMatrix &spd_matrix);
 
   /** @brief Builds @ref ba_product_ for the current view when the options ask for it. */
   void InitializeBaProduct(cudaStream_t stream);

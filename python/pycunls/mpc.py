@@ -60,7 +60,7 @@ import numpy as np
 import warp as wp
 
 import pycunls
-from pycunls._arrays import to_numpy, warp_stream
+from pycunls._arrays import to_device, to_numpy, warp_stream
 
 __all__ = [
     "Model",
@@ -82,30 +82,6 @@ MAX_PENALTY = 1e4
 #: Largest augmented-Lagrangian penalty in real-time mode (Horizon.build(real_time=...)).
 REAL_TIME_MAX_PENALTY = 1e3
 
-_VECTOR_STATE = {
-    1: pycunls.VectorStateBatch1,
-    2: pycunls.VectorStateBatch2,
-    3: pycunls.VectorStateBatch3,
-    4: pycunls.VectorStateBatch4,
-    6: pycunls.VectorStateBatch6,
-    12: pycunls.VectorStateBatch12,
-}
-_VECTOR_PRIOR = {
-    1: pycunls.PriorVectorFactorBatch1,
-    2: pycunls.PriorVectorFactorBatch2,
-    3: pycunls.PriorVectorFactorBatch3,
-    4: pycunls.PriorVectorFactorBatch4,
-    6: pycunls.PriorVectorFactorBatch6,
-    12: pycunls.PriorVectorFactorBatch12,
-}
-_VECTOR_BETWEEN = {
-    1: pycunls.VectorBetweenFactorBatch1,
-    2: pycunls.VectorBetweenFactorBatch2,
-    3: pycunls.VectorBetweenFactorBatch3,
-    4: pycunls.VectorBetweenFactorBatch4,
-    6: pycunls.VectorBetweenFactorBatch6,
-    12: pycunls.VectorBetweenFactorBatch12,
-}
 _POSE = {
     "SE2": (pycunls.SE2StateBatch, pycunls.SE2PriorFactorBatch, (3, 3), 3),
     "SE3": (pycunls.SE3StateBatch, pycunls.SE3PriorFactorBatch, (4, 4), 6),
@@ -206,8 +182,8 @@ class Quadruped(Model):
         self.control = 12
 
     def dynamics(self, h):
-        h.contacts = _device(np.ones((h.batch, h.steps, 4), np.float32))
-        h.foot_positions = _device(np.zeros((h.batch, h.steps, 4, 3), np.float32))
+        h.contacts = to_device(np.ones((h.batch, h.steps, 4), np.float32))
+        h.foot_positions = to_device(np.zeros((h.batch, h.steps, 4, 3), np.float32))
         return pycunls.QuadrupedFactorBatch(h.time_steps, h.contacts, h.foot_positions,
                                             self.parameters, h.batch * h.steps)
 
@@ -219,12 +195,6 @@ class Quadruped(Model):
 
 def _identity(shape):
     return np.eye(shape[0], dtype=np.float32)
-
-
-def _device(a) -> wp.array:
-    """Device copy of a host array (float32 or int32 kept)."""
-    a = np.ascontiguousarray(a)
-    return wp.array(a, dtype=wp.dtype_from_numpy(a.dtype), device=wp.get_cuda_device())
 
 
 def _float32(value, name: str) -> np.ndarray:
@@ -255,7 +225,7 @@ def _shift(a: wp.array) -> None:
 def _write(a: wp.array, value, all_steps: bool, name: str) -> None:
     """Writes ``value`` ([B, ...] one step) into step 0 (or every step) of a [B, T, ...] buffer."""
     if not isinstance(value, wp.array):
-        value = _device(_float32(value, name))
+        value = to_device(_float32(value, name))
     view = a.reshape((a.shape[0], a.shape[1], -1))
     value = value.reshape((a.shape[0], view.shape[2]))
     wp.launch(_write_steps, dim=view.shape, inputs=[value, int(all_steps), view],
@@ -269,7 +239,7 @@ def _weighted(inner, weight: Weight, residual_size: int, capacity: int, keep: li
     w = np.asarray(weight, dtype=np.float32)
     if w.shape != (residual_size,):
         raise ValueError(f"weight needs {residual_size} components, got {w.shape}")
-    sqrt_info = _device(np.tile(np.diag(w).reshape(-1), capacity))
+    sqrt_info = to_device(np.tile(np.diag(w).reshape(-1), capacity))
     keep.append(sqrt_info)
     return pycunls.InformationFactorBatch(inner, sqrt_info)
 
@@ -299,24 +269,25 @@ class Horizon:
         self.model, self.steps, self.batch = model, steps, batch
         B, N = batch, steps
         state_cls, self._pose_prior_cls, self._pose_shape, self._pose_tangent = _POSE[model.pose]
-        self.poses = _device(np.broadcast_to(_identity(self._pose_shape),
+        self.poses = to_device(np.broadcast_to(_identity(self._pose_shape),
                                              (B, N + 1) + self._pose_shape))
-        self.vectors = {name: _device(np.zeros((B, N + 1, d), np.float32))
+        self.vectors = {name: to_device(np.zeros((B, N + 1, d), np.float32))
                         for name, d in model.vectors}
-        self.controls = _device(np.zeros((B, N, model.control), np.float32))
-        self.time_steps = _device(np.full(B * N, dt, np.float32))
+        self.controls = to_device(np.zeros((B, N, model.control), np.float32))
+        self.time_steps = to_device(np.full(B * N, dt, np.float32))
         self._keep = []  # buffers the bound factors read from
 
         # State batches: the first state of every trajectory is constant.
-        self._const_ids = _device(np.arange(B, dtype=np.int32) * (N + 1))
+        self._const_ids = to_device(np.arange(B, dtype=np.int32) * (N + 1))
         self.pose_states = state_cls(self.poses, B * (N + 1), self._const_ids, B)
         self.pose_states.set_num_active_states(B * (N + 1), B)
         self.vector_states = {}
         for name, d in model.vectors:
-            sb = _VECTOR_STATE[d](self.vectors[name], B * (N + 1), self._const_ids, B)
+            sb = pycunls.VectorStateBatch(self.vectors[name], B * (N + 1), self._const_ids, B,
+                                          dim=d)
             sb.set_num_active_states(B * (N + 1), B)
             self.vector_states[name] = sb
-        self.control_states = _VECTOR_STATE[model.control](self.controls, B * N)
+        self.control_states = pycunls.VectorStateBatch(self.controls, B * N, dim=model.control)
         self.control_states.set_num_active_states(B * N)
 
         self._factors = []      # (factor_batch, slot_batches, indices)
@@ -349,7 +320,7 @@ class Horizon:
     # --- helpers ---------------------------------------------------------------
 
     def _add(self, factor, slots, indices):
-        indices = _device(np.asarray(indices, np.int32))
+        indices = to_device(np.asarray(indices, np.int32))
         self._keep.append(indices)
         self._factors.append((factor, slots, indices))
 
@@ -369,7 +340,7 @@ class Horizon:
         ref = np.broadcast_to(_identity(self._pose_shape), (B, N) + self._pose_shape)
         if reference is not None:
             ref = np.broadcast_to(_float32(reference, "reference")[:, 1:], ref.shape)
-        self.pose_reference = _device(ref)
+        self.pose_reference = to_device(ref)
         prior = self._pose_prior_cls(self.pose_reference, B * N)
         prior.set_num_active_factors(B * N)
         self._keep.append(prior)
@@ -387,8 +358,8 @@ class Horizon:
         ref = np.zeros((B, N, d), np.float32)
         if reference is not None:
             ref = np.broadcast_to(_float32(reference, "reference")[:, 1:], ref.shape)
-        ref = self.vector_reference[name] = _device(ref)
-        prior = _VECTOR_PRIOR[d](ref, B * N)
+        ref = self.vector_reference[name] = to_device(ref)
+        prior = pycunls.PriorVectorFactorBatch(ref, B * N, dim=d)
         prior.set_num_active_factors(B * N)
         self._keep.append(prior)
         factor = _weighted(prior, weight, d, B * N, self._keep)
@@ -401,8 +372,8 @@ class Horizon:
         values = np.zeros((B, N, nu), np.float32)
         if nominal is not None:
             values = np.broadcast_to(_float32(nominal, "nominal"), values.shape)
-        self.control_nominal = _device(values)
-        prior = _VECTOR_PRIOR[nu](self.control_nominal, B * N)
+        self.control_nominal = to_device(values)
+        prior = pycunls.PriorVectorFactorBatch(self.control_nominal, B * N, dim=nu)
         prior.set_num_active_factors(B * N)
         self._keep.append(prior)
         factor = _weighted(prior, weight, nu, B * N, self._keep)
@@ -415,8 +386,8 @@ class Horizon:
         if N < 2:
             return self
         n = B * (N - 1)
-        zero = _device(np.zeros((n, nu), np.float32))
-        between = _VECTOR_BETWEEN[nu](zero, n)
+        zero = to_device(np.zeros((n, nu), np.float32))
+        between = pycunls.VectorBetweenFactorBatch(zero, n, dim=nu)
         between.set_num_active_factors(n)
         self._keep += [zero, between]
         factor = _weighted(between, weight, nu, n, self._keep)
@@ -431,7 +402,7 @@ class Horizon:
     def control_bounds(self, lower, upper):
         """lower <= u <= upper (scalars or per-component sequences; ±inf: none).
 
-        Enforced by projection (:meth:`pycunls.VectorStateBatch2.set_bounds`):
+        Enforced by projection (:meth:`pycunls.VectorStateBatch.set_bounds`):
         the controls never leave the box, at any iteration. The bounds live in
         :attr:`control_lower` / :attr:`control_upper` (``[B, N, nu]``) and may
         be reassigned between solves.
@@ -456,12 +427,12 @@ class Horizon:
 
     @staticmethod
     def _bound_buffer(value, shape):
-        return _device(np.broadcast_to(_float32(value, "bounds"), shape))
+        return to_device(np.broadcast_to(_float32(value, "bounds"), shape))
 
     def goal_pose(self, goal):
         """The last pose of every trajectory equals ``goal`` (``[B, *pose]``) exactly."""
         B, N = self.batch, self.steps
-        self.goal = _device(np.broadcast_to(_float32(goal, "goal"), (B,) + self._pose_shape))
+        self.goal = to_device(np.broadcast_to(_float32(goal, "goal"), (B,) + self._pose_shape))
         prior = self._pose_prior_cls(self.goal, B)
         prior.set_num_active_factors(B)
         self._keep.append(prior)
@@ -482,7 +453,7 @@ class Horizon:
         K, c = obs.shape[1], obs.shape[2]
         if (self.model.pose == "SE2") != (c == 3):
             raise ValueError("SE(2) models take [B, K, 3] disks, SE(3) models [B, K, 4] spheres")
-        self.obstacles = _device(np.broadcast_to(obs[:, None], (B, N, K, c)))
+        self.obstacles = to_device(np.broadcast_to(obs[:, None], (B, N, K, c)))
         cls = (pycunls.SE2DiskClearanceFactorBatch if c == 3 else pycunls.SE3SphereClearanceFactorBatch)
         clearance = cls(self.obstacles, float(margin), B * N * K)
         clearance.set_num_active_factors(B * N * K)
@@ -521,15 +492,15 @@ class Horizon:
         for factor, slots, indices in self._factors:
             problem.add_factor_batch(factor, slots, indices)
         B, N = self.batch, self.steps
-        ids = [_device(np.arange(B * (N + 1), dtype=np.int32) // (N + 1))]
+        ids = [to_device(np.arange(B * (N + 1), dtype=np.int32) // (N + 1))]
         ids += [ids[0]] * len(self.model.vectors)
-        ids.append(_device(np.arange(B * N, dtype=np.int32) // N))
+        ids.append(to_device(np.arange(B * N, dtype=np.int32) // N))
         self._keep += ids
         problem.set_problem_partition(B, ids)
         # Stages for the block-tridiagonal solver: x_k and u_k in stage k.
-        stages = [_device(np.tile(np.arange(N + 1, dtype=np.int32), B))] * (
+        stages = [to_device(np.tile(np.arange(N + 1, dtype=np.int32), B))] * (
             1 + len(self.model.vectors))
-        stages.append(_device(np.tile(np.arange(N, dtype=np.int32), B)))
+        stages.append(to_device(np.tile(np.arange(N, dtype=np.int32), B)))
         self._keep += stages
         problem.set_state_stages(stages)
         default_minimizer = minimizer is None
@@ -579,10 +550,17 @@ class Controller:
 
         With ``real_time`` (see :meth:`Horizon.build`), the first call converges
         and switches the solver to the fixed budget for the following calls.
+        The solve runs on ``stream`` after the work queued on Warp's current
+        stream, and later work on Warp's current stream (:meth:`shift`,
+        :meth:`set_initial_state`, reading the buffers) runs after the solve, so
+        a real-time solve, which returns without waiting for the GPU, needs no
+        synchronization, also when the two streams differ.
         """
+        device_stream = wp.get_stream(self.horizon.controls.device)
         # Buffer writes (assign, Horizon setup) run on Warp's stream: the solve waits for them.
-        warp_stream(stream).wait_stream(wp.get_stream(self.horizon.controls.device))
+        warp_stream(stream).wait_stream(device_stream)
         self.summary = self.solver.minimize(stream, self.problem)
+        device_stream.wait_stream(warp_stream(stream))  # later writes and reads wait for the solve
         if self._real_time is not None and not self.solver.options.real_time:
             outer, inner = self._real_time
             o = self.solver.options
@@ -635,15 +613,12 @@ class Controller:
         """Shift, set the measured state, solve; returns the first controls ``[B, nu]``.
 
         The shift and the state writes run on Warp's current stream, the solve on
-        ``stream``; stream waits order them (the solve after the writes, the
-        returned copy after the solve), also when the two streams differ.
+        ``stream``; :meth:`solve` orders them (the solve after the writes, the
+        returned copy and the next writes after the solve), also when the two
+        streams differ.
         """
-        current = wp.get_stream(self.horizon.controls.device)
-        solver = warp_stream(stream)
         if self._started:
             self.shift()
         self.set_initial_state(pose, **vectors)
-        solver.wait_stream(current)
         self.solve(stream)
-        current.wait_stream(solver)
         return wp.clone(self.horizon.controls[:, 0])

@@ -19,8 +19,6 @@
 
 #include <cusolverDn.h>
 
-#include "cunls/common/log.h"
-
 namespace cunls {
 
 const char *cusolverGetErrorString(int status) {
@@ -79,38 +77,27 @@ const char *cusolverGetErrorString(int status) {
   return "Unspecified cuSolver error";
 }
 
-cuSolverHandle::cuSolverHandle() {
-  cusolverDnHandle_t h = nullptr;
-  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&h));
-  handle_ = static_cast<void *>(h);
+namespace {
+
+void *CreateCusolverHandle() {
+  cusolverDnHandle_t handle = nullptr;
+  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&handle));
+  return handle;
 }
 
-cuSolverHandle::~cuSolverHandle() {
-  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
+void SetCusolverStream(void *handle, cudaStream_t stream) {
+  THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(static_cast<cusolverDnHandle_t>(handle), stream));
 }
 
-void *cuSolverHandle::GetHandle(cudaStream_t stream) {
-  if (stream == nullptr) {
-    const std::string msg = "cuSolverHandle received invalid CUDA stream.";
-    LogError(msg);
-    throw std::invalid_argument(msg);
-  }
-
-  if (stream == stream_ && handle_ != nullptr) {
-    return handle_;
-  }
-
-  if (handle_ != nullptr) {
-    THROW_ON_CUSOLVER_ERROR(cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle_)));
-  }
-
-  stream_ = stream;
-  cusolverDnHandle_t h = nullptr;
-  THROW_ON_CUSOLVER_ERROR(cusolverDnCreate(&h));
-  THROW_ON_CUSOLVER_ERROR(cusolverDnSetStream(h, stream_));
-  handle_ = static_cast<void *>(h);
-  return handle_;
+void DestroyCusolverHandle(void *handle) {
+  WARN_ON_CUSOLVER_ERROR(cusolverDnDestroy(static_cast<cusolverDnHandle_t>(handle)));
 }
+
+}  // namespace
+
+cuSolverHandle::cuSolverHandle()
+    : StreamBoundHandle("cuSolverHandle", &CreateCusolverHandle, &SetCusolverStream,
+                        &DestroyCusolverHandle) {}
 
 cuSolverInfo::cuSolverInfo() {
   syevjInfo_t info = nullptr;

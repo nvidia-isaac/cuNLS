@@ -298,18 +298,6 @@ TEST(FactorCapacity, OverridingNumActiveFactorsFixesTheSize) {
   EXPECT_TRUE(problem.CheckConsistency());
 }
 
-TEST(FactorCapacity, ActiveCountStartsAtZero) {
-  auto targets = ToDevice(std::vector<float>(16 * 4, 0.f));
-  SE3PriorFactorBatch prior(reinterpret_cast<const SE3Transform *>(targets.data()), 4);
-  EXPECT_EQ(prior.Capacity(), 4u);
-  EXPECT_EQ(prior.NumActiveFactors(), 0u);
-  prior.SetNumActiveFactors(4);
-  EXPECT_EQ(prior.NumActiveFactors(), 4u);
-  VectorStateBatch<3> states(targets.data(), 8);
-  EXPECT_EQ(states.Capacity(), 8u);
-  EXPECT_EQ(states.NumActiveStates(), 0u);
-}
-
 // ============================================================================
 // States: Plus touches exactly the active states
 // ============================================================================

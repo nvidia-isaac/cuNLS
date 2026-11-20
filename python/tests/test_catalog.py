@@ -34,9 +34,8 @@ def _exported(base):
 
 
 def test_every_exported_batch_is_in_the_catalog():
-    names = {e["name"] for e in pycunls.catalog()}
     missing = [n for n in _exported(core.FactorBatch) + _exported(core.StateBatch)
-               if n not in names]
+               if factor_info(n) is None and state_info(n) is None]
     assert not missing, missing
 
 
@@ -59,7 +58,10 @@ def test_state_sizes_match(name):
         assert (batch.ambient_size, batch.tangent_size) == (topo.ambient_size, topo.dof_count)
         assert (topo.ambient_size, topo.dof_count) == (19, 1)  # as describe() states
         return
-    batch = getattr(pycunls, name)(wp.zeros(4 * info.ambient, wp.float32), 4)
+    kwargs = {}
+    if hasattr(pycunls, f"{name}6"):  # runtime-sized: as its numbered name of size 6
+        kwargs, info = {"dim": 6}, state_info(f"{name}6")
+    batch = getattr(pycunls, name)(wp.zeros(4 * info.ambient, wp.float32), 4, **kwargs)
     assert (batch.ambient_size, batch.tangent_size) == (info.ambient, info.tangent)
 
 
@@ -79,10 +81,12 @@ def _simple_factors():
 
 @pytest.mark.parametrize("name", _simple_factors())
 def test_factor_sizes_match(name):
-    info = factor_info(name)
+    info, kwargs = factor_info(name), {}
+    if hasattr(pycunls, f"{name}6"):  # runtime-sized: as its numbered name of size 6
+        info, kwargs = factor_info(f"{name}6"), {"dim": 6}
     arrays = [wp.zeros(64 * 4, wp.float32) for a in info.arrays
               if a != "poses_camera_from_rig"]
-    fb = getattr(pycunls, name)(*arrays, 4)
+    fb = getattr(pycunls, name)(*arrays, 4, **kwargs)
     assert fb.residuals_size == info.residual_size
     tangents = [state_info(s).tangent for s in info.states]
     assert list(fb.state_sizes()) == tangents

@@ -54,11 +54,13 @@ constexpr int kBlockSize = 256;
 // writes the finite-difference column directly into the dense per-factor
 // Jacobian layout (`ResidualsSize() x sum(StateSizes())`, row-major,
 // per factor) that analytic Jacobians also use.
-__global__ void NumericDiffColumnKernel(
-    const float *__restrict__ perturbed_residuals, const float *__restrict__ baseline_residuals,
-    const int *__restrict__ col_idx, const int *__restrict__ plus_slot,
-    const int *__restrict__ minus_slot, const float *__restrict__ eps_arr, bool central, int F,
-    int W, int residual_size, int total_cols, float *__restrict__ jacobian_out) {
+__global__ void NumericDiffColumnKernel(const float *__restrict__ perturbed_residuals,
+                                        const float *__restrict__ baseline_residuals,
+                                        const int *__restrict__ col_idx,
+                                        const int *__restrict__ plus_slot,
+                                        const int *__restrict__ minus_slot, float step,
+                                        bool central, int F, int W, int residual_size,
+                                        int total_cols, float *__restrict__ jacobian_out) {
   long long idx = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
   long long total = static_cast<long long>(F) * W * residual_size;
   if (idx >= total) return;
@@ -76,10 +78,10 @@ __global__ void NumericDiffColumnKernel(
   if (central) {
     int ms = minus_slot[j];
     rm = perturbed_residuals[(static_cast<long long>(ms) * F + f) * residual_size + r];
-    denom = 2.0f * eps_arr[j];
+    denom = 2.0f * step;
   } else {
     rm = baseline_residuals[static_cast<long long>(f) * residual_size + r];
-    denom = eps_arr[j];
+    denom = step;
   }
 
   float deriv = (rp - rm) / denom;
@@ -115,7 +117,6 @@ NumericDiffJacobianBuilder::ComputeCache::~ComputeCache() {
   if (pinned_delta_host != nullptr) cudaFreeHost(pinned_delta_host);
   if (pinned_ptrs_host != nullptr) cudaFreeHost(pinned_ptrs_host);
   if (pinned_int_host != nullptr) cudaFreeHost(pinned_int_host);
-  if (pinned_eps_host != nullptr) cudaFreeHost(pinned_eps_host);
 }
 
 NumericDiffJacobianBuilder::NumericDiffJacobianBuilder() {
@@ -175,7 +176,7 @@ void NumericDiffJacobianBuilder::BuildPlan(const Problem &problem, size_t residu
 
   // Address -> (state batch index, state index) lookup, built from the
   // problem's own state batches. This mirrors the pointer-identity walk
-  // Problem::CheckGraphConnectivity already performs.
+  // Problem::FindStructureError performs.
   std::unordered_map<const float *, std::pair<size_t, size_t>> addr_to_block;
   for (size_t bi = 0; bi < state_batches.size(); ++bi) {
     StateBatch *sb = state_batches[bi];
@@ -315,8 +316,6 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     needs_rebuild = (cache.x_plus_delta_scratch.data() != cache.last_xpd_base);
   }
 
-  cache.S = S;
-  cache.W = W;
   cache.F = F;
   cache.P = P;
   cache.residual_size = residual_size;
@@ -342,7 +341,6 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     cache.col_idx_h.assign(W, 0);
     cache.plus_slot_h.assign(W, 0);
     cache.minus_slot_h.assign(W, central ? 0 : -1);
-    cache.eps_h.assign(W, options.relative_step_size);
 
     size_t delta_total = 0, xpd_total = 0, slot = 0, j = 0;
     for (size_t b = 0; b < P; ++b) {
@@ -370,8 +368,6 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
         ++j;
       }
     }
-    cache.delta_total = delta_total;
-    cache.xpd_total = xpd_total;
 
     cache.delta_scratch.resize(delta_total);
     cache.x_plus_delta_scratch.resize(xpd_total);
@@ -380,7 +376,6 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
     cache.col_idx_scratch.resize(W);
     cache.plus_slot_scratch.resize(W);
     cache.minus_slot_scratch.resize(W);
-    cache.eps_scratch.resize(W);
 
     // ---- Build & upload the one-hot tangent deltas for every slot, via a
     // ---- pinned staging buffer (true async DMA, not an internally-staged
@@ -468,7 +463,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
                                         S * F * P * sizeof(const float *), cudaMemcpyHostToDevice,
                                         stream));
 
-    // ---- Differencing kernel's static index/epsilon arrays: also
+    // ---- Differencing kernel's static index arrays: also
     // ---- structure-only, uploaded once via one merged pinned staging
     // ---- buffer (col_idx | plus_slot | minus_slot back-to-back) instead of
     // ---- three separate transfers. ----
@@ -482,11 +477,6 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
                                         W * sizeof(int), cudaMemcpyHostToDevice, stream));
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(cache.minus_slot_scratch.data(), int_host + 2 * W,
                                         W * sizeof(int), cudaMemcpyHostToDevice, stream));
-
-    float *eps_host = EnsurePinnedHost(cache.pinned_eps_host, cache.pinned_eps_capacity, W);
-    std::copy(cache.eps_h.begin(), cache.eps_h.end(), eps_host);
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(cache.eps_scratch.data(), eps_host, W * sizeof(float),
-                                        cudaMemcpyHostToDevice, stream));
 
     // Mark all of this cache's pinned buffers as "safe to touch again once
     // this event completes" -- checked at the top of the next rebuild (or
@@ -507,7 +497,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   } else {
     // ---- Fast path: structure, options, and all relevant addresses are
     // ---- unchanged since the last call, so `delta`, the replicated
-    // ---- state-pointer table, and the differencing kernel's index/epsilon
+    // ---- state-pointer table, and the differencing kernel's index
     // ---- arrays are already correct on the device -- only the actual
     // ---- perturbed evaluations (which read the *current* state values)
     // ---- need to happen. No H2D copies, no stream-pool synchronization. ----
@@ -536,7 +526,7 @@ void NumericDiffJacobianBuilder::Compute(cudaStream_t stream, const Problem &pro
   const int num_blocks = static_cast<int>((total_elements + kBlockSize - 1) / kBlockSize);
   NumericDiffColumnKernel<<<num_blocks, kBlockSize, 0, stream>>>(
       cache.perturbed_residuals.data(), baseline_residuals, cache.col_idx_scratch.data(),
-      cache.plus_slot_scratch.data(), cache.minus_slot_scratch.data(), cache.eps_scratch.data(),
+      cache.plus_slot_scratch.data(), cache.minus_slot_scratch.data(), options.relative_step_size,
       central, static_cast<int>(F), static_cast<int>(W), static_cast<int>(residual_size),
       static_cast<int>(total_cols), jacobian_out);
   THROW_ON_CUDA_ERROR(cudaGetLastError());

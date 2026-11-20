@@ -193,6 +193,11 @@ def evaluate(problem: Problem, stream: Optional[CudaStream] = None,
     """
     stream = _stream(stream)
     _refresh_derived_state_data(problem, stream)
+    return _evaluate(problem, stream, keep_residuals)
+
+
+def _evaluate(problem: Problem, stream: CudaStream, keep_residuals: bool = False) -> Evaluation:
+    """:func:`evaluate` without refreshing the derived state data (the caller did)."""
     batches = []
     with _external(stream):
         for i in range(problem.num_residual_batches):
@@ -473,14 +478,15 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
                     "float32 values in the batch's layout."))
     if issues:
         return issues
-    evaluation = evaluate(problem, stream)
+    evaluation = _evaluate(problem, stream)  # refreshed above
     for b in evaluation.batches:
         if b.num_non_finite:
             _, info, _ = effective_factor(problem.factor_batch(b.index))
             kinematic = info is not None and "ArticulationStateBatch" in info.states
             hint = (" Kinematic factors also give NaN for a link or DOF index outside the "
-                    "topology (links 0 .. link_count-1, or -1 for the world in LinkFrameFactorBatch; DOFs 0 .. "
-                    "dof_count-1, scalar ones for mimic joints)." if kinematic else "")
+                    "topology (links 0 .. link_count-1, or -1 for the world in "
+                    "LinkFrameFactorBatch; DOFs 0 .. dof_count-1, scalar ones for mimic "
+                    "joints)." if kinematic else "")
             issues.append(Issue(
                 "error",
                 f"Factor batch {b.name}: {b.num_non_finite} of {b.num_factors} factors have NaN "

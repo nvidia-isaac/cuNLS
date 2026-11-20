@@ -93,9 +93,12 @@ CUDA target and Arm platform selection
 ===============================================================================
 
 cuNLS preserves caller-provided CUDA compiler and architecture settings.
-Without one, ``/usr/local/cuda/bin/nvcc`` is used when it exists. A native
-Jetson Orin build can compile an SM 87 cubin and avoid PTX JIT compatibility
-requirements:
+Without one, ``/usr/local/cuda/bin/nvcc`` is used when it exists, and the build
+compiles native code for every GPU generation that toolkit supports
+(``cmake/CudaArchitectures.cmake``): SM 75, 80, 86, 89 and 90; 100 and 120 from
+CUDA 12.8; on Arm hosts 87 (Jetson Orin, CUDA 12) or 110 (Jetson Thor, CUDA 13).
+PTX is kept only for the newest, so no supported GPU compiles kernels at load
+time. A build for one GPU is faster, for example a native Jetson Orin build:
 
 .. code-block:: bash
 

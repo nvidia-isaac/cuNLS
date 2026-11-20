@@ -20,6 +20,7 @@
 #include <cuda_runtime.h>
 
 #include <stdexcept>
+#include <string>
 
 #include "sized_state_batch.h"
 
@@ -87,104 +88,92 @@ inline bool HasBoxBounds(const StateBatch *batch) {
 }
 
 /**
- * @brief Batch of Euclidean vector states with compile-time dimension.
+ * @brief Batch of Euclidean vector states of `dim` components, the size set at run time (the
+ * Python VectorStateBatch; VectorStateBatch<Dim> fixes it at compile time).
  *
- * For Euclidean states, the tangent and ambient spaces are identical
- * (both have dimension Dim), and the Plus operation reduces to element-wise
- * vector addition: x_plus_delta = x + delta. With box bounds (SetBounds),
- * Plus keeps every component it moves inside the box.
- *
- * @tparam Dim The dimension of each vector state.
+ * Tangent and ambient spaces coincide (`dim` floats each), and Plus is element-wise addition,
+ * x_plus_delta = x + delta. With box bounds (SetBounds), Plus keeps every component it moves
+ * inside the box.
  */
-template <int Dim>
-class VectorStateBatch : public SizedStateBatch<Dim, Dim>, public BoxBoundedStates {
+class DynamicVectorStateBatch : public DynamicSizedStateBatch, public BoxBoundedStates {
  public:
-  using Base = SizedStateBatch<Dim, Dim>;
-
   /**
-   * @brief Constructs a batch of vector states.
-   *
-   * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least capacity * Dim floats of
-   * allocated memory.
-   * @param capacity Number of states the buffer holds. The active count
-   *        starts at 0: call SetNumActiveStates(n) before solving.
+   * @param dim Components per state (>= 1).
+   * @param device_ptr Device storage of capacity * dim floats.
+   * @param capacity States the storage holds; the active count starts at 0.
+   * @param device_constant_state_ids Optional device ids of constant states.
+   * @param const_capacity Entries of device_constant_state_ids.
+   * @throws std::invalid_argument if dim < 1.
    */
-  VectorStateBatch(const float *device_ptr, size_t capacity) : Base(device_ptr, capacity) {}
+  DynamicVectorStateBatch(int dim, const float *device_ptr, size_t capacity,
+                          const int *device_constant_state_ids = nullptr, size_t const_capacity = 0)
+      : DynamicSizedStateBatch(CheckedDim(dim), CheckedDim(dim), device_ptr, capacity,
+                               device_constant_state_ids, const_capacity) {}
 
-  /**
-   * @brief Constructs a batch of vector states with constant state
-   * constraints.
-   *
-   * @param device_ptr Pointer to GPU device memory containing the vectors.
-   *                   Must point to at least capacity * Dim floats of
-   * allocated memory.
-   * @param capacity Number of states the buffer holds. The active count
-   *        starts at 0: call SetNumActiveStates(n) before solving.
-   * @param device_constant_state_ids Pointer to GPU device memory containing
-   * the indices of states that should remain constant.
-   * @param const_capacity Number of ids the constant-id buffer holds.
-   */
-  VectorStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
-                   size_t const_capacity)
-      : Base(device_ptr, capacity, device_constant_state_ids, const_capacity) {}
+  /** @brief Components per state. */
+  int Dimension() const { return static_cast<int>(AmbientSize()); }
 
-  /**
-   * @brief x_plus_delta = x + delta element-wise for all states; with bounds,
-   * every component with a nonzero delta is clamped into the box (constant
-   * states, whose delta is 0, are never moved or clamped).
-   *
-   * @param x             Device pointer to current state values.
-   * @param delta         Device pointer to tangent-space updates.
-   * @param x_plus_delta  Device pointer to output state values.
-   * @param stream        CUDA stream for asynchronous execution.
-   * @param num_replicas  Replicas of the batch (see StateBatch::Plus); they share the bounds.
-   */
+  /** @brief x + delta for `num_replicas` copies of the active states, clamped into the bounds. */
   void Plus(const float *x, const float *delta, float *x_plus_delta, cudaStream_t stream,
             size_t num_replicas = 1) override {
-    CalculateVectorPlus(x, delta, x_plus_delta, this->num_active_states_ * num_replicas, Dim,
-                        stream, lower_, upper_, this->num_active_states_ * Dim);
+    CalculateVectorPlus(x, delta, x_plus_delta, num_active_states_ * num_replicas, Dimension(),
+                        stream, lower_, upper_, num_active_states_ * AmbientSize());
   }
 
   /**
-   * @brief Box bounds lower <= x <= upper per component. Bounds are a
-   * constraint: solve a problem with bounded states with
-   * AugmentedLagrangianMinimizer, which keeps the iterates inside the box
-   * (projected Gauss-Newton); GaussNewtonMinimizer, LevenbergMarquardtMinimizer
-   * and the RANSAC minimizers reject it. Constant states are never moved.
-   *
-   * @param lower, upper Device arrays of Capacity() * Dim floats (state i at
-   *        `i * Dim`); ±inf leaves a side unbounded. Not owned: they must
-   *        outlive the solves, and are read at every solve (they may be
-   *        rewritten, or rebound with another call, between solves). Both
-   *        nullptr removes the bounds.
-   * @throws std::invalid_argument if exactly one of them is nullptr.
+   * @brief Box bounds: device arrays of Capacity() * dim floats (±inf: unbounded), not
+   * owned; both nullptr removes them.
+   * @throws std::invalid_argument if only one is given.
    */
   void SetBounds(const float *lower, const float *upper) {
     if ((lower == nullptr) != (upper == nullptr)) {
-      throw std::invalid_argument("VectorStateBatch::SetBounds: need both bounds or neither");
+      throw std::invalid_argument(
+          "VectorStateBatch::SetBounds: got one bound and nullptr (expected both bounds or "
+          "neither). Fix: pass both arrays, or nullptr for both.");
     }
     lower_ = lower;
     upper_ = upper;
   }
 
-  /** @brief See BoxBoundedStates. */
   const float *LowerBounds() const override { return lower_; }
-  /** @brief See BoxBoundedStates. */
   const float *UpperBounds() const override { return upper_; }
 
-  /** @brief x + delta for the active states, without clamping (see BoxBoundedStates). */
+  /** @brief x + delta for the active states without clamping (numeric differentiation). */
   void PlusIgnoringBounds(const float *x, const float *delta, float *x_plus_delta,
                           cudaStream_t stream) override {
-    CalculateVectorPlus(x, delta, x_plus_delta, this->num_active_states_, Dim, stream);
+    CalculateVectorPlus(x, delta, x_plus_delta, num_active_states_, Dimension(), stream);
   }
 
  private:
-  /** @brief Default constructor (private, not for external use). */
-  VectorStateBatch() = default;
+  static size_t CheckedDim(int dim) {
+    if (dim < 1) {
+      throw std::invalid_argument("VectorStateBatch: dim must be at least 1 (got " +
+                                  std::to_string(dim) + "). Fix: pass the vector size.");
+    }
+    return static_cast<size_t>(dim);
+  }
 
   const float *lower_ = nullptr;
   const float *upper_ = nullptr;
+};
+
+/**
+ * @brief DynamicVectorStateBatch of Dim components, the size fixed at compile time.
+ *
+ * @tparam Dim The dimension of each vector state.
+ */
+template <int Dim>
+class VectorStateBatch : public DynamicVectorStateBatch {
+ public:
+  /** @brief Storage of capacity * Dim floats; no constant states. */
+  VectorStateBatch(const float *device_ptr, size_t capacity)
+      : DynamicVectorStateBatch(Dim, device_ptr, capacity) {}
+
+  /** @brief Storage of capacity * Dim floats and constant state ids. */
+  VectorStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                   size_t const_capacity)
+      : DynamicVectorStateBatch(Dim, device_ptr, capacity, device_constant_state_ids,
+                                const_capacity) {}
 };
 
 }  // namespace cunls

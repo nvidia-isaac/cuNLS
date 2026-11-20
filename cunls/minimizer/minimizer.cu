@@ -61,43 +61,13 @@ void InitializeResiduals(const Problem &problem, dvector<float> &residuals) {
 void ComputeCostAsync(cudaStream_t stream, const Problem &problem, const MinimizerState &state,
                       MinimizerScratch &scratch, float *d_total) {
   const auto &state_pointers = state.GetStatePointers();
-  const auto &residual_batches = problem.GetResidualBatches();
-  size_t max_residual_dim = 0;
-  size_t total_num_cost_elements = 0;
-  size_t max_workspace_floats = 0;
-  for (const auto &rb : residual_batches) {
-    const auto &factor_batch = rb.GetFactorBatch();
-    size_t n = factor_batch->NumActiveFactors();
-    total_num_cost_elements += n;
-    max_residual_dim = std::max(n * factor_batch->ResidualsSize(), max_residual_dim);
-    max_workspace_floats = std::max(max_workspace_floats, ResidualBatchWorkspaceNumFloats(n));
-  }
-
-  size_t buffer_floats = total_num_cost_elements + max_residual_dim + max_workspace_floats;
-  if (scratch.buffer.size() < buffer_floats * sizeof(float)) {
-    scratch.buffer.resize(buffer_floats * sizeof(float));
-  }
-  float *costs = reinterpret_cast<float *>(scratch.buffer.data());
-  float *cost_ptr = costs;
-  float *residuals_ptr = costs + total_num_cost_elements;
-  float *workspace_ptr = residuals_ptr + max_residual_dim;
-
-  for (size_t i = 0; i < residual_batches.size(); i++) {
-    const auto &rb = residual_batches[i];
-    CheckEvaluate(rb.Evaluate(stream, workspace_ptr, residuals_ptr, state_pointers[i].data(),
-                              cost_ptr, nullptr),
-                  i);
-    cost_ptr += rb.GetFactorBatch()->NumActiveFactors();
-  }
-
+  const size_t num_costs = EvaluateFactorCosts(
+      stream, problem.GetResidualBatches(), [&](size_t i) { return state_pointers[i].data(); },
+      scratch.buffer);
   if (d_total == nullptr) return;
-  if (total_num_cost_elements > 0) {
-    size_t partials_needed = ReducePartialCount(total_num_cost_elements);
-    if (scratch.d_partials.size() < partials_needed) scratch.d_partials.resize(partials_needed);
-    ReduceSumToDevice(stream, costs, total_num_cost_elements, d_total, scratch.d_partials.data());
-  } else {
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(d_total, 0, sizeof(float), stream));
-  }
+  const size_t partials_needed = ReducePartialCount(num_costs);
+  if (scratch.d_partials.size() < partials_needed) scratch.d_partials.resize(partials_needed);
+  ReduceSumToDevice(stream, scratch.buffer.data(), num_costs, d_total, scratch.d_partials.data());
 }
 
 /** The total cost at `state`, read back (synchronizes the stream). */
@@ -154,11 +124,9 @@ void ComputeResidualAndJacobian(cudaStream_t stream, const Problem &problem,
   for (const auto &rb : residual_batches) {
     max_n = std::max(max_n, rb.GetFactorBatch()->NumActiveFactors());
   }
-  size_t ws_floats = ResidualBatchWorkspaceNumFloats(max_n);
-  if (scratch.buffer.size() < ws_floats * sizeof(float)) {
-    scratch.buffer.resize(ws_floats * sizeof(float));
-  }
-  float *workspace_ptr = reinterpret_cast<float *>(scratch.buffer.data());
+  const size_t ws_floats = ResidualBatchWorkspaceNumFloats(max_n);
+  if (scratch.buffer.size() < ws_floats) scratch.buffer.resize(ws_floats);
+  float *workspace_ptr = scratch.buffer.data();
   float *residuals_ptr = system.residuals.data();
   float *jacobian_ptr = system.factor_jacobians.data();
 
@@ -620,10 +588,9 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     }
   };
   // ComputeCostAsync leaves the per-factor costs at the start of the buffer.
-  auto factor_costs = [&]() { return reinterpret_cast<const float *>(scratch.buffer.data()); };
   auto evaluate = [&](const MinimizerState &state, float *costs) {
     ComputeCostAsync(stream, problem, state, scratch, nullptr);
-    partition.SumFactorCosts(stream, factor_costs(), costs);
+    partition.SumFactorCosts(stream, scratch.buffer.data(), costs);
   };
 
   evaluate(current, partition.Cost());

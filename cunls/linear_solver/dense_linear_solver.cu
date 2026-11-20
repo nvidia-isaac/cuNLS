@@ -76,7 +76,8 @@ __device__ __forceinline__ float WarpReduceSum(float val) {
 // Pivoted LDLT factorization kernel
 // ---------------------------------------------------------------------------
 
-/// @brief Single-block kernel that computes P^T A P = L D L^T in-place.
+/// @brief Single-block kernel that computes P^T A P = L D L^T in place (A is
+///        overwritten by the factor).
 ///
 /// The algorithm at each step k = 0 .. n-1:
 ///   1. **Diagonal pivoting**: find the row/column with the largest absolute
@@ -90,23 +91,18 @@ __device__ __forceinline__ float WarpReduceSum(float val) {
 ///
 /// On success *status is set to 1 (only written when @p check_status != 0).
 ///
-/// @param A        Dense row-major input matrix (n x n), read-only.
+/// @param ldlt     Dense row-major matrix A (n x n) on input; L and D packed on
+///                 output.
 /// @param n        Matrix dimension.
-/// @param ldlt     Output: L and D packed in one n x n buffer.
 /// @param permutation Output: permutation vector of length n.
 /// @param status   Output: 1 on success, 0 on singular pivot (only when
 ///                 @p check_status != 0).
 /// @param check_status  When non-zero, enable pivot-value checks and status
 ///                      reporting; when zero, skip them for lower latency.
-__global__ void factorize_symmetric_pivoted_ldlt_kernel(const float *__restrict__ A, int n,
-                                                        float *__restrict__ ldlt,
+__global__ void factorize_symmetric_pivoted_ldlt_kernel(float *__restrict__ ldlt, int n,
                                                         int *__restrict__ permutation,
                                                         int *__restrict__ status,
                                                         int check_status) {
-  if (blockIdx.x != 0) {
-    return;
-  }
-
   const int tid = threadIdx.x;
   const int block_size = blockDim.x;
   const int warp_id = tid / kWarpSize;
@@ -122,10 +118,7 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(const float *__restrict_
     factorization_ok = 1;
   }
 
-  // Copy A -> ldlt and initialize the identity permutation.
-  for (int idx = tid; idx < n * n; idx += block_size) {
-    ldlt[idx] = A[idx];
-  }
+  // The identity permutation.
   for (int i = tid; i < n; i += block_size) {
     permutation[i] = i;
   }
@@ -236,34 +229,28 @@ __global__ void factorize_symmetric_pivoted_ldlt_kernel(const float *__restrict_
 ///
 /// Given the factored form P^T A P = L D L^T from the factorization kernel,
 /// this kernel performs:
-///   1. Permute the RHS:  permuted_rhs = P * rhs.
-///   2. Forward substitution:  L * y = permuted_rhs  (L has unit diagonal).
-///   3. Diagonal solve:  D * z = y  (when @p check_status != 0, checks for
+///   1. Forward substitution:  L * y = P * rhs  (L has unit diagonal).
+///   2. Diagonal solve:  D * z = y  (when @p check_status != 0, checks for
 ///      zero diagonals and sets *status = 0 / returns early).
-///   4. Backward substitution:  L^T * x_p = z.
-///   5. Un-permute:  solution[permutation[i]] = x_p[i].
+///   3. Backward substitution:  L^T * x_p = z.
+///   4. Un-permute:  solution[permutation[i]] = x_p[i].
 ///
 /// @param ldlt        Factored matrix (L and D packed, n x n, row-major).
 /// @param permutation Pivot permutation vector of length n.
 /// @param rhs         Right-hand side vector of length n.
 /// @param n           System dimension.
-/// @param permuted_rhs     Scratch buffer of length n.
-/// @param intermediate     Scratch buffer of length n (y, then z).
-/// @param permuted_sol     Scratch buffer of length n (x_p).
+/// @param intermediate     Scratch buffer of length n (y, then z, then x_p).
 /// @param solution         Output solution vector of length n.
 /// @param status           Output: 1 on success, 0 on zero diagonal (only
 ///                         when @p check_status != 0).
 /// @param check_status  When non-zero, enable diagonal checks and status
 ///                      reporting; when zero, skip them for lower latency.
-__global__ void solve_from_pivoted_ldlt_kernel(
-    const float *__restrict__ ldlt, const int *__restrict__ permutation,
-    const float *__restrict__ rhs, int n, float *__restrict__ permuted_rhs,
-    float *__restrict__ intermediate, float *__restrict__ permuted_sol,
-    float *__restrict__ solution, int *__restrict__ status, int check_status) {
-  if (blockIdx.x != 0) {
-    return;
-  }
-
+__global__ void solve_from_pivoted_ldlt_kernel(const float *__restrict__ ldlt,
+                                               const int *__restrict__ permutation,
+                                               const float *__restrict__ rhs, int n,
+                                               float *__restrict__ intermediate,
+                                               float *__restrict__ solution,
+                                               int *__restrict__ status, int check_status) {
   const int tid = threadIdx.x;
   const int block_size = blockDim.x;
   const int warp_id = tid / kWarpSize;
@@ -278,13 +265,7 @@ __global__ void solve_from_pivoted_ldlt_kernel(
   }
   __syncthreads();
 
-  // Step 1: permute the RHS.
-  for (int i = tid; i < n; i += block_size) {
-    permuted_rhs[i] = rhs[permutation[i]];
-  }
-  __syncthreads();
-
-  // Step 2: forward substitution  L y = P b.
+  // Step 1: forward substitution  L y = P b.
   for (int i = 0; i < n; ++i) {
     float partial = 0.0f;
     for (int j = tid; j < i; j += block_size) {
@@ -299,13 +280,13 @@ __global__ void solve_from_pivoted_ldlt_kernel(
       float s = (lane < num_warps) ? warp_sums[lane] : 0.0f;
       s = WarpReduceSum(s);
       if (lane == 0) {
-        intermediate[i] = permuted_rhs[i] - s;
+        intermediate[i] = rhs[permutation[i]] - s;
       }
     }
     __syncthreads();
   }
 
-  // Step 3: diagonal solve  D z = y.
+  // Step 2: diagonal solve  D z = y.
   if (check_status) {
     for (int i = tid; i < n; i += block_size) {
       if (fabsf(ldlt[i * n + i]) <= kDiagonalEpsilonAbs) {
@@ -326,11 +307,11 @@ __global__ void solve_from_pivoted_ldlt_kernel(
   }
   __syncthreads();
 
-  // Step 4: backward substitution  L^T x_p = z.
+  // Step 3: backward substitution  L^T x_p = z, in place: entries after i hold x_p.
   for (int i = n - 1; i >= 0; --i) {
     float partial = 0.0f;
     for (int j = i + 1 + tid; j < n; j += block_size) {
-      partial += ldlt[j * n + i] * permuted_sol[j];
+      partial += ldlt[j * n + i] * intermediate[j];
     }
     partial = WarpReduceSum(partial);
     if (lane == 0) {
@@ -341,23 +322,21 @@ __global__ void solve_from_pivoted_ldlt_kernel(
       float s = (lane < num_warps) ? warp_sums[lane] : 0.0f;
       s = WarpReduceSum(s);
       if (lane == 0) {
-        permuted_sol[i] = intermediate[i] - s;
+        intermediate[i] -= s;
       }
     }
     __syncthreads();
   }
 
-  // Step 5: un-permute to obtain the solution in the original ordering.
+  // Step 4: un-permute to obtain the solution in the original ordering.
   for (int i = tid; i < n; i += block_size) {
-    solution[permutation[i]] = permuted_sol[i];
+    solution[permutation[i]] = intermediate[i];
   }
 
   if (check_status && tid == 0) {
     *status = 1;
   }
 }
-
-}  // namespace
 
 // ---------------------------------------------------------------------------
 // Host-side launcher functions
@@ -370,16 +349,15 @@ __global__ void solve_from_pivoted_ldlt_kernel(
 ///                @p check_status is true.
 /// @param check_status  When true, the kernel checks pivots for near-zero
 ///                      values and reports status; when false, skips checks.
-void FactorizeSymmetricPivotedLDLT(cudaStream_t stream, const float *dense_symmetric_matrix, int n,
-                                   float *ldlt_factor, int *permutation, int *status,
-                                   bool check_status) {
+void FactorizeSymmetricPivotedLDLT(cudaStream_t stream, float *matrix, int n, int *permutation,
+                                   int *status, bool check_status) {
   if (n == 0) {
     return;
   }
 
   const int threads = SelectBlockSize(n);
-  factorize_symmetric_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(
-      dense_symmetric_matrix, n, ldlt_factor, permutation, status, check_status ? 1 : 0);
+  factorize_symmetric_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(matrix, n, permutation, status,
+                                                                     check_status ? 1 : 0);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -391,18 +369,19 @@ void FactorizeSymmetricPivotedLDLT(cudaStream_t stream, const float *dense_symme
 /// @param check_status  When true, the kernel checks diagonal elements and
 ///                      reports status; when false, skips checks.
 void SolveFromPivotedLDLT(cudaStream_t stream, const float *ldlt_factor, const int *permutation,
-                          const float *rhs, int n, float *permuted_rhs,
-                          float *intermediate_solution, float *permuted_solution, float *solution,
+                          const float *rhs, int n, float *intermediate_solution, float *solution,
                           int *status, bool check_status) {
   if (n == 0) {
     return;
   }
   const int threads = SelectBlockSize(n);
-  solve_from_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(
-      ldlt_factor, permutation, rhs, n, permuted_rhs, intermediate_solution, permuted_solution,
-      solution, status, check_status ? 1 : 0);
+  solve_from_pivoted_ldlt_kernel<<<1, threads, 0, stream>>>(ldlt_factor, permutation, rhs, n,
+                                                            intermediate_solution, solution, status,
+                                                            check_status ? 1 : 0);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // DenseLDLTSolver public API
@@ -410,12 +389,11 @@ void SolveFromPivotedLDLT(cudaStream_t stream, const float *ldlt_factor, const i
 
 bool DenseLDLTSolver::FactorizeAndSolve(cudaStream_t stream, int n, const dvector<float> &rhs,
                                         dvector<float> &result) {
-  FactorizeSymmetricPivotedLDLT(stream, dense_matrix_.data(), n, ldlt_factor_.data(),
-                                permutation_.data(), status_.data(), safety_checks_enabled_);
+  FactorizeSymmetricPivotedLDLT(stream, dense_matrix_.data(), n, permutation_.data(),
+                                status_.data(), safety_checks_enabled_);
 
-  SolveFromPivotedLDLT(stream, ldlt_factor_.data(), permutation_.data(), rhs.data(), n,
-                       permuted_rhs_.data(), intermediate_solution_.data(),
-                       permuted_solution_.data(), result.data(), status_.data() + 1,
+  SolveFromPivotedLDLT(stream, dense_matrix_.data(), permutation_.data(), rhs.data(), n,
+                       intermediate_solution_.data(), result.data(), status_.data() + 1,
                        safety_checks_enabled_);
 
   if (safety_checks_enabled_) {
@@ -441,18 +419,8 @@ bool DenseLDLTSolver::FactorizeAndSolve(cudaStream_t stream, int n, const dvecto
 // ---------------------------------------------------------------------------
 
 void DenseLDLTSolver::EnsureBuffersSize(cudaStream_t /*stream*/, size_t n) {
-  const size_t matrix_elements = n * n;
-  if (ldlt_factor_.size() != matrix_elements) {
-    ldlt_factor_.resize(matrix_elements);
-  }
   if (permutation_.size() != n) {
     permutation_.resize(n);
-  }
-  if (permuted_rhs_.size() != n) {
-    permuted_rhs_.resize(n);
-  }
-  if (permuted_solution_.size() != n) {
-    permuted_solution_.resize(n);
   }
   if (intermediate_solution_.size() != n) {
     intermediate_solution_.resize(n);

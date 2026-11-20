@@ -76,8 +76,6 @@ class Similarity3PriorFactorBatch : public SizedFactorBatch<7, 7> {
                 size_t num_factor_ids = 0) const final;
 
  private:
-  Similarity3PriorFactorBatch() = default;
-
   const Matrix<4> *observations_ptr_;
   mutable DeviceVector<Matrix<4>> transforms_error_;
 };

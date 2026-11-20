@@ -36,8 +36,6 @@ constexpr size_t kSE2TangentStride = 3;
 /**
  * @brief Fused kernel: collect L/R SE(2), compute T_left^{-1} * T_right * Delta
  *        in one pass. SE(2) structure: last row [0 0 1].
- *
- * Replaces: collect + InverseSE2 + 2x cuBLAS 3x3 GEMM.
  */
 __global__ void collect_and_compute_se2_between_error_kernel(float const *const *state_pointers,
                                                              const Matrix<3> *deltas,
@@ -72,8 +70,7 @@ __global__ void collect_and_compute_se2_between_error_kernel(float const *const 
   const float t11 = -ls * r01 + lc * r11;
   const float t12 = -ls * r02 + lc * r12 + i12;
 
-  // error = D * temp (row-major: D_row * temp_row)
-  // cuBLAS col-major: C_col = A_col * B_col => C_row = B_row * A_row = D * temp
+  // error = D * temp (row-major)
   const float d00 = D[0], d01 = D[1], d02 = D[2];
   const float d10 = D[3], d11 = D[4], d12 = D[5];
   out[0] = d00 * t00 + d01 * t10;

@@ -76,8 +76,6 @@ class SE2PriorFactorBatch : public SizedFactorBatch<3, 3> {
                 size_t num_factor_ids = 0) const final;
 
  private:
-  SE2PriorFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing target transforms.
   const Matrix<3> *observations_ptr_;
 

@@ -183,25 +183,17 @@ def _bundle(num_poses=6, num_points=200, seed=0):
 
 
 class TestSchurComplement:
-    """LinearSystemType.SchurComplement reaches the assembled system's minimum."""
+    """LinearSystemType.SchurComplement through the bindings (C++ compares it with the assembled
+    system)."""
 
-    def test_matches_assembled(self, stream):
-        costs = []
-        for system in (pycunls.LinearSystemType.Assembled,
-                       pycunls.LinearSystemType.SchurComplement):
-            problem, points, _buffers = _bundle()
-            problem.set_eliminated_state_batches([points])
-            options = pycunls.LevenbergMarquardtMinimizerOptions()
-            options.base_options.max_num_iterations = 30
-            options.base_options.linear_system = system
-            # The exact reference for Assembled; SchurComplement has its own solver.
-            options.base_options.sparse_linear_solver_type = (
-                pycunls.SparseLinearSolverType.DenseCholesky)
-            summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
-            wp.synchronize()
-            assert summary.final_cost < 1e-3 * summary.initial_cost
-            costs.append(summary.final_cost)
-        assert costs[1] == pytest.approx(costs[0], rel=1e-2, abs=1e-6)
+    def test_solves_a_bundle(self, stream):
+        problem, points, _buffers = _bundle()
+        problem.set_eliminated_state_batches([points])
+        options = pycunls.LevenbergMarquardtMinimizerOptions()
+        options.base_options.max_num_iterations = 30
+        options.base_options.linear_system = pycunls.LinearSystemType.SchurComplement
+        summary = pycunls.LevenbergMarquardtMinimizer(options).minimize(stream, problem)
+        assert summary.converged() and summary.final_cost < 1e-3 * summary.initial_cost
 
     def test_requires_eliminated_batches(self, stream):
         problem, _points, _buffers = _bundle()

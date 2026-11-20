@@ -180,11 +180,30 @@ with the host unless safety checks are on:
    :math:`L_D`, :math:`B L_D^{-T}` and, from the last row, the panel's step of
    the forward substitution :math:`z = L^{-1} b` at no extra cost. A second
    launch applies each panel's update :math:`L_B L_B^T` to the panels it
-   targets, one CTA per 64 x 64 tile; atomics are used only on levels where two
-   panels update the same target.
+   targets, one CTA per 64 x 64 tile, as reductions (atomic adds), so panels of
+   a level may share a target.
 3. **Backward substitution**, levels in reverse: each CTA multiplies its rows'
    :math:`L_B^T` by the solution below, and the last CTA of a panel solves the
-   diagonal block.
+   diagonal block. A panel without rows below it (a root of the elimination
+   tree, e.g. a whole small subproblem) needs nothing from other panels, so its
+   factor kernel solves it backward right away, and it has no backward step.
+
+The analysis compiles these steps into a fixed list of kernel launches (which
+panels take warps, which panels have a backward step); every solve replays
+it, each kernel starting its prologue while its predecessor finishes (on GPUs
+with programmatic dependent launch, compute capability 9.0 and newer).
+
+**Small panels.** A level with at least 256 panels of at most 32 rows (diagonal
+block plus the rows below it) gives each of them one warp instead of a CTA, in
+all three steps: a lane holds one row of the stacked panel in registers, pivots
+and multipliers move by warp shuffles, and the lanes of the diagonal block hold
+the panel's part of the right-hand side. This is the shape of batches of many small
+independent subproblems (inverse kinematics of a batch of robots, many small
+pose graphs) and of the leaves of chains and grids, where a CTA per panel would
+leave most of its threads idle. With fewer such panels, a level keeps the CTA
+kernels, which finish them in about one wave with less latency per panel. A
+batch of single-block subproblems (roots) takes one kernel per solve, with
+warps or with CTAs.
 
 The cost of a level is mostly latency for small problems (each level is two
 dependent launches) and throughput for large ones, so the number of levels

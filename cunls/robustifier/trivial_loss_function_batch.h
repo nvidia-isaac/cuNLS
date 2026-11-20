@@ -17,8 +17,9 @@
 
 #pragma once
 
-#include "cunls/robustifier/loss_function_batch.h"
 #include <cuda_runtime.h>
+
+#include "cunls/robustifier/loss_function_batch.h"
 
 namespace cunls {
 
@@ -30,12 +31,11 @@ namespace cunls {
  * outlier down-weighting.
  */
 class TrivialLossFunctionBatch : public LossFunctionBatch {
-public:
+ public:
   /**
    * @brief Evaluates the identity loss for a batch of squared residuals.
    * @copydetails LossFunctionBatch::Evaluate
    */
-  bool Evaluate(float *s, float3 *out, int num_losses,
-                cudaStream_t stream) const override;
+  void Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
 };
-} // namespace cunls
+}  // namespace cunls

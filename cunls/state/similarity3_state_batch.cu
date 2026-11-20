@@ -25,8 +25,7 @@ namespace {
 
 constexpr int kBlockSize = 256;
 
-/** Fused Sim(3) Exp + row-major multiply: result = x * Exp(xi), layout matches
- *  exp_sim3_kernel + former strided batched GEMM. */
+/** Fused Sim(3) Exp + row-major multiply: result = x * Exp(xi) (4x4 row-major). */
 __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
                                                const float *__restrict__ delta,
                                                float *__restrict__ result, int n) {
@@ -42,8 +41,8 @@ __global__ void sim3_apply_update_fused_kernel(const float *__restrict__ x,
 
   const float theta2 = w1 * w1 + w2 * w2 + w3 * w3;
 
-  // The coefficients of ComputeExpSim3: float32-safe at small angles and
-  // small log-scales, where the closed forms cancel.
+  // The Sim(3) exponential coefficients (shared with ComputeLogSim3): float32-safe at small angles
+  // and small log-scales, where the closed forms cancel.
   float A1, A2, P_c, Q_c, R_c;
   lie_device::Sim3VCoefficients(theta2, lambda, &A1, &A2, &P_c, &Q_c, &R_c);
 

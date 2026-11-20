@@ -45,6 +45,7 @@ import numpy as np
 import warp as wp
 
 from pycunls import _pycunls_core as _core
+from pycunls._vectors import NUMBERED
 from pycunls._arrays import to_device, to_numpy
 from pycunls.catalog import factor_info, state_info
 from pycunls.diagnostics import diagnose, evaluate
@@ -63,7 +64,7 @@ _AL_OPTIONS = ("constraint_tolerance", "max_outer_iterations", "inner_iterations
 
 def _resolve(cls_or_name, base, kind: str):
     if isinstance(cls_or_name, str):
-        cls = getattr(_core, cls_or_name, None)
+        cls = getattr(_core, cls_or_name, None) or NUMBERED.get(cls_or_name)
         if cls is None:
             raise ValueError(f"unknown {kind} class {cls_or_name!r}; see pycunls.catalog('{kind}')")
         return cls
@@ -90,8 +91,6 @@ class StateHandle:
     batch: Any
     data: wp.array
     index: int
-    constant_ids: Optional[wp.array] = None
-    bounds: Optional[Tuple[wp.array, wp.array]] = None
 
     @property
     def count(self) -> int:
@@ -125,7 +124,6 @@ class FactorHandle:
     measurements: List[wp.array]
     connectivity: np.ndarray
     index: int
-    loss: Any = None
 
     def set_measurements(self, *arrays) -> None:
         """Overwrites the measurement arrays (same shapes) before solving again."""
@@ -201,7 +199,7 @@ class ProblemBuilder:
         Args:
             state_class: A state batch class or its name, e.g. ``pycunls.SE3StateBatch``.
             initial: Initial values, ``(N, ...)`` with ``ambient_size`` floats per state (SE3:
-                ``(N, 4, 4)`` row-major ``world_from_body``; VectorStateBatch3: ``(N, 3)``).
+                ``(N, 4, 4)`` row-major ``world_from_body``; VectorStateBatch: ``(N, dim)``).
             constant: Indices of states held fixed (e.g. ``[0]`` to fix the gauge).
             bounds: Vector states only: ``(lower, upper)`` per component, scalars or arrays
                 broadcastable to ``(N, dim)``; then the solve uses the augmented Lagrangian.
@@ -213,7 +211,7 @@ class ProblemBuilder:
         data = _float32(initial, "initial")
         info = state_info(cls.__name__)
         n = data.shape[0] if data.ndim else 0
-        if info is not None and data.size != n * info.ambient:
+        if info is not None and info.ambient and data.size != n * info.ambient:
             raise ValueError(f"{cls.__name__} stores {info.ambient} floats per state "
                              f"({info.layout}); initial has shape {data.shape}, i.e. "
                              f"{data.size / max(n, 1):g} per state")
@@ -223,15 +221,18 @@ class ProblemBuilder:
             if int(ids.max()) >= n or int(ids.min()) < 0:
                 raise ValueError(f"constant ids must be in [0, {n}); got {constant}")
             const_ids = wp.array(ids, dtype=wp.int32, device=data.device)
-            batch = cls(data, n, const_ids, const_ids.size)
+        # A vector state's size is what initial holds per state ((N,) holds scalars).
+        size = {"dim": data.size // n} if issubclass(cls, _core.VectorStateBatch) and n else {}
+        if const_ids is not None:
+            batch = cls(data, n, const_ids, const_ids.size, **size)
             batch.set_num_active_states(n, const_ids.size)
         else:
-            batch = cls(data, n)
+            batch = cls(data, n, **size)
             batch.set_num_active_states(n)
-        handle = StateHandle(batch, data, len(self.state_handles), const_ids)
+        handle = StateHandle(batch, data, len(self.state_handles))
         if bounds is not None:
             if not hasattr(batch, "set_bounds"):
-                raise TypeError(f"{cls.__name__} has no bounds; only VectorStateBatchN does")
+                raise TypeError(f"{cls.__name__} has no bounds; only VectorStateBatch does")
             dim = batch.tangent_size
             def bound(b, name):
                 b = to_numpy(b, np.float32, name, "ProblemBuilder")
@@ -239,7 +240,6 @@ class ProblemBuilder:
 
             lo, hi = bound(bounds[0], "lower"), bound(bounds[1], "upper")
             batch.set_bounds(lo, hi)
-            handle.bounds = (lo, hi)
         self.problem.add_state_batch(batch)
         self.state_handles.append(handle)
         self._structure_changed()
@@ -296,7 +296,7 @@ class ProblemBuilder:
         table = wp.array(np.ascontiguousarray(columns.reshape(-1)), dtype=wp.int32,
                          device=wp.get_cuda_device())
         self.problem.add_factor_batch(batch, [h.batch for h in handles], table, loss)
-        handle = FactorHandle(batch, arrays, columns, len(self.factor_handles), loss)
+        handle = FactorHandle(batch, arrays, columns, len(self.factor_handles))
         self.factor_handles.append(handle)
         self._structure_changed()
         return handle
@@ -329,28 +329,6 @@ class ProblemBuilder:
                         "(handle, indices[M]) pairs, one per state slot")
 
     # -- solve -------------------------------------------------------------------------------------
-
-    @staticmethod
-    def _make_solver(method: str, constrained: bool, options: dict):
-        """(minimizer, augmented Lagrangian wrapper or None) for these options."""
-        base = _make_solver_options(options)
-        if method == "lm":
-            lm = _core.LevenbergMarquardtMinimizerOptions()
-            lm.base_options = base
-            for key in _LM_OPTIONS:
-                if key in options:
-                    setattr(lm, key, options[key])
-            minimizer = _core.LevenbergMarquardtMinimizer(lm)
-        else:
-            minimizer = _core.GaussNewtonMinimizer(base)
-        if not constrained:
-            return minimizer, None
-        al = _core.AugmentedLagrangianMinimizerOptions()
-        for key in _AL_OPTIONS:
-            if key in options:
-                setattr(al, key, options[key])
-        al.reuse_structure = True  # warm_start stays off: every solve starts from zero multipliers
-        return minimizer, _core.AugmentedLagrangianMinimizer(minimizer, al)
 
     def diagnose(self):
         """:func:`pycunls.diagnose` on the built problem."""
@@ -400,15 +378,16 @@ class ProblemBuilder:
             raise ValueError(f"method must be 'lm' or 'gn', got {method!r}")
         if method == "gn" and any(k in options for k in _LM_OPTIONS):
             raise ValueError("Levenberg-Marquardt options given with method='gn'")
-        constrained = any(h.bounds is not None for h in self.state_handles) or any(
-            isinstance(f.batch, _core.ConstraintFactorBatchBase) for f in self.factor_handles)
+        constrained = (any(getattr(h.batch, "has_bounds", False) for h in self.state_handles) or
+                       any(isinstance(f.batch, _core.ConstraintFactorBatchBase)
+                           for f in self.factor_handles))
         if not constrained and any(k in options for k in _AL_OPTIONS):
             raise ValueError("augmented Lagrangian options given for a problem without "
                              "bounds or constraint factors")
         reuse = options.pop("reuse_structure", None)
         key = (method, constrained, tuple(sorted((k, repr(v)) for k, v in options.items())))
         if self._solver is None or self._solver[0] != key or reuse is False:
-            self._solver = (key,) + self._make_solver(method, constrained, options)
+            self._solver = (key,) + make_solver(method, constrained, options)
         _, minimizer, al = self._solver
         # Uploads and StateHandle.set() run on Warp's stream; the solve on self.stream (and
         # minimize() synchronizes it before returning).
@@ -419,6 +398,29 @@ class ProblemBuilder:
             summary = minimizer.minimize(self.stream, self.problem)
         self._solved_once = True
         return SolveResult(summary, bool(summary.converged()), summary.message, self)
+
+
+def make_solver(method: str, constrained: bool, options: dict):
+    """(minimizer, augmented Lagrangian wrapper or None) for ``method`` ("lm" or "gn") and the
+    solver ``options`` by name (as :meth:`ProblemBuilder.solve` takes them)."""
+    base = _make_solver_options(options)
+    if method == "lm":
+        lm = _core.LevenbergMarquardtMinimizerOptions()
+        lm.base_options = base
+        for key in _LM_OPTIONS:
+            if key in options:
+                setattr(lm, key, options[key])
+        minimizer = _core.LevenbergMarquardtMinimizer(lm)
+    else:
+        minimizer = _core.GaussNewtonMinimizer(base)
+    if not constrained:
+        return minimizer, None
+    al = _core.AugmentedLagrangianMinimizerOptions()
+    for key in _AL_OPTIONS:
+        if key in options:
+            setattr(al, key, options[key])
+    al.reuse_structure = True  # warm_start stays off: every solve starts from zero multipliers
+    return minimizer, _core.AugmentedLagrangianMinimizer(minimizer, al)
 
 
 def _make_solver_options(options):
@@ -435,14 +437,19 @@ def _make_solver_options(options):
 def _check_slot(factor: str, slot: int, size: int, handle: StateHandle,
                 expected: Optional[str]) -> None:
     """A state batch fits a factor slot: the catalog's state class for built-in factors (or a
-    subclass of it); a custom state batch needs the expected ambient and tangent sizes; for
-    custom factors only the tangent size can be checked."""
+    subclass of it; any vector state of the slot's size for a vector slot); a custom state batch
+    needs the expected ambient and tangent sizes; for custom factors only the tangent size can be
+    checked."""
     batch = handle.batch
     got = type(batch).__name__
-    expected_cls = getattr(_core, expected, None) if expected else None
-    if expected_cls is not None and isinstance(batch, expected_cls):
+    vector = bool(expected) and expected.startswith("VectorStateBatch")
+    expected_cls = (_core.VectorStateBatch if vector else
+                    getattr(_core, expected, None) if expected else None)
+    if (expected_cls is not None and isinstance(batch, expected_cls) and
+            batch.tangent_size == size):
         return
-    if expected_cls is not None and state_info(got) is not None:
+    if (expected_cls is not None and state_info(got) is not None and
+            not isinstance(batch, expected_cls)):
         raise ValueError(f"slot {slot} of {factor} needs a {expected}, got a {got}: the factor "
                          f"reads the state layout of {expected} ({state_info(expected).layout}). "
                          f"Fix: add the states as pycunls.{expected}.")
@@ -451,7 +458,7 @@ def _check_slot(factor: str, slot: int, size: int, handle: StateHandle,
         raise ValueError(f"slot {slot} of {factor} needs a state with tangent size {size}{hint}; "
                          f"{got} has {batch.tangent_size}")
     if expected_cls is not None:
-        ambient = state_info(expected).ambient
+        ambient = size if vector else state_info(expected).ambient
         if batch.ambient_size != ambient:
             raise ValueError(f"slot {slot} of {factor} needs the layout of {expected} ({ambient} "
                              f"floats per state); the custom {got} stores {batch.ambient_size}")

@@ -54,9 +54,6 @@ class HypothesisScorer {
   /** @brief Writes hypotheses.score() / inliers(); invalid hypotheses score +inf. */
   void Score(cudaStream_t stream, const RansacLayout &layout, SlotSet &hypotheses, uint64_t round);
 
-  int chunk() const { return chunk_; }
-  bool two_stage() const { return two_stage_; }
-
  private:
   /** Buffers of one kSampled residual batch. */
   struct Batch {

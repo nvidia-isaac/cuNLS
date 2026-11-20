@@ -192,6 +192,22 @@ def test_repeated_solves_keep_the_solver_until_something_changes():
     assert pb._solver is None  # structure changed
 
 
+def test_vector_states_of_any_size():
+    # The size comes from the arrays; a numbered factor takes any vector state of its size.
+    target = np.random.default_rng(3).uniform(-2, 2, (4, 13)).astype(np.float32)
+    pb = pycunls.ProblemBuilder()
+    x = pb.add_states(pycunls.VectorStateBatch, np.zeros((4, 13)), bounds=(-1.0, 1.0))
+    pb.add_factors(pycunls.PriorVectorFactorBatch, target, connect=(x, np.arange(4)))
+    with pytest.raises(ValueError, match="tangent size 3"):
+        pb.add_factors(pycunls.PriorVectorFactorBatch3, target[:, :3], connect=(x, np.arange(4)))
+    y = pb.add_states("VectorStateBatch", np.zeros((4, 3)))
+    pb.add_factors(pycunls.PriorVectorFactorBatch3, target[:, :3], connect=(y, np.arange(4)))
+    result = pb.solve()
+    assert result.converged
+    np.testing.assert_allclose(result[x], np.clip(target, -1, 1), atol=1e-3)
+    np.testing.assert_allclose(result[y], target[:, :3], atol=1e-4)
+
+
 def test_bounds_use_the_augmented_lagrangian_and_repeated_solves_reuse_it():
     pb = pycunls.ProblemBuilder()
     x = pb.add_states(pycunls.VectorStateBatch2, np.zeros((3, 2)), bounds=(-1.0, [1.0, 0.5]))

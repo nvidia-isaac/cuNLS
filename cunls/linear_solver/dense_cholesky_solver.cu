@@ -54,25 +54,10 @@ bool DenseCholeskySolver::FactorizeAndSolve(cudaStream_t stream, int n, const dv
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(result.data(), rhs.data(), n * sizeof(float),
                                       cudaMemcpyDeviceToDevice, stream));
 
+  // potrs reports only invalid arguments in devInfo (fixed here), so it is not read back.
   THROW_ON_CUSOLVER_ERROR(cusolverDnSpotrs(handle, CUBLAS_FILL_MODE_LOWER, n, 1,
                                            dense_matrix_.data(), n, result.data(), n,
                                            dev_info_.data()));
-
-  if (safety_checks_enabled_) {
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(dev_info_pinned_.data(), dev_info_.data(), sizeof(int),
-                                        cudaMemcpyDeviceToHost, stream));
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-
-    if (dev_info_pinned_[0] < 0) {
-      LogError("cusolverDnSpotrs reported invalid parameter at index {}.", -dev_info_pinned_[0]);
-      return false;
-    }
-    if (dev_info_pinned_[0] > 0) {
-      LogError("cusolverDnSpotrs failed (devInfo = {}).", dev_info_pinned_[0]);
-      return false;
-    }
-  }
-
   return true;
 }
 

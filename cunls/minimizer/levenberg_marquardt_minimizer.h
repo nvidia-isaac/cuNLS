@@ -19,9 +19,27 @@
 
 #include <cuda_runtime.h>
 
+#include <string>
+
 #include "cunls/minimizer/minimizer.h"
 
 namespace cunls {
+
+namespace internal {
+
+/**
+ * @brief Checks the damping options of LevenbergMarquardtMinimizer and
+ * RansacLevenbergMarquardtMinimizer (internal).
+ *
+ * @param where The constructor the message names.
+ * @throws std::invalid_argument naming the option and the fix unless
+ *         0 < lambda_min <= lambda_max, 0 <= initial_lambda <= lambda_max,
+ *         lambda_upscale > 1 and 0 < lambda_downscale <= 1.
+ */
+void ValidateDamping(const std::string &where, float initial_lambda, float lambda_min,
+                     float lambda_max, float lambda_upscale, float lambda_downscale);
+
+}  // namespace internal
 
 /**
  * @brief Options of LevenbergMarquardtMinimizer: the common MinimizerOptions
@@ -35,8 +53,8 @@ struct LevenbergMarquardtMinimizerOptions {
    * @brief Initial value for the damping factor lambda.
    *
    * Controls the initial regularization strength. Higher values make the
-   * algorithm more conservative (closer to gradient descent). Must be
-   * <= lambda_max; 0 (Gauss-Newton steps) is allowed.
+   * algorithm more conservative (closer to gradient descent). Must be in
+   * [0, lambda_max]; 0 (Gauss-Newton steps) is allowed.
    * Default: 1e-3
    */
   float initial_lambda = 1e-3;
@@ -64,7 +82,8 @@ struct LevenbergMarquardtMinimizerOptions {
   float lambda_upscale = 2.0f;
 
   /**
-   * @brief Factor by which lambda is decreased when a step is accepted.
+   * @brief Factor by which lambda is decreased when a step is accepted; must
+   * be in (0, 1].
    *
    * When a step is very successful (rho > lambda_downscale_threshold), lambda
    * is multiplied by this factor to make the next step more aggressive
@@ -157,8 +176,8 @@ class LevenbergMarquardtMinimizer : public Minimizer {
    * lambda_max.
    *
    * @throws std::invalid_argument unless 0 < lambda_min <= lambda_max,
-   *         initial_lambda <= lambda_max, lambda_upscale > 1 and
-   *         min_diagonal >= 0.
+   *         0 <= initial_lambda <= lambda_max, lambda_upscale > 1,
+   *         0 < lambda_downscale <= 1 and min_diagonal >= 0.
    */
   explicit LevenbergMarquardtMinimizer(
       const LevenbergMarquardtMinimizerOptions &options = LevenbergMarquardtMinimizerOptions());

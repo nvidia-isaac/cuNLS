@@ -20,9 +20,12 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
+#include "cunls/common/types.h"
 #include "cunls/factor/factor_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
 
@@ -65,8 +68,8 @@ inline size_t ResidualBatchWorkspaceSizeBytes(size_t num_residuals) {
  * @brief Same scratch as `ResidualBatchWorkspaceSizeBytes`, expressed in
  * `float` elements (rounded up).
  *
- * Use this when sub-allocating inside a larger `float` arena (e.g. GaussNewton
- * `buffer_`).
+ * Use this when sub-allocating inside a larger `float` arena (e.g.
+ * EvaluateFactorCosts' buffer).
  */
 inline size_t ResidualBatchWorkspaceNumFloats(size_t num_residuals) {
   return (ResidualBatchWorkspaceSizeBytes(num_residuals) + sizeof(float) - 1u) / sizeof(float);
@@ -103,7 +106,7 @@ class ResidualBatch {
    * bytes (or `ResidualBatchWorkspaceNumFloats(NumActiveFactors())` floats in a
    * `float` arena); layout: the first `NumActiveFactors()` floats hold per-factor
    * squared L2 norms, then aligned `float3` rho values written by the loss
-   * batch.
+   * batch (unused without a loss function).
    * @param residuals Device array of length `NumActiveFactors() * ResidualsSize()`,
    * row-major packed residual vectors (one block of length `ResidualsSize()`
    * per factor). Written by the factor batch, then scaled in place when a
@@ -141,8 +144,8 @@ class ResidualBatch {
    * callers that compute raw residuals/Jacobians through a path other than
    * this class's `Evaluate` (e.g. numeric-diff Jacobians, which call
    * `FactorBatch::Evaluate` directly) can still apply the exact same loss
-   * handling `Evaluate` would have applied. No-op work beyond the trivial
-   * squared-error/cost bookkeeping when `GetLossFunction() == nullptr`.
+   * handling `Evaluate` would have applied. Without a loss function
+   * (`GetLossFunction() == nullptr`) only the cost is written, if requested.
    *
    * @param stream CUDA stream used for all kernels launched by this call.
    * @param workspace Device scratch; same sizing contract as `Evaluate`'s
@@ -182,4 +185,26 @@ class ResidualBatch {
   FactorBatch *factor_batch_ = nullptr;         ///< Factor batch.
   LossFunctionBatch *loss_function_ = nullptr;  ///< Optional loss function batch.
 };
+
+/**
+ * @brief Evaluates the per-factor costs ½ ρ(‖r‖²) of several residual batches
+ * into one buffer (no Jacobians; asynchronous on `stream`).
+ *
+ * Residual batch i is evaluated when `state_pointers(i)` is not null; its
+ * NumActiveFactors() costs follow those of the evaluated batches before it at
+ * the front of `buffer`, which is grown as needed and also holds the residuals
+ * and the loss workspace behind the costs.
+ *
+ * @param stream CUDA stream.
+ * @param residual_batches The batches, e.g. Problem::GetResidualBatches().
+ * @param state_pointers Device state-pointer table of batch i (FactorBatch::Evaluate),
+ *        or nullptr to skip the batch.
+ * @param[in,out] buffer Scratch; on return its first floats are the costs.
+ * @return Number of costs written.
+ * @throws std::runtime_error if an evaluation fails (CheckEvaluate).
+ */
+size_t EvaluateFactorCosts(cudaStream_t stream, const std::vector<ResidualBatch> &residual_batches,
+                           const std::function<float const *const *(size_t)> &state_pointers,
+                           dvector<float> &buffer);
+
 }  // namespace cunls

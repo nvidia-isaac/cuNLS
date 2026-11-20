@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 
@@ -49,47 +50,14 @@ const char *cublasGetErrorString(int status);
 #define WARN_ON_CUBLAS_ERROR(status) CHECK_CUDA_ERROR(status, cublasGetErrorString, false)
 
 /**
- * @brief RAII wrapper for cuBLAS handle management.
- *
- * This class manages the lifecycle of a cuBLAS handle, automatically
- * creating and destroying it as needed. The handle is associated with
- * a specific CUDA stream and will be recreated if the stream changes.
- *
- * Thread-safe: Each instance manages its own handle independently.
- * Non-copyable: Prevents accidental handle duplication.
+ * @brief The cuBLAS handle of a CUDA stream (see StreamBoundHandle): created on
+ * the first GetHandle(), rebound with cublasSetStream when the stream changes,
+ * destroyed with the object. Each instance owns its handle; non-copyable.
  */
-class cuBLASHandle {
+class cuBLASHandle : public StreamBoundHandle {
  public:
-  cuBLASHandle() = default;
-
-  cuBLASHandle(const cuBLASHandle &) = delete;
-  cuBLASHandle &operator=(const cuBLASHandle &) = delete;
-
-  /**
-   * @brief Destructor that releases the cuBLAS handle if initialized.
-   *
-   * Automatically destroys the cuBLAS handle if one was created.
-   * Uses WARN_ON_CUBLAS_ERROR to avoid throwing exceptions in destructor.
-   */
-  ~cuBLASHandle();
-
-  /**
-   * @brief Gets or creates a cuBLAS handle for the specified stream.
-   *
-   * Returns the existing handle if it's already associated with the
-   * requested stream. Otherwise, destroys the old handle (if any) and
-   * creates a new one for the specified stream.
-   *
-   * @param stream CUDA stream to associate the handle with (must not be
-   * nullptr)
-   * @return An opaque pointer to the cuBLAS handle associated with the stream.
-   * @throws std::invalid_argument if stream is nullptr
-   */
-  void *GetHandle(cudaStream_t stream);
-
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
-  void *handle_ = nullptr;         ///< The cuBLAS handle.
+  /** @brief No handle yet: the first GetHandle() creates a cublasHandle_t. */
+  cuBLASHandle();
 };
 
 }  // namespace cunls

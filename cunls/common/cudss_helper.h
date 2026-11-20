@@ -23,6 +23,7 @@
 #include <mutex>
 #include <vector>
 
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 
@@ -101,65 +102,27 @@ class cuDSSDeviceMemPool {
 };
 
 /**
- * @brief C callback wrapper for cuDSS device allocation.
- */
-int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size, cudaStream_t stream);
-
-/**
- * @brief C callback wrapper for cuDSS device deallocation.
- */
-int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size, cudaStream_t stream);
-
-/**
- * @brief Installs a cuDSS memory handler backed by a custom pool.
+ * @brief Makes cuDSS allocate its device memory from @p pool for @p handle.
  *
- * @param handle Opaque cuDSS handle (cudssHandle_t).
- * @param pool Pool object that must outlive handle usage.
- * @param handler_name Optional allocator name shown by cuDSS.
+ * Call it once per handle, after the handle is created and before its first
+ * cuDSS phase; @p pool must outlive the handle (declare the pool before the
+ * cuDSSHandle).
+ *
+ * @param handle Opaque cuDSS handle (cudssHandle_t); nothing happens when null.
+ * @param pool The pool cuDSS allocates from.
  */
-void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool,
-                              const char *handler_name = "cunls device pool");
+void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool);
 
 /**
- * @brief Detaches the cuDSS memory handler from the given handle.
- *
- * @param handle Opaque cuDSS handle (cudssHandle_t).
+ * @brief The cuDSS handle of a CUDA stream (see StreamBoundHandle): created on
+ * the first GetHandle(), rebound with cudssSetStream when the stream changes
+ * (so a cuDSSData made with it stays valid), destroyed with the object. Each
+ * instance owns its handle; non-copyable.
  */
-void DetachcuDSSDeviceMemHandler(void *handle);
-
-/**
- * @brief RAII wrapper for cuDSS handle with stream management.
- *
- * This class manages the lifecycle of a cuDSS handle and associates it with
- * a CUDA stream. The handle is lazily initialized when GetHandle() is called
- * and automatically destroyed in the destructor.
- */
-class cuDSSHandle {
+class cuDSSHandle : public StreamBoundHandle {
  public:
-  cuDSSHandle() = default;
-
-  cuDSSHandle(const cuDSSHandle &) = delete;
-  cuDSSHandle &operator=(const cuDSSHandle &) = delete;
-
-  /** @brief Destructor that releases the cuDSS handle if initialized. */
-  ~cuDSSHandle();
-
-  /**
-   * @brief Gets or creates a cuDSS handle for the specified stream.
-   *
-   * If the handle is already associated with the given stream, returns it.
-   * If the stream differs from the current one, the old handle is destroyed
-   * and a new one is created for the new stream.
-   *
-   * @param stream The CUDA stream to associate with the handle.
-   * @return An opaque pointer to the cuDSS handle associated with the stream.
-   * @throws std::invalid_argument if stream is nullptr.
-   */
-  void *GetHandle(cudaStream_t stream);
-
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream.
-  void *handle_ = nullptr;         ///< The cuDSS handle.
+  /** @brief No handle yet: the first GetHandle() creates a cudssHandle_t. */
+  cuDSSHandle();
 };
 
 /**
@@ -234,7 +197,8 @@ class cuDSSConfig {
  * @brief RAII wrapper for cuDSS data object.
  *
  * This class manages a cuDSS data object that stores internal solver state
- * and working memory during the factorization and solve phases.
+ * and working memory during the factorization and solve phases. The handle it
+ * was made with must outlive it (declare the cuDSSData after the cuDSSHandle).
  */
 class cuDSSData {
  public:

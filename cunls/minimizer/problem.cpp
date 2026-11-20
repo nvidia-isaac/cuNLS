@@ -114,13 +114,17 @@ void Problem::AddFactorBatch(FactorBatch *factor_batch,
 void Problem::SetStatePointers(size_t residual_batch_index,
                                const std::vector<float *> &state_pointers) {
   if (residual_batch_index >= connectivity_.size()) {
-    throw std::out_of_range("Problem::SetStatePointers: residual batch index out of range");
+    throw std::out_of_range("Problem::SetStatePointers: residual batch index out of range (got " +
+                            std::to_string(residual_batch_index) + ", expected below " +
+                            std::to_string(connectivity_.size()) +
+                            "). Fix: pass the index AddFactorBatch gave the batch.");
   }
   Connectivity &c = connectivity_[residual_batch_index];
   if (c.kind != Connectivity::Kind::kHostList) {
     throw std::logic_error("Problem::SetStatePointers: residual batch " +
                            std::to_string(residual_batch_index) +
-                           " was registered with a device table; rewrite that table instead");
+                           " was registered with a device table (got a host pointer list). Fix: "
+                           "rewrite that device table instead.");
   }
   c.host = state_pointers;
   c.table.resize(std::max(c.table.size(), state_pointers.size()));
@@ -190,16 +194,6 @@ const std::vector<float *> &Problem::HostStatePointers(size_t residual_batch_ind
   return view;
 }
 
-const std::vector<std::vector<float *>> &Problem::GetStatePointers() const {
-  for (size_t i = 0; i < connectivity_.size(); ++i) {
-    const std::vector<float *> &view = HostStatePointers(i);
-    if (&view != &state_pointers_[i]) {
-      state_pointers_[i] = view;
-    }
-  }
-  return state_pointers_;
-}
-
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -245,6 +239,14 @@ std::string Problem::SizeError() const {
           << " exceeds Capacity() = " << factor_batch->Capacity()
           << "; custom factor batches must pass their capacity to the base constructor "
              "(SizedFactorBatch(capacity)).";
+      return err.str();
+    }
+    if (factor_batch->NumActiveFactors() > 0 && NumSlots(*factor_batch) == 0) {
+      // Its residuals would depend on no unknown: constant costs with nothing to solve for.
+      err << "Residual batch " << i
+          << ": the factors read no states (got 0 state slots, expected at least 1). Fix: give "
+             "the factor batch the states its residual depends on, or leave a constant cost out "
+             "of the problem.";
       return err.str();
     }
     active_factors += factor_batch->NumActiveFactors();
@@ -302,15 +304,6 @@ std::string Problem::SizeError() const {
            "num_const) before solving (Python: set_num_active_factors, set_num_active_states).";
   }
   return "";
-}
-
-bool Problem::CheckForValidInputs() const {
-  const std::string error = SizeError();
-  if (!error.empty()) {
-    LogError("{}", error);
-    return false;
-  }
-  return true;
 }
 
 void Problem::SetProblemPartition(size_t num_problems,
@@ -490,14 +483,8 @@ bool Problem::Validate(cudaStream_t stream) const {
   return false;
 }
 
-/**
- * @brief Validates the complete problem structure: the inputs on the host,
- * then the graph on the GPU (Validate), whatever the connectivity kind.
- */
 bool Problem::CheckConsistency() const {
-  if (!CheckForValidInputs()) {
-    return false;
-  }
+  // Validate checks the sizes on the host first (SizeError), then the graph on the GPU.
   CudaStream stream;
   return Validate(stream.GetStream());
 }

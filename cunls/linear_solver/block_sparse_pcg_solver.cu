@@ -96,6 +96,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/linear_solver/block_sparse_pcg_solver.h"
+#include "cunls/minimizer/bsr_matrix.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/state_batch.h"
 
@@ -178,231 +179,6 @@ __device__ __forceinline__ void GatherTileRowBSR(const int *__restrict__ row_off
   }
 }
 
-/**
- * @brief y = A * x for uniform block storage, one warp per block row.
- *
- * cuSPARSE's `cusparseSbsrmv` measured 3.6x slower than `csrmv_v3` on a
- * bundle-adjustment Hessian with 3x3 tiles, which would negate the point of
- * block storage, so the SpMV is written here.
- *
- * A warp per block row rather than a thread per row: bundle-adjustment Hessians
- * are wildly non-uniform -- a pose block row holds one tile per observation of
- * that camera (thousands) while a landmark row holds a handful -- so a
- * thread-per-row schedule leaves the few pose threads serializing for as long
- * as the whole kernel takes.  Lanes stride over the row's tiles instead, and a
- * butterfly reduction combines their partial `b`-vectors.
- *
- * @tparam kB Tile edge.
- */
-template <int kB>
-__global__ void BsrMultiplyWarpKernel(int num_block_rows, const int *__restrict__ row_offsets,
-                                      const int *__restrict__ col_ids,
-                                      const float *__restrict__ values, const float *__restrict__ x,
-                                      float *__restrict__ y) {
-  const int block_row = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
-  const int lane = threadIdx.x & 31;
-  if (block_row >= num_block_rows) {
-    return;
-  }
-
-  const int end = row_offsets[block_row + 1];
-  float acc[kB];
-#pragma unroll
-  for (int k = 0; k < kB; ++k) {
-    acc[k] = 0.f;
-  }
-
-  for (int t = row_offsets[block_row] + lane; t < end; t += 32) {
-    const float *tile = values + static_cast<size_t>(t) * kB * kB;
-    const float *xs = x + static_cast<size_t>(col_ids[t]) * kB;
-    float xv[kB];
-#pragma unroll
-    for (int l = 0; l < kB; ++l) {
-      xv[l] = xs[l];
-    }
-#pragma unroll
-    for (int k = 0; k < kB; ++k) {
-#pragma unroll
-      for (int l = 0; l < kB; ++l) {
-        acc[k] = fmaf(tile[k * kB + l], xv[l], acc[k]);
-      }
-    }
-  }
-
-  // Butterfly rather than shfl_down so every lane ends with the totals and the
-  // first kB lanes can write the output run coalesced.
-#pragma unroll
-  for (int k = 0; k < kB; ++k) {
-#pragma unroll
-    for (int offset = 16; offset > 0; offset >>= 1) {
-      acc[k] += __shfl_xor_sync(0xFFFFFFFFu, acc[k], offset);
-    }
-  }
-  if (lane < kB) {
-    y[block_row * kB + lane] = acc[lane];
-  }
-}
-
-/// Largest tile edge the generic BSR SpMV can accumulate per lane.
-/// Distinct from the preconditioner's block-size limit; this one is set by
-/// the fixed-size accumulator in BsrMultiplyWarpGenericKernel.
-constexpr int kMaxSpMVBlockSize = 16;
-
-/**
- * @brief Runtime-tile-edge fallback for block sizes without a specialization.
- *
- * Same schedule as BsrMultiplyWarpKernel, but the per-lane accumulator is a
- * fixed-size array, so the caller must reject edges above
- * kMaxSpMVBlockSize before dispatching here.
- */
-__global__ void BsrMultiplyWarpGenericKernel(int num_block_rows, int block_size,
-                                             const int *__restrict__ row_offsets,
-                                             const int *__restrict__ col_ids,
-                                             const float *__restrict__ values,
-                                             const float *__restrict__ x, float *__restrict__ y) {
-  const int block_row = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
-  const int lane = threadIdx.x & 31;
-  if (block_row >= num_block_rows) {
-    return;
-  }
-
-  const int b = block_size;
-  const int end = row_offsets[block_row + 1];
-  float acc[kMaxSpMVBlockSize];
-  for (int k = 0; k < b; ++k) {
-    acc[k] = 0.f;
-  }
-
-  for (int t = row_offsets[block_row] + lane; t < end; t += 32) {
-    const float *tile = values + static_cast<size_t>(t) * b * b;
-    const float *xs = x + static_cast<size_t>(col_ids[t]) * b;
-    for (int k = 0; k < b; ++k) {
-      float a = 0.f;
-      for (int l = 0; l < b; ++l) {
-        a = fmaf(tile[k * b + l], xs[l], a);
-      }
-      acc[k] += a;
-    }
-  }
-
-  for (int k = 0; k < b; ++k) {
-    for (int offset = 16; offset > 0; offset >>= 1) {
-      acc[k] += __shfl_xor_sync(0xFFFFFFFFu, acc[k], offset);
-    }
-  }
-  if (lane < b) {
-    y[block_row * b + lane] = acc[lane];
-  }
-}
-
-/**
- * @brief y = A * x, one thread per scalar row.
- *
- * The right schedule for near-uniform, short block rows -- a pose graph has a
- * handful of tiles per row, so a whole warp per row would leave most lanes idle
- * and pay for a reduction that spans mostly zeros.  Thread `i` walks row
- * `i % b` of every tile in block row `i / b`; the `b` consecutive threads
- * sharing a block row read each tile as one contiguous run and broadcast their
- * identical `col_ids` and `x` loads.
- *
- * @tparam kB Tile edge, or 0 to take it as a runtime argument.
- */
-template <int kB>
-__global__ void BsrMultiplyRowKernel(int num_rows, int runtime_block_size,
-                                     const int *__restrict__ row_offsets,
-                                     const int *__restrict__ col_ids,
-                                     const float *__restrict__ values, const float *__restrict__ x,
-                                     float *__restrict__ y) {
-  const int row = blockIdx.x * blockDim.x + threadIdx.x;
-  if (row >= num_rows) {
-    return;
-  }
-  const int b = kB > 0 ? kB : runtime_block_size;
-  const int block_row = row / b;
-  const int sub_row = row - block_row * b;
-
-  float acc = 0.f;
-  const int end = row_offsets[block_row + 1];
-  for (int t = row_offsets[block_row]; t < end; ++t) {
-    const float *tile = values + static_cast<size_t>(t) * b * b + sub_row * b;
-    const float *xs = x + static_cast<size_t>(col_ids[t]) * b;
-    for (int l = 0; l < b; ++l) {
-      acc = fmaf(tile[l], xs[l], acc);
-    }
-  }
-  y[row] = acc;
-}
-
-/**
- * @brief Launches the BSR SpMV, choosing a schedule from the row lengths.
- *
- * A warp per block row tolerates skew but wastes lanes on short rows; a thread
- * per scalar row is the opposite.  Bundle adjustment needs the former (pose
- * rows hold thousands of tiles), pose graphs the latter (every row holds a
- * handful), so the peak row length decides.
- */
-void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
-                       int max_tiles_per_row, const int *row_offsets, const int *col_ids,
-                       const float *values, const float *x, float *y) {
-  constexpr int kThreads = 128;
-  constexpr int kSkewThreshold = 32;
-
-  if (max_tiles_per_row < kSkewThreshold) {
-    const int num_rows = num_block_rows * block_size;
-    const int grid = (num_rows + kThreads - 1) / kThreads;
-    switch (block_size) {
-#define LAUNCH_ROW(BVAL)                                                                     \
-  case BVAL:                                                                                 \
-    BsrMultiplyRowKernel<BVAL>                                                               \
-        <<<grid, kThreads, 0, stream>>>(num_rows, BVAL, row_offsets, col_ids, values, x, y); \
-    break
-      LAUNCH_ROW(2);
-      LAUNCH_ROW(3);
-      LAUNCH_ROW(4);
-      LAUNCH_ROW(6);
-      LAUNCH_ROW(7);
-      LAUNCH_ROW(15);
-      LAUNCH_ROW(16);
-#undef LAUNCH_ROW
-      default:
-        BsrMultiplyRowKernel<0><<<grid, kThreads, 0, stream>>>(num_rows, block_size, row_offsets,
-                                                               col_ids, values, x, y);
-        break;
-    }
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-    return;
-  }
-
-  const int warps_per_block = kThreads / 32;
-  const int grid = (num_block_rows + warps_per_block - 1) / warps_per_block;
-  switch (block_size) {
-#define LAUNCH_WARP(BVAL)                                                                    \
-  case BVAL:                                                                                 \
-    BsrMultiplyWarpKernel<BVAL>                                                              \
-        <<<grid, kThreads, 0, stream>>>(num_block_rows, row_offsets, col_ids, values, x, y); \
-    break
-    LAUNCH_WARP(2);
-    LAUNCH_WARP(3);
-    LAUNCH_WARP(4);
-    LAUNCH_WARP(5);
-    LAUNCH_WARP(6);
-    LAUNCH_WARP(7);
-    LAUNCH_WARP(8);
-#undef LAUNCH_WARP
-    default:
-      // The generic kernel accumulates into a fixed-size per-lane array; a
-      // larger edge would write past it, silently, so refuse instead.
-      if (block_size > kMaxSpMVBlockSize) {
-        throw std::runtime_error("BSR SpMV: block size exceeds " +
-                                 std::to_string(kMaxSpMVBlockSize));
-      }
-      BsrMultiplyWarpGenericKernel<<<grid, kThreads, 0, stream>>>(
-          num_block_rows, block_size, row_offsets, col_ids, values, x, y);
-      break;
-  }
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
 /** @brief Dispatches the gather on the storage layout. */
 __device__ __forceinline__ void GatherTileRow(const int *__restrict__ row_off,
                                               const int *__restrict__ col_idx,
@@ -440,18 +216,25 @@ __device__ __forceinline__ void GatherTileRow(const int *__restrict__ row_off,
  * The serial LDLT is fine for the sizes here (B ≤ 16, dominant cost is
  * the global I/O for the tile, not the O(B³) arithmetic).
  *
- * @tparam B Compile-time tile side length.
+ * @tparam kB Compile-time tile side length, or 0 for `runtime_b` (the tile
+ *            then lives in `runtime_b²` floats of dynamic shared memory).
  */
-template <int B>
-__global__ void ExtractAndFactorBlockDiagonalsKernel(
-    const int *__restrict__ row_off, const int *__restrict__ col_idx,
-    const float *__restrict__ values, bool block_storage, int block_size, int row_start,
-    int num_blocks, int factor_offset, float pivot_floor, float *__restrict__ factors) {
+template <int kB>
+__global__ void ExtractAndFactorBlockDiagonalsKernel(const int *__restrict__ row_off,
+                                                     const int *__restrict__ col_idx,
+                                                     const float *__restrict__ values,
+                                                     bool block_storage, int block_size,
+                                                     int runtime_b, int row_start, int num_blocks,
+                                                     int factor_offset, float pivot_floor,
+                                                     float *__restrict__ factors) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
   }
-  __shared__ float tile[B * B];
+  const int B = kB > 0 ? kB : runtime_b;
+  __shared__ float static_tile[kB > 0 ? kB * kB : 1];
+  extern __shared__ float dynamic_tile[];
+  float *tile = kB > 0 ? static_tile : dynamic_tile;
 
   int tid = threadIdx.x;
   for (int i = tid; i < B * B; i += blockDim.x) {
@@ -505,69 +288,6 @@ __global__ void ExtractAndFactorBlockDiagonalsKernel(
   __syncthreads();
 
   // Step 4: write back.
-  float *out = factors + factor_offset + block_row * B * B;
-  for (int i = tid; i < B * B; i += blockDim.x) {
-    out[i] = tile[i];
-  }
-}
-
-/** Generic-B fallback for non-templated block sizes.  Uses dynamic
- *  shared memory of size `B*B` floats.  Slightly slower than the
- *  templated version (no constant-B unrolling) but works for any
- *  block size up to @c kMaxBlockSize. */
-__global__ void ExtractAndFactorGenericKernel(const int *__restrict__ row_off,
-                                              const int *__restrict__ col_idx,
-                                              const float *__restrict__ values, bool block_storage,
-                                              int block_size, int B, int row_start, int num_blocks,
-                                              int factor_offset, float pivot_floor,
-                                              float *__restrict__ factors) {
-  int block_row = blockIdx.x;
-  if (block_row >= num_blocks) {
-    return;
-  }
-  extern __shared__ float smem[];
-  float *tile = smem;
-
-  int tid = threadIdx.x;
-  for (int i = tid; i < B * B; i += blockDim.x) {
-    tile[i] = 0.f;
-  }
-  __syncthreads();
-
-  if (tid < B) {
-    int col_lo = row_start + block_row * B;
-    GatherTileRow(row_off, col_idx, values, block_storage, block_size, col_lo, B, tid,
-                  tile + tid * B);
-  }
-  __syncthreads();
-  if (tid < B) {
-    for (int j = tid + 1; j < B; ++j) {
-      float a = tile[tid * B + j];
-      float b = tile[j * B + tid];
-      float s = 0.5f * (a + b);
-      tile[tid * B + j] = s;
-      tile[j * B + tid] = s;
-    }
-  }
-  __syncthreads();
-  if (tid == 0) {
-    for (int k = 0; k < B; ++k) {
-      float d = tile[k * B + k];
-      if (fabsf(d) < pivot_floor) {
-        d = (d >= 0.f) ? pivot_floor : -pivot_floor;
-      }
-      tile[k * B + k] = d;
-      float inv_d = 1.f / d;
-      for (int i = k + 1; i < B; ++i) {
-        float lik = tile[i * B + k] * inv_d;
-        tile[i * B + k] = lik;
-        for (int j = k + 1; j <= i; ++j) {
-          tile[i * B + j] -= lik * tile[j * B + k] * d;
-        }
-      }
-    }
-  }
-  __syncthreads();
   float *out = factors + factor_offset + block_row * B * B;
   for (int i = tid; i < B * B; i += blockDim.x) {
     out[i] = tile[i];
@@ -689,18 +409,23 @@ __global__ void ExtractScalarJacobi(const int *__restrict__ row_off,
  * per-block arithmetic is ~3*B² FMAs, fully dominated by the global
  * factor read.
  *
- * @tparam B Compile-time tile side length.
+ * @tparam kB Compile-time tile side length, or 0 for `runtime_b` (the tile
+ *            and its residual then live in `runtime_b² + runtime_b` floats
+ *            of dynamic shared memory).
  */
-template <int B>
+template <int kB>
 __global__ void ApplyBlockJacobiKernel(const float *__restrict__ factors, int factor_offset,
-                                       const float *__restrict__ r, int row_start, int num_blocks,
-                                       float *__restrict__ z) {
+                                       int runtime_b, const float *__restrict__ r, int row_start,
+                                       int num_blocks, float *__restrict__ z) {
   int block_row = blockIdx.x;
   if (block_row >= num_blocks) {
     return;
   }
-  __shared__ float L[B * B];
-  __shared__ float v[B];
+  const int B = kB > 0 ? kB : runtime_b;
+  __shared__ float static_smem[kB > 0 ? kB * kB + kB : 1];
+  extern __shared__ float dynamic_smem[];
+  float *L = kB > 0 ? static_smem : dynamic_smem;
+  float *v = L + B * B;
 
   int tid = threadIdx.x;
   if (tid < B) {
@@ -712,12 +437,19 @@ __global__ void ApplyBlockJacobiKernel(const float *__restrict__ factors, int fa
   __syncthreads();
 
   if (tid == 0) {
-    // Forward: L y = r (unit diagonal).
+    // Forward: L y = r (unit diagonal). A compile-time B unrolls each row in
+    // full (predicated); a runtime B loops over the columns before the diagonal.
     for (int i = 1; i < B; ++i) {
       float s = v[i];
+      if constexpr (kB > 0) {
 #pragma unroll
-      for (int j = 0; j < B; ++j) {
-        if (j < i) {
+        for (int j = 0; j < kB; ++j) {
+          if (j < i) {
+            s -= L[i * B + j] * v[j];
+          }
+        }
+      } else {
+        for (int j = 0; j < i; ++j) {
           s -= L[i * B + j] * v[j];
         }
       }
@@ -730,9 +462,15 @@ __global__ void ApplyBlockJacobiKernel(const float *__restrict__ factors, int fa
     // Back: L^T z = w.
     for (int i = B - 2; i >= 0; --i) {
       float s = v[i];
+      if constexpr (kB > 0) {
 #pragma unroll
-      for (int j = 0; j < B; ++j) {
-        if (j > i) {
+        for (int j = 0; j < kB; ++j) {
+          if (j > i) {
+            s -= L[j * B + i] * v[j];
+          }
+        }
+      } else {
+        for (int j = i + 1; j < B; ++j) {
           s -= L[j * B + i] * v[j];
         }
       }
@@ -741,51 +479,6 @@ __global__ void ApplyBlockJacobiKernel(const float *__restrict__ factors, int fa
   }
   __syncthreads();
 
-  if (tid < B) {
-    z[row_start + block_row * B + tid] = v[tid];
-  }
-}
-
-/** Generic-B apply for non-templated tile sizes; dynamic shared mem. */
-__global__ void ApplyBlockJacobiGenericKernel(const float *__restrict__ factors, int factor_offset,
-                                              int B, const float *__restrict__ r, int row_start,
-                                              int num_blocks, float *__restrict__ z) {
-  int block_row = blockIdx.x;
-  if (block_row >= num_blocks) {
-    return;
-  }
-  extern __shared__ float smem[];
-  float *L = smem;
-  float *v = L + B * B;
-
-  int tid = threadIdx.x;
-  if (tid < B) {
-    v[tid] = r[row_start + block_row * B + tid];
-  }
-  for (int i = tid; i < B * B; i += blockDim.x) {
-    L[i] = factors[factor_offset + block_row * B * B + i];
-  }
-  __syncthreads();
-  if (tid == 0) {
-    for (int i = 1; i < B; ++i) {
-      float s = v[i];
-      for (int j = 0; j < i; ++j) {
-        s -= L[i * B + j] * v[j];
-      }
-      v[i] = s;
-    }
-    for (int i = 0; i < B; ++i) {
-      v[i] /= L[i * B + i];
-    }
-    for (int i = B - 2; i >= 0; --i) {
-      float s = v[i];
-      for (int j = i + 1; j < B; ++j) {
-        s -= L[j * B + i] * v[j];
-      }
-      v[i] = s;
-    }
-  }
-  __syncthreads();
   if (tid < B) {
     z[row_start + block_row * B + tid] = v[tid];
   }
@@ -930,9 +623,12 @@ __global__ void PcgDirectionKernel(const float *__restrict__ rz_new_ptr,
   p[i] = z[i] + b * p[i];
 }
 
-/** Performs `dst += local` on a single device scalar via a per-block warp
- *  reduction + atomicAdd.  Helper for fused dot kernels below. */
-__device__ inline void ReduceAndAddToScalar(float local, float *dst) {
+/**
+ * Sum of `local` over the CTA, valid in thread 0: a shuffle reduction per warp,
+ * then warp 0 over the warp sums. Every thread of the CTA calls it; calling it
+ * again in the same kernel is safe.
+ */
+__device__ inline float BlockSum(float local) {
   for (int off = warpSize / 2; off > 0; off >>= 1) {
     local += __shfl_down_sync(0xffffffffu, local, off);
   }
@@ -940,21 +636,29 @@ __device__ inline void ReduceAndAddToScalar(float local, float *dst) {
   // A second call in the same kernel must not overwrite warp_sums while
   // warp 0 is still reading the sums of the first call.
   __syncthreads();
-  int lane = threadIdx.x & 31;
-  int wid = threadIdx.x >> 5;
+  const int lane = threadIdx.x & 31;
+  const int wid = threadIdx.x >> 5;
   if (lane == 0) {
     warp_sums[wid] = local;
   }
   __syncthreads();
+  float s = 0.f;
   if (wid == 0) {
-    int nw = (blockDim.x + 31) >> 5;
-    float s = (lane < nw) ? warp_sums[lane] : 0.f;
+    const int nw = (blockDim.x + 31) >> 5;
+    s = (lane < nw) ? warp_sums[lane] : 0.f;
     for (int off = warpSize / 2; off > 0; off >>= 1) {
       s += __shfl_down_sync(0xffffffffu, s, off);
     }
-    if (lane == 0) {
-      atomicAdd(dst, s);
-    }
+  }
+  return s;
+}
+
+/** Performs `dst += local` (summed over the CTA) on a single device scalar
+ *  with one atomicAdd per CTA.  Helper for the fused dot kernels below. */
+__device__ inline void ReduceAndAddToScalar(float local, float *dst) {
+  const float s = BlockSum(local);
+  if (threadIdx.x == 0) {
+    atomicAdd(dst, s);
   }
 }
 
@@ -963,37 +667,19 @@ __device__ inline void ReduceAndAddToScalar(float local, float *dst) {
  *  sum in `partials[blockIdx.x]`; the last CTA to take a ticket adds the
  *  partials in index order and resets the ticket to 0. */
 __device__ inline void ReduceToScalar(float local, float *dst, float *partials, unsigned *ticket) {
-  for (int off = warpSize / 2; off > 0; off >>= 1) {
-    local += __shfl_down_sync(0xffffffffu, local, off);
-  }
-  __shared__ float warp_sums[32];
+  const float s = BlockSum(local);
   __shared__ bool last;
-  // A second call in the same kernel must not overwrite warp_sums while
-  // warp 0 is still reading the sums of the first call.
-  __syncthreads();
-  int lane = threadIdx.x & 31;
-  int wid = threadIdx.x >> 5;
-  if (lane == 0) {
-    warp_sums[wid] = local;
-  }
-  __syncthreads();
-  if (wid == 0) {
-    int nw = (blockDim.x + 31) >> 5;
-    float s = (lane < nw) ? warp_sums[lane] : 0.f;
-    for (int off = warpSize / 2; off > 0; off >>= 1) {
-      s += __shfl_down_sync(0xffffffffu, s, off);
-    }
-    if (lane == 0) {
-      __stcg(partials + blockIdx.x, s);
-      __threadfence();
-      last = atomicAdd(ticket, 1u) == gridDim.x - 1;
-      if (last) {
-        __threadfence();  // Order the partials reads below after the ticket.
-      }
+  if (threadIdx.x == 0) {
+    __stcg(partials + blockIdx.x, s);
+    __threadfence();
+    last = atomicAdd(ticket, 1u) == gridDim.x - 1;
+    if (last) {
+      __threadfence();  // Order the partials reads below after the ticket.
     }
   }
   __syncthreads();
-  if (last && wid == 0) {
+  if (last && threadIdx.x < 32) {
+    const int lane = threadIdx.x;
     float t = 0.f;
     for (int i = lane; i < gridDim.x; i += 32) {
       t += __ldcg(partials + i);
@@ -1114,25 +800,27 @@ void DispatchExtractAndFactor(cudaStream_t stream, int B, int row_start, int num
 
   // Large-B path: one CTA per block.
   int threads = ((B + 31) / 32) * 32;
-#define LAUNCH_FACTOR(BVAL)                                                                      \
-  case BVAL:                                                                                     \
-    ExtractAndFactorBlockDiagonalsKernel<BVAL><<<num_blocks, threads, 0, stream>>>(              \
-        row_off, col_idx, vals, block_storage, block_size, row_start, num_blocks, factor_offset, \
-        pivot_floor, factors);                                                                   \
-    break
+#define LAUNCH_FACTOR(BVAL, SHARED_BYTES)                                                         \
+  ExtractAndFactorBlockDiagonalsKernel<BVAL><<<num_blocks, threads, SHARED_BYTES, stream>>>(      \
+      row_off, col_idx, vals, block_storage, block_size, B, row_start, num_blocks, factor_offset, \
+      pivot_floor, factors)
 
   switch (B) {
-    LAUNCH_FACTOR(7);
-    LAUNCH_FACTOR(8);
-    LAUNCH_FACTOR(15);
-    LAUNCH_FACTOR(16);
-    default: {
-      size_t shared_bytes = static_cast<size_t>(B) * B * sizeof(float);
-      ExtractAndFactorGenericKernel<<<num_blocks, threads, shared_bytes, stream>>>(
-          row_off, col_idx, vals, block_storage, block_size, B, row_start, num_blocks,
-          factor_offset, pivot_floor, factors);
+    case 7:
+      LAUNCH_FACTOR(7, 0);
       break;
-    }
+    case 8:
+      LAUNCH_FACTOR(8, 0);
+      break;
+    case 15:
+      LAUNCH_FACTOR(15, 0);
+      break;
+    case 16:
+      LAUNCH_FACTOR(16, 0);
+      break;
+    default:
+      LAUNCH_FACTOR(0, static_cast<size_t>(B) * B * sizeof(float));
+      break;
   }
 #undef LAUNCH_FACTOR
   THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -1187,23 +875,26 @@ void DispatchApplyPrecond(cudaStream_t stream, int B, int row_start, int num_blo
 
   // Large-B path: one CTA per block, factor staged through shared mem.
   int threads = ((B + 31) / 32) * 32;
-#define LAUNCH_APPLY(BVAL)                                                                         \
-  case BVAL:                                                                                       \
-    ApplyBlockJacobiKernel<BVAL>                                                                   \
-        <<<num_blocks, threads, 0, stream>>>(factors, factor_offset, r, row_start, num_blocks, z); \
-    break
+#define LAUNCH_APPLY(BVAL, SHARED_BYTES)                                       \
+  ApplyBlockJacobiKernel<BVAL><<<num_blocks, threads, SHARED_BYTES, stream>>>( \
+      factors, factor_offset, B, r, row_start, num_blocks, z)
 
   switch (B) {
-    LAUNCH_APPLY(7);
-    LAUNCH_APPLY(8);
-    LAUNCH_APPLY(15);
-    LAUNCH_APPLY(16);
-    default: {
-      size_t shared_bytes = (static_cast<size_t>(B) * B + B) * sizeof(float);
-      ApplyBlockJacobiGenericKernel<<<num_blocks, threads, shared_bytes, stream>>>(
-          factors, factor_offset, B, r, row_start, num_blocks, z);
+    case 7:
+      LAUNCH_APPLY(7, 0);
       break;
-    }
+    case 8:
+      LAUNCH_APPLY(8, 0);
+      break;
+    case 15:
+      LAUNCH_APPLY(15, 0);
+      break;
+    case 16:
+      LAUNCH_APPLY(16, 0);
+      break;
+    default:
+      LAUNCH_APPLY(0, (static_cast<size_t>(B) * B + B) * sizeof(float));
+      break;
   }
 #undef LAUNCH_APPLY
   THROW_ON_CUDA_ERROR(cudaGetLastError());
@@ -1364,7 +1055,8 @@ bool BlockSparsePCGSolver::Initialize(cudaStream_t stream, const Problem &proble
   if (!InitializeCommon(stream, &problem, static_cast<int>(spd_matrix.NumRows()), rhs, result)) {
     return false;
   }
-  return InitializeCsrSpMV(stream, spd_matrix);
+  InitializeCsrSpMV(stream, spd_matrix);
+  return true;
 }
 
 /** @brief Checks sizes and sets up the block layout, segment tables, BA product and scratch. */
@@ -1477,7 +1169,7 @@ void BlockSparsePCGSolver::WarnBaProductNotUsed() {
 
 /** Creates the cuSPARSE SpMV plan for CSR input with the algorithm chosen by
  *  @ref SpmvAlg. */
-bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
+void BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
                                              const CSRSparseMatrix &spd_matrix) {
   const int n = static_cast<int>(spd_matrix.NumRows());
   // cuSPARSE SpMV setup.  The descriptor is reused across all PCG steps
@@ -1507,7 +1199,6 @@ bool BlockSparsePCGSolver::InitializeCsrSpMV(cudaStream_t stream,
                                                   spmv_buffer_.data()));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecX));
   WARN_ON_CUSPARSE_ERROR(cusparseDestroyDnVec(vecY));
-  return true;
 }
 
 bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const BSRSparseMatrix &spd_matrix,
@@ -1558,10 +1249,10 @@ bool BlockSparsePCGSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd
     // Initialize() no longer fits that layout.
     initialized_csr_ = nullptr;
     initialized_bsr_ = nullptr;
-    if (!InitializeCommon(stream, nullptr, n, rhs, result) ||
-        !InitializeCsrSpMV(stream, spd_matrix)) {
+    if (!InitializeCommon(stream, nullptr, n, rhs, result)) {
       return false;
     }
+    InitializeCsrSpMV(stream, spd_matrix);
   }
 
   // Refresh the cuSPARSE descriptor's value pointer; the matrix's
@@ -1697,9 +1388,7 @@ bool BlockSparsePCGSolver::SolveCommon(cudaStream_t stream, int n, const float *
     if (ba_done) {
       // Ap_ holds H p.
     } else if (block_storage) {
-      LaunchBsrMultiply(stream, bsr_view_->num_block_rows, bsr_view_->block_size,
-                        bsr_view_->max_tiles_per_row, row_off, col_idx, vals, p_.data(),
-                        Ap_.data());
+      MultiplyBSRValuesByDenseVector(stream, *bsr_view_, vals, p_.data(), Ap_.data());
     } else {
       THROW_ON_CUSPARSE_ERROR(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha,
                                            matA, vecX, &spmv_beta, vecY, CUDA_R_32F,

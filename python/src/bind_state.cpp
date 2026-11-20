@@ -123,114 +123,30 @@ class PyStateBatch : public cunls::StateBatch {
   }
 };
 
-// Floats stored per state of a SizedStateBatch subclass.
-template <int A, int T>
-constexpr size_t AmbientOf(const cunls::SizedStateBatch<A, T> *) {
-  return static_cast<size_t>(A);
-}
-
-// The state array of a batch of `capacity` states, checked to hold
-// capacity x AmbientSize float32 values (e.g. 16 per SE3 state: a row-major 4x4).
-template <typename Class>
-const float *StateData(nb::handle data, size_t capacity) {
-  constexpr size_t ambient = AmbientOf(static_cast<const Class *>(nullptr));
+// The state array of a batch of `capacity` states, checked to hold capacity x ambient float32
+// values (e.g. 16 per SE3 state: a row-major 4x4).
+const float *StateData(nb::handle data, size_t capacity, size_t ambient) {
   const std::string what = "capacity " + std::to_string(capacity) + " states x " +
                            std::to_string(ambient) + " float32 per state";
   return reinterpret_cast<const float *>(extract_device_ptr(
       data, "float32", "data", checked_size(capacity, ambient, "data"), what.c_str()));
 }
 
-// Checked data array of a CustomStateBatch: capacity x ambient_size float32 values.
-uintptr_t CustomStateData(nb::handle data, size_t ambient_size, size_t capacity) {
-  const std::string what = "capacity " + std::to_string(capacity) + " states x " +
-                           std::to_string(ambient_size) + " float32 per state";
-  return extract_device_ptr(data, "float32", "data", checked_size(capacity, ambient_size, "data"),
-                            what.c_str());
-}
-
-// Register a VectorStateBatch<Dim> with two constructor overloads:
-//   1. (data, capacity)                                  — all states are variable
-//   2. (data, capacity, const_state_ids, const_capacity) — some states are held constant
-// Both start with 0 active states: call set_num_active_states() before solving.
-//
-// nb::keep_alive<1, N> prevents the Python objects that own the GPU memory
-// (e.g. Warp arrays passed as `data`) from being garbage-collected while the
-// StateBatch is alive.
-template <int Dim>
-void bind_vector_state_batch(nb::module_ &m, const char *name) {
-  using Class = cunls::VectorStateBatch<Dim>;
-  nb::class_<Class, cunls::StateBatch>(
-      m, name, nb::dynamic_attr(), "Euclidean vector state batch (Plus = element-wise addition).")
-      .def(
-          "__init__",
-          [](Class *self, nb::handle data, size_t capacity) {
-            auto ptr = StateData<Class>(data, capacity);
-            new (self) Class(ptr, capacity);
-          },
-          nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
-      .def(
-          "__init__",
-          [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
-             size_t const_capacity) {
-            auto ptr = StateData<Class>(data, capacity);
-            auto cids = reinterpret_cast<const int *>(extract_device_ptr(
-                const_ids, "int32", "const_ids", const_capacity, "const_capacity ids"));
-            new (self) Class(ptr, capacity, cids, const_capacity);
-          },
-          nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
-          nb::arg("const_capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
-      .def(
-          "set_bounds",
-          [](Class &self, nb::handle lower, nb::handle upper) {
-            if (lower.is_none() && upper.is_none()) {
-              self.SetBounds(nullptr, nullptr);
-              hold_bounds(self, lower, upper);
-              return;
-            }
-            if (lower.is_none() || upper.is_none()) {
-              throw std::invalid_argument(
-                  "VectorStateBatch.set_bounds: got one bound and None (expected both arrays, or "
-                  "None, None to remove the bounds). Fix: pass -inf / +inf arrays for an "
-                  "unbounded side.");
-            }
-            self.SetBounds(
-                device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
-                device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
-            hold_bounds(self, lower, upper);
-          },
-          nb::arg("lower").none(), nb::arg("upper").none(),
-          "Box bounds lower <= x <= upper per component (device float32 arrays of "
-          "capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem "
-          "with AugmentedLagrangianMinimizer, which keeps the iterates in the box "
-          "(projected Gauss-Newton); the other minimizers reject it. None, None removes them.")
-      .def_prop_ro(
-          "has_bounds", [](const Class &self) { return cunls::HasBoxBounds(&self); },
-          "Whether the batch has box bounds (solve such a problem with "
-          "AugmentedLagrangianMinimizer).");
-}
-
-// Register a Lie-group state batch (SE3, SO3, ...).  Same two-overload
-// pattern as the vector variant.
+// Binds a built-in manifold state batch (fixed ambient size `ambient`): constructor
+// (data, capacity, const_state_ids=None, const_capacity=0); batches start with 0 active states.
+// nb::keep_alive keeps the arrays that own the GPU memory alive with the batch.
 template <typename Class>
-void bind_manifold_state_batch(nb::class_<Class, cunls::StateBatch> &cls) {
-  cls.def(
-         "__init__",
-         [](Class *self, nb::handle data, size_t capacity) {
-           auto ptr = StateData<Class>(data, capacity);
-           new (self) Class(ptr, capacity);
-         },
-         nb::arg("data"), nb::arg("capacity"), nb::keep_alive<1, 2>())
+void bind_manifold_state_batch(nb::module_ &m, const char *name, size_t ambient, const char *doc) {
+  nb::class_<Class, cunls::StateBatch>(m, name, doc)
       .def(
           "__init__",
-          [](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
-             size_t const_capacity) {
-            auto ptr = StateData<Class>(data, capacity);
-            auto cids = reinterpret_cast<const int *>(extract_device_ptr(
-                const_ids, "int32", "const_ids", const_capacity, "const_capacity ids"));
-            new (self) Class(ptr, capacity, cids, const_capacity);
+          [ambient](Class *self, nb::handle data, size_t capacity, nb::handle const_ids,
+                    size_t const_capacity) {
+            new (self) Class(StateData(data, capacity, ambient), capacity,
+                             const_state_ids(const_ids, const_capacity), const_capacity);
           },
-          nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids"),
-          nb::arg("const_capacity"), nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>());
+          nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids").none() = nb::none(),
+          nb::arg("const_capacity") = 0, nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>());
 }
 
 }  // namespace
@@ -268,14 +184,7 @@ void bind_state(nb::module_ &m) {
       .def(
           "constant_state_ids",
           [](const cunls::StateBatch &self) {
-            const size_t n = self.NumConstStates();
-            auto *host = new int[n > 0 ? n : 1];
-            nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<int *>(p); });
-            if (n > 0) {
-              THROW_ON_CUDA_ERROR(
-                  cudaMemcpy(host, self.ConstStateIds(), n * sizeof(int), cudaMemcpyDeviceToHost));
-            }
-            return nb::ndarray<nb::numpy, int, nb::ndim<1>>(host, {n}, owner);
+            return device_to_numpy(self.ConstStateIds(), self.NumConstStates());
           },
           "The active constant state ids (num_const_states entries) as a numpy int32 array.")
       .def(
@@ -306,48 +215,49 @@ void bind_state(nb::module_ &m) {
           "ignore_bounds: do not clamp into box bounds (numeric differentiation at a bound). "
           "Used by pycunls.check_jacobians.");
 
-  bind_vector_state_batch<1>(m, "VectorStateBatch1");
-  bind_vector_state_batch<2>(m, "VectorStateBatch2");
-  bind_vector_state_batch<3>(m, "VectorStateBatch3");
-  bind_vector_state_batch<4>(m, "VectorStateBatch4");
-  bind_vector_state_batch<6>(m, "VectorStateBatch6");
-  bind_vector_state_batch<12>(m, "VectorStateBatch12");
+  auto vectors = nb::class_<cunls::DynamicVectorStateBatch, cunls::StateBatch>(
+      m, "VectorStateBatch", nb::dynamic_attr(),
+      "Euclidean vector states of any size (Plus = element-wise addition). Constructor: data "
+      "(float32 GPU array of capacity x dim), capacity, optional const_state_ids (int32 GPU "
+      "array) with const_capacity, and dim: the vector size, read from data when it is shaped "
+      "(N, dim) or an array of wp.vecN, required for a flat array. VectorStateBatch3 and the "
+      "other numbered classes are the same with the size fixed.");
+  vectors
+      .def(
+          "__init__",
+          [](cunls::DynamicVectorStateBatch *self, nb::handle data, size_t capacity,
+             nb::handle const_ids, size_t const_capacity, nb::handle dim) {
+            const int n = vector_dim(data, dim, "VectorStateBatch", "data");
+            new (self) cunls::DynamicVectorStateBatch(
+                n, StateData(data, capacity, static_cast<size_t>(n)), capacity,
+                const_state_ids(const_ids, const_capacity), const_capacity);
+          },
+          nb::arg("data"), nb::arg("capacity"), nb::arg("const_state_ids").none() = nb::none(),
+          nb::arg("const_capacity") = 0, nb::kw_only(), nb::arg("dim").none() = nb::none(),
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
+      .def_prop_ro("dim", &cunls::DynamicVectorStateBatch::Dimension,
+                   "Components per state (the vector size).");
+  bind_box_bounds(vectors, "VectorStateBatch",
+                  "Box bounds lower <= x <= upper per component (device float32 arrays of "
+                  "capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem "
+                  "with AugmentedLagrangianMinimizer, which keeps the iterates in the box "
+                  "(projected Gauss-Newton); the other minimizers reject it. None, None removes "
+                  "them.");
 
-  {
-    auto cls = nb::class_<cunls::SE3StateBatch, cunls::StateBatch>(
-        m, "SE3StateBatch", "SE(3) state batch. Ambient=16 (4x4 matrix), Tangent=6.");
-    bind_manifold_state_batch(cls);
-  }
-  {
-    auto cls = nb::class_<cunls::SO3StateBatch, cunls::StateBatch>(
-        m, "SO3StateBatch", "SO(3) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
-    bind_manifold_state_batch(cls);
-  }
-  {
-    auto cls = nb::class_<cunls::SO2StateBatch, cunls::StateBatch>(
-        m, "SO2StateBatch", "SO(2) state batch. Ambient=4 (2x2 matrix), Tangent=1.");
-    bind_manifold_state_batch(cls);
-  }
-  {
-    auto cls = nb::class_<cunls::SE2StateBatch, cunls::StateBatch>(
-        m, "SE2StateBatch", "SE(2) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
-    bind_manifold_state_batch(cls);
-  }
-  {
-    auto cls = nb::class_<cunls::Similarity2StateBatch, cunls::StateBatch>(
-        m, "Similarity2StateBatch", "2D similarity state batch. Ambient=9, Tangent=4.");
-    bind_manifold_state_batch(cls);
-  }
-  {
-    auto cls = nb::class_<cunls::Similarity3StateBatch, cunls::StateBatch>(
-        m, "Similarity3StateBatch", "3D similarity state batch. Ambient=16, Tangent=7.");
-    bind_manifold_state_batch(cls);
-  }
-  {
-    auto cls = nb::class_<cunls::SL4StateBatch, cunls::StateBatch>(
-        m, "SL4StateBatch", "SL(4) state batch. Ambient=16 (4x4), Tangent=15.");
-    bind_manifold_state_batch(cls);
-  }
+  bind_manifold_state_batch<cunls::SE3StateBatch>(
+      m, "SE3StateBatch", 16, "SE(3) state batch. Ambient=16 (4x4 matrix), Tangent=6.");
+  bind_manifold_state_batch<cunls::SO3StateBatch>(
+      m, "SO3StateBatch", 9, "SO(3) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
+  bind_manifold_state_batch<cunls::SO2StateBatch>(
+      m, "SO2StateBatch", 4, "SO(2) state batch. Ambient=4 (2x2 matrix), Tangent=1.");
+  bind_manifold_state_batch<cunls::SE2StateBatch>(
+      m, "SE2StateBatch", 9, "SE(2) state batch. Ambient=9 (3x3 matrix), Tangent=3.");
+  bind_manifold_state_batch<cunls::Similarity2StateBatch>(
+      m, "Similarity2StateBatch", 9, "2D similarity state batch. Ambient=9, Tangent=4.");
+  bind_manifold_state_batch<cunls::Similarity3StateBatch>(
+      m, "Similarity3StateBatch", 16, "3D similarity state batch. Ambient=16, Tangent=7.");
+  bind_manifold_state_batch<cunls::SL4StateBatch>(
+      m, "SL4StateBatch", 16, "SL(4) state batch. Ambient=16 (4x4), Tangent=15.");
 
   // --- Custom state batch trampoline ---
   nb::class_<PyStateBatch, cunls::StateBatch>(
@@ -364,25 +274,15 @@ void bind_state(nb::module_ &m) {
       .def(
           "__init__",
           [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
-             size_t capacity) {
-            auto ptr = CustomStateData(data, ambient_size, capacity);
-            new (self) PyStateBatch(ptr, ambient_size, tangent_size, capacity, 0, 0);
-          },
-          nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("capacity"),
-          nb::keep_alive<1, 2>())
-      .def(
-          "__init__",
-          [](PyStateBatch *self, nb::handle data, size_t ambient_size, size_t tangent_size,
              size_t capacity, nb::handle const_ids, size_t const_capacity) {
-            auto ptr = CustomStateData(data, ambient_size, capacity);
-            auto cids = extract_device_ptr(const_ids, "int32", "const_ids", const_capacity,
-                                           "const_capacity ids");
+            auto ptr = reinterpret_cast<uintptr_t>(StateData(data, capacity, ambient_size));
+            auto cids = reinterpret_cast<uintptr_t>(const_state_ids(const_ids, const_capacity));
             new (self)
                 PyStateBatch(ptr, ambient_size, tangent_size, capacity, cids, const_capacity);
           },
           nb::arg("data"), nb::arg("ambient_size"), nb::arg("tangent_size"), nb::arg("capacity"),
-          nb::arg("const_state_ids"), nb::arg("const_capacity"), nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 6>())
+          nb::arg("const_state_ids").none() = nb::none(), nb::arg("const_capacity") = 0,
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 6>())
       .def(
           "plus",
           [](PyStateBatch &, uintptr_t, uintptr_t, uintptr_t, uintptr_t, size_t) {

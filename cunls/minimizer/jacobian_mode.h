@@ -49,8 +49,8 @@ struct NumericDiffOptions {
   /**
    * @brief Per-tangent-coordinate perturbation step size.
    *
-   * Phase 1 uses this as a fixed scalar step (not scaled by the current
-   * state magnitude); see `numeric_diff_jacobian.h` for rationale.
+   * A fixed step, the same for every coordinate: it is not scaled by the
+   * state's magnitude (despite the name).
    * Default: 1e-4.
    */
   float relative_step_size = 1e-4f;

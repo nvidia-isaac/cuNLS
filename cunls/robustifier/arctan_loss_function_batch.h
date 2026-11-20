@@ -49,7 +49,7 @@ class ArctanLossFunctionBatch : public LossFunctionBatch {
    * @brief Evaluates the Arctan loss for a batch of squared residuals.
    * @copydetails LossFunctionBatch::Evaluate
    */
-  bool Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
+  void Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
 
  private:
   float a_;

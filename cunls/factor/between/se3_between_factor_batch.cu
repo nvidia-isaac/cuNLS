@@ -46,7 +46,6 @@ constexpr size_t block_size = 256;
  * @brief Fused kernel: collect L/R SE3 transforms, compute T_left^{-1},
  *        then compute error = Delta * T_left^{-1} * T_right in one pass.
  *
- * Replaces: collect_poses_kernel + ComputeInverseSE3 + 2x cuBLAS SGEMM.
  * Fully unrolled with SE3 structure exploitation: last row is always [0 0 0 1],
  * reducing 128 FMAs to ~78 FMAs + additions.  Zero local-memory arrays.
  */
@@ -155,142 +154,6 @@ __global__ void collect_and_compute_se3_between_error_kernel(float const *const 
 //   Q(-tw) is recomputed once in shared memory for the negated twist.
 // ---------------------------------------------------------------------------
 
-// Rodrigues formula for a single row of SO(3) Jacobian inverse.
-// Computes row `r` of: k1*I + k2*[phi]_x + k3*phi*phi^T  (with k4 for
-// small-angle)
-__device__ __forceinline__ void rodrigues_row(const float *phi, int r, float k1, float k2, float k3,
-                                              float k4, float *row3, float tol = 1e-5f) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  // Skew row r: row 0 = [0, -z, y], row 1 = [z, 0, -x], row 2 = [-y, x, 0]
-  float sx, sy, sz;
-  if (r == 0) {
-    sx = 0.f;
-    sy = -phi[2];
-    sz = phi[1];
-  } else if (r == 1) {
-    sx = phi[2];
-    sy = 0.f;
-    sz = -phi[0];
-  } else {
-    sx = -phi[1];
-    sy = phi[0];
-    sz = 0.f;
-  }
-  if (theta < tol) {
-    row3[0] = (r == 0 ? 1.f : 0.f) + k4 * sx;
-    row3[1] = (r == 1 ? 1.f : 0.f) + k4 * sy;
-    row3[2] = (r == 2 ? 1.f : 0.f) + k4 * sz;
-    return;
-  }
-  float pr = phi[r];
-  row3[0] = (r == 0 ? k1 : 0.f) + k2 * sx + k3 * pr * phi[0];
-  row3[1] = (r == 1 ? k1 : 0.f) + k2 * sy + k3 * pr * phi[1];
-  row3[2] = (r == 2 ? k1 : 0.f) + k2 * sz + k3 * pr * phi[2];
-}
-
-__device__ __forceinline__ void so3_jac_left_inv_row(const float *phi, int r, float *row3) {
-  // k3 = (1 - (θ/2) cot(θ/2)) / θ² without cancellation (lie_device::HalfCotCoefficients).
-  const float theta = norm3df(phi[0], phi[1], phi[2]);
-  float k1, rest;
-  lie_device::HalfCotCoefficients(theta, &k1, &rest);
-  const float k3 = theta > 0.f ? rest / theta : 1.f / 12.f;
-  rodrigues_row(phi, r, k1, -0.5f, k3, -0.5f, row3);
-}
-
-// Compute full Q matrix (9 floats) for a given twist. Called once per factor
-// by a designated thread and stored to shared memory for all 6 threads to read.
-__device__ __forceinline__ void compute_Q_full(const float *tw, float *Q) {
-  float A, B, C;
-  lie_device::QLeftCoefficients(norm3df(tw[0], tw[1], tw[2]), &A, &B, &C);
-
-  const float *phi = tw;
-  const float *rho = tw + 3;
-  float V[9], W[9];
-  V[0] = 0.f;
-  V[1] = -rho[2];
-  V[2] = rho[1];
-  V[3] = rho[2];
-  V[4] = 0.f;
-  V[5] = -rho[0];
-  V[6] = -rho[1];
-  V[7] = rho[0];
-  V[8] = 0.f;
-  W[0] = 0.f;
-  W[1] = -phi[2];
-  W[2] = phi[1];
-  W[3] = phi[2];
-  W[4] = 0.f;
-  W[5] = -phi[0];
-  W[6] = -phi[1];
-  W[7] = phi[0];
-  W[8] = 0.f;
-
-#pragma unroll
-  for (int i = 0; i < 9; i++) Q[i] = 0.5f * V[i];
-
-  // VW, WV (reuse temporaries)
-  float VW[9], WV[9];
-#pragma unroll
-  for (int i = 0; i < 3; i++)
-#pragma unroll
-    for (int j = 0; j < 3; j++) {
-      VW[i * 3 + j] = V[i * 3] * W[j] + V[i * 3 + 1] * W[3 + j] + V[i * 3 + 2] * W[6 + j];
-      WV[i * 3 + j] = W[i * 3] * V[j] + W[i * 3 + 1] * V[3 + j] + W[i * 3 + 2] * V[6 + j];
-    }
-#pragma unroll
-  for (int i = 0; i < 9; i++) Q[i] += A * (VW[i] + WV[i]);
-
-  // VWW = VW * W
-  float VWW[9];
-#pragma unroll
-  for (int i = 0; i < 3; i++)
-#pragma unroll
-    for (int j = 0; j < 3; j++)
-      VWW[i * 3 + j] = VW[i * 3] * W[j] + VW[i * 3 + 1] * W[3 + j] + VW[i * 3 + 2] * W[6 + j];
-
-  // WWV = W * WV
-  float WWV[9];
-#pragma unroll
-  for (int i = 0; i < 3; i++)
-#pragma unroll
-    for (int j = 0; j < 3; j++)
-      WWV[i * 3 + j] = W[i * 3] * WV[j] + W[i * 3 + 1] * WV[3 + j] + W[i * 3 + 2] * WV[6 + j];
-
-#pragma unroll
-  for (int i = 0; i < 9; i++) Q[i] += B * (VWW[i] + WWV[i]);
-
-  // WVW = WV * W
-  float WVW[9];
-#pragma unroll
-  for (int i = 0; i < 3; i++)
-#pragma unroll
-    for (int j = 0; j < 3; j++)
-      WVW[i * 3 + j] = WV[i * 3] * W[j] + WV[i * 3 + 1] * W[3 + j] + WV[i * 3 + 2] * W[6 + j];
-
-#pragma unroll
-  for (int i = 0; i < 9; i++) Q[i] += (A - 3.f * B) * WVW[i];
-
-  // WVWW = WVW * W, WWVW = W * WVW
-  float T[9];
-#pragma unroll
-  for (int i = 0; i < 3; i++)
-#pragma unroll
-    for (int j = 0; j < 3; j++) {
-      T[i * 3 + j] = WVW[i * 3] * W[j] + WVW[i * 3 + 1] * W[3 + j] + WVW[i * 3 + 2] * W[6 + j];
-    }
-#pragma unroll
-  for (int i = 0; i < 9; i++) Q[i] += C * T[i];
-
-#pragma unroll
-  for (int i = 0; i < 3; i++)
-#pragma unroll
-    for (int j = 0; j < 3; j++) {
-      T[i * 3 + j] = W[i * 3] * WVW[j] + W[i * 3 + 1] * WVW[3 + j] + W[i * 3 + 2] * WVW[6 + j];
-    }
-#pragma unroll
-  for (int i = 0; i < 9; i++) Q[i] += C * T[i];
-}
-
 // 6 threads per factor. Each thread computes one row of the 6x12 Jacobian.
 // Shared memory per factor: twist[6] + J_so3[9] + Q[9] + Ad(Delta)[36] = 60 floats
 constexpr int kThreadsPerFactor = 6;
@@ -334,13 +197,15 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
 
     if (row < 3) {
       float jr[3];
-      so3_jac_left_inv_row(tw, row, jr);
+      float h, k;
+      lie_device::SO3JacobianLeftInverseCoefficients(tw, &h, &k);
+      lie_device::SO3JacobianLeftInverseRow(tw, h, k, row, jr);
       s_J[row * 3] = jr[0];
       s_J[row * 3 + 1] = jr[1];
       s_J[row * 3 + 2] = jr[2];
     }
     if (row == 3) {
-      compute_Q_full(tw, s_Q);
+      lie_device::QLeftSE3(tw, 3, s_Q);
     }
   }
   __syncthreads();
@@ -403,7 +268,7 @@ __global__ void __launch_bounds__(kJacBlockSize, 5)
     // transpose) Lower-left: -J^T * Q(-tw) * J^T
     if (row == 3) {
       float ntw[6] = {-tw[0], -tw[1], -tw[2], -tw[3], -tw[4], -tw[5]};
-      compute_Q_full(ntw, s_Q);
+      lie_device::QLeftSE3(ntw, 3, s_Q);
     }
   }
   __syncthreads();

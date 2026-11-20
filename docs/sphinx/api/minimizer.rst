@@ -856,15 +856,15 @@ Options for the **Levenberg-Marquardt** minimizer. Extends
 constructing a :code:`LevenbergMarquardtMinimizer`.
 
 - **base_options** [in]: Base Gauss-Newton options (:code:`MinimizerOptions`).
-- **initial_lambda** [in]: Initial damping coefficient; at most ``lambda_max``.
-  Default: 1e-3.
+- **initial_lambda** [in]: Initial damping coefficient, in
+  [0, ``lambda_max``]. Default: 1e-3.
 - **relative_reduction_tolerance** [in]: Convergence threshold on predicted
   relative cost reduction. Default: 1e-6.
 - **lambda_upscale** [in]: Factor by which :math:`\lambda` is increased after a
   rejected step, times :math:`2^{k-1}` at the :math:`k`-th consecutive rejection;
   greater than 1. Default: 2.0.
 - **lambda_downscale** [in]: Factor by which :math:`\lambda` is decreased after a
-  very successful step. Default: 0.5.
+  very successful step; in (0, 1]. Default: 0.5.
 - **lambda_max** [in]: Upper bound for :math:`\lambda`. Default: 1e+6.
 - **lambda_min** [in]: Lower bound for :math:`\lambda`. Default: 1e-6.
 - **step_accept_threshold** [in]: Minimum step quality (rho, actual/predicted
@@ -1413,15 +1413,8 @@ triplets; see ``ResidualBatchWorkspaceSizeBytes`` / ``ResidualBatchWorkspaceNumF
 :code:`MinimizerState::Copy`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Purpose:** Snapshot or restore state. Copy state from a set of device vectors
-into the minimizer state, or from another :cpp:class:`MinimizerState` into a
-problem’s state storage. Useful for rollback or warm starts.
-
-.. cpp:function:: void Copy(cudaStream_t stream, const std::vector<dvector<float>>& other)
-
-  :param ``stream``: [in] CUDA stream for copy operations.
-  :param ``other``: [in] Source state vectors (one per state batch segment).
-  :returns: [out] No return value.
+**Purpose:** Write a :cpp:class:`MinimizerState` snapshot back into a
+problem's state storage (what the minimizers do at the end of a solve).
 
 .. cpp:function:: void Copy(cudaStream_t stream, const MinimizerState& state, Problem& problem)
 

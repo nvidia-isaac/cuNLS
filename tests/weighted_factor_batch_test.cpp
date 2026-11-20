@@ -28,6 +28,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <utility>
+#include <vector>
 
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
@@ -93,17 +95,9 @@ struct TestParam {
   static constexpr int solver_id = SolverId;
 };
 
-constexpr int kPCG = test_utils::kBlockSparsePCGSolverId;
-constexpr int kChol = test_utils::kBlockSparseCholeskySolverId;
-
-typedef ::testing::Types<
-#ifdef CUNLS_ENABLE_CUDSS
-    TestParam<1, 0>, TestParam<2, 0>, TestParam<3, 0>, TestParam<4, 0>, TestParam<1, 1>,
-    TestParam<2, 1>, TestParam<3, 1>, TestParam<4, 1>,
-#endif
-    TestParam<1, kPCG>, TestParam<2, kPCG>, TestParam<3, kPCG>, TestParam<4, kPCG>,
-    TestParam<1, kChol>, TestParam<2, kChol>, TestParam<3, kChol>, TestParam<4, kChol>>
-    WeightedTestParams;
+// The wrapper scales rows; it does not depend on the vector size or the linear
+// solver (both covered elsewhere): one of each.
+typedef ::testing::Types<TestParam<3, test_utils::kBlockSparseCholeskySolverId>> WeightedTestParams;
 TYPED_TEST_SUITE(WeightedFactorBatchTest, WeightedTestParams);
 
 /**
@@ -189,74 +183,60 @@ TYPED_TEST(WeightedFactorBatchTest, PerFactorWeightLM) {
 }
 
 /**
- * @brief Verifies that a uniform weight of 1.0 produces the same cost
- *        trajectory as an unweighted factor.
+ * @brief Values: the weighted residuals and Jacobians are the wrapped factor's
+ * multiplied by the weight of each item's factor (uniform and per-factor).
  */
-TYPED_TEST(WeightedFactorBatchTest, UnitWeightMatchesUnweighted) {
-  using FactorType = PriorVectorFactorBatch<TestFixture::kDim>;
-  using WeightedType = WeightedFactorBatch<FactorType>;
-
-  DeviceVector<typename TestFixture::VectorType> obs_device(this->observations_);
-
-  // Run with weight = 1.0
-  {
-    typename TestFixture::StateData state_data(this->state_values_);
-    auto &vector_states = state_data.get();
-    auto device_pointers = test_utils::CollectStatePointers(vector_states);
-
-    WeightedType weighted_factor(1.0f, obs_device.data(), this->num_vectors_);
-    weighted_factor.SetNumActiveFactors(weighted_factor.Capacity());
-
-    Problem problem;
-    problem.AddFactorBatch(&weighted_factor, device_pointers);
-    problem.AddStateBatch(&vector_states);
-
-    CudaStream stream;
-    LevenbergMarquardtMinimizerOptions lm_options;
-    lm_options.base_options = this->minimizer_options_;
-    LevenbergMarquardtMinimizer minimizer(lm_options);
-    auto summary = minimizer.Minimize(stream.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-    ASSERT_TRUE(std::isfinite(summary.final_cost));
-    this->CheckConvergence(vector_states);
+TEST(WeightedFactorBatchValues, ScalesResidualsAndJacobians) {
+  constexpr int kDim = 3;
+  constexpr size_t kN = 37;
+  using FactorType = PriorVectorFactorBatch<kDim>;
+  std::vector<Vector<kDim>> obs(kN), states(kN);
+  std::vector<float> weights(kN);
+  for (size_t i = 0; i < kN; i++) {
+    for (int k = 0; k < kDim; k++) {
+      obs[i][k] = 0.1f * static_cast<float>(i) - static_cast<float>(k);
+      states[i][k] = 0.3f * static_cast<float>(k) - 0.05f * static_cast<float>(i);
+    }
+    weights[i] = 0.5f + 0.25f * static_cast<float>(i % 7);
   }
-}
+  DeviceVector<Vector<kDim>> obs_device(obs), states_device(states);
+  DeviceVector<float> weights_device(weights);
+  std::vector<const float *> pointers(kN);
+  for (size_t i = 0; i < kN; i++) {
+    pointers[i] = reinterpret_cast<const float *>(states_device.data() + i);
+  }
+  DeviceVector<const float *> pointers_device(pointers);
 
-/**
- * @brief Verifies that a large uniform weight still converges.
- */
-TYPED_TEST(WeightedFactorBatchTest, LargeUniformWeightConverges) {
-  using FactorType = PriorVectorFactorBatch<TestFixture::kDim>;
-  using WeightedType = WeightedFactorBatch<FactorType>;
-
-  typename TestFixture::StateData state_data(this->state_values_);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-
-  DeviceVector<typename TestFixture::VectorType> obs_device(this->observations_);
-
-  const float weight = 100.0f;
-  WeightedType weighted_factor(weight, obs_device.data(), this->num_vectors_);
-  weighted_factor.SetNumActiveFactors(weighted_factor.Capacity());
-
-  Problem problem;
-  problem.AddFactorBatch(&weighted_factor, device_pointers);
-  problem.AddStateBatch(&vector_states);
-
-  CudaStream stream;
-  LevenbergMarquardtMinimizerOptions lm_options;
-  lm_options.base_options = this->minimizer_options_;
-  lm_options.initial_lambda = 1.0f;
-  LevenbergMarquardtMinimizer minimizer(lm_options);
-  auto summary = minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  ASSERT_TRUE(std::isfinite(summary.initial_cost));
-  ASSERT_TRUE(std::isfinite(summary.final_cost));
-  ASSERT_LE(summary.final_cost, summary.initial_cost);
-
-  this->CheckConvergence(vector_states);
+  // Residuals and Jacobians (kDim x kDim per item) of `factor`.
+  auto evaluate = [&](FactorBatch &factor) {
+    factor.SetNumActiveFactors(kN);
+    DeviceVector<float> r(kN * kDim), j(kN * kDim * kDim);
+    CudaStream stream;
+    EXPECT_TRUE(factor.Evaluate(r.data(), j.data(), pointers_device.data(), stream.GetStream()));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    std::vector<float> hr(r.size()), hj(j.size());
+    r.CopyToHost(hr.data(), hr.size());
+    j.CopyToHost(hj.data(), hj.size());
+    return std::make_pair(hr, hj);
+  };
+  FactorType plain(obs_device.data(), kN);
+  WeightedFactorBatch<FactorType> uniform(2.5f, obs_device.data(), kN);
+  WeightedFactorBatch<FactorType> per_factor(weights_device.data(), kN, obs_device.data(), kN);
+  const auto ref = evaluate(plain);
+  const auto u = evaluate(uniform);
+  const auto p = evaluate(per_factor);
+  for (size_t i = 0; i < kN; i++) {
+    for (int k = 0; k < kDim; k++) {
+      const size_t at = i * kDim + k;
+      EXPECT_FLOAT_EQ(u.first[at], 2.5f * ref.first[at]) << "uniform residual " << at;
+      EXPECT_FLOAT_EQ(p.first[at], weights[i] * ref.first[at]) << "per-factor residual " << at;
+    }
+    for (int k = 0; k < kDim * kDim; k++) {
+      const size_t at = i * kDim * kDim + k;
+      EXPECT_FLOAT_EQ(u.second[at], 2.5f * ref.second[at]) << "uniform Jacobian " << at;
+      EXPECT_FLOAT_EQ(p.second[at], weights[i] * ref.second[at]) << "per-factor Jacobian " << at;
+    }
+  }
 }
 
 /**

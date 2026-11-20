@@ -6,18 +6,16 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89" CACHE STRING "CUDA architectures to compile")
-endif()
-
 # /usr/local/cuda/bin is often not on PATH, and distro packages such as Ubuntu's
 # nvidia-cuda-toolkit install an older nvcc in /usr/bin that PATH lookup would find
 # first. Prefer the standard toolkit location unless the caller chose a compiler.
 if(NOT DEFINED CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX} AND EXISTS "/usr/local/cuda/bin/nvcc")
   set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 endif()
+# Native code for every GPU generation the toolkit supports (no PTX JIT at load time).
+include(cmake/CudaArchitectures.cmake)
 
-project(cunls VERSION 0.4.2 LANGUAGES CXX CUDA)
+project(cunls VERSION 0.4.3 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -138,8 +136,12 @@ if(NOT BUILD_SHARED_LIBS)
 endif()
 
 if(BUILD_SHARED_LIBS)
+  # Before 1.0 any release may change the ABI (CHANGELOG.md): the SONAME carries the full
+  # version, so a program built against another release does not load this one.
   set_target_properties(cunls PROPERTIES
-      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+      VERSION ${PROJECT_VERSION}
+      SOVERSION ${PROJECT_VERSION})
 else()
   set_target_properties(cunls PROPERTIES
       ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -223,8 +225,6 @@ if(BUILD_TESTING)
     tests/schur_system_test.cpp
     tests/stereo_loop_ba_test.cpp
     tests/triple_smooth_factor_batch.cu
-    tests/dense_matrix_ops_test.cpp
-    tests/utils_test.cpp
     tests/device_vector_test.cpp
     tests/sba_minimizer_test.cpp
     tests/pgo_minimizer_test.cpp

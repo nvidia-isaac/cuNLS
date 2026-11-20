@@ -54,10 +54,9 @@ class DenseQRSolver : public DenseLinearSolverBase {
    * The pipeline is:
    *   1. cusolverDnSgeqrf  (in-place QR factorization).
    *   2. Rank-deficiency check on R's diagonal (if safety checks enabled).
-   *   3. Copy rhs into a work vector.
-   *   4. cusolverDnSormqr   (Q^T * b in-place).
-   *   5. cublasStrsm        (R x = Q^T b upper-triangular solve).
-   *   6. Copy result from work vector.
+   *   3. Copy rhs into result.
+   *   4. cusolverDnSormqr   (Q^T * b in place).
+   *   5. cublasStrsm        (R x = Q^T b upper-triangular solve, in place).
    *
    * @param stream CUDA stream for asynchronous GPU operations.
    * @param n Matrix dimension.
@@ -73,7 +72,6 @@ class DenseQRSolver : public DenseLinearSolverBase {
   cuBLASHandle cublas_handle_;
   dvector<float> tau_;
   dvector<float> workspace_;
-  dvector<float> rhs_copy_;
   dvector<int> dev_info_;
   pvector<int> dev_info_pinned_;
   size_t last_n_ = 0;

@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <numeric>
 #include <sstream>
 #include <type_traits>
 #include <utility>
@@ -28,72 +27,23 @@
 namespace cunls {
 
 /**
- * @brief Applies a uniform scalar weight to batched residual vectors.
+ * @brief Evaluates `inner` under FactorBatch::Evaluate's item contract and
+ * scales each item's residual and Jacobian rows by a scalar weight: the weight
+ * of the item's factor f (factor_ids[t], or t % inner.NumActiveFactors()),
+ * per_factor_weights[f], when per_factor_weights is not null, otherwise
+ * uniform_weight. The evaluation of WeightedFactorBatch and of the Python
+ * weighted wrapper.
  *
- * Computes residuals[i] *= weight for every element across all factors.
- *
- * @param weight Scalar weight to apply.
- * @param residuals Residual vectors, modified in-place (device).
- * @param total_elements Total number of float elements (num_factors *
- * residual_size).
- * @param stream CUDA stream for asynchronous execution.
+ * @param inner The weighted factor batch.
+ * @param uniform_weight Weight of every item when per_factor_weights is null.
+ * @param per_factor_weights Device array of inner.NumActiveFactors() weights,
+ *        or nullptr.
+ * @return false (nothing scaled) if inner's evaluation fails, true otherwise.
  */
-void ApplyUniformWeightToResiduals(float weight, float *residuals, size_t total_elements,
-                                   cudaStream_t stream);
-
-/**
- * @brief Applies a uniform scalar weight to batched Jacobian matrices.
- *
- * Computes jacobians[i] *= weight for every element across all factors.
- *
- * @param weight Scalar weight to apply.
- * @param jacobians Jacobian matrices, modified in-place (device).
- * @param total_elements Total number of float elements
- *        (num_factors * residual_size * jacobian_pitch).
- * @param stream CUDA stream for asynchronous execution.
- */
-void ApplyUniformWeightToJacobians(float weight, float *jacobians, size_t total_elements,
-                                   cudaStream_t stream);
-
-/**
- * @brief Applies per-factor scalar weights to batched residual vectors.
- *
- * Computes residuals[i * residual_size + j] *= weights[f(i)] for each item i,
- * where f(i) is the item's factor (FactorBatch::Evaluate's item contract):
- * factor_ids[i], or i modulo weights_size when factor_ids is null.
- *
- * @param weights Device pointer to per-factor weights (weights_size floats).
- * @param residuals Residual vectors, modified in-place (device).
- * @param residual_size Dimension of each residual vector.
- * @param num_factors Number of items (residual vectors) to weight.
- * @param stream CUDA stream for asynchronous execution.
- * @param factor_ids Optional device array of per-item factor indices.
- * @param weights_size Number of weights; 0 means num_factors.
- */
-void ApplyPerFactorWeightToResiduals(const float *weights, float *residuals, size_t residual_size,
-                                     size_t num_factors, cudaStream_t stream,
-                                     const int *factor_ids = nullptr, size_t weights_size = 0);
-
-/**
- * @brief Applies per-factor scalar weights to batched Jacobian matrices.
- *
- * Computes jacobians[i * stride + j] *= weights[f(i)] for each item i,
- * where stride = residual_size * jacobian_pitch and f(i) is the item's factor
- * as in ApplyPerFactorWeightToResiduals.
- *
- * @param weights Device pointer to per-factor weights (weights_size floats).
- * @param jacobians Jacobian matrices, modified in-place (device).
- * @param residual_size Row dimension of the Jacobian.
- * @param jacobian_pitch Column dimension (total state width) of each
- * Jacobian.
- * @param num_factors Number of items (Jacobians) to weight.
- * @param stream CUDA stream for asynchronous execution.
- * @param factor_ids Optional device array of per-item factor indices.
- * @param weights_size Number of weights; 0 means num_factors.
- */
-void ApplyPerFactorWeightToJacobians(const float *weights, float *jacobians, size_t residual_size,
-                                     size_t jacobian_pitch, size_t num_factors, cudaStream_t stream,
-                                     const int *factor_ids = nullptr, size_t weights_size = 0);
+bool EvaluateWeighted(const FactorBatch &inner, float uniform_weight,
+                      const float *per_factor_weights, float *residuals, float *jacobians,
+                      float const *const *state_pointers, cudaStream_t stream,
+                      const int *factor_ids, size_t num_factor_ids);
 
 /**
  * @brief Wrapper factor that applies scalar weights to residuals and Jacobians.
@@ -113,7 +63,7 @@ void ApplyPerFactorWeightToJacobians(const float *weights, float *jacobians, siz
  * @note For per-factor weights, the weights pointer must point to GPU device
  *       memory and remain valid for the lifetime of this object.
  */
-template <class T, typename std::enable_if_t<IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
+template <class T, typename std::enable_if_t<HasSizedLayout<T>::value, int> = 0>
 class WeightedFactorBatch : public T::sized_layout {
  public:
   /**
@@ -210,42 +160,8 @@ class WeightedFactorBatch : public T::sized_layout {
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override {
-    const size_t num_items = num_factor_ids == 0 ? this->NumActiveFactors() : num_factor_ids;
-    if (num_items == 0 || NumActiveFactors() == 0) {
-      return true;
-    }
-    if (!factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream, factor_ids,
-                                num_items)) {
-      return false;
-    }
-
-    const size_t rsize = T::residual_size_;
-    const size_t num_factors = factor_batch_.NumActiveFactors();
-
-    if (per_factor_weights_ != nullptr) {
-      ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals, rsize, num_items, stream,
-                                      factor_ids, num_factors);
-    } else {
-      ApplyUniformWeightToResiduals(uniform_weight_, residuals, num_items * rsize, stream);
-    }
-
-    if (jacobians == nullptr) {
-      return true;
-    }
-
-    auto state_sizes = this->StateSizes();
-    const size_t jacobian_pitch =
-        std::accumulate(state_sizes.begin(), state_sizes.end(), size_t{0});
-
-    if (per_factor_weights_ != nullptr) {
-      ApplyPerFactorWeightToJacobians(per_factor_weights_, jacobians, rsize, jacobian_pitch,
-                                      num_items, stream, factor_ids, num_factors);
-    } else {
-      ApplyUniformWeightToJacobians(uniform_weight_, jacobians, num_items * rsize * jacobian_pitch,
-                                    stream);
-    }
-
-    return true;
+    return EvaluateWeighted(factor_batch_, uniform_weight_, per_factor_weights_, residuals,
+                            jacobians, state_pointers, stream, factor_ids, num_factor_ids);
   }
 
  private:

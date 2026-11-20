@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
 
@@ -49,12 +48,7 @@ class ConstantAccelerationSO2FactorBatch : public SizedFactorBatch<3, 1, 1, 1, 1
                 size_t num_factor_ids = 0) const override;
 
  private:
-  ConstantAccelerationSO2FactorBatch() = delete;
-
-  const float *dt_ptr_;
-
-  mutable DeviceVector<Matrix<2>> pose_rel_;
-  mutable DeviceVector<float> twist_;
+  const float *dt_ptr_;  ///< Per-factor time deltas (user memory).
 };
 
 }  // namespace cunls

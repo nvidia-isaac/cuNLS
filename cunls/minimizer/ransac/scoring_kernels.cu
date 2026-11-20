@@ -199,7 +199,6 @@ __device__ int FirstUnchosen(const unsigned *chosen, int num_slots) {
 }
 
 __device__ void UpdateBest(DeviceStats *stats, float value, int slot, const int *inliers) {
-  stats->last_min_score = value;
   stats->improved = value < stats->best_score ? 1 : 0;
   if (stats->improved) {
     stats->best_score = value;
@@ -250,7 +249,6 @@ __global__ void InitStatsKernel(DeviceStats *stats) {
   stats->improved = 0;
   stats->best_slot = 0;
   stats->valid_total = 0;
-  stats->last_min_score = INFINITY;
 }
 
 }  // namespace

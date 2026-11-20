@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 
@@ -49,46 +50,15 @@ const char *cusolverGetErrorString(int status);
 #define WARN_ON_CUSOLVER_ERROR(status) CHECK_CUDA_ERROR(status, cusolverGetErrorString, false)
 
 /**
- * @brief RAII wrapper for cuSolver handle management.
- *
- * Manages the lifecycle of a cuSolver handle. The handle is created
- * on construction and destroyed on destruction. The handle is associated with
- * a specific CUDA stream when GetHandle is called.
+ * @brief The cuSOLVER dense handle of a CUDA stream (see StreamBoundHandle):
+ * created on the first GetHandle(), rebound with cusolverDnSetStream when the
+ * stream changes, destroyed with the object. Each instance owns its handle;
+ * non-copyable.
  */
-class cuSolverHandle {
+class cuSolverHandle : public StreamBoundHandle {
  public:
-  /// Constructs a cuSolver handle (handle is created lazily on first GetHandle
-  /// call)
+  /** @brief No handle yet: the first GetHandle() creates a cusolverDnHandle_t. */
   cuSolverHandle();
-  /// Destroys the cuSolver handle
-  ~cuSolverHandle();
-
-  cuSolverHandle(const cuSolverHandle &) = delete;
-
-  cuSolverHandle &operator=(const cuSolverHandle &) = delete;
-
-  cuSolverHandle(cuSolverHandle &&) = delete;
-
-  cuSolverHandle &operator=(cuSolverHandle &&) = delete;
-
-  /**
-   * @brief Gets or creates a cuSolver handle associated with the given stream.
-   *
-   * If the handle is already associated with the given stream, returns it.
-   * Otherwise, destroys the old handle (if any) and creates a new one
-   * associated with the stream.
-   *
-   * @param stream CUDA stream to associate the handle with (must not be
-   * nullptr)
-   * @return An opaque pointer to the cuSolver handle associated with the
-   * stream.
-   * @throws std::invalid_argument if stream is nullptr
-   */
-  void *GetHandle(cudaStream_t stream);
-
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
-  void *handle_ = nullptr;         ///< cuSolver handle
 };
 
 /**

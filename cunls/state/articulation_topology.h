@@ -178,16 +178,8 @@ class ArticulationTopology {
   const std::vector<float> &LowerLimits() const { return lower_; }
   /** @brief Upper limit per DOF (T entries, host; +inf when unbounded). */
   const std::vector<float> &UpperLimits() const { return upper_; }
-  /** @brief Joint type per joint (host copy, in the description's order). */
-  const std::vector<int> &JointTypes() const { return joint_type_; }
-  /** @brief First coordinate per joint plus the total (host copy, J + 1 entries). */
-  const std::vector<int> &JointQStart() const { return q_start_; }
-  /** @brief First DOF per joint plus the total (host copy, J + 1 entries). */
-  const std::vector<int> &JointQdStart() const { return qd_start_; }
   /** @brief Coordinate of each scalar DOF, -1 for BALL and FREE DOFs (host copy, T entries). */
   const std::vector<int> &ScalarCoord() const { return scalar_coord_; }
-  /** @brief Tree joint of each link (host, J entries). */
-  const std::vector<int> &LinkJoint() const { return link_joint_; }
 
   /** @brief Device arrays for kernels (valid for the lifetime of this object). */
   const DeviceView &View() const { return view_; }
@@ -196,7 +188,7 @@ class ArticulationTopology {
   DeviceView view_;
   bool has_limits_ = false;
   std::vector<float> lower_, upper_;
-  std::vector<int> joint_type_, q_start_, qd_start_, scalar_coord_, link_joint_;
+  std::vector<int> scalar_coord_;
   dvector<int> d_ints_;      ///< All integer arrays of view_, back to back.
   dvector<float> d_floats_;  ///< All float arrays of view_, back to back.
   dvector<unsigned> d_ancestors_;

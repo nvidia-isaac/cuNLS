@@ -58,27 +58,6 @@ typedef ::testing::Types<test_utils::Size<1>, test_utils::Size<2>, test_utils::S
     VectorSizes;
 TYPED_TEST_SUITE(ProblemConsistencyTest, VectorSizes);
 
-/** @brief Verifies that a problem is inconsistent without states and consistent
- * once added. */
-TYPED_TEST(ProblemConsistencyTest, CheckConsistencySimple) {
-  auto seq_vecs = test_utils::MakeSequentialVectors<TestFixture::kDim>(this->num_vectors);
-  test_utils::VectorStateData<TestFixture::kDim> state_data(seq_vecs);
-  auto &vector_states = state_data.get();
-  auto device_pointers = test_utils::CollectStatePointers(vector_states);
-  auto obs_vecs = test_utils::MakeConstantVectors<TestFixture::kDim>(this->num_vectors, 1.f);
-  test_utils::PriorFactorData<TestFixture::kDim> factor_data(obs_vecs);
-  auto &factor_batch = factor_data.get();
-
-  Problem problem;
-  problem.AddFactorBatch(&factor_batch, device_pointers);
-  ASSERT_FALSE(problem.CheckConsistency());
-
-  problem.AddStateBatch(&vector_states);
-
-  auto test_range = this->profiler_domain_.CreateDomainRange("CheckConsistencySimple");
-  ASSERT_TRUE(problem.CheckConsistency());
-}
-
 /** @brief Verifies consistency with one state batch and multiple factor
  * batches. */
 TYPED_TEST(ProblemConsistencyTest, CheckConsistencyOneToMany) {

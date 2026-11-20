@@ -25,6 +25,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -42,6 +43,7 @@
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/prior/se2_prior_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
+#include "cunls/linear_solver/block_sparse_cholesky_solver.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
@@ -416,34 +418,57 @@ TEST(BlockTridiagonalSolver, RandomSystemsMatchFloat64) {
   CheckRandomSystem<32>(1, 4);
 }
 
-template <int M>
-void TimeSolver(int P, int K) {
+/** Median time of one Solve (matrix scatter + factorization + substitutions) by `Solver`. */
+template <typename Solver, int M>
+double SolveMicroseconds(int P, int K) {
   RandomSystem<M> system(P, K, 3);
   dvector<float> rhs(system.rhs), result(std::vector<float>(system.n, 0.f));
   CudaStream stream;
-  BlockTridiagonalSolver solver;
-  ASSERT_TRUE(solver.Initialize(stream.GetStream(), system.problem, system.csr, rhs, result));
-  for (int i = 0; i < 3; ++i) solver.Solve(stream.GetStream(), system.csr, rhs, result);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  constexpr int kRuns = 20;
-  const auto t0 = std::chrono::steady_clock::now();
-  for (int i = 0; i < kRuns; ++i) solver.Solve(stream.GetStream(), system.csr, rhs, result);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const double us =
-      std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count() /
-      kRuns;
-  std::printf("BlockTridiagonal P=%5d K=%3d M=%2d: %9.1f us per solve\n", P, K, M, us);
+  Solver solver;
+  solver.DisableSafetyChecks();
+  EXPECT_TRUE(solver.Initialize(stream.GetStream(), system.problem, system.csr, rhs, result));
+  std::vector<double> us;
+  for (int i = 0; i < 23; ++i) {
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    const auto t0 = std::chrono::steady_clock::now();
+    solver.Solve(stream.GetStream(), system.csr, rhs, result);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    if (i >= 3) {
+      us.push_back(
+          std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
+    }
+  }
+  std::sort(us.begin(), us.end());
+  return us[us.size() / 2];
 }
 
-// Throughput of the solve (scatter, kernel, gather) on the MPC sizes; run with
+/** Prints both solvers' Solve times on a random system (BlockTridiagonal up to its stage limit). */
+template <int M>
+void CompareSolvers(int P, int K) {
+  const double tridiagonal = M <= BlockTridiagonalSolver::kMaxStageSize
+                                 ? SolveMicroseconds<BlockTridiagonalSolver, M>(P, K)
+                                 : 0.0;
+  std::printf("BENCH solve_P%d_K%d_M%d BlockTridiagonal_us=%.1f BlockSparseCholesky_us=%.1f\n", P,
+              K, M, tridiagonal, SolveMicroseconds<BlockSparseCholeskySolver, M>(P, K));
+}
+
+// The same systems through both direct solvers: many independent subproblems (inverse
+// kinematics), batches of trajectories, single trajectories. Run with
 // --gtest_also_run_disabled_tests.
-TEST(BlockTridiagonalSolver, DISABLED_Throughput) {
-  TimeSolver<5>(1, 51);
-  TimeSolver<7>(1, 51);
-  TimeSolver<16>(1, 41);
-  TimeSolver<24>(1, 21);
-  TimeSolver<16>(4096, 41);
-  TimeSolver<24>(1024, 21);
+TEST(BlockTridiagonalSolver, DISABLED_ThroughputVsBlockSparseCholesky) {
+  CompareSolvers<6>(32768, 1);
+  CompareSolvers<9>(32768, 1);
+  CompareSolvers<16>(32768, 1);
+  CompareSolvers<32>(32768, 1);
+  CompareSolvers<36>(32768, 1);
+  CompareSolvers<64>(8192, 1);
+  CompareSolvers<5>(1, 51);
+  CompareSolvers<7>(1, 51);
+  CompareSolvers<16>(1, 41);
+  CompareSolvers<24>(1, 21);
+  CompareSolvers<16>(4096, 41);
+  CompareSolvers<24>(1024, 21);
+  CompareSolvers<6>(512, 101);
 }
 
 }  // namespace

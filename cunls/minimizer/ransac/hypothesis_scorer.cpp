@@ -224,13 +224,8 @@ void HypothesisScorer::EvaluateChunk(cudaStream_t stream, const RansacLayout &la
     }
     Batch &buf = batches_[b];
     const size_t nf = static_cast<size_t>(r.num_factors);
-    if (slot_index != nullptr) {
-      LaunchIndexedSlotTables(stream, hypotheses.state_views(), r.blocks.data(), r.num_factors,
-                              r.nb, slot_index, count, buf.table.data());
-    } else {
-      LaunchSlotTables(stream, hypotheses.state_views(), r.blocks.data(), r.num_factors, r.nb,
-                       count, first, false, buf.table.data());
-    }
+    LaunchSlotTables(stream, hypotheses.state_views(), r.blocks.data(), r.num_factors, r.nb,
+                     slot_index, count, first, false, buf.table.data());
     // Hypothesis q's rows are items q * N .. q * N + N - 1 (factor t % N).
     CheckEvaluate(r.factor->Evaluate(buf.res.data(), jacobians_ ? buf.jac.data() : nullptr,
                                      buf.table.data(), stream, nullptr, count * nf),

@@ -15,13 +15,11 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <numeric>
-#include <stdexcept>
-#include <string>
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/bsr_matrix.h"
-#include "cunls/minimizer/device_reduction.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/state_batch.h"
 
@@ -56,64 +54,6 @@ __global__ void ExtractBlockDiagonalKernel(int num_block_rows, int block_size,
   // Structurally absent diagonal tile: the diagonal is zero there.
   for (int k = 0; k < block_size; k++) {
     diagonal[block_row * block_size + k] = 0.f;
-  }
-}
-
-/** One thread per block row; adds `scale * diagonal` to the diagonal tile. */
-__global__ void AddScaledBlockDiagonalKernel(int num_block_rows, int block_size,
-                                             const int *__restrict__ row_offsets,
-                                             const int *__restrict__ col_ids, float scale,
-                                             const float *__restrict__ diagonal,
-                                             float *__restrict__ values) {
-  int block_row = blockIdx.x * blockDim.x + threadIdx.x;
-  if (block_row >= num_block_rows) {
-    return;
-  }
-  const int tile_area = block_size * block_size;
-  for (int t = row_offsets[block_row]; t < row_offsets[block_row + 1]; t++) {
-    if (col_ids[t] != block_row) {
-      continue;
-    }
-    float *tile = values + static_cast<size_t>(t) * tile_area;
-    for (int k = 0; k < block_size; k++) {
-      tile[k * block_size + k] += scale * diagonal[block_row * block_size + k];
-    }
-    return;
-  }
-}
-
-/**
- * One thread per stored scalar entry.  `row_of_tile` maps a tile index to its
- * block row so the entry's global (i, j) can be recovered.
- */
-__global__ void ScaleSymmetricBSRKernel(size_t num_values, int block_size,
-                                        const int *__restrict__ row_of_tile,
-                                        const int *__restrict__ col_ids,
-                                        const float *__restrict__ scale,
-                                        float *__restrict__ values) {
-  size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (idx >= num_values) {
-    return;
-  }
-  const int tile_area = block_size * block_size;
-  const size_t tile = idx / tile_area;
-  const int within = static_cast<int>(idx - tile * tile_area);
-  const int row_in_tile = within / block_size;
-  const int col_in_tile = within - row_in_tile * block_size;
-  const int row = row_of_tile[tile] * block_size + row_in_tile;
-  const int col = col_ids[tile] * block_size + col_in_tile;
-  values[idx] *= scale[row] * scale[col];
-}
-
-/** One thread per tile; records the tile's block row. */
-__global__ void FillRowOfTileKernel(int num_block_rows, const int *__restrict__ row_offsets,
-                                    int *__restrict__ row_of_tile) {
-  int block_row = blockIdx.x * blockDim.x + threadIdx.x;
-  if (block_row >= num_block_rows) {
-    return;
-  }
-  for (int t = row_offsets[block_row]; t < row_offsets[block_row + 1]; t++) {
-    row_of_tile[t] = block_row;
   }
 }
 
@@ -283,7 +223,9 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
   constexpr int kThreads = 128;
   constexpr int kSkewThreshold = 32;
 
-  if (max_tiles_per_row < kSkewThreshold) {
+  // The warp kernels accumulate a tile edge in a fixed per-lane array (kMaxSpMVBlockSize):
+  // a larger edge takes the row kernel whatever the skew.
+  if (max_tiles_per_row < kSkewThreshold || block_size > kMaxSpMVBlockSize) {
     const int num_rows = num_block_rows * block_size;
     const int grid = (num_rows + kThreads - 1) / kThreads;
     switch (block_size) {
@@ -325,13 +267,7 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
     LAUNCH_WARP(7);
     LAUNCH_WARP(8);
 #undef LAUNCH_WARP
-    default:
-      // The generic kernel accumulates into a fixed-size per-lane array; a
-      // larger edge would write past it, silently, so refuse instead.
-      if (block_size > kMaxSpMVBlockSize) {
-        throw std::runtime_error("BSR SpMV: block size exceeds " +
-                                 std::to_string(kMaxSpMVBlockSize));
-      }
+    default:  // at most kMaxSpMVBlockSize (larger edges took the row kernel)
       BsrMultiplyWarpGenericKernel<<<grid, kThreads, 0, stream>>>(
           num_block_rows, block_size, row_offsets, col_ids, values, x, y);
       break;
@@ -344,15 +280,20 @@ void LaunchBsrMultiply(cudaStream_t stream, int num_block_rows, int block_size,
 void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
                               const dvector<float> &x, dvector<float> &y) {
   y.resize(static_cast<size_t>(matrix.NumRows()));
-  if (matrix.NumRows() == 0) {
-    return;
-  }
-  LaunchBsrMultiply(stream, matrix.num_block_rows, matrix.block_size, matrix.max_tiles_per_row,
-                    matrix.row_offsets.data(), matrix.col_ids.data(), matrix.values.data(),
-                    x.data(), y.data());
+  MultiplyBSRValuesByDenseVector(stream, matrix, matrix.values.data(), x.data(), y.data());
 }
 
-int ChooseHessianBlockSize(const Problem &problem, int max_block_size) {
+void MultiplyBSRValuesByDenseVector(cudaStream_t stream, const BSRSparseMatrix &structure,
+                                    const float *values, const float *x, float *y) {
+  if (structure.NumRows() == 0) {
+    return;
+  }
+  LaunchBsrMultiply(stream, structure.num_block_rows, structure.block_size,
+                    structure.max_tiles_per_row, structure.row_offsets.data(),
+                    structure.col_ids.data(), values, x, y);
+}
+
+int ChooseHessianBlockSize(const Problem &problem) {
   int block_size = 0;
   for (const auto *state_batch : problem.GetStateBatches()) {
     const size_t num_free = state_batch->NumActiveStates() - state_batch->NumConstStates();
@@ -364,19 +305,12 @@ int ChooseHessianBlockSize(const Problem &problem, int max_block_size) {
       return 1;
     }
   }
-  if (block_size <= 1) {
-    return 1;
+  // The largest divisor of the common tangent size within kMaxSpMVBlockSize (e.g. 12 for 36, 5
+  // for 25); 1 is scalar storage.
+  for (int edge = std::min(block_size, kMaxSpMVBlockSize); edge > 1; --edge) {
+    if (block_size % edge == 0) return edge;
   }
-  while (block_size > max_block_size) {
-    // Fall back to the largest divisor within budget; halving keeps the
-    // divisibility invariant for the even sizes cuNLS actually uses and
-    // otherwise bails out to scalar storage.
-    if (block_size % 2 != 0) {
-      return 1;
-    }
-    block_size /= 2;
-  }
-  return block_size;
+  return 1;
 }
 
 void ExtractDiagonal(cudaStream_t stream, const BSRSparseMatrix &matrix, dvector<float> &diagonal) {
@@ -388,79 +322,6 @@ void ExtractDiagonal(cudaStream_t stream, const BSRSparseMatrix &matrix, dvector
       matrix.num_block_rows, matrix.block_size, matrix.row_offsets.data(), matrix.col_ids.data(),
       matrix.values.data(), diagonal.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void AddScaledDiagonal(cudaStream_t stream, float scale, const dvector<float> &diagonal,
-                       const BSRSparseMatrix &matrix, BSRSparseMatrix &result) {
-  CopyBSRSparseMatrix(stream, matrix, result);
-  if (result.num_block_rows == 0) {
-    return;
-  }
-  AddScaledBlockDiagonalKernel<<<GridFor(result.num_block_rows), kBlockSize, 0, stream>>>(
-      result.num_block_rows, result.block_size, result.row_offsets.data(), result.col_ids.data(),
-      scale, diagonal.data(), result.values.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void ScaleSymmetric(cudaStream_t stream, BSRSparseMatrix &matrix, const dvector<float> &scale,
-                    dvector<int> &row_of_tile) {
-  if (matrix.values.empty()) {
-    return;
-  }
-  // Scaling needs each entry's global row, which BSR does not store per tile.
-  // The map is caller-owned so this stays allocation- and sync-free on the
-  // solver's hot path.
-  row_of_tile.resize(matrix.NumBlocks());
-  FillRowOfTileKernel<<<GridFor(matrix.num_block_rows), kBlockSize, 0, stream>>>(
-      matrix.num_block_rows, matrix.row_offsets.data(), row_of_tile.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  ScaleSymmetricBSRKernel<<<GridFor(matrix.values.size()), kBlockSize, 0, stream>>>(
-      matrix.values.size(), matrix.block_size, row_of_tile.data(), matrix.col_ids.data(),
-      scale.data(), matrix.values.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void CopyBSRValues(cudaStream_t stream, const BSRSparseMatrix &input, BSRSparseMatrix &output) {
-  if (&input == &output || input.values.empty()) return;
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(output.values.data(), input.values.data(),
-                                      input.values.size() * sizeof(float), cudaMemcpyDeviceToDevice,
-                                      stream));
-}
-
-void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
-                         BSRSparseMatrix &output) {
-  if (&input == &output) {
-    return;
-  }
-  // Always copy the structure, never just the values.  Matching sizes do not
-  // imply matching connectivity: a solver reused across a stream of problems
-  // hits pairs with the same block-row and tile counts but different sparsity,
-  // and reusing the previous pattern silently pairs new values with old
-  // columns.
-  output.block_size = input.block_size;
-  output.num_block_rows = input.num_block_rows;
-  output.max_tiles_per_row = input.max_tiles_per_row;
-
-  output.row_offsets.resize(input.row_offsets.size());
-  output.col_ids.resize(input.col_ids.size());
-  if (!input.row_offsets.empty()) {
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(output.row_offsets.data(), input.row_offsets.data(),
-                                        input.row_offsets.size() * sizeof(int),
-                                        cudaMemcpyDeviceToDevice, stream));
-  }
-  if (!input.col_ids.empty()) {
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(output.col_ids.data(), input.col_ids.data(),
-                                        input.col_ids.size() * sizeof(int),
-                                        cudaMemcpyDeviceToDevice, stream));
-  }
-
-  output.values.resize(input.values.size());
-  if (!input.values.empty()) {
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(output.values.data(), input.values.data(),
-                                        input.values.size() * sizeof(float),
-                                        cudaMemcpyDeviceToDevice, stream));
-  }
 }
 
 }  // namespace cunls

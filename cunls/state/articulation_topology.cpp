@@ -286,11 +286,7 @@ ArticulationTopology::ArticulationTopology(const ArticulationDescription &d) {
   TransformMatrix(d.root_pose.data(), false, "root_pose", root.data());
 
   // Host copies.
-  joint_type_ = d.joint_type;
-  q_start_ = d.joint_q_start;
-  qd_start_ = d.joint_qd_start;
   scalar_coord_ = scalar_coord;
-  link_joint_ = link_joint;
 
   // Upload: integer arrays and float arrays back to back.
   std::vector<int> dof_dim(2 * size_t(J), 0);

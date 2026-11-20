@@ -27,198 +27,60 @@
 namespace cunls {
 
 /**
- * @brief Template class for batch processing of states with compile-time
- * known dimensions.
- *
- * This class provides a concrete implementation of StateBatch for states
- * where both the ambient dimension (storage size) and tangent dimension
- * (optimization space) are known at compile time. This enables compile-time
- * optimizations and type safety.
- *
- * The class manages a contiguous array of states stored on the GPU device
- * memory. Each state occupies AmbientDim floats, and states are stored
- * sequentially.
- *
- * @tparam AmbientDim The dimension of the ambient space (storage size per
- * state). This is the number of floats needed to store one state.
- * @tparam TangentDim The dimension of the tangent space (optimization space per
- * state). This is the number of floats needed to represent an
- * update/delta.
- *
- * @note This is a base class that provides storage and access methods. Derived
- * classes (such as SE3StateBatch or VectorStateBatch) must implement the Plus()
- * operation specific to their manifold structure.
- *
- * @note The data pointed to by device_ptr must be allocated on the GPU device
- * and remain valid for the lifetime of this object. The memory layout is:
- *       [state0: AmbientDim floats][state1: AmbientDim floats]...[stateN-1:
- * AmbientDim floats]
+ * @brief Storage and bookkeeping of a state batch whose ambient and tangent sizes are set at
+ * run time: a contiguous device array of Capacity() states of AmbientSize() floats each
+ * ([state0][state1]..., caller-owned, valid for the batch's lifetime), the optional constant
+ * state ids, and the active counts. SizedStateBatch fixes the sizes at compile time; derived
+ * classes implement Plus() for their manifold.
  */
-template <int AmbientDim, int TangentDim>
-class SizedStateBatch : public StateBatch {
+class DynamicSizedStateBatch : public StateBatch {
  public:
   /**
-   * @brief Constructs a batch of states with no constant states.
-   *
-   * The batch wraps user-owned GPU memory holding up to `capacity` states of
-   * AmbientDim floats each: [state0][state1]...[state(capacity-1)]. The active
-   * count starts at 0: call SetNumActiveStates(n) before solving. Only the first
-   * n states are read and written; the rest stay addressable through
-   * StateDevicePtr().
-   *
-   * @param device_ptr GPU memory of at least capacity * AmbientDim floats.
-   * @param capacity Number of states the buffer holds.
+   * @param ambient_size Floats per state in the storage.
+   * @param tangent_size Floats per state update (delta).
+   * @param device_ptr Device storage of capacity * ambient_size floats.
+   * @param capacity States the storage holds; the active count starts at 0
+   *        (SetNumActiveStates).
+   * @param device_constant_state_ids Optional device array of the ids of constant states
+   *        (const_capacity entries).
+   * @param const_capacity Entries of device_constant_state_ids.
    */
-  SizedStateBatch(const float *device_ptr, size_t capacity)
+  DynamicSizedStateBatch(size_t ambient_size, size_t tangent_size, const float *device_ptr,
+                         size_t capacity, const int *device_constant_state_ids = nullptr,
+                         size_t const_capacity = 0)
       : ptr_(device_ptr),
-        num_active_states_(0),
-        capacity_(capacity),
-        constant_state_ids_(nullptr),
-        num_const_states_(0),
-        const_capacity_(0) {}
-
-  /**
-   * @brief Constructs a batch of states with a buffer of constant-state
-   * ids.
-   *
-   * As above, plus a user-owned GPU array of up to `const_capacity` indices of
-   * states held constant. The active counts start at 0: call
-   * SetNumActiveStates(n, num_const) before solving; the first num_const ids
-   * (each below n) are then constant.
-   *
-   * @param device_ptr GPU memory of at least capacity * AmbientDim floats.
-   * @param capacity Number of states the buffer holds.
-   * @param device_constant_state_ids GPU array of at least const_capacity
-   *        ints, or nullptr if const_capacity is 0. Not copied: it must stay
-   *        valid for the lifetime of this object.
-   * @param const_capacity Number of ids the constant-id buffer holds.
-   */
-  SizedStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
-                  size_t const_capacity)
-      : ptr_(device_ptr),
-        num_active_states_(0),
         capacity_(capacity),
         constant_state_ids_(device_constant_state_ids),
-        num_const_states_(0),
-        const_capacity_(const_capacity) {}
+        const_capacity_(const_capacity),
+        ambient_size_(ambient_size),
+        tangent_size_(tangent_size) {}
 
-  /**
-   * @brief Returns the number of states in this batch.
-   *
-   * @return The total number of states managed by this batch.
-   */
+  /** @brief Active states (SetNumActiveStates). */
   size_t NumActiveStates() const final { return num_active_states_; }
-
-  /**
-   * @brief Returns the dimension of the tangent space.
-   *
-   * The tangent space dimension determines the size of update vectors (deltas)
-   * used in optimization. This is a compile-time constant equal to TangentDim.
-   *
-   * @return The tangent space dimension (TangentDim).
-   */
-  size_t TangentSize() const final { return TangentDim; };
-
-  /**
-   * @brief Returns the dimension of the ambient space.
-   *
-   * The ambient space dimension determines the storage size of each
-   * state. This is a compile-time constant equal to AmbientDim.
-   *
-   * @return The ambient space dimension (AmbientDim).
-   */
-  size_t AmbientSize() const final { return AmbientDim; };
-
-  /**
-   * @brief Returns a mutable device pointer to a specific state.
-   *
-   * Computes the device memory address of the state at the given index.
-   * The pointer can be used to read or modify the state data on the GPU.
-   *
-   * @param state_idx The zero-based index of the state, in
-   *        [0, Capacity()). States at or above NumActiveStates() are inactive but
-   *        addressable, so connectivity for a coming solve can be built before
-   *        SetNumActiveStates() is called.
-   * @return Device pointer to the state data (AmbientDim floats), or
-   *         nullptr if state_idx >= Capacity().
-   *
-   * @note The returned pointer points to GPU device memory. Use CUDA memory
-   * operations or kernels to access/modify the data.
-   */
+  /** @brief Floats per state update. */
+  size_t TangentSize() const final { return tangent_size_; }
+  /** @brief Floats per stored state. */
+  size_t AmbientSize() const final { return ambient_size_; }
+  /** @brief Device pointer to state `state_idx`, or nullptr past the capacity. */
   float *StateDevicePtr(size_t state_idx) final {
-    if (state_idx >= capacity_) {
-      return nullptr;
-    }
-
-    return const_cast<float *>(ptr_ + state_idx * AmbientDim);
+    return state_idx < capacity_ ? const_cast<float *>(ptr_ + state_idx * ambient_size_) : nullptr;
   }
-
-  /**
-   * @brief Returns a const device pointer to a specific state.
-   *
-   * Computes the device memory address of the state at the given index.
-   * The pointer provides read-only access to the state data on the GPU.
-   *
-   * @param state_idx The zero-based index of the state, in
-   *        [0, Capacity()) (see the non-const overload).
-   * @return Const device pointer to the state data (AmbientDim floats),
-   *         or nullptr if state_idx >= Capacity().
-   *
-   * @note The returned pointer points to GPU device memory. Use CUDA memory
-   * operations or kernels to read the data.
-   */
+  /** @brief Device pointer to state `state_idx`, or nullptr past the capacity. */
   const float *StateDevicePtr(size_t state_idx) const final {
-    if (state_idx >= capacity_) {
-      return nullptr;
-    }
-
-    return ptr_ + state_idx * AmbientDim;
+    return state_idx < capacity_ ? ptr_ + state_idx * ambient_size_ : nullptr;
   }
-
-  /**
-   * @brief Returns a pointer to the array of constant state indices.
-   *
-   * Returns the device pointer to the array containing indices of states
-   * that should remain constant (not optimized) during the optimization
-   * process.
-   *
-   * @return Device pointer to an array of integer indices, or nullptr if no
-   * states are marked as constant. The array should contain sorted, unique
-   * indices in the range [0, NumActiveStates()).
-   *
-   * @note The returned pointer is valid only if the batch was constructed with
-   *       constant_state_ids. Otherwise, it may be nullptr or uninitialized.
-   */
+  /** @brief Device array of the constant state ids, or nullptr. */
   const int *ConstStateIds() const final { return constant_state_ids_; }
-
-  /**
-   * @brief Returns the number of states marked as constant.
-   * @return The number of constant (non-optimized) states.
-   */
+  /** @brief Active constant states (SetNumActiveStates). */
   size_t NumConstStates() const final { return num_const_states_; }
-
-  /**
-   * @brief Capacity of the state buffer, in states: the constructor's capacity.
-   */
+  /** @brief States the storage holds. */
   size_t Capacity() const final { return capacity_; }
-
-  /**
-   * @brief Entry capacity of the constant-id buffer: the constructor's
-   * const_capacity.
-   */
+  /** @brief Entries of the constant-id array. */
   size_t ConstCapacity() const final { return const_capacity_; }
 
   /**
-   * @brief Sets the active state and constant-id counts (see
-   * StateBatch::SetNumActiveStates). Host-only; takes effect at the next Plus /
-   * Minimize.
-   *
-   * @param num_active_states Active states: the first `num_active_states`
-   *        states of the buffer, at most Capacity().
-   * @param num_const_states Active constant ids: the first entries of the
-   *        constant-id buffer, at most ConstCapacity(); each must be below
-   *        `num_active_states`.
-   * @throws std::invalid_argument if a count exceeds its capacity.
+   * @brief Sets the active state count and the active constant-id count (host only).
+   * @throws std::invalid_argument if either exceeds its capacity.
    */
   void SetNumActiveStates(size_t num_active_states, size_t num_const_states = 0) override {
     if (num_active_states > capacity_ || num_const_states > const_capacity_) {
@@ -233,50 +95,34 @@ class SizedStateBatch : public StateBatch {
   }
 
  protected:
-  /**
-   * @brief Device pointer to the contiguous array of states.
-   *
-   * Points to GPU device memory containing num_active_states_ states stored
-   * sequentially. Each state occupies AmbientDim floats.
-   *
-   * Memory layout: [state0: AmbientDim floats][state1: AmbientDim floats]...
-   *                [stateN-1: AmbientDim floats]
-   *
-   * Total memory size: num_active_states_ * AmbientDim * sizeof(float) bytes.
-   */
-  const float *ptr_;
+  const float *ptr_;                         ///< Device storage.
+  size_t num_active_states_ = 0;             ///< Active states.
+  size_t capacity_;                          ///< States the storage holds.
+  const int *constant_state_ids_ = nullptr;  ///< Device ids of constant states, or nullptr.
+  size_t num_const_states_ = 0;              ///< Active constant ids.
+  size_t const_capacity_ = 0;                ///< Entries of constant_state_ids_.
 
-  /**
-   * @brief The number of states in this batch.
-   *
-   * This value determines the total number of states managed by this
-   * batch and is used for bounds checking when accessing individual states.
-   */
-  size_t num_active_states_;
+ private:
+  size_t ambient_size_;  ///< Floats per stored state.
+  size_t tangent_size_;  ///< Floats per state update.
+};
 
-  /** @brief Capacity of the buffer in states (the constructor's capacity). */
-  size_t capacity_;
+/**
+ * @brief DynamicSizedStateBatch with the ambient size (floats per stored state) and tangent
+ * size (floats per update) fixed at compile time; the base of the built-in manifold states.
+ */
+template <int AmbientDim, int TangentDim>
+class SizedStateBatch : public DynamicSizedStateBatch {
+ public:
+  /** @brief Storage of capacity * AmbientDim floats; no constant states. */
+  SizedStateBatch(const float *device_ptr, size_t capacity)
+      : DynamicSizedStateBatch(AmbientDim, TangentDim, device_ptr, capacity) {}
 
-  /**
-   * @brief Device pointer to array of constant state indices.
-   *
-   * Points to GPU device memory containing the indices of states that
-   * should remain constant during optimization. The array should contain
-   * sorted, unique indices in the range [0, num_active_states_).
-   *
-   * Can be nullptr if no states are marked as constant.
-   *
-   * @note This pointer is not owned by this object; the caller is responsible
-   *       for managing the lifetime of the array.
-   */
-  const int *constant_state_ids_ = nullptr;
-
-  /** @brief Number of states that are held constant during optimization.
-   */
-  size_t num_const_states_ = 0;
-
-  /** @brief Constant-id buffer capacity (the constructor's count). */
-  size_t const_capacity_ = 0;
+  /** @brief Storage of capacity * AmbientDim floats and constant state ids. */
+  SizedStateBatch(const float *device_ptr, size_t capacity, const int *device_constant_state_ids,
+                  size_t const_capacity)
+      : DynamicSizedStateBatch(AmbientDim, TangentDim, device_ptr, capacity,
+                               device_constant_state_ids, const_capacity) {}
 };
 
 }  // namespace cunls

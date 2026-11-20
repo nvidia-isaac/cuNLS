@@ -183,131 +183,111 @@ void bind_articulation(nb::module_ &m) {
       .def("dof_column_offset", &cunls::ArticulationTopology::DofColumnOffset, nb::arg("dof"),
            "Offset of a DOF's world motion column (omega, v: 6 floats) in an instance's storage.");
 
-  nb::class_<cunls::ArticulationStateBatch, cunls::StateBatch>(
-      m, "ArticulationStateBatch", nb::dynamic_attr(),
-      "Instances of one articulation (topology): each instance's joint_q plus a cache of link "
-      "poses and motion columns that the kinematic factors read. The storage is owned (capacity "
-      "x topology.ambient_size); write coordinates with set_joint_q and read them with "
-      "get_joint_q. Tangent per joint, in joint_qd order: one scalar per PRISMATIC/REVOLUTE/D6 "
-      "axis; BALL a rotation vector in the parent-anchor frame (quat <- Exp(d) * quat); FREE "
-      "(dp, dtheta) in the parent-anchor frame. With apply_joint_limits the topology's limits are "
-      "box bounds (solve with AugmentedLagrangianMinimizer). const_state_ids (int32 device array) "
-      "with const_capacity entries holds instances constant. Starts with 0 active states: call "
-      "set_num_active_states.")
-      .def(
-          "__init__",
-          [](cunls::ArticulationStateBatch *self, const cunls::ArticulationTopology &topology,
-             size_t capacity, bool apply_joint_limits) {
-            new (self) cunls::ArticulationStateBatch(topology, capacity, apply_joint_limits);
-          },
-          nb::arg("topology"), nb::arg("capacity"), nb::arg("apply_joint_limits") = true,
-          nb::keep_alive<1, 2>())
-      .def(
-          "__init__",
-          [](cunls::ArticulationStateBatch *self, const cunls::ArticulationTopology &topology,
-             size_t capacity, nb::handle const_ids, size_t const_capacity,
-             bool apply_joint_limits) {
-            auto cids =
-                device_ints(const_ids, "const_state_ids", const_capacity, "const_capacity ids");
-            new (self) cunls::ArticulationStateBatch(topology, capacity, cids, const_capacity,
-                                                     apply_joint_limits);
-          },
-          nb::arg("topology"), nb::arg("capacity"), nb::arg("const_state_ids"),
-          nb::arg("const_capacity"), nb::arg("apply_joint_limits") = true, nb::keep_alive<1, 2>(),
-          nb::keep_alive<1, 4>())
-      .def_prop_ro("topology", &cunls::ArticulationStateBatch::Topology,
-                   nb::rv_policy::reference_internal, "The kinematic tree of every instance.")
-      .def(
-          "set_joint_q",
-          [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
-             cunls::CudaStream &stream, size_t stride) {
-            const size_t C = self.Topology().CoordCount();
-            self.SetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
-                           stream.GetStream(), stride);
-          },
-          nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
-          nb::arg("stride") = 0,
-          "Copies the coordinates of the first num_states instances from joint_q (device float32; "
-          "instance i's coord_count values start at i * stride, stride 0: packed) and recomputes "
-          "their cache (forward kinematics), asynchronous on stream. A stride reads instances "
-          "embedded in a larger array in place, e.g. one articulation per replicated world of a "
-          "scene-wide joint_q: set_joint_q(scene_q[first:], worlds, stream, stride=per_world).")
-      .def(
-          "get_joint_q",
-          [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
-             cunls::CudaStream &stream, size_t stride) {
-            const size_t C = self.Topology().CoordCount();
-            self.GetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
-                           stream.GetStream(), stride);
-          },
-          nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
-          nb::arg("stride") = 0,
-          "Copies the coordinates of the first num_states instances into joint_q (device "
-          "float32; instance i at i * stride, stride 0: packed; the values between instances "
-          "are left untouched), asynchronous on stream. A stride writes a solve back into a "
-          "larger (scene-wide) array in place.")
-      .def(
-          "get_link_transforms",
-          [](cunls::ArticulationStateBatch &self, nb::handle transforms, size_t num_states,
-             cunls::CudaStream &stream, size_t stride) {
-            const size_t per = 7 * static_cast<size_t>(self.Topology().LinkCount());
-            self.GetLinkTransforms(StridedFloats(transforms, "transforms", num_states, per, stride),
-                                   num_states, stream.GetStream(), stride);
-          },
-          nb::arg("transforms"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
-          nb::arg("stride") = 0,
-          "Writes the world transform of every link of the first num_states instances, read from "
-          "the cached poses (no forward kinematics runs: set_joint_q keeps the cache current; "
-          "after writing state_device_ptr storage directly, call refresh(stream) first): 7 "
-          "float32 per link, the pose convention of the "
-          "factor targets, "
-          "position then quaternion (x, y, z, w), links in topology order; instance i starts at "
-          "i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A "
-          "wp.array(dtype=wp.transform) of shape (num_states * link_count,) is accepted.")
-      .def(
-          "set_bounds",
-          [](cunls::ArticulationStateBatch &self, nb::handle lower, nb::handle upper) {
-            if (lower.is_none() && upper.is_none()) {
-              self.SetBounds(nullptr, nullptr);
-              hold_bounds(self, lower, upper);
-              return;
-            }
-            if (lower.is_none() || upper.is_none()) {
-              throw std::invalid_argument(
-                  "ArticulationStateBatch.set_bounds: got one bound and None (expected both "
-                  "arrays, or None, None). Fix: pass -inf / +inf for an unbounded side.");
-            }
-            self.SetBounds(
-                device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
-                device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
-            hold_bounds(self, lower, upper);
-          },
-          nb::arg("lower").none(), nb::arg("upper").none(),
-          "Box bounds per instance and DOF, replacing the joint limits: either two device "
-          "float32 arrays of capacity x dof_count (an unbounded side is a ±inf-filled array; "
-          "BALL/FREE entries ignored), or None, None to remove them (one None alone is "
-          "rejected); use_joint_limits() restores the topology's limits. Keeps only the current "
-          "arrays alive (replaced ones are released).")
-      .def(
-          "use_joint_limits",
-          [](cunls::ArticulationStateBatch &self) {
-            self.UseJointLimits();
-            hold_bounds(self, nb::none(), nb::none());
-          },
-          "Restores the topology's joint limits as the bounds (none if it has no finite limit) "
-          "and releases the arrays of set_bounds.")
-      .def_prop_ro(
-          "has_bounds",
-          [](const cunls::ArticulationStateBatch &self) { return cunls::HasBoxBounds(&self); },
-          "Whether the batch has box bounds (solve with AugmentedLagrangianMinimizer).")
-      .def(
-          "refresh",
-          [](cunls::ArticulationStateBatch &self, cunls::CudaStream &stream) {
-            self.RefreshDerivedData(stream.GetStream());
-          },
-          nb::arg("stream"),
-          "Recomputes the cache of the active instances from their joint_q (after writing "
-          "state_device_ptr storage directly; the minimizers refresh at every solve).");
+  auto articulation_states =
+      nb::class_<cunls::ArticulationStateBatch, cunls::StateBatch>(
+          m, "ArticulationStateBatch", nb::dynamic_attr(),
+          "Instances of one articulation (topology): each instance's joint_q plus a cache of link "
+          "poses and motion columns that the kinematic factors read. The storage is owned "
+          "(capacity "
+          "x topology.ambient_size); write coordinates with set_joint_q and read them with "
+          "get_joint_q. Tangent per joint, in joint_qd order: one scalar per PRISMATIC/REVOLUTE/D6 "
+          "axis; BALL a rotation vector in the parent-anchor frame (quat <- Exp(d) * quat); FREE "
+          "(dp, dtheta) in the parent-anchor frame. With apply_joint_limits the topology's limits "
+          "are "
+          "box bounds (solve with AugmentedLagrangianMinimizer). const_state_ids (int32 device "
+          "array) "
+          "with const_capacity entries holds instances constant. Starts with 0 active states: call "
+          "set_num_active_states.")
+          .def(
+              "__init__",
+              [](cunls::ArticulationStateBatch *self, const cunls::ArticulationTopology &topology,
+                 size_t capacity, nb::handle const_ids, size_t const_capacity,
+                 bool apply_joint_limits) {
+                new (self) cunls::ArticulationStateBatch(topology, capacity,
+                                                         const_state_ids(const_ids, const_capacity),
+                                                         const_capacity, apply_joint_limits);
+              },
+              nb::arg("topology"), nb::arg("capacity"),
+              nb::arg("const_state_ids").none() = nb::none(), nb::arg("const_capacity") = 0,
+              nb::arg("apply_joint_limits") = true, nb::keep_alive<1, 2>(), nb::keep_alive<1, 4>())
+          .def_prop_ro("topology", &cunls::ArticulationStateBatch::Topology,
+                       nb::rv_policy::reference_internal, "The kinematic tree of every instance.")
+          .def(
+              "set_joint_q",
+              [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
+                 cunls::CudaStream &stream, size_t stride) {
+                const size_t C = self.Topology().CoordCount();
+                self.SetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
+                               stream.GetStream(), stride);
+              },
+              nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
+              nb::arg("stride") = 0,
+              "Copies the coordinates of the first num_states instances from joint_q (device "
+              "float32; "
+              "instance i's coord_count values start at i * stride, stride 0: packed) and "
+              "recomputes "
+              "their cache (forward kinematics), asynchronous on stream. A stride reads instances "
+              "embedded in a larger array in place, e.g. one articulation per replicated world of "
+              "a "
+              "scene-wide joint_q: set_joint_q(scene_q[first:], worlds, stream, stride=per_world).")
+          .def(
+              "get_joint_q",
+              [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
+                 cunls::CudaStream &stream, size_t stride) {
+                const size_t C = self.Topology().CoordCount();
+                self.GetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
+                               stream.GetStream(), stride);
+              },
+              nb::arg("joint_q"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
+              nb::arg("stride") = 0,
+              "Copies the coordinates of the first num_states instances into joint_q (device "
+              "float32; instance i at i * stride, stride 0: packed; the values between instances "
+              "are left untouched), asynchronous on stream. A stride writes a solve back into a "
+              "larger (scene-wide) array in place.")
+          .def(
+              "get_link_transforms",
+              [](cunls::ArticulationStateBatch &self, nb::handle transforms, size_t num_states,
+                 cunls::CudaStream &stream, size_t stride) {
+                const size_t per = 7 * static_cast<size_t>(self.Topology().LinkCount());
+                self.GetLinkTransforms(
+                    StridedFloats(transforms, "transforms", num_states, per, stride), num_states,
+                    stream.GetStream(), stride);
+              },
+              nb::arg("transforms"), nb::arg("num_states"), nb::arg("stream"), nb::kw_only(),
+              nb::arg("stride") = 0,
+              "Writes the world transform of every link of the first num_states instances, read "
+              "from "
+              "the cached poses (no forward kinematics runs: set_joint_q keeps the cache current; "
+              "after writing state_device_ptr storage directly, call refresh(stream) first): 7 "
+              "float32 per link, the pose convention of the "
+              "factor targets, "
+              "position then quaternion (x, y, z, w), links in topology order; instance i starts "
+              "at "
+              "i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A "
+              "wp.array(dtype=wp.transform) of shape (num_states * link_count,) is accepted.")
+          .def(
+              "use_joint_limits",
+              [](cunls::ArticulationStateBatch &self) {
+                self.UseJointLimits();
+                hold_bounds(self, nb::none(), nb::none());
+              },
+              "Restores the topology's joint limits as the bounds (none if it has no finite limit) "
+              "and releases the arrays of set_bounds.")
+          .def(
+              "refresh",
+              [](cunls::ArticulationStateBatch &self, cunls::CudaStream &stream) {
+                self.RefreshDerivedData(stream.GetStream());
+              },
+              nb::arg("stream"),
+              "Recomputes the cache of the active instances from their joint_q (after writing "
+              "state_device_ptr storage directly; the minimizers refresh at every solve).");
+  bind_box_bounds(
+      articulation_states, "ArticulationStateBatch",
+      "Box bounds per instance and DOF, replacing the joint limits: either two device "
+      "float32 arrays of capacity x dof_count (an unbounded side is a ±inf-filled array; "
+      "BALL/FREE entries ignored), or None, None to remove them (one None alone is "
+      "rejected); use_joint_limits() restores the topology's limits. Keeps only the current "
+      "arrays alive (replaced ones are released).");
 
   nb::class_<cunls::LinkPositionFactorBatch, cunls::FactorBatch>(
       m, "LinkPositionFactorBatch",

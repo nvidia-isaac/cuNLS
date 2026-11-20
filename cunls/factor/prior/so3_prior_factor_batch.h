@@ -73,8 +73,6 @@ class SO3PriorFactorBatch : public SizedFactorBatch<3, 3> {
                 size_t num_factor_ids = 0) const final;
 
  private:
-  SO3PriorFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing target rotations.
   const Matrix<3> *observations_ptr_;
 

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "cunls/factor/constraint_factor_batch.h"
+#include "cunls/factor/sized_factor_batch.h"
 
 namespace cunls {
 
@@ -35,54 +36,74 @@ void LaunchBoundConstraintKernel(const float *lower, const float *upper,
                                  size_t num_factors, cudaStream_t stream);
 
 /**
- * @brief Box constraints `lower <= x <= upper` on the components of a
- * Dim-dimensional vector state (VectorStateBatch<Dim>).
+ * @brief Box constraints `lower <= x <= upper` on the components of a `dim`-dimensional
+ * vector state, the size set at run time (the Python BoundFactorBatch; BoundFactorBatch<Dim>
+ * fixes it at compile time).
  *
- * An inequality constraint batch by itself (no ConstraintFactorBatch wrapper
- * needed): factor f has 2 * Dim rows,
+ * An inequality constraint batch by itself (no ConstraintFactorBatch wrapper needed): factor f
+ * has 2 * dim rows,
  *
  * @verbatim
- *   rows [0, Dim):        x_i - upper_i <= 0
- *   rows [Dim, 2 Dim):    lower_i - x_i <= 0
+ *   rows [0, dim):        x_i - upper_i <= 0
+ *   rows [dim, 2 dim):    lower_i - x_i <= 0
  * @endverbatim
  *
- * Bounds are per factor and per component; ±infinity leaves a side
- * unbounded (the row is never active).
- *
- * @tparam Dim Dimension of the bounded vector state.
+ * Bounds are per factor and per component; ±infinity leaves a side unbounded (the row is never
+ * active).
  */
-template <int Dim>
-class BoundFactorBatch : public ConstraintFactorBatchBase {
+class DynamicBoundFactorBatch : public ConstraintFactorBatchBase {
  public:
   /**
-   * @param lower Device array of capacity * Dim lower bounds (-inf: none).
-   * @param upper Device array of capacity * Dim upper bounds (+inf: none).
+   * @param dim Components of the bounded vector state (>= 1).
+   * @param lower Device array of capacity * dim lower bounds (-inf: none).
+   * @param upper Device array of capacity * dim upper bounds (+inf: none).
    * @param capacity Number of factors the buffers hold. The active count
    *        starts at 0: call SetNumActiveFactors(n) before solving.
    * @param scale Positive row scale (see ConstraintFactorBatch).
+   * @throws std::invalid_argument if dim < 1.
    */
-  BoundFactorBatch(const float *lower, const float *upper, size_t capacity, float scale = 1.f)
+  DynamicBoundFactorBatch(int dim, const float *lower, const float *upper, size_t capacity,
+                          float scale = 1.f)
       : ConstraintFactorBatchBase(ConstraintKind::kInequality, scale, capacity),
+        dim_(CheckedVectorDim("BoundFactorBatch", dim)),
         lower_(lower),
         upper_(upper) {
     AllocateMultipliers();
   }
 
-  size_t ResidualsSize() const override { return 2 * Dim; }
-  std::vector<size_t> StateSizes() const override { return {Dim}; }
+  /** @brief Components of the bounded vector state. */
+  int Dimension() const { return static_cast<int>(dim_); }
+  size_t ResidualsSize() const override { return 2 * dim_; }
+  std::vector<size_t> StateSizes() const override { return {dim_}; }
 
  protected:
   bool EvaluateConstraintRows(float *values, float *jacobians, float const *const *state_pointers,
                               cudaStream_t stream, const int *factor_ids,
                               size_t num_factor_ids) const override {
-    LaunchBoundConstraintKernel(lower_, upper_, state_pointers, values, jacobians, Dim,
-                                num_factor_ids, factor_ids, this->NumActiveFactors(), stream);
+    LaunchBoundConstraintKernel(lower_, upper_, state_pointers, values, jacobians,
+                                static_cast<int>(dim_), num_factor_ids, factor_ids,
+                                NumActiveFactors(), stream);
     return true;
   }
 
  private:
-  const float *lower_;
-  const float *upper_;
+  size_t dim_;          ///< Components of the bounded vector state.
+  const float *lower_;  ///< Device lower bounds, capacity * dim floats.
+  const float *upper_;  ///< Device upper bounds, capacity * dim floats.
+};
+
+/**
+ * @brief DynamicBoundFactorBatch on a Dim-dimensional vector state (VectorStateBatch<Dim>),
+ * the size fixed at compile time.
+ *
+ * @tparam Dim Dimension of the bounded vector state.
+ */
+template <int Dim>
+class BoundFactorBatch : public DynamicBoundFactorBatch {
+ public:
+  /** @brief See DynamicBoundFactorBatch (capacity * Dim bounds each). */
+  BoundFactorBatch(const float *lower, const float *upper, size_t capacity, float scale = 1.f)
+      : DynamicBoundFactorBatch(Dim, lower, upper, capacity, scale) {}
 };
 
 }  // namespace cunls

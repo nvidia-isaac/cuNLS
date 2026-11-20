@@ -15,11 +15,10 @@
 
 """Tests for factor batch bindings.
 
-Each built-in factor is constructed with dummy (zeroed) Warp observation data and must report
-its ``capacity``, ``num_active_factors`` (zero until set), ``residuals_size`` and
-``state_sizes()``; the wrappers (weighted, information) forward them to the wrapped batch.
-These are pure construction/metadata tests: evaluation correctness is tested end-to-end in
-``test_minimizer.py`` and ``test_warp_factor.py``.
+The constructor variants the catalog test (``test_catalog.py``, every built-in factor's sizes)
+does not reach, the runtime-sized vector factors, and the wrappers (weighted, information),
+which forward ``capacity``, ``num_active_factors`` and the sizes to the wrapped batch.
+Evaluation correctness is tested end-to-end in ``test_minimizer.py``.
 """
 
 import numpy as np
@@ -42,25 +41,20 @@ def _eyes(dim, n):
 
 # (constructor of a batch of capacity N, residual size, state tangent sizes)
 FACTORS = {
-    "Reprojection": (lambda: pycunls.ReprojectionFactorBatch(_zeros(2 * N), N), 2, [6, 3]),
     "Reprojection_z_threshold": (
         lambda: pycunls.ReprojectionFactorBatch(_zeros(2 * N), N, z_threshold=0.1), 2, [6, 3]),
-    "PnP": (lambda: pycunls.PnPFactorBatch(_zeros(2 * N), _zeros(3 * N), N), 2, [6]),
     "PnP_camera_from_rig": (
         lambda: pycunls.PnPFactorBatch(_zeros(2 * N), _eyes(4, N), _zeros(3 * N), N,
                                        z_threshold=0.02), 2, [6]),
-    "SE3Between": (lambda: pycunls.SE3BetweenFactorBatch(_zeros(16 * N), N), 6, [6, 6]),
-    "SE3Prior": (lambda: pycunls.SE3PriorFactorBatch(_zeros(16 * N), N), 6, [6]),
-    "SO3Prior": (lambda: pycunls.SO3PriorFactorBatch(_zeros(9 * N), N), 3, [3]),
-    "SO2Prior": (lambda: pycunls.SO2PriorFactorBatch(_zeros(4 * N), N), 1, [1]),
-    **{f"PriorVector{d}": (lambda d=d: getattr(pycunls, f"PriorVectorFactorBatch{d}")(
-        _zeros(d * N), N), d, [d]) for d in (1, 2, 3, 6)},
-    # ICP: residual = p - T q (point), Nq'(p - T q) (plane), symmetric plane.
-    "PointToPoint": (lambda: pycunls.PointToPointFactorBatch(_zeros(3 * N), _zeros(3 * N), N),
-                     3, [6]),
-    "PointToPlane": (lambda: pycunls.PointToPlaneFactorBatch(*[_zeros(3 * N)] * 3, N), 1, [6]),
-    "SymmetricPointToPlane": (
-        lambda: pycunls.SymmetricPointToPlaneFactorBatch(*[_zeros(3 * N)] * 4, N), 1, [6]),
+    # Runtime-sized vector factors: the size from the array shape or the dim keyword.
+    **{f"PriorVector{d}": (lambda d=d: pycunls.PriorVectorFactorBatch(
+        wp.zeros((N, d), dtype=wp.float32), N), d, [d]) for d in (5, 13, 100)},
+    "VectorBetween13": (lambda: pycunls.VectorBetweenFactorBatch(_zeros(13 * N), N, dim=13),
+                        13, [13, 13]),
+    "Bound13": (lambda: pycunls.BoundFactorBatch(_zeros(13 * N), _zeros(13 * N), N, dim=13),
+                26, [13]),
+    "Halfspace13": (lambda: pycunls.HalfspaceFactorBatch(
+        wp.zeros((N, 13), dtype=wp.float32), _zeros(N), N), 1, [13]),
 }
 
 
@@ -77,7 +71,8 @@ def test_factor_reports_capacity_and_sizes(make, residual_size, state_sizes):
 
 # Inner batches (constructor, residual size, state sizes) and the wrappers around them.
 INNER = {
-    "PriorVector3": (lambda: pycunls.PriorVectorFactorBatch3(_zeros(3 * N), N), 3, [3]),
+    "PriorVector13": (lambda: pycunls.PriorVectorFactorBatch(_zeros(13 * N), N, dim=13), 13,
+                      [13]),
     "SE3Between": (lambda: pycunls.SE3BetweenFactorBatch(_zeros(16 * N), N), 6, [6, 6]),
 }
 WRAPPERS = {
@@ -104,6 +99,17 @@ def test_wrapper_forwards_sizes_and_active_count(make_inner, residual_size, stat
     assert fb.num_active_factors == N
     assert fb.residuals_size == residual_size
     assert fb.state_sizes() == state_sizes
+
+
+def test_vector_size_errors_name_the_fix():
+    with pytest.raises(ValueError, match="pass dim=n"):
+        pycunls.PriorVectorFactorBatch(_zeros(12), 4)
+    with pytest.raises(ValueError, match="expected 3"):
+        pycunls.PriorVectorFactorBatch3(_zeros(12), 4, dim=4)
+    with pytest.raises(ValueError, match="are needed"):
+        pycunls.VectorBetweenFactorBatch(_zeros(12), 4, dim=4)
+    assert isinstance(pycunls.BoundFactorBatch3(_zeros(12), _zeros(12), 4),
+                      pycunls.BoundFactorBatch)
 
 
 def test_positional_number_is_a_scalar_weight():

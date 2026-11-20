@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cuda/std/array>
+#include <vector>
 
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
@@ -45,73 +46,73 @@ void LaunchPriorVectorFactorKernel(const float *observations, float const *const
                                    int num_factors = 0);
 
 /**
- * @brief Batch factor for prior vector constraints.
+ * @brief Prior on `dim`-dimensional vector states, the size set at run time (the Python
+ * PriorVectorFactorBatch; PriorVectorFactorBatch<Dim> fixes it at compile time):
+ * residual = state - observation, Jacobian the identity.
  *
- * Computes the residual between state vectors and observation vectors:
- * residual = state - observation
- *
- * @tparam Dim Dimension of each vector
- *
- * @note The observations_ptr must point to GPU device memory and remain
- *       valid for the lifetime of this object. The memory layout is:
- *       [obs0: Dim floats][obs1: Dim floats]...[obsN-1: Dim floats]
+ * @note `observations` is device memory of capacity * dim floats
+ *       ([obs0: dim][obs1: dim]...), valid for the batch's lifetime.
  */
-template <int Dim>
-class PriorVectorFactorBatch : public SizedFactorBatch<Dim, Dim> {
-  using Base = SizedFactorBatch<Dim, Dim>;
-  using VectorType = Vector<Dim>;
-
+class DynamicPriorVectorFactorBatch : public FactorBatch {
  public:
   /**
-   * @brief Constructs a batch of prior vector factors.
-   *
-   * @param observations_ptr Pointer to GPU device memory containing
-   * observations. Must point to at least capacity * Dim floats of allocated
-   * memory.
-   * @param capacity Number of factors the measurement buffers hold. The active
-   *        count starts at 0: call SetNumActiveFactors(n) before evaluating or solving.
+   * @param dim Components per vector (>= 1).
+   * @param observations Device array of capacity * dim floats.
+   * @param capacity Factors the buffer holds; the active count starts at 0
+   *        (SetNumActiveFactors).
+   * @throws std::invalid_argument if dim < 1.
    */
-  PriorVectorFactorBatch(const VectorType *observations_ptr, size_t capacity)
-      : SizedFactorBatch<Dim, Dim>(capacity), observations_ptr_(observations_ptr) {}
+  DynamicPriorVectorFactorBatch(int dim, const float *observations, size_t capacity)
+      : FactorBatch(capacity),
+        dim_(CheckedVectorDim("PriorVectorFactorBatch", dim)),
+        observations_(observations) {}
+
+  /** @brief Components per vector. */
+  int Dimension() const { return static_cast<int>(dim_); }
+  size_t ResidualsSize() const final { return dim_; }
+  std::vector<size_t> StateSizes() const final { return {dim_}; }
 
   /**
-   * @brief Evaluates prior vector residuals and optionally Jacobians.
-   *
-   * Computes residual = state - observation for each vector in the batch.
-   * The Jacobian is the identity matrix for each vector.
-   *
-   * @param residuals Output device pointer for residuals (Dim floats per
-   *                  factor). Can be nullptr to skip residual computation.
-   * @param jacobians Output device pointer for Jacobians (Dim x Dim floats per
-   *                  factor). Can be nullptr to skip Jacobian computation.
-   * @param state_pointers Device pointer to state pointers. Each entry
-   *                   points to a Dim-dimensional vector on the device.
-   * @param stream CUDA stream for asynchronous execution.
-   * @param factor_ids Optional per-item factor indices (device pointer).
-   * @param num_factor_ids Number of items (the length of factor_ids when it
-   *        is given); 0 means NumActiveFactors().
-   * @return true on success.
+   * @brief residual = state - observation per item, Jacobian the identity (dim x dim);
+   * follows FactorBatch::Evaluate's item contract. Either output may be nullptr.
    */
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const final {
-    const size_t num_items = num_factor_ids == 0 ? this->NumActiveFactors() : num_factor_ids;
-    if (num_items == 0 || this->NumActiveFactors() == 0) {
-      return true;
-    }
-    auto data_ptr = reinterpret_cast<const float *>(observations_ptr_);
-
-    LaunchPriorVectorFactorKernel(data_ptr, state_pointers, residuals, jacobians, Dim,
-                                  static_cast<int>(num_items), stream, factor_ids,
-                                  static_cast<int>(this->NumActiveFactors()));
+    const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+    if (num_items == 0 || NumActiveFactors() == 0) return true;
+    LaunchPriorVectorFactorKernel(observations_, state_pointers, residuals, jacobians,
+                                  static_cast<int>(dim_), static_cast<int>(num_items), stream,
+                                  factor_ids, static_cast<int>(NumActiveFactors()));
     return true;
   }
 
  private:
-  PriorVectorFactorBatch() = default;
+  size_t dim_;                 ///< Components per vector.
+  const float *observations_;  ///< Device observations, capacity * dim floats.
+};
 
-  /// Pointer to user-managed device memory containing observations.
-  const VectorType *observations_ptr_;
+/**
+ * @brief DynamicPriorVectorFactorBatch of Dim components, the size fixed at compile time
+ * (also what WeightedFactorBatch / InformationFactorBatch need: `sized_layout`).
+ *
+ * @tparam Dim Dimension of each vector.
+ */
+template <int Dim>
+class PriorVectorFactorBatch : public DynamicPriorVectorFactorBatch {
+ public:
+  /** @brief The compile-time layout (residual Dim, one state of Dim). */
+  using sized_layout = SizedFactorBatch<Dim, Dim>;
+  /** @brief Residual rows per factor. */
+  static constexpr size_t residual_size_ = Dim;
+
+  /**
+   * @param observations_ptr Device array of capacity vectors.
+   * @param capacity Factors the buffer holds; the active count starts at 0.
+   */
+  PriorVectorFactorBatch(const Vector<Dim> *observations_ptr, size_t capacity)
+      : DynamicPriorVectorFactorBatch(Dim, reinterpret_cast<const float *>(observations_ptr),
+                                      capacity) {}
 };
 
 }  // namespace cunls

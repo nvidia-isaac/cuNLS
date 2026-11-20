@@ -81,18 +81,19 @@ class NormalEquations : public LinearSystem {
   /** @copydoc LinearSystem::ExtractHessianDiagonal */
   void ExtractHessianDiagonal(cudaStream_t stream, dvector<float> &diagonal) const override;
 
-  /** @brief Builds the working left-hand side and runs the solver's symbolic setup. */
+  /**
+   * @brief Runs the solver's symbolic setup (SparseLinearSolver::Initialize)
+   * on the pattern of H; the values are written by each Solve().
+   */
   bool PrepareSolver(cudaStream_t stream, const Problem &problem, const dvector<float> &rhs,
                      dvector<float> &step) override;
 
-  /** @brief Builds the working left-hand side and solves with it. */
+  /** @brief Writes the working left-hand side into the solver's storage and solves with it. */
   bool Solve(cudaStream_t stream, const dvector<float> &rhs, dvector<float> &step) override;
 
   /** @brief δᵀHδ per subproblem, from H δ (SpMV) in either layout. */
   void StepCurvature(cudaStream_t stream, const dvector<float> &step, ProblemPartition &partition,
                      float *out) const override;
-
-  // Test hooks: the matrices and products the layouts produce.
 
   /** @brief y = H x with the assembled, undamped Hessian, in either layout. */
   void MultiplyHessian(cudaStream_t stream, const dvector<float> &x, dvector<float> &y) const;
@@ -101,24 +102,11 @@ class NormalEquations : public LinearSystem {
   bool UsesBlockStorage() const { return block_size_ > 1; }
 
   /**
-   * @brief Rebuilds the working left-hand side from H with the declared scale,
-   * damping and mask as a matrix in H's layout (LhsCSR() / LhsBSR()): a test
-   * and inspection hook that copies H whole on every call (the solve path
-   * writes into the solver's storage instead).
-   */
-  void BuildWorkingLhs(cudaStream_t stream);
-
-  /**
    * @brief Writes the working left-hand side (H with the declared scale,
    * damping and mask) into the solver's MatrixStorage(), one pass over H.
+   * Called by Solve(); public so tests can read the matrix a solver receives.
    */
   void WriteWorkingLhsToSolver(cudaStream_t stream);
-
-  /** @brief Working left-hand side in scalar storage; empty under block storage. */
-  const CSRSparseMatrix &LhsCSR() const { return csr_lhs_; }
-
-  /** @brief Working left-hand side in block storage; empty under scalar storage. */
-  const BSRSparseMatrix &LhsBSR() const { return bsr_lhs_; }
 
  private:
   SparseLinearSolverPtr solver_;     ///< Solver of the working left-hand side.
@@ -127,12 +115,10 @@ class NormalEquations : public LinearSystem {
 
   // Exactly one layout is populated, decided by block_size_.
   CSRSparseMatrix csr_hessian_;  ///< Scalar layout: H as assembled.
-  CSRSparseMatrix csr_lhs_;      ///< Scalar layout: the working left-hand side (H's pattern).
   dvector<int> csr_diagonal_;    ///< Scalar layout: position of each diagonal entry.
   BSRSparseMatrix bsr_hessian_;  ///< Block layout: H as assembled.
-  BSRSparseMatrix bsr_lhs_;      ///< Block layout: the working left-hand side.
-  dvector<int> tile_rows_;       ///< Block layout: block row of each tile of H.
-  dvector<int> entry_row_;       ///< Scalar layout: row of each entry of H.
+  /// Row of each entry of H (scalar layout) or block row of each tile (block layout).
+  dvector<int> row_of_entry_;
 
   // Scratch of MultiplyHessian() / StepCurvature().
   mutable cuSPARSEHandle cusparse_handle_;  ///< Scalar-layout SpMV.

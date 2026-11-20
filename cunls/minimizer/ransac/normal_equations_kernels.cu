@@ -88,18 +88,46 @@ Geometry MakeGeometry(const SlotItems &items, int dim, SlotGroup requested) {
   return g;
 }
 
-template <int kGroup>
-__device__ __forceinline__ void GroupSync() {
-  if (kGroup == kWarpSize) {
-    __syncwarp();
-  } else {
-    __syncthreads();
-  }
-}
+/** @brief Where one item of a slot lives. */
+struct ItemRef {
+  int view;    ///< Index into SlotItems::views.
+  int factor;  ///< Factor of the batch (selects its local columns).
+  int row;     ///< Row in the slot's part of the view's buffers.
+};
 
-template <int kGroup>
-__device__ __forceinline__ float GroupSum(float value, float *scratch) {
-  return kGroup == kWarpSize ? WarpSum(value) : BlockSum(value, scratch);
+/**
+ * @brief Locates item `e` of a slot. Returns false when the item contributes
+ * nothing (masked out, or a sample entry outside every sample view).
+ */
+__device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, ItemRef &ref) {
+  if (e < items.sample_size) {
+    const int u = items.samples[static_cast<size_t>(slot) * items.sample_size + e];
+    for (int v = 0; v < items.num_views; ++v) {
+      const BatchView &view = items.views[v];
+      if (view.kind == kViewSamples && u >= view.u_offset && u < view.u_offset + view.num_factors) {
+        ref = {v, u - view.u_offset, e};
+        return true;
+      }
+    }
+    return false;
+  }
+  int rest = e - items.sample_size;
+  for (int v = 0; v < items.num_views; ++v) {
+    const BatchView &view = items.views[v];
+    if (view.kind == kViewSamples) {
+      continue;
+    }
+    if (rest < view.num_factors) {
+      if (view.kind == kViewPerSlotMasked &&
+          items.mask[static_cast<size_t>(slot) * items.mask_stride + view.u_offset + rest] == 0) {
+        return false;
+      }
+      ref = {v, rest, rest};
+      return true;
+    }
+    rest -= view.num_factors;
+  }
+  return false;
 }
 
 /** Shared-memory layout of one group's tile. */
@@ -341,7 +369,10 @@ __global__ void NormalEquationsKernel(SlotItems global_items, int num_slots, int
   }
 }
 
-/** Adds the split partials of every (slot, entry) in split order. */
+/**
+ * Adds the split partials of every (slot, entry) in split order: H (dim x dim),
+ * then g (dim), then the cost.
+ */
 __global__ void SumSplitsKernel(const float *partials, int splits, int num_slots, int entries,
                                 int dim, float *hessian, float *gradient, float *cost) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -400,19 +431,6 @@ __global__ void SlotCostKernel(SlotItems items, int num_slots, int splits, float
   if (t == 0) {
     out[static_cast<size_t>(split) * num_slots + slot] = total;
   }
-}
-
-/** cost[slot] = sum of the split partials in split order. */
-__global__ void SumCostSplitsKernel(const float *partials, int splits, int num_slots, float *cost) {
-  const int slot = blockIdx.x * blockDim.x + threadIdx.x;
-  if (slot >= num_slots) {
-    return;
-  }
-  float sum = 0.f;
-  for (int s = 0; s < splits; ++s) {
-    sum += partials[static_cast<size_t>(s) * num_slots + slot];
-  }
-  cost[slot] = sum;
 }
 
 }  // namespace
@@ -482,8 +500,9 @@ void LaunchSlotCost(cudaStream_t stream, const SlotItems &items, int num_slots, 
       items, num_slots, splits, splits > 1 ? scratch : cost);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   if (splits > 1) {
-    SumCostSplitsKernel<<<GridFor(num_slots, kBlockThreads), kBlockThreads, 0, stream>>>(
-        scratch, splits, num_slots, cost);
+    // One entry per slot: the cost (no H or g with dim 0).
+    SumSplitsKernel<<<GridFor(num_slots, kBlockThreads), kBlockThreads, 0, stream>>>(
+        scratch, splits, num_slots, 1, 0, nullptr, nullptr, cost);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 }

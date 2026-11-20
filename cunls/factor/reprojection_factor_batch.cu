@@ -17,7 +17,9 @@
 
 /**
  * @file reprojection_factor_batch.cu
- * @brief CUDA implementation of batched camera reprojection error computation.
+ * @brief CUDA implementation of the batched camera projection factors:
+ * ReprojectionFactorBatch (pose and 3D point states) and PnPFactorBatch (pose
+ * state, fixed 3D points), one templated kernel.
  *
  * =============================================================================
  * COORDINATE SYSTEM AND NORMALIZATION
@@ -30,12 +32,13 @@
  * MEMORY LAYOUT DOCUMENTATION
  * =============================================================================
  *
- * state_pointers[2*i]     -> SE3Transform for observation i (pose, 16 floats)
- * state_pointers[2*i + 1] -> Vector<3> for observation i (3D point, 3 floats)
+ * Reprojection: state_pointers[2*i] -> SE3Transform (pose, 16 floats),
+ *               state_pointers[2*i + 1] -> Vector<3> (3D point, 3 floats).
+ * PnP:          state_pointers[i] -> SE3Transform; points_world[factor].
  *
  * residuals: [r0_x, r0_y, r1_x, r1_y, ...] (N * 2 floats)
  *
- * jacobians: N blocks of 2x9 row-major matrices (N * 18 floats)
+ * jacobians: N blocks of 2x9 (reprojection) or 2x6 (PnP) row-major matrices.
  *   Columns 0-2: d(r)/d(rotation), 3-5: d(r)/d(translation), 6-8: d(r)/d(point)
  *
  * =============================================================================
@@ -54,6 +57,7 @@
  *   d(r)/d(point)       = A R^T
  */
 
+#include "cunls/factor/pnp_factor_batch.h"
 #include "cunls/factor/reprojection_factor_batch.h"
 
 namespace cunls {
@@ -72,8 +76,7 @@ __device__ __forceinline__ int FactorMeasurementIndex(int item, const int *facto
   return item < num_factors ? item : item % num_factors;
 }
 
-// Pinhole projection through a world_from_rig pose state (the same helpers
-// as in the other projection factor's kernel file).
+// Pinhole projection through a world_from_rig pose state.
 //
 // T = (R, t) is world_from_rig (rows 0..2 of a row-major 4x4, pitch 4), E an
 // optional camera_from_rig (same layout; nullptr = identity):
@@ -151,26 +154,41 @@ __device__ __forceinline__ void ProjectionJacobian(const float *__restrict__ T,
 constexpr size_t kBlockSize = 256;
 
 /**
- * @brief Fused kernel: read the world_from_rig pose and the point from
- *        state_pointers, optionally apply camera-from-rig, compute the
- *        reprojection residual and Jacobian in one pass.
+ * @brief Fused kernel: read the world_from_rig pose (and, with kPointState,
+ *        the point) from state_pointers, optionally apply camera-from-rig,
+ *        compute the projection residual and Jacobian in one pass. Without
+ *        kPointState the point is points_world[factor] (PnP) and the Jacobian
+ *        has only the 6 pose columns.
  */
-__global__ void reprojection_fused_kernel(const Vector<2> *observations,
-                                          float const *const *state_pointers,
-                                          const SE3Transform *poses_camera_from_rig,
-                                          float *residuals, float *jacobians, float z_threshold,
-                                          int num_items, const int *factor_ids, int num_factors) {
+template <bool kPointState>
+__global__ void projection_fused_kernel(const Vector<2> *observations,
+                                        const Vector<3> *points_world,
+                                        float const *const *state_pointers,
+                                        const SE3Transform *poses_camera_from_rig, float *residuals,
+                                        float *jacobians, float z_threshold, int num_items,
+                                        const int *factor_ids, int num_factors) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= num_items) return;
   const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   constexpr int kResidualDim = 2;
-  constexpr int kJacobianCols = 9;
+  constexpr int kJacobianCols = kPointState ? 9 : 6;
+  constexpr int kStates = kPointState ? 2 : 1;
 
   if (residuals == nullptr) return;
-  const float *__restrict__ rig = state_pointers[tid * 2];
-  const float *__restrict__ pt = state_pointers[tid * 2 + 1];
-  const float P[3] = {pt[0], pt[1], pt[2]};
+  const float *__restrict__ rig = state_pointers[tid * kStates];
+  float P[3];
+  if constexpr (kPointState) {
+    const float *__restrict__ pt = state_pointers[tid * kStates + 1];
+    P[0] = pt[0];
+    P[1] = pt[1];
+    P[2] = pt[2];
+  } else {
+    const Vector<3> &Pw = points_world[m];
+    P[0] = Pw[0];
+    P[1] = Pw[1];
+    P[2] = Pw[2];
+  }
   float T[12];  // world_from_rig, rows 0..2
 #pragma unroll
   for (int i = 0; i < 12; i++) T[i] = rig[i];
@@ -200,13 +218,15 @@ __global__ void reprojection_fused_kernel(const Vector<2> *observations,
     return;
   }
   float J_pose[2][6], J_point[2][3];
-  ProjectionJacobian(T, E, p_r, p_c, inv_z, J_pose, J_point);
+  ProjectionJacobian(T, E, p_r, p_c, inv_z, J_pose, kPointState ? J_point : nullptr);
 #pragma unroll
   for (int i = 0; i < kResidualDim; i++) {
 #pragma unroll
     for (int j = 0; j < 6; j++) jac_ptr[i * kJacobianCols + j] = J_pose[i][j];
+    if constexpr (kPointState) {
 #pragma unroll
-    for (int j = 0; j < 3; j++) jac_ptr[i * kJacobianCols + 6 + j] = J_point[i][j];
+      for (int j = 0; j < 3; j++) jac_ptr[i * kJacobianCols + 6 + j] = J_point[i][j];
+    }
   }
 }
 
@@ -230,9 +250,40 @@ bool ReprojectionFactorBatch::Evaluate(float *residuals, float *jacobians,
     return true;
   }
   const size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
-  reprojection_fused_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      observations_, state_pointers, poses_camera_from_rig_, residuals, jacobians, z_threshold_,
-      static_cast<int>(num_items), factor_ids, static_cast<int>(NumActiveFactors()));
+  projection_fused_kernel<true><<<num_blocks, kBlockSize, 0, stream>>>(
+      observations_, nullptr, state_pointers, poses_camera_from_rig_, residuals, jacobians,
+      z_threshold_, static_cast<int>(num_items), factor_ids, static_cast<int>(NumActiveFactors()));
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  return true;
+}
+
+PnPFactorBatch::PnPFactorBatch(const Vector<2> *observations, const Vector<3> *points_world,
+                               size_t capacity, float z_threshold)
+    : SizedFactorBatch(capacity),
+      observations_(observations),
+      points_world_(points_world),
+      z_threshold_(z_threshold) {}
+
+PnPFactorBatch::PnPFactorBatch(const Vector<2> *observations,
+                               const SE3Transform *poses_camera_from_rig,
+                               const Vector<3> *points_world, size_t capacity, float z_threshold)
+    : SizedFactorBatch(capacity),
+      observations_(observations),
+      points_world_(points_world),
+      poses_camera_from_rig_(poses_camera_from_rig),
+      z_threshold_(z_threshold) {}
+
+bool PnPFactorBatch::Evaluate(float *residuals, float *jacobians,
+                              float const *const *state_pointers, cudaStream_t stream,
+                              const int *factor_ids, size_t num_factor_ids) const {
+  const size_t num_items = num_factor_ids == 0 ? NumActiveFactors() : num_factor_ids;
+  if (num_items == 0 || NumActiveFactors() == 0) {
+    return true;
+  }
+  const size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
+  projection_fused_kernel<false><<<num_blocks, kBlockSize, 0, stream>>>(
+      observations_, points_world_, state_pointers, poses_camera_from_rig_, residuals, jacobians,
+      z_threshold_, static_cast<int>(num_items), factor_ids, static_cast<int>(NumActiveFactors()));
   THROW_ON_CUDA_ERROR(cudaGetLastError());
   return true;
 }

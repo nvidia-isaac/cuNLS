@@ -15,6 +15,10 @@
  * limitations under the License.
  */
 
+#include <thrust/device_ptr.h>
+#include <thrust/execution_policy.h>
+#include <thrust/fill.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -199,82 +203,57 @@ __global__ void decay_penalty_kernel(float *penalty, size_t n, float factor, flo
   if (i < n) penalty[i] = fminf(fmaxf(penalty[i] / factor, floor), ceiling);
 }
 
-__global__ void fill_kernel(float *data, size_t n, float value) {
-  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (i < n) data[i] = value;
-}
-
 void Fill(cudaStream_t stream, dvector<float> &v, float value) {
-  if (v.size() == 0) return;
-  fill_kernel<<<Blocks(v.size()), kThreads, 0, stream>>>(v.data(), v.size(), value);
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  thrust::fill_n(thrust::cuda::par_nosync.on(stream), thrust::device_pointer_cast(v.data()),
+                 v.size(), value);
 }
 
 using internal::ConstraintBatchState;
 
-/** Clamps the components of the non-constant states (column >= 0) into [lower, upper]. */
-__global__ void project_kernel(float *x, const int *column_offsets, const float *lower,
-                               const float *upper, size_t n, int dim) {
-  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (i >= n || column_offsets[i / dim] < 0) return;
-  x[i] = fminf(fmaxf(x[i], lower[i]), upper[i]);
-}
-
 /**
- * project_kernel for a batch whose bounded values sit at `offsets` within
- * each state of `ambient` floats (BoxBoundedStates::BoundedComponentOffsets;
- * -1: the component has no bounds), e.g. articulation joint coordinates.
+ * Index in the state array of the bounded value of tangent component i (state
+ * i / dim, component i % dim): i for a batch whose bounded values are its whole
+ * state, or the value at `offsets` within each state of `ambient` floats
+ * (BoxBoundedStates::BoundedComponentOffsets), e.g. articulation joint
+ * coordinates; -1 for a component without bounds.
  */
-__global__ void project_offsets_kernel(float *x, const int *column_offsets, const float *lower,
-                                       const float *upper, size_t n, int dim, int ambient,
-                                       const int *offsets) {
-  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (i >= n || column_offsets[i / dim] < 0) return;
+__device__ __forceinline__ long long BoundedIndex(size_t i, int dim, int ambient,
+                                                  const int *offsets) {
+  if (offsets == nullptr) return static_cast<long long>(i);
   const int offset = offsets[i % dim];
-  if (offset < 0) return;
-  float *v = x + (i / dim) * ambient + offset;
-  *v = fminf(fmaxf(*v, lower[i]), upper[i]);
+  return offset < 0 ? -1 : static_cast<long long>((i / dim) * ambient + offset);
+}
+
+/** Clamps the bounded components of the non-constant states (column >= 0) into [lower, upper]. */
+__global__ void project_kernel(float *x, const int *column_offsets, const float *lower,
+                               const float *upper, size_t n, int dim, int ambient,
+                               const int *offsets) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i >= n || column_offsets[i / dim] < 0) return;
+  const long long k = BoundedIndex(i, dim, ambient, offsets);
+  if (k >= 0) x[k] = fminf(fmaxf(x[k], lower[i]), upper[i]);
 }
 
 /**
- * mask[column] = 0 for the components of non-constant states that sit at a
- * bound with direction (the right-hand side, minus the gradient) pointing
- * outward. A component within a relative 1e-6 of a bound counts as at it
- * (projection puts it exactly there; this catches float round-off).
+ * mask[column] = 0 for the bounded components of non-constant states that sit
+ * at a bound with `direction` (the right-hand side, minus the gradient)
+ * pointing outward. A component within a relative 1e-6 of a bound counts as at
+ * it (projection puts it exactly there; this catches float round-off).
  */
-__device__ __forceinline__ void HoldIfOutward(float v, float lo, float hi, float d, int row,
-                                              float *mask) {
-  const bool at_lower = v <= lo + 1e-6f * (1.f + fabsf(lo));
-  const bool at_upper = v >= hi - 1e-6f * (1.f + fabsf(hi));
-  if ((at_lower && d <= 0.f) || (at_upper && d >= 0.f)) mask[row] = 0.f;
-}
-
 __global__ void hold_kernel(const float *x, const int *column_offsets, const float *lower,
                             const float *upper, const float *direction, size_t n, int dim,
-                            float *mask) {
+                            int ambient, const int *offsets, float *mask) {
   const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (i >= n) return;
   const int column = column_offsets[i / dim];
   if (column < 0) return;
+  const long long k = BoundedIndex(i, dim, ambient, offsets);
+  if (k < 0) return;
   const int row = column + static_cast<int>(i % dim);
-  const float v = x[i], d = direction[row], lo = lower[i], hi = upper[i];
+  const float v = x[k], d = direction[row], lo = lower[i], hi = upper[i];
   const bool at_lower = v <= lo + 1e-6f * (1.f + fabsf(lo));
   const bool at_upper = v >= hi - 1e-6f * (1.f + fabsf(hi));
   if ((at_lower && d <= 0.f) || (at_upper && d >= 0.f)) mask[row] = 0.f;
-}
-
-/** hold_kernel for bounded values at `offsets` (see project_offsets_kernel). */
-__global__ void hold_offsets_kernel(const float *x, const int *column_offsets, const float *lower,
-                                    const float *upper, const float *direction, size_t n, int dim,
-                                    int ambient, const int *offsets, float *mask) {
-  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
-  if (i >= n) return;
-  const int column = column_offsets[i / dim];
-  if (column < 0) return;
-  const int offset = offsets[i % dim];
-  if (offset < 0) return;
-  const int row = column + static_cast<int>(i % dim);
-  HoldIfOutward(x[(i / dim) * ambient + offset], lower[i], upper[i], direction[row], row, mask);
 }
 
 /**
@@ -308,37 +287,19 @@ const BoxBoundedStates &Bounds(const StateBatch *batch) {
 float ComputeObjective(cudaStream_t stream, const Problem &problem, dvector<float> &scratch,
                        dvector<float> &partials, dvector<float> &d_out) {
   const auto &residual_batches = problem.GetResidualBatches();
-  size_t num_costs = 0, max_residuals = 0, max_workspace = 0;
-  for (const auto &rb : residual_batches) {
-    const FactorBatch *fb = rb.GetFactorBatch();
-    if (dynamic_cast<const ConstraintFactorBatchBase *>(fb) != nullptr) continue;
-    const size_t n = fb->NumActiveFactors();
-    num_costs += n;
-    max_residuals = std::max(max_residuals, n * fb->ResidualsSize());
-    max_workspace = std::max(max_workspace, ResidualBatchWorkspaceNumFloats(n));
-  }
+  const size_t num_costs = EvaluateFactorCosts(
+      stream, residual_batches,
+      [&](size_t i) -> float const *const * {
+        const bool constraint = dynamic_cast<const ConstraintFactorBatchBase *>(
+                                    residual_batches[i].GetFactorBatch()) != nullptr;
+        return constraint ? nullptr : problem.DeviceStatePointers(i);
+      },
+      scratch);
   if (d_out.size() < kNumOut) d_out.resize(kNumOut);
   if (num_costs == 0) return 0.f;
-  // Keep the workspace aligned for its float3 part: it goes first.
-  const size_t floats = max_workspace + max_residuals + num_costs;
-  if (scratch.size() < floats) scratch.resize(floats);
-  float *workspace = scratch.data();
-  float *residuals = workspace + max_workspace;
-  float *costs = residuals + max_residuals;
-  float *cost = costs;
-  for (size_t i = 0; i < residual_batches.size(); ++i) {
-    const auto &rb = residual_batches[i];
-    const FactorBatch *fb = rb.GetFactorBatch();
-    if (dynamic_cast<const ConstraintFactorBatchBase *>(fb) != nullptr) continue;
-    if (fb->NumActiveFactors() == 0) continue;
-    CheckEvaluate(
-        rb.Evaluate(stream, workspace, residuals, problem.DeviceStatePointers(i), cost, nullptr),
-        i);
-    cost += fb->NumActiveFactors();
-  }
   const size_t num_partials = ReducePartialCount(num_costs);
   if (partials.size() < num_partials) partials.resize(num_partials);
-  ReduceSumToDevice(stream, costs, num_costs, d_out.data(), partials.data());
+  ReduceSumToDevice(stream, scratch.data(), num_costs, d_out.data(), partials.data());
   float result = 0.f;
   THROW_ON_CUDA_ERROR(
       cudaMemcpyAsync(&result, d_out.data(), sizeof(float), cudaMemcpyDeviceToHost, stream));
@@ -462,18 +423,11 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
       const StateBatch *batch = state_batches[b];
       const size_t n = batch->NumActiveStates() * batch->TangentSize();
       if (n == 0) continue;
-      const int *offsets = Bounds(batch).BoundedComponentOffsets();
-      const int dim = static_cast<int>(batch->TangentSize());
-      if (offsets == nullptr) {
-        hold_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-            state.GetStates()[b].data(), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
-            Bounds(batch).UpperBounds(), direction, n, dim, mask.data());
-      } else {
-        hold_offsets_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-            state.GetStates()[b].data(), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
-            Bounds(batch).UpperBounds(), direction, n, dim, static_cast<int>(batch->AmbientSize()),
-            offsets, mask.data());
-      }
+      hold_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+          state.GetStates()[b].data(), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
+          Bounds(batch).UpperBounds(), direction, n, static_cast<int>(batch->TangentSize()),
+          static_cast<int>(batch->AmbientSize()), Bounds(batch).BoundedComponentOffsets(),
+          mask.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
   };
@@ -580,17 +534,10 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       StateBatch *batch = state_batches[b];
       const size_t n = batch->NumActiveStates() * batch->TangentSize();
       if (n == 0) continue;
-      const int *offsets = Bounds(batch).BoundedComponentOffsets();
-      const int dim = static_cast<int>(batch->TangentSize());
-      if (offsets == nullptr) {
-        project_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-            batch->StateDevicePtr(0), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
-            Bounds(batch).UpperBounds(), n, dim);
-      } else {
-        project_offsets_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-            batch->StateDevicePtr(0), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
-            Bounds(batch).UpperBounds(), n, dim, static_cast<int>(batch->AmbientSize()), offsets);
-      }
+      project_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+          batch->StateDevicePtr(0), column_offsets_[b].data(), Bounds(batch).LowerBounds(),
+          Bounds(batch).UpperBounds(), n, static_cast<int>(batch->TangentSize()),
+          static_cast<int>(batch->AmbientSize()), Bounds(batch).BoundedComponentOffsets());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
   }
@@ -601,13 +548,15 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   signature_ = signature;
   problem_ = &problem;
 
+  // Iteration cap of a full inner solve
+  // (AugmentedLagrangianMinimizerOptions::final_inner_iterations).
+  const size_t final_cap = options_.final_inner_iterations > 0
+                               ? options_.final_inner_iterations
+                               : (options_.real_time ? options_.inner_iterations
+                                                     : minimizer_.Options().max_num_iterations);
   if (constraints.empty()) {
     internal::InnerSolve inner_solve;
-    inner_solve.max_num_iterations =
-        options_.final_inner_iterations > 0
-            ? options_.final_inner_iterations
-            : (options_.real_time ? options_.inner_iterations
-                                  : minimizer_.Options().max_num_iterations);
+    inner_solve.max_num_iterations = final_cap;
     inner_solve.max_line_search_steps = options_.inner_line_search_steps;
     inner_solve.reuse_structure = options_.reuse_structure;
     inner_solve.fixed_iterations = options_.real_time;
@@ -711,10 +660,6 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
                                    : ComputeObjective(stream, problem, scratch_, partials_, d_out_);
   summary.final_cost = summary.initial_cost;
 
-  const size_t final_cap =
-      options_.final_inner_iterations > 0
-          ? options_.final_inner_iterations
-          : (real_time ? options_.inner_iterations : minimizer_.Options().max_num_iterations);
   if (!real_time) iteration_cap_.resize(num_problems_);
   std::array<float, kNumOut> out{};
   // Whether the next inner solve is a full solve for every iterating

@@ -188,24 +188,11 @@ MinimizerOptions MakeBaseOptions() {
 
 constexpr float kConvergedCostThreshold = 5e-2f;
 
-TEST(NumericDiffMinimizerTest, GaussNewtonAnalyticBaseline) {
-  SyntheticPGOProblem data(kFixedSeed);
-  Problem problem;
-  data.AddSingleGroup(problem, std::nullopt);
-  ASSERT_TRUE(problem.CheckConsistency());
-
-  MinimizerOptions options = MakeBaseOptions();
-  options.jacobian_mode = JacobianMode::kAnalytic;
-  GaussNewtonMinimizer minimizer(options);
-
-  CudaStream stream;
-  MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  ASSERT_LT(summary.final_cost, kConvergedCostThreshold);
-}
-
-TEST(NumericDiffMinimizerTest, GaussNewtonNumericMatchesAnalytic) {
+/**
+ * @brief The minimizers converge with numeric Jacobians (their accuracy against
+ * the analytic ones: numeric_diff_jacobian_test.cpp).
+ */
+TEST(NumericDiffMinimizerTest, GaussNewtonNumericConverges) {
   SyntheticPGOProblem data(kFixedSeed);
   Problem problem;
   data.AddSingleGroup(problem, std::nullopt);
@@ -223,7 +210,7 @@ TEST(NumericDiffMinimizerTest, GaussNewtonNumericMatchesAnalytic) {
   ASSERT_LT(summary.final_cost, kConvergedCostThreshold);
 }
 
-TEST(NumericDiffMinimizerTest, LevenbergMarquardtNumericMatchesAnalytic) {
+TEST(NumericDiffMinimizerTest, LevenbergMarquardtNumericConverges) {
   SyntheticPGOProblem data(kFixedSeed);
   Problem problem;
   data.AddSingleGroup(problem, std::nullopt);

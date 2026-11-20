@@ -25,26 +25,15 @@
 namespace cunls {
 
 /**
- * @brief Helper struct for SFINAE-based type checking.
- *
- * Used to detect if a type T derives from SizedFactorBatch.
+ * @brief Whether factor batch T declares its compile-time layout `T::sized_layout` (a
+ * SizedFactorBatch instantiation, as every SizedFactorBatch and the fixed-size vector factors
+ * do): what WeightedFactorBatch and InformationFactorBatch need. C++17 detection idiom.
  */
-struct DerivedFromAnySizedFactorBatchHelper {
-  template <int Dim, int... StateSizes>
-  static std::true_type test(const SizedFactorBatch<Dim, StateSizes...> *);
+template <class T, class = void>
+struct HasSizedLayout : std::false_type {};
 
-  /// Fallback overload for types that don't derive from SizedFactorBatch
-  static std::false_type test(...);
-};
-
-/**
- * @brief Type trait that checks if T derives from SizedFactorBatch.
- *
- * Uses SFINAE to determine if a type is derived from any instantiation
- * of SizedFactorBatch. C++17 compatible alternative to concepts.
- */
+/** @brief HasSizedLayout for a T that declares `sized_layout`. */
 template <class T>
-struct IsDerivedFromAnySizedFactorBatch
-    : decltype(DerivedFromAnySizedFactorBatchHelper::test(std::declval<T *>())) {};
+struct HasSizedLayout<T, std::void_t<typename T::sized_layout>> : std::true_type {};
 
 }  // namespace cunls

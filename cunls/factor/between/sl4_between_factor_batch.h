@@ -33,11 +33,8 @@ class SL4BetweenFactorBatch : public SizedFactorBatch<15, 15, 15> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  SL4BetweenFactorBatch() = default;
-
-  const SL4Transform *pose_deltas_ptr_;
-  mutable DeviceVector<SL4Transform> poses_left_;
-  mutable DeviceVector<SL4Transform> poses_left_inverse_;
+  const SL4Transform *pose_deltas_ptr_;        ///< Measurements Delta (user memory).
+  mutable DeviceVector<SL4Transform> errors_;  ///< Scratch: Delta * T_left^{-1} * T_right per item.
 };
 
 }  // namespace cunls

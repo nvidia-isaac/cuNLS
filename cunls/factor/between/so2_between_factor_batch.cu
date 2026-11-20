@@ -37,7 +37,6 @@ constexpr size_t kSO2AngleStride = 1;
  *        R_error = (R_L^T * R_R) * Delta in one pass.
  *
  * SO(2) is 2x2 so everything is done with scalar ops -- zero loops.
- * Replaces: collect + TransposeSO2 + 2x cuBLAS 2x2 GEMM.
  */
 __global__ void collect_and_compute_so2_between_error_kernel(float const *const *state_pointers,
                                                              const Matrix<2> *deltas,

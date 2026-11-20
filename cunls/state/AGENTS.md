@@ -1,71 +1,37 @@
 # Module: state
 
-> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
-> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
+Batched optimization variables and their `Plus` (tangent update).
 
-## Purpose
+## Files
 
-Represents optimization variables in batched manifold form and provides `Plus`
-operations for applying tangent-space updates.
-
-## Core interfaces
-
-- `state_batch.h`: abstract base `StateBatch`
-- `sized_state_batch.h`: `SizedStateBatch<AmbientDim, TangentDim>`
-- `state_batch_ops.h`: `StateBatchOps` (reduced/full mapping + batched updates)
-
-## Implementations
-
-- Euclidean: `vector_state_batch.h`
-- Rotation groups: `so2_state_batch.h`, `so3_state_batch.h`
-- Rigid transforms: `se2_state_batch.h`, `se3_state_batch.h`
-- Similarities: `similarity2_state_batch.h`, `similarity3_state_batch.h`
-- Projective: `sl4_state_batch.h` (SL(4) homographies)
-- Articulations: `articulation_topology.h` (`ArticulationDescription`: flat joint
-  arrays; `ArticulationTopology`: validated, parents-first, uploaded; `DeviceView` for
-  kernels) and `articulation_state_batch.h` (`ArticulationStateBatch`: owned storage,
-  ambient = joint_q + link poses (12/link) + DOF motion columns (6/DOF); `Plus` applies the
-  per-joint step, clamps moved scalar coordinates, then runs forward kinematics into the
-  cache). Implements `BoxBoundedStates` (bounds per DOF; `BoundedComponentOffsets` =
-  coordinate of each scalar DOF, -1 for BALL/FREE) and `DerivedStateData`. BALL / FREE
-  quaternions are normalized whenever coordinates are read into the cache (`SetJointQ`,
-  `RefreshDerivedData`, `Plus`); a zero one becomes the identity. The factors that read the
-  cache, and the index-space and frame conventions they share: `cunls/factor/kinematics/AGENTS.md`.
+- `state_batch.h` (`StateBatch`, `BoxBoundedStates`, `DerivedStateData`),
+  `sized_state_batch.h` (`DynamicSizedStateBatch`: bookkeeping with run-time sizes;
+  `SizedStateBatch<AmbientDim, TangentDim>` derives from it), `state_batch_ops.h`
+  (`StateBatchOps`: reduced / full mapping, batched updates).
+- `vector_state_batch.h` (`DynamicVectorStateBatch(dim, ...)`, bound in Python as
+  `VectorStateBatch`; `VectorStateBatch<Dim>` derives from it), `so2_` / `so3_` / `se2_` /
+  `se3_` / `similarity2_` / `similarity3_` / `sl4_state_batch.h`.
+- Articulations: `articulation_topology.h` (`ArticulationDescription` flat joint arrays ->
+  validated, parents-first `ArticulationTopology` with a kernel `DeviceView`) and
+  `articulation_state_batch.h` (`ArticulationStateBatch`: owns its storage; ambient = joint_q +
+  link poses (12 per link) + DOF motion columns (6 per DOF); `Plus` steps each joint, clamps moved
+  scalar coordinates, runs forward kinematics into the cache; BALL / FREE quaternions are
+  normalized whenever coordinates enter the cache, a zero one becomes the identity). Cache and
+  index conventions: `cunls/factor/kinematics/AGENTS.md`.
 
 ## Memory model
 
-- Backed by user-provided contiguous device memory, except `ArticulationStateBatch`, which
-  allocates and owns its state storage; its custom bounds (`SetBounds`) and constant state IDs
-  are still borrowed from the caller.
-- Optional constant state IDs mark fixed states excluded from optimization.
-- Constructed with a capacity (states the buffer holds; `const_capacity` for
-  the constant-id buffer), fixed for the batch's lifetime. The active counts
-  start at 0: `SetNumActiveStates(n, num_const)` (host-only) must be called
-  before the first solve and may change them between solves up to the
-  capacity. `NumActiveStates()` is the active count, `Capacity()` the capacity.
-- `StateDevicePtr(i)` returns pointers into underlying batch storage,
-  valid for any i < Capacity().
-- `Plus(x, delta, out, stream, num_replicas = 1)` processes `num_replicas`
-  contiguous copies of the batch (replica r = states [r*N, (r+1)*N)); out does
-  not overlap the inputs. RANSAC passes one replica per hypothesis.
-- Box bounds: `VectorStateBatch<Dim>::SetBounds(lower, upper)` (device arrays,
-  Capacity()*Dim floats, ±inf allowed; not owned), read through the
-  `BoxBoundedStates` interface (`HasBoxBounds(batch)`); `StateBatch` itself has
-  no bounds API. The bounded `Plus` clamps every component with a nonzero
-  delta into the box (constant states, delta 0, never move). Bounds are a
-  constraint: only `AugmentedLagrangianMinimizer` solves bounded problems
-  (it holds the active bounds in the inner systems). Numeric differentiation
-  perturbs bounded states by plain addition (a clamped perturbation would
-  give a one-sided derivative at a bound).
-
-- Derived data: `DerivedStateData` (`state_batch.h`) for batches whose storage caches data
-  computed from the coordinates; the minimizers call `RefreshDerivedStateData` on every
-  problem batch at the start of each (inner) solve, before copying the states, and the
-  Python diagnostics before evaluating.
-- `BoxBoundedStates::PlusIgnoringBounds` is the perturbation of numeric differentiation;
-  `BoundedComponentOffsets` (nullptr = identity) tells the AL where each bounded value is.
-
-## Related modules
-
-- Consumed by `factor/` through state pointer arrays.
-- Updated by minimizers through `StateBatchOps`.
+- States live in caller-provided device memory (except `ArticulationStateBatch`, which owns its
+  storage and its topology joint limits but borrows custom bounds (`SetBounds`, which must
+  outlive the solves) and constant ids). Constant state ids mark fixed states.
+- Capacity is fixed at construction; active counts start at 0 and `SetNumActiveStates(n,
+  num_const)` (host) sets them before a solve. `StateDevicePtr(i)` is valid for i < `Capacity()`.
+- `Plus(x, delta, out, stream, num_replicas = 1)` updates `num_replicas` contiguous copies
+  (RANSAC: one per hypothesis); `out` does not overlap the inputs.
+- Box bounds (`DynamicVectorStateBatch::SetBounds`, device arrays, ±inf allowed, not owned) are read
+  through `BoxBoundedStates`; the bounded `Plus` clamps every moved component. Bounds are a
+  constraint: only `AugmentedLagrangianMinimizer` solves bounded problems. Numeric differentiation
+  perturbs through `PlusIgnoringBounds`; `BoundedComponentOffsets` (nullptr = identity) maps each
+  bounded value (an articulation's scalar DOFs to coordinates).
+- `DerivedStateData`: the minimizers call `RefreshDerivedStateData` on every batch at the start of
+  each (inner) solve, and the Python diagnostics before evaluating.

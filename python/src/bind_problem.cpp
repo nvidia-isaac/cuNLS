@@ -58,6 +58,37 @@ struct is_copy_constructible<cunls::Problem> : std::false_type {};
 NAMESPACE_END(detail)
 NAMESPACE_END(NB_NAMESPACE)
 
+namespace {
+
+// Python int device addresses as state pointers.
+std::vector<float *> StatePointers(const std::vector<uintptr_t> &addresses) {
+  std::vector<float *> ptrs(addresses.size());
+  for (size_t i = 0; i < addresses.size(); ++i) ptrs[i] = reinterpret_cast<float *>(addresses[i]);
+  return ptrs;
+}
+
+// One device int32 array per state batch (checked like extract_device_ptr, errors name `name`).
+std::vector<const int *> DeviceIntArrays(const std::vector<nb::handle> &arrays, const char *name) {
+  std::vector<const int *> ptrs;
+  for (const auto &h : arrays) {
+    ptrs.push_back(reinterpret_cast<const int *>(extract_device_ptr(h, "int32", name)));
+  }
+  return ptrs;
+}
+
+// Raises IndexError naming `method` when `index` is not a residual batch of `problem`.
+void CheckResidualBatchIndex(const cunls::Problem &problem, size_t index, const char *method) {
+  const size_t count = problem.GetResidualBatches().size();
+  if (index >= count) {
+    throw nb::index_error((std::string(method) + ": index " + std::to_string(index) +
+                           " out of range; the problem has " + std::to_string(count) +
+                           " factor batches")
+                              .c_str());
+  }
+}
+
+}  // namespace
+
 void bind_problem(nb::module_ &m) {
   nb::class_<cunls::Problem>(m, "Problem",
                              "Defines a nonlinear least-squares problem from "
@@ -71,10 +102,7 @@ void bind_problem(nb::module_ &m) {
           [](cunls::Problem &self, cunls::FactorBatch *factor_batch,
              const std::vector<uintptr_t> &state_ptrs,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
-            std::vector<float *> ptrs(state_ptrs.size());
-            for (size_t i = 0; i < state_ptrs.size(); ++i)
-              ptrs[i] = reinterpret_cast<float *>(state_ptrs[i]);
-            self.AddFactorBatch(factor_batch, ptrs, jacobian_mode_override);
+            self.AddFactorBatch(factor_batch, StatePointers(state_ptrs), jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::arg("state_pointers"),
           nb::arg("jacobian_mode_override") = std::nullopt, nb::keep_alive<1, 2>(),
@@ -88,10 +116,8 @@ void bind_problem(nb::module_ &m) {
           [](cunls::Problem &self, cunls::FactorBatch *factor_batch, cunls::LossFunctionBatch *loss,
              const std::vector<uintptr_t> &state_ptrs,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
-            std::vector<float *> ptrs(state_ptrs.size());
-            for (size_t i = 0; i < state_ptrs.size(); ++i)
-              ptrs[i] = reinterpret_cast<float *>(state_ptrs[i]);
-            self.AddFactorBatch(factor_batch, loss, ptrs, jacobian_mode_override);
+            self.AddFactorBatch(factor_batch, loss, StatePointers(state_ptrs),
+                                jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::arg("loss_function"), nb::arg("state_pointers"),
           nb::arg("jacobian_mode_override") = std::nullopt, nb::keep_alive<1, 2>(),
@@ -141,10 +167,7 @@ void bind_problem(nb::module_ &m) {
           "set_state_pointers",
           [](cunls::Problem &self, size_t residual_batch_index,
              const std::vector<uintptr_t> &state_ptrs) {
-            std::vector<float *> ptrs(state_ptrs.size());
-            for (size_t i = 0; i < state_ptrs.size(); ++i)
-              ptrs[i] = reinterpret_cast<float *>(state_ptrs[i]);
-            self.SetStatePointers(residual_batch_index, ptrs);
+            self.SetStatePointers(residual_batch_index, StatePointers(state_ptrs));
           },
           nb::arg("residual_batch_index"), nb::arg("state_pointers"),
           "Replace the host-list connectivity of a residual batch "
@@ -176,23 +199,16 @@ void bind_problem(nb::module_ &m) {
       .def(
           "factor_batch",
           [](const cunls::Problem &self, size_t index) {
-            const auto &rbs = self.GetResidualBatches();
-            if (index >= rbs.size()) {
-              throw nb::index_error(("factor_batch: index " + std::to_string(index) +
-                                     " out of range; the problem has " +
-                                     std::to_string(rbs.size()) + " factor batches")
-                                        .c_str());
-            }
-            return rbs[index].GetFactorBatch();
+            CheckResidualBatchIndex(self, index, "factor_batch");
+            return self.GetResidualBatches()[index].GetFactorBatch();
           },
           nb::arg("index"), nb::rv_policy::reference_internal,
           "The factor batch of residual batch `index` (as its concrete class).")
       .def(
           "loss_function",
           [](const cunls::Problem &self, size_t index) -> cunls::LossFunctionBatch * {
-            const auto &rbs = self.GetResidualBatches();
-            if (index >= rbs.size()) throw nb::index_error("loss_function: index out of range");
-            return rbs[index].GetLossFunction();
+            CheckResidualBatchIndex(self, index, "loss_function");
+            return self.GetResidualBatches()[index].GetLossFunction();
           },
           nb::arg("index"), nb::rv_policy::reference_internal,
           nb::sig("def loss_function(self, index: int) -> LossFunctionBatch | None"),
@@ -210,9 +226,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "host_state_pointers",
           [](const cunls::Problem &self, size_t index) {
-            if (index >= self.GetResidualBatches().size()) {
-              throw nb::index_error("host_state_pointers: index out of range");
-            }
+            CheckResidualBatchIndex(self, index, "host_state_pointers");
             const auto &ptrs = self.HostStatePointers(index);
             std::vector<uintptr_t> out(ptrs.size());
             for (size_t i = 0; i < ptrs.size(); ++i) out[i] = reinterpret_cast<uintptr_t>(ptrs[i]);
@@ -225,12 +239,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "set_problem_partition",
           [](cunls::Problem &self, size_t num_problems, const std::vector<nb::handle> &ids) {
-            std::vector<const int *> ptrs;
-            for (const auto &h : ids) {
-              ptrs.push_back(reinterpret_cast<const int *>(
-                  extract_device_ptr(h, "int32", "state_problem_ids")));
-            }
-            self.SetProblemPartition(num_problems, ptrs);
+            self.SetProblemPartition(num_problems, DeviceIntArrays(ids, "state_problem_ids"));
           },
           nb::arg("num_problems"), nb::arg("state_problem_ids"), nb::keep_alive<1, 3>(),
           "Declare the problem a batch of independent subproblems: state s of state batch b "
@@ -240,12 +249,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "set_state_stages",
           [](cunls::Problem &self, const std::vector<nb::handle> &stages) {
-            std::vector<const int *> ptrs;
-            for (const auto &h : stages) {
-              ptrs.push_back(
-                  reinterpret_cast<const int *>(extract_device_ptr(h, "int32", "state_stages")));
-            }
-            self.SetStateStages(ptrs);
+            self.SetStateStages(DeviceIntArrays(stages, "state_stages"));
           },
           nb::arg("state_stages"), nb::keep_alive<1, 2>(),
           "Declare a time ordering of the states for the BlockTridiagonal linear solver: state "

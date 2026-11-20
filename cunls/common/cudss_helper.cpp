@@ -23,15 +23,6 @@
 #include <cstring>
 
 #include "cunls/common/cudss_dynamic.h"
-#include "cunls/common/log.h"
-
-// cuDSS 0.8 reworked the matrix descriptor and config API (new reordering enums,
-// hybrid execute mode, separate offset/index/value types in cudssMatrixCreateCsr).
-// Releases <= 0.7.x still use the legacy API. Gate on the version reported by the
-// cuDSS header so both prebuilt 0.7.1 and 0.8 builds compile.
-#if CUDSS_VERSION_MAJOR > 0 || CUDSS_VERSION_MINOR >= 8
-#define CUDSS_NEW_API
-#endif
 
 namespace cunls {
 
@@ -138,90 +129,56 @@ int cuDSSDeviceMemPool::Dealloc(void *ptr, size_t size, cudaStream_t stream) {
   return cudaErrorInvalidDevicePointer;
 }
 
-int cuDSSDeviceMemPoolAlloc(void *ctx, void **ptr, size_t size, cudaStream_t stream) {
+namespace {
+
+/** cudssDeviceMemHandler_t::device_alloc: Alloc() of the pool in `ctx`. */
+int PoolAlloc(void *ctx, void **ptr, size_t size, cudaStream_t stream) {
   if (ctx == nullptr) {
     return cudaErrorInvalidResourceHandle;
   }
   return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Alloc(ptr, size, stream);
 }
 
-int cuDSSDeviceMemPoolDealloc(void *ctx, void *ptr, size_t size, cudaStream_t stream) {
+/** cudssDeviceMemHandler_t::device_free: Dealloc() of the pool in `ctx`. */
+int PoolDealloc(void *ctx, void *ptr, size_t size, cudaStream_t stream) {
   if (ctx == nullptr) {
     return cudaErrorInvalidResourceHandle;
   }
   return reinterpret_cast<cuDSSDeviceMemPool *>(ctx)->Dealloc(ptr, size, stream);
 }
 
-void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool, const char *handler_name) {
+void *CreateCudssHandle() {
+  cudssHandle_t handle = nullptr;
+  THROW_ON_CUDSS_ERROR(GetCudssApi().Create(&handle));
+  return handle;
+}
+
+void SetCudssStream(void *handle, cudaStream_t stream) {
+  THROW_ON_CUDSS_ERROR(GetCudssApi().SetStream(static_cast<cudssHandle_t>(handle), stream));
+}
+
+void DestroyCudssHandle(void *handle) {
+  WARN_ON_CUDSS_ERROR(GetCudssApi().Destroy(static_cast<cudssHandle_t>(handle)));
+}
+
+}  // namespace
+
+void SetcuDSSDeviceMemHandler(void *handle, cuDSSDeviceMemPool &pool) {
   if (handle == nullptr) {
     return;
   }
-
   cudssDeviceMemHandler_t handler{};
   handler.ctx = reinterpret_cast<void *>(&pool);
-  handler.device_alloc = cuDSSDeviceMemPoolAlloc;
-  handler.device_free = cuDSSDeviceMemPoolDealloc;
-  std::strncpy(
-      handler.name,
-      (handler_name == nullptr || handler_name[0] == '\0') ? "cunls device pool" : handler_name,
-      CUDSS_ALLOCATOR_NAME_LEN);
+  handler.device_alloc = PoolAlloc;
+  handler.device_free = PoolDealloc;
+  std::strncpy(handler.name, "cuNLS cuDSS pool", CUDSS_ALLOCATOR_NAME_LEN);
   handler.name[CUDSS_ALLOCATOR_NAME_LEN - 1] = '\0';
-
-  DetachcuDSSDeviceMemHandler(handle);
-
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().SetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), &handler));
 }
 
-void DetachcuDSSDeviceMemHandler(void *handle) {
-  if (handle == nullptr) {
-    return;
-  }
-  THROW_ON_CUDSS_ERROR(
-      GetCudssApi().SetDeviceMemHandler(reinterpret_cast<cudssHandle_t>(handle), nullptr));
-}
-
-/**
- * @brief Destructor that releases the cuDSS handle if initialized.
- *
- * Safely destroys the cuDSS handle, logging a warning if destruction fails
- * rather than throwing an exception.
- */
-cuDSSHandle::~cuDSSHandle() {
-  if (handle_ != nullptr) {
-    WARN_ON_CUDSS_ERROR(GetCudssApi().Destroy((cudssHandle_t)handle_));
-  }
-}
-
-/** @copydoc cuDSSHandle::GetHandle */
-void *cuDSSHandle::GetHandle(cudaStream_t stream) {
-  // Validate input stream
-  if (stream == nullptr) {
-    const std::string msg = "cuDSSHandle received invalid CUDA stream.";
-    LogError(msg);
-    throw std::invalid_argument(msg);
-  }
-
-  // Return existing handle if already associated with the requested stream
-  if (stream == stream_ && handle_ != nullptr) {
-    return handle_;
-  }
-
-  // Destroy old handle if switching to a different stream
-  if (handle_ != nullptr) {
-    auto h = reinterpret_cast<cudssHandle_t>(handle_);
-    THROW_ON_CUDSS_ERROR(GetCudssApi().Destroy(h));
-  }
-
-  // Create and initialize new handle for the requested stream
-  stream_ = stream;
-
-  cudssHandle_t h = nullptr;
-  THROW_ON_CUDSS_ERROR(GetCudssApi().Create(&h));
-  THROW_ON_CUDSS_ERROR(GetCudssApi().SetStream(h, stream_));
-  handle_ = reinterpret_cast<void *>(h);
-  return handle_;
-}
+cuDSSHandle::cuDSSHandle()
+    : StreamBoundHandle("cuDSSHandle", &CreateCudssHandle, &SetCudssStream, &DestroyCudssHandle) {}
 
 /**
  * @brief Constructs a cuDSS matrix descriptor from a CSR sparse matrix.
@@ -248,7 +205,7 @@ cuDSSDescription::cuDSSDescription(const CSRSparseMatrix &symmetric_matrix, cons
   cudssMatrix_t mat = nullptr;
   // Create cuDSS CSR matrix descriptor
   // Parameters: symmetric matrix, full view, zero-based indexing
-#ifdef CUDSS_NEW_API
+#ifdef CUNLS_CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().MatrixCreateCsr(&mat, matrix_size, matrix_size, num_nonzeros, rows_ptr, NULL,
                                     cols_ptr, values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_32F,
@@ -280,7 +237,7 @@ cuDSSDescription::cuDSSDescription(const dvector<float> &vector) {
   // vector
 
   cudssMatrix_t mat = nullptr;
-#ifdef CUDSS_NEW_API
+#ifdef CUNLS_CUDSS_NEW_API
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().MatrixCreateDn(&mat, size, 1, size, ptr, CUDSS_R_32F, CUDSS_LAYOUT_COL_MAJOR));
 #else
@@ -314,7 +271,7 @@ cuDSSDescription::~cuDSSDescription() {
 cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
   cudssConfig_t cfg = nullptr;
 
-#ifdef CUDSS_NEW_API
+#ifdef CUNLS_CUDSS_NEW_API
   // Validate algorithm is within expected range
   if (reordering_algorithm < static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT) ||
       reordering_algorithm > static_cast<int>(CUDSS_REORDERING_ALG_NONE)) {
@@ -345,7 +302,7 @@ cuDSSConfig::cuDSSConfig(int reordering_algorithm, int nthreads) {
   THROW_ON_CUDSS_ERROR(
       GetCudssApi().ConfigSet(cfg, CUDSS_CONFIG_HOST_NTHREADS, &nthreads, sizeof(int)));
 
-#ifdef CUDSS_NEW_API
+#ifdef CUNLS_CUDSS_NEW_API
   // Hybrid execute mode is incompatible with the BTF_COLAMD/COLAMD reordering
   // paths in cuDSS — those algorithms return CUDSS_STATUS_NOT_SUPPORTED during
   // analysis when hybrid execution is on. Enable hybrid mode only for the

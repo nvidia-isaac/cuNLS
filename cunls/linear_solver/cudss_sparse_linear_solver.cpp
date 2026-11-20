@@ -19,13 +19,6 @@
 
 #include <cudss.h>
 
-// cuDSS 0.8 reworked the reordering algorithm enums; releases <= 0.7.x use the
-// legacy CUDSS_ALG_* values. Gate on the version reported by the cuDSS header so
-// both prebuilt 0.7.1 and 0.8 builds compile.
-#if CUDSS_VERSION_MAJOR > 0 || CUDSS_VERSION_MINOR >= 8
-#define CUDSS_NEW_API
-#endif
-
 #include <cassert>
 
 #include "cunls/common/cudss_dynamic.h"
@@ -33,6 +26,7 @@
 #include "cunls/common/log.h"
 
 namespace cunls {
+namespace {
 
 /**
  * @brief Maps cuDSSLinearSolverMode to the cuDSS reordering algorithm.
@@ -43,7 +37,7 @@ namespace cunls {
  * CUDSS_ALG_DEFAULT / CUDSS_ALG_1 with older cuDSS.
  */
 int GetOrderingType(cuDSSLinearSolverMode mode) {
-#ifdef CUDSS_NEW_API
+#ifdef CUNLS_CUDSS_NEW_API
   switch (mode) {
     case cuDSSLinearSolverMode::SlowInitFastSolve:
       return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
@@ -64,6 +58,8 @@ int GetOrderingType(cuDSSLinearSolverMode mode) {
 #endif
 }
 
+}  // namespace
+
 /** @copydoc cuDSSLinearSolver::cuDSSLinearSolver */
 cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
     : options_(options), cudss_config_(GetOrderingType(options.mode), options.nthreads) {}
@@ -83,8 +79,7 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
     return false;
   }
 
-  auto dss_handle = reinterpret_cast<cudssHandle_t>(cudss_handle_.GetHandle(stream));
-  assert(dss_handle != nullptr && "Invalid cuDSS handle");
+  auto dss_handle = static_cast<cudssHandle_t>(Handle(stream));
   auto cudss_data = reinterpret_cast<cudssData_t>(cudss_data_.GetData(dss_handle));
   assert(cudss_data != nullptr && "Invalid cuDSS data");
 
@@ -92,7 +87,6 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
     THROW_ON_CUDSS_ERROR(
         GetCudssApi().SetThreadingLayer(dss_handle, options_.threading_lib_path.c_str()));
   }
-  SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
 
   // MatrixStorage(): values in the pattern's layout, starting as the given matrix's values.
   pattern_ = &spd_matrix;
@@ -137,6 +131,16 @@ bool cuDSSLinearSolver::Solve(cudaStream_t stream, const CSRSparseMatrix &spd_ma
   return SolveWithValues(stream, spd_matrix, spd_matrix.values.data(), rhs, result);
 }
 
+void *cuDSSLinearSolver::Handle(cudaStream_t stream) {
+  void *handle = cudss_handle_.GetHandle(stream);
+  // cudss_handle_ keeps one handle (rebound on a stream change): attach the pool once.
+  if (!pool_attached_) {
+    SetcuDSSDeviceMemHandler(handle, device_mem_pool_);
+    pool_attached_ = true;
+  }
+  return handle;
+}
+
 SolverMatrixStorage cuDSSLinearSolver::MatrixStorage() { return {values_.data()}; }
 
 bool cuDSSLinearSolver::SolveStoredMatrix(cudaStream_t stream, const dvector<float> &rhs,
@@ -167,9 +171,7 @@ bool cuDSSLinearSolver::SolveWithValues(cudaStream_t stream, const CSRSparseMatr
     return true;
   }
 
-  auto dss_handle = reinterpret_cast<cudssHandle_t>(cudss_handle_.GetHandle(stream));
-  assert(dss_handle != nullptr && "Invalid cuDSS handle");
-  SetcuDSSDeviceMemHandler(dss_handle, device_mem_pool_, "cuNLS cuDSS pool");
+  auto dss_handle = static_cast<cudssHandle_t>(Handle(stream));
   auto cudss_data = reinterpret_cast<cudssData_t>(cudss_data_.GetData(dss_handle));
 
   // Create cuDSS descriptors for the matrix and vectors

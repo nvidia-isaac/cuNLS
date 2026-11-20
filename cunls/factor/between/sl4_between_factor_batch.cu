@@ -31,26 +31,29 @@ __device__ __forceinline__ int FactorMeasurementIndex(int item, const int *facto
 constexpr size_t kBlockSize = 256;
 
 /**
- * @brief Fused kernel: collect L/R SL(4), compute (L^{-1} * R) * Delta.
- *
- * SL(4) uses general 4x4 matrices, so we must compute the full inverse
- * using a helper kernel or precompute it. Since InverseSL4 already exists,
- * we fuse the collection, the two matrix multiplies, but call InverseSL4
- * externally. This kernel does: collect + 2x matmul(4x4) in one pass.
+ * @brief Fused kernel: read L and R from state_pointers, invert L in place
+ *        (lie_device::Inv4; a singular L gives a zero inverse) and compute
+ *        error = Delta * (L^{-1} * R), all 4x4 in registers.
  */
-__global__ void collect_and_matmul_sl4_between_kernel(float const *const *state_pointers,
-                                                      const SL4Transform *left_inverse,
-                                                      const SL4Transform *deltas, size_t num_items,
-                                                      SL4Transform *errors, const int *factor_ids,
-                                                      int num_factors) {
+__global__ void compute_sl4_between_error_kernel(float const *const *state_pointers,
+                                                 const SL4Transform *deltas, size_t num_items,
+                                                 SL4Transform *errors, const int *factor_ids,
+                                                 int num_factors) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= (int)num_items) return;
   const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   const float *__restrict__ R = state_pointers[2 * tid + 1];
-  const float *__restrict__ I = left_inverse[tid].data();
   const float *__restrict__ D = deltas[m].data();
   float *__restrict__ out = errors[tid].data();
+
+  float L[16], I[16];
+#pragma unroll
+  for (int k = 0; k < 16; ++k) L[k] = state_pointers[2 * tid][k];
+  if (!lie_device::Inv4(L, I)) {
+#pragma unroll
+    for (int k = 0; k < 16; ++k) I[k] = 0.f;
+  }
 
   // temp = I * R  (full 4x4)
   float t[16];
@@ -105,19 +108,12 @@ __global__ void collect_and_matmul_sl4_between_kernel(float const *const *state_
   out[15] = d12 * t[3] + d13 * t[7] + d14 * t[11] + d15 * t[15];
 }
 
-__global__ void collect_sl4_left_poses_kernel(float const *const *state_pointers, size_t num_items,
-                                              SL4Transform *pose_left) {
-  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_items) return;
-  pose_left[tid] = *reinterpret_cast<const SL4Transform *>(state_pointers[2 * tid]);
-}
-
 // Fused Jacobian kernel: one warp per item writes the full 15x30 Jacobian.
 //   Left block (cols 0-14):  -Ad(D), derived from the measurement D in place
 //   Right block (cols 15-29): identity
 // Lane 0 inverts D (Inv4); then the 450 outputs of the item are striped over
 // the 32 lanes in memory order, so stores are coalesced. Ad entries use the
-// same basis-support arithmetic as AdjointSL4Kernel (lie_device helpers).
+// basis-support arithmetic of lie_device::SL4AdjointEntry.
 constexpr int kSL4JacWarpsPerBlock = 8;
 constexpr int kSL4JacBlockSize = kSL4JacWarpsPerBlock * 32;
 
@@ -157,7 +153,7 @@ __global__ void __launch_bounds__(kSL4JacBlockSize)
     const int col = o - row * 30;
     float v;
     if (col < 15) {
-      // Singular D: Ad = identity (as AdjointSL4Kernel), negated below.
+      // Singular D: Ad = identity, negated below.
       const float ad = ok ? lie_device::SL4AdjointEntry(s_basis, row, col, s_T[w], s_Tinv[w])
                           : (row == col ? 1.f : 0.f);
       v = -ad;
@@ -169,10 +165,7 @@ __global__ void __launch_bounds__(kSL4JacBlockSize)
 }
 
 SL4BetweenFactorBatch::SL4BetweenFactorBatch(const SL4Transform *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      poses_left_(capacity),
-      poses_left_inverse_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
@@ -182,31 +175,17 @@ bool SL4BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
     return true;
   }
   const int num_factors = static_cast<int>(NumActiveFactors());
-  poses_left_.resize(num_items);  // keeps capacity: allocates at most once per size
-  poses_left_inverse_.resize(num_items);
-  size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
+  errors_.resize(num_items);  // keeps capacity: allocates at most once per size
+  const size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
   constexpr size_t pitch = 4;
   constexpr size_t stride = 16;
 
-  // SL(4) inverse is non-trivial (general 4x4). Pipeline:
-  // 1. Gather left poses into contiguous buffer
-  // 2. Compute L^{-1} via ComputeInverseSL4
-  // 3. Fused kernel: read L^{-1} + R from state_pointers, compute (L^{-1}*R)*D
-  collect_sl4_left_poses_kernel<<<num_blocks, kBlockSize, 0, stream>>>(state_pointers, num_items,
-                                                                       poses_left_.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  ComputeInverseSL4(stream, reinterpret_cast<const float *>(poses_left_.data()), pitch, stride,
-                    pitch, stride, num_items,
-                    reinterpret_cast<float *>(poses_left_inverse_.data()));
-
-  collect_and_matmul_sl4_between_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, poses_left_inverse_.data(), pose_deltas_ptr_, num_items, poses_left_.data(),
-      factor_ids, num_factors);
+  compute_sl4_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
   constexpr size_t twist_stride = 15;
-  ComputeLogSL4(stream, reinterpret_cast<const float *>(poses_left_.data()), pitch, stride,
+  ComputeLogSL4(stream, reinterpret_cast<const float *>(errors_.data()), pitch, stride,
                 twist_stride, num_items, residuals);
 
   if (jacobians != nullptr) {

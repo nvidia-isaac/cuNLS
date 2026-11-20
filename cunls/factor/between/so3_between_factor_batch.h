@@ -34,8 +34,6 @@ class SO3BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  SO3BetweenFactorBatch() = default;
-
   const Matrix<3> *pose_deltas_ptr_;
   /// Scratch: the per-factor error transform whose Log is the residual.
   mutable DeviceVector<Matrix<3>> errors_;

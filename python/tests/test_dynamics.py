@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dynamics factor batches: layout, consistency with a NumPy rollout, and a
-Carter driving to a goal under AugmentedLagrangianMinimizer."""
+"""Dynamics factor batches: layout and consistency with a NumPy rollout (solves to a goal are
+covered by the C++ tests and by test_mpc.py)."""
 
 import numpy as np
 import pytest
@@ -100,59 +100,3 @@ def test_carter_rollout_is_consistent(stream):
     options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.DenseLDLT
     summary = pycunls.GaussNewtonMinimizer(options).minimize(stream, problem)
     assert summary.initial_cost < 1e-8
-
-
-@pytest.mark.parametrize("kind", ["gn", "lm"])
-def test_carter_reaches_goal(stream, kind):
-    steps, dt, umax = 30, 0.1, 25.0
-    pose_buf = wp.array(np.stack([se2(0, 0, 0)] * (steps + 1)))
-    u_buf = wp.zeros((steps, 2), dtype=wp.float32)
-    const_ids = wp.array([0], dtype=wp.int32)
-    pose_states = pycunls.SE2StateBatch(pose_buf, steps + 1, const_ids, 1)
-    pose_states.set_num_active_states(steps + 1, 1)
-    controls = pycunls.VectorStateBatch2(u_buf, steps)
-    controls.set_num_active_states(steps)
-
-    dts = wp.full(steps, dt, dtype=wp.float32)
-    dynamics = pycunls.SE2DifferentialDriveFactorBatch(dts, 0.125, 0.5, steps)
-    dynamics.set_num_active_factors(steps)
-    hard_dynamics = pycunls.ConstraintFactorBatch(dynamics, pycunls.ConstraintKind.Equality)
-    goal = wp.array(se2(1.5, 0.8, 1.2)[None])
-    goal_prior = pycunls.SE2PriorFactorBatch(goal, 1)
-    goal_prior.set_num_active_factors(1)
-    at_goal = pycunls.ConstraintFactorBatch(goal_prior, pycunls.ConstraintKind.Equality)
-    zeros = wp.zeros(steps * 2, dtype=wp.float32)
-    effort = pycunls.WeightedFactorBatch(pycunls.PriorVectorFactorBatch2(zeros, steps), 0.1)
-    effort.set_num_active_factors(steps)
-    lo = wp.full(steps * 2, -umax, dtype=wp.float32)
-    hi = wp.full(steps * 2, umax, dtype=wp.float32)
-    limits = pycunls.BoundFactorBatch2(lo, hi, steps)
-    limits.set_num_active_factors(steps)
-
-    problem = pycunls.Problem()
-    problem.add_state_batch(pose_states)
-    problem.add_state_batch(controls)
-    dyn_ptrs, u_ptrs = [], []
-    for k in range(steps):
-        dyn_ptrs += [pose_states.state_device_ptr(k), controls.state_device_ptr(k),
-                     pose_states.state_device_ptr(k + 1)]
-        u_ptrs.append(controls.state_device_ptr(k))
-    problem.add_factor_batch(hard_dynamics, dyn_ptrs)
-    problem.add_factor_batch(at_goal, [pose_states.state_device_ptr(steps)])
-    problem.add_factor_batch(effort, u_ptrs)
-    problem.add_factor_batch(limits, u_ptrs)
-
-    options = pycunls.MinimizerOptions()
-    options.max_num_iterations = 100
-    options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.DenseLDLT
-    if kind == "gn":
-        inner = pycunls.GaussNewtonMinimizer(options)
-    else:
-        lm = pycunls.LevenbergMarquardtMinimizerOptions()
-        lm.base_options = options
-        inner = pycunls.LevenbergMarquardtMinimizer(lm)
-    summary = pycunls.AugmentedLagrangianMinimizer(inner).minimize(stream, problem)
-    assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged, summary
-    poses = pose_buf.numpy()
-    np.testing.assert_allclose(poses[-1], se2(1.5, 0.8, 1.2), atol=1e-3)
-    assert np.abs(u_buf.numpy()).max() <= umax + 1e-3

@@ -74,8 +74,6 @@ class ReprojectionFactorBatch : public SizedFactorBatch<2, 6, 3> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  ReprojectionFactorBatch() = delete;
-
   const Vector<2> *observations_;
   const SE3Transform *poses_camera_from_rig_ = nullptr;
   float z_threshold_ = 1e-3f;

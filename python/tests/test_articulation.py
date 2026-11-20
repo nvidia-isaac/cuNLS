@@ -141,6 +141,14 @@ def test_topology_errors_say_what_and_how_to_fix():
             joint_q_start=[0, 1], joint_qd_start=[0, 1], joint_axis=[0, 0, 2])
 
 
+def test_apply_joint_limits_is_a_keyword(arm):
+    # The third positional argument is const_state_ids: a flag there is rejected, not taken as a
+    # null pointer that would leave the limits on.
+    with pytest.raises(TypeError, match="got a bool"):
+        pycunls.ArticulationStateBatch(arm.topology, 4, False)
+    assert pycunls.ArticulationStateBatch(arm.topology, 4, apply_joint_limits=False) is not None
+
+
 def _link_transforms(states, n, stream):
     """World pose (position, quaternion x, y, z, w) of every link: (n, link_count, 7)."""
     out = wp.zeros((n, states.topology.link_count), dtype=wp.transform)

@@ -1,8 +1,5 @@
 # cuNLS Core Source Tree
 
-> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
-> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
-
 ## Purpose
 
 This directory contains all core library modules and the public umbrella header
@@ -29,6 +26,7 @@ This directory contains all core library modules and the public umbrella header
 
 ## Typical dependency direction
 
-`factor/state` -> `minimizer` -> `linear_solver`/`math` + `common`. One exception:
+`factor/state` -> `minimizer` -> `linear_solver`/`math` + `common`. Two exceptions:
 `SparseLinearSolver::Initialize` takes the `Problem` (to derive the block layout or
-the stages), so `linear_solver` includes `minimizer/problem.h`.
+the stages), so `linear_solver` includes `minimizer/problem.h`; the PCG solver multiplies
+with the minimizer's BSR product (`minimizer/bsr_matrix.h`, one implementation for both).

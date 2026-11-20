@@ -26,6 +26,8 @@
 
 #include <cuda_runtime.h>
 
+#include <numeric>
+
 #include "cunls/common/helper.h"
 #include "cunls/common/log.h"
 #include "cunls/factor/information/information_factor_batch.h"
@@ -178,6 +180,30 @@ void ApplyInformationToJacobianItems(const float *sqrt_information, float *jacob
   LaunchSqrtInformation(sqrt_information, jacobians, residual_size, jacobian_pitch,
                         residual_size * jacobian_pitch, jacobian_pitch, num_items, factor_ids,
                         num_factors, stream);
+}
+
+bool EvaluateWithSqrtInformation(const FactorBatch &inner, const float *sqrt_information,
+                                 float *residuals, float *jacobians,
+                                 float const *const *state_pointers, cudaStream_t stream,
+                                 const int *factor_ids, size_t num_factor_ids) {
+  const size_t num_factors = inner.NumActiveFactors();
+  const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+  if (num_items == 0 || num_factors == 0) return true;
+  if (!inner.Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_items)) {
+    return false;
+  }
+  const size_t rsize = inner.ResidualsSize();
+  if (residuals != nullptr) {
+    ApplyInformationToResidualItems(sqrt_information, residuals, rsize, num_items, factor_ids,
+                                    num_factors, stream);
+  }
+  if (jacobians != nullptr) {
+    const auto sizes = inner.StateSizes();
+    const size_t pitch = std::accumulate(sizes.begin(), sizes.end(), size_t{0});
+    ApplyInformationToJacobianItems(sqrt_information, jacobians, rsize, pitch, num_items,
+                                    factor_ids, num_factors, stream);
+  }
+  return true;
 }
 
 }  // namespace cunls

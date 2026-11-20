@@ -36,8 +36,6 @@ class SL4PriorFactorBatch : public SizedFactorBatch<15, 15> {
                 size_t num_factor_ids = 0) const final;
 
  private:
-  SL4PriorFactorBatch() = default;
-
   const SL4Transform *observations_ptr_;
   mutable DeviceVector<SL4Transform> transforms_error_;
 };

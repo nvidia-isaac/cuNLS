@@ -424,7 +424,7 @@ struct MinimizerSystem {
 
 /** @brief Scratch buffers and read-back slots. */
 struct MinimizerScratch {
-  dvector<uint8_t> buffer;               ///< Per-factor costs, residuals and workspaces.
+  dvector<float> buffer;                 ///< Per-factor costs, residuals and workspaces.
   dvector<float> d_scalars;              ///< Device scalars: totals and read-back slots.
   PinnedVector<float> h_scalars;         ///< Host mirror of d_scalars.
   dvector<float> d_partials;             ///< Reduction partials.

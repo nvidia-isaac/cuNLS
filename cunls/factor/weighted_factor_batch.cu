@@ -17,6 +17,8 @@
 
 #include <cuda_runtime.h>
 
+#include <numeric>
+
 #include "cunls/common/helper.h"
 #include "cunls/factor/weighted_factor_batch.h"
 
@@ -50,64 +52,59 @@ __global__ void UniformScaleKernel(float weight, float *data, size_t total_eleme
 }
 
 // Scales each item's `stride` consecutive floats by the weight of the item's
-// factor (FactorMeasurementIndex: factor_ids[item] or item % weights_size).
+// factor (FactorMeasurementIndex: factor_ids[item] or item % num_factors).
 __global__ void PerFactorScaleKernel(const float *weights, float *data, size_t stride,
-                                     size_t num_items, const int *factor_ids, int weights_size) {
+                                     size_t num_items, const int *factor_ids, int num_factors) {
   const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   const size_t total = num_items * stride;
   if (idx < total) {
     const int item = static_cast<int>(idx / stride);
-    data[idx] *= weights[FactorMeasurementIndex(item, factor_ids, weights_size)];
+    data[idx] *= weights[FactorMeasurementIndex(item, factor_ids, num_factors)];
   }
+}
+
+/**
+ * Scales each item's `stride` consecutive floats of `data` by the weight of the
+ * item's factor, weights[f], or by `uniform_weight` when weights is null.
+ */
+void ScaleItems(float uniform_weight, const float *weights, float *data, size_t stride,
+                size_t num_items, const int *factor_ids, size_t num_factors, cudaStream_t stream) {
+  const size_t total = num_items * stride;
+  if (total == 0) return;
+  const unsigned num_blocks = static_cast<unsigned>((total + kBlockSize - 1) / kBlockSize);
+  if (weights == nullptr) {
+    UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(uniform_weight, data, total);
+  } else {
+    PerFactorScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(
+        weights, data, stride, num_items, factor_ids, static_cast<int>(num_factors));
+  }
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 }  // namespace
 
-void ApplyUniformWeightToResiduals(float weight, float *residuals, size_t total_elements,
-                                   cudaStream_t stream) {
-  const int num_blocks = (total_elements + kBlockSize - 1) / kBlockSize;
-  UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(weight, residuals, total_elements);
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void ApplyUniformWeightToJacobians(float weight, float *jacobians, size_t total_elements,
-                                   cudaStream_t stream) {
-  const int num_blocks = (total_elements + kBlockSize - 1) / kBlockSize;
-  UniformScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(weight, jacobians, total_elements);
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void ApplyPerFactorWeightToResiduals(const float *weights, float *residuals, size_t residual_size,
-                                     size_t num_factors, cudaStream_t stream, const int *factor_ids,
-                                     size_t weights_size) {
-  const size_t total = num_factors * residual_size;
-  if (total == 0) {
-    return;
+bool EvaluateWeighted(const FactorBatch &inner, float uniform_weight,
+                      const float *per_factor_weights, float *residuals, float *jacobians,
+                      float const *const *state_pointers, cudaStream_t stream,
+                      const int *factor_ids, size_t num_factor_ids) {
+  const size_t num_factors = inner.NumActiveFactors();
+  const size_t num_items = num_factor_ids == 0 ? num_factors : num_factor_ids;
+  if (num_items == 0 || num_factors == 0) return true;
+  if (!inner.Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_items)) {
+    return false;
   }
-  if (weights_size == 0) {
-    weights_size = num_factors;
+  const size_t rsize = inner.ResidualsSize();
+  if (residuals != nullptr) {
+    ScaleItems(uniform_weight, per_factor_weights, residuals, rsize, num_items, factor_ids,
+               num_factors, stream);
   }
-  const int num_blocks = (total + kBlockSize - 1) / kBlockSize;
-  PerFactorScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      weights, residuals, residual_size, num_factors, factor_ids, static_cast<int>(weights_size));
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void ApplyPerFactorWeightToJacobians(const float *weights, float *jacobians, size_t residual_size,
-                                     size_t jacobian_pitch, size_t num_factors, cudaStream_t stream,
-                                     const int *factor_ids, size_t weights_size) {
-  const size_t stride = residual_size * jacobian_pitch;
-  const size_t total = num_factors * stride;
-  if (total == 0) {
-    return;
+  if (jacobians != nullptr) {
+    const auto sizes = inner.StateSizes();
+    const size_t pitch = std::accumulate(sizes.begin(), sizes.end(), size_t{0});
+    ScaleItems(uniform_weight, per_factor_weights, jacobians, rsize * pitch, num_items, factor_ids,
+               num_factors, stream);
   }
-  if (weights_size == 0) {
-    weights_size = num_factors;
-  }
-  const int num_blocks = (total + kBlockSize - 1) / kBlockSize;
-  PerFactorScaleKernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      weights, jacobians, stride, num_factors, factor_ids, static_cast<int>(weights_size));
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  return true;
 }
 
 }  // namespace cunls

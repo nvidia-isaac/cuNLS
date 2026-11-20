@@ -305,19 +305,10 @@ class SyntheticProblem {
     const size_t num_factors = num_poses - 1;
     std::mt19937 rng(1000);
     const std::vector<SE3Transform> gt_poses = RandomPoses(num_poses, rng);
-    // Deltas satisfying delta_i = T_i^{-1} * T_{i+1} exactly (device inverse).
+    // Deltas satisfying delta_i = T_i^{-1} * T_{i+1}.
     std::vector<SE3Transform> deltas(num_factors);
-    {
-      CudaStream stream;
-      dvector<SE3Transform> d_poses(gt_poses);
-      dvector<SE3Transform> d_inv(num_poses);
-      ComputeInverseSE3(stream.GetStream(), reinterpret_cast<const float *>(d_poses.data()), 4, 16,
-                        4, 16, num_poses, reinterpret_cast<float *>(d_inv.data()));
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-      std::vector<SE3Transform> inv(num_poses);
-      d_inv.CopyToHost(inv.data(), num_poses);
-      for (size_t i = 0; i < num_factors; ++i) deltas[i] = ComposeSE3Host(inv[i], gt_poses[i + 1]);
-    }
+    const std::vector<SE3Transform> inv = test_utils::InverseSE3(gt_poses);
+    for (size_t i = 0; i < num_factors; ++i) deltas[i] = ComposeSE3Host(inv[i], gt_poses[i + 1]);
     init_poses_ = perturbed ? PerturbPoses(gt_poses, rng, /*skip_first_n=*/1) : gt_poses;
     poses_ = dvector<SE3Transform>(init_poses_);
     deltas_ = dvector<SE3Transform>(deltas);

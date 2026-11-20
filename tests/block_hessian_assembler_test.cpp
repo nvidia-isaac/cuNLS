@@ -19,17 +19,19 @@
  * @file block_hessian_assembler_test.cpp
  * @brief Correctness and performance tests for Hessian assembly and storage.
  *
- * Three suites:
- *  - HessianStructureTest checks the GPU-derived sparsity pattern against a
- *    naive CPU oracle,
- *  - BlockHessianAssemblerTest checks the assembled H and rhs against a CPU
- *    oracle that contracts the same per-factor Jacobians,
- *  - HessianStorageTest checks scalar CSR and block BSR against each other.
+ * Two suites:
+ *  - BlockHessianAssemblerTest checks the GPU-derived sparsity pattern and the
+ *    assembled H and rhs, in both storage layouts, against a CPU oracle that
+ *    contracts the same per-factor Jacobians,
+ *  - HessianStorageTest checks the operations on scalar CSR and block BSR
+ *    (diagonal, damping, SpMV, solvers) against each other.
  *
  * The oracles share no code with the GPU paths they validate, which matters:
  * both storage layouts run through one assembler, so comparing them against
  * each other cannot catch an error common to both.
  */
+
+#include "cunls/minimizer/block_hessian_assembler.h"
 
 #include <gtest/gtest.h>
 
@@ -39,6 +41,8 @@
 #include <numeric>
 #include <random>
 #include <set>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
@@ -52,7 +56,6 @@
 #include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/linear_solver/dense_cholesky_solver.h"
 #include "cunls/linear_solver/dense_linear_solver.h"
-#include "cunls/linear_solver/dense_qr_solver.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/bsr_matrix.h"
@@ -74,31 +77,78 @@ namespace {
 // Harness
 // ============================================================================
 
+/** @brief dst = src on the device (dst resized). */
+template <typename T>
+void CopyDevice(cudaStream_t stream, const dvector<T> &src, dvector<T> &dst) {
+  dst.resize(src.size());
+  if (src.empty()) return;
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(dst.data(), src.data(), src.size() * sizeof(T),
+                                      cudaMemcpyDeviceToDevice, stream));
+}
+
 /**
- * @brief Backend that consumes CSR only and never solves.
+ * @brief Backend that never solves and keeps the working left-hand side in H's
+ * own layout.
  *
- * Declining block storage is what puts assembly on the scalar CSR path.  cuDSS
+ * Initialize() copies the pattern it receives (CSR, or BSR when block storage
+ * is accepted) and exposes its values as MatrixStorage() with the identity
+ * entry map, so NormalEquations::WriteWorkingLhsToSolver() -- the production
+ * path -- leaves the scaled, damped and masked LHS readable as a matrix.
+ * Declining block storage is what puts assembly on the scalar CSR path; cuDSS
  * is the only real backend that declines it and is absent when cunls is built
- * with CUNLS_ENABLE_CUDSS=OFF, so the assembly comparisons use this instead.
+ * with CUNLS_ENABLE_CUDSS=OFF, so the comparisons use this instead.
  */
-class CSROnlySolver : public SparseLinearSolver {
+class CaptureSolver : public SparseLinearSolver {
  public:
   using SparseLinearSolver::Initialize;
   using SparseLinearSolver::Solve;
 
-  bool Initialize(cudaStream_t, const Problem &, const CSRSparseMatrix &matrix,
+  /** @param block_storage Whether to accept block storage (SupportsBlockStorage()). */
+  explicit CaptureSolver(bool block_storage) : block_storage_(block_storage) {}
+
+  bool Initialize(cudaStream_t stream, const Problem &, const CSRSparseMatrix &matrix,
                   const dvector<float> &, dvector<float> &) override {
-    values_.resize(matrix.values.size());
+    CopyDevice(stream, matrix.row_offsets, csr_.row_offsets);
+    CopyDevice(stream, matrix.col_ids, csr_.col_ids);
+    csr_.values.resize(matrix.values.size());
+    values_ = &csr_.values;
     return true;
   }
-  SolverMatrixStorage MatrixStorage() override { return {values_.data(), nullptr, nullptr}; }
-  void ClearMatrixStorage(cudaStream_t) override {}
+  bool SupportsBlockStorage() const override { return block_storage_; }
+  bool Initialize(cudaStream_t stream, const Problem &, const BSRSparseMatrix &matrix,
+                  const dvector<float> &, dvector<float> &) override {
+    CopyDevice(stream, matrix.row_offsets, bsr_.row_offsets);
+    CopyDevice(stream, matrix.col_ids, bsr_.col_ids);
+    bsr_.values.resize(matrix.values.size());
+    bsr_.block_size = matrix.block_size;
+    bsr_.num_block_rows = matrix.num_block_rows;
+    bsr_.max_tiles_per_row = matrix.max_tiles_per_row;
+    values_ = &bsr_.values;
+    return true;
+  }
+  SolverMatrixStorage MatrixStorage() override {
+    return {values_ != nullptr ? values_->data() : nullptr, nullptr, nullptr};
+  }
+  void ClearMatrixStorage(cudaStream_t stream) override {
+    if (values_ != nullptr && !values_->empty()) {
+      THROW_ON_CUDA_ERROR(
+          cudaMemsetAsync(values_->data(), 0, values_->size() * sizeof(float), stream));
+    }
+  }
   bool SolveStoredMatrix(cudaStream_t, const dvector<float> &, dvector<float> &) override {
     return false;
   }
 
+  /** @brief The working LHS in scalar storage (after WriteWorkingLhsToSolver). */
+  const CSRSparseMatrix &Csr() const { return csr_; }
+  /** @brief The working LHS in block storage (after WriteWorkingLhsToSolver). */
+  const BSRSparseMatrix &Bsr() const { return bsr_; }
+
  private:
-  dvector<float> values_;  ///< The matrix in the pattern of Initialize() (identity map).
+  bool block_storage_;
+  CSRSparseMatrix csr_;
+  BSRSparseMatrix bsr_;
+  dvector<float> *values_ = nullptr;  ///< The values of the layout Initialize() received.
 };
 
 /**
@@ -108,14 +158,18 @@ class CSROnlySolver : public SparseLinearSolver {
  */
 class SystemBuilder {
  public:
-  /**
-   * @brief Builds with block storage (the default for a block-capable solver).
-   */
-  SystemBuilder() : SystemBuilder(MakeOptions(SparseLinearSolverType::BlockSparsePCG)) {}
+  /** @brief Builds with block storage (the default for a block-capable solver). */
+  SystemBuilder() : SystemBuilder(MinimizerOptions(), true) {}
 
+  /**
+   * @brief Builds with the storage the solver of `options` selects: the
+   * working LHS is captured in that layout (the real solver is only asked
+   * whether it accepts block storage).
+   */
   explicit SystemBuilder(const MinimizerOptions &options)
       : SystemBuilder(options, CreateSparseLinearSolver(options.sparse_linear_solver_type,
-                                                        options.sparse_linear_solver_config)) {}
+                                                        options.sparse_linear_solver_config)
+                                   ->SupportsBlockStorage()) {}
 
   /**
    * @brief Builds with scalar CSR storage.
@@ -123,30 +177,39 @@ class SystemBuilder {
    * There is no switch for this: storage is chosen from the problem's tangent
    * dimensions and the solver's capability.  A CSR-only backend is how a
    * caller actually ends up on the scalar path, so that is what the
-   * comparisons here exercise.  Only assembly is compared, never the solve, so
-   * the backend choice does not otherwise affect the result.
+   * comparisons here exercise.
    */
   static SystemBuilder Scalar(const MinimizerOptions &options = MinimizerOptions()) {
-    return SystemBuilder(options, std::make_unique<CSROnlySolver>());
+    return SystemBuilder(options, false);
   }
 
-  /** @brief Runs the structure setup + one system build and syncs. */
+  /** @brief Runs the structure setup + one system build (and the solver setup) and syncs. */
   void Build(cudaStream_t stream, Problem &problem) {
     internal::SetUpStructure(stream, problem, options_, state_ops_, system_);
     state_.Recreate(stream, problem);
     internal::BuildSystem(stream, problem, state_, options_, system_, scratch_);
-    Equations().BuildWorkingLhs(stream);
+    system_.step.resize(system_.rhs.size());
+    if (!Equations().PrepareSolver(stream, problem, system_.rhs, system_.step)) {
+      throw std::runtime_error("SystemBuilder: the capture solver rejected the system");
+    }
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+  }
+
+  /** @brief The working left-hand side (scaled, damped as declared) in block storage. */
+  const BSRSparseMatrix &LhsBSR(cudaStream_t stream) {
+    Equations().WriteWorkingLhsToSolver(stream);
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    return capture_->Bsr();
   }
 
   /** @brief The working left-hand side (scaled, damped as declared), as CSR. */
   const CSRSparseMatrix &HessianAsCSR(cudaStream_t stream) {
-    Equations().BuildWorkingLhs(stream);
+    Equations().WriteWorkingLhsToSolver(stream);
     if (!Equations().UsesBlockStorage()) {
       THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-      return Equations().LhsCSR();
+      return capture_->Csr();
     }
-    test_utils::ExpandBSRToCSR(stream, Equations().LhsBSR(), csr_mirror_, expand_scratch_);
+    test_utils::ExpandBSRToCSR(stream, capture_->Bsr(), csr_mirror_, expand_scratch_);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     return csr_mirror_;
   }
@@ -175,17 +238,14 @@ class SystemBuilder {
   }
 
  private:
-  SystemBuilder(const MinimizerOptions &options, SparseLinearSolverPtr solver) : options_(options) {
-    system_.linear_system = std::make_unique<NormalEquations>(std::move(solver));
-  }
-
-  static MinimizerOptions MakeOptions(SparseLinearSolverType solver) {
-    MinimizerOptions options;
-    options.sparse_linear_solver_type = solver;
-    return options;
+  SystemBuilder(const MinimizerOptions &options, bool block_storage) : options_(options) {
+    auto capture = std::make_unique<CaptureSolver>(block_storage);
+    capture_ = capture.get();
+    system_.linear_system = std::make_unique<NormalEquations>(std::move(capture));
   }
 
   MinimizerOptions options_;
+  CaptureSolver *capture_ = nullptr;  ///< Owned by the NormalEquations of system_.
   StateBatchOps state_ops_;
   internal::MinimizerSystem system_;
   internal::MinimizerScratch scratch_;
@@ -651,16 +711,16 @@ ReferenceStructure BuildReferenceStructure(const Problem &problem) {
 
   std::set<std::pair<int, int>> pairs;
   const auto &residual_batches = problem.GetResidualBatches();
-  const auto &state_pointers = problem.GetStatePointers();
   out.factor_columns.resize(residual_batches.size());
   for (size_t i = 0; i < residual_batches.size(); i++) {
+    const std::vector<float *> &state_pointers = problem.HostStatePointers(i);
     const auto *factor_batch = residual_batches[i].GetFactorBatch();
     auto block_sizes = factor_batch->StateSizes();
     const size_t nb = block_sizes.size();
     for (size_t f = 0; f < factor_batch->NumActiveFactors(); f++) {
       std::vector<int> cols;
       for (size_t b = 0; b < nb; b++) {
-        int col = resolve(state_pointers[i][f * nb + b], static_cast<int>(block_sizes[b]));
+        int col = resolve(state_pointers[f * nb + b], static_cast<int>(block_sizes[b]));
         out.factor_columns[i].push_back(col);
         if (col >= 0) {
           cols.push_back(col);
@@ -803,144 +863,43 @@ void ComputeReferenceSystem(const Problem &problem, const std::vector<float> &ja
  * rather than by each entry's own magnitude.
  */
 void ExpectMatchesReference(Problem &problem, float rel_tol = 1e-5f) {
-  CudaStream stream;
-  SystemBuilder builder;
-  builder.Build(stream.GetStream(), problem);
-  SystemSnapshot actual = Snapshot(builder, stream.GetStream());
-
-  std::vector<float> jacobians(builder.FactorJacobians().size());
-  std::vector<float> residuals(builder.Residuals().size());
-  builder.FactorJacobians().CopyToHost(jacobians.data(), jacobians.size());
-  builder.Residuals().CopyToHost(residuals.data(), residuals.size());
-
   ReferenceStructure structure = BuildReferenceStructure(problem);
-  std::vector<float> expected_values;
-  std::vector<float> expected_rhs;
-  ComputeReferenceSystem(problem, jacobians, residuals, structure, expected_values, expected_rhs);
+  // Both layouts against the oracle: scalar CSR (a CSR-only backend) and block
+  // storage when the problem qualifies for it, expanded to CSR.
+  for (const bool block_layout : {false, true}) {
+    SCOPED_TRACE(block_layout ? "block layout" : "scalar layout");
+    CudaStream stream;
+    SystemBuilder builder = block_layout ? SystemBuilder() : SystemBuilder::Scalar();
+    builder.Build(stream.GetStream(), problem);
+    SystemSnapshot actual = Snapshot(builder, stream.GetStream());
 
-  ASSERT_EQ(structure.row_offsets, actual.row_offsets);
-  ASSERT_EQ(structure.col_ids, actual.col_ids);
-  ASSERT_EQ(expected_values.size(), actual.values.size());
-  ASSERT_EQ(expected_rhs.size(), actual.rhs.size());
+    std::vector<float> jacobians(builder.FactorJacobians().size());
+    std::vector<float> residuals(builder.Residuals().size());
+    builder.FactorJacobians().CopyToHost(jacobians.data(), jacobians.size());
+    builder.Residuals().CopyToHost(residuals.data(), residuals.size());
+    std::vector<float> expected_values;
+    std::vector<float> expected_rhs;
+    ComputeReferenceSystem(problem, jacobians, residuals, structure, expected_values, expected_rhs);
 
-  const float h_tol = rel_tol * std::max(MaxAbs(expected_values), 1e-6f);
-  for (size_t i = 0; i < expected_values.size(); i++) {
-    ASSERT_NEAR(expected_values[i], actual.values[i], h_tol) << "Hessian mismatch at nnz " << i;
+    ASSERT_EQ(structure.row_offsets, actual.row_offsets);
+    ASSERT_EQ(structure.col_ids, actual.col_ids);
+    ASSERT_EQ(expected_values.size(), actual.values.size());
+    ASSERT_EQ(expected_rhs.size(), actual.rhs.size());
+
+    const float h_tol = rel_tol * std::max(MaxAbs(expected_values), 1e-6f);
+    for (size_t i = 0; i < expected_values.size(); i++) {
+      ASSERT_NEAR(expected_values[i], actual.values[i], h_tol) << "Hessian mismatch at nnz " << i;
+    }
+    const float b_tol = rel_tol * std::max(MaxAbs(expected_rhs), 1e-6f);
+    for (size_t i = 0; i < expected_rhs.size(); i++) {
+      ASSERT_NEAR(expected_rhs[i], actual.rhs[i], b_tol) << "RHS mismatch at " << i;
+    }
   }
-  const float b_tol = rel_tol * std::max(MaxAbs(expected_rhs), 1e-6f);
-  for (size_t i = 0; i < expected_rhs.size(); i++) {
-    ASSERT_NEAR(expected_rhs[i], actual.rhs[i], b_tol) << "RHS mismatch at " << i;
-  }
-}
-
-/** @brief Asserts the GPU-built pattern matches the CPU oracle exactly. */
-void ExpectStructureMatchesReference(Problem &problem) {
-  ReferenceStructure expected = BuildReferenceStructure(problem);
-
-  CudaStream stream;
-  SystemBuilder builder = SystemBuilder::Scalar();
-  builder.Build(stream.GetStream(), problem);
-  SystemSnapshot actual = Snapshot(builder, stream.GetStream());
-
-  ASSERT_EQ(expected.row_offsets.size(), actual.row_offsets.size());
-  EXPECT_EQ(expected.row_offsets, actual.row_offsets);
-  ASSERT_EQ(expected.col_ids.size(), actual.col_ids.size());
-  EXPECT_EQ(expected.col_ids, actual.col_ids);
-}
-
-TEST(HessianStructureTest, MatchesReferenceOnVectorChain) {
-  // Between and prior factors both emit the (i, i) block pair, so this covers
-  // the duplicate-key segmentation that an exclusive scan gets wrong.
-  auto data = MakeVectorChain(64, {});
-  ExpectStructureMatchesReference(data->problem);
-}
-
-TEST(HessianStructureTest, MatchesReferenceWithConstantStates) {
-  auto data = MakeVectorChain(64, {0, 7, 8, 63});
-  ExpectStructureMatchesReference(data->problem);
-}
-
-TEST(HessianStructureTest, MatchesReferenceWithMixedTangentDims) {
-  auto data = MakeMixedDim(48);
-  ExpectStructureMatchesReference(data->problem);
-}
-
-TEST(HessianStructureTest, MatchesReferenceOnPoseGraph) {
-  auto data = MakePoseGraph(512, /*fix_first_pose=*/true);
-  ExpectStructureMatchesReference(data->problem);
-}
-
-TEST(HessianStructureTest, MatchesReferenceOnBundleAdjustment) {
-  auto data = MakeBundle(8, 200, /*robust_loss=*/false);
-  ExpectStructureMatchesReference(data->problem);
-}
-
-TEST(HessianStructureTest, MatchesReferenceWithRepeatedState) {
-  auto data = MakeVectorChain(32, {}, /*repeat_block=*/true);
-  ExpectStructureMatchesReference(data->problem);
 }
 
 // ============================================================================
 // Storage-layout tests
 // ============================================================================
-
-/**
- * @brief Asserts scalar and block storage assemble the same system.
- *
- * Both go through the same assembler, so this isolates the addressing change:
- * a block pair is exactly tiled by `b x b` tiles, so expanding the block form
- * must reproduce the scalar pattern and values entry for entry.  Accumulation
- * order differs between the two, hence a tolerance on values.
- */
-void ExpectStorageLayoutsAgree(Problem &problem, float rel_tol = 1e-5f) {
-  CudaStream stream;
-
-  SystemBuilder scalar = SystemBuilder::Scalar();
-  scalar.Build(stream.GetStream(), problem);
-  ASSERT_FALSE(scalar.UsesBlockStorage());
-  SystemSnapshot expected = Snapshot(scalar, stream.GetStream());
-
-  SystemBuilder block;
-  block.Build(stream.GetStream(), problem);
-  ASSERT_TRUE(block.UsesBlockStorage()) << "problem should qualify for block storage";
-  SystemSnapshot actual = Snapshot(block, stream.GetStream());
-
-  EXPECT_EQ(expected.row_offsets, actual.row_offsets);
-  EXPECT_EQ(expected.col_ids, actual.col_ids);
-  ASSERT_EQ(expected.values.size(), actual.values.size());
-
-  const float h_tol = rel_tol * std::max(MaxAbs(expected.values), 1e-6f);
-  for (size_t i = 0; i < expected.values.size(); i++) {
-    ASSERT_NEAR(expected.values[i], actual.values[i], h_tol) << "Hessian mismatch at nnz " << i;
-  }
-  const float b_tol = rel_tol * std::max(MaxAbs(expected.rhs), 1e-6f);
-  ASSERT_EQ(expected.rhs.size(), actual.rhs.size());
-  for (size_t i = 0; i < expected.rhs.size(); i++) {
-    ASSERT_NEAR(expected.rhs[i], actual.rhs[i], b_tol) << "RHS mismatch at " << i;
-  }
-}
-
-TEST(HessianStorageTest, BlockMatchesScalarOnPoseGraph) {
-  auto data = MakePoseGraph(512, /*fix_first_pose=*/true);
-  ExpectStorageLayoutsAgree(data->problem);
-}
-
-TEST(HessianStorageTest, BlockMatchesScalarOnBundleAdjustment) {
-  // Mixed 6-dof poses and 3-dof points: gcd 3, so a pose tile spans a 2x2 grid
-  // of blocks while a point tile is a single block.
-  auto data = MakeBundle(8, 200, /*robust_loss=*/false);
-  ExpectStorageLayoutsAgree(data->problem);
-}
-
-TEST(HessianStorageTest, BlockMatchesScalarWithConstantStates) {
-  auto data = MakeVectorChain(64, {0, 7, 8, 63});
-  ExpectStorageLayoutsAgree(data->problem);
-}
-
-TEST(HessianStorageTest, BlockMatchesScalarWithRepeatedState) {
-  auto data = MakeVectorChain(32, {}, /*repeat_block=*/true);
-  ExpectStorageLayoutsAgree(data->problem);
-}
 
 /**
  * @brief Checks the BSR diagonal operations against their CSR counterparts.
@@ -1016,7 +975,7 @@ TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
 
   CSRSparseMatrix csr;
   dvector<int> expand_scratch;
-  test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
+  test_utils::ExpandBSRToCSR(s, block.LhsBSR(s), csr, expand_scratch);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   const size_t n = block.Rhs().size();
@@ -1037,8 +996,8 @@ TEST(HessianStorageTest, PcgAgreesBetweenStorages) {
   ASSERT_TRUE(csr_solver.Solve(s, csr, rhs, x_csr));
 
   BlockSparsePCGSolver bsr_solver(pcg_options);
-  ASSERT_TRUE(bsr_solver.Initialize(s, data->problem, block.Equations().LhsBSR(), rhs, x_bsr));
-  ASSERT_TRUE(bsr_solver.Solve(s, block.Equations().LhsBSR(), rhs, x_bsr));
+  ASSERT_TRUE(bsr_solver.Initialize(s, data->problem, block.LhsBSR(s), rhs, x_bsr));
+  ASSERT_TRUE(bsr_solver.Solve(s, block.LhsBSR(s), rhs, x_bsr));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   std::vector<float> a(n);
@@ -1078,7 +1037,7 @@ TEST(HessianStorageTest, PcgStoredSolveOutlivesSolveMatrix) {
   block.Build(s, data->problem);
   CSRSparseMatrix csr;
   dvector<int> expand_scratch;
-  test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
+  test_utils::ExpandBSRToCSR(s, block.LhsBSR(s), csr, expand_scratch);
   const size_t n = block.Rhs().size();
   dvector<float> rhs(n);
   THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs.data(), block.Rhs().data(), n * sizeof(float),
@@ -1092,7 +1051,7 @@ TEST(HessianStorageTest, PcgStoredSolveOutlivesSolveMatrix) {
   ASSERT_TRUE(solver.Initialize(s, data->problem, csr, rhs, x_direct));
   {
     CSRSparseMatrix other;  // same pattern, destroyed before the stored solve
-    test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), other, expand_scratch);
+    test_utils::ExpandBSRToCSR(s, block.LhsBSR(s), other, expand_scratch);
     ASSERT_TRUE(solver.Solve(s, other, rhs, x_direct));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
   }
@@ -1123,8 +1082,8 @@ TEST(HessianStorageTest, PcgStoredSolveRefusedAfterPatternChange) {
   b.Build(s, large->problem);
   CSRSparseMatrix csr_a, csr_b;
   dvector<int> scratch;
-  test_utils::ExpandBSRToCSR(s, a.Equations().LhsBSR(), csr_a, scratch);
-  test_utils::ExpandBSRToCSR(s, b.Equations().LhsBSR(), csr_b, scratch);
+  test_utils::ExpandBSRToCSR(s, a.LhsBSR(s), csr_a, scratch);
+  test_utils::ExpandBSRToCSR(s, b.LhsBSR(s), csr_b, scratch);
   const size_t na = a.Rhs().size(), nb = b.Rhs().size();
   ASSERT_NE(na, nb);
   dvector<float> rhs_a(na), rhs_b(nb), x_a(na), x_b(nb);
@@ -1164,7 +1123,7 @@ TEST(HessianStorageTest, FirstPcgIterationAgreesBetweenStorages) {
   // Feed both solvers the *same* matrix, so only the reader differs.
   CSRSparseMatrix csr;
   dvector<int> expand_scratch;
-  test_utils::ExpandBSRToCSR(s, block.Equations().LhsBSR(), csr, expand_scratch);
+  test_utils::ExpandBSRToCSR(s, block.LhsBSR(s), csr, expand_scratch);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   const size_t n = block.Rhs().size();
@@ -1184,8 +1143,8 @@ TEST(HessianStorageTest, FirstPcgIterationAgreesBetweenStorages) {
   ASSERT_TRUE(csr_solver.Solve(s, csr, rhs, x_csr));
 
   BlockSparsePCGSolver bsr_solver(pcg_options);
-  ASSERT_TRUE(bsr_solver.Initialize(s, data->problem, block.Equations().LhsBSR(), rhs, x_bsr));
-  ASSERT_TRUE(bsr_solver.Solve(s, block.Equations().LhsBSR(), rhs, x_bsr));
+  ASSERT_TRUE(bsr_solver.Initialize(s, data->problem, block.LhsBSR(s), rhs, x_bsr));
+  ASSERT_TRUE(bsr_solver.Solve(s, block.LhsBSR(s), rhs, x_bsr));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(s));
 
   std::vector<float> a(n);
@@ -1302,18 +1261,20 @@ TEST(HessianStorageTest, FallsBackToScalarWhenSolverNeedsCSR) {
 }
 
 /**
- * @brief The storage layout must follow the problem, not the solver choice.
+ * @brief The storage layout must follow the problem and the backend's declared
+ * support, nothing else.
  *
  * A backend that densifies (or otherwise discards the sparse layout) has no
  * reason to force the whole assembly onto scalar CSR, because doing so costs
  * the block layout's smaller index array and the BuildSystem time with it.
- * cuDSS is the one backend that genuinely cannot read tiles; every other one
- * must take the block path on a problem that qualifies for it.
+ * The dense backends and BlockSparsePCG take the block path on a problem that
+ * qualifies for it; cuDSS, BlockSparseCholesky and BlockTridiagonal read
+ * scalar CSR only.
  *
  * This is the regression guard for that invariant: it is exactly the property
- * that silently degrades if a new backend forgets to declare block support.
+ * that silently degrades if a backend's block support changes.
  */
-TEST(HessianStorageTest, OnlyCuDSSDeclinesBlockStorage) {
+TEST(HessianStorageTest, BackendsDeclareTheirBlockStorage) {
   auto data = MakePoseGraph(64, /*fix_first_pose=*/true);
   ASSERT_EQ(6, ChooseHessianBlockSize(data->problem)) << "fixture must qualify for block storage";
 
@@ -1323,6 +1284,8 @@ TEST(HessianStorageTest, OnlyCuDSSDeclinesBlockStorage) {
       {SparseLinearSolverType::DenseCholesky, "DenseCholesky"},
       {SparseLinearSolverType::DenseQR, "DenseQR"},
       {SparseLinearSolverType::BlockSparsePCG, "BlockSparsePCG"},
+      {SparseLinearSolverType::BlockSparseCholesky, "BlockSparseCholesky"},
+      {SparseLinearSolverType::BlockTridiagonal, "BlockTridiagonal"},
   };
 
   CudaStream stream;
@@ -1335,20 +1298,24 @@ TEST(HessianStorageTest, OnlyCuDSSDeclinesBlockStorage) {
     SystemBuilder builder(options);
     builder.Build(stream.GetStream(), data->problem);
 
-    const bool expect_block = type != SparseLinearSolverType::cuDSS;
+    const bool expect_block = type != SparseLinearSolverType::cuDSS &&
+                              type != SparseLinearSolverType::BlockSparseCholesky &&
+                              type != SparseLinearSolverType::BlockTridiagonal;
     EXPECT_EQ(expect_block, builder.UsesBlockStorage())
         << name << " selected the wrong Hessian storage layout";
   }
 }
 
 /**
- * @brief Every dense backend must read BSR and CSR to the same answer.
+ * @brief A dense backend must read BSR and CSR to the same answer.
  *
  * The dense solvers scatter into an `n x n` buffer and never look at the sparse
  * form again, so both layouts have to land identically in that buffer.  Solving
  * the same system twice — once from tiles, once from the expanded scalar copy —
  * compares the two scatter kernels through the factorization that consumes
  * them, which is the only place a mis-scattered entry would actually matter.
+ * The scatter is DenseLinearSolverBase's, shared by every dense backend, so one
+ * backend (DenseCholesky) covers it.
  */
 void ExpectDenseBackendAgreesAcrossLayouts(SparseLinearSolver &solver, Problem &problem) {
   CudaStream stream;
@@ -1358,7 +1325,7 @@ void ExpectDenseBackendAgreesAcrossLayouts(SparseLinearSolver &solver, Problem &
   builder.Build(s, problem);
   ASSERT_TRUE(builder.UsesBlockStorage()) << "fixture must qualify for block storage";
 
-  const size_t n = static_cast<size_t>(builder.Equations().LhsBSR().NumRows());
+  const size_t n = builder.Rhs().size();
 
   // Damp before solving, exactly as Levenberg-Marquardt does.  An undamped
   // Gauss-Newton Hessian is only positive *semi*-definite whenever the problem
@@ -1368,9 +1335,8 @@ void ExpectDenseBackendAgreesAcrossLayouts(SparseLinearSolver &solver, Problem &
   // matrix and the comparison stays about the scatter.
   dvector<float> damping(1e-2f, n);
   builder.Equations().SetDamping(&damping);
-  builder.Equations().BuildWorkingLhs(s);
 
-  const BSRSparseMatrix &bsr = builder.Equations().LhsBSR();
+  const BSRSparseMatrix &bsr = builder.LhsBSR(s);
   CSRSparseMatrix csr;
   dvector<int> scratch;
   test_utils::ExpandBSRToCSR(s, bsr, csr, scratch);
@@ -1407,21 +1373,13 @@ void ExpectDenseBackendAgreesAcrossLayouts(SparseLinearSolver &solver, Problem &
   }
 }
 
+/**
+ * @brief The dense backends share one scatter (DenseLinearSolverBase), so one
+ * of them covers it on a pose graph.
+ */
 TEST(HessianStorageTest, DenseLDLTAgreesAcrossLayouts) {
   auto data = MakePoseGraph(48, /*fix_first_pose=*/true);
   DenseLDLTSolver solver;
-  ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
-}
-
-TEST(HessianStorageTest, DenseCholeskyAgreesAcrossLayouts) {
-  auto data = MakePoseGraph(48, /*fix_first_pose=*/true);
-  DenseCholeskySolver solver;
-  ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
-}
-
-TEST(HessianStorageTest, DenseQRAgreesAcrossLayouts) {
-  auto data = MakePoseGraph(48, /*fix_first_pose=*/true);
-  DenseQRSolver solver;
   ExpectDenseBackendAgreesAcrossLayouts(solver, data->problem);
 }
 
@@ -1440,6 +1398,8 @@ TEST(HessianStorageTest, DenseCholeskyAgreesAcrossLayoutsOnBundle) {
 // ============================================================================
 
 TEST(BlockHessianAssemblerTest, MatchesReferenceOnVectorChain) {
+  // Between and prior factors both emit the (i, i) block pair, so this covers
+  // the duplicate-key segmentation that an exclusive scan gets wrong.
   auto data = MakeVectorChain(64, {});
   ASSERT_TRUE(data->problem.CheckConsistency());
   ExpectMatchesReference(data->problem);
@@ -1492,6 +1452,12 @@ TEST(BlockHessianAssemblerTest, AccumulatesRepeatedState) {
   }
 }
 
+TEST(BlockHessianAssemblerTest, MatchesReferenceWithRepeatedState) {
+  auto data = MakeVectorChain(32, {}, /*repeat_block=*/true);
+  ASSERT_TRUE(data->problem.CheckConsistency());
+  ExpectMatchesReference(data->problem);
+}
+
 TEST(BlockHessianAssemblerTest, MatchesReferenceWithMixedTangentDims) {
   auto data = MakeMixedDim(48);
   ASSERT_TRUE(data->problem.CheckConsistency());
@@ -1511,6 +1477,8 @@ TEST(BlockHessianAssemblerTest, MatchesReferenceOnPoseGraphWithFixedPose) {
 }
 
 TEST(BlockHessianAssemblerTest, MatchesReferenceOnBundleAdjustment) {
+  // Mixed 6-dof poses and 3-dof points: gcd 3, so a pose tile spans a 2x2 grid
+  // of blocks while a point tile is a single block.
   auto data = MakeBundle(8, 200, /*robust_loss=*/false);
   ASSERT_TRUE(data->problem.CheckConsistency());
   ExpectMatchesReference(data->problem);
@@ -1585,6 +1553,36 @@ TEST(BlockHessianAssemblerTest, AllConstantStatesProduceZeroSystem) {
   }
   for (float v : snapshot.rhs) {
     EXPECT_EQ(v, 0.f);
+  }
+}
+
+/**
+ * A factor whose staging does not fit the assembler's shared memory (a prior on one vector state
+ * of 160 components; 88 is the most) fails at setup with the limits and the fix.
+ */
+TEST(HessianAssemblyLimits, TooWideFactorFailsWithTheFix) {
+  constexpr int kDim = 160;
+  dvector<float> x(kDim), target(kDim);
+  THROW_ON_CUDA_ERROR(cudaMemset(x.data(), 0, kDim * sizeof(float)));
+  THROW_ON_CUDA_ERROR(cudaMemset(target.data(), 0, kDim * sizeof(float)));
+  DynamicVectorStateBatch states(kDim, x.data(), 1);
+  states.SetNumActiveStates(1);
+  DynamicPriorVectorFactorBatch prior(kDim, target.data(), 1);
+  prior.SetNumActiveFactors(1);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, std::vector<float *>{states.StateDevicePtr(0)});
+  CudaStream stream;
+  CSRSparseMatrix hessian;
+  BlockHessianAssembler assembler;
+  try {
+    assembler.Initialize(stream.GetStream(), problem, kDim, hessian);
+    FAIL() << "expected the staging of a 160-component prior not to fit";
+  } catch (const std::runtime_error &e) {
+    const std::string what = e.what();
+    EXPECT_NE(what.find("too large for shared-memory assembly"), std::string::npos) << what;
+    EXPECT_NE(what.find("Fix:"), std::string::npos) << what;
+    EXPECT_NE(what.find("88"), std::string::npos) << what;
   }
 }
 

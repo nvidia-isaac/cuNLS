@@ -62,11 +62,11 @@ class _Vec2(pycunls.CustomStateBatch):
     (lambda: pycunls.SE3StateBatch(wp.zeros((3, 12), wp.float32), 3),
      r"has 36 float32 values, but 48 are needed.*16 float32"),
     (lambda: pycunls.VectorStateBatch2(wp.zeros(8, wp.float32), 4, wp.zeros(1, wp.int32), 2),
-     "const_ids has 1 int32 values, but 2 are needed"),
+     "const_state_ids has 1 int32 values, but 2 are needed"),
     (lambda: _Vec2(wp.zeros(6, wp.float32), 2, 2, 4),
      "data has 6 float32 values, but 8 are needed"),
     (lambda: _Vec2(wp.zeros(8, wp.float32), 2, 2, 4, wp.zeros(1, wp.int32), 2),
-     "const_ids has 1 int32 values, but 2 are needed"),
+     "const_state_ids has 1 int32 values, but 2 are needed"),
     (lambda: pycunls.VectorStateBatch3(wp.zeros(9, wp.float32), 3).set_bounds(
         wp.zeros(9, wp.float32), wp.zeros(6, wp.float32)),
      "upper has 6 float32 values, but 9 are needed"),
@@ -113,7 +113,7 @@ def test_capacity_that_overflows_the_size_is_rejected(make, needle):
 
 def test_every_device_buffer_dtype_is_checked():
     """float32 data, int32 ids, uint64 pointer tables."""
-    with pytest.raises(TypeError, match="const_ids must have dtype int32, got int64"):
+    with pytest.raises(TypeError, match="const_state_ids must have dtype int32, got int64"):
         pycunls.SE3StateBatch(wp.zeros(16 * 2, wp.float32), 2, wp.zeros(1, wp.int64), 1)
     with pytest.raises(TypeError, match="observations must have dtype float32"):
         pycunls.ReprojectionFactorBatch(wp.zeros(4, wp.float64), 2)

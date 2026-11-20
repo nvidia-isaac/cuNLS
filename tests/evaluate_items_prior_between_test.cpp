@@ -166,6 +166,14 @@ TEST(EvaluateItemsBetween, VectorBetweenMatchesEvaluate) {
   CheckVector<VectorBetweenFactorBatch<5>, 5>(2, 130);
 }
 
+TEST(EvaluateItemsBetween, RuntimeSizedVectorBetweenMatchesEvaluate) {
+  constexpr int kDim = 13;  // a size with no fixed-size class
+  auto deltas = ToDevice(RandomVector(kNumFactors * kDim, 1.f, 140));
+  DynamicVectorBetweenFactorBatch factor(kDim, deltas.data(), kNumFactors);
+  auto states = ToDevice(RandomVector(2 * kCopies * kNumFactors * kDim, 1.f, 141));
+  CheckFactor(factor, states, 2, kDim);
+}
+
 TEST(EvaluateItemsBetween, SE2BetweenMatchesEvaluate) {
   CheckLie<SE2BetweenFactorBatch, SE2Transform, SE2StateBatch>(2, 9, 3, 140);
 }

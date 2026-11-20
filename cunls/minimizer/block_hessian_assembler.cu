@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "cunls/common/helper.h"
+#include "cunls/common/log.h"
 #include "cunls/minimizer/block_hessian_assembler.h"
 #include "cunls/minimizer/hessian_structure.h"
 #include "cunls/minimizer/problem.h"
@@ -127,8 +128,7 @@ __global__ void AssembleBlockHessianKernel(
   for (int p = lane; p < tangent_dim; p += kWarpSize) {
     int col = cols_src[s_block_of_col[p]];
     if (col < 0) {
-      // Constant state: this row and column of H_f are dropped, which
-      // is the block-level equivalent of the col_id == -1 triplet filter.
+      // Constant state: this row and column of H_f are dropped.
       s_global_col[p] = -1;
       s_row_start[p] = -1;
     } else {
@@ -198,9 +198,11 @@ __global__ void AssembleBlockHessianKernel(
 
 /**
  * Picks the largest warp count that fits the per-warp staging arena in shared
- * memory, capped at kMaxWarpsPerBlock.
+ * memory, capped at kMaxWarpsPerBlock; throws if not even one warp fits (residual
+ * batch `batch`, for the message).
  */
-int PickWarpsPerBlock(int residual_dim, int tangent_dim, int num_blocks, size_t &shared_bytes) {
+int PickWarpsPerBlock(size_t batch, int residual_dim, int tangent_dim, int num_blocks,
+                      size_t &shared_bytes) {
   const size_t block_ints = static_cast<size_t>(4) * tangent_dim +
                             static_cast<size_t>(tangent_dim) * (tangent_dim + 1) / 2;
   const size_t warp_ints = static_cast<size_t>(residual_dim) * tangent_dim + residual_dim +
@@ -215,7 +217,13 @@ int PickWarpsPerBlock(int residual_dim, int tangent_dim, int num_blocks, size_t 
     warps = static_cast<int>(std::min<size_t>(warps, budget));
   }
   if (warps < 1) {
-    throw std::runtime_error("BlockHessianAssembler: factor too large for shared-memory assembly");
+    throw std::runtime_error(internal::Format(
+        "BlockHessianAssembler::Initialize: the factors of residual batch {} are too large for "
+        "shared-memory assembly ({} residuals over {} state components in {} states need {} "
+        "bytes, expected at most {}). Fix: split them over states of fewer components (e.g. "
+        "two vector states of 80 instead of one of 160): a prior on one vector state fits up "
+        "to 88 components, a between factor of two vector states up to 53.",
+        batch, residual_dim, tangent_dim, num_blocks, block_bytes + warp_bytes, kMaxSharedBytes));
   }
   shared_bytes = block_bytes + static_cast<size_t>(warps) * warp_bytes;
   return warps;
@@ -228,7 +236,7 @@ void BlockHessianAssembler::Initialize(cudaStream_t stream, const Problem &probl
   auto range = profiler_domain_.CreateDomainRange("Initialize");
   num_cols_ = num_cols;
   block_size_ = 1;
-  structure_builder_.Build(stream, problem, num_cols, hessian, /*want_scatter_maps=*/true);
+  structure_builder_.Build(stream, problem, num_cols, hessian);
   BuildPlans(problem);
 }
 
@@ -237,8 +245,7 @@ void BlockHessianAssembler::Initialize(cudaStream_t stream, const Problem &probl
   auto range = profiler_domain_.CreateDomainRange("Initialize");
   num_cols_ = num_cols;
   block_size_ = block_size;
-  structure_builder_.Build(stream, problem, num_cols, block_size, hessian,
-                           /*want_scatter_maps=*/true);
+  structure_builder_.Build(stream, problem, num_cols, block_size, hessian);
   BuildPlans(problem);
 }
 
@@ -254,6 +261,11 @@ void BlockHessianAssembler::BuildPlans(const Problem &problem) {
   for (size_t i = 0; i < layout.size(); i++) {
     BatchPlan &plan = plans_[i];
     plan.layout = layout[i];
+    if (plan.layout.tangent_dim > 0) {  // the staging must fit (throws with the fix otherwise)
+      size_t shared_bytes = 0;
+      PickWarpsPerBlock(i, plan.layout.residual_dim, plan.layout.tangent_dim,
+                        plan.layout.num_blocks, shared_bytes);
+    }
 
     auto block_sizes = problem.GetResidualBatches()[i].GetFactorBatch()->StateSizes();
 
@@ -306,18 +318,18 @@ void BlockHessianAssembler::BuildPlans(const Problem &problem) {
   }
 }
 
-void BlockHessianAssembler::Assemble(cudaStream_t stream, const Problem &problem,
-                                     const float *jacobian_values, const float *residuals,
-                                     CSRSparseMatrix &hessian, dvector<float> &rhs) {
+void BlockHessianAssembler::Assemble(cudaStream_t stream, const float *jacobian_values,
+                                     const float *residuals, CSRSparseMatrix &hessian,
+                                     dvector<float> &rhs) {
   auto range = profiler_domain_.CreateDomainRange("Assemble");
   PrepareOutputs(stream, hessian.values, rhs);
   LaunchAssembly(stream, jacobian_values, residuals, hessian.row_offsets.data(),
                  hessian.values.data(), rhs.data(), /*block_storage=*/false);
 }
 
-void BlockHessianAssembler::Assemble(cudaStream_t stream, const Problem &problem,
-                                     const float *jacobian_values, const float *residuals,
-                                     BSRSparseMatrix &hessian, dvector<float> &rhs) {
+void BlockHessianAssembler::Assemble(cudaStream_t stream, const float *jacobian_values,
+                                     const float *residuals, BSRSparseMatrix &hessian,
+                                     dvector<float> &rhs) {
   auto range = profiler_domain_.CreateDomainRange("Assemble");
   PrepareOutputs(stream, hessian.values, rhs);
   LaunchAssembly(stream, jacobian_values, residuals, hessian.row_offsets.data(),
@@ -337,15 +349,16 @@ void BlockHessianAssembler::LaunchAssembly(cudaStream_t stream, const float *jac
   const int *factor_cols = structure_builder_.FactorCols().data();
   const int *write_offsets = structure_builder_.WriteOffsets().data();
 
-  for (const BatchPlan &plan : plans_) {
+  for (size_t i = 0; i < plans_.size(); ++i) {
+    const BatchPlan &plan = plans_[i];
     const HessianBatchLayout &layout = plan.layout;
     if (layout.num_factors == 0 || layout.tangent_dim == 0) {
       continue;
     }
 
     size_t shared_bytes = 0;
-    int warps =
-        PickWarpsPerBlock(layout.residual_dim, layout.tangent_dim, layout.num_blocks, shared_bytes);
+    int warps = PickWarpsPerBlock(i, layout.residual_dim, layout.tangent_dim, layout.num_blocks,
+                                  shared_bytes);
     int threads = warps * kWarpSize;
     int grid = (layout.num_factors + warps - 1) / warps;
 

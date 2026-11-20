@@ -63,10 +63,8 @@ struct RansacContext {
   PinnedVector<DeviceStats> host_stats{1};  ///< Host mirror of stats.
   dvector<int> selected;                    ///< Best hypothesis of the last round (device).
   dvector<float> cost_history;              ///< Refinement cost per iteration.
-  dvector<float> initial_res;               ///< Scratch of the initial cost.
-  dvector<float> initial_cost;              ///< Scratch of the initial cost.
-  dvector<float> initial_workspace;         ///< Scratch of the initial cost.
-  dvector<float> initial_sums;              ///< Per-batch sums, then reduction partials.
+  dvector<float> initial_scratch;           ///< Costs and evaluation buffers of the initial cost.
+  dvector<float> initial_sums;              ///< The initial cost, then reduction partials.
   bool has_run = false;                     ///< A run completed (the inlier masks are valid).
 };
 

@@ -10,7 +10,7 @@ on:
           base_image (overrides the Docker base image), ports_mirror (Ubuntu Ports mirror URL),
           python (build and test only a wheel for this Python version, e.g. "3.13";
           without it, the C++ libraries too and a wheel for the image's python3).
-          Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75;80;86;89"}]
+          Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"}]
         type: string
         required: true
       release_tag:

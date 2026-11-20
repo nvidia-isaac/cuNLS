@@ -64,17 +64,6 @@ class MinimizerState {
   void Recreate(cudaStream_t stream, const Problem &problem) { Create(stream, problem); }
 
   /**
-   * @brief Copies state values from another state.
-   *
-   * Updates this state's values with values from another state's
-   * state vectors.
-   *
-   * @param stream CUDA stream for GPU operations.
-   * @param other Source state to copy from.
-   */
-  void Copy(cudaStream_t stream, const std::vector<dvector<float>> &other);
-
-  /**
    * @brief Gets the state value vectors.
    *
    * @return Reference to vector of state value vectors (one per batch).

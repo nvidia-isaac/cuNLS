@@ -76,7 +76,7 @@ is the wrapped minimizer.
 Bounds on vector states
 ===============================================================================
 
-``VectorStateBatchN.set_bounds(lower, upper)`` (C++ ``VectorStateBatch<N>::SetBounds``)
+``VectorStateBatch.set_bounds(lower, upper)`` (C++ ``VectorStateBatch<N>::SetBounds``)
    Per-state, per-component bounds (device float32 arrays of
    ``capacity * N``; :math:`\pm\infty` leaves a side unbounded; ``None,
    None`` removes them). The arrays are read at every solve and may be
@@ -114,15 +114,15 @@ Constraint batches
    signed-distance factor wrapped as an inequality ("keep clear of the
    obstacle"). The wrapper does not own ``inner``.
 
-``BoundFactorBatchN(lower, upper, capacity, scale=1)`` (C++ ``BoundFactorBatch<N>``)
-   Box constraints on an N-dimensional vector state, with per-factor,
+``BoundFactorBatch(lower, upper, capacity, scale=1, *, dim)`` (C++ ``BoundFactorBatch<N>``)
+   Box constraints on an N-dimensional vector state (N from the arrays' shape or ``dim``), with per-factor,
    per-component bounds; :math:`\pm\infty` leaves a side unbounded. An
    inequality constraint batch by itself (no wrapper needed). The same
    semantics as ``set_bounds``, through the AL loop: use it where only some
    factors of a state should be bounded or bounds should be soft until the
    AL loop converges; otherwise prefer ``set_bounds``.
 
-``HalfspaceFactorBatchN(normals, offsets, capacity)`` (C++ ``HalfspaceFactorBatch<N>``)
+``HalfspaceFactorBatch(normals, offsets, capacity, *, dim)`` (C++ ``HalfspaceFactorBatch<N>``)
    The signed value :math:`a^\top x - b` of a vector state: wrap it as an
    inequality for :math:`a^\top x \le b` (lanes, polygonal free space as
    several halfspaces) or as an equality for a hyperplane.

@@ -36,6 +36,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
+#include "cunls/common/types.h"
 #include "cunls/factor/factor_batch.h"
 
 namespace cunls {

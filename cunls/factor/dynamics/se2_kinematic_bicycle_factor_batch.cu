@@ -46,35 +46,6 @@ constexpr int kRows = 5;                         // residual size
 constexpr int kColumns = 3 + 2 + 2 + 3 + 2;      // T_k, z_k, u_k, T_{k+1}, z_{k+1}
 constexpr int kJacobianSize = kRows * kColumns;  // 60 floats per item
 
-/** SE(2) element as (cos θ, sin θ, x, y): the 4 non-trivial entries of the 3x3 storage. */
-struct Pose {
-  float c, s, x, y;
-};
-
-__device__ __forceinline__ Pose LoadPose(const float *T) {
-  return {__ldg(T + 0), __ldg(T + 3), __ldg(T + 2), __ldg(T + 5)};
-}
-
-__device__ __forceinline__ Pose Compose(const Pose &a, const Pose &b) {
-  return {a.c * b.c - a.s * b.s, a.s * b.c + a.c * b.s, a.c * b.x - a.s * b.y + a.x,
-          a.s * b.x + a.c * b.y + a.y};
-}
-
-__device__ __forceinline__ Pose Inverse(const Pose &a) {
-  return {a.c, -a.s, -(a.c * a.x + a.s * a.y), a.s * a.x - a.c * a.y};
-}
-
-__device__ __forceinline__ Pose Exp(const float *xi) {
-  float E[9];
-  lie_device::ExpSE2(xi, E);
-  return {E[0], E[3], E[2], E[5]};
-}
-
-__device__ __forceinline__ void Log(const Pose &a, float *xi) {
-  const float T[9] = {a.c, -a.s, a.x, a.s, a.c, a.y, 0.f, 0.f, 1.f};
-  lie_device::LogSE2(T, xi);
-}
-
 /**
  * One thread per item. The per-item outputs are staged in shared memory (odd
  * strides: no bank conflicts) and the block then writes its contiguous ranges
@@ -94,10 +65,10 @@ __global__ void __launch_bounds__(kBlockSize)
 
   if (t < num_items) {
     const int f = FactorMeasurementIndex(t, factor_ids, num_factors);
-    const Pose X = LoadPose(state_pointers[5 * t + 0]);
+    const lie_device::SE2Element X = lie_device::LoadSE2Element(state_pointers[5 * t + 0]);
     const float *z = state_pointers[5 * t + 1];
     const float *u = state_pointers[5 * t + 2];
-    const Pose Y = LoadPose(state_pointers[5 * t + 3]);
+    const lie_device::SE2Element Y = lie_device::LoadSE2Element(state_pointers[5 * t + 3]);
     const float *z_next = state_pointers[5 * t + 4];
     const float dt = __ldg(time_steps + f);
     const float v = __ldg(z), tan_delta = tanf(__ldg(z + 1));
@@ -105,10 +76,9 @@ __global__ void __launch_bounds__(kBlockSize)
 
     // Pose: step dt ξ with ξ = [v, 0, v tan δ / L]. Speed and steering: Euler.
     const float step[3] = {dt * v, 0.f, dt * v * tan_delta / wheelbase};
-    const Pose E = Exp(step);
-    const Pose D = Compose(Inverse(Compose(X, E)), Y);
+    lie_device::SE2Element E;
     float res[3];
-    Log(D, res);
+    lie_device::SE2StepDefect(X, Y, step, &E, res);
 
     float *o = out + threadIdx.x * kStride;
     o[0] = res[0];
@@ -118,28 +88,18 @@ __global__ void __launch_bounds__(kBlockSize)
     o[4] = __ldg(z_next + 1) - __ldg(z + 1) - dt * steer_rate;
 
     if constexpr (kJacobian) {
-      // Pose rows: ∂r/∂T_k = -J_l⁻¹(r) Ad(E⁻¹); ∂r/∂z = -dt J_l⁻¹(r) J_r(step) ∂ξ/∂z;
-      // ∂r/∂T_{k+1} = J_r⁻¹(r); nothing on u_k and z_{k+1}. J_l⁻¹(r) = J_r⁻¹(-r).
-      float Jl_inv[9], Jr_inv[9], Jr_step[9];
-      lie_device::SE2JrInv(-res[0], -res[1], -res[2], Jl_inv);
-      lie_device::SE2JrInv(res[0], res[1], res[2], Jr_inv);
-      lie_device::SE2Jr(step[0], step[1], step[2], Jr_step);
-      const Pose Ei = Inverse(E);
-      const float Ad[9] = {Ei.c, -Ei.s, Ei.y, Ei.s, Ei.c, -Ei.x, 0.f, 0.f, 1.f};
-      // ∂ξ/∂z = [[1, 0], [0, 0], [tan δ / L, v (1 + tan² δ) / L]].
+      // Pose rows: step defect rows (lie_device::SE2StepDefectRow) with
+      // ∂ξ/∂z = [[1, 0], [0, 0], [tan δ / L, v (1 + tan² δ) / L]]; nothing on u_k
+      // and z_{k+1}.
+      lie_device::SE2StepDefectJacobian J;
+      lie_device::InitSE2StepDefectJacobian(res, step, E, &J);
       const float dw_dv = tan_delta / wheelbase;
       const float dw_ddelta = v * (1.f + tan_delta * tan_delta) / wheelbase;
 #pragma unroll
       for (int i = 0; i < 3; ++i) {
         float *row = o + kRows + i * kColumns;
-        const float *l = Jl_inv + 3 * i;
         float m[3];
-#pragma unroll
-        for (int j = 0; j < 3; ++j) {
-          row[j] = -(l[0] * Ad[j] + l[1] * Ad[3 + j] + l[2] * Ad[6 + j]);
-          row[7 + j] = Jr_inv[3 * i + j];
-          m[j] = -dt * (l[0] * Jr_step[j] + l[1] * Jr_step[3 + j] + l[2] * Jr_step[6 + j]);
-        }
+        lie_device::SE2StepDefectRow(J, i, dt, row, m, row + 7);
         row[3] = m[0] + m[2] * dw_dv;
         row[4] = m[2] * dw_ddelta;
         row[5] = 0.f;
