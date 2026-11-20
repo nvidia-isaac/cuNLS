@@ -29,11 +29,11 @@
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
 #include "cunls/robustifier/loss_function_batch.h"
+#include "cunls/robustifier/scaled_loss_function_batch.h"
 #include "cunls/robustifier/soft_lone_loss_function_batch.h"
 #include "cunls/robustifier/tolerant_loss_function_batch.h"
 #include "cunls/robustifier/trivial_loss_function_batch.h"
 #include "cunls/robustifier/tukey_loss_function_batch.h"
-#include "py_factor_wrappers.h"
 
 void bind_loss(nb::module_ &m) {
   nb::class_<cunls::LossFunctionBatch>(m, "LossFunctionBatch",
@@ -46,9 +46,7 @@ void bind_loss(nb::module_ &m) {
                 extract_device_ptr(s, "float32", "s", count, "count squared norms"));
             auto out_ptr = reinterpret_cast<float3 *>(extract_device_ptr(
                 out, "float32", "out", checked_size(count, 3, "out"), "count x 3 values"));
-            if (!self.Evaluate(s_ptr, out_ptr, static_cast<int>(count), stream.GetStream())) {
-              throw std::runtime_error("LossFunctionBatch.evaluate: the loss kernel failed");
-            }
+            self.Evaluate(s_ptr, out_ptr, static_cast<int>(count), stream.GetStream());
           },
           nb::arg("s"), nb::arg("out"), nb::arg("count"), nb::arg("stream"),
           "Evaluates the loss on `count` squared residual norms s (float32 GPU array; may be "
@@ -98,10 +96,10 @@ void bind_loss(nb::module_ &m) {
       "redescending loss: needs a good initial guess).")
       .def(nb::init<float>(), nb::arg("a"));
 
-  nb::class_<PyScaledLossFunctionBatch, cunls::LossFunctionBatch>(
+  nb::class_<cunls::ScaledLossFunctionBatch, cunls::LossFunctionBatch>(
       m, "ScaledLossFunctionBatch",
       "Scales the output of another loss function (loss_function) by a positive scalar a: "
       "rho_scaled(s) = a * f(s).")
-      .def(nb::init<cunls::LossFunctionBatch *, float>(), nb::arg("loss_function"), nb::arg("a"),
-           nb::keep_alive<1, 2>());
+      .def(nb::init<const cunls::LossFunctionBatch &, float>(), nb::arg("loss_function"),
+           nb::arg("a"), nb::keep_alive<1, 2>());
 }

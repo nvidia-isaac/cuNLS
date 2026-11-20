@@ -161,7 +161,7 @@ class NumericDiffJacobianBuilder {
    *
    * All of the host-built arrays this class uploads to the device each
    * `Compute` call (`delta`, the replicated state-pointer table, and the
-   * differencing kernel's index/epsilon arrays) depend *only* on: (a) the
+   * differencing kernel's index arrays) depend *only* on: (a) the
    * static factor-graph structure captured in `BatchPlan`, (b) `options`,
    * and (c) the *addresses* of the owning `StateBatch` buffers and of this
    * cache's own `x_plus_delta_scratch` allocation -- never on the current
@@ -179,9 +179,8 @@ class NumericDiffJacobianBuilder {
     bool uploaded = false;
     bool central = false;
     float step_size = 0.0f;
-    size_t S = 0, W = 0, F = 0, P = 0;
+    size_t F = 0, P = 0;
     size_t residual_size = 0, total_cols = 0;
-    size_t delta_total = 0, xpd_total = 0;
 
     // Host-side slot layout, built once per (plan, options) pair.
     std::vector<size_t> slot_b, slot_k;
@@ -191,7 +190,6 @@ class NumericDiffJacobianBuilder {
     // [region_begin[s], region_begin[s + 1]), in position_owners order.
     std::vector<size_t> region_begin, region_owner, region_delta_offset, region_xpd_offset;
     std::vector<int> col_idx_h, plus_slot_h, minus_slot_h;
-    std::vector<float> eps_h;
 
     // Address fingerprint of the last successful upload, used to cheaply
     // detect whether the cached device data is still valid.
@@ -212,7 +210,6 @@ class NumericDiffJacobianBuilder {
     dvector<int> col_idx_scratch;
     dvector<int> plus_slot_scratch;
     dvector<int> minus_slot_scratch;
-    dvector<float> eps_scratch;
 
     // Small pinned host staging buffers for this cache's (rare -- only on
     // rebuild) H2D uploads, reused/grown across calls; pageable
@@ -229,8 +226,6 @@ class NumericDiffJacobianBuilder {
     size_t pinned_ptrs_capacity = 0;
     int *pinned_int_host = nullptr;  // Holds col_idx/plus_slot/minus_slot back-to-back.
     size_t pinned_int_capacity = 0;
-    float *pinned_eps_host = nullptr;
-    size_t pinned_eps_capacity = 0;
 
     // Recorded on `stream` right after the last H2D copy that reads from
     // the pinned buffers above; synchronized before those buffers are ever

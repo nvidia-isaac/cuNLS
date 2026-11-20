@@ -169,8 +169,6 @@ const CudssLoader &GetCudssLoader() {
 
 }  // namespace
 
-bool cuDSSIsAvailable() { return GetCudssLoader().available; }
-
 const CudssApi &GetCudssApi() {
   const CudssLoader &loader = GetCudssLoader();
   if (!loader.available) {

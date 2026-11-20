@@ -46,24 +46,6 @@ constexpr int kRows = 3;
 constexpr int kColumns = 3 + 3 + 3;              // X_k, ξ_k, X_{k+1}
 constexpr int kJacobianSize = kRows * kColumns;  // 27 floats per item
 
-/** SE(2) element as (cos θ, sin θ, x, y): the 4 non-trivial entries of the 3x3 storage. */
-struct Pose {
-  float c, s, x, y;
-};
-
-__device__ __forceinline__ Pose LoadPose(const float *T) {
-  return {__ldg(T + 0), __ldg(T + 3), __ldg(T + 2), __ldg(T + 5)};
-}
-
-__device__ __forceinline__ Pose Compose(const Pose &a, const Pose &b) {
-  return {a.c * b.c - a.s * b.s, a.s * b.c + a.c * b.s, a.c * b.x - a.s * b.y + a.x,
-          a.s * b.x + a.c * b.y + a.y};
-}
-
-__device__ __forceinline__ Pose Inverse(const Pose &a) {
-  return {a.c, -a.s, -(a.c * a.x + a.s * a.y), a.s * a.x - a.c * a.y};
-}
-
 /**
  * One thread per item; outputs staged in shared memory (odd stride) and written
  * with coalesced stores. kJacobian selects the residual-only variant.
@@ -81,19 +63,14 @@ __global__ void __launch_bounds__(kBlockSize)
 
   if (t < num_items) {
     const int f = FactorMeasurementIndex(t, factor_ids, num_factors);
-    const Pose X = LoadPose(state_pointers[3 * t + 0]);
+    const lie_device::SE2Element X = lie_device::LoadSE2Element(state_pointers[3 * t + 0]);
     const float *xi = state_pointers[3 * t + 1];
-    const Pose Y = LoadPose(state_pointers[3 * t + 2]);
+    const lie_device::SE2Element Y = lie_device::LoadSE2Element(state_pointers[3 * t + 2]);
     const float dt = __ldg(time_steps + f);
     const float step[3] = {dt * __ldg(xi), dt * __ldg(xi + 1), dt * __ldg(xi + 2)};
-
-    float E9[9];
-    lie_device::ExpSE2(step, E9);
-    const Pose E = {E9[0], E9[3], E9[2], E9[5]};
-    const Pose D = Compose(Inverse(Compose(X, E)), Y);
-    const float D9[9] = {D.c, -D.s, D.x, D.s, D.c, D.y, 0.f, 0.f, 1.f};
+    lie_device::SE2Element E;
     float res[3];
-    lie_device::LogSE2(D9, res);
+    lie_device::SE2StepDefect(X, Y, step, &E, res);
 
     float *o = out + threadIdx.x * kStride;
     o[0] = res[0];
@@ -102,22 +79,12 @@ __global__ void __launch_bounds__(kBlockSize)
 
     if constexpr (kJacobian) {
       // ∂r/∂X_k = -J_l⁻¹(r) Ad(E⁻¹); ∂r/∂ξ = -dt J_l⁻¹(r) J_r(step); ∂r/∂X_{k+1} = J_r⁻¹(r).
-      float Jl_inv[9], Jr_inv[9], Jr_step[9];
-      lie_device::SE2JrInv(-res[0], -res[1], -res[2], Jl_inv);  // J_l⁻¹(r) = J_r⁻¹(-r)
-      lie_device::SE2JrInv(res[0], res[1], res[2], Jr_inv);
-      lie_device::SE2Jr(step[0], step[1], step[2], Jr_step);
-      const Pose Ei = Inverse(E);
-      const float Ad[9] = {Ei.c, -Ei.s, Ei.y, Ei.s, Ei.c, -Ei.x, 0.f, 0.f, 1.f};
+      lie_device::SE2StepDefectJacobian J;
+      lie_device::InitSE2StepDefectJacobian(res, step, E, &J);
 #pragma unroll
       for (int i = 0; i < 3; ++i) {
         float *row = o + kRows + i * kColumns;
-        const float *l = Jl_inv + 3 * i;
-#pragma unroll
-        for (int j = 0; j < 3; ++j) {
-          row[j] = -(l[0] * Ad[j] + l[1] * Ad[3 + j] + l[2] * Ad[6 + j]);
-          row[3 + j] = -dt * (l[0] * Jr_step[j] + l[1] * Jr_step[3 + j] + l[2] * Jr_step[6 + j]);
-          row[6 + j] = Jr_inv[3 * i + j];
-        }
+        lie_device::SE2StepDefectRow(J, i, dt, row, row + 3, row + 6);
       }
     }
   }

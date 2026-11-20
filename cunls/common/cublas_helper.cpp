@@ -19,63 +19,33 @@
 
 #include <cublas_v2.h>
 
-#include "cunls/common/log.h"
-
 namespace cunls {
 
 const char *cublasGetErrorString(int status) {
-  auto s = static_cast<cublasStatus_t>(status);
-  if (s == CUBLAS_STATUS_SUCCESS)
-    return "CUBLAS_STATUS_SUCCESS";
-  else if (s == CUBLAS_STATUS_NOT_INITIALIZED)
-    return "CUBLAS_STATUS_NOT_INITIALIZED";
-  else if (s == CUBLAS_STATUS_ALLOC_FAILED)
-    return "CUBLAS_STATUS_ALLOC_FAILED";
-  else if (s == CUBLAS_STATUS_INVALID_VALUE)
-    return "CUBLAS_STATUS_INVALID_VALUE";
-  else if (s == CUBLAS_STATUS_ARCH_MISMATCH)
-    return "CUBLAS_STATUS_ARCH_MISMATCH";
-  else if (s == CUBLAS_STATUS_MAPPING_ERROR)
-    return "CUBLAS_STATUS_MAPPING_ERROR";
-  else if (s == CUBLAS_STATUS_EXECUTION_FAILED)
-    return "CUBLAS_STATUS_EXECUTION_FAILED";
-  else if (s == CUBLAS_STATUS_INTERNAL_ERROR)
-    return "CUBLAS_STATUS_INTERNAL_ERROR";
-  else if (s == CUBLAS_STATUS_NOT_SUPPORTED)
-    return "CUBLAS_STATUS_NOT_SUPPORTED";
-  else if (s == CUBLAS_STATUS_LICENSE_ERROR)
-    return "CUBLAS_STATUS_LICENSE_ERROR";
-  else
-    return "Unspecified cuBLAS error";
+  return cublasGetStatusString(static_cast<cublasStatus_t>(status));
 }
 
-cuBLASHandle::~cuBLASHandle() {
-  if (handle_ != nullptr) {
-    WARN_ON_CUBLAS_ERROR(cublasDestroy(static_cast<cublasHandle_t>(handle_)));
+namespace {
+
+void *CreateCublasHandle(cudaStream_t stream) {
+  cublasHandle_t handle = nullptr;
+  THROW_ON_CUBLAS_ERROR(cublasCreate(&handle));
+  THROW_ON_CUBLAS_ERROR(cublasSetStream(handle, stream));
+  return handle;
+}
+
+void DestroyCublasHandle(void *handle, bool may_throw) {
+  const cublasStatus_t status = cublasDestroy(static_cast<cublasHandle_t>(handle));
+  if (may_throw) {
+    THROW_ON_CUBLAS_ERROR(status);
+  } else {
+    WARN_ON_CUBLAS_ERROR(status);
   }
 }
 
-void *cuBLASHandle::GetHandle(cudaStream_t stream) {
-  if (stream == nullptr) {
-    const std::string msg = "cuBLASHandle received invalid CUDA stream.";
-    LogError(msg);
-    throw std::invalid_argument(msg);
-  }
+}  // namespace
 
-  if (stream == stream_ && handle_ != nullptr) {
-    return handle_;
-  }
-
-  if (handle_ != nullptr) {
-    THROW_ON_CUBLAS_ERROR(cublasDestroy(static_cast<cublasHandle_t>(handle_)));
-  }
-
-  stream_ = stream;
-  cublasHandle_t h = nullptr;
-  THROW_ON_CUBLAS_ERROR(cublasCreate(&h));
-  THROW_ON_CUBLAS_ERROR(cublasSetStream(h, stream_));
-  handle_ = static_cast<void *>(h);
-  return handle_;
-}
+cuBLASHandle::cuBLASHandle()
+    : StreamBoundHandle("cuBLASHandle", &CreateCublasHandle, &DestroyCublasHandle) {}
 
 }  // namespace cunls

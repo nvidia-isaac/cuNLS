@@ -138,12 +138,14 @@ class SyntheticPGOTest : public ::testing::Test {
     const float *opt_poses_set1_ptr = state_batch_set1.StateDevicePtr(0);
     const float *opt_poses_set2_ptr = state_batch_set2.StateDevicePtr(0);
 
-    dvector<SE3Transform> poses_set1_inverse(this->num_poses_);
-    constexpr size_t transform_pitch = 4;
+    std::vector<SE3Transform> poses_set1(this->num_poses_);
+    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(poses_set1.data(), opt_poses_set1_ptr,
+                                        this->num_poses_ * sizeof(SE3Transform),
+                                        cudaMemcpyDeviceToHost, stream));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+    dvector<SE3Transform> poses_set1_inverse(test_utils::InverseSE3(poses_set1));
     constexpr size_t transform_stride = 16;
     auto poses_set1_inv_ptr = reinterpret_cast<float *>(poses_set1_inverse.data());
-    ComputeInverseSE3(stream, opt_poses_set1_ptr, transform_pitch, transform_stride,
-                      transform_pitch, transform_stride, this->num_poses_, poses_set1_inv_ptr);
 
     cuBLASHandle cublas_handle;
     auto handle = static_cast<cublasHandle_t>(cublas_handle.GetHandle(stream));
@@ -265,36 +267,18 @@ TEST_F(SyntheticPGOTest, OptimizeConsecutiveBetweenConstraints) {
   OptimizeAndExpectDeltasSatisfied(factor);
 }
 
-/** The same with InformationFactorBatch (identity sqrt-information). */
-TEST_F(SyntheticPGOTest, InformationBetweenFactorBatch) {
-  dvector<SE3Transform> deltas(pose_deltas_);
-  auto sqrt_information = IdentitySqrtInformation();
-  InformationFactorBatch<SE3BetweenFactorBatch> factor(sqrt_information.data(), num_poses_,
-                                                       deltas.data(), num_poses_);
-  OptimizeAndExpectDeltasSatisfied(factor);
-}
-
 /**
  * @brief The same with WeightedFactorBatch around InformationFactorBatch
- * (identity sqrt-information, uniform weight).
+ * (identity sqrt-information, uniform weight): the wrappers run in a full
+ * solve. Their weights do not change this optimum (every pair has one factor);
+ * the wrapper math is checked per factor in weighted_factor_batch_test.cpp and
+ * evaluate_items_registration_test.cpp.
  */
 TEST_F(SyntheticPGOTest, WeightedWrapsInformationBetweenFactorBatch) {
   dvector<SE3Transform> deltas(pose_deltas_);
   auto sqrt_information = IdentitySqrtInformation();
   WeightedFactorBatch<InformationFactorBatch<SE3BetweenFactorBatch>> factor(
       2.0f, sqrt_information.data(), num_poses_, deltas.data(), num_poses_);
-  OptimizeAndExpectDeltasSatisfied(factor);
-}
-
-/**
- * @brief The same with InformationFactorBatch around WeightedFactorBatch
- * (identity sqrt-information, uniform weight).
- */
-TEST_F(SyntheticPGOTest, InformationWrapsWeightedBetweenFactorBatch) {
-  dvector<SE3Transform> deltas(pose_deltas_);
-  auto sqrt_information = IdentitySqrtInformation();
-  InformationFactorBatch<WeightedFactorBatch<SE3BetweenFactorBatch>> factor(
-      sqrt_information.data(), num_poses_, 2.0f, deltas.data(), num_poses_);
   OptimizeAndExpectDeltasSatisfied(factor);
 }
 

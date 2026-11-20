@@ -1,8 +1,5 @@
 # cuNLS Core Source Tree
 
-> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
-> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
-
 ## Purpose
 
 This directory contains all core library modules and the public umbrella header

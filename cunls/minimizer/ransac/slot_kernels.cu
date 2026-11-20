@@ -74,29 +74,19 @@ __global__ void SampleTablesKernel(const StateView *states, const int2 *blocks, 
   }
 }
 
+/** Local slot p's table reads replica slot_index[p], or slot_offset + p without slot_index. */
 __global__ void SlotTablesKernel(const StateView *states, const int2 *blocks, int num_factors,
-                                 int nb, int num_slots, int slot_offset, bool candidate,
-                                 float **tables) {
+                                 int nb, const int *slot_index, int num_slots, int slot_offset,
+                                 bool candidate, float **tables) {
   const size_t per_slot = static_cast<size_t>(num_factors) * nb;
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= per_slot * num_slots) {
     return;
   }
+  const int p = static_cast<int>(idx / per_slot);
   const int2 sb = blocks[idx % per_slot];
-  tables[idx] =
-      ReplicaPointer(states[sb.x], sb.y, slot_offset + static_cast<int>(idx / per_slot), candidate);
-}
-
-__global__ void IndexedSlotTablesKernel(const StateView *states, const int2 *blocks,
-                                        int num_factors, int nb, const int *slot_index,
-                                        int num_slots, float **tables) {
-  const size_t per_slot = static_cast<size_t>(num_factors) * nb;
-  const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (idx >= per_slot * num_slots) {
-    return;
-  }
-  const int2 sb = blocks[idx % per_slot];
-  tables[idx] = ReplicaPointer(states[sb.x], sb.y, slot_index[idx / per_slot], false);
+  tables[idx] = ReplicaPointer(states[sb.x], sb.y,
+                               slot_index != nullptr ? slot_index[p] : slot_offset + p, candidate);
 }
 
 __global__ void SubsetTablesKernel(const StateView *states, const int2 *blocks, int nb,
@@ -199,7 +189,7 @@ __device__ void LevenbergMarquardtDecision(const DevicePolicy &pol, bool ok, flo
 __global__ void AcceptKernel(int num_slots, DevicePolicy policy, const float *cost_cur,
                              const float *cost_cand, const float *predicted, const float *step_sq,
                              const int *solve_ok, int *active, float *lambda, int *accept,
-                             int *valid, int *iterations, int *num_accepted) {
+                             int *valid, int *iterations) {
   const int p = blockIdx.x * blockDim.x + threadIdx.x;
   if (p >= num_slots) {
     return;
@@ -221,14 +211,13 @@ __global__ void AcceptKernel(int num_slots, DevicePolicy policy, const float *co
     GaussNewtonDecision(policy, ok, cost_cur[p], cost_cand[p], step_sq[p], acc, stop);
   }
   accept[p] = acc;
-  num_accepted[p] += acc;
   if (stop) {
     active[p] = 0;
   }
 }
 
 __global__ void ResetSlotsKernel(int num_slots, float initial_lambda, int *active, float *lambda,
-                                 int *valid, int *iterations, int *num_accepted) {
+                                 int *valid, int *iterations) {
   const int p = blockIdx.x * blockDim.x + threadIdx.x;
   if (p >= num_slots) {
     return;
@@ -236,7 +225,6 @@ __global__ void ResetSlotsKernel(int num_slots, float initial_lambda, int *activ
   active[p] = 1;
   lambda[p] = initial_lambda;
   iterations[p] = 0;
-  num_accepted[p] = 0;
   if (valid != nullptr) {
     valid[p] = 1;
   }
@@ -286,26 +274,14 @@ void LaunchSampleTables(cudaStream_t stream, const StateView *states, const int2
 }
 
 void LaunchSlotTables(cudaStream_t stream, const StateView *states, const int2 *blocks,
-                      int num_factors, int nb, int num_slots, int slot_offset, bool candidate,
-                      float **tables) {
+                      int num_factors, int nb, const int *slot_index, int num_slots,
+                      int slot_offset, bool candidate, float **tables) {
   const size_t count = static_cast<size_t>(num_factors) * nb * num_slots;
   if (count == 0) {
     return;
   }
   SlotTablesKernel<<<GridFor(count), kThreads, 0, stream>>>(
-      states, blocks, num_factors, nb, num_slots, slot_offset, candidate, tables);
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void LaunchIndexedSlotTables(cudaStream_t stream, const StateView *states, const int2 *blocks,
-                             int num_factors, int nb, const int *slot_index, int num_slots,
-                             float **tables) {
-  const size_t count = static_cast<size_t>(num_factors) * nb * num_slots;
-  if (count == 0) {
-    return;
-  }
-  IndexedSlotTablesKernel<<<GridFor(count), kThreads, 0, stream>>>(states, blocks, num_factors, nb,
-                                                                   slot_index, num_slots, tables);
+      states, blocks, num_factors, nb, slot_index, num_slots, slot_offset, candidate, tables);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -383,23 +359,23 @@ void LaunchCopyReplicas(cudaStream_t stream, int num_slots, size_t slot_floats, 
 void LaunchAccept(cudaStream_t stream, int num_slots, const DevicePolicy &policy,
                   const float *cost_cur, const float *cost_cand, const float *predicted,
                   const float *step_sq, const int *solve_ok, int *active, float *lambda,
-                  int *accept, int *valid, int *iterations, int *num_accepted) {
+                  int *accept, int *valid, int *iterations) {
   if (num_slots <= 0) {
     return;
   }
-  AcceptKernel<<<GridFor(num_slots), kThreads, 0, stream>>>(
-      num_slots, policy, cost_cur, cost_cand, predicted, step_sq, solve_ok, active, lambda, accept,
-      valid, iterations, num_accepted);
+  AcceptKernel<<<GridFor(num_slots), kThreads, 0, stream>>>(num_slots, policy, cost_cur, cost_cand,
+                                                            predicted, step_sq, solve_ok, active,
+                                                            lambda, accept, valid, iterations);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
 void LaunchResetSlots(cudaStream_t stream, int num_slots, float initial_lambda, int *active,
-                      float *lambda, int *valid, int *iterations, int *num_accepted) {
+                      float *lambda, int *valid, int *iterations) {
   if (num_slots <= 0) {
     return;
   }
-  ResetSlotsKernel<<<GridFor(num_slots), kThreads, 0, stream>>>(
-      num_slots, initial_lambda, active, lambda, valid, iterations, num_accepted);
+  ResetSlotsKernel<<<GridFor(num_slots), kThreads, 0, stream>>>(num_slots, initial_lambda, active,
+                                                                lambda, valid, iterations);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

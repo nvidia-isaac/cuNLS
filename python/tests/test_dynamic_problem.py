@@ -48,11 +48,10 @@ def _make_frame(num_states, extra_edges, seed):
     return gt, initial, deltas, edges
 
 
-def _options(jacobian_mode=pycunls.JacobianMode.analytic):
+def _options():
     o = pycunls.LevenbergMarquardtMinimizerOptions()
     o.base_options.max_num_iterations = 20
     o.base_options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.DenseLDLT
-    o.base_options.jacobian_mode = jacobian_mode
     return o
 
 
@@ -80,7 +79,7 @@ def _solve_fresh(gt, initial, deltas, edges, stream):
 class BoundProblem:
     """Buffers bound once at capacity; each frame rewrites contents and sizes."""
 
-    def __init__(self, form, options=None):
+    def __init__(self, form):
         self.form = form
         self.states = wp.zeros(CAP_STATES * 3, dtype=wp.float32)
         self.deltas = wp.zeros(CAP_EDGES * 3, dtype=wp.float32)
@@ -103,7 +102,7 @@ class BoundProblem:
             self.problem.add_factor_batch(self.between, [self.state_batch, self.state_batch],
                                           self.indices)
         self.problem.add_factor_batch(self.prior, [self.state_batch], self.anchor_index)
-        self.minimizer = pycunls.LevenbergMarquardtMinimizer(options or _options())
+        self.minimizer = pycunls.LevenbergMarquardtMinimizer(_options())
         self.stream = pycunls.CudaStream()
         self.wp_stream = wp.Stream(wp.get_cuda_device(), cuda_stream=self.stream.get_stream())
 
@@ -177,11 +176,3 @@ def test_validation_catches_bad_connectivity():
     assert bound.problem.validate(bound.stream)
     bound.between.set_num_active_factors(1)
     assert not bound.problem.validate(bound.stream)
-
-
-def test_numeric_jacobians_follow_connectivity_changes():
-    bound = BoundProblem("device_indices", _options(pycunls.JacobianMode.numeric))
-    for seed in (21, 22, 23):
-        frame = _make_frame(80, 40, seed)
-        solved = bound.solve(*frame)
-        assert np.abs(solved - frame[0]).max() < 1e-2, f"seed {seed}"

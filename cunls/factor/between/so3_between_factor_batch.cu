@@ -7,6 +7,7 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/so3_between_factor_batch.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
@@ -37,7 +38,6 @@ constexpr size_t kTwistStride = 3;
  * @brief Fused kernel: collect L/R rotations from state pointers, compute
  *        R_error = (R_left^T * R_right) * Delta in one pass.
  *
- * Replaces collect + TransposeSO3 + two cuBLAS GEMM calls.
  * Fully unrolled: two 3x3 multiplies use 54 FMAs with zero local memory.
  */
 __global__ void collect_and_compute_so3_between_error_kernel(float const *const *state_pointers,
@@ -89,57 +89,6 @@ __global__ void collect_and_compute_so3_between_error_kernel(float const *const 
   out[8] = m6 * d2 + m7 * d5 + m8 * d8;
 }
 
-// Compute one row of J_l^{-1}(phi) via the Rodrigues formula:
-//   k1*I + k2*[phi]_x + k3*(phi * phi^T)
-// with k1 = half_theta/tan(half_theta), k2 = -half_theta/theta,
-//      k3 = (1 - k1)/theta^2, k4 = -0.5 for small-angle fallback.
-__device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *row) {
-  float theta = norm3df(phi[0], phi[1], phi[2]);
-  float th2 = theta * theta;
-  if (theta < 1e-5f) {
-    float sx, sy, sz;
-    if (r == 0) {
-      sx = 0.f;
-      sy = -phi[2];
-      sz = phi[1];
-    } else if (r == 1) {
-      sx = phi[2];
-      sy = 0.f;
-      sz = -phi[0];
-    } else {
-      sx = -phi[1];
-      sy = phi[0];
-      sz = 0.f;
-    }
-    row[0] = (r == 0 ? 1.f : 0.f) - 0.5f * sx;
-    row[1] = (r == 1 ? 1.f : 0.f) - 0.5f * sy;
-    row[2] = (r == 2 ? 1.f : 0.f) - 0.5f * sz;
-    return;
-  }
-  float half = 0.5f * theta;
-  float k1 = half / tanf(half);
-  float k2 = -half / theta;
-  float k3 = (1.0f - k1) / th2;
-  float pr = phi[r];
-  float sx, sy, sz;
-  if (r == 0) {
-    sx = 0.f;
-    sy = -phi[2];
-    sz = phi[1];
-  } else if (r == 1) {
-    sx = phi[2];
-    sy = 0.f;
-    sz = -phi[0];
-  } else {
-    sx = -phi[1];
-    sy = phi[0];
-    sz = 0.f;
-  }
-  row[0] = (r == 0 ? k1 : 0.f) + k2 * sx + k3 * pr * phi[0];
-  row[1] = (r == 1 ? k1 : 0.f) + k2 * sy + k3 * pr * phi[1];
-  row[2] = (r == 2 ? k1 : 0.f) + k2 * sz + k3 * pr * phi[2];
-}
-
 // Fused kernel: computes BOTH left and right SO(3) Jacobians in one pass.
 //
 // Residual: r = Log(E), E = L^T * R * Delta  (see
@@ -152,7 +101,7 @@ __device__ __forceinline__ void so3_jl_inv_row(const float *phi, int r, float *r
 //
 // Left  Jacobian (cols 0..2): -J_l^{-1}(r)
 // Right Jacobian (cols 3..5):  J_r^{-1}(r) * D^T,  J_r^{-1}(r) = J_l^{-1}(-r)
-// 1 thread per factor, ~25 regs. Replaces 4 separate kernel launches.
+// 1 thread per factor.
 __global__ void __launch_bounds__(256, 4)
     so3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
                                        const Matrix<3> *__restrict__ deltas, int num_items,
@@ -168,10 +117,11 @@ __global__ void __launch_bounds__(256, 4)
   float *J = jacobians + tid * 18;
 
   // Left block: -J_l_inv(phi)  (right-perturbation retraction; no D factor)
-  float jl[9];
+  float jl[9], h, k;
+  lie_device::SO3JacobianLeftInverseCoefficients(phi, &h, &k);
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
-    so3_jl_inv_row(phi, row, &jl[row * 3]);
+    lie_device::SO3JacobianLeftInverseRow(phi, h, k, row, &jl[row * 3]);
   }
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
@@ -181,11 +131,14 @@ __global__ void __launch_bounds__(256, 4)
   }
 
   // Right block: J_r_inv(phi) * D^T,  J_r_inv(phi) = J_l_inv(-phi)
-  float neg_phi[3] = {-phi[0], -phi[1], -phi[2]};
+  const float neg_phi[3] = {-phi[0], -phi[1], -phi[2]};
   float jr[9];
+  // Equal to the coefficients of phi (even in phi); recomputed so h, k need not
+  // stay live across the left block (fewer registers).
+  lie_device::SO3JacobianLeftInverseCoefficients(neg_phi, &h, &k);
 #pragma unroll
   for (int row = 0; row < 3; ++row) {
-    so3_jl_inv_row(neg_phi, row, &jr[row * 3]);
+    lie_device::SO3JacobianLeftInverseRow(neg_phi, h, k, row, &jr[row * 3]);
   }
 #pragma unroll
   for (int row = 0; row < 3; ++row) {

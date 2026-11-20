@@ -52,15 +52,15 @@ class DenseCholeskySolver : public DenseLinearSolverBase {
    *   1. cusolverDnSpotrf  (in-place Cholesky factorization).
    *   2. devInfo check after potrf (if safety checks enabled).
    *   3. Copy rhs into result (potrs works in-place on B).
-   *   4. cusolverDnSpotrs  (triangular solve).
-   *   5. devInfo check after potrs (if safety checks enabled).
+   *   4. cusolverDnSpotrs  (triangular solve; its devInfo reports only
+   *      invalid arguments, which are fixed here, so it is not read back).
    *
    * @param stream CUDA stream for asynchronous GPU operations.
    * @param n Matrix dimension.
    * @param rhs The right-hand side vector b.
    * @param result Output vector x.
    * @return true on success, false on a non-SPD matrix (devInfo > 0 from
-   *         potrf) or an invalid parameter from potrs (devInfo < 0).
+   *         potrf, with safety checks enabled).
    */
   bool FactorizeAndSolve(cudaStream_t stream, int n, const dvector<float> &rhs,
                          dvector<float> &result) final;

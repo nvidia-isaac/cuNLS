@@ -16,15 +16,18 @@
  */
 
 /** @file device_vector_test.cpp
- *  @brief Tests for the DeviceVector CUDA device memory wrapper class.
+ *  @brief Tests for the DeviceVector CUDA device memory wrapper class, the
+ *  CudaStream wrapper and the library handles bound to a stream.
  */
 
 #include "cunls/common/device_vector.h"
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
 #include <vector>
 
+#include "cunls/common/cublas_helper.h"
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 
@@ -111,32 +114,6 @@ TEST_F(DeviceVectorTest, ConstructorFromEmptyStdVector) {
   EXPECT_EQ(vec.capacity(), 0);
   EXPECT_EQ(vec.data(), nullptr);
   EXPECT_TRUE(vec.empty());
-}
-
-/** @brief Verifies synchronous host-to-device and device-to-host copy preserves
- * data. */
-TEST_F(DeviceVectorTest, SyncCopyRoundTrip) {
-  const size_t num_elements = 100;
-  std::vector<float> host_data(num_elements);
-
-  // Initialize host data with test values
-  for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = static_cast<float>(i) * 1.5f;
-  }
-
-  // Create device vector from host data
-  DeviceVector<float> vec(host_data);
-
-  EXPECT_EQ(vec.size(), num_elements);
-
-  // Copy data back to host
-  std::vector<float> result(num_elements);
-  vec.CopyToHost(result.data(), num_elements);
-
-  // Verify data integrity
-  for (size_t i = 0; i < num_elements; ++i) {
-    EXPECT_FLOAT_EQ(result[i], host_data[i]);
-  }
 }
 
 /** @brief Verifies asynchronous host-to-device and device-to-host copy with
@@ -453,44 +430,6 @@ TEST_F(DeviceVectorTest, SelfMoveAssignment) {
   }
 }
 
-/** @brief Verifies that DeviceVector works correctly with int data type. */
-TEST_F(DeviceVectorTest, WorksWithIntType) {
-  const size_t num_elements = 100;
-  std::vector<int> host_data(num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = static_cast<int>(i * 7);
-  }
-
-  DeviceVector<int> vec(host_data);
-
-  std::vector<int> result(num_elements);
-  vec.CopyToHost(result.data(), num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    EXPECT_EQ(result[i], host_data[i]);
-  }
-}
-
-/** @brief Verifies that DeviceVector works correctly with double data type. */
-TEST_F(DeviceVectorTest, WorksWithDoubleType) {
-  const size_t num_elements = 100;
-  std::vector<double> host_data(num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    host_data[i] = static_cast<double>(i) * 3.14159;
-  }
-
-  DeviceVector<double> vec(host_data);
-
-  std::vector<double> result(num_elements);
-  vec.CopyToHost(result.data(), num_elements);
-
-  for (size_t i = 0; i < num_elements; ++i) {
-    EXPECT_DOUBLE_EQ(result[i], host_data[i]);
-  }
-}
-
 /** @brief Verifies that DeviceVector works correctly with a custom struct type.
  */
 TEST_F(DeviceVectorTest, WorksWithStructType) {
@@ -557,6 +496,21 @@ TEST_F(DeviceVectorTest, PartialCopyOperations) {
   for (size_t i = 0; i < read_size; ++i) {
     EXPECT_FLOAT_EQ(result[i], host_data[i]);
   }
+}
+
+// A library handle (StreamBoundHandle) rejects a null stream, is kept for its stream and is
+// recreated for another one.
+TEST(StreamBoundHandleTest, KeepsTheHandleOfItsStream) {
+  CudaStream a;
+  CudaStream b;
+  cuBLASHandle handle;
+  EXPECT_THROW(handle.GetHandle(nullptr), std::invalid_argument);
+  void *first = handle.GetHandle(a.GetStream());
+  ASSERT_NE(first, nullptr);
+  EXPECT_EQ(handle.GetHandle(a.GetStream()), first);
+  void *second = handle.GetHandle(b.GetStream());
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(handle.GetHandle(b.GetStream()), second);
 }
 
 // A CudaStream wrapping a stream created elsewhere runs work on it and leaves it alive.

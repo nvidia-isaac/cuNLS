@@ -43,6 +43,7 @@
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
@@ -108,7 +109,7 @@ std::vector<float> ToFloat(const std::vector<Mat3> &m, size_t first, size_t coun
   return out;
 }
 
-enum class Kind { kGaussNewton, kLevenbergMarquardt };
+using Kind = test_utils::MinimizerKind;
 
 std::unique_ptr<Minimizer> MakeMinimizer(
     Kind kind, SparseLinearSolverType solver = SparseLinearSolverType::DenseLDLT) {
@@ -116,54 +117,69 @@ std::unique_ptr<Minimizer> MakeMinimizer(
   options.max_num_iterations = 50;
   options.state_tolerance = 1e-12f;
   options.sparse_linear_solver_type = solver;
-  if (kind == Kind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = options;
-  lm.relative_reduction_tolerance = 1e-12f;  // run to convergence: compare solutions
-  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+  // Run to convergence: compare solutions.
+  return test_utils::MakeMinimizer(kind, options, 1e-12f);
 }
 
 /**
- * Solves graphs [first, first + count) as one problem (with a partition when
- * `partition`); returns the optimized poses, 9 floats each.
+ * Graphs [first, first + count) of `g` as one problem, with a partition (one
+ * subproblem per graph, or the ids of `ids_override`) when `partition`.
  */
+struct GraphProblem {
+  GraphProblem(const Graphs &g, int first, int count, bool partition,
+               const std::vector<int> *ids_override = nullptr)
+      : poses(ToFloat(g.init, size_t(first) * g.n, size_t(count) * g.n)),
+        deltas(ToFloat(g.deltas, size_t(first) * g.edges.size(), size_t(count) * g.edges.size())),
+        priors(ToFloat(g.priors, first, count)),
+        states(poses.data(), count * g.n),
+        prior(reinterpret_cast<const SE2Transform *>(priors.data()), count),
+        between(reinterpret_cast<const SE2Transform *>(deltas.data()), count * g.edges.size()) {
+    const int n = g.n;
+    states.SetNumActiveStates(count * n);
+    prior.SetNumActiveFactors(count);
+    between.SetNumActiveFactors(count * g.edges.size());
+    std::vector<float *> prior_ptrs, between_ptrs;
+    for (int s = 0; s < count; ++s) {
+      prior_ptrs.push_back(states.StateDevicePtr(s * n));
+      for (auto [a, b] : g.edges) {
+        between_ptrs.push_back(states.StateDevicePtr(s * n + a));
+        between_ptrs.push_back(states.StateDevicePtr(s * n + b));
+      }
+    }
+    problem.AddStateBatch(&states);
+    problem.AddFactorBatch(&prior, prior_ptrs);
+    problem.AddFactorBatch(&between, between_ptrs);
+    std::vector<int> ids_host;
+    for (int s = 0; s < count; ++s) ids_host.insert(ids_host.end(), n, s);
+    if (ids_override != nullptr) ids_host = *ids_override;
+    ids = dvector<int>(ids_host);
+    if (partition) problem.SetProblemPartition(count, {ids.data()});
+  }
+
+  /** The current poses, 9 floats each. */
+  std::vector<float> Poses() const {
+    std::vector<float> out(poses.size());
+    poses.CopyToHost(out.data(), out.size());
+    return out;
+  }
+
+  dvector<float> poses, deltas, priors;
+  SE2StateBatch states;
+  SE2PriorFactorBatch prior;
+  SE2BetweenFactorBatch between;
+  dvector<int> ids;
+  Problem problem;
+};
+
+/** Solves a GraphProblem; returns the optimized poses, 9 floats each. */
 std::vector<float> Solve(const Graphs &g, int first, int count, bool partition, Kind kind,
                          const std::vector<int> *ids_override = nullptr,
                          SparseLinearSolverType solver = SparseLinearSolverType::DenseLDLT) {
-  const int n = g.n, m = static_cast<int>(g.edges.size());
+  GraphProblem p(g, first, count, partition, ids_override);
   CudaStream stream;
-  dvector<float> poses(ToFloat(g.init, size_t(first) * n, size_t(count) * n));
-  dvector<float> deltas(ToFloat(g.deltas, size_t(first) * m, size_t(count) * m));
-  dvector<float> priors(ToFloat(g.priors, first, count));
-  SE2StateBatch states(poses.data(), count * n);
-  states.SetNumActiveStates(count * n);
-  SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(priors.data()), count);
-  prior.SetNumActiveFactors(count);
-  SE2BetweenFactorBatch between(reinterpret_cast<const SE2Transform *>(deltas.data()), count * m);
-  between.SetNumActiveFactors(count * m);
-  std::vector<float *> prior_ptrs, between_ptrs;
-  for (int s = 0; s < count; ++s) {
-    prior_ptrs.push_back(states.StateDevicePtr(s * n));
-    for (auto [a, b] : g.edges) {
-      between_ptrs.push_back(states.StateDevicePtr(s * n + a));
-      between_ptrs.push_back(states.StateDevicePtr(s * n + b));
-    }
-  }
-  Problem problem;
-  problem.AddStateBatch(&states);
-  problem.AddFactorBatch(&prior, prior_ptrs);
-  problem.AddFactorBatch(&between, between_ptrs);
-  std::vector<int> ids_host;
-  for (int s = 0; s < count; ++s) ids_host.insert(ids_host.end(), n, s);
-  if (ids_override != nullptr) ids_host = *ids_override;
-  dvector<int> ids(ids_host);
-  if (partition) problem.SetProblemPartition(count, {ids.data()});
-  auto minimizer = MakeMinimizer(kind, solver);
-  minimizer->Minimize(stream.GetStream(), problem);
+  MakeMinimizer(kind, solver)->Minimize(stream.GetStream(), p.problem);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  std::vector<float> out(poses.size());
-  poses.CopyToHost(out.data(), out.size());
-  return out;
+  return p.Poses();
 }
 
 /** Solves 8 graphs as one partitioned problem and each alone; the solutions agree. */
@@ -308,35 +324,12 @@ TEST(ProblemPartition, FrozenSubproblemsKeepTheirStates) {
 // subproblem capped at one iteration ends where one iteration alone ends.
 TEST(ProblemPartition, IterationCapsStopEachSubproblemAtItsOwnCap) {
   const Graphs g(2, 12, 6);
-  const int n = g.n, m = static_cast<int>(g.edges.size());
+  const int n = g.n;
   auto run = [&](int first, int count, const std::vector<int> &caps, size_t max_iterations,
                  std::vector<int> *at_cap, std::vector<int> *reasons) {
+    GraphProblem p(g, first, count, /*partition=*/count > 1);
     CudaStream stream;
-    dvector<float> poses(ToFloat(g.init, size_t(first) * n, size_t(count) * n));
-    dvector<float> deltas(ToFloat(g.deltas, size_t(first) * m, size_t(count) * m));
-    dvector<float> priors(ToFloat(g.priors, first, count));
-    SE2StateBatch states(poses.data(), count * n);
-    states.SetNumActiveStates(count * n);
-    SE2PriorFactorBatch prior(reinterpret_cast<const SE2Transform *>(priors.data()), count);
-    prior.SetNumActiveFactors(count);
-    SE2BetweenFactorBatch between(reinterpret_cast<const SE2Transform *>(deltas.data()), count * m);
-    between.SetNumActiveFactors(count * m);
-    std::vector<float *> prior_ptrs, between_ptrs;
-    for (int s = 0; s < count; ++s) {
-      prior_ptrs.push_back(states.StateDevicePtr(s * n));
-      for (auto [a, b] : g.edges) {
-        between_ptrs.push_back(states.StateDevicePtr(s * n + a));
-        between_ptrs.push_back(states.StateDevicePtr(s * n + b));
-      }
-    }
-    Problem problem;
-    problem.AddStateBatch(&states);
-    problem.AddFactorBatch(&prior, prior_ptrs);
-    problem.AddFactorBatch(&between, between_ptrs);
-    std::vector<int> ids_host;
-    for (int s = 0; s < count; ++s) ids_host.insert(ids_host.end(), n, s);
-    dvector<int> ids(ids_host), d_caps(caps), d_at_cap(std::vector<int>(count, -1));
-    if (count > 1) problem.SetProblemPartition(count, {ids.data()});
+    dvector<int> d_caps(caps), d_at_cap(std::vector<int>(count, -1));
     MinimizerOptions options;
     options.state_tolerance = 1e-12f;
     options.cost_tolerance = 1e-12f;
@@ -346,7 +339,7 @@ TEST(ProblemPartition, IterationCapsStopEachSubproblemAtItsOwnCap) {
     settings.max_num_iterations = max_iterations;
     if (!caps.empty()) settings.problem_iteration_cap = d_caps.data();
     settings.problem_at_cap = d_at_cap.data();
-    internal::InnerMinimize(minimizer, stream.GetStream(), problem, settings);
+    internal::InnerMinimize(minimizer, stream.GetStream(), p.problem, settings);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
     if (at_cap != nullptr) {
       at_cap->resize(count);
@@ -357,9 +350,7 @@ TEST(ProblemPartition, IterationCapsStopEachSubproblemAtItsOwnCap) {
       THROW_ON_CUDA_ERROR(cudaMemcpy(reasons->data(), minimizer.SubproblemTerminationReasons(),
                                      count * sizeof(int), cudaMemcpyDeviceToHost));
     }
-    std::vector<float> out(poses.size());
-    poses.CopyToHost(out.data(), out.size());
-    return out;
+    return p.Poses();
   };
   std::vector<int> at_cap, reasons;
   const auto batched = run(0, 2, {1, 30}, 30, &at_cap, &reasons);

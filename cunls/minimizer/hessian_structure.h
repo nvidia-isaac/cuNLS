@@ -49,8 +49,7 @@ struct HessianBatchLayout {
  *
  * The whole derivation runs on the GPU: resolve each factor's state pointers to
  * global columns, pack every candidate pair into a 64-bit key, then sort and
- * segment.  The previous host implementation spent most of a large SBA solve
- * inside an `unordered_set` of 8 M keys plus a `std::sort` of 5 M pairs.
+ * segment.
  *
  * The resulting CSR has a property `BlockHessianAssembler` depends on: within
  * one block row, the columns of a given block pair are contiguous, and the
@@ -64,17 +63,14 @@ struct HessianBatchLayout {
 class HessianStructureBuilder {
  public:
   /**
-   * @brief Builds the scalar CSR pattern, and optionally the scatter maps.
+   * @brief Builds the scalar CSR pattern and the scatter maps (WriteOffsets()).
    *
    * @param stream CUDA stream for GPU operations.
    * @param problem The optimization problem.
    * @param num_cols Free (non-constant) tangent columns.
    * @param[out] output CSR matrix; row_offsets/col_ids filled, values sized.
-   * @param want_scatter_maps When false, WriteOffsets() is left empty and the
-   *        final scatter pass is skipped (the J^T J path does not need it).
    */
-  void Build(cudaStream_t stream, const Problem &problem, int num_cols, CSRSparseMatrix &output,
-             bool want_scatter_maps);
+  void Build(cudaStream_t stream, const Problem &problem, int num_cols, CSRSparseMatrix &output);
 
   /**
    * @brief Builds the same pattern in uniform block storage.
@@ -91,10 +87,10 @@ class HessianStructureBuilder {
    * @param num_cols Free tangent dimensions; must be a multiple of block_size.
    * @param block_size Tile edge; see ChooseHessianBlockSize().
    * @param[out] output BSR matrix; structure filled, values sized.
-   * @param want_scatter_maps As for the CSR overload.
+   * @throws std::invalid_argument if block_size does not divide num_cols.
    */
   void Build(cudaStream_t stream, const Problem &problem, int num_cols, int block_size,
-             BSRSparseMatrix &output, bool want_scatter_maps);
+             BSRSparseMatrix &output);
 
   /**
    * @brief Only the layout and the column of every (factor, state slot)
@@ -119,8 +115,7 @@ class HessianStructureBuilder {
   /**
    * @brief Row-relative offset of each (factor, block_a, block_b) run.
    *
-   * -1 when either state is constant.  Empty unless Build() was called
-   * with `want_scatter_maps`.
+   * -1 when either state is constant.  Empty until Build() is called.
    */
   const dvector<int> &WriteOffsets() const { return write_offsets_; }
 
@@ -137,6 +132,16 @@ class HessianStructureBuilder {
   int DiscoverBlockPairs(cudaStream_t stream, const Problem &problem, int num_cols,
                          dvector<int> &pair_fields, dvector<int> &pair_order,
                          dvector<int> &pair_group, size_t &num_valid);
+
+  /**
+   * @brief Both Build() overloads: the pattern in tiles of `block_size` (1:
+   * scalar CSR) and the scatter maps.
+   *
+   * @param[out] max_tiles_per_row If not null: the longest block row, in tiles.
+   */
+  void BuildPattern(cudaStream_t stream, const Problem &problem, int num_cols, int block_size,
+                    dvector<int> &row_offsets, dvector<int> &col_ids, dvector<float> &values,
+                    int *max_tiles_per_row);
 
   /** @brief Fills layout_ and the flat-buffer offsets from the problem. */
   void BuildLayout(const Problem &problem);

@@ -79,26 +79,30 @@ int64, and ``wp.array(np_array)`` keeps that dtype: pass
 
 .. _py-prior-vector-factor:
 
-``pycunls.PriorVectorFactorBatch1`` / ``PriorVectorFactorBatch2`` / ``PriorVectorFactorBatch3`` / ``PriorVectorFactorBatch6``
-------------------------------------------------------------------------------------------------------------------------------
+``pycunls.PriorVectorFactorBatch``
+--------------------------------------------------------------------------------
 
-Prior on a Euclidean vector.  Residual = :math:`x - o` with identity
-Jacobian.  The suffix indicates the dimension.
+Prior on a Euclidean vector of any size.  Residual = :math:`x - o` with
+identity Jacobian.  ``PriorVectorFactorBatch3`` and the other numbered names
+(1, 2, 3, 4, 6, 12) fix ``dim``.
 
 **Constructor**
 
 .. code-block:: python
 
-   fb = pycunls.PriorVectorFactorBatch3(observations, capacity)
+   fb = pycunls.PriorVectorFactorBatch(observations, capacity)          # (capacity, dim)
+   fb = pycunls.PriorVectorFactorBatch(flat_observations, capacity, dim=13)
 
 - **observations** (``DevicePointer``) — contiguous GPU buffer of
-  ``capacity × Dim`` floats holding the observed (target) vectors.  The
+  ``capacity × dim`` floats holding the observed (target) vectors; shaped
+  ``(capacity, dim)`` (or an array of ``wp.vecN``) it gives ``dim``.  The
   factor batch does **not** copy the data; the caller must keep the
   allocation alive.
 - **capacity** (``int``) — number of prior factors the buffers hold; 0 are active until ``set_num_active_factors``.
+- **dim** (``int``, keyword) — the vector size; required for a flat array.
 
-**State layout:** one state per factor from the corresponding
-``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
+**State layout:** one state per factor from a ``VectorStateBatch`` of the same
+``dim`` (see :ref:`py-vector-state-batches`).
 
 **C++ reference:** :ref:`cpp-prior-vector-factor-batch`.
 
@@ -435,24 +439,26 @@ factor.
 
 .. _py-vector-between-factor:
 
-``pycunls.VectorBetweenFactorBatch1`` / ``VectorBetweenFactorBatch2`` / ``VectorBetweenFactorBatch3`` / ``VectorBetweenFactorBatch6``
---------------------------------------------------------------------------------------------------------------------------------------
+``pycunls.VectorBetweenFactorBatch``
+--------------------------------------------------------------------------------
 
-Between factor on Euclidean vectors.  Residual =
-:math:`x_l - x_r - \delta`.  Two states per factor.
+Between factor on Euclidean vectors of any size.  Residual =
+:math:`x_l - x_r - \delta`.  Two states per factor.  The numbered names
+(``VectorBetweenFactorBatch3``, ...) fix ``dim``.
 
 **Constructor**
 
 .. code-block:: python
 
-   fb = pycunls.VectorBetweenFactorBatch3(deltas, capacity)
+   fb = pycunls.VectorBetweenFactorBatch(deltas, capacity)   # deltas (capacity, dim)
 
-- **deltas** (``DevicePointer``) — ``capacity × Dim`` floats holding
+- **deltas** (``DevicePointer``) — ``capacity × dim`` floats holding
   the measured difference vectors :math:`\delta`.
 - **capacity** (``int``) — number of between constraints the buffers hold; 0 are active until ``set_num_active_factors``.
+- **dim** (``int``, keyword) — the vector size; required for a flat array.
 
-**State layout:** two states per factor from the corresponding
-``VectorStateBatch`` (see :ref:`py-vector-state-batches`).
+**State layout:** two states per factor from ``VectorStateBatch`` batches of
+the same ``dim`` (see :ref:`py-vector-state-batches`).
 
 **C++ reference:** :ref:`cpp-vector-between-factor-batch`.
 
@@ -1079,6 +1085,9 @@ PriorVectorFactorBatch<Dim>
 Header: :code:`cunls/factor/prior/prior_vector_factor_batch.h`
 
 Prior on a Euclidean vector (e.g. bias, landmark). Pulls the state toward observed values.
+:code:`DynamicPriorVectorFactorBatch(dim, observations, capacity)` is the same with the size
+set at run time (Python's ``PriorVectorFactorBatch``); :code:`DynamicVectorBetweenFactorBatch`,
+:code:`DynamicBoundFactorBatch` and :code:`DynamicHalfspaceFactorBatch` likewise.
 
 .. list-table::
    :header-rows: 1
@@ -2262,8 +2271,9 @@ Residual and state sizes come from that base; this class adds
 ``NumActiveFactors``, storage for ``T``, and an ``Evaluate`` that applies
 :math:`\Omega^{1/2}` after the inner factor.
 
-``T`` must derive from some ``SizedFactorBatch`` (see type trait
-``IsDerivedFromAnySizedFactorBatch``).
+``T`` must declare its compile-time layout ``T::sized_layout`` (every ``SizedFactorBatch``
+and the fixed-size vector factors such as ``PriorVectorFactorBatch<Dim>`` do; type trait
+``HasSizedLayout``).
 
 Wraps a factor to apply a square-root information matrix :math:`\Omega^{1/2}` (e.g. from measurement covariance).
 

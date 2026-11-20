@@ -28,6 +28,14 @@
 // pointer types does not require the symbols to be resolvable at link time.
 #include <cudss.h>
 
+// cuDSS 0.8 reworked the matrix descriptor and config API (new reordering enums,
+// hybrid execute mode, separate offset/index/value types in cudssMatrixCreateCsr).
+// Releases <= 0.7.x still use the legacy API. CUNLS_CUDSS_NEW_API selects the 0.8
+// API by the version of the cuDSS header, so both prebuilt 0.7.1 and 0.8 builds compile.
+#if CUDSS_VERSION_MAJOR > 0 || CUDSS_VERSION_MINOR >= 8
+#define CUNLS_CUDSS_NEW_API
+#endif
+
 namespace cunls {
 
 /**
@@ -54,19 +62,6 @@ struct CudssApi {
   decltype(&::cudssMatrixDestroy) MatrixDestroy = nullptr;
   decltype(&::cudssExecute) Execute = nullptr;
 };
-
-/**
- * @brief Checks whether libcudss.so can be found and loaded, without
- * throwing.
- *
- * Performs (and caches) the same dlopen() probe as GetCudssApi(), but
- * reports the result instead of raising an exception. Useful for callers
- * that want to detect cuDSS availability up front (e.g. to choose a
- * fallback solver or skip a test).
- *
- * @return true if libcudss.so was found and every required symbol resolved.
- */
-bool cuDSSIsAvailable();
 
 /**
  * @brief Returns the lazily dlopen()'d cuDSS function table.

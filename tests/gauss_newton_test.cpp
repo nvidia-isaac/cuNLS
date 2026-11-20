@@ -145,13 +145,6 @@ class GaussNewtonMinimizerTest : public ::testing::Test {
     CheckConvergence(vector_states, const_state_ids);
   }
 
-  /** minimizer_options_ with Hessian-diagonal column scaling. */
-  MinimizerOptions ColumnScaled() const {
-    MinimizerOptions options = minimizer_options_;
-    options.column_scaling = ColumnScaling::HessianDiagonal;
-    return options;
-  }
-
   const size_t num_vectors_ = 10000;  ///< Number of states in test.
 
   std::vector<VectorType> observations_;  ///< Target values for optimization.
@@ -202,15 +195,6 @@ TYPED_TEST(GaussNewtonMinimizerTest, GNWithConstantStates) {
 
 TYPED_TEST(GaussNewtonMinimizerTest, LMWithConstantStates) {
   this->SolveAndCheck(true, this->minimizer_options_, {0, 9, 99, 999});
-}
-
-/** Hessian-diagonal column scaling (shared MinimizerOptions path). */
-TYPED_TEST(GaussNewtonMinimizerTest, GNColumnScalingHessianDiagonal) {
-  this->SolveAndCheck(false, this->ColumnScaled());
-}
-
-TYPED_TEST(GaussNewtonMinimizerTest, LMColumnScalingHessianDiagonal) {
-  this->SolveAndCheck(true, this->ColumnScaled());
 }
 
 /**
@@ -359,9 +343,6 @@ class NanBeyondTwoFactor : public SizedFactorBatch<1, 1> {
 
 }  // namespace
 
-// A trial step to a non-finite cost is rejected (and the damping raised), by
-// both minimizers, with and without a subproblem partition; it was accepted
-// by Levenberg-Marquardt, whose test rho < threshold is false for NaN.
 // A factor whose Evaluate reports failure stops the solve with an exception
 // instead of optimizing on unwritten residuals.
 class FailingFactorBatch : public SizedFactorBatch<1, 1> {
@@ -393,6 +374,9 @@ TEST(FailingFactor, MinimizersThrow) {
   EXPECT_THROW(lm.Minimize(stream.GetStream(), problem), std::runtime_error);
 }
 
+// A trial step to a non-finite cost is rejected (and the damping raised), by
+// both minimizers, with and without a subproblem partition; it was accepted
+// by Levenberg-Marquardt, whose test rho < threshold is false for NaN.
 TEST(NonFiniteTrialStep, IsRejected) {
   for (int kind = 0; kind < 4; ++kind) {
     CudaStream stream;

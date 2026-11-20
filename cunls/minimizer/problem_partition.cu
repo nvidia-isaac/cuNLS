@@ -15,8 +15,10 @@
  * limitations under the License.
  */
 
+#include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "cunls/common/helper.h"
 #include "cunls/minimizer/device_reduction.h"
@@ -347,12 +349,41 @@ __global__ void finish_termination_kernel(size_t num_problems, const int *active
   atomicAdd(counts + termination[p], 1u);
 }
 
+/**
+ * The factor map's view of every state batch: `base(b)`, the storage the
+ * factors' state pointers point into, and the batch's subproblem ids.
+ */
+std::vector<BatchView> MakeViews(const Problem &problem,
+                                 const std::function<const float *(size_t)> &base) {
+  const auto &state_batches = problem.GetStateBatches();
+  const auto &ids = problem.StateProblemIds();
+  std::vector<BatchView> views;
+  for (size_t b = 0; b < state_batches.size(); ++b) {
+    views.push_back(
+        {base(b), state_batches[b]->AmbientSize(), state_batches[b]->NumActiveStates(), ids[b]});
+  }
+  return views;
+}
+
+/**
+ * factor_problem[f] = subproblem of active factor f of residual batch i, read
+ * through its state-pointer table `pointers`; partition errors into `error`.
+ */
+void LaunchFactorProblem(cudaStream_t stream, const Problem &problem, size_t i,
+                         float *const *pointers, const BatchView *views, int num_views,
+                         int *factor_problem, int *error) {
+  const size_t n = problem.GetResidualBatches()[i].GetFactorBatch()->NumActiveFactors();
+  if (n == 0) return;
+  factor_problem_kernel<<<Blocks(n), kThreads, 0, stream>>>(
+      pointers, n, problem.NumStatePointers(i) / n, views, num_views,
+      static_cast<int>(problem.NumProblems()), factor_problem, error);
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
 }  // namespace
 
 void ComputeFactorProblemIds(cudaStream_t stream, const Problem &problem,
                              size_t residual_batch_index, int *factor_problem) {
-  const auto &state_batches = problem.GetStateBatches();
-  const auto &ids = problem.StateProblemIds();
   const size_t n =
       problem.GetResidualBatches()[residual_batch_index].GetFactorBatch()->NumActiveFactors();
   if (n == 0) return;
@@ -360,26 +391,25 @@ void ComputeFactorProblemIds(cudaStream_t stream, const Problem &problem,
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(factor_problem, 0, n * sizeof(int), stream));
     return;
   }
-  std::vector<BatchView> views;
-  for (size_t b = 0; b < state_batches.size(); ++b) {
+  const auto &state_batches = problem.GetStateBatches();
+  const std::vector<BatchView> views = MakeViews(problem, [&](size_t b) {
     const StateBatch *batch = state_batches[b];
     const size_t count = batch->NumActiveStates();
-    if (count == 0) continue;
     const float *base = batch->StateDevicePtr(0);
-    if (batch->StateDevicePtr(count - 1) != base + (count - 1) * batch->AmbientSize()) {
+    if (count > 0 &&
+        batch->StateDevicePtr(count - 1) != base + (count - 1) * batch->AmbientSize()) {
       throw std::invalid_argument(
-          "Problem partition: a state batch does not store its states contiguously");
+          "ComputeFactorProblemIds: state batch " + std::to_string(b) +
+          " does not store its states contiguously (got non-adjacent states, expected one "
+          "array). Fix: give the batch one contiguous state array to use a problem partition.");
     }
-    views.push_back({base, batch->AmbientSize(), count, ids[b]});
-  }
+    return base;
+  });
   dvector<BatchView> d_views(views, stream);
   dvector<int> error(0, 1, stream);
-  const size_t slots = problem.NumStatePointers(residual_batch_index) / n;
-  factor_problem_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-      problem.DeviceStatePointers(residual_batch_index), n, slots, d_views.data(),
-      static_cast<int>(views.size()), static_cast<int>(problem.NumProblems()), factor_problem,
-      error.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
+  LaunchFactorProblem(stream, problem, residual_batch_index,
+                      problem.DeviceStatePointers(residual_batch_index), d_views.data(),
+                      static_cast<int>(views.size()), factor_problem, error.data());
   // d_views and error are freed at scope exit: wait for the kernel.
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
@@ -409,11 +439,8 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
 
   error_.resize(1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(error_.data(), 0, sizeof(int), stream));
-  std::vector<BatchView> views;
-  for (size_t b = 0; b < state_batches.size(); ++b) {
-    views.push_back({states[b].data(), state_batches[b]->AmbientSize(),
-                     state_batches[b]->NumActiveStates(), ids[b]});
-  }
+  const std::vector<BatchView> views =
+      MakeViews(problem, [&](size_t b) { return states[b].data(); });
   // Reused across solves (no allocation once sized); the copy is ordered on
   // the stream before the kernels that read it.
   views_.resize(views.size() * sizeof(BatchView));
@@ -424,14 +451,10 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   factor_problem_.resize(num_factor_items_);
   size_t offset = 0;
   for (size_t i = 0; i < residual_batches.size(); ++i) {
-    const size_t n = residual_batches[i].GetFactorBatch()->NumActiveFactors();
-    if (n == 0) continue;
-    const size_t slots = problem.NumStatePointers(i) / n;
-    factor_problem_kernel<<<Blocks(n), kThreads, 0, stream>>>(
-        state.GetStatePointers()[i].data(), n, slots, d_views, static_cast<int>(views.size()),
-        num_problems, factor_problem_.data() + offset, error_.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-    offset += n;
+    LaunchFactorProblem(stream, problem, i, state.GetStatePointers()[i].data(), d_views,
+                        static_cast<int>(views.size()), factor_problem_.data() + offset,
+                        error_.data());
+    offset += residual_batches[i].GetFactorBatch()->NumActiveFactors();
   }
 
   row_problem_.resize(num_rows);

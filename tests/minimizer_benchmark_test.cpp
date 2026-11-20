@@ -302,21 +302,9 @@ TEST(MinimizerBenchmark, DISABLED_SE2GraphSingleSmall) {
   SE2Graphs("se2_graph_1x12", 1, 12, 2, SparseLinearSolverType::DenseLDLT, 200);
 }
 
-/** Large and batched cases run the default solver; BENCH_CUDSS=1 adds cuDSS variants. */
-bool WithCudss() { return std::getenv("BENCH_CUDSS") != nullptr; }
-
+/** The default solver; SolverBenchmark compares the backends (BENCH_SOLVERS). */
 TEST(MinimizerBenchmark, DISABLED_SE2GraphSingleLarge) {
   SE2Graphs("se2_graph_1x5000", 1, 5000, 1000, SparseLinearSolverType::BlockSparseCholesky, 20);
-  if (WithCudss()) {
-    SE2Graphs("se2_graph_1x5000_cudss", 1, 5000, 1000, SparseLinearSolverType::cuDSS, 20);
-  }
-}
-
-TEST(MinimizerBenchmark, DISABLED_SE2GraphsBatched) {
-  SE2Graphs("se2_graph_256x12", 256, 12, 2, SparseLinearSolverType::BlockSparseCholesky, 50);
-  if (WithCudss()) {
-    SE2Graphs("se2_graph_256x12_cudss", 256, 12, 2, SparseLinearSolverType::cuDSS, 50);
-  }
 }
 
 /**
@@ -337,57 +325,6 @@ TEST(MinimizerBenchmark, DISABLED_SE2GraphsHeterogeneous) {
               100);
     SE2Graphs(base + "_hard", size.batch, size.n, size.closures, kSolver, 10, 0.02, Subset::kHard,
               100);
-  }
-}
-
-TEST(MinimizerBenchmark, DISABLED_SE3LoopClosurePGO) {
-  constexpr int kPoses = 5000, kClosures = 2000;
-  std::mt19937 rng(7);
-  std::uniform_real_distribution<double> r(-0.1, 0.1), t(-0.4, 0.4);
-  std::normal_distribution<double> jitter(0.0, 0.02);
-  std::vector<Mat4> gt(kPoses), init(kPoses);
-  gt[0] = Pose3({0, 0, 0}, {0, 0, 0});
-  for (int i = 1; i < kPoses; ++i) {
-    gt[i] = Mul<16, 4>(gt[i - 1], Pose3({r(rng), r(rng), r(rng)}, {t(rng), t(rng), t(rng)}));
-  }
-  init[0] = gt[0];
-  for (int i = 1; i < kPoses; ++i) {
-    init[i] = Mul<16, 4>(gt[i], Pose3({jitter(rng), jitter(rng), jitter(rng)},
-                                      {jitter(rng), jitter(rng), jitter(rng)}));
-  }
-  std::vector<std::pair<int, int>> edges;
-  for (int i = 0; i + 1 < kPoses; ++i) edges.push_back({i, i + 1});
-  std::uniform_int_distribution<int> pick(0, kPoses - 1);
-  while (static_cast<int>(edges.size()) < kPoses - 1 + kClosures) {
-    const int a = pick(rng), b = pick(rng);
-    if (std::abs(a - b) > 1) edges.push_back({a, b});
-  }
-  std::vector<Mat4> deltas;
-  for (auto [a, b] : edges) deltas.push_back(Mul<16, 4>(gt[a], Inv<16, 4>(gt[b])));
-  const std::vector<float> init_f = ToFloat(init);
-  dvector<float> init_d(init_f), poses(init_f), deltas_d(ToFloat(deltas));
-  dvector<int> const_ids(std::vector<int>{0});
-  SE3StateBatch states(poses.data(), kPoses, const_ids.data(), 1);
-  states.SetNumActiveStates(kPoses, 1);
-  SE3BetweenFactorBatch between(reinterpret_cast<const SE3Transform *>(deltas_d.data()),
-                                edges.size());
-  between.SetNumActiveFactors(edges.size());
-  std::vector<float *> ptrs;
-  for (auto [a, b] : edges) {
-    ptrs.push_back(states.StateDevicePtr(a));
-    ptrs.push_back(states.StateDevicePtr(b));
-  }
-  Problem problem;
-  problem.AddStateBatch(&states);
-  problem.AddFactorBatch(&between, ptrs);
-  auto reset = [&] {
-    THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_d.data(), init_f.size() * sizeof(float),
-                                   cudaMemcpyDeviceToDevice));
-  };
-  RunBoth("se3_pgo_5000_lc2000", problem, SparseLinearSolverType::BlockSparseCholesky, 15, 10,
-          reset);
-  if (WithCudss()) {
-    RunBoth("se3_pgo_5000_lc2000_cudss", problem, SparseLinearSolverType::cuDSS, 15, 10, reset);
   }
 }
 

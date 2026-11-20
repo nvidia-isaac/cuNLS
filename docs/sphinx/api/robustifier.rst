@@ -181,16 +181,17 @@ LossFunctionBatch
 
 Abstract base (:code:`cunls/robustifier/loss_function_batch.h`).
 
-.. cpp:function:: bool Evaluate(float* s, float3* out, int num_losses, cudaStream_t stream) const
+.. cpp:function:: void Evaluate(float* s, float3* out, int num_losses, cudaStream_t stream) const
 
-  Evaluates the loss for a batch of squared residuals.
+  Evaluates the loss for a batch of squared residuals, asynchronously on
+  ``stream``.
 
   :param s: [in] Device pointer to squared residual values :math:`s = \|f\|^2`.
   :param out: [out] Device pointer to :cpp:type:`float3` tuples
     :math:`(\rho(s), \rho'(s), \rho''(s))` for each input.
   :param num_losses: [in] Number of residual values to process.
   :param stream: [in] CUDA stream for asynchronous execution.
-  :returns: ``true`` on success.
+  :throws std\:\:runtime_error: if the kernel launch fails.
 
 .. _cpp-trivial-loss-function-batch:
 
@@ -384,17 +385,13 @@ ScaledLossFunctionBatch
 
 Header: :code:`cunls/robustifier/scaled_loss_function_batch.h`
 
-.. cpp:function:: template <class T> ScaledLossFunctionBatch(float a, Args&&... loss_args)
+.. cpp:function:: ScaledLossFunctionBatch(const LossFunctionBatch& loss_function, float a)
 
+  :param loss_function: [in] The scaled loss. Referenced, not owned: it must
+    outlive the ``ScaledLossFunctionBatch``.
   :param a: [in] Positive scale factor applied to all loss outputs.
-  :param loss_args: [in] Arguments forwarded to the wrapped loss function
-    constructor (e.g. ``delta`` when ``T`` is ``HuberLossFunctionBatch``).
   :returns: Constructor has no return value.
   :throws std\:\:invalid_argument: if ``a <= 0``.
-
-  ``T`` must derive from ``LossFunctionBatch``. The inner loss is owned by
-  value and constructed from the forwarded arguments, following the same
-  decorator pattern as ``InformationFactorBatch<T>``.
 
 **Formula**
 
@@ -410,6 +407,6 @@ Header: :code:`cunls/robustifier/scaled_loss_function_batch.h`
 
 .. code-block:: cpp
 
-   // Scale Huber loss by 0.5 — the delta=1.0 argument is forwarded
-   // to the HuberLossFunctionBatch constructor.
-   cunls::ScaledLossFunctionBatch<cunls::HuberLossFunctionBatch> loss(0.5f, 1.0f);
+   // Scale a Huber loss (delta = 1.0) by 0.5; huber must outlive loss.
+   cunls::HuberLossFunctionBatch huber(1.0f);
+   cunls::ScaledLossFunctionBatch loss(huber, 0.5f);

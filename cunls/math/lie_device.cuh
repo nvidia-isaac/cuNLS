@@ -686,6 +686,37 @@ __device__ __forceinline__ void SO3JacobianLeftInverse(const float *phi, float *
   RodriguesMatrix(phi, h, -0.5f, k, -0.5, ptr, pitch);
 }
 
+/**
+ * Coefficients of J_l(phi)^{-1} = h I - [phi]x / 2 + k phi phi^T of SO(3):
+ * h = (θ/2) cot(θ/2), k = (1 - h) / θ² (HalfCotCoefficients, no cancellation
+ * at small angles). Even in phi: J_l(-phi)^{-1} = J_r(phi)^{-1} has the same h, k.
+ */
+__device__ __forceinline__ void SO3JacobianLeftInverseCoefficients(const float *phi, float *h,
+                                                                   float *k) {
+  const float theta = norm3df(phi[0], phi[1], phi[2]);
+  float rest;
+  HalfCotCoefficients(theta, h, &rest);
+  *k = theta > 0.f ? rest / theta : 1.f / 12.f;
+}
+
+/**
+ * Row `r` (0..2) of J_l(phi)^{-1} = h I - [phi]x / 2 + k phi phi^T of SO(3),
+ * with h, k from SO3JacobianLeftInverseCoefficients (the same values as
+ * SO3JacobianLeftInverse). For kernels that need one row per thread or rows in
+ * registers; `r` may be a runtime value (no dynamic indexing).
+ */
+__device__ __forceinline__ void SO3JacobianLeftInverseRow(const float *phi, float h, float k, int r,
+                                                          float *row) {
+  // Row r of [phi]x = [[0, -z, y], [z, 0, -x], [-y, x, 0]], and phi_r.
+  const float s0 = r == 0 ? 0.f : (r == 1 ? phi[2] : -phi[1]);
+  const float s1 = r == 0 ? -phi[2] : (r == 1 ? 0.f : phi[0]);
+  const float s2 = r == 0 ? phi[1] : (r == 1 ? -phi[0] : 0.f);
+  const float pr = r == 0 ? phi[0] : (r == 1 ? phi[1] : phi[2]);
+  row[0] = (r == 0 ? h : 0.f) - 0.5f * s0 + k * pr * phi[0];
+  row[1] = (r == 1 ? h : 0.f) - 0.5f * s1 + k * pr * phi[1];
+  row[2] = (r == 2 ? h : 0.f) - 0.5f * s2 + k * pr * phi[2];
+}
+
 /** phi = Log(R) (rows of R `rotation_pitch` apart), accurate at every angle in float32. */
 __device__ __forceinline__ void LogSO3(const float *rotation_matrix, const size_t rotation_pitch,
                                        float *twist) {
@@ -1040,6 +1071,423 @@ __device__ __forceinline__ void Sim2JrInv(float u1, float u2, float w, float lam
   Jr[13] = 0.0f;
   Jr[14] = 0.0f;
   Jr[15] = 1.0f;
+}
+
+/**
+ * J_r^{-1}(xi) of Sim(3) (7x7, row-major, contiguous) for xi = [w, u, lambda]:
+ * the Bernoulli series I + sum_{n=1}^{6} c_n ad(xi)^n, c_n = B_n^+ / n! = 1/2,
+ * 1/12, 0, -1/720, 0, 1/30240, in blocks. With W = [w]_x, U = [u]_x and
+ * M = W + lambda I, ad(xi) = [[W, 0, 0], [U, M, -u], [0, 0, 0]], and
+ *   Block(0,0) = J_r^{-1} of SO(3): I + W / 2 + a2 W^2 (closed form);
+ *   Block(1,1) = I + sum c_n M^n, M^n = a I + b W + c W^2 by the recurrence
+ *                (a, b, c) <- (lambda a, lambda b + a - theta^2 c, lambda c + b)
+ *                (W^3 = -theta^2 W);
+ *   Block(1,0) = sum c_n B_n, B_1 = U, B_n = U W^{n-1} + M B_{n-1};
+ *   Block(1,2) = -sum d_n M^n u, d_n = c_{n+1}.
+ * Used by the batched ComputeJacobianRightInverseSim3 kernel and the Sim(3)
+ * between factor.
+ */
+__device__ __forceinline__ void Sim3JrInv(const float *xi, float *J) {
+  const float w[3] = {xi[0], xi[1], xi[2]};
+  const float u[3] = {xi[3], xi[4], xi[5]};
+  const float lam = xi[6];
+  const float theta2 = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+
+  if (theta2 + lam * lam < 1e-6f) {
+    // First order: I + ad(xi) / 2.
+    for (int i = 0; i < 49; ++i) J[i] = 0.0f;
+    J[0] = 1.f;
+    J[8] = 1.f;
+    J[16] = 1.f;
+    J[24] = 1.f;
+    J[32] = 1.f;
+    J[40] = 1.f;
+    J[48] = 1.f;
+    J[1] += -0.5f * w[2];
+    J[2] += 0.5f * w[1];
+    J[7] += 0.5f * w[2];
+    J[9] += -0.5f * w[0];
+    J[14] += -0.5f * w[1];
+    J[15] += 0.5f * w[0];
+    J[24] += 0.5f * lam;
+    J[25] += -0.5f * w[2];
+    J[26] += 0.5f * w[1];
+    J[31] += 0.5f * w[2];
+    J[32] += 0.5f * lam;
+    J[33] += -0.5f * w[0];
+    J[38] += -0.5f * w[1];
+    J[39] += 0.5f * w[0];
+    J[40] += 0.5f * lam;
+    J[22] += -0.5f * u[2];  // row 3 of the 0.5 [u]_x block: [0, -u2, u1] / 2
+    J[23] += 0.5f * u[1];
+    J[28] += 0.5f * u[2];
+    J[30] += -0.5f * u[0];
+    J[35] += -0.5f * u[1];
+    J[36] += 0.5f * u[0];
+    J[27] = -0.5f * u[0];
+    J[34] = -0.5f * u[1];
+    J[41] = -0.5f * u[2];
+    return;
+  }
+
+  const float theta = sqrtf(theta2);
+  float a2;
+  if (theta2 > 1e-6f) {
+    const float st = sinf(theta), ct = cosf(theta);
+    a2 = 1.0f / theta2 - (1.0f + ct) / (2.0f * theta * st);
+  } else {
+    a2 = 1.0f / 12.0f + theta2 / 720.0f;
+  }
+
+  float W[9], W2[9], U[9], UW[9], UW2[9];
+  SkewMatrix(w, W, 3);
+  SkewMatrix(u, U, 3);
+  MatMul3x3(W, W, W2);
+  MatMul3x3(U, W, UW);
+  MatMul3x3(U, W2, UW2);
+
+  const float wu_cross[3] = {w[1] * u[2] - w[2] * u[1], w[2] * u[0] - w[0] * u[2],
+                             w[0] * u[1] - w[1] * u[0]};
+  const float dot_wu = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
+  const float W2u[3] = {w[0] * dot_wu - theta2 * u[0], w[1] * dot_wu - theta2 * u[1],
+                        w[2] * dot_wu - theta2 * u[2]};
+
+  constexpr float c1 = 0.5f, c2 = 1.0f / 12.0f, c4 = -1.0f / 720.0f, c6 = 1.0f / 30240.0f;
+
+  // M^n = ma I + mb W + mc W^2 and B_n, accumulated into sum c_n M^n (sa, sb,
+  // sc) and sum c_n B_n (SB).
+  float ma = lam, mb = 1.0f, mc = 0.0f;
+  float sa = 0.0f, sb = 0.0f, sc = 0.0f;
+  float Bn[9], SB[9];
+#pragma unroll
+  for (int i = 0; i < 9; ++i) {
+    Bn[i] = U[i];
+    SB[i] = 0.0f;
+  }
+  auto accumulate = [&](float c) {
+    sa += c * ma;
+    sb += c * mb;
+    sc += c * mc;
+#pragma unroll
+    for (int i = 0; i < 9; ++i) SB[i] += c * Bn[i];
+  };
+  // M^n from M^{n-1}, and B_n = U W^{n-1} + lambda B_{n-1} + W B_{n-1} with
+  // U W^{n-1} = s X (X = UW or UW2).
+  auto next = [&](const float *X, float s) {
+    const float na = lam * ma, nb = lam * mb + ma - theta2 * mc, nc = lam * mc + mb;
+    ma = na;
+    mb = nb;
+    mc = nc;
+    float WB[9];
+    MatMul3x3(W, Bn, WB);
+#pragma unroll
+    for (int i = 0; i < 9; ++i) Bn[i] = s * X[i] + lam * Bn[i] + WB[i];
+  };
+  accumulate(c1);  // n = 1
+  next(UW, 1.0f);  // n = 2: U W
+  accumulate(c2);
+  next(UW2, 1.0f);    // n = 3: U W^2 (c_3 = 0)
+  next(UW, -theta2);  // n = 4: U W^3 = -theta^2 U W
+  accumulate(c4);
+  next(UW2, -theta2);         // n = 5: U W^4 = -theta^2 U W^2 (c_5 = 0)
+  next(UW, theta2 * theta2);  // n = 6: U W^5 = theta^4 U W
+  accumulate(c6);
+
+  for (int i = 0; i < 49; ++i) J[i] = 0.0f;
+    // Block(0,0): J_r^{-1} of SO(3).
+#pragma unroll
+  for (int r = 0; r < 3; ++r) {
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+      float val = 0.5f * W[r * 3 + c] + a2 * W2[r * 3 + c];
+      if (r == c) val += 1.0f;
+      J[r * 7 + c] = val;
+    }
+  }
+  // Block(1,1): I + sa I + sb W + sc W^2.
+#pragma unroll
+  for (int r = 0; r < 3; ++r) {
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+      float val = sb * W[r * 3 + c] + sc * W2[r * 3 + c];
+      if (r == c) val += 1.0f + sa;
+      J[(r + 3) * 7 + (c + 3)] = val;
+    }
+  }
+  // Block(1,0): SB.
+#pragma unroll
+  for (int r = 0; r < 3; ++r) {
+#pragma unroll
+    for (int c = 0; c < 3; ++c) J[(r + 3) * 7 + c] = SB[r * 3 + c];
+  }
+
+  // Block(1,2): -sum d_n M^n u with d = (1/2, 1/12, 0, -1/720, 0, 1/30240) for
+  // n = 0..5, M^n u = a u + b (w x u) + c W^2 u.
+  float ma_s[6], mb_s[6], mc_s[6];
+  ma_s[0] = 1.0f;
+  mb_s[0] = 0.0f;
+  mc_s[0] = 0.0f;
+  ma_s[1] = lam;
+  mb_s[1] = 1.0f;
+  mc_s[1] = 0.0f;
+#pragma unroll
+  for (int n = 1; n < 5; ++n) {
+    ma_s[n + 1] = lam * ma_s[n];
+    mb_s[n + 1] = lam * mb_s[n] + ma_s[n] - theta2 * mc_s[n];
+    mc_s[n + 1] = lam * mc_s[n] + mb_s[n];
+  }
+  const float sd_a = c1 * ma_s[0] + c2 * ma_s[1] + c4 * ma_s[3] + c6 * ma_s[5];
+  const float sd_b = c1 * mb_s[0] + c2 * mb_s[1] + c4 * mb_s[3] + c6 * mb_s[5];
+  const float sd_c = c1 * mc_s[0] + c2 * mc_s[1] + c4 * mc_s[3] + c6 * mc_s[5];
+#pragma unroll
+  for (int i = 0; i < 3; ++i)
+    J[(3 + i) * 7 + 6] = -(sd_a * u[i] + sd_b * wu_cross[i] + sd_c * W2u[i]);
+  J[48] = 1.0f;
+}
+
+// ---------------------------------------------------------------------------
+// Euler step defects of the dynamics factors (cunls/factor/dynamics/):
+// r = Log((X Exp(step))^{-1} Y) between consecutive poses X, Y, with right
+// perturbations X Exp(δ) and Y Exp(δ). Its Jacobians:
+//   ∂r/∂X = -J_l^{-1}(r) Ad(E^{-1}),  ∂r/∂Y = J_r^{-1}(r) = J_l^{-1}(-r),
+//   ∂r/∂step = -J_l^{-1}(r) J_r(step),  E = Exp(step);
+// each factor chains ∂step/∂(its inputs) (step = dt ξ).
+// ---------------------------------------------------------------------------
+
+/** SE(2) element as (cos θ, sin θ, x, y): the 4 non-trivial entries of the 3x3 storage. */
+struct SE2Element {
+  float c, s, x, y;
+};
+
+/** Loads an SE(2) element from its row-major 3x3 storage through the read-only cache. */
+__device__ __forceinline__ SE2Element LoadSE2Element(const float *T) {
+  return {__ldg(T + 0), __ldg(T + 3), __ldg(T + 2), __ldg(T + 5)};
+}
+
+/** a b of two SE(2) elements. */
+__device__ __forceinline__ SE2Element ComposeSE2(const SE2Element &a, const SE2Element &b) {
+  return {a.c * b.c - a.s * b.s, a.s * b.c + a.c * b.s, a.c * b.x - a.s * b.y + a.x,
+          a.s * b.x + a.c * b.y + a.y};
+}
+
+/** a^{-1} of an SE(2) element. */
+__device__ __forceinline__ SE2Element InverseSE2Element(const SE2Element &a) {
+  return {a.c, -a.s, -(a.c * a.x + a.s * a.y), a.s * a.x - a.c * a.y};
+}
+
+/** SE(2) step defect r = Log((X Exp(step))^{-1} Y), step = [v_x, v_y, θ]; *E = Exp(step). */
+__device__ __forceinline__ void SE2StepDefect(const SE2Element &X, const SE2Element &Y,
+                                              const float *step, SE2Element *E, float *r) {
+  float E9[9];
+  ExpSE2(step, E9);
+  *E = {E9[0], E9[3], E9[2], E9[5]};
+  const SE2Element D = ComposeSE2(InverseSE2Element(ComposeSE2(X, *E)), Y);
+  const float D9[9] = {D.c, -D.s, D.x, D.s, D.c, D.y, 0.f, 0.f, 1.f};
+  LogSE2(D9, r);
+}
+
+/**
+ * The matrices of the SE(2) step defect's Jacobians (row-major 3x3):
+ * J_l^{-1}(r), J_r^{-1}(r), J_r(step) and Ad(E^{-1}).
+ */
+struct SE2StepDefectJacobian {
+  float Jl_inv[9], Jr_inv[9], Jr_step[9], Ad[9];
+};
+
+/** Fills `J` for the defect r of SE2StepDefect (E = Exp(step)). */
+__device__ __forceinline__ void InitSE2StepDefectJacobian(const float *r, const float *step,
+                                                          const SE2Element &E,
+                                                          SE2StepDefectJacobian *J) {
+  SE2JrInv(-r[0], -r[1], -r[2], J->Jl_inv);  // J_l^{-1}(r) = J_r^{-1}(-r)
+  SE2JrInv(r[0], r[1], r[2], J->Jr_inv);
+  SE2Jr(step[0], step[1], step[2], J->Jr_step);
+  const SE2Element Ei = InverseSE2Element(E);
+  const float Ad[9] = {Ei.c, -Ei.s, Ei.y, Ei.s, Ei.c, -Ei.x, 0.f, 0.f, 1.f};
+#pragma unroll
+  for (int k = 0; k < 9; ++k) J->Ad[k] = Ad[k];
+}
+
+/**
+ * Row i of the SE(2) step defect's Jacobians: dX = ∂r_i/∂X, dstep = dt
+ * ∂r_i/∂step = -dt (J_l^{-1} J_r(step))_i, dY = ∂r_i/∂Y.
+ */
+__device__ __forceinline__ void SE2StepDefectRow(const SE2StepDefectJacobian &J, int i, float dt,
+                                                 float *dX, float *dstep, float *dY) {
+  const float *l = J.Jl_inv + 3 * i;
+#pragma unroll
+  for (int j = 0; j < 3; ++j) {
+    dX[j] = -(l[0] * J.Ad[j] + l[1] * J.Ad[3 + j] + l[2] * J.Ad[6 + j]);
+    dstep[j] = -dt * (l[0] * J.Jr_step[j] + l[1] * J.Jr_step[3 + j] + l[2] * J.Jr_step[6 + j]);
+    dY[j] = J.Jr_inv[3 * i + j];
+  }
+}
+
+/** Rows 0..2 of an SE(3) storage matrix (row-major 4x4): R and t, pitch 4, read-only cache. */
+__device__ __forceinline__ void LoadSE3Rows(const float *T, float *P) {
+#pragma unroll
+  for (int i = 0; i < 12; ++i) P[i] = __ldg(T + i);
+}
+
+/**
+ * C = A B for SE(3) poses stored as rows 0..2 of row-major 4x4 matrices (pitch
+ * 4; row 3 is the implied [0 0 0 1] and is not written). C may not alias A or B.
+ */
+__device__ __forceinline__ void ComposeSE3(const float *A, const float *B, float *C) {
+#pragma unroll
+  for (int i = 0; i < 3; ++i) {
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      C[i * 4 + j] = A[i * 4] * B[j] + A[i * 4 + 1] * B[4 + j] + A[i * 4 + 2] * B[8 + j] +
+                     (j == 3 ? A[i * 4 + 3] : 0.f);
+    }
+  }
+}
+
+/**
+ * SE(3) step defect e = Log((X Exp(step))^{-1} Y), step = [φ, ρ]; X and Y as
+ * rows 0..2 (pitch 4). E receives Exp(step) (4x4, pitch 4).
+ */
+__device__ __forceinline__ void SE3StepDefect(const float *X, const float *Y, const float *step,
+                                              float *E, float *e) {
+  float Phi[16], Phi_inv[16], D[16];
+  ExpSE3(step, E, 4);
+  ComposeSE3(X, E, Phi);
+  InverseSE3(Phi, 4, Phi_inv);
+  ComposeSE3(Phi_inv, Y, D);
+  LogSE3(D, 4, e);
+}
+
+/**
+ * The matrices of the SE(3) step defect's Jacobians: J_l^{-1}(e), J_r^{-1}(e),
+ * J_r(step) (6x6 each) and E^{-1} (4x4); all row-major.
+ */
+struct SE3StepDefectJacobian {
+  float Jl_inv[36], Jr_inv[36], Jr_step[36], E_inv[16];
+};
+
+/** Fills `J` for the defect e of SE3StepDefect (E = Exp(step), pitch 4). */
+__device__ __forceinline__ void InitSE3StepDefectJacobian(const float *e, const float *step,
+                                                          const float *E,
+                                                          SE3StepDefectJacobian *J) {
+  SE3JacobianLeftInverse(e, J->Jl_inv, 6);
+  float m[6];
+#pragma unroll
+  for (int i = 0; i < 6; ++i) m[i] = -e[i];
+  SE3JacobianLeftInverse(m, J->Jr_inv, 6);  // J_r^{-1}(e) = J_l^{-1}(-e)
+#pragma unroll
+  for (int i = 0; i < 6; ++i) m[i] = -step[i];
+  SE3JacobianLeft(m, J->Jr_step, 6);  // J_r(step) = J_l(-step)
+  InverseSE3(E, 4, J->E_inv);
+}
+
+/**
+ * For row i of J_l^{-1}(e): lad = (J_l^{-1} Ad(E^{-1}))_i and lj = (J_l^{-1}
+ * J_r(step))_i, so ∂e_i/∂X = -lad and ∂e_i/∂step = -lj. Unused entries of
+ * lj are eliminated by the compiler.
+ */
+__device__ __forceinline__ void SE3StepDefectRow(const SE3StepDefectJacobian &J, int i, float *lad,
+                                                 float *lj) {
+  const float *l = J.Jl_inv + i * 6;
+#pragma unroll
+  for (int j = 0; j < 6; ++j) {
+    lad[j] = 0.f;
+    lj[j] = 0.f;
+  }
+#pragma unroll
+  for (int k = 0; k < 6; ++k) {
+    float ad[6];
+    AdjointSE3RowFromTransform(J.E_inv, 4, k, ad);
+#pragma unroll
+    for (int j = 0; j < 6; ++j) {
+      lad[j] += l[k] * ad[j];
+      lj[j] += l[k] * J.Jr_step[k * 6 + j];
+    }
+  }
+}
+
+/**
+ * Pose row i (0..5) of the rigid-body Euler defect of the quadrotor and
+ * quadruped factors: e = Log((T Exp(dt ξ))^{-1} T_next), ξ = [ω; ρ], ρ = Rᵀ v
+ * (world velocity v, body rates ω):
+ *   ∂e/∂T = -J_l^{-1} (Ad(E^{-1}) + dt J_r ∂ξ/∂δT) with ∂ξ_ρ/∂δφ = [ρ]x (columns 0..5);
+ *   ∂e/∂v = -dt J_l^{-1} J_r[:, 3:6] Rᵀ (columns 6..8);
+ *   ∂e/∂ω = -dt J_l^{-1} J_r[:, 0:3] (columns 9..11);
+ *   ∂e/∂T_next = J_r^{-1}(e) (columns kNextPoseColumn..+5).
+ * R is the rotation of T (rows 0..2, pitch 4). Every other column of `row` is set to zero.
+ */
+template <int kColumns, int kNextPoseColumn>
+__device__ __forceinline__ void RigidBodyPoseRow(const SE3StepDefectJacobian &J, int i, float dt,
+                                                 const float *R, const float *rho,
+                                                 float (&row)[kColumns]) {
+  float lad[6], lj[6];
+  SE3StepDefectRow(J, i, lad, lj);
+  const float *ar = lj + 3;  // (l J_r)[3:6], against ∂ξ_ρ
+#pragma unroll
+  for (int j = 0; j < kColumns; ++j) row[j] = 0.f;
+  row[0] = -(lad[0] + dt * (ar[1] * rho[2] - ar[2] * rho[1]));
+  row[1] = -(lad[1] + dt * (ar[2] * rho[0] - ar[0] * rho[2]));
+  row[2] = -(lad[2] + dt * (ar[0] * rho[1] - ar[1] * rho[0]));
+  row[3] = -lad[3];
+  row[4] = -lad[4];
+  row[5] = -lad[5];
+#pragma unroll
+  for (int j = 0; j < 3; ++j) {
+    row[6 + j] = -dt * (ar[0] * R[j * 4] + ar[1] * R[j * 4 + 1] + ar[2] * R[j * 4 + 2]);
+    row[9 + j] = -dt * lj[j];
+  }
+#pragma unroll
+  for (int j = 0; j < 6; ++j) row[kNextPoseColumn + j] = J.Jr_inv[i * 6 + j];
+}
+
+/**
+ * Writes one row of n values per item for a warp's `count` items: each lane
+ * stages its item's row (rows kRowStride floats apart in `stage`, kMaxColumns
+ * >= n), then the warp stores the rows of consecutive items (contiguous runs of
+ * n floats, `item_stride` apart) with consecutive lanes on consecutive
+ * addresses.
+ */
+template <int kMaxColumns, int kRowStride>
+__device__ __forceinline__ void WriteWarpRows(float *stage, int lane, const float *values, int n,
+                                              int count, float *dst, size_t item_stride) {
+#pragma unroll
+  for (int c = 0; c < kMaxColumns; ++c) {
+    if (c < n) stage[lane * kRowStride + c] = values[c];
+  }
+  __syncwarp();
+  for (int k = lane; k < count * n; k += 32) {
+    const int item = k / n, c = k % n;
+    dst[item * item_stride + c] = stage[item * kRowStride + c];
+  }
+  __syncwarp();
+}
+
+// ---------------------------------------------------------------------------
+// Quaternions (x, y, z, w).
+// ---------------------------------------------------------------------------
+
+/**
+ * R (row-major 3x3) of the quaternion q = (x, y, z, w). With kNormalize, q is
+ * normalized first (it need not have unit length); otherwise q must be unit.
+ */
+template <bool kNormalize>
+__device__ __forceinline__ void QuatToMatrix(const float *q, float *R) {
+  float x = q[0], y = q[1], z = q[2], w = q[3];
+  if constexpr (kNormalize) {
+    const float n = rsqrtf(x * x + y * y + z * z + w * w);
+    x *= n;
+    y *= n;
+    z *= n;
+    w *= n;
+  }
+  R[0] = 1.f - 2.f * (y * y + z * z);
+  R[1] = 2.f * (x * y - z * w);
+  R[2] = 2.f * (x * z + y * w);
+  R[3] = 2.f * (x * y + z * w);
+  R[4] = 1.f - 2.f * (x * x + z * z);
+  R[5] = 2.f * (y * z - x * w);
+  R[6] = 2.f * (x * z - y * w);
+  R[7] = 2.f * (y * z + x * w);
+  R[8] = 1.f - 2.f * (x * x + y * y);
 }
 
 }  // namespace lie_device

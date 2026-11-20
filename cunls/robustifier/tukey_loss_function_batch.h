@@ -17,8 +17,9 @@
 
 #pragma once
 
-#include "cunls/robustifier/loss_function_batch.h"
 #include <cuda_runtime.h>
+
+#include "cunls/robustifier/loss_function_batch.h"
 
 namespace cunls {
 
@@ -35,7 +36,7 @@ namespace cunls {
  * Tukey completely rejects outliers (zero weight) beyond the threshold.
  */
 class TukeyLossFunctionBatch : public LossFunctionBatch {
-public:
+ public:
   /**
    * @brief Constructs a Tukey loss with the given threshold.
    * @param a Threshold parameter (a > 0). Residuals with s > a^2 are
@@ -47,11 +48,10 @@ public:
    * @brief Evaluates the Tukey loss for a batch of squared residuals.
    * @copydetails LossFunctionBatch::Evaluate
    */
-  bool Evaluate(float *s, float3 *out, int num_losses,
-                cudaStream_t stream) const override;
+  void Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
 
-private:
-  float a_squared_; ///< a^2, threshold separating inlier and outlier regions.
+ private:
+  float a_squared_;  ///< a^2, threshold separating inlier and outlier regions.
 };
 
-} // namespace cunls
+}  // namespace cunls

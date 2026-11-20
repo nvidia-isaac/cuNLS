@@ -69,4 +69,57 @@ class CudaStream {
   bool sync_on_destroy_;  ///< Whether to synchronize on destruction.
   bool owned_ = true;     ///< Created here (destroyed with the object), not wrapped.
 };
+
+/**
+ * @brief Base of the library handle wrappers (cuBLASHandle, cuSPARSEHandle,
+ * cuSolverHandle, cuDSSHandle): one handle bound to one CUDA stream at a time.
+ *
+ * The first GetHandle() creates the handle for its stream; a call with another
+ * stream destroys it and creates a new one. The handle is owned: destroyed with
+ * the object, and the object is non-copyable.
+ */
+class StreamBoundHandle {
+ public:
+  /** @brief Creates a library handle bound to `stream`; throws on a library error. */
+  using CreateFn = void *(*)(cudaStream_t stream);
+
+  /**
+   * @brief Destroys a library handle: throws on a library error when `may_throw`,
+   * else only logs it (the destructor).
+   */
+  using DestroyFn = void (*)(void *handle, bool may_throw);
+
+  StreamBoundHandle(const StreamBoundHandle &) = delete;
+  StreamBoundHandle &operator=(const StreamBoundHandle &) = delete;
+
+  /** @brief Destroys the handle, if one was created (errors are logged, not thrown). */
+  ~StreamBoundHandle();
+
+  /**
+   * @brief The handle bound to @p stream: the existing one when @p stream is the
+   * stream of the previous call, else a new one (the old one is destroyed).
+   *
+   * @param stream CUDA stream to bind the handle to (must not be null).
+   * @return An opaque pointer to the library handle.
+   * @throws std::invalid_argument if @p stream is null.
+   */
+  void *GetHandle(cudaStream_t stream);
+
+ protected:
+  /**
+   * @brief No handle yet; GetHandle() creates one.
+   *
+   * @param name Class name used in error messages (e.g. "cuBLASHandle").
+   * @param create Creates a handle bound to a stream.
+   * @param destroy Destroys a handle.
+   */
+  StreamBoundHandle(const char *name, CreateFn create, DestroyFn destroy);
+
+ private:
+  const char *name_;               ///< Class name for error messages.
+  CreateFn create_;                ///< Creates a handle bound to a stream.
+  DestroyFn destroy_;              ///< Destroys a handle.
+  cudaStream_t stream_ = nullptr;  ///< Stream the current handle is bound to.
+  void *handle_ = nullptr;         ///< The library handle, or null before the first GetHandle().
+};
 }  // namespace cunls

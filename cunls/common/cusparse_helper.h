@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 
+#include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 
@@ -51,50 +52,14 @@ const char *cusparseGetErrorString(int status);
 #define WARN_ON_CUSPARSE_ERROR(status) CHECK_CUDA_ERROR(status, cusparseGetErrorString, false)
 
 /**
- * @class cuSPARSEHandle
- * @brief RAII wrapper for cuSPARSE library handles
- *
- * This class manages the lifetime of cuSPARSE handles and automatically
- * associates them with CUDA streams. It ensures proper cleanup and provides
- * lazy initialization of handles only when needed. The handle is automatically
- * destroyed when the object goes out of scope or when a different stream is
- * requested.
+ * @brief The cuSPARSE handle of a CUDA stream (see StreamBoundHandle): created
+ * on the first GetHandle(), recreated when the stream changes, destroyed with
+ * the object. Each instance owns its handle; non-copyable.
  */
-class cuSPARSEHandle {
+class cuSPARSEHandle : public StreamBoundHandle {
  public:
-  /**
-   * @brief Default constructor
-   *
-   * Creates an uninitialized handle. The actual cuSPARSE handle creation is
-   * deferred until GetHandle() is called for the first time.
-   */
-  cuSPARSEHandle() = default;
-
-  /**
-   * @brief Destructor
-   *
-   * Automatically destroys the cuSPARSE handle if it was created, ensuring
-   * proper resource cleanup. Uses WARN_ON_CUSPARSE_ERROR to avoid throwing
-   * exceptions from the destructor.
-   */
-  ~cuSPARSEHandle();
-
-  /**
-   * @brief Get or create a cuSPARSE handle for the specified stream
-   *
-   * Returns a cuSPARSE handle associated with the given CUDA stream. If a
-   * handle already exists for the same stream, it is reused. If a different
-   * stream is requested, the old handle is destroyed and a new one is created.
-   *
-   * @param stream The CUDA stream to associate with the cuSPARSE handle
-   * @return An opaque pointer to the cuSPARSE handle ready for use.
-   * @throws Runtime error if handle creation or stream association fails
-   */
-  void *GetHandle(cudaStream_t stream);
-
- private:
-  cudaStream_t stream_ = nullptr;  ///< Currently associated CUDA stream
-  void *handle_ = nullptr;         ///< The cuSPARSE handle object
+  /** @brief No handle yet: GetHandle() creates a cusparseHandle_t for its stream. */
+  cuSPARSEHandle();
 };
 
 /**

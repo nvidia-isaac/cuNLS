@@ -35,6 +35,7 @@ Conventions shared by every class:
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Dict, List, Optional, Tuple, Union
 
 
@@ -101,16 +102,55 @@ _POSE = {
                     "[omega (3), u (3), lambda (log scale)]"),
     "SL4": ("SL4StateBatch", 16, 15, "4x4 matrix with det 1, row-major", "15 sl(4) coordinates"),
 }
-_VECTOR_DIMS = (1, 2, 3, 4, 6, 12)
+# The numbered names of the vector classes (VectorStateBatch3, BoundFactorBatch12, ...): the
+# runtime-sized class with dim fixed. The catalog lists the runtime-sized classes; a lookup by a
+# numbered name gets the entry with the size filled in.
+VECTOR_DIMS = (1, 2, 3, 4, 6, 12)  # sizes with a numbered name
+_NUMBERED = re.compile(r"^(VectorStateBatch|PriorVectorFactorBatch|VectorBetweenFactorBatch|"
+                       r"BoundFactorBatch|HalfspaceFactorBatch)(\d+)$")
+
+
+def _vector_entries(dim: Optional[int]) -> List[Union[StateInfo, FactorInfo]]:
+    """The vector state and factor entries: runtime-sized (dim None, sizes 0) or numbered."""
+    sfx, d, size = ("", "dim", 0) if dim is None else (str(dim), str(dim), dim)
+    state = f"VectorStateBatch{sfx}"
+    sized = "" if dim else (" Size: the dim keyword, else the trailing extent of the first "
+                            "array ((M, dim) or wp.vecN); the numbered names (e.g. "
+                            "PriorVectorFactorBatch3) fix it.")
+    return [
+        StateInfo(state, size, size, f"{d} floats", f"the {d} components (Plus is addition)",
+                  constructor="" if dim else (
+                      "data (float32 GPU array of capacity x dim), capacity, optionally "
+                      "const_state_ids (int32 GPU array of the states held fixed) with "
+                      "const_capacity, and the keyword dim (read from data shaped (N, dim) or "
+                      "wp.vecN when omitted; VectorStateBatch3 and the other numbered names "
+                      "fix it)")),
+        FactorInfo(f"PriorVectorFactorBatch{sfx}", [state], size, "x - observation",
+                   {"observations": f"{d} floats per factor"}, False,
+                   "Absolute measurement of a vector state; also a weak prior/regularizer (wrap "
+                   "in WeightedFactorBatch).", sized.strip()),
+        FactorInfo(f"VectorBetweenFactorBatch{sfx}", [state] * 2, size,
+                   "x_left - x_right - delta", {"deltas": f"{d} floats per factor"}, True,
+                   "Relative measurement between two vector states.",
+                   "Sign: residual is left - right - delta, so delta = x_left - x_right." + sized),
+        FactorInfo(f"BoundFactorBatch{sfx}", [state], 2 * size,
+                   "box constraint lower <= x <= upper",
+                   {"lower": f"{d} floats per factor", "upper": f"{d} floats per factor"}, False,
+                   "Box bounds on a vector state; needs AugmentedLagrangianMinimizer.",
+                   "For plain parameter bounds prefer VectorStateBatch.set_bounds (projected)." +
+                   sized),
+        FactorInfo(f"HalfspaceFactorBatch{sfx}", [state], 1, "a^T x - b",
+                   {"normals": f"{d} floats per factor (a)", "offsets": "1 float per factor (b)"},
+                   False, "Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., "
+                   "ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.",
+                   sized.strip()),
+    ]
 
 
 def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
     entries: List[Union[StateInfo, FactorInfo]] = []
     for group, (cls, amb, tan, layout, order) in _POSE.items():
         entries.append(StateInfo(cls, amb, tan, layout, order))
-    for d in _VECTOR_DIMS:
-        entries.append(StateInfo(f"VectorStateBatch{d}", d, d, f"{d} floats",
-                                 f"the {d} components (Plus is addition)"))
 
     lie_label = {"SE3": "SE(3)", "SE2": "SE(2)", "SO3": "SO(3)", "SO2": "SO(2)",
                  "Similarity2": "Sim(2)", "Similarity3": "Sim(3)", "SL4": "SL(4)"}
@@ -127,17 +167,7 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
             f"{group}PriorFactorBatch", [cls], tan, "Log(T_target^-1 * T)",
             {"observations": f"T_target per factor: {layout}"}, False,
             f"Absolute {lie_label[group]} measurement or anchor of one state."))
-    for d in _VECTOR_DIMS:
-        entries.append(FactorInfo(
-            f"PriorVectorFactorBatch{d}", [f"VectorStateBatch{d}"], d, "x - observation",
-            {"observations": f"{d} floats per factor"}, False,
-            "Absolute measurement of a vector state; also a weak prior/regularizer (wrap in "
-            "WeightedFactorBatch)."))
-        entries.append(FactorInfo(
-            f"VectorBetweenFactorBatch{d}", [f"VectorStateBatch{d}"] * 2, d,
-            "x_left - x_right - delta", {"deltas": f"{d} floats per factor"}, True,
-            "Relative measurement between two vector states.",
-            "Sign: residual is left - right - delta, so delta = x_left - x_right."))
+    entries += _vector_entries(None)
     entries += [
         FactorInfo("ReprojectionFactorBatch", ["SE3StateBatch", "VectorStateBatch3"], 2,
                    "P_c = T^-1 P_w; r = P_c.xy / P_c.z - observation",
@@ -214,19 +244,6 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
         entries.append(FactorInfo(name, [], 0, "dynamics residual (see docs/sphinx/dynamics.rst)",
                                   {"time_steps": "1 float per factor"}, True, use,
                                   "Prefer pycunls.mpc, which wires these for you."))
-    for d in _VECTOR_DIMS:
-        entries.append(FactorInfo(
-            f"BoundFactorBatch{d}", [f"VectorStateBatch{d}"], 2 * d,
-            "box constraint lower <= x <= upper",
-            {"lower": f"{d} floats per factor", "upper": f"{d} floats per factor"}, False,
-            "Box bounds on a vector state; needs AugmentedLagrangianMinimizer.",
-            "For plain parameter bounds prefer VectorStateBatch.set_bounds (projected)."))
-    for d in _VECTOR_DIMS:
-        entries.append(FactorInfo(
-            f"HalfspaceFactorBatch{d}", [f"VectorStateBatch{d}"], 1, "a^T x - b",
-            {"normals": f"{d} floats per factor (a)", "offsets": "1 float per factor (b)"},
-            False, "Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., "
-            "ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer."))
     entries += [
         FactorInfo("SE2DiskClearanceFactorBatch", ["SE2StateBatch"], 1,
                    "(radius + margin) - |p - center|",
@@ -341,15 +358,23 @@ def _build() -> Dict[str, Union[StateInfo, FactorInfo]]:
 _ENTRIES = _build()
 
 
+def _entry(name: str) -> Optional[Union[StateInfo, FactorInfo]]:
+    entry = _ENTRIES.get(name)
+    numbered = _NUMBERED.match(name) if entry is None else None
+    if numbered and int(numbered[2]) in VECTOR_DIMS:
+        entry = next(e for e in _vector_entries(int(numbered[2])) if e.name == name)
+    return entry
+
+
 def state_info(name: str) -> Optional[StateInfo]:
     """The :class:`StateInfo` of a built-in state batch class name, or None."""
-    entry = _ENTRIES.get(name)
+    entry = _entry(name)
     return entry if isinstance(entry, StateInfo) else None
 
 
 def factor_info(name: str) -> Optional[FactorInfo]:
     """The :class:`FactorInfo` of a built-in factor batch class name, or None."""
-    entry = _ENTRIES.get(name)
+    entry = _entry(name)
     return entry if isinstance(entry, FactorInfo) else None
 
 
@@ -421,13 +446,15 @@ def describe(name) -> str:
     """
     if not isinstance(name, str):
         name = name.__name__
-    entry = _ENTRIES.get(name)
+    entry = _entry(name)
     if entry is None:
         close = [n for n in _ENTRIES if name.lower() in n.lower()]
         hint = f" Did you mean: {', '.join(close[:8])}?" if close else ""
         raise KeyError(f"{name} is not a built-in state or factor batch.{hint}")
     if isinstance(entry, StateInfo):
-        if entry.ambient == 0:  # sized by the topology
+        if entry.name == "VectorStateBatch":
+            sizes, tangent = "dim floats per state", "dim"
+        elif entry.ambient == 0:  # sized by the topology
             sizes = ("topology.ambient_size floats per state (e.g. 19 for one revolute joint: "
                      "1 coordinate, 12 pose floats, 6 motion-column floats)")
             tangent = "topology.dof_count (e.g. 1 for one revolute joint)"

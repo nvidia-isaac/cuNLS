@@ -17,7 +17,7 @@ if(NOT DEFINED CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX} AND EXISTS "/usr
   set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 endif()
 
-project(cunls VERSION 0.4.2 LANGUAGES CXX CUDA)
+project(cunls VERSION 0.4.3 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -223,8 +223,6 @@ if(BUILD_TESTING)
     tests/schur_system_test.cpp
     tests/stereo_loop_ba_test.cpp
     tests/triple_smooth_factor_batch.cu
-    tests/dense_matrix_ops_test.cpp
-    tests/utils_test.cpp
     tests/device_vector_test.cpp
     tests/sba_minimizer_test.cpp
     tests/pgo_minimizer_test.cpp

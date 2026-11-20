@@ -22,21 +22,22 @@
 // Each bind_*() function registers one logical group of cuNLS types with
 // the nanobind module.  They are called sequentially from pycunls_module.cpp.
 
+#include <cuda_runtime.h>
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
+
+#include "cunls/state/vector_state_batch.h"
 
 namespace nb = nanobind;
 
-// Extract a raw GPU device pointer from a Python object.
-// Accepts either a plain int (already a pointer) or any object whose
-// .data.ptr attribute yields one.
-uintptr_t extract_device_ptr(nb::handle obj);
-
-// Same, and when obj is an array (has .dtype) checks that its dtype is
-// `dtype` (e.g. "float32"), raising TypeError naming `name` otherwise. Plain
-// ints (raw pointers) pass unchecked.
+// Extracts a raw GPU device pointer from a Python object: a plain int (already a pointer) or a
+// device array (__cuda_array_interface__); when obj is an array, checks that its dtype is
+// `dtype` (e.g. "float32"), raising TypeError naming `name` otherwise. Plain ints (raw pointers)
+// pass unchecked.
 uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name);
 
 // Same, and when the array's size is known (__cuda_array_interface__) checks
@@ -51,6 +52,8 @@ struct DeviceArray {
   uintptr_t ptr = 0;
   size_t num_elements = 0;
   bool size_known = false;
+  size_t ndim = 0;         // dimensions of the shape (when size_known)
+  size_t last_extent = 0;  // its trailing extent (when ndim >= 2): e.g. the n of (N, n) or vecN
 };
 
 // Checks and reads a device array argument: an int pointer passes unchecked;
@@ -58,6 +61,28 @@ struct DeviceArray {
 // have dtype `dtype` (when not null) and be C-contiguous; a NumPy array raises
 // TypeError explaining that GPU memory is needed. Errors name `name`.
 DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *name);
+
+// The size of a runtime-sized vector batch (VectorStateBatch, PriorVectorFactorBatch, ...):
+// `dim` when given (the array's size check then applies to capacity x dim values), else the
+// trailing extent of `data`, a (N, n) array or an array of wp.vecN. Raises ValueError naming
+// `cls` when neither gives it or dim < 1.
+int vector_dim(nb::handle data, nb::handle dim, const char *cls, const char *name);
+
+// A 1-D numpy array holding a host copy of the `n` values at `device` (zeros when `device` is
+// null). Synchronous: the copy waits for the device.
+template <typename T>
+nb::ndarray<nb::numpy, T, nb::ndim<1>> device_to_numpy(const T *device, size_t n) {
+  auto *host = new T[n > 0 ? n : 1]();
+  nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<T *>(p); });
+  if (n > 0 && device != nullptr) {
+    const cudaError_t status = cudaMemcpy(host, device, n * sizeof(T), cudaMemcpyDeviceToHost);
+    if (status != cudaSuccess) {  // `owner` frees host
+      throw std::runtime_error(std::string("device_to_numpy: cudaMemcpy failed (") +
+                               cudaGetErrorString(status) + "). Fix: check the CUDA device.");
+    }
+  }
+  return nb::ndarray<nb::numpy, T, nb::ndim<1>>(host, {n}, owner);
+}
 
 // count * per_item, raising ValueError (naming `name`) when the product overflows size_t
 // (e.g. a huge capacity that would otherwise wrap to a small required size).
@@ -108,10 +133,51 @@ inline const float *device_floats(nb::handle obj, const char *name, size_t count
       extract_device_ptr(obj, "float32", name, checked_size(count, per_item, name), what.c_str()));
 }
 
+// The optional const_state_ids argument of a state batch constructor: nullptr for None, else a
+// device int32 array of at least `const_capacity` ids.
+inline const int *const_state_ids(nb::handle ids, size_t const_capacity) {
+  if (ids.is_none()) return nullptr;
+  return reinterpret_cast<const int *>(
+      extract_device_ptr(ids, "int32", "const_state_ids", const_capacity, "const_capacity ids"));
+}
+
 // Device int32 array of at least `count` values (`what` explains the count); the
 // size check is best-effort, as for device_floats.
 inline const int *device_ints(nb::handle obj, const char *name, size_t count, const char *what) {
   return reinterpret_cast<const int *>(extract_device_ptr(obj, "int32", name, count, what));
+}
+
+/**
+ * Binds `set_bounds(lower, upper)` (device float32 arrays of capacity x tangent_size, or None,
+ * None to remove them; one None alone raises ValueError naming `cls_name`) and `has_bounds` on a
+ * box-bounded state batch class, with `doc` for set_bounds.
+ */
+template <typename Class, typename... Extra>
+void bind_box_bounds(nb::class_<Class, Extra...> &cls, const char *cls_name, const char *doc) {
+  cls.def(
+         "set_bounds",
+         [cls_name](Class &self, nb::handle lower, nb::handle upper) {
+           if (lower.is_none() && upper.is_none()) {
+             self.SetBounds(nullptr, nullptr);
+             hold_bounds(self, lower, upper);
+             return;
+           }
+           if (lower.is_none() || upper.is_none()) {
+             throw std::invalid_argument(
+                 std::string(cls_name) +
+                 ".set_bounds: got one bound and None (expected both arrays, or None, None to "
+                 "remove the bounds). Fix: pass -inf / +inf arrays for an unbounded side.");
+           }
+           self.SetBounds(
+               device_floats(lower, "lower", self.Capacity(), self.TangentSize(), "state"),
+               device_floats(upper, "upper", self.Capacity(), self.TangentSize(), "state"));
+           hold_bounds(self, lower, upper);
+         },
+         nb::arg("lower").none(), nb::arg("upper").none(), doc)
+      .def_prop_ro(
+          "has_bounds", [](const Class &self) { return cunls::HasBoxBounds(&self); },
+          "Whether the batch has box bounds (solve such a problem with "
+          "AugmentedLagrangianMinimizer).");
 }
 
 // --- Binding registration entry points (one per translation unit) ----------

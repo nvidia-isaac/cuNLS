@@ -24,12 +24,12 @@
 
 #include <cmath>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
-#include "cunls/common/profiler.h"
 #include "cunls/robustifier/arctan_loss_function_batch.h"
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/robustifier/huber_loss_function_batch.h"
@@ -45,18 +45,16 @@ namespace cunls {
 /**
  * @brief Test fixture for loss function evaluation on GPU.
  *
- * Generates random squared errors on device and provides buffers for rho
- * output.
+ * Generates random squared errors on device and checks a loss's output
+ * against a CPU reference.
  */
 class LossTest : public ::testing::Test {
-protected:
+ protected:
   /** @brief Initializes device vectors with random squared error values. */
   void SetUp() override {
     squared_errors.resize(num_errors);
     rho.resize(num_errors);
     std::uniform_real_distribution<float> dist(0, 100);
-
-    // Generate host data first, then copy to device
     std::vector<float> host_squared_errors(num_errors);
     for (size_t i = 0; i < num_errors; i++) {
       host_squared_errors[i] = dist(generator);
@@ -64,268 +62,113 @@ protected:
     squared_errors.CopyFromHost(host_squared_errors.data(), num_errors);
   }
 
+  /** @brief Evaluates @p loss on the squared errors and checks every output against
+   * @p reference (squared error -> (rho, rho', rho'')) within @p tolerance. */
+  template <typename Reference>
+  void ExpectMatches(const LossFunctionBatch &loss, Reference reference, float tolerance) {
+    CudaStream stream;
+    loss.Evaluate(squared_errors.data(), rho.data(), num_errors, stream.GetStream());
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
+    std::vector<float> host_squared_errors(num_errors);
+    std::vector<float3> host_rho(num_errors);
+    squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
+    rho.CopyToHost(host_rho.data(), num_errors);
+    for (size_t i = 0; i < num_errors; i++) {
+      const float3 expected = reference(host_squared_errors[i]);
+      ASSERT_NEAR(host_rho[i].x, expected.x, tolerance) << "s = " << host_squared_errors[i];
+      ASSERT_NEAR(host_rho[i].y, expected.y, tolerance) << "s = " << host_squared_errors[i];
+      ASSERT_NEAR(host_rho[i].z, expected.z, tolerance) << "s = " << host_squared_errors[i];
+    }
+  }
+
   const size_t num_errors = 1000;
   std::mt19937 generator;
   DeviceVector<float> squared_errors;
   DeviceVector<float3> rho;
-
-  profiler::Domain profiler_domain_{"LossTest"};
 };
 
-/** @brief Verifies that the trivial loss returns identity-like rho values
- * (rho=[s, 1, 0]). */
+/** @brief The trivial loss returns identity-like rho values (rho=[s, 1, 0]). */
 TEST_F(LossTest, TrivialLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("TrivialLoss");
-  CudaStream stream;
-
-  TrivialLossFunctionBatch loss;
-  auto s_ptr = this->squared_errors.data();
-  auto rho_ptr = this->rho.data();
-
-  {
-    auto range = this->profiler_domain_.CreateDomainRange(
-        "TrivialLossFunctionBatch::Evaluate");
-    loss.Evaluate(s_ptr, rho_ptr, num_errors, stream.GetStream());
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  // Copy results back to host for comparison
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    ASSERT_NEAR(host_rho[i].x, host_squared_errors[i], 1e-5);
-    ASSERT_NEAR(host_rho[i].y, 1.f, 1e-5);
-    ASSERT_NEAR(host_rho[i].z, 0, 1e-5);
-  }
+  ExpectMatches(
+      TrivialLossFunctionBatch(),
+      [](float s) {
+        return float3{s, 1.f, 0.f};
+      },
+      1e-5f);
 }
 
-/** @brief Verifies that the Huber loss GPU output matches the CPU reference for
- * a random delta. */
+/** @brief The Huber loss matches the CPU reference for a random delta. */
 TEST_F(LossTest, HuberLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("HuberLoss");
-  CudaStream stream;
-
   std::uniform_real_distribution<float> dist(0.5, 20);
-  float delta = dist(this->generator);
-
-  HuberLossFunctionBatch loss(delta);
-  auto s_ptr = this->squared_errors.data();
-  auto rho_ptr = this->rho.data();
-
-  {
-    auto range = this->profiler_domain_.CreateDomainRange(
-        "HuberLossFunctionBatch::Evaluate");
-    loss.Evaluate(s_ptr, rho_ptr, num_errors, stream.GetStream());
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  // Copy results back to host for comparison
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto gt_rho = test_utils::HuberLossCPU(host_squared_errors[i], delta);
-    ASSERT_NEAR(host_rho[i].x, gt_rho.x, 1e-5);
-    ASSERT_NEAR(host_rho[i].y, gt_rho.y, 1e-5);
-    ASSERT_NEAR(host_rho[i].z, gt_rho.z, 1e-5);
-  }
+  const float delta = dist(generator);
+  ExpectMatches(
+      HuberLossFunctionBatch(delta), [&](float s) { return test_utils::HuberLossCPU(s, delta); },
+      1e-5f);
 }
 
-/** @brief Verifies SoftLOne loss GPU output matches CPU reference. */
+/** @brief The SoftLOne loss matches the CPU reference. */
 TEST_F(LossTest, SoftLOneLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("SoftLOneLoss");
-  CudaStream stream;
-
   std::uniform_real_distribution<float> dist_b(0.1f, 2.0f);
   std::uniform_real_distribution<float> dist_c(0.01f, 1.0f);
-  float b = dist_b(this->generator);
-  float c = dist_c(this->generator);
-
-  SoftLOneLossFunctionBatch loss(b, c);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto gt = test_utils::SoftLOneLossCPU(host_squared_errors[i], b, c);
-    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
-  }
+  const float b = dist_b(generator);
+  const float c = dist_c(generator);
+  ExpectMatches(
+      SoftLOneLossFunctionBatch(b, c),
+      [&](float s) { return test_utils::SoftLOneLossCPU(s, b, c); }, 1e-4f);
 }
 
-/** @brief Verifies Cauchy loss GPU output matches CPU reference. */
+/** @brief The Cauchy loss matches the CPU reference. */
 TEST_F(LossTest, CauchyLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("CauchyLoss");
-  CudaStream stream;
-
   std::uniform_real_distribution<float> dist_b(0.1f, 2.0f);
   std::uniform_real_distribution<float> dist_c(0.01f, 1.0f);
-  float b = dist_b(this->generator);
-  float c = dist_c(this->generator);
-
-  CauchyLossFunctionBatch loss(b, c);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto gt = test_utils::CauchyLossCPU(host_squared_errors[i], b, c);
-    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
-  }
+  const float b = dist_b(generator);
+  const float c = dist_c(generator);
+  ExpectMatches(
+      CauchyLossFunctionBatch(b, c), [&](float s) { return test_utils::CauchyLossCPU(s, b, c); },
+      1e-4f);
 }
 
-/** @brief Verifies Arctan loss GPU output matches CPU reference. */
+/** @brief The Arctan loss matches the CPU reference. */
 TEST_F(LossTest, ArctanLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("ArctanLoss");
-  CudaStream stream;
-
   std::uniform_real_distribution<float> dist_a(0.5f, 5.0f);
   std::uniform_real_distribution<float> dist_b(0.01f, 0.5f);
-  float a = dist_a(this->generator);
-  float b = dist_b(this->generator);
-
-  ArctanLossFunctionBatch loss(a, b);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto gt = test_utils::ArctanLossCPU(host_squared_errors[i], a, b);
-    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
-  }
+  const float a = dist_a(generator);
+  const float b = dist_b(generator);
+  ExpectMatches(
+      ArctanLossFunctionBatch(a, b), [&](float s) { return test_utils::ArctanLossCPU(s, a, b); },
+      1e-4f);
 }
 
-/** @brief Verifies Tolerant loss GPU output matches CPU reference. */
+/** @brief The Tolerant loss matches the CPU reference. */
 TEST_F(LossTest, TolerantLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("TolerantLoss");
-  CudaStream stream;
-
-  float a = 1.0f;
-  float b = 0.5f;
-  float c = b * std::log(1.0f + std::exp(-a / b));
-
-  TolerantLossFunctionBatch loss(a, b);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto gt = test_utils::TolerantLossCPU(host_squared_errors[i], a, b, c);
-    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
-  }
+  const float a = 1.0f;
+  const float b = 0.5f;
+  const float c = b * std::log(1.0f + std::exp(-a / b));
+  ExpectMatches(
+      TolerantLossFunctionBatch(a, b),
+      [&](float s) { return test_utils::TolerantLossCPU(s, a, b, c); }, 1e-4f);
 }
 
-/** @brief Verifies Tukey loss GPU output matches CPU reference. */
+/** @brief The Tukey loss matches the CPU reference. */
 TEST_F(LossTest, TukeyLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("TukeyLoss");
-  CudaStream stream;
-
   std::uniform_real_distribution<float> dist_a(2.0f, 15.0f);
-  float a = dist_a(this->generator);
-  float a_squared = a * a;
-
-  TukeyLossFunctionBatch loss(a);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto gt = test_utils::TukeyLossCPU(host_squared_errors[i], a_squared);
-    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
-  }
+  const float a = dist_a(generator);
+  ExpectMatches(
+      TukeyLossFunctionBatch(a), [&](float s) { return test_utils::TukeyLossCPU(s, a * a); },
+      1e-4f);
 }
 
-/** @brief Verifies ScaledLoss wrapping Huber matches a * HuberCPU. */
+/** @brief ScaledLossFunctionBatch wrapping Huber matches a * HuberCPU; a <= 0 is rejected. */
 TEST_F(LossTest, ScaledHuberLoss) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("ScaledHuberLoss");
-  CudaStream stream;
-
   std::uniform_real_distribution<float> dist_a(0.1f, 10.0f);
   std::uniform_real_distribution<float> dist_delta(0.5f, 20.0f);
-  float scale = dist_a(this->generator);
-  float delta = dist_delta(this->generator);
-
-  ScaledLossFunctionBatch<HuberLossFunctionBatch> loss(scale, delta);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    auto inner = test_utils::HuberLossCPU(host_squared_errors[i], delta);
-    auto gt = test_utils::ScaledLossCPU(scale, inner);
-    ASSERT_NEAR(host_rho[i].x, gt.x, 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, gt.y, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, gt.z, 1e-4f);
-  }
+  const float scale = dist_a(generator);
+  const float delta = dist_delta(generator);
+  const HuberLossFunctionBatch huber(delta);
+  ExpectMatches(
+      ScaledLossFunctionBatch(huber, scale),
+      [&](float s) { return test_utils::ScaledLossCPU(scale, test_utils::HuberLossCPU(s, delta)); },
+      1e-4f);
+  EXPECT_THROW(ScaledLossFunctionBatch(huber, 0.f), std::invalid_argument);
 }
-
-/** @brief Verifies ScaledLoss wrapping TrivialLoss returns {a*s, a, 0}. */
-TEST_F(LossTest, ScaledTrivialLoss) {
-  auto test_range =
-      this->profiler_domain_.CreateDomainRange("ScaledTrivialLoss");
-  CudaStream stream;
-
-  std::uniform_real_distribution<float> dist_a(0.1f, 10.0f);
-  float scale = dist_a(this->generator);
-
-  ScaledLossFunctionBatch<TrivialLossFunctionBatch> loss(scale);
-  loss.Evaluate(this->squared_errors.data(), this->rho.data(), num_errors,
-                stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_squared_errors(num_errors);
-  std::vector<float3> host_rho(num_errors);
-  this->squared_errors.CopyToHost(host_squared_errors.data(), num_errors);
-  this->rho.CopyToHost(host_rho.data(), num_errors);
-
-  for (size_t i = 0; i < this->num_errors; i++) {
-    ASSERT_NEAR(host_rho[i].x, scale * host_squared_errors[i], 1e-4f);
-    ASSERT_NEAR(host_rho[i].y, scale, 1e-4f);
-    ASSERT_NEAR(host_rho[i].z, 0.0f, 1e-4f);
-  }
-}
-} // namespace cunls
+}  // namespace cunls

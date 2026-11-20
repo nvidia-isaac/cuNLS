@@ -418,8 +418,20 @@ TEST(Sim2ManifoldTest, BetweenLMConvergence) {
 // SO(3)
 // ============================================================================
 
+/** SO(3) Exp of n tangents: SO3StateBatch::Plus from the identity (signature of RandomExp's exp).
+ */
+void ExpSO3ThroughPlus(cudaStream_t stream, const float *twist, size_t /*twist_stride*/,
+                       size_t /*pitch*/, size_t /*stride*/, size_t n, float *rotation) {
+  hvector<Matrix<3>> identity(n, Identity<Matrix<3>>());
+  dvector<Matrix<3>> identity_dev(identity);
+  SO3StateBatch states(reinterpret_cast<const float *>(identity_dev.data()), n);
+  states.SetNumActiveStates(n);
+  states.Plus(reinterpret_cast<const float *>(identity_dev.data()), twist, rotation, stream);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));  // identity_dev is freed on return
+}
+
 hvector<Matrix<3>> RandomSO3(size_t n, uint32_t seed, float magnitude) {
-  return RandomExp<3, Matrix<3>>(n, seed, 3, magnitude, magnitude, ComputeExpSO3, 3);
+  return RandomExp<3, Matrix<3>>(n, seed, 3, magnitude, magnitude, ExpSO3ThroughPlus, 3);
 }
 
 TEST(SO3ManifoldTest, StateDimensions) { ExpectStateDimensions<SO3Manifold>(3, 9); }

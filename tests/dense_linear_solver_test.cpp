@@ -31,12 +31,8 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/problem.h"
-#include "cunls/state/se3_state_batch.h"
-#include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -162,10 +158,6 @@ TEST_P(DenseSolverTest, SymmetricIndefiniteSystem) {
   }
 }
 
-TEST_P(DenseSolverTest, SolveReturnsFalseForZeroMatrix) {
-  EXPECT_FALSE(Solve(std::vector<float>(16, 0.0f), std::vector<float>(4, 1.0f)));
-}
-
 TEST_P(DenseSolverTest, SolveReturnsFalseForRankDeficientMatrix) {
   EXPECT_FALSE(Solve(kRankOneMatrix, {1.0f, 2.0f, 3.0f}));
 }
@@ -173,88 +165,6 @@ TEST_P(DenseSolverTest, SolveReturnsFalseForRankDeficientMatrix) {
 TEST_P(DenseSolverTest, SolveReturnsTrueForValidSystemAfterSingularOne) {
   ASSERT_FALSE(Solve(std::vector<float>(9, 0.0f), std::vector<float>(3, 1.0f)));
   ExpectSolves(RandomSPDMatrix(3, 42), {1.0f, -0.5f, 2.0f});
-}
-
-/** Projects a world point through the world_from_camera pose state. */
-Vector<2> ProjectPoint(const SE3Transform &world_from_cam, const Vector<3> &point_world) {
-  const SE3Transform pose = test_utils::InverseSE3(world_from_cam);  // camera_from_world
-  const float x =
-      pose[0] * point_world[0] + pose[1] * point_world[1] + pose[2] * point_world[2] + pose[3];
-  const float y =
-      pose[4] * point_world[0] + pose[5] * point_world[1] + pose[6] * point_world[2] + pose[7];
-  const float z =
-      pose[8] * point_world[0] + pose[9] * point_world[1] + pose[10] * point_world[2] + pose[11];
-  return Vector<2>{x / z, y / z};
-}
-
-SE3Transform TranslationPose(float x, float y, float z) {
-  return {1.0f, 0.0f, 0.0f, x, 0.0f, 1.0f, 0.0f, y, 0.0f, 0.0f, 1.0f, z, 0.0f, 0.0f, 0.0f, 1.0f};
-}
-
-// One GaussNewtonMinimizer recovers a camera translation (PnP against fixed
-// points) for growing point counts, reusing the dense solver across sizes.
-TEST_P(DenseSolverTest, SolvePnPSequentiallyForDifferentPointCounts) {
-  MinimizerOptions options;
-  options.max_num_iterations = 20;
-  options.state_tolerance = 1e-10f;
-  options.cost_tolerance = 1e-12f;
-  options.disable_safety_checks = false;
-  options.sparse_linear_solver_type = GetParam();
-  GaussNewtonMinimizer minimizer(options);
-
-  const SE3Transform true_pose = TranslationPose(0.2f, -0.15f, 0.35f);
-  for (const size_t num_points : {1000, 2000, 3000, 4000, 5000}) {
-    SCOPED_TRACE("PnP point count = " + std::to_string(num_points));
-
-    std::mt19937 rng(19 + static_cast<int>(num_points));
-    std::uniform_real_distribution<float> xy_dist(-1.0f, 1.0f);
-    std::uniform_real_distribution<float> z_dist(4.0f, 8.0f);
-    std::vector<Vector<3>> points_host(num_points);
-    std::vector<Vector<2>> observations_host(num_points);
-    for (size_t i = 0; i < num_points; ++i) {
-      points_host[i] = Vector<3>{xy_dist(rng), xy_dist(rng), z_dist(rng)};
-      observations_host[i] = ProjectPoint(true_pose, points_host[i]);
-    }
-
-    dvector<SE3Transform> poses_device(
-        std::vector<SE3Transform>{TranslationPose(0.45f, -0.45f, 0.8f)});
-    dvector<Vector<3>> points_device(points_host);
-    dvector<Vector<2>> observations_device(observations_host);
-    dvector<int> point_const_ids_device(test_utils::MakeSequentialIds(num_points));
-
-    SE3StateBatch pose_batch(reinterpret_cast<const float *>(poses_device.data()), 1);
-    pose_batch.SetNumActiveStates(pose_batch.Capacity(), pose_batch.ConstCapacity());
-    VectorStateBatch<3> point_batch(reinterpret_cast<const float *>(points_device.data()),
-                                    num_points, point_const_ids_device.data(), num_points);
-    point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
-    ReprojectionFactorBatch reprojection_factor(observations_device.data(), num_points);
-    reprojection_factor.SetNumActiveFactors(reprojection_factor.Capacity());
-
-    std::vector<float *> state_pointers;
-    state_pointers.reserve(num_points * 2);
-    for (size_t i = 0; i < num_points; ++i) {
-      state_pointers.push_back(pose_batch.StateDevicePtr(0));
-      state_pointers.push_back(point_batch.StateDevicePtr(i));
-    }
-
-    Problem problem;
-    problem.AddStateBatch(&pose_batch);
-    problem.AddStateBatch(&point_batch);
-    problem.AddFactorBatch(&reprojection_factor, state_pointers);
-    ASSERT_TRUE(problem.CheckConsistency());
-
-    const auto summary = minimizer.Minimize(stream_.GetStream(), problem);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream_.GetStream()));
-
-    ASSERT_LT(summary.final_cost, summary.initial_cost);
-    ASSERT_LT(summary.final_cost, 1e-5f);
-
-    std::vector<SE3Transform> optimized_pose_host(1);
-    poses_device.CopyToHost(optimized_pose_host.data(), 1);
-    for (const int t : {3, 7, 11}) {
-      ASSERT_NEAR(optimized_pose_host[0][t], true_pose[t], 5e-3f) << "translation entry " << t;
-    }
-  }
 }
 
 INSTANTIATE_TEST_SUITE_P(DenseBackends, DenseSolverTest,

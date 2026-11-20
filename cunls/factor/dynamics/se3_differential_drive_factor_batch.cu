@@ -46,24 +46,6 @@ constexpr int kRows = 4;                         // e[2:6]
 constexpr int kColumns = 6 + 2 + 6;              // T_k, u_k, T_{k+1}
 constexpr int kJacobianSize = kRows * kColumns;  // 56 floats per item
 
-/** Rows 0..2 of an SE(3) storage matrix (row-major 4x4): R and t, pitch 4. */
-__device__ __forceinline__ void LoadPose(const float *T, float *P) {
-#pragma unroll
-  for (int i = 0; i < 12; ++i) P[i] = __ldg(T + i);
-}
-
-/** C = A B for SE(3) poses stored as rows 0..2 (pitch 4). */
-__device__ __forceinline__ void Compose(const float *A, const float *B, float *C) {
-#pragma unroll
-  for (int i = 0; i < 3; ++i) {
-#pragma unroll
-    for (int j = 0; j < 4; ++j) {
-      C[i * 4 + j] = A[i * 4] * B[j] + A[i * 4 + 1] * B[4 + j] + A[i * 4 + 2] * B[8 + j] +
-                     (j == 3 ? A[i * 4 + 3] : 0.f);
-    }
-  }
-}
-
 /**
  * One thread per item; outputs staged in shared memory (odd stride) and written
  * with coalesced stores. kJacobian selects the residual-only variant.
@@ -81,64 +63,39 @@ __global__ void __launch_bounds__(kBlockSize)
 
   if (t < num_items) {
     const int f = FactorMeasurementIndex(t, factor_ids, num_factors);
-    float X[16], Y[16];
-    LoadPose(state_pointers[3 * t + 0], X);
+    float X[12], Y[12];
+    lie_device::LoadSE3Rows(state_pointers[3 * t + 0], X);
     const float *u = state_pointers[3 * t + 1];
-    LoadPose(state_pointers[3 * t + 2], Y);
+    lie_device::LoadSE3Rows(state_pointers[3 * t + 2], Y);
     const float dt = __ldg(time_steps + f);
     const float wl = __ldg(u), wr = __ldg(u + 1);
     const float r = wheel_radius, b = track_width;
 
     // Step dt ξ, ξ = [0, 0, ω, v, 0, 0], and e = Log((X Exp(dt ξ))⁻¹ Y).
     const float step[6] = {0.f, 0.f, dt * r / b * (wr - wl), dt * 0.5f * r * (wr + wl), 0.f, 0.f};
-    float E[16], Phi[16], Phi_inv[16], D[16], e[6];
-    lie_device::ExpSE3(step, E, 4);
-    Compose(X, E, Phi);
-    lie_device::InverseSE3(Phi, 4, Phi_inv);
-    Compose(Phi_inv, Y, D);
-    lie_device::LogSE3(D, 4, e);
+    float E[16], e[6];
+    lie_device::SE3StepDefect(X, Y, step, E, e);
 
     float *o = out + threadIdx.x * kStride;
 #pragma unroll
     for (int i = 0; i < kRows; ++i) o[i] = e[2 + i];
 
     if constexpr (kJacobian) {
-      // Full-row Jacobians, rows 2..5: ∂e/∂T_k = -J_l⁻¹(e) Ad(E⁻¹),
-      // ∂e/∂u = -dt J_l⁻¹(e) J_r(step) ∂ξ/∂u, ∂e/∂T_{k+1} = J_r⁻¹(e) = J_l⁻¹(-e).
-      float Jl_inv[36], Jr_inv[36], Jr_step[36], E_inv[16];
-      lie_device::SE3JacobianLeftInverse(e, Jl_inv, 6);
-      const float minus_e[6] = {-e[0], -e[1], -e[2], -e[3], -e[4], -e[5]};
-      lie_device::SE3JacobianLeftInverse(minus_e, Jr_inv, 6);
-      const float minus_step[6] = {0.f, 0.f, -step[2], -step[3], 0.f, 0.f};
-      lie_device::SE3JacobianLeft(minus_step, Jr_step, 6);  // J_r(step)
-      lie_device::InverseSE3(E, 4, E_inv);
-      // ∂ξ/∂u: ξ_2 = ω = (r/b)(ω_R - ω_L), ξ_3 = v = (r/2)(ω_R + ω_L).
+      // Full-row Jacobians, rows 2..5 of the step defect (lie_device::SE3StepDefectRow),
+      // with ∂ξ/∂u: ξ_2 = ω = (r/b)(ω_R - ω_L), ξ_3 = v = (r/2)(ω_R + ω_L).
+      lie_device::SE3StepDefectJacobian J;
+      lie_device::InitSE3StepDefectJacobian(e, step, E, &J);
       const float half_r = 0.5f * r, r_over_b = r / b;
 #pragma unroll
       for (int i = 0; i < kRows; ++i) {
-        const float *l = Jl_inv + (2 + i) * 6;
         float *row = o + kRows + i * kColumns;
-        // -l Ad(E⁻¹), one Ad row at a time.
-        float acc[6] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-#pragma unroll
-        for (int k = 0; k < 6; ++k) {
-          float ad[6];
-          lie_device::AdjointSE3RowFromTransform(E_inv, 4, k, ad);
-#pragma unroll
-          for (int j = 0; j < 6; ++j) acc[j] += l[k] * ad[j];
-        }
-        float m2 = 0.f, m3 = 0.f;  // (-dt l J_r(step)) columns 2 and 3
-#pragma unroll
-        for (int k = 0; k < 6; ++k) {
-          m2 += l[k] * Jr_step[k * 6 + 2];
-          m3 += l[k] * Jr_step[k * 6 + 3];
-        }
-        m2 *= -dt;
-        m3 *= -dt;
+        float lad[6], lj[6];
+        lie_device::SE3StepDefectRow(J, 2 + i, lad, lj);
+        const float m2 = -dt * lj[2], m3 = -dt * lj[3];  // ∂e/∂ξ_2, ∂e/∂ξ_3 times dt
 #pragma unroll
         for (int j = 0; j < 6; ++j) {
-          row[j] = -acc[j];
-          row[8 + j] = Jr_inv[(2 + i) * 6 + j];
+          row[j] = -lad[j];
+          row[8 + j] = J.Jr_inv[(2 + i) * 6 + j];
         }
         row[6] = -m2 * r_over_b + m3 * half_r;
         row[7] = m2 * r_over_b + m3 * half_r;

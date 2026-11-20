@@ -33,8 +33,6 @@ class SE2BetweenFactorBatch : public SizedFactorBatch<3, 3, 3> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  SE2BetweenFactorBatch() = default;
-
   const Matrix<3> *pose_deltas_ptr_;
   /// Scratch: the per-factor error transform whose Log is the residual.
   mutable DeviceVector<Matrix<3>> errors_;

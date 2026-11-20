@@ -15,8 +15,8 @@
 
 """Tests for state batch bindings.
 
-Covers VectorStateBatch{1,2,3,6} and the Lie-group state batches (SE3, SO3, SO2, SE2,
-Similarity2, Similarity3):
+Covers VectorStateBatch (any size; VectorStateBatch3 and the other numbered names fix it) and
+the Lie-group state batches (SE3, SO3, SO2, SE2, Similarity2, Similarity3):
   - Construction from Warp arrays with the expected ambient/tangent dimensions.
   - Device pointer arithmetic (stride matches ambient_size * sizeof(float)).
   - The ``const_state_ids`` constructor overload for holding states constant.
@@ -30,10 +30,7 @@ import pycunls
 
 # (class, ambient size, tangent size)
 STATES = [
-    (pycunls.VectorStateBatch1, 1, 1),
-    (pycunls.VectorStateBatch2, 2, 2),
     (pycunls.VectorStateBatch3, 3, 3),
-    (pycunls.VectorStateBatch6, 6, 6),
     (pycunls.SE3StateBatch, 16, 6),  # 4x4 row-major
     (pycunls.SO3StateBatch, 9, 3),
     (pycunls.SO2StateBatch, 4, 1),
@@ -55,6 +52,28 @@ def test_sizes_and_pointer_stride(cls, ambient, tangent):
     p0, p1 = sb.state_device_ptr(0), sb.state_device_ptr(1)
     assert p0 != 0
     assert p1 - p0 == ambient * 4  # ambient floats * 4 bytes
+
+
+@pytest.mark.parametrize("dim", [5, 13, 100])
+def test_vector_states_of_any_size(dim):
+    sb = pycunls.VectorStateBatch(wp.zeros((4, dim), dtype=wp.float32), 4)  # dim from the shape
+    assert (sb.dim, sb.ambient_size, sb.tangent_size) == (dim, dim, dim)
+    assert sb.state_device_ptr(1) - sb.state_device_ptr(0) == dim * 4
+    flat = pycunls.VectorStateBatch(wp.zeros(4 * dim, dtype=wp.float32), 4, dim=dim)
+    assert flat.dim == dim
+
+
+def test_vector_size_errors_name_the_fix():
+    flat = wp.zeros(12, dtype=wp.float32)
+    with pytest.raises(ValueError, match="pass dim=n"):
+        pycunls.VectorStateBatch(flat, 4)
+    with pytest.raises(ValueError, match="dim=0 is not a vector size"):
+        pycunls.VectorStateBatch(flat, 4, dim=0)
+    with pytest.raises(ValueError, match="are needed"):
+        pycunls.VectorStateBatch(flat, 4, dim=5)
+    with pytest.raises(ValueError, match="expected 3"):
+        pycunls.VectorStateBatch3(flat, 4, dim=4)
+    assert isinstance(pycunls.VectorStateBatch3(flat, 4), pycunls.VectorStateBatch)
 
 
 def test_vector_state_device_ptr_points_into_the_array():

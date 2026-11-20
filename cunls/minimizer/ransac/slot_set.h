@@ -83,8 +83,8 @@ class SlotSet {
   void CopySlotIf(cudaStream_t stream, const RansacLayout &layout, const SlotSet &src,
                   const int *src_slot, const int *only_if);
 
-  /** @brief Copies `slot`'s state into the problem's state batches. */
-  void WriteBack(cudaStream_t stream, const RansacLayout &layout, int slot) const;
+  /** @brief Copies slot 0's state into the problem's state batches. */
+  void WriteBack(cudaStream_t stream, const RansacLayout &layout) const;
 
   // --- Solving (not for kNone) ----------------------------------------------
 
@@ -193,7 +193,7 @@ class SlotSet {
   dvector<float> hessian_, gradient_, delta_;
   dvector<float> normal_scratch_, cost_scratch_, score_scratch_;  ///< Split-reduction partials.
   dvector<float> cost_cur_, cost_cand_, predicted_, step_sq_, lambda_, score_;
-  dvector<int> solve_ok_, active_, accept_, valid_, iterations_, num_accepted_, inliers_;
+  dvector<int> solve_ok_, active_, accept_, valid_, iterations_, inliers_;
   dvector<int> active_count_;
 };
 

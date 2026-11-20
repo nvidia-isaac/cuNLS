@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "cunls/common/helper.h"
+#include "cunls/math/lie_device.cuh"
 #include "cunls/state/articulation_state_batch.h"
 
 namespace cunls {
@@ -32,22 +33,13 @@ namespace {
 
 constexpr int kBlockSize = 128;
 
-// Joint type values (ArticulationJointType).
-constexpr int kPrismatic = 0, kRevolute = 1, kBall = 2, kFixed = 3, kFree = 4, kD6 = 6;
-
-/** R (row-major 3x3) of the unit quaternion (x, y, z, w). */
-__device__ __forceinline__ void QuatToMatrix(const float *q, float *R) {
-  const float x = q[0], y = q[1], z = q[2], w = q[3];
-  R[0] = 1.f - 2.f * (y * y + z * z);
-  R[1] = 2.f * (x * y - z * w);
-  R[2] = 2.f * (x * z + y * w);
-  R[3] = 2.f * (x * y + z * w);
-  R[4] = 1.f - 2.f * (x * x + z * z);
-  R[5] = 2.f * (y * z - x * w);
-  R[6] = 2.f * (x * z - y * w);
-  R[7] = 2.f * (y * z + x * w);
-  R[8] = 1.f - 2.f * (x * x + y * y);
-}
+// Joint type values (ArticulationJointType), as stored in the topology's int arrays.
+constexpr int kPrismatic = static_cast<int>(ArticulationJointType::kPrismatic);
+constexpr int kRevolute = static_cast<int>(ArticulationJointType::kRevolute);
+constexpr int kBall = static_cast<int>(ArticulationJointType::kBall);
+constexpr int kFixed = static_cast<int>(ArticulationJointType::kFixed);
+constexpr int kFree = static_cast<int>(ArticulationJointType::kFree);
+constexpr int kD6 = static_cast<int>(ArticulationJointType::kD6);
 
 /** q ← normalize(Exp(phi) ⊗ q), quaternions (x, y, z, w), phi a rotation vector. */
 __device__ __forceinline__ void QuatLeftExp(const float *phi, float *q) {
@@ -115,18 +107,6 @@ __device__ __forceinline__ void Rot(const float *R, const float *v, float *y) {
   for (int r = 0; r < 3; ++r) y[r] = R[3 * r] * v[0] + R[3 * r + 1] * v[1] + R[3 * r + 2] * v[2];
 }
 
-/** C = A B for 3x4 row-major transforms [R | t] (C may not alias A or B). */
-__device__ __forceinline__ void Compose(const float *A, const float *B, float *C) {
-#pragma unroll
-  for (int r = 0; r < 3; ++r) {
-#pragma unroll
-    for (int c = 0; c < 4; ++c) {
-      C[4 * r + c] = A[4 * r] * B[c] + A[4 * r + 1] * B[4 + c] + A[4 * r + 2] * B[8 + c] +
-                     (c == 3 ? A[4 * r + 3] : 0.f);
-    }
-  }
-}
-
 /** Writes the 3x4 transform [R | t] (R row-major 3x3) into M. */
 __device__ __forceinline__ void MakeTransform(const float *R, const float *t, float *M) {
 #pragma unroll
@@ -166,7 +146,7 @@ __device__ void JointKinematics(const ArticulationTopology::DeviceView &v, int j
                                 const float *parent_pose, const float *q, float *pose,
                                 float *cols) {
   float A[12];
-  Compose(parent_pose, v.X_p + 12 * j, A);
+  lie_device::ComposeSE3(parent_pose, v.X_p + 12 * j, A);
   const float RA[9] = {A[0], A[1], A[2], A[4], A[5], A[6], A[8], A[9], A[10]};
   const float pA[3] = {A[3], A[7], A[11]};
   const int d0 = v.qd_start[j];
@@ -192,7 +172,7 @@ __device__ void JointKinematics(const ArticulationTopology::DeviceView &v, int j
       break;
     }
     case kBall: {
-      QuatToMatrix(q, Rj);
+      lie_device::QuatToMatrix<false>(q, Rj);
 #pragma unroll
       for (int i = 0; i < 3; ++i) {
         const float w[3] = {RA[i], RA[3 + i], RA[6 + i]};  // R_A e_i
@@ -204,7 +184,7 @@ __device__ void JointKinematics(const ArticulationTopology::DeviceView &v, int j
       tj[0] = q[0];
       tj[1] = q[1];
       tj[2] = q[2];
-      QuatToMatrix(q + 3, Rj);
+      lie_device::QuatToMatrix<false>(q + 3, Rj);
       float p[3];
       Rot(RA, tj, p);
       p[0] += pA[0];
@@ -255,8 +235,8 @@ __device__ void JointKinematics(const ArticulationTopology::DeviceView &v, int j
   }
   float Xj[12], AXj[12];
   MakeTransform(Rj, tj, Xj);
-  Compose(A, Xj, AXj);
-  Compose(AXj, v.X_c_inv + 12 * j, pose);
+  lie_device::ComposeSE3(A, Xj, AXj);
+  lie_device::ComposeSE3(AXj, v.X_c_inv + 12 * j, pose);
 }
 
 /**

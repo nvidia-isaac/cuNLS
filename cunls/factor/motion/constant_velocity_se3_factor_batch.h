@@ -18,7 +18,6 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "cunls/common/device_vector.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/sized_factor_batch.h"
 
@@ -69,19 +68,7 @@ class ConstantVelocitySE3FactorBatch : public SizedFactorBatch<12, 6, 6, 6, 6> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  ConstantVelocitySE3FactorBatch() = delete;
-
-  const float *dt_ptr_;
-
-  /// Scratch: T_k^{-1} * T_{k+1} per factor.
-  mutable DeviceVector<SE3Transform> pose_rel_;
-  /// Scratch: Log(pose_rel) per factor.
-  mutable DeviceVector<Vector<6>> twist_;
-  /// Scratch: J_l^{-1}(twist) per factor (row-major 6x6).
-  mutable DeviceVector<Matrix<6>> jl_inv_;
-  /// Scratch: J_r^{-1}(twist) per factor (row-major 6x6), only filled when
-  /// Jacobians are requested.
-  mutable DeviceVector<Matrix<6>> jr_inv_;
+  const float *dt_ptr_;  ///< Per-factor time deltas (user memory).
 };
 
 }  // namespace cunls

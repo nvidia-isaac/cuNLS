@@ -402,7 +402,7 @@ class LevenbergMarquardtMinimizerOptions:
     @property
     def initial_lambda(self) -> float:
         """
-        Initial damping lambda; larger is more conservative (closer to gradient descent). 0 (Gauss-Newton steps) is allowed. Default: 1e-3.
+        Initial damping lambda in [0, lambda_max]; larger is more conservative (closer to gradient descent). 0 (Gauss-Newton steps) is allowed. Default: 1e-3.
         """
 
     @initial_lambda.setter
@@ -429,7 +429,7 @@ class LevenbergMarquardtMinimizerOptions:
     @property
     def lambda_downscale(self) -> float:
         """
-        Damping factor on a very successful step (rho > lambda_downscale_threshold). Default: 0.5.
+        Damping factor in (0, 1] on a very successful step (rho > lambda_downscale_threshold). Default: 0.5.
         """
 
     @lambda_downscale.setter
@@ -523,168 +523,23 @@ class StateBatch:
         out = x (+) delta for the num_active_states states of the given arrays (the manifold update the minimizers use; asynchronous on stream). x, out: float32 device arrays of num_active_states x ambient_size; delta: num_active_states x tangent_size. ignore_bounds: do not clamp into box bounds (numeric differentiation at a bound). Used by pycunls.check_jacobians.
         """
 
-class VectorStateBatch1(StateBatch):
+class VectorStateBatch(StateBatch):
     """
-    Euclidean vector state batch (Plus = element-wise addition).
+    Euclidean vector states of any size (Plus = element-wise addition). Constructor: data (float32 GPU array of capacity x dim), capacity, optional const_state_ids (int32 GPU array) with const_capacity, and dim: the vector size, read from data when it is shaped (N, dim) or an array of wp.vecN, required for a flat array. VectorStateBatch3 and the other numbered classes are the same with the size fixed.
 
-    VectorStateBatch1 (state)
-      stored: 1 floats, 1 floats per state
-      tangent (1): the 1 components (Plus is addition)
+    VectorStateBatch (state)
+      stored: dim floats, dim floats per state
+      tangent (dim): the dim components (Plus is addition)
       update: x' = x (+) delta (right-multiplicative for Lie groups)
-      constructor: data (float32 GPU array of capacity x 1), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
+      constructor: data (float32 GPU array of capacity x dim), capacity, optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity, and the keyword dim (read from data shaped (N, dim) or wp.vecN when omitted; VectorStateBatch3 and the other numbered names fix it)
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
-
-    def set_bounds(self, lower: object | None, upper: object | None) -> None:
-        """
-        Box bounds lower <= x <= upper per component (device float32 arrays of capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem with AugmentedLagrangianMinimizer, which keeps the iterates in the box (projected Gauss-Newton); the other minimizers reject it. None, None removes them.
-        """
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0, *, dim: object | None = None) -> None: ...
 
     @property
-    def has_bounds(self) -> bool:
-        """
-        Whether the batch has box bounds (solve such a problem with AugmentedLagrangianMinimizer).
-        """
-
-class VectorStateBatch2(StateBatch):
-    """
-    Euclidean vector state batch (Plus = element-wise addition).
-
-    VectorStateBatch2 (state)
-      stored: 2 floats, 2 floats per state
-      tangent (2): the 2 components (Plus is addition)
-      update: x' = x (+) delta (right-multiplicative for Lie groups)
-      constructor: data (float32 GPU array of capacity x 2), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
-
-    def set_bounds(self, lower: object | None, upper: object | None) -> None:
-        """
-        Box bounds lower <= x <= upper per component (device float32 arrays of capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem with AugmentedLagrangianMinimizer, which keeps the iterates in the box (projected Gauss-Newton); the other minimizers reject it. None, None removes them.
-        """
-
-    @property
-    def has_bounds(self) -> bool:
-        """
-        Whether the batch has box bounds (solve such a problem with AugmentedLagrangianMinimizer).
-        """
-
-class VectorStateBatch3(StateBatch):
-    """
-    Euclidean vector state batch (Plus = element-wise addition).
-
-    VectorStateBatch3 (state)
-      stored: 3 floats, 3 floats per state
-      tangent (3): the 3 components (Plus is addition)
-      update: x' = x (+) delta (right-multiplicative for Lie groups)
-      constructor: data (float32 GPU array of capacity x 3), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
-
-    def set_bounds(self, lower: object | None, upper: object | None) -> None:
-        """
-        Box bounds lower <= x <= upper per component (device float32 arrays of capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem with AugmentedLagrangianMinimizer, which keeps the iterates in the box (projected Gauss-Newton); the other minimizers reject it. None, None removes them.
-        """
-
-    @property
-    def has_bounds(self) -> bool:
-        """
-        Whether the batch has box bounds (solve such a problem with AugmentedLagrangianMinimizer).
-        """
-
-class VectorStateBatch4(StateBatch):
-    """
-    Euclidean vector state batch (Plus = element-wise addition).
-
-    VectorStateBatch4 (state)
-      stored: 4 floats, 4 floats per state
-      tangent (4): the 4 components (Plus is addition)
-      update: x' = x (+) delta (right-multiplicative for Lie groups)
-      constructor: data (float32 GPU array of capacity x 4), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
-
-    def set_bounds(self, lower: object | None, upper: object | None) -> None:
-        """
-        Box bounds lower <= x <= upper per component (device float32 arrays of capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem with AugmentedLagrangianMinimizer, which keeps the iterates in the box (projected Gauss-Newton); the other minimizers reject it. None, None removes them.
-        """
-
-    @property
-    def has_bounds(self) -> bool:
-        """
-        Whether the batch has box bounds (solve such a problem with AugmentedLagrangianMinimizer).
-        """
-
-class VectorStateBatch6(StateBatch):
-    """
-    Euclidean vector state batch (Plus = element-wise addition).
-
-    VectorStateBatch6 (state)
-      stored: 6 floats, 6 floats per state
-      tangent (6): the 6 components (Plus is addition)
-      update: x' = x (+) delta (right-multiplicative for Lie groups)
-      constructor: data (float32 GPU array of capacity x 6), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
-
-    def set_bounds(self, lower: object | None, upper: object | None) -> None:
-        """
-        Box bounds lower <= x <= upper per component (device float32 arrays of capacity * dim; ±inf: unbounded). Bounds are a constraint: solve the problem with AugmentedLagrangianMinimizer, which keeps the iterates in the box (projected Gauss-Newton); the other minimizers reject it. None, None removes them.
-        """
-
-    @property
-    def has_bounds(self) -> bool:
-        """
-        Whether the batch has box bounds (solve such a problem with AugmentedLagrangianMinimizer).
-        """
-
-class VectorStateBatch12(StateBatch):
-    """
-    Euclidean vector state batch (Plus = element-wise addition).
-
-    VectorStateBatch12 (state)
-      stored: 12 floats, 12 floats per state
-      tangent (12): the 12 components (Plus is addition)
-      update: x' = x (+) delta (right-multiplicative for Lie groups)
-      constructor: data (float32 GPU array of capacity x 12), capacity, and optionally const_state_ids (int32 GPU array of the states held fixed) with const_capacity (entries it holds)
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def dim(self) -> int:
+        """Components per state (the vector size)."""
 
     def set_bounds(self, lower: object | None, upper: object | None) -> None:
         """
@@ -709,11 +564,7 @@ class SE3StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class SO3StateBatch(StateBatch):
     """
@@ -727,11 +578,7 @@ class SO3StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class SO2StateBatch(StateBatch):
     """
@@ -745,11 +592,7 @@ class SO2StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class SE2StateBatch(StateBatch):
     """
@@ -763,11 +606,7 @@ class SE2StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class Similarity2StateBatch(StateBatch):
     """
@@ -781,11 +620,7 @@ class Similarity2StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class Similarity3StateBatch(StateBatch):
     """
@@ -799,11 +634,7 @@ class Similarity3StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class SL4StateBatch(StateBatch):
     """
@@ -817,11 +648,7 @@ class SL4StateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, data: object, capacity: int) -> None: ...
-
-    @overload
-    def __init__(self, data: object, capacity: int, const_state_ids: object, const_capacity: int) -> None: ...
+    def __init__(self, data: object, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0) -> None: ...
 
 class CustomStateBatch(StateBatch):
     """
@@ -1148,191 +975,45 @@ class Similarity3PriorFactorBatch(FactorBatch):
 
     def __init__(self, observations: object, capacity: int) -> None: ...
 
-class PriorVectorFactorBatch1(FactorBatch):
+class PriorVectorFactorBatch(FactorBatch):
     """
-    Prior factor for Dim-dimensional vectors: residual = state - observation.
+    Prior on vector states of any size: residual = state - observation. Constructor: observations (float32 GPU array of capacity x dim), capacity, and dim: read from observations shaped (N, dim) or an array of wp.vecN, required for a flat array.
 
-    PriorVectorFactorBatch1 (factor)
-      states: [VectorStateBatch1]
-      residual (1): x - observation
-      observations: 1 floats per factor
+    PriorVectorFactorBatch (factor)
+      states: [VectorStateBatch]
+      residual: x - observation
+      observations: dim floats per factor
       relative: no
       use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
+      notes: Size: the dim keyword, else the trailing extent of the first array ((M, dim) or wp.vecN); the numbered names (e.g. PriorVectorFactorBatch3) fix it.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    def __init__(self, observations: object, capacity: int) -> None: ...
+    def __init__(self, observations: object, capacity: int, *, dim: object | None = None) -> None: ...
 
-class PriorVectorFactorBatch2(FactorBatch):
+    @property
+    def dim(self) -> int:
+        """Components per vector."""
+
+class VectorBetweenFactorBatch(FactorBatch):
     """
-    Prior factor for Dim-dimensional vectors: residual = state - observation.
+    Between factor on vector states of any size: residual = left - right - delta. Constructor: deltas (float32 GPU array of capacity x dim), capacity, and dim: read from deltas shaped (N, dim) or an array of wp.vecN, required for a flat array.
 
-    PriorVectorFactorBatch2 (factor)
-      states: [VectorStateBatch2]
-      residual (2): x - observation
-      observations: 2 floats per factor
-      relative: no
-      use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, observations: object, capacity: int) -> None: ...
-
-class PriorVectorFactorBatch3(FactorBatch):
-    """
-    Prior factor for Dim-dimensional vectors: residual = state - observation.
-
-    PriorVectorFactorBatch3 (factor)
-      states: [VectorStateBatch3]
-      residual (3): x - observation
-      observations: 3 floats per factor
-      relative: no
-      use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, observations: object, capacity: int) -> None: ...
-
-class PriorVectorFactorBatch4(FactorBatch):
-    """
-    Prior factor for Dim-dimensional vectors: residual = state - observation.
-
-    PriorVectorFactorBatch4 (factor)
-      states: [VectorStateBatch4]
-      residual (4): x - observation
-      observations: 4 floats per factor
-      relative: no
-      use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, observations: object, capacity: int) -> None: ...
-
-class PriorVectorFactorBatch6(FactorBatch):
-    """
-    Prior factor for Dim-dimensional vectors: residual = state - observation.
-
-    PriorVectorFactorBatch6 (factor)
-      states: [VectorStateBatch6]
-      residual (6): x - observation
-      observations: 6 floats per factor
-      relative: no
-      use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, observations: object, capacity: int) -> None: ...
-
-class PriorVectorFactorBatch12(FactorBatch):
-    """
-    Prior factor for Dim-dimensional vectors: residual = state - observation.
-
-    PriorVectorFactorBatch12 (factor)
-      states: [VectorStateBatch12]
-      residual (12): x - observation
-      observations: 12 floats per factor
-      relative: no
-      use: Absolute measurement of a vector state; also a weak prior/regularizer (wrap in WeightedFactorBatch).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, observations: object, capacity: int) -> None: ...
-
-class VectorBetweenFactorBatch1(FactorBatch):
-    """
-    Between factor on Euclidean vectors: residual = left - right - delta.
-
-    VectorBetweenFactorBatch1 (factor)
-      states: [VectorStateBatch1, VectorStateBatch1]
-      residual (1): x_left - x_right - delta
-      deltas: 1 floats per factor
+    VectorBetweenFactorBatch (factor)
+      states: [VectorStateBatch, VectorStateBatch]
+      residual: x_left - x_right - delta
+      deltas: dim floats per factor
       relative: yes (needs an anchor: a constant state or a prior)
       use: Relative measurement between two vector states.
-      notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
+      notes: Sign: residual is left - right - delta, so delta = x_left - x_right. Size: the dim keyword, else the trailing extent of the first array ((M, dim) or wp.vecN); the numbered names (e.g. PriorVectorFactorBatch3) fix it.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    def __init__(self, deltas: object, capacity: int) -> None: ...
+    def __init__(self, deltas: object, capacity: int, *, dim: object | None = None) -> None: ...
 
-class VectorBetweenFactorBatch2(FactorBatch):
-    """
-    Between factor on Euclidean vectors: residual = left - right - delta.
-
-    VectorBetweenFactorBatch2 (factor)
-      states: [VectorStateBatch2, VectorStateBatch2]
-      residual (2): x_left - x_right - delta
-      deltas: 2 floats per factor
-      relative: yes (needs an anchor: a constant state or a prior)
-      use: Relative measurement between two vector states.
-      notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, deltas: object, capacity: int) -> None: ...
-
-class VectorBetweenFactorBatch3(FactorBatch):
-    """
-    Between factor on Euclidean vectors: residual = left - right - delta.
-
-    VectorBetweenFactorBatch3 (factor)
-      states: [VectorStateBatch3, VectorStateBatch3]
-      residual (3): x_left - x_right - delta
-      deltas: 3 floats per factor
-      relative: yes (needs an anchor: a constant state or a prior)
-      use: Relative measurement between two vector states.
-      notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, deltas: object, capacity: int) -> None: ...
-
-class VectorBetweenFactorBatch4(FactorBatch):
-    """
-    Between factor on Euclidean vectors: residual = left - right - delta.
-
-    VectorBetweenFactorBatch4 (factor)
-      states: [VectorStateBatch4, VectorStateBatch4]
-      residual (4): x_left - x_right - delta
-      deltas: 4 floats per factor
-      relative: yes (needs an anchor: a constant state or a prior)
-      use: Relative measurement between two vector states.
-      notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, deltas: object, capacity: int) -> None: ...
-
-class VectorBetweenFactorBatch6(FactorBatch):
-    """
-    Between factor on Euclidean vectors: residual = left - right - delta.
-
-    VectorBetweenFactorBatch6 (factor)
-      states: [VectorStateBatch6, VectorStateBatch6]
-      residual (6): x_left - x_right - delta
-      deltas: 6 floats per factor
-      relative: yes (needs an anchor: a constant state or a prior)
-      use: Relative measurement between two vector states.
-      notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, deltas: object, capacity: int) -> None: ...
-
-class VectorBetweenFactorBatch12(FactorBatch):
-    """
-    Between factor on Euclidean vectors: residual = left - right - delta.
-
-    VectorBetweenFactorBatch12 (factor)
-      states: [VectorStateBatch12, VectorStateBatch12]
-      residual (12): x_left - x_right - delta
-      deltas: 12 floats per factor
-      relative: yes (needs an anchor: a constant state or a prior)
-      use: Relative measurement between two vector states.
-      notes: Sign: residual is left - right - delta, so delta = x_left - x_right.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, deltas: object, capacity: int) -> None: ...
+    @property
+    def dim(self) -> int:
+        """Components per vector."""
 
 class PointToPointFactorBatch(FactorBatch):
     """
@@ -1519,317 +1200,70 @@ class ConstraintFactorBatch(ConstraintFactorBatchBase):
     def inner_factor(self) -> FactorBatch:
         """The wrapped factor batch whose residuals are the constraint rows."""
 
-class BoundFactorBatch1(ConstraintFactorBatchBase):
+class BoundFactorBatch(ConstraintFactorBatchBase):
     """
-    Box constraints lower <= x <= upper on the components of a vector state (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
+    Box constraints lower <= x <= upper on the components of a vector state of any size (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
 
     Parameters
     ----------
     lower, upper : DevicePointer
-        Device buffers of capacity * Dim floats (per factor and component); -inf / +inf
+        Device buffers of capacity * dim floats (per factor and component); -inf / +inf
         leave a side unbounded.
     capacity : int
         Number of factors the buffers hold.
     scale : float
         Positive row scale.
+    dim : int, optional
+        The vector size; read from lower shaped (N, dim) when omitted.
 
-    BoundFactorBatch1 (factor)
-      states: [VectorStateBatch1]
-      residual (2): box constraint lower <= x <= upper
-      lower: 1 floats per factor
-      upper: 1 floats per factor
+    BoundFactorBatch (factor)
+      states: [VectorStateBatch]
+      residual: box constraint lower <= x <= upper
+      lower: dim floats per factor
+      upper: dim floats per factor
       relative: no
       use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
-      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
+      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected). Size: the dim keyword, else the trailing extent of the first array ((M, dim) or wp.vecN); the numbered names (e.g. PriorVectorFactorBatch3) fix it.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
+    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0, *, dim: object | None = None) -> None: ...
 
-class BoundFactorBatch2(ConstraintFactorBatchBase):
+    @property
+    def dim(self) -> int:
+        """Components of the bounded vector state."""
+
+class HalfspaceFactorBatch(FactorBatch):
     """
-    Box constraints lower <= x <= upper on the components of a vector state (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
-
-    Parameters
-    ----------
-    lower, upper : DevicePointer
-        Device buffers of capacity * Dim floats (per factor and component); -inf / +inf
-        leave a side unbounded.
-    capacity : int
-        Number of factors the buffers hold.
-    scale : float
-        Positive row scale.
-
-    BoundFactorBatch2 (factor)
-      states: [VectorStateBatch2]
-      residual (4): box constraint lower <= x <= upper
-      lower: 2 floats per factor
-      upper: 2 floats per factor
-      relative: no
-      use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
-      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
-
-class BoundFactorBatch3(ConstraintFactorBatchBase):
-    """
-    Box constraints lower <= x <= upper on the components of a vector state (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
-
-    Parameters
-    ----------
-    lower, upper : DevicePointer
-        Device buffers of capacity * Dim floats (per factor and component); -inf / +inf
-        leave a side unbounded.
-    capacity : int
-        Number of factors the buffers hold.
-    scale : float
-        Positive row scale.
-
-    BoundFactorBatch3 (factor)
-      states: [VectorStateBatch3]
-      residual (6): box constraint lower <= x <= upper
-      lower: 3 floats per factor
-      upper: 3 floats per factor
-      relative: no
-      use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
-      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
-
-class BoundFactorBatch4(ConstraintFactorBatchBase):
-    """
-    Box constraints lower <= x <= upper on the components of a vector state (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
-
-    Parameters
-    ----------
-    lower, upper : DevicePointer
-        Device buffers of capacity * Dim floats (per factor and component); -inf / +inf
-        leave a side unbounded.
-    capacity : int
-        Number of factors the buffers hold.
-    scale : float
-        Positive row scale.
-
-    BoundFactorBatch4 (factor)
-      states: [VectorStateBatch4]
-      residual (8): box constraint lower <= x <= upper
-      lower: 4 floats per factor
-      upper: 4 floats per factor
-      relative: no
-      use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
-      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
-
-class BoundFactorBatch6(ConstraintFactorBatchBase):
-    """
-    Box constraints lower <= x <= upper on the components of a vector state (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
-
-    Parameters
-    ----------
-    lower, upper : DevicePointer
-        Device buffers of capacity * Dim floats (per factor and component); -inf / +inf
-        leave a side unbounded.
-    capacity : int
-        Number of factors the buffers hold.
-    scale : float
-        Positive row scale.
-
-    BoundFactorBatch6 (factor)
-      states: [VectorStateBatch6]
-      residual (12): box constraint lower <= x <= upper
-      lower: 6 floats per factor
-      upper: 6 floats per factor
-      relative: no
-      use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
-      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
-
-class BoundFactorBatch12(ConstraintFactorBatchBase):
-    """
-    Box constraints lower <= x <= upper on the components of a vector state (an inequality constraint batch: add it to the problem directly and solve with AugmentedLagrangianMinimizer).
-
-    Parameters
-    ----------
-    lower, upper : DevicePointer
-        Device buffers of capacity * Dim floats (per factor and component); -inf / +inf
-        leave a side unbounded.
-    capacity : int
-        Number of factors the buffers hold.
-    scale : float
-        Positive row scale.
-
-    BoundFactorBatch12 (factor)
-      states: [VectorStateBatch12]
-      residual (24): box constraint lower <= x <= upper
-      lower: 12 floats per factor
-      upper: 12 floats per factor
-      relative: no
-      use: Box bounds on a vector state; needs AugmentedLagrangianMinimizer.
-      notes: For plain parameter bounds prefer VectorStateBatch.set_bounds (projected).
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, lower: object, upper: object, capacity: int, scale: float = 1.0) -> None: ...
-
-class HalfspaceFactorBatch1(FactorBatch):
-    """
-    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
+    Signed halfspace value r = a^T x - b of a vector state of any size (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
 
     Parameters
     ----------
     normals : DevicePointer
-        Device buffer of capacity * Dim floats (a).
+        Device buffer of capacity * dim floats (a).
     offsets : DevicePointer
         Device buffer of capacity floats (b).
     capacity : int
         Number of factors the buffers hold.
+    dim : int, optional
+        The vector size; read from normals shaped (N, dim) when omitted.
 
-    HalfspaceFactorBatch1 (factor)
-      states: [VectorStateBatch1]
+    HalfspaceFactorBatch (factor)
+      states: [VectorStateBatch]
       residual (1): a^T x - b
-      normals: 1 floats per factor (a)
+      normals: dim floats per factor (a)
       offsets: 1 float per factor (b)
       relative: no
       use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
+      notes: Size: the dim keyword, else the trailing extent of the first array ((M, dim) or wp.vecN); the numbered names (e.g. PriorVectorFactorBatch3) fix it.
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
+    def __init__(self, normals: object, offsets: object, capacity: int, *, dim: object | None = None) -> None: ...
 
-class HalfspaceFactorBatch2(FactorBatch):
-    """
-    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
-
-    Parameters
-    ----------
-    normals : DevicePointer
-        Device buffer of capacity * Dim floats (a).
-    offsets : DevicePointer
-        Device buffer of capacity floats (b).
-    capacity : int
-        Number of factors the buffers hold.
-
-    HalfspaceFactorBatch2 (factor)
-      states: [VectorStateBatch2]
-      residual (1): a^T x - b
-      normals: 2 floats per factor (a)
-      offsets: 1 float per factor (b)
-      relative: no
-      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
-
-class HalfspaceFactorBatch3(FactorBatch):
-    """
-    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
-
-    Parameters
-    ----------
-    normals : DevicePointer
-        Device buffer of capacity * Dim floats (a).
-    offsets : DevicePointer
-        Device buffer of capacity floats (b).
-    capacity : int
-        Number of factors the buffers hold.
-
-    HalfspaceFactorBatch3 (factor)
-      states: [VectorStateBatch3]
-      residual (1): a^T x - b
-      normals: 3 floats per factor (a)
-      offsets: 1 float per factor (b)
-      relative: no
-      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
-
-class HalfspaceFactorBatch4(FactorBatch):
-    """
-    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
-
-    Parameters
-    ----------
-    normals : DevicePointer
-        Device buffer of capacity * Dim floats (a).
-    offsets : DevicePointer
-        Device buffer of capacity floats (b).
-    capacity : int
-        Number of factors the buffers hold.
-
-    HalfspaceFactorBatch4 (factor)
-      states: [VectorStateBatch4]
-      residual (1): a^T x - b
-      normals: 4 floats per factor (a)
-      offsets: 1 float per factor (b)
-      relative: no
-      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
-
-class HalfspaceFactorBatch6(FactorBatch):
-    """
-    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
-
-    Parameters
-    ----------
-    normals : DevicePointer
-        Device buffer of capacity * Dim floats (a).
-    offsets : DevicePointer
-        Device buffer of capacity floats (b).
-    capacity : int
-        Number of factors the buffers hold.
-
-    HalfspaceFactorBatch6 (factor)
-      states: [VectorStateBatch6]
-      residual (1): a^T x - b
-      normals: 6 floats per factor (a)
-      offsets: 1 float per factor (b)
-      relative: no
-      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
-
-class HalfspaceFactorBatch12(FactorBatch):
-    """
-    Signed halfspace value r = a^T x - b of a vector state (per-factor a, b). Wrap it in ConstraintFactorBatch(..., ConstraintKind.Inequality) for a^T x <= b.
-
-    Parameters
-    ----------
-    normals : DevicePointer
-        Device buffer of capacity * Dim floats (a).
-    offsets : DevicePointer
-        Device buffer of capacity floats (b).
-    capacity : int
-        Number of factors the buffers hold.
-
-    HalfspaceFactorBatch12 (factor)
-      states: [VectorStateBatch12]
-      residual (1): a^T x - b
-      normals: 12 floats per factor (a)
-      offsets: 1 float per factor (b)
-      relative: no
-      use: Linear inequality a^T x <= b: wrap in ConstraintFactorBatch(..., ConstraintKind.Inequality) and solve with AugmentedLagrangianMinimizer.
-      capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
-    """
-
-    def __init__(self, normals: object, offsets: object, capacity: int) -> None: ...
+    @property
+    def dim(self) -> int:
+        """Components of the state."""
 
 class SE2DifferentialDriveFactorBatch(FactorBatch):
     """
@@ -2645,11 +2079,7 @@ class ArticulationStateBatch(StateBatch):
       capacity: how many factors (or states) the arrays hold. Batches start with 0 active items: call set_num_active_factors(n) / set_num_active_states(n) before solving. Arrays are GPU arrays (e.g. wp.array), C-contiguous: float32 values, int32 indices, as each argument states.
     """
 
-    @overload
-    def __init__(self, topology: ArticulationTopology, capacity: int, apply_joint_limits: bool = True) -> None: ...
-
-    @overload
-    def __init__(self, topology: ArticulationTopology, capacity: int, const_state_ids: object, const_capacity: int, apply_joint_limits: bool = True) -> None: ...
+    def __init__(self, topology: ArticulationTopology, capacity: int, const_state_ids: object | None = None, const_capacity: int = 0, apply_joint_limits: bool = True) -> None: ...
 
     @property
     def topology(self) -> ArticulationTopology:
@@ -2670,25 +2100,25 @@ class ArticulationStateBatch(StateBatch):
         Writes the world transform of every link of the first num_states instances, read from the cached poses (no forward kinematics runs: set_joint_q keeps the cache current; after writing state_device_ptr storage directly, call refresh(stream) first): 7 float32 per link, the pose convention of the factor targets, position then quaternion (x, y, z, w), links in topology order; instance i starts at i * stride (stride 0: packed, 7 * link_count). Asynchronous on stream. A wp.array(dtype=wp.transform) of shape (num_states * link_count,) is accepted.
         """
 
-    def set_bounds(self, lower: object | None, upper: object | None) -> None:
-        """
-        Box bounds per instance and DOF, replacing the joint limits: either two device float32 arrays of capacity x dof_count (an unbounded side is a ±inf-filled array; BALL/FREE entries ignored), or None, None to remove them (one None alone is rejected); use_joint_limits() restores the topology's limits. Keeps only the current arrays alive (replaced ones are released).
-        """
-
     def use_joint_limits(self) -> None:
         """
         Restores the topology's joint limits as the bounds (none if it has no finite limit) and releases the arrays of set_bounds.
         """
 
-    @property
-    def has_bounds(self) -> bool:
-        """
-        Whether the batch has box bounds (solve with AugmentedLagrangianMinimizer).
-        """
-
     def refresh(self, stream: CudaStream) -> None:
         """
         Recomputes the cache of the active instances from their joint_q (after writing state_device_ptr storage directly; the minimizers refresh at every solve).
+        """
+
+    def set_bounds(self, lower: object | None, upper: object | None) -> None:
+        """
+        Box bounds per instance and DOF, replacing the joint limits: either two device float32 arrays of capacity x dof_count (an unbounded side is a ±inf-filled array; BALL/FREE entries ignored), or None, None to remove them (one None alone is rejected); use_joint_limits() restores the topology's limits. Keeps only the current arrays alive (replaced ones are released).
+        """
+
+    @property
+    def has_bounds(self) -> bool:
+        """
+        Whether the batch has box bounds (solve such a problem with AugmentedLagrangianMinimizer).
         """
 
 class LinkPositionFactorBatch(FactorBatch):

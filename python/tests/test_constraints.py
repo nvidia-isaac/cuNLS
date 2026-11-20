@@ -205,91 +205,55 @@ def test_random_convex_qps_match_reference(stream, kind):
 # Hock-Schittkowski problems (nonlinear objective / constraints)
 # ---------------------------------------------------------------------------
 
-# Rows of the HS1/HS2/HS6 functions of x = (x1, x2):
-#   which 0: r = 10 (x2 - x1²)    which 1: r = 1 - x1    which 2: both rows
+# Rows of the HS6 functions of x = (x1, x2): which 0: r = 10 (x2 - x1²), which 1: r = 1 - x1.
+# (C++ covers HS2 and HS6 with both minimizers; this checks a Python factor as a constraint.)
 @wp.kernel
 def _hs_rows(which: int, state_ptrs: wp.array(dtype=wp.uint64), res: wp.array(dtype=float),
              jac_ptr: wp.uint64):
     t = wp.tid()
     x = wp.array(ptr=state_ptrs[t], shape=(2,), dtype=float)
-    rows = 1
-    if which == 2:
-        rows = 2
-    r = t * rows
-    if which != 1:
-        res[r] = 10.0 * (x[1] - x[0] * x[0])
-        if jac_ptr != wp.uint64(0):
-            jac = wp.array(ptr=jac_ptr, shape=(2 * (r + 1),), dtype=float)
-            jac[2 * r] = -20.0 * x[0]
-            jac[2 * r + 1] = 10.0
-        r += 1
-    if which != 0:
-        res[r] = 1.0 - x[0]
-        if jac_ptr != wp.uint64(0):
-            jac = wp.array(ptr=jac_ptr, shape=(2 * (r + 1),), dtype=float)
-            jac[2 * r] = -1.0
-            jac[2 * r + 1] = 0.0
+    d0 = float(-1.0)
+    d1 = float(0.0)
+    if which == 0:
+        res[t] = 10.0 * (x[1] - x[0] * x[0])
+        d0 = -20.0 * x[0]
+        d1 = 10.0
+    else:
+        res[t] = 1.0 - x[0]
+    if jac_ptr != wp.uint64(0):
+        jac = wp.array(ptr=jac_ptr, shape=(2 * (t + 1),), dtype=float)
+        jac[2 * t] = d0
+        jac[2 * t + 1] = d1
 
 
 class HsRows(pycunls.CustomFactorBatch):
     def __init__(self, which):
-        super().__init__(2 if which == 2 else 1, [2], 1)
+        super().__init__(1, [2], 1)
         self.which = which
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
         n = num_factor_ids
         device = wp.get_cuda_device()
         state_ptrs = wp.array(ptr=sp_ptr, shape=(n,), dtype=wp.uint64, device=device)
-        res = wp.array(ptr=res_ptr, shape=(n * self.residuals_size,), dtype=float, device=device)
+        res = wp.array(ptr=res_ptr, shape=(n,), dtype=float, device=device)
         wp.launch(_hs_rows, dim=n, inputs=[self.which, state_ptrs, res, wp.uint64(jac_ptr)],
                   device=device, stream=wp.Stream(device, cuda_stream=stream_handle))
         return True
 
 
-def hs_problem(x0, objective_rows, constraint=None, bounds=None):
-    x = wp.array(np.array(x0, dtype=np.float32))
-    states = pycunls.VectorStateBatch2(x, 1)
+def test_hs6_python_factor_as_nonlinear_equality(stream):
+    # min (1 - x1)²  s.t.  10 (x2 - x1²) = 0;  x* = (1, 1).
+    x = wp.array(np.array([-1.2, 1.0], dtype=np.float32))
+    states = pycunls.VectorStateBatch(x, 1, dim=2)
     states.set_num_active_states(1)
+    objective, rows = HsRows(1), HsRows(0)
+    constraint = pycunls.ConstraintFactorBatch(rows, pycunls.ConstraintKind.Equality)
     problem = pycunls.Problem()
     problem.add_state_batch(states)
-    keep = [states]
-    objective = HsRows(objective_rows)
-    objective.set_num_active_factors(1)
-    problem.add_factor_batch(objective, [states.state_device_ptr(0)])
-    keep.append(objective)
-    if constraint is not None:
-        constraint.set_num_active_factors(1)
-        problem.add_factor_batch(constraint, [states.state_device_ptr(0)])
-        keep.append(constraint)
-    if bounds is not None:
-        lo, hi = (wp.array(np.array(v, dtype=np.float32)) for v in bounds)
-        bound = pycunls.BoundFactorBatch2(lo, hi, 1)
-        bound.set_num_active_factors(1)
-        problem.add_factor_batch(bound, [states.state_device_ptr(0)])
-        keep += [bound, lo, hi]
-    return x, problem, keep
-
-
-@pytest.mark.parametrize("kind", ["gn", "lm"])
-def test_hs2_active_bound(stream, kind):
-    # min 100 (x2 - x1²)² + (1 - x1)²  s.t.  x2 >= 1.5;  x* = (1.2243707..., 1.5).
-    # From the standard start (-2, 1) a local method may stop at the other KKT
-    # point on the bound, x1 = -1.2210 (f = 4.94); start in x*'s basin instead.
-    x, problem, keep = hs_problem([2.0, 1.0], 2, bounds=([-np.inf, 1.5], [np.inf, np.inf]))
-    summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind)).minimize(stream, problem)
-    assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
-    np.testing.assert_allclose(x.numpy(), [1.2243707487363527, 1.5], atol=2e-4)
-    # HS2 objective value 0.0504261879 is twice the least-squares cost.
-    assert summary.final_cost == pytest.approx(0.0504261879 / 2, rel=1e-3)
-
-
-@pytest.mark.parametrize("kind", ["gn", "lm"])
-def test_hs6_nonlinear_equality(stream, kind):
-    # min (1 - x1)²  s.t.  10 (x2 - x1²) = 0;  x* = (1, 1).
-    rows = HsRows(0)
-    constraint = pycunls.ConstraintFactorBatch(rows, pycunls.ConstraintKind.Equality)
-    x, problem, keep = hs_problem([-1.2, 1.0], 1, constraint=constraint)
-    summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind)).minimize(stream, problem)
+    for batch in (objective, constraint):
+        batch.set_num_active_factors(1)
+        problem.add_factor_batch(batch, [states.state_device_ptr(0)])
+    summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer("lm")).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
     assert summary.max_violation <= 1e-4
     np.testing.assert_allclose(x.numpy(), [1.0, 1.0], atol=1e-3)

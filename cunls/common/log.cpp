@@ -17,8 +17,6 @@
 
 #include "cunls/common/log.h"
 
-#include <spdlog/sinks/basic_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -69,36 +67,9 @@ spdlog::level::level_enum GetLogLevel(Verbosity verbosity) {
 }  // namespace
 
 /** @copydoc SetLoggerOptions */
-void SetLoggerOptions(Verbosity verbosity, Sink sink, const std::string &path) {
+void SetLoggerOptions(Verbosity verbosity) {
   is_logger_initialized.store(true, std::memory_order_release);
-  spdlog::level::level_enum log_level = GetLogLevel(verbosity);
-  if (sink == Sink::Console) {
-    spdlog::set_level(log_level);
-    return;
-  }
-
-  if (path.empty()) {
-    spdlog::warn("Empty path provided to the logger. Using the default logger.");
-    spdlog::set_level(log_level);
-    return;
-  }
-
-  std::vector<spdlog::sink_ptr> sinks;
-
-  if (sink == Sink::ConsoleAndFile) {
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    sinks.push_back(console_sink);
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path);
-    sinks.push_back(file_sink);
-  } else if (sink == Sink::File) {
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path);
-    sinks.push_back(file_sink);
-  }
-
-  auto logger = std::make_shared<spdlog::logger>("logger", begin(sinks), end(sinks));
-  logger->set_level(log_level);
-
-  spdlog::set_default_logger(logger);
+  spdlog::set_level(GetLogLevel(verbosity));
 }
 
 namespace {

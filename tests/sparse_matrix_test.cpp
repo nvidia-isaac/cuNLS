@@ -17,12 +17,11 @@
 
 /**
  * @file sparse_matrix_test.cpp
- * @brief Unit tests for sparse matrix operations (COO-to-CSR, diagonal, copy,
- * SpMV, RHS).
+ * @brief Unit tests for sparse matrix operations (diagonal, SpMV, weighted
+ * squared step norms).
  *
- * Tests GPU implementations of diagonal extraction,
- * scaled diagonal addition, matrix copy, weighted squared step norms, and
- * right-hand-side computation against CPU reference implementations.
+ * Tests GPU implementations of diagonal extraction and weighted squared step
+ * norms against CPU reference implementations.
  */
 
 #include "cunls/minimizer/sparse_matrix.h"
@@ -114,29 +113,6 @@ void ExtractDiagonalCPU(const std::vector<int> &row_ptr, const std::vector<int> 
   }
 }
 
-/**
- * @brief Adds a scaled diagonal to a CSR matrix in place: A += scale * diag(d).
- *
- * @param row_ptr CSR row offsets.
- * @param col_idx CSR column indices.
- * @param values CSR values (modified in place).
- * @param scale Scalar multiplier for the diagonal.
- * @param diagonal Diagonal vector to add.
- */
-void AddScaledDiagonalCPU(const std::vector<int> &row_ptr, const std::vector<int> &col_idx,
-                          std::vector<float> &values, float scale,
-                          const std::vector<float> &diagonal) {
-  // For each row, find and update the diagonal element
-  for (size_t i = 0; i < diagonal.size(); ++i) {
-    for (int j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
-      if (col_idx[j] == i) {
-        values[j] += scale * diagonal[i];
-        break;  // Found and updated diagonal element for this row
-      }
-    }
-  }
-}
-
 }  // namespace
 
 /**
@@ -197,8 +173,8 @@ class SparseMatrixTest : public ::testing::Test {
   profiler::Domain profiler_domain_{"SparseMatrixTest"};
 };
 
-/** @brief Verifies GPU diagonal extraction from a CSR matrix matches the CPU
- * reference. */
+/** @brief Verifies GPU diagonal extraction from a CSR matrix (FindDiagonalPositions,
+ * then ExtractDiagonalAt, as NormalEquations does) matches the CPU reference. */
 TEST_F(SparseMatrixTest, ExtractDiagonal) {
   auto test_range = this->profiler_domain_.CreateDomainRange("ExtractDiagonal");
   // Prepare GPU matrix
@@ -215,7 +191,9 @@ TEST_F(SparseMatrixTest, ExtractDiagonal) {
   dvector<float> device_diagonal;
   {
     auto range = this->profiler_domain_.CreateDomainRange("ExtractDiagonal");
-    ExtractDiagonal(stream.GetStream(), csr_matrix, device_diagonal);
+    dvector<int> positions;
+    FindDiagonalPositions(stream.GetStream(), csr_matrix, positions);
+    ExtractDiagonalAt(stream.GetStream(), csr_matrix, positions, device_diagonal);
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   }
 
@@ -223,86 +201,6 @@ TEST_F(SparseMatrixTest, ExtractDiagonal) {
   hvector<float> device_diagonal_host(device_diagonal.size());
   device_diagonal.CopyToHost(device_diagonal_host.data(), device_diagonal_host.size());
   ASSERT_EQ(device_diagonal_host, diagonal);
-}
-
-/** @brief Verifies GPU AddScaledDiagonal (A + scale * diag(d)) matches the CPU
- * reference. */
-TEST_F(SparseMatrixTest, AddScaledDiagonal) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("AddScaledDiagonalTest");
-  // Prepare GPU matrix
-  CSRSparseMatrix input_matrix;
-  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, input_matrix);
-
-  // Generate random diagonal and scale factor
-  float scale = 10;
-  std::vector<float> diagonal;
-  test_utils::GenerateRandomVector(matrix_size, diagonal);
-  dvector<float> device_diagonal(diagonal);
-
-  // Compute expected result using CPU reference
-  AddScaledDiagonalCPU(csr_row_offsets, csr_col_idx, csr_values, scale, diagonal);
-
-  // Perform operation on GPU
-  CSRSparseMatrix result_matrix;
-  CudaStream stream;
-  {
-    auto range = this->profiler_domain_.CreateDomainRange("AddScaledDiagonal");
-    AddScaledDiagonal(stream.GetStream(), scale, device_diagonal, input_matrix, result_matrix);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  constexpr float tolerance = 1e-3;
-
-  // Verify structure is preserved
-  hvector<int> result_row_offsets_host(result_matrix.row_offsets.size());
-  result_matrix.row_offsets.CopyToHost(result_row_offsets_host.data(),
-                                       result_row_offsets_host.size());
-  hvector<int> result_col_ids_host(result_matrix.col_ids.size());
-  result_matrix.col_ids.CopyToHost(result_col_ids_host.data(), result_col_ids_host.size());
-  ASSERT_EQ(result_row_offsets_host, csr_row_offsets);
-  ASSERT_EQ(result_col_ids_host, csr_col_idx);
-
-  // Verify values match CPU reference (within tolerance)
-  hvector<float> mat_values(result_matrix.values.size());
-  result_matrix.values.CopyToHost(mat_values.data(), mat_values.size());
-  ASSERT_EQ(mat_values.size(), csr_values.size());
-  for (size_t i = 0; i < csr_values.size(); i++) {
-    ASSERT_NEAR(mat_values[i], csr_values[i], tolerance);
-  }
-}
-
-/** @brief Verifies GPU CSR matrix copy preserves structure and values. */
-TEST_F(SparseMatrixTest, Copy) {
-  auto test_range = this->profiler_domain_.CreateDomainRange("CopyTest");
-  // Prepare source matrix on GPU
-  CSRSparseMatrix input_matrix;
-  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, input_matrix);
-
-  // Copy matrix on GPU
-  CSRSparseMatrix result_matrix;
-  CudaStream stream;
-  {
-    auto range = this->profiler_domain_.CreateDomainRange("Copy");
-    CopyCSRSparseMatrix(stream.GetStream(), input_matrix, result_matrix);
-    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  }
-
-  // Verify structure is preserved
-  hvector<int> result_row_offsets_host(result_matrix.row_offsets.size());
-  result_matrix.row_offsets.CopyToHost(result_row_offsets_host.data(),
-                                       result_row_offsets_host.size());
-  hvector<int> result_col_ids_host(result_matrix.col_ids.size());
-  result_matrix.col_ids.CopyToHost(result_col_ids_host.data(), result_col_ids_host.size());
-  ASSERT_EQ(result_row_offsets_host, csr_row_offsets);
-  ASSERT_EQ(result_col_ids_host, csr_col_idx);
-
-  // Verify values match (within floating point tolerance)
-  hvector<float> mat_values(result_matrix.values.size());
-  result_matrix.values.CopyToHost(mat_values.data(), mat_values.size());
-  ASSERT_EQ(mat_values.size(), csr_values.size());
-  for (size_t i = 0; i < csr_values.size(); i++) {
-    ASSERT_NEAR(mat_values[i], csr_values[i], 1e-3);
-  }
 }
 
 /** @brief Verifies the GPU diagonally weighted squared step norm sum(steps[i]^2 *
@@ -374,11 +272,11 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
   float result;
   {
     auto range = this->profiler_domain_.CreateDomainRange("ComputeWeightedSquaredStepSecond");
-    int num_rows = 0, num_cols = 0, num_nonzeros = 0;
-    ExtractMatrixMetadata(stream.GetStream(), input_matrix, num_rows, num_cols, num_nonzeros);
+    const int n = static_cast<int>(matrix_size);
     dvector<float> spmv_scratch;
-    MultiplyCSRByDenseVector(stream.GetStream(), handle, input_matrix, num_rows, num_cols,
-                             num_nonzeros, dsteps, spmv_scratch, buffer);
+    MultiplyCSRByDenseVector(stream.GetStream(), handle, input_matrix, n, n,
+                             static_cast<int>(input_matrix.NumNonZeros()), dsteps, spmv_scratch,
+                             buffer);
     result =
         RunAsyncReduction(stream.GetStream(), dsteps.size(), [&](float *d_out, float *d_partials) {
           DotProductToDevice(stream.GetStream(), dsteps.data(), spmv_scratch.data(), dsteps.size(),
@@ -389,30 +287,6 @@ TEST_F(SparseMatrixTest, ComputeWeightedSquaredStepSecond) {
   result /= matrix_size;
 
   ASSERT_NEAR(result, gt_value, 1e-3);
-}
-
-/** @brief SHS scaling matches hand-derived 2x2 normal equations. */
-TEST(SparseMatrixColumnScaling, SymmetricScaling2x2) {
-  std::vector<int> csr_row_offsets = {0, 2, 4};
-  std::vector<int> csr_col_idx = {0, 1, 0, 1};
-  std::vector<float> csr_values = {4.f, 1.f, 1.f, 9.f};
-
-  CSRSparseMatrix h;
-  test_utils::CreateCSRSparseMatrix(csr_row_offsets, csr_col_idx, csr_values, h);
-
-  std::vector<float> host_scale = {0.5f, 1.f / 3.f};
-  dvector<float> scale(host_scale);
-
-  CudaStream stream;
-  ScaleSymmetricCSR(stream.GetStream(), h, scale);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  hvector<float> out(h.NumNonZeros());
-  h.values.CopyToHost(out.data(), out.size());
-  ASSERT_NEAR(out[0], 1.f, 1e-4f);
-  ASSERT_NEAR(out[1], 1.f / 6.f, 1e-4f);
-  ASSERT_NEAR(out[2], 1.f / 6.f, 1e-4f);
-  ASSERT_NEAR(out[3], 1.f, 1e-4f);
 }
 
 /**
@@ -429,39 +303,13 @@ TEST(SparseMatrixEmptySystem, OperationsOnZeroRowMatrixAreNoOps) {
   ASSERT_EQ(empty.NumRows(), 0);
 
   CudaStream stream;
-  dvector<float> scale;
+  dvector<int> positions;
   dvector<float> diagonal;
-
-  ScaleSymmetricCSR(stream.GetStream(), empty, scale);
-  ExtractDiagonal(stream.GetStream(), empty, diagonal);
-  EXPECT_EQ(diagonal.size(), 0u);
-
-  // Damping still has to produce the (empty) output matrix, since callers read
-  // `damped` afterwards regardless of size.
-  CSRSparseMatrix damped;
-  AddScaledDiagonal(stream.GetStream(), 1e-3f, diagonal, empty, damped);
+  FindDiagonalPositions(stream.GetStream(), empty, positions);
+  ExtractDiagonalAt(stream.GetStream(), empty, positions, diagonal);
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  EXPECT_EQ(damped.NumRows(), 0);
-  EXPECT_EQ(damped.NumNonZeros(), 0);
-  ASSERT_EQ(damped.row_offsets.size(), 1u);
-  hvector<int> offsets(1);
-  damped.row_offsets.CopyToHost(offsets.data(), offsets.size());
-  EXPECT_EQ(offsets[0], 0);
-}
-
-/** @brief Metadata of an empty-but-well-formed CSR is 0x0 with no nonzeros. */
-TEST(SparseMatrixEmptySystem, MetadataOfZeroRowMatrixIsAllZero) {
-  CSRSparseMatrix empty;
-  test_utils::CreateCSRSparseMatrix({0}, {}, {}, empty);
-
-  CudaStream stream;
-  int num_rows = -1, num_cols = -1, num_nonzeros = -1;
-  ExtractMatrixMetadata(stream.GetStream(), empty, num_rows, num_cols, num_nonzeros);
-
-  EXPECT_EQ(num_rows, 0);
-  EXPECT_EQ(num_cols, 0);
-  EXPECT_EQ(num_nonzeros, 0);
+  EXPECT_EQ(positions.size(), 0u);
+  EXPECT_EQ(diagonal.size(), 0u);
 }
 
 }  // namespace cunls

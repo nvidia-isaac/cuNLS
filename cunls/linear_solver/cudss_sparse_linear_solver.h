@@ -139,14 +139,21 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   bool SolveWithValues(cudaStream_t stream, const CSRSparseMatrix &spd_matrix, const float *values,
                        const dvector<float> &rhs, dvector<float> &result);
 
+  /**
+   * @brief The cuDSS handle of @p stream, with device_mem_pool_ attached once per
+   * handle (a new stream gets a new handle).
+   */
+  void *Handle(cudaStream_t stream);
+
   const CSRSparseMatrix *pattern_ = nullptr;  ///< The pattern of Initialize() (not owned).
   dvector<float> values_;                     ///< MatrixStorage(): its values.
 
   cuDSSLinearSolverOptions options_;  ///< Solver configuration.
 
-  cuDSSHandle cudss_handle_;            ///< Owns the cuDSS handle used for all solver phases.
-  cuDSSDeviceMemPool device_mem_pool_;  ///< Reusable pool for cuDSS allocations.
-  cuDSSData cudss_data_;                ///< cuDSS data object storing internal solver state.
+  cuDSSHandle cudss_handle_;              ///< Owns the cuDSS handle used for all solver phases.
+  cuDSSDeviceMemPool device_mem_pool_;    ///< Reusable pool for cuDSS allocations.
+  cudaStream_t pooled_stream_ = nullptr;  ///< Stream whose handle device_mem_pool_ is attached to.
+  cuDSSData cudss_data_;                  ///< cuDSS data object storing internal solver state.
 
   cuDSSConfig cudss_config_;  ///< cuDSS configuration for solver parameters.
 };

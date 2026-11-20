@@ -102,6 +102,7 @@ TEST(SizeCheck, HostListMustCoverActiveFactors) {
   PriorProblem p;
   p.SetSizes(kCapacity);
   p.problem.SetStatePointers(0, {p.state_batch.StateDevicePtr(0)});  // one pointer for 8
+  EXPECT_FALSE(p.problem.CheckConsistency());
   CudaStream stream;
   ExpectInvalid([&] { GaussNewtonMinimizer().Minimize(stream.GetStream(), p.problem); },
                 "SetStatePointers");

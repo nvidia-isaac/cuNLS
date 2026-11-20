@@ -27,7 +27,8 @@ namespace cunls {
 namespace {
 
 constexpr int kBlockSize = 128;
-constexpr int kBall = 2, kFree = 4;
+constexpr int kBall = static_cast<int>(ArticulationJointType::kBall);
+constexpr int kFree = static_cast<int>(ArticulationJointType::kFree);
 
 /** Factor (measurement) index of item t (see FactorBatch::Evaluate). */
 __device__ __forceinline__ int FactorIndex(int t, const int *factor_ids, int num_factors) {
@@ -35,26 +36,11 @@ __device__ __forceinline__ int FactorIndex(int t, const int *factor_ids, int num
   return t < num_factors ? t : t % num_factors;
 }
 
-/** R (row-major 3x3) of the quaternion (x, y, z, w), normalized. */
-__device__ __forceinline__ void QuatToMatrix(const float *q, float *R) {
-  const float n = rsqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-  const float x = q[0] * n, y = q[1] * n, z = q[2] * n, w = q[3] * n;
-  R[0] = 1.f - 2.f * (y * y + z * z);
-  R[1] = 2.f * (x * y - z * w);
-  R[2] = 2.f * (x * z + y * w);
-  R[3] = 2.f * (x * y + z * w);
-  R[4] = 1.f - 2.f * (x * x + z * z);
-  R[5] = 2.f * (y * z - x * w);
-  R[6] = 2.f * (x * z - y * w);
-  R[7] = 2.f * (y * z + x * w);
-  R[8] = 1.f - 2.f * (x * x + y * y);
-}
-
 /** phi = Log(R(q) R(q*)ᵀ) for quaternions q, q* (x, y, z, w). */
 __device__ __forceinline__ void QuatError(const float *q, const float *qt, float *phi) {
   float R[9], Rt[9], M[9];
-  QuatToMatrix(q, R);
-  QuatToMatrix(qt, Rt);
+  lie_device::QuatToMatrix<true>(q, R);
+  lie_device::QuatToMatrix<true>(qt, Rt);
 #pragma unroll
   for (int a = 0; a < 3; ++a) {
 #pragma unroll

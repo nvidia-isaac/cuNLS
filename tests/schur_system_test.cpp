@@ -48,6 +48,7 @@
 #include "cunls/robustifier/cauchy_loss_function_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
@@ -296,11 +297,7 @@ class SmallBundle {
   Problem problem_;
 };
 
-std::vector<float> ToHost(const dvector<float> &v) {
-  std::vector<float> out(v.size());
-  v.CopyToHost(out.data(), out.size());
-  return out;
-}
+using test_utils::ToHost;
 
 /** ‖a - b‖ / ‖b‖. */
 double RelativeError(const std::vector<float> &a, const std::vector<float> &b) {

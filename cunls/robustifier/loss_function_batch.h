@@ -33,24 +33,23 @@ namespace cunls {
  *   - rho.z = rho''(s): the second derivative w.r.t. s
  */
 class LossFunctionBatch {
-public:
+ public:
   /**
    * @brief Evaluates the loss function for a batch of squared residuals on the
-   * GPU.
+   * GPU, asynchronously on @p stream (nothing for @p num_losses <= 0).
    *
    * @param s          Device pointer to an array of squared residuals
-   * (input/output).
+   * (input; the built-in losses do not modify it).
    * @param out        Device pointer to an array of float3 output triplets
    *                   (rho, rho', rho'') for each residual.
    * @param num_losses Number of residuals to evaluate.
    * @param stream     CUDA stream for asynchronous execution.
-   * @return True on success, false on failure.
+   * @throws std::runtime_error if the kernel launch fails.
    */
-  virtual bool Evaluate(float *s, float3 *out, int num_losses,
-                        cudaStream_t stream) const = 0;
+  virtual void Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const = 0;
 
   /** @brief Virtual destructor. */
   virtual ~LossFunctionBatch() = default;
 };
 
-} // namespace cunls
+}  // namespace cunls

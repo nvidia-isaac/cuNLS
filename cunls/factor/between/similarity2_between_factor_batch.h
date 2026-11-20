@@ -33,11 +33,8 @@ class Similarity2BetweenFactorBatch : public SizedFactorBatch<4, 4, 4> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  Similarity2BetweenFactorBatch() = default;
-
-  const Matrix<3> *pose_deltas_ptr_;
-  mutable DeviceVector<Matrix<3>> poses_left_;
-  mutable DeviceVector<Matrix<3>> poses_left_inverse_;
+  const Matrix<3> *pose_deltas_ptr_;        ///< Measurements Delta (user memory).
+  mutable DeviceVector<Matrix<3>> errors_;  ///< Scratch: Delta * T_left^{-1} * T_right per item.
 };
 
 }  // namespace cunls

@@ -181,34 +181,6 @@ void MinimizerState::Create(cudaStream_t stream, const Problem &problem) {
 }
 
 /**
- * @brief Copies state values from another state.
- *
- * Updates this state's values with values from the provided state
- * vectors. Resizes storage if necessary to match the source.
- *
- * @param stream CUDA stream for GPU operations.
- * @param from Source state vectors to copy from.
- */
-void MinimizerState::Copy(cudaStream_t stream, const std::vector<dvector<float>> &from) {
-  if (states_.size() != from.size()) {
-    states_.resize(from.size());
-  }
-
-  for (size_t i = 0; i < from.size(); i++) {
-    const auto &from_dvec = from[i];
-    auto &to_dvec = states_[i];
-
-    if (to_dvec.size() != from_dvec.size()) {
-      to_dvec.resize(from_dvec.size());
-    }
-    if (from_dvec.size() == 0) continue;
-    THROW_ON_CUDA_ERROR(cudaMemcpyAsync(to_dvec.data(), from_dvec.data(),
-                                        from_dvec.size() * sizeof(float), cudaMemcpyDeviceToDevice,
-                                        stream));
-  }
-}
-
-/**
  * @brief Copies minimizer state back to a problem.
  *
  * Updates the problem's state batches with values from the minimizer state.

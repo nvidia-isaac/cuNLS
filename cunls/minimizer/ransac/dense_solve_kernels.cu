@@ -46,24 +46,9 @@ constexpr int kMaxWordsPerBlock = 12288;  ///< 48 KiB of shared memory.
 constexpr float kPivotTolerance = 1e-6f;  ///< On the equilibrated matrix (unit diagonal).
 
 template <int kGroup>
-__device__ __forceinline__ void GroupSync() {
-  if (kGroup == kWarpSize) {
-    __syncwarp();
-  } else {
-    __syncthreads();
-  }
-}
-
-template <int kGroup>
 __device__ __forceinline__ bool GroupAll(bool predicate) {
   return kGroup == kWarpSize ? __all_sync(kFullMask, predicate) != 0
                              : __syncthreads_and(predicate) != 0;
-}
-
-/** Group sum; block groups reduce the per-warp sums in warp order (deterministic). */
-template <int kGroup>
-__device__ float GroupSum(float value, float *scratch) {
-  return kGroup == kWarpSize ? WarpSum(value) : BlockSum(value, scratch);
 }
 
 /** One group's shared-memory workspace. */

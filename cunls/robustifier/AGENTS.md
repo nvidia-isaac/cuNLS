@@ -1,17 +1,17 @@
 # Module: robustifier
 
-> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
-> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
-
 ## Purpose
 
 Implements GPU-batched robust losses applied to squared residual norms.
 
 ## Core interface
 
-- `loss_function_batch.h`: abstract `LossFunctionBatch::Evaluate(float* s, float3* out, int num_losses, cudaStream_t stream)`
+- `loss_function_batch.h`: abstract `void LossFunctionBatch::Evaluate(float* s, float3* out,
+  int num_losses, cudaStream_t stream)`
 
 ## Implementations
+
+All in `loss_function_batch.cu` (one kernel template, one functor per loss); headers:
 
 - `trivial_loss_function_batch.h`: identity loss
 - `huber_loss_function_batch.h`
@@ -20,7 +20,8 @@ Implements GPU-batched robust losses applied to squared residual norms.
 - `soft_lone_loss_function_batch.h`
 - `tolerant_loss_function_batch.h`
 - `tukey_loss_function_batch.h`
-- `scaled_loss_function_batch.h`: templated decorator that scales any loss output by a scalar
+- `scaled_loss_function_batch.h`: `ScaledLossFunctionBatch(const LossFunctionBatch&, float a)`,
+  scales any loss by a > 0; the inner loss is referenced, not owned
 
 ## Semantics
 

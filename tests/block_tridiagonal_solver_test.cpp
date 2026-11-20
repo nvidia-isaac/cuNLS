@@ -418,36 +418,6 @@ TEST(BlockTridiagonalSolver, RandomSystemsMatchFloat64) {
   CheckRandomSystem<32>(1, 4);
 }
 
-template <int M>
-void TimeSolver(int P, int K) {
-  RandomSystem<M> system(P, K, 3);
-  dvector<float> rhs(system.rhs), result(std::vector<float>(system.n, 0.f));
-  CudaStream stream;
-  BlockTridiagonalSolver solver;
-  ASSERT_TRUE(solver.Initialize(stream.GetStream(), system.problem, system.csr, rhs, result));
-  for (int i = 0; i < 3; ++i) solver.Solve(stream.GetStream(), system.csr, rhs, result);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  constexpr int kRuns = 20;
-  const auto t0 = std::chrono::steady_clock::now();
-  for (int i = 0; i < kRuns; ++i) solver.Solve(stream.GetStream(), system.csr, rhs, result);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  const double us =
-      std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count() /
-      kRuns;
-  std::printf("BlockTridiagonal P=%5d K=%3d M=%2d: %9.1f us per solve\n", P, K, M, us);
-}
-
-// Throughput of the solve (scatter, kernel, gather) on the MPC sizes; run with
-// --gtest_also_run_disabled_tests.
-TEST(BlockTridiagonalSolver, DISABLED_Throughput) {
-  TimeSolver<5>(1, 51);
-  TimeSolver<7>(1, 51);
-  TimeSolver<16>(1, 41);
-  TimeSolver<24>(1, 21);
-  TimeSolver<16>(4096, 41);
-  TimeSolver<24>(1024, 21);
-}
-
 /** Median time of one Solve (matrix scatter + factorization + substitutions) by `Solver`. */
 template <typename Solver, int M>
 double SolveMicroseconds(int P, int K) {
@@ -493,7 +463,9 @@ TEST(BlockTridiagonalSolver, DISABLED_ThroughputVsBlockSparseCholesky) {
   CompareSolvers<36>(32768, 1);
   CompareSolvers<64>(8192, 1);
   CompareSolvers<5>(1, 51);
+  CompareSolvers<7>(1, 51);
   CompareSolvers<16>(1, 41);
+  CompareSolvers<24>(1, 21);
   CompareSolvers<16>(4096, 41);
   CompareSolvers<24>(1024, 21);
   CompareSolvers<6>(512, 101);

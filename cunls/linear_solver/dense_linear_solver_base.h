@@ -91,8 +91,8 @@ class DenseLinearSolverBase : public SparseLinearSolver {
   /**
    * @brief Allocates the backend's working buffers for an `n x n` system.
    *
-   * Called from both Initialize and Solve.  Implementations should resize only
-   * when the requested size differs, so repeated calls at a fixed `n` are free.
+   * Called from Initialize.  Implementations should resize only when the
+   * requested size differs, so repeated calls at a fixed `n` are free.
    * @ref dense_matrix_ is sized by this class before the call, so subclasses
    * only need their own buffers.
    *
@@ -116,7 +116,11 @@ class DenseLinearSolverBase : public SparseLinearSolver {
   virtual bool FactorizeAndSolve(cudaStream_t stream, int n, const dvector<float> &rhs,
                                  dvector<float> &result) = 0;
 
-  /** @brief Dense row-major copy of the coefficient matrix; `n * n` floats. */
+  /**
+   * @brief Dense row-major copy of the coefficient matrix; `n * n` floats.
+   * FactorizeAndSolve may overwrite it with the factors (it is rewritten before
+   * every solve).
+   */
   dvector<float> dense_matrix_;
 
   /** @brief Whether to run post-factorization numerical checks. */

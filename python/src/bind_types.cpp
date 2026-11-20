@@ -99,6 +99,8 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
     out.ptr = nb::cast<uintptr_t>(nb::cast<nb::tuple>(cai["data"])[0]);
     out.num_elements = count;
     out.size_known = true;
+    out.ndim = shape.size();
+    if (out.ndim >= 2) out.last_extent = nb::cast<size_t>(shape[out.ndim - 1]);
     return out;
   }
   if (nb::hasattr(obj, "__array_interface__")) {
@@ -121,8 +123,24 @@ DeviceArray inspect_device_array(nb::handle obj, const char *dtype, const char *
                            .c_str());
 }
 
-uintptr_t extract_device_ptr(nb::handle obj) {
-  return inspect_device_array(obj, nullptr, "array").ptr;
+int vector_dim(nb::handle data, nb::handle dim, const char *cls, const char *name) {
+  if (!dim.is_none()) {
+    const int value = nb::cast<int>(dim);
+    if (value < 1) {
+      throw nb::value_error((std::string(cls) + ": dim=" + std::to_string(value) +
+                             " is not a vector size (expected >= 1). Fix: pass the vector size.")
+                                .c_str());
+    }
+    return value;
+  }
+  const DeviceArray array = inspect_device_array(data, nullptr, name);
+  if (!array.size_known || array.ndim < 2) {
+    throw nb::value_error((std::string(cls) + ": cannot tell the vector size from " + name +
+                           " (a flat array or a pointer). Fix: pass dim=n, or " + name +
+                           " shaped (N, n).")
+                              .c_str());
+  }
+  return static_cast<int>(array.last_extent);
 }
 
 uintptr_t extract_device_ptr(nb::handle obj, const char *dtype, const char *name) {
@@ -474,8 +492,8 @@ void bind_types(nb::module_ &m) {
               "Options common to all minimizers (MinimizerOptions). Set fields on it, e.g. "
               "options.base_options.max_num_iterations = 100.")
       .def_rw("initial_lambda", &cunls::LevenbergMarquardtMinimizerOptions::initial_lambda,
-              "Initial damping lambda; larger is more conservative (closer to gradient descent). 0 "
-              "(Gauss-Newton steps) is allowed. Default: 1e-3.")
+              "Initial damping lambda in [0, lambda_max]; larger is more conservative (closer to "
+              "gradient descent). 0 (Gauss-Newton steps) is allowed. Default: 1e-3.")
       .def_rw("relative_reduction_tolerance",
               &cunls::LevenbergMarquardtMinimizerOptions::relative_reduction_tolerance,
               "Converged when the cost reduction the linear model predicts, relative to the cost, "
@@ -484,8 +502,8 @@ void bind_types(nb::module_ &m) {
               "Damping growth on a rejected step (> 1); the k-th rejection in a row multiplies "
               "lambda by lambda_upscale * 2^(k-1). Default: 2.")
       .def_rw("lambda_downscale", &cunls::LevenbergMarquardtMinimizerOptions::lambda_downscale,
-              "Damping factor on a very successful step (rho > lambda_downscale_threshold). "
-              "Default: 0.5.")
+              "Damping factor in (0, 1] on a very successful step (rho > "
+              "lambda_downscale_threshold). Default: 0.5.")
       .def_rw("lambda_max", &cunls::LevenbergMarquardtMinimizerOptions::lambda_max,
               "Largest damping (>= lambda_min). Default: 1e6.")
       .def_rw("lambda_min", &cunls::LevenbergMarquardtMinimizerOptions::lambda_min,

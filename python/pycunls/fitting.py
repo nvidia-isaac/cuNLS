@@ -55,27 +55,17 @@ import numpy as np
 import warp as wp
 
 from pycunls import _pycunls_core as _core
-from pycunls._arrays import to_numpy, warp_stream
+from pycunls._arrays import (cached_stream, is_warp_function, to_numpy, warp_length,
+                             warp_result_type, warp_stream)
 from pycunls._summary import _plain
+from pycunls.builder import make_solver
 
-_VECTOR_SIZES = (1, 2, 3, 4, 6, 12)
-_MAX_PARAMETERS = 12
 _FD_STEP = 3e-4   # relative central-difference step in float32
 
 
 # ---------------------------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------------------------
-
-def _length(t) -> int:
-    """1 for a scalar Warp type, N for a wp.vecN, 0 for anything else."""
-    return 1 if t in (float, wp.float32) else int(getattr(t, "_length_", 0))
-
-
-def _is_warp_function(model) -> bool:
-    # warp's Function class; its module moved between Warp versions.
-    return type(model).__name__ == "Function" and type(model).__module__.startswith("warp")
-
 
 class _Workspace:
     """Device buffers of one evaluation of ``rows`` samples (reused while large enough)."""
@@ -106,11 +96,10 @@ class _WarpModel:
         self.fn = fn
         self.device = device
         self.x_type, self.p_type = types
-        self.y_type = getattr(fn, "func", None) and fn.func.__annotations__.get("return")
-        self.y_type = self.y_type or fn.value_type or float
-        self.num_params = _length(self.p_type)
-        self.x_dim = _length(self.x_type)
-        self.m = _length(self.y_type)
+        self.y_type = warp_result_type(fn)
+        self.num_params = warp_length(self.p_type)
+        self.x_dim = warp_length(self.x_type)
+        self.m = warp_length(self.y_type)
         if not (self.num_params and self.x_dim and self.m):
             raise TypeError("fit: unsupported Warp model types (got x: "
                             f"{self.x_type}, p: {self.p_type}, result: {self.y_type}; expected "
@@ -128,11 +117,11 @@ class _WarpModel:
 
         @wp.kernel(module="unique")
         def gather(pointers: wp.array(dtype=wp.uint64), ids: wp.array(dtype=wp.int32),
-                   use_ids: int, num_factors: int, width: int, params: wp.array(dtype=PT),
+                   use_ids: int, num_factors: int, params: wp.array(dtype=PT),
                    sample: wp.array(dtype=wp.int32)):
             # Item t: the parameters its state pointer addresses, and its sample.
             t = wp.tid()
-            a = wp.array(ptr=pointers[t], shape=(width,), dtype=float)
+            a = wp.array(ptr=pointers[t], shape=(P,), dtype=float)
             if wp.static(P == 1):
                 params[t] = a[0]
             else:
@@ -199,13 +188,12 @@ class _WarpModel:
             self._workspace = _Workspace(self, rows)
         return self._workspace
 
-    def gather(self, pointers: wp.array, ids: Optional[wp.array], num_factors: int, width: int,
+    def gather(self, pointers: wp.array, ids: Optional[wp.array], num_factors: int,
                rows: int) -> _Workspace:
         """Reads each item's parameters through its state pointer and its sample index."""
         ws = self.workspace(rows)
         wp.launch(self._kernels["gather"], dim=rows, device=self.device,
-                  inputs=[pointers, ids, int(ids is not None), num_factors, width, ws.params,
-                          ws.sample])
+                  inputs=[pointers, ids, int(ids is not None), num_factors, ws.params, ws.sample])
         return ws
 
     def evaluate(self, x: wp.array, ws: _Workspace, rows: int, mode: Optional[str]) -> None:
@@ -259,7 +247,7 @@ class _WarpModel:
 
 
 def _make_model(model, jacobian: str, device) -> _WarpModel:
-    if not _is_warp_function(model):
+    if not is_warp_function(model):
         raise TypeError(
             f"fit: model must be a Warp function (got {type(model).__name__}). Fix: write it "
             "for one sample, e.g. @wp.func def model(x: float, p: wp.vec3) -> float: return "
@@ -277,7 +265,7 @@ def _make_model(model, jacobian: str, device) -> _WarpModel:
 @wp.kernel
 def _write_residuals(pred: wp.array2d(dtype=float), jac: wp.array3d(dtype=float),
                      sample: wp.array(dtype=wp.int32), y: wp.array2d(dtype=float),
-                     w: wp.array2d(dtype=float), num_params: int, want_jacobian: int,
+                     w: wp.array2d(dtype=float), want_jacobian: int,
                      residuals: wp.array2d(dtype=float), jacobians: wp.array3d(dtype=float)):
     # residual = w * (pred - y); samples with w = 0 (NaN y) contribute nothing.
     t = wp.tid()
@@ -291,7 +279,7 @@ def _write_residuals(pred: wp.array2d(dtype=float), jac: wp.array3d(dtype=float)
         if want_jacobian:
             for k in range(jacobians.shape[2]):
                 v = float(0.0)
-                if wi > 0.0 and k < num_params:
+                if wi > 0.0:
                     v = jac[t, i, k] * wi
                 jacobians[t, i, k] = v
 
@@ -299,36 +287,28 @@ def _write_residuals(pred: wp.array2d(dtype=float), jac: wp.array3d(dtype=float)
 class _SampleFactors(_core.CustomFactorBatch):
     """residual_t = w_t * (model(x_t, p_fit(t)) - y_t) for every sample t."""
 
-    def __init__(self, model: _WarpModel, x: wp.array, y: wp.array, w: wp.array,
-                 num_params: int, width: int):
-        super().__init__(model.m, [width], y.shape[0])
+    def __init__(self, model: _WarpModel, x: wp.array, y: wp.array, w: wp.array):
+        super().__init__(model.m, [model.num_params], y.shape[0])
         self.model, self.x, self.y, self.w = model, x, y, w
-        self.num_params, self.width = num_params, width
         self._streams: Dict[int, wp.Stream] = {}
-
-    def _stream(self, handle: int) -> wp.Stream:
-        stream = self._streams.get(handle)
-        if stream is None:
-            stream = self._streams[handle] = warp_stream(handle)
-        return stream
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, ids_ptr, num_ids):
         n = num_ids if num_ids else self.num_active_factors
-        m, width, device = self.model.m, self.width, self.model.device
+        m, num_params, device = self.model.m, self.model.num_params, self.model.device
 
         def wrap(ptr, dtype, shape):
             return wp.array(ptr=ptr, dtype=dtype, shape=shape, device=device, copy=False)
 
-        with wp.ScopedStream(self._stream(stream_handle), sync_enter=False):
+        stream = cached_stream(self._streams, stream_handle, device)
+        with wp.ScopedStream(stream, sync_enter=False):
             # Item t evaluates factor ids[t], or t % N without ids (FactorBatch.Evaluate).
             ids = wrap(ids_ptr, wp.int32, (n,)) if ids_ptr else None
-            ws = self.model.gather(wrap(sp_ptr, wp.uint64, (n,)), ids, self.num_active_factors,
-                                   width, n)
+            ws = self.model.gather(wrap(sp_ptr, wp.uint64, (n,)), ids, self.num_active_factors, n)
             self.model.evaluate(self.x, ws, n, self.model.mode if jac_ptr else None)
             wp.launch(_write_residuals, dim=n, device=device,
-                      inputs=[ws.pred, ws.jac, ws.sample, self.y, self.w, self.num_params,
-                              int(jac_ptr != 0), wrap(res_ptr, float, (n, m)),
-                              wrap(jac_ptr, float, (n, m, width)) if jac_ptr else None])
+                      inputs=[ws.pred, ws.jac, ws.sample, self.y, self.w, int(jac_ptr != 0),
+                              wrap(res_ptr, float, (n, m)),
+                              wrap(jac_ptr, float, (n, m, num_params)) if jac_ptr else None])
         return True
 
 
@@ -483,7 +463,7 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
 
     Raises:
         TypeError: the model is not a ``@wp.func`` of two arguments with supported types.
-        ValueError: inconsistent shapes or more than 12 parameters.
+        ValueError: inconsistent shapes.
     """
     stream = stream if stream is not None else _core.CudaStream()
     device = wp.get_cuda_device()
@@ -491,6 +471,8 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
     def _host(a, name):
         return to_numpy(a, np.float64, name, "fit")
 
+    if method not in ("lm", "gn"):
+        raise ValueError(f"fit: method must be 'lm' or 'gn', got {method!r}")
     fitted = _make_model(model, jacobian, device)
 
     # ---- shapes ------------------------------------------------------------------------------
@@ -500,9 +482,6 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
     if p0_d.ndim not in (1, 2):
         raise ValueError(f"p0 must be (P,) or (B, P); got shape {p0_d.shape}")
     num_params = p0_d.shape[-1]
-    if num_params > _MAX_PARAMETERS:
-        raise ValueError(f"fit() supports up to {_MAX_PARAMETERS} parameters per fit, got "
-                         f"{num_params}; build the problem with pycunls.Problem instead")
     if num_params != fitted.num_params:
         raise ValueError(f"p0 has {num_params} parameters but the Warp model's p is a vector "
                          f"of {fitted.num_params}")
@@ -586,26 +565,21 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
     y_clean = np.where(valid, y_s, 0.0).astype(np.float32)
 
     # ---- problem -----------------------------------------------------------------------------
-    width = next(k for k in _VECTOR_SIZES if k >= num_params)
-    start = np.zeros((total, width), np.float32)
-    start[:, :num_params] = p0_flat if lower is None else np.clip(p0_flat, lower, upper)
+    start = (p0_flat if lower is None else np.clip(p0_flat, lower, upper)).astype(np.float32)
     solver_stream = warp_stream(stream)
     with wp.ScopedStream(solver_stream):
         x_dev = wp.array(x_s, dtype=fitted.x_type, device=device)
         probe_fits = -(-256 // n)  # choose_jacobian probes at most 256 rows
         fitted.choose_jacobian(x_dev, np.repeat(p0_flat[:probe_fits], n, axis=0))
         params = wp.array(start, dtype=float, device=device)
-        state_cls = getattr(_core, f"VectorStateBatch{width}")
-        states = state_cls(params, total)
+        states = _core.VectorStateBatch(params, total, dim=num_params)
         states.set_num_active_states(total)
         if lower is not None:
-            lo = np.full((total, width), -np.inf, np.float32)
-            hi = np.full((total, width), np.inf, np.float32)
-            lo[:, :num_params], hi[:, :num_params] = lower, upper
-            lo, hi = wp.array(lo, device=device), wp.array(hi, device=device)
+            lo, hi = (wp.array(np.ascontiguousarray(b, np.float32), device=device)
+                      for b in (lower, upper))
             states.set_bounds(lo, hi)
         factors = _SampleFactors(fitted, x_dev, wp.array(y_clean, device=device),
-                                 wp.array(w, device=device), num_params, width)
+                                 wp.array(w, device=device))
         factors.set_num_active_factors(rows)
         fit_of_sample = wp.array(np.repeat(np.arange(total, dtype=np.int32), n), device=device)
         loss_batch = _loss(loss, loss_scale)
@@ -617,30 +591,18 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
             problem.set_problem_partition(total, [fit_ids])
         wp.synchronize_stream(solver_stream)
 
-    base = _core.MinimizerOptions()
-    base.max_num_iterations = int(max_iterations)
-    base.state_tolerance = 1e-14
-    base.cost_tolerance = 1e-14
+    options = {"max_num_iterations": int(max_iterations), "state_tolerance": 1e-14,
+               "cost_tolerance": 1e-14}
     if method == "lm":
-        options = _core.LevenbergMarquardtMinimizerOptions()
-        options.base_options = base
-        options.relative_reduction_tolerance = 1e-7
-        minimizer = _core.LevenbergMarquardtMinimizer(options)
-    elif method == "gn":
-        minimizer = _core.GaussNewtonMinimizer(base)
-    else:
-        raise ValueError(f"method must be 'lm' or 'gn', got {method!r}")
-    if lower is not None:
-        al = _core.AugmentedLagrangianMinimizer(minimizer)
-        summary = al.minimize(stream, problem)
-    else:
-        summary = minimizer.minimize(stream, problem)
+        options["relative_reduction_tolerance"] = 1e-7
+    minimizer, al = make_solver(method, lower is not None, options)
+    summary = (minimizer if al is None else al).minimize(stream, problem)
 
     # ---- results -----------------------------------------------------------------------------
     # Why each fit stopped (with bounds: the wrapped minimizer's last solve).
     codes = np.asarray(minimizer.subproblem_termination_reasons())
     with wp.ScopedStream(solver_stream):
-        p_final = params.numpy()[:, :num_params].astype(np.float64)
+        p_final = params.numpy().astype(np.float64)
         ws = fitted.workspace(rows)
         wp.copy(ws.sample, wp.array(np.arange(rows, dtype=np.int32), device=device))
         p_rows = np.ascontiguousarray(np.repeat(p_final, n, axis=0), np.float32)
@@ -685,7 +647,9 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
 
     codes = codes[pick]
     names = [_reason_name(c) for c in codes]
-    converged = np.array([_converged(c) for c in codes])
+    # As MinimizerSummary.converged(): the reasons NoFreeStates to NoCostDecrease.
+    reasons = _core.TerminationReason
+    converged = (codes >= reasons.NoFreeStates.value) & (codes <= reasons.NoCostDecrease.value)
     # A fit without one observed sample determines nothing.
     empty = counts[pick] == 0
     for k in np.flatnonzero(empty):
@@ -794,14 +758,3 @@ def _reason_name(code: int) -> str:
     except ValueError:
         return "NotDetermined"
 
-
-def _converged(code: int) -> bool:
-    try:
-        reason = _core.TerminationReason(int(code))
-    except ValueError:
-        return False
-    return reason in (_core.TerminationReason.CostTolerance,
-                      _core.TerminationReason.StateTolerance,
-                      _core.TerminationReason.RelativeReductionTolerance,
-                      _core.TerminationReason.NoCostDecrease,
-                      _core.TerminationReason.NoFreeStates)

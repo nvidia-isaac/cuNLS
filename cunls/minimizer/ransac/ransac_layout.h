@@ -63,9 +63,8 @@ struct ResidualLayout {
   int u_offset = -1;  ///< Offset in the concatenated sampled index (sampled only).
   std::vector<int> block_off;
   std::vector<int> block_size;
-  dvector<int2> blocks;       ///< (state batch, state) per (factor, state slot).
-  dvector<int> local_col;     ///< Local column per (factor, state slot), -1 if constant.
-  dvector<float *> x0_table;  ///< The problem's own pointer list (initial guess).
+  dvector<int2> blocks;    ///< (state batch, state) per (factor, state slot).
+  dvector<int> local_col;  ///< Local column per (factor, state slot), -1 if constant.
 };
 
 /**
@@ -84,7 +83,6 @@ class RansacLayout {
   int total_sampled() const { return total_sampled_; }  ///< Sampled factors, all batches.
   int sample_size() const { return sample_size_; }      ///< Factors per minimal sample.
   int m_max() const { return m_max_; }                  ///< Largest residual dimension.
-  int max_factors() const { return max_factors_; }      ///< Largest batch size.
 
  private:
   void BuildStates(const Problem &problem);
@@ -92,7 +90,7 @@ class RansacLayout {
   int BuildState(size_t index, StateBatch *batch);
   void BuildResiduals(const Problem &problem, const RansacMinimizerOptions &options);
   void BuildResidual(const Problem &problem, size_t index, const RansacFactorBatchOptions &role);
-  void ResolveBlocks(ResidualLayout &r, size_t index, const std::vector<float *> &pointers);
+  void ResolveBlocks(ResidualLayout &r, const std::vector<float *> &pointers);
   void ChooseSampleSize(const RansacMinimizerOptions &options, int m_min_sampled);
 
   std::vector<StateLayout> states_;
@@ -101,7 +99,6 @@ class RansacLayout {
   int total_sampled_ = 0;
   int sample_size_ = 0;
   int m_max_ = 1;
-  int max_factors_ = 1;
 };
 
 /** @brief Throws std::invalid_argument(message) after logging it. */

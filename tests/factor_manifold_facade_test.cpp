@@ -24,8 +24,7 @@
  *
  * Covers: zero-cost specialization (sizeof equivalence), CTAD deduction for
  * BetweenFactorBatch/PriorFactorBatch (no <Manifold> needed), and
- * behavioral equivalence (facade Evaluate() output matches the direct
- * class's).
+ * behavioral equivalence (the facade's Evaluate() is the direct class's).
  */
 
 #include <gtest/gtest.h>
@@ -34,9 +33,7 @@
 #include <utility>
 #include <vector>
 
-#include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
-#include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/between_factor_batch.h"
 #include "cunls/factor/motion/constant_acceleration_factor_batch.h"
@@ -105,88 +102,16 @@ static_assert(
     std::is_same_v<decltype(PriorFactorBatch(std::declval<const SO2Rotation *>(), size_t{})),
                    PriorFactorBatch<manifold::SO2>>);
 
-// --- Behavioral equivalence: facade Evaluate() matches the direct class. -
+// --- Behavioral equivalence: the facade is the concrete class (it derives
+// from it and does not redeclare Evaluate), so its Evaluate() is the direct
+// class's.
 
-TEST(FactorManifoldFacadeTest, BetweenFactorBatchSE3DeducedMatchesDirectClass) {
-  constexpr size_t kN = 8;
-  SE3Transform identity{};
-  identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
-  std::vector<SE3Transform> poses(kN + 1, identity);
-  std::vector<SE3Transform> deltas(kN, identity);
-
-  dvector<SE3Transform> poses_dev(poses);
-  dvector<SE3Transform> deltas_dev(deltas);
-
-  std::vector<const float *> ptrs(2 * kN);
-  for (size_t i = 0; i < kN; ++i) {
-    ptrs[2 * i] = reinterpret_cast<const float *>(poses_dev.data() + (i + 1));
-    ptrs[2 * i + 1] = reinterpret_cast<const float *>(poses_dev.data() + i);
-  }
-  dvector<const float *> ptrs_dev(ptrs);
-
-  CudaStream stream;
-
-  SE3BetweenFactorBatch direct(deltas_dev.data(), kN);
-  direct.SetNumActiveFactors(direct.Capacity());
-  dvector<float> res_direct(6 * kN), jac_direct(72 * kN);
-  direct.Evaluate(res_direct.data(), jac_direct.data(),
-                  reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
-
-  // CTAD: no <manifold::SE3> written anywhere.
-  BetweenFactorBatch facade(deltas_dev.data(), kN);
-  facade.SetNumActiveFactors(facade.Capacity());
-  dvector<float> res_facade(6 * kN), jac_facade(72 * kN);
-  facade.Evaluate(res_facade.data(), jac_facade.data(),
-                  reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_direct(6 * kN), host_facade(6 * kN);
-  res_direct.CopyToHost(host_direct.data(), 6 * kN);
-  res_facade.CopyToHost(host_facade.data(), 6 * kN);
-  for (size_t i = 0; i < 6 * kN; ++i) {
-    EXPECT_FLOAT_EQ(host_direct[i], host_facade[i]) << "residual index " << i;
-  }
-}
-
-TEST(FactorManifoldFacadeTest, PriorFactorBatchSO2DeducedMatchesDirectClass) {
-  constexpr size_t kN = 8;
-  SO2Rotation identity{};
-  identity[0] = identity[3] = 1.0f;
-  std::vector<SO2Rotation> poses(kN, identity);
-  std::vector<SO2Rotation> observations(kN, identity);
-
-  dvector<SO2Rotation> poses_dev(poses);
-  dvector<SO2Rotation> observations_dev(observations);
-
-  std::vector<const float *> ptrs(kN);
-  for (size_t i = 0; i < kN; ++i) {
-    ptrs[i] = reinterpret_cast<const float *>(poses_dev.data() + i);
-  }
-  dvector<const float *> ptrs_dev(ptrs);
-
-  CudaStream stream;
-
-  SO2PriorFactorBatch direct(observations_dev.data(), kN);
-  direct.SetNumActiveFactors(direct.Capacity());
-  dvector<float> res_direct(kN), jac_direct(2 * kN);
-  direct.Evaluate(res_direct.data(), jac_direct.data(),
-                  reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
-
-  // CTAD: no <manifold::SO2> written anywhere.
-  PriorFactorBatch facade(observations_dev.data(), kN);
-  facade.SetNumActiveFactors(facade.Capacity());
-  dvector<float> res_facade(kN), jac_facade(2 * kN);
-  facade.Evaluate(res_facade.data(), jac_facade.data(),
-                  reinterpret_cast<const float *const *>(ptrs_dev.data()), stream.GetStream());
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> host_direct(kN), host_facade(kN);
-  res_direct.CopyToHost(host_direct.data(), kN);
-  res_facade.CopyToHost(host_facade.data(), kN);
-  for (size_t i = 0; i < kN; ++i) {
-    EXPECT_FLOAT_EQ(host_direct[i], host_facade[i]) << "residual index " << i;
-  }
-}
+static_assert(std::is_base_of_v<SE3BetweenFactorBatch, BetweenFactorBatch<manifold::SE3>>);
+static_assert(std::is_same_v<decltype(&BetweenFactorBatch<manifold::SE3>::Evaluate),
+                             decltype(&SE3BetweenFactorBatch::Evaluate)>);
+static_assert(std::is_base_of_v<SO2PriorFactorBatch, PriorFactorBatch<manifold::SO2>>);
+static_assert(std::is_same_v<decltype(&PriorFactorBatch<manifold::SO2>::Evaluate),
+                             decltype(&SO2PriorFactorBatch::Evaluate)>);
 
 // Similarity3's between-factor deduction guide resolves from the measurement
 // pointer type alone, like the other manifolds.

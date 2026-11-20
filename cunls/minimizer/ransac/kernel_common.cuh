@@ -19,8 +19,8 @@
 
 /**
  * @file kernel_common.cuh
- * @brief Device helpers shared by the RANSAC kernels: deterministic warp and
- * block reductions, and item resolution for a slot.
+ * @brief Device helpers shared by the RANSAC kernels: deterministic warp,
+ * block and group reductions.
  */
 
 #include <cuda_runtime.h>
@@ -45,14 +45,6 @@ template <typename T>
 __device__ __forceinline__ T WarpSum(T value) {
   for (int offset = kWarpSize / 2; offset > 0; offset >>= 1) {
     value += __shfl_xor_sync(kFullMask, value, offset);
-  }
-  return value;
-}
-
-/** @brief Max over a warp. Result in every lane. */
-__device__ __forceinline__ float WarpMax(float value) {
-  for (int offset = kWarpSize / 2; offset > 0; offset >>= 1) {
-    value = fmaxf(value, __shfl_xor_sync(kFullMask, value, offset));
   }
   return value;
 }
@@ -93,55 +85,23 @@ __device__ T BlockSum(T value, T *scratch) {
   return total;
 }
 
-/** @brief Where one item of a slot lives. */
-struct ItemRef {
-  int view;    ///< Index into SlotItems::views.
-  int factor;  ///< Factor of the batch (selects its local columns).
-  int row;     ///< Row in the slot's part of the view's buffers.
-};
-
-/**
- * @brief Locates item `e` of a slot. Returns false when the item contributes
- * nothing (masked out, or a sample entry outside every sample view).
- */
-__device__ inline bool ResolveItem(const SlotItems &items, int slot, int e, ItemRef &ref) {
-  if (e < items.sample_size) {
-    const int u = items.samples[static_cast<size_t>(slot) * items.sample_size + e];
-    for (int v = 0; v < items.num_views; ++v) {
-      const BatchView &view = items.views[v];
-      if (view.kind == kViewSamples && u >= view.u_offset && u < view.u_offset + view.num_factors) {
-        ref = {v, u - view.u_offset, e};
-        return true;
-      }
-    }
-    return false;
+/** @brief Synchronizes a group: one warp (kGroup == kWarpSize) or the whole block. */
+template <int kGroup>
+__device__ __forceinline__ void GroupSync() {
+  if (kGroup == kWarpSize) {
+    __syncwarp();
+  } else {
+    __syncthreads();
   }
-  int rest = e - items.sample_size;
-  for (int v = 0; v < items.num_views; ++v) {
-    const BatchView &view = items.views[v];
-    if (view.kind == kViewSamples) {
-      continue;
-    }
-    if (rest < view.num_factors) {
-      if (view.kind == kViewPerSlotMasked &&
-          items.mask[static_cast<size_t>(slot) * items.mask_stride + view.u_offset + rest] == 0) {
-        return false;
-      }
-      ref = {v, rest, rest};
-      return true;
-    }
-    rest -= view.num_factors;
-  }
-  return false;
 }
 
-/** @brief State slot of the factor column `col` (slot columns are contiguous and ordered). */
-__device__ __forceinline__ int BlockOfColumn(const BatchView &view, int col) {
-  int blk = 0;
-  while (blk + 1 < view.nb && col >= view.block_col_off[blk + 1]) {
-    ++blk;
-  }
-  return blk;
+/**
+ * @brief Sum over a group: WarpSum for a warp, BlockSum for a block
+ * (deterministic). `scratch` as for BlockSum.
+ */
+template <int kGroup>
+__device__ __forceinline__ float GroupSum(float value, float *scratch) {
+  return kGroup == kWarpSize ? WarpSum(value) : BlockSum(value, scratch);
 }
 
 }  // namespace ransac_internal

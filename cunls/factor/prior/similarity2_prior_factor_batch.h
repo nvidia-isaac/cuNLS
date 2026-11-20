@@ -76,8 +76,6 @@ class Similarity2PriorFactorBatch : public SizedFactorBatch<4, 4> {
                 size_t num_factor_ids = 0) const final;
 
  private:
-  Similarity2PriorFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing target transforms.
   const Matrix<3> *observations_ptr_;
 

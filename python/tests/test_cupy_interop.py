@@ -43,7 +43,7 @@ def test_cupy_array_and_its_int_pointer_give_the_same_state_pointer():
 def test_cupy_dtype_is_checked():
     with pytest.raises(TypeError, match="data must have dtype float32, got float64"):
         pycunls.VectorStateBatch3(cp.zeros(9, dtype=cp.float64), 3)
-    with pytest.raises(TypeError, match="const_ids must have dtype int32, got int64"):
+    with pytest.raises(TypeError, match="const_state_ids must have dtype int32, got int64"):
         pycunls.SE3StateBatch(cp.zeros(16 * 2, dtype=cp.float32), 2, cp.arange(1), 1)
 
 

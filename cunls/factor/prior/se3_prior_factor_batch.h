@@ -71,8 +71,6 @@ class SE3PriorFactorBatch : public SizedFactorBatch<6, 6> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  SE3PriorFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing target transforms.
   const SE3Transform *observations_ptr_;
 

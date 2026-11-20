@@ -69,19 +69,25 @@ def doctor() -> Tuple[bool, List[dict]]:
         from pycunls import _pycunls_core  # the original import error, if any
         return f"pycunls {pycunls.__version__} ({pathlib.Path(_pycunls_core.__file__).name})"
 
+    def prior_problem(x, target):
+        """One 3-vector state x pulled to target ((1, 3) device arrays)."""
+        import pycunls
+        states = pycunls.VectorStateBatch(x, 1)
+        states.set_num_active_states(1)
+        prior = pycunls.PriorVectorFactorBatch(target, 1)
+        prior.set_num_active_factors(1)
+        problem = pycunls.Problem()
+        problem.add_state_batch(states)
+        problem.add_factor_batch(prior, [states.state_device_ptr(0)])
+        return problem
+
     def solve():
         import numpy as np
         import warp as wp
         import pycunls
         x = wp.array([[5.0, -3.0, 2.0]], dtype=float)
         target = wp.array([[1.0, 2.0, 3.0]], dtype=float)
-        states = pycunls.VectorStateBatch3(x, 1)
-        states.set_num_active_states(1)
-        prior = pycunls.PriorVectorFactorBatch3(target, 1)
-        prior.set_num_active_factors(1)
-        problem = pycunls.Problem()
-        problem.add_state_batch(states)
-        problem.add_factor_batch(prior, [states.state_device_ptr(0)])
+        problem = prior_problem(x, target)
         summary = pycunls.LevenbergMarquardtMinimizer().minimize(pycunls.CudaStream(), problem)
         if not summary.converged() or float(np.abs(x.numpy() - target.numpy()).max()) > 1e-3:
             raise RuntimeError(summary.message)
@@ -105,14 +111,8 @@ def doctor() -> Tuple[bool, List[dict]]:
     def cudss():
         import warp as wp
         import pycunls
-        x = wp.array([[5.0, -3.0, 2.0]], dtype=float)
-        states = pycunls.VectorStateBatch3(x, 1)
-        states.set_num_active_states(1)
-        prior = pycunls.PriorVectorFactorBatch3(wp.zeros((1, 3), dtype=float), 1)
-        prior.set_num_active_factors(1)
-        problem = pycunls.Problem()
-        problem.add_state_batch(states)
-        problem.add_factor_batch(prior, [states.state_device_ptr(0)])
+        problem = prior_problem(wp.array([[5.0, -3.0, 2.0]], dtype=float),
+                                wp.zeros((1, 3), dtype=float))
         options = pycunls.MinimizerOptions()
         options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.cuDSS
         pycunls.GaussNewtonMinimizer(options).minimize(pycunls.CudaStream(), problem)

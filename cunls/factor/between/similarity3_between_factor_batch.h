@@ -33,8 +33,6 @@ class Similarity3BetweenFactorBatch : public SizedFactorBatch<7, 7, 7> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  Similarity3BetweenFactorBatch() = default;
-
   const Matrix<4> *pose_deltas_ptr_;
   /// Scratch: the per-factor error transform whose Log is the residual.
   mutable DeviceVector<Matrix<4>> errors_;

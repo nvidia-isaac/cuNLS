@@ -37,7 +37,8 @@ constexpr int kThreads = 256;
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
-/// Pivots below this are replaced (singular systems; no read-back reports them).
+/// Pivots below this are replaced and counted in num_singular (read back only with safety
+/// checks on).
 constexpr float kPivotFloor = 1e-30f;
 
 __global__ void gather_rhs_kernel(const float *rhs, const int *row_slot, size_t rows,
@@ -72,6 +73,16 @@ __device__ void StoreBlock(float *__restrict__ dst, const float *src, int lane) 
   }
 }
 
+/// Most subproblems (warps) per block of block_tridiagonal_kernel for stages of
+/// M unknowns, within 48 KB of static shared memory. Several warps per block
+/// keep more warps resident per SM when there are many subproblems (one-warp
+/// blocks cap occupancy at the per-SM block limit); few subproblems keep one
+/// warp per block so that they spread over the SMs (see Solve).
+template <int M>
+__host__ __device__ constexpr int MaxWarpsPerBlock() {
+  return M <= 16 ? 4 : 1;
+}
+
 /**
  * One warp per subproblem: block Cholesky of the block-tridiagonal matrix (the
  * Riccati recursion) and the two substitutions. Lane i owns row i of the stage
@@ -89,16 +100,6 @@ __device__ void StoreBlock(float *__restrict__ dst, const float *src, int lane) 
  * Rows past a stage's size (padding up to M) are identity rows with zero
  * right-hand side; lanes past M only take part in the shuffles.
  */
-/// Most subproblems (warps) per block of block_tridiagonal_kernel for stages of
-/// M unknowns, within 48 KB of static shared memory. Several warps per block
-/// keep more warps resident per SM when there are many subproblems (one-warp
-/// blocks cap occupancy at the per-SM block limit); few subproblems keep one
-/// warp per block so that they spread over the SMs (see Solve).
-template <int M>
-__host__ __device__ constexpr int MaxWarpsPerBlock() {
-  return M <= 16 ? 4 : 1;
-}
-
 template <int M, int kWarps>
 __global__ void __launch_bounds__(kWarp *kWarps)
     block_tridiagonal_kernel(int num_problems, int num_stages, const int *__restrict__ stage_sizes,

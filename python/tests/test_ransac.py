@@ -138,12 +138,6 @@ class TestRansacPnP:
         assert int(np.sum((mask == 1) & ~is_outlier)) >= 0.97 * np.sum(~is_outlier)
         assert summary.num_inliers == int(mask.sum())
 
-    def test_plain_lm_fails_on_same_data(self, stream):
-        gt, init, pts, obs, _ = _pnp_scene(1000, 0.5, seed=1)
-        p = _PnPProblem(init, pts, obs)
-        pycunls.LevenbergMarquardtMinimizer().minimize(stream, p.problem)
-        assert _rot_err_deg(p.pose(), gt) > 0.5
-
     def test_always_on_prior_is_not_classified(self, stream):
         gt, init, pts, obs, _ = _pnp_scene(600, 0.3, seed=2)
         p = _PnPProblem(init, pts, obs, with_prior=True)

@@ -46,24 +46,6 @@ constexpr int kRows = 6;                         // e[2:6], speed, steering
 constexpr int kColumns = 6 + 2 + 2 + 6 + 2;      // T_k, z_k, u_k, T_{k+1}, z_{k+1}
 constexpr int kJacobianSize = kRows * kColumns;  // 108 floats per item
 
-/** Rows 0..2 of an SE(3) storage matrix (row-major 4x4): R and t, pitch 4. */
-__device__ __forceinline__ void LoadPose(const float *T, float *P) {
-#pragma unroll
-  for (int i = 0; i < 12; ++i) P[i] = __ldg(T + i);
-}
-
-/** C = A B for SE(3) poses stored as rows 0..2 (pitch 4). */
-__device__ __forceinline__ void Compose(const float *A, const float *B, float *C) {
-#pragma unroll
-  for (int i = 0; i < 3; ++i) {
-#pragma unroll
-    for (int j = 0; j < 4; ++j) {
-      C[i * 4 + j] = A[i * 4] * B[j] + A[i * 4 + 1] * B[4 + j] + A[i * 4 + 2] * B[8 + j] +
-                     (j == 3 ? A[i * 4 + 3] : 0.f);
-    }
-  }
-}
-
 /**
  * One thread per item; outputs staged in shared memory (odd stride) and written
  * with coalesced stores. kJacobian selects the residual-only variant.
@@ -81,23 +63,19 @@ __global__ void __launch_bounds__(kBlockSize)
 
   if (t < num_items) {
     const int f = FactorMeasurementIndex(t, factor_ids, num_factors);
-    float X[16], Y[16];
-    LoadPose(state_pointers[5 * t + 0], X);
+    float X[12], Y[12];
+    lie_device::LoadSE3Rows(state_pointers[5 * t + 0], X);
     const float *z = state_pointers[5 * t + 1];
     const float *u = state_pointers[5 * t + 2];
-    LoadPose(state_pointers[5 * t + 3], Y);
+    lie_device::LoadSE3Rows(state_pointers[5 * t + 3], Y);
     const float *z_next = state_pointers[5 * t + 4];
     const float dt = __ldg(time_steps + f);
     const float v = __ldg(z), delta = __ldg(z + 1), tan_delta = tanf(delta);
 
     // Pose: step dt ξ, ξ = [0, 0, v tan δ / L, v, 0, 0]. Speed and steering: Euler.
     const float step[6] = {0.f, 0.f, dt * v * tan_delta / wheelbase, dt * v, 0.f, 0.f};
-    float E[16], Phi[16], Phi_inv[16], D[16], e[6];
-    lie_device::ExpSE3(step, E, 4);
-    Compose(X, E, Phi);
-    lie_device::InverseSE3(Phi, 4, Phi_inv);
-    Compose(Phi_inv, Y, D);
-    lie_device::LogSE3(D, 4, e);
+    float E[16], e[6];
+    lie_device::SE3StepDefect(X, Y, step, E, e);
 
     float *o = out + threadIdx.x * kStride;
 #pragma unroll
@@ -106,42 +84,22 @@ __global__ void __launch_bounds__(kBlockSize)
     o[5] = __ldg(z_next + 1) - delta - dt * __ldg(u + 1);
 
     if constexpr (kJacobian) {
-      // Pose rows (e rows 2..5): ∂e/∂T_k = -J_l⁻¹(e) Ad(E⁻¹),
-      // ∂e/∂z = -dt J_l⁻¹(e) J_r(step) ∂ξ/∂z, ∂e/∂T_{k+1} = J_l⁻¹(-e); nothing on u, z_{k+1}.
-      float Jl_inv[36], Jr_inv[36], Jr_step[36], E_inv[16];
-      lie_device::SE3JacobianLeftInverse(e, Jl_inv, 6);
-      const float minus_e[6] = {-e[0], -e[1], -e[2], -e[3], -e[4], -e[5]};
-      lie_device::SE3JacobianLeftInverse(minus_e, Jr_inv, 6);
-      const float minus_step[6] = {0.f, 0.f, -step[2], -step[3], 0.f, 0.f};
-      lie_device::SE3JacobianLeft(minus_step, Jr_step, 6);  // J_r(step)
-      lie_device::InverseSE3(E, 4, E_inv);
-      // ∂ξ/∂z: ξ_2 = v tan δ / L, ξ_3 = v.
+      // Pose rows: rows 2..5 of the step defect (lie_device::SE3StepDefectRow) with
+      // ∂ξ/∂z: ξ_2 = v tan δ / L, ξ_3 = v; nothing on u, z_{k+1}.
+      lie_device::SE3StepDefectJacobian J;
+      lie_device::InitSE3StepDefectJacobian(e, step, E, &J);
       const float dw_dv = tan_delta / wheelbase;
       const float dw_ddelta = v * (1.f + tan_delta * tan_delta) / wheelbase;
 #pragma unroll
       for (int i = 0; i < 4; ++i) {
-        const float *l = Jl_inv + (2 + i) * 6;
         float *row = o + kRows + i * kColumns;
-        float acc[6] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-#pragma unroll
-        for (int k = 0; k < 6; ++k) {
-          float ad[6];
-          lie_device::AdjointSE3RowFromTransform(E_inv, 4, k, ad);
-#pragma unroll
-          for (int j = 0; j < 6; ++j) acc[j] += l[k] * ad[j];
-        }
-        float m2 = 0.f, m3 = 0.f;  // (-dt l J_r(step)) columns 2 and 3
-#pragma unroll
-        for (int k = 0; k < 6; ++k) {
-          m2 += l[k] * Jr_step[k * 6 + 2];
-          m3 += l[k] * Jr_step[k * 6 + 3];
-        }
-        m2 *= -dt;
-        m3 *= -dt;
+        float lad[6], lj[6];
+        lie_device::SE3StepDefectRow(J, 2 + i, lad, lj);
+        const float m2 = -dt * lj[2], m3 = -dt * lj[3];  // ∂e/∂ξ_2, ∂e/∂ξ_3 times dt
 #pragma unroll
         for (int j = 0; j < 6; ++j) {
-          row[j] = -acc[j];
-          row[10 + j] = Jr_inv[(2 + i) * 6 + j];
+          row[j] = -lad[j];
+          row[10 + j] = J.Jr_inv[(2 + i) * 6 + j];
         }
         row[6] = m2 * dw_dv + m3;
         row[7] = m2 * dw_ddelta;

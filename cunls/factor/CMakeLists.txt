@@ -27,14 +27,7 @@ add_library(cunls_factor OBJECT
   kinematics/link_target_factor_batch.cu
   kinematics/mimic_joint_factor_batch.cu
   kinematics/posture_factor_batch.cu
-  motion/constant_acceleration_se2_factor_batch.cu
-  motion/constant_acceleration_se3_factor_batch.cu
-  motion/constant_acceleration_so2_factor_batch.cu
-  motion/constant_acceleration_so3_factor_batch.cu
-  motion/constant_velocity_se2_factor_batch.cu
-  motion/constant_velocity_se3_factor_batch.cu
-  motion/constant_velocity_so2_factor_batch.cu
-  motion/constant_velocity_so3_factor_batch.cu
+  motion/motion_prior_factor_batches.cu
   point_to_plane_factor_batch.cu
   se3_joint_axis_factor_batch.cu
   point_to_point_factor_batch.cu
@@ -46,7 +39,6 @@ add_library(cunls_factor OBJECT
   prior/sl4_prior_factor_batch.cu
   prior/so2_prior_factor_batch.cu
   prior/so3_prior_factor_batch.cu
-  pnp_factor_batch.cu
   reprojection_factor_batch.cu
   symmetric_point_to_plane_factor_batch.cu
   weighted_factor_batch.cu

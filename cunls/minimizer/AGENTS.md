@@ -1,150 +1,59 @@
 # Module: minimizer
 
-> Notes for agents and contributors working in this directory (loaded automatically by coding agents that read nested `AGENTS.md`). Users of the library: see
-> `python/pycunls/AGENT_GUIDE.md` and `docs/sphinx/`.
+Problem assembly, normal equations, and the GN / LM / augmented-Lagrangian / RANSAC loops. User
+guides: `docs/sphinx/constraints.rst`, `docs/sphinx/ransac.rst`.
 
-## Purpose
+## Files
 
-Problem assembly, residual orchestration, sparse system building, and iterative
-optimization.
+- `problem.h`: `Problem` (non-owning graph of states and factors; `FindStructureError` returns the
+  first structural problem with its fix). `residual_batch.h`: `ResidualBatch` (factor + loss),
+  `EvaluateFactorCosts`.
+- `minimizer.h`: `TerminationReason` (ordered by severity), `MinimizerOptions`, `MinimizerSummary`,
+  `Minimizer` (the one iteration loop: linear system, line search, structure reuse, per-subproblem
+  bookkeeping; the private hooks `UpdateSystem` / `ClassifySteps` are the whole GN / LM
+  difference; behaviour lives in free functions in `minimizer.cu`). `internal::InnerSolve` /
+  `InnerMinimize` are the AL's channel into the loop; `internal::SetUpStructure` /
+  `BuildSystem` also serve tests.
+- `gauss_newton_minimizer.h`, `levenberg_marquardt_minimizer.h` (per-subproblem λ, fused
+  λ-update + damping kernel; all LM state lives there).
+- `problem_partition.h`: `ProblemPartition` (subproblem maps and sums, the device step decision
+  `StepControl`, deterministic reductions, one-subproblem fast paths).
+- `augmented_lagrangian_minimizer.h`: AL outer loop around a GN / LM `Minimizer &`; finds
+  constraint batches by type; per-subproblem penalties and stopping on the device. The only solver
+  of box-bounded states: clamps initial free states into the box, and `HoldActiveBounds` (as
+  `InnerSolve::restrict_system`) holds active bounds plus up to `max_bound_refinements`
+  active-set refinements. GN / LM / RANSAC reject bounded problems.
+- `normal_equations.h`: `NormalEquations` owns H and its layout (BSR when tangent sizes share a
+  factor and the solver supports it, else CSR; chosen here only) and writes the working LHS
+  (scale, damping, mask) into the solver's `MatrixStorage()` in one kernel.
+- `hessian_structure.h` (GPU sparsity), `block_hessian_assembler.h` (one kernel for H and rhs),
+  `bsr_matrix.h`, `sparse_matrix.h` (CSR diagonal positions / extraction, SpMV, element-wise
+  ops), `minimizer_state.h` (snapshots).
+- `ransac_minimizer.h`: RANSAC over an ordinary `Problem` (free tangent <= 64);
+  internals in `ransac/` (`RansacLayout`, `SlotSet`, `HypothesisScorer`, `RunRansac`, kernels).
 
-## Key files and classes
+## Iteration
 
-- `problem.h`: `Problem` (graph composition of states + factors;
-  `FindStructureError` returns the first structural problem as a message with
-  the fix, `Validate` logs it)
-- `residual_batch.h`: `ResidualBatch` (factor + loss wrapper)
-- `minimizer.h`: `TerminationReason` (why a (sub)problem stopped, ordered by
-  severity; `ToString`, `IsConvergence`), `MinimizerOptions`,
-  `MinimizerSummary` (also `termination_reason`, `num_problems_by_reason`,
-  `message`, `solve_time_ms`, `Converged()`), `Minimizer` (common
-  base: the one iteration loop, linear system, line search, structure
-  reuse, per-subproblem bookkeeping; private pure virtual hooks
-  `UpdateSystem` / `ClassifySteps` are the whole GN/LM difference; private
-  section is data only, behaviour in free functions in `minimizer.cu`);
-  `internal::InnerSolve` / `internal::InnerMinimize` (the AL's inner-solve
-  channel), `internal::SetUpStructure` / `internal::BuildSystem` (system
-  assembly, also used by tests)
-- `gauss_newton_minimizer.h`: `GaussNewtonMinimizer` (classify kernel only)
-- `levenberg_marquardt_minimizer.h`:
-  `LevenbergMarquardtMinimizerOptions`, `LevenbergMarquardtMinimizer` (per
-  subproblem λ, ρ classify kernel, fused λ-update + damping kernel; all LM
-  state lives here)
-- `problem_partition.h`: `ProblemPartition` (subproblem maps, per-subproblem
-  sums, the common take/reject/line-search/cap decision `StepControl`;
-  one-subproblem fast paths, deterministic reductions)
-- `augmented_lagrangian_minimizer.h`: `AugmentedLagrangianMinimizer`,
-  `AugmentedLagrangianMinimizerOptions`, `AugmentedLagrangianMinimizerSummary` (augmented
-  Lagrangian outer loop around a GN/LM minimizer; finds constraint batches by
-  type; per-subproblem penalties and stopping on the device; uses
-  `internal::InnerMinimize` for capped, line-searched inner solves). Takes a
-  `Minimizer &`. Also the only solver of box-bounded states (projected
-  Gauss-Newton): it clamps the initial free states into the box, and its
-  private `HoldActiveBounds` runs as `InnerSolve::restrict_system` (the one
-  callback the minimizer loop offers: before the solve, and after each solve
-  with the step, returning true for another solve) to hold the components at
-  an active bound plus up to `max_bound_refinements` active-set refinements
-  (AL option); the bounded `VectorStateBatch::Plus` clamps every moved
-  component. GN/LM/RANSAC reject
-  bounded problems (`Problem::HasBoxBounds`). Guide:
-  `docs/sphinx/constraints.rst`.
-- `minimizer_state.h`: `MinimizerState` snapshot/copy utilities
-- `sparse_matrix.h`: CSR diagonal ops, scaling, norms (free functions)
-- `normal_equations.h`: `NormalEquations` (owns H and its storage layout, the
-  only place either layout is named; writes the working LHS, H with scale,
-  damping and mask, into the solver's `MatrixStorage()` in one kernel)
-- `bsr_matrix.h`: `BSRSparseMatrix` ops, `ChooseHessianBlockSize`, block SpMV
-- `hessian_structure.h`: `HessianStructureBuilder` (GPU sparsity derivation)
-- `block_hessian_assembler.h`: `BlockHessianAssembler` (one kernel for H and rhs)
-- `ransac_minimizer.h`: `RansacMinimizer` (common base, holds the state by
-  value), `RansacGaussNewtonMinimizer`, `RansacLevenbergMarquardtMinimizer`,
-  `RansacMinimizerOptions`, `RansacSummary` (RANSAC over an ordinary `Problem`
-  whose total free tangent dimension is <= `kMaxRansacTangentDim` = 64)
-- `ransac/`: RANSAC internals (not in `cunls.h`): `RansacLayout` (problem
-  description), `SlotSet` (slots with state replicas, solved in lockstep),
-  `HypothesisScorer`, `RansacContext` (data) + `RunRansac` (rounds,
-  refinement), and kernels
-  (`ransac_kernels.h` declares all launchers)
+1. Evaluate residuals and per-factor dense Jacobian blocks; contract them locally into
+   `H = JᵀJ`, `-Jᵀr` (the global Jacobian is never formed); solve; apply the manifold update.
+2. Classify and take / reject each subproblem's step on the device (`StepControl`); one 2-float
+   read-back per iteration. `ClassifySteps` writes a `TerminationReason` per subproblem;
+   `FinishTermination` counts them in the final synchronization (none in real time).
+3. With `max_line_search_steps > 0` a non-decreasing step is halved along its direction.
+4. Stopped subproblems take no step and no factorization work: the loop declares the active rows
+   (`ActiveRows` -> `SparseLinearSolver::SetRowActivity`) and BlockSparseCholesky skips the rest.
 
-## Solver flow
+## Invariants
 
-1. Evaluate residuals and per-factor dense Jacobian blocks for all residual
-   batches.
-2. Contract each factor locally and scatter-add into the normal equations
-   (`H = J^T J`, `-J^T r`); the global Jacobian is never materialized.
-3. Solve the sparse linear system.
-4. Apply manifold-aware state updates (`StateBatchOps`).
-5. Classify (subclass) and take/reject each subproblem's step on the device
-   (`ProblemPartition::StepControl`); one 2-float read-back per iteration.
-   `ClassifySteps` writes the convergence `TerminationReason` value (not a
-   bool) into `ProblemPartition::Converged()`; the partition records every
-   subproblem's reason (`Termination()`), and `FinishTermination` counts them
-   with one small read-back folded into the final synchronization (none in real
-   time). The summary message is built on the host (`DescribeTermination`).
-   A problem without a partition is one subproblem. With
-   `MinimizerOptions::max_line_search_steps > 0`, a step that does not
-   decrease the cost is halved along its direction, and any step that
-   decreases the cost is taken (per subproblem).
-6. Subproblems that stopped (converged, capped, frozen) take no step and cost
-   no factorization work: before each solve the loop declares the rows of the
-   still-active subproblems (`ProblemPartition::ActiveRows` →
-   `LinearSystem::SetRowActivity` → `SparseLinearSolver::SetRowActivity`), and
-   `BlockSparseCholeskySolver` skips the panels of the others. Their step
-   entries are unspecified (never taken). `InnerSolve::problem_iteration_cap`
-   gives subproblems different caps within one call (`StepControl` stops each
-   at its own; `ProblemPartition::AtCap` reports them).
-
-## Batched invariants
-
-- A subproblem never waits for another: GN/LM stop each subproblem at its own
-  convergence; the AL gives each feasible subproblem its own full inner solve
-  (`kPolishing`, then `kDone`) while infeasible ones continue capped solves.
-- Without a partition, results and iteration counts are those of a single
-  problem (the per-subproblem paths reduce to the single-problem rules).
-- Inactive subproblems cost no linear-solver work with BlockSparseCholesky;
-  other solvers may ignore the row activity (results are the same).
-
-## Important constraints
-
-- Problem pointers are non-owning; caller keeps lifetime.
-- Inputs and intermediate buffers are GPU-resident.
-- The Hessian is stored as BSR when the state tangent dimensions share a common
-  factor and the solver supports it, otherwise as scalar CSR. This is chosen
-  automatically inside `NormalEquations`; no user-facing option, and no storage
-  branch outside that class.
-
-## RANSAC minimizers
-
-- Use only `FactorBatch::Evaluate` and `StateBatch::Plus`, through their item
-  (`factor_ids`, `num_factor_ids`) and replica (`num_replicas`) parameters;
-  every factor and state batch must honor them. Guide:
-  `docs/sphinx/ransac.rst`.
-- Each hypothesis (slot) owns a replica of every state batch with a free state;
-  fully constant batches are shared.
-- Sampling (`SlotSet::DrawSamples`): slot p's minimal sample is the first s
-  elements of a keyed Feistel permutation (no sort) with the slot-specific key
-  `PermutationKey(seed, round, p)`, so samples of different slots may overlap.
-- Call pattern: `SlotSet::Evaluate` and `HypothesisScorer::EvaluateChunk`
-  evaluate all slots with one `Evaluate` call per residual batch (minimal
-  samples addressed through `factor_ids`); `SlotSet::ApplyStep` makes one
-  `Plus` call per state batch with `num_replicas = num_slots_`.
-- Per-hypothesis normal equations (register-tiled, no atomics), Jacobi-
-  equilibrated Cholesky / pivoted LDLT (warp or block per slot) and scoring are
-  deterministic (fixed reduction order): same seed, same bits.
-- By default an inlier must have a non-zero Jacobian on a free state
-  (`require_informative_inliers`), which stops zero-residual degenerate
-  configurations (e.g. PnP points behind the camera) from scoring as perfect.
-
-## Real time (R1)
-
-- `MinimizerOptions::reuse_structure` (and `InnerSolve::reuse_structure`):
-  skip the structure setup / symbolic analysis / partition build when the
-  caller vouches for an unchanged structure (host size signature checked;
-  `MinimizerStructure` tracks what was built).
-- `InnerSolve::fixed_iterations` (AL real time): fixed line-search and
-  bound-refinement counts; no read-backs; summary costs NaN.
-- `AugmentedLagrangianMinimizerOptions::real_time`, `reuse_structure`;
-  `SetOptions` keeps the warm state. A real-time call reads its status back
-  once, at the end.
-- `NormalEquations`: one fused kernel writes the working LHS straight into
-  the solver's storage (no lhs copy); per-entry rows cached at `Initialize`.
+- A subproblem never waits for another; without a partition the problem is one subproblem with
+  single-problem results and iteration counts. The AL gives each feasible subproblem its own full
+  inner solve while infeasible ones continue capped solves.
+- Problem pointers are non-owning; all buffers are on the device.
+- RANSAC uses only `FactorBatch::Evaluate` and `StateBatch::Plus` through their item
+  (`factor_ids`) and replica (`num_replicas`) parameters, which every batch must honor. Each
+  hypothesis owns a replica of every free state batch; samples are keyed Feistel permutations;
+  per-hypothesis normal equations, factorization and scoring use fixed reduction orders (same
+  seed, same bits). By default an inlier needs a non-zero Jacobian on a free state.
+- Real time: `reuse_structure` skips structure setup when the caller vouches for it (a host size
+  signature is checked); `InnerSolve::fixed_iterations` / AL `real_time` fix the line-search and
+  refinement counts and read nothing back until the end (summary costs NaN).

@@ -33,28 +33,22 @@ constexpr int kThreads = 256;
 
 unsigned Blocks(size_t n) { return static_cast<unsigned>((n + kThreads - 1) / kThreads); }
 
-/** entry_row[e] = the row of CSR entry e, one thread per row. */
-__global__ void entry_row_kernel(const int *__restrict__ row_offsets, int num_rows,
-                                 int *__restrict__ entry_row) {
+/**
+ * row_of[e] = the row of entry e of a CSR pattern, or the block row of tile e
+ * of a BSR pattern; one thread per (block) row.
+ */
+__global__ void row_of_entry_kernel(const int *__restrict__ row_offsets, int num_rows,
+                                    int *__restrict__ row_of) {
   const int r = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= num_rows) return;
-  for (int e = row_offsets[r]; e < row_offsets[r + 1]; ++e) entry_row[e] = r;
-}
-
-/** tile_row[t] = the block row of BSR tile t, one thread per block row. */
-__global__ void tile_row_kernel(const int *__restrict__ row_offsets, int num_block_rows,
-                                int *__restrict__ tile_row) {
-  const int r = blockIdx.x * blockDim.x + threadIdx.x;
-  if (r >= num_block_rows) return;
-  for (int t = row_offsets[r]; t < row_offsets[r + 1]; ++t) tile_row[t] = r;
+  for (int e = row_offsets[r]; e < row_offsets[r + 1]; ++e) row_of[e] = r;
 }
 
 /**
  * The working left-hand side written straight into the solver's storage, one
  * thread per value e of H's pattern: s_r s_c H_e (column scale), plus the
  * damping on the diagonal, then a masked row or column cleared to the
- * identity (a positive diagonal is kept) — the same matrix the in-place CSR /
- * BSR passes build — stored at slot(e) (the identity, entry_slot[e] or
+ * identity (a positive diagonal is kept) — stored at slot(e) (the identity, entry_slot[e] or
  * entry_slot64[e]; -1: not stored).
  *
  * Rows and columns: scalar CSR, entry_row[e] and col_ids[e]; BSR (kBlock),
@@ -110,10 +104,10 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
   if (UsesBlockStorage()) {
     assembler_.Initialize(stream, problem, num_cols, block_size_, bsr_hessian_);
     // The working left-hand side lives in the solver; only the tile rows are needed here.
-    tile_rows_.resize(bsr_hessian_.NumBlocks());
+    row_of_entry_.resize(bsr_hessian_.NumBlocks());
     if (bsr_hessian_.num_block_rows > 0) {
-      tile_row_kernel<<<Blocks(bsr_hessian_.num_block_rows), kThreads, 0, stream>>>(
-          bsr_hessian_.row_offsets.data(), bsr_hessian_.num_block_rows, tile_rows_.data());
+      row_of_entry_kernel<<<Blocks(bsr_hessian_.num_block_rows), kThreads, 0, stream>>>(
+          bsr_hessian_.row_offsets.data(), bsr_hessian_.num_block_rows, row_of_entry_.data());
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
     LogMessage("Hessian storage: BSR with block size {}", block_size_);
@@ -136,22 +130,22 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
   // The pattern is fixed from here on: locate the diagonal and the row of
   // every entry once (the working left-hand side lives in the solver).
   FindDiagonalPositions(stream, csr_hessian_, csr_diagonal_);
-  entry_row_.resize(csr_hessian_.NumNonZeros());
+  row_of_entry_.resize(csr_hessian_.NumNonZeros());
   const int n = static_cast<int>(csr_hessian_.NumRows());
   if (n > 0) {
-    entry_row_kernel<<<Blocks(n), kThreads, 0, stream>>>(csr_hessian_.row_offsets.data(), n,
-                                                         entry_row_.data());
+    row_of_entry_kernel<<<Blocks(n), kThreads, 0, stream>>>(csr_hessian_.row_offsets.data(), n,
+                                                            row_of_entry_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 }
 
-void NormalEquations::Assemble(cudaStream_t stream, const Problem &problem, const float *jacobians,
+void NormalEquations::Assemble(cudaStream_t stream, const Problem &, const float *jacobians,
                                const float *residuals, dvector<float> &rhs) {
   if (UsesBlockStorage()) {
-    assembler_.Assemble(stream, problem, jacobians, residuals, bsr_hessian_, rhs);
+    assembler_.Assemble(stream, jacobians, residuals, bsr_hessian_, rhs);
     return;
   }
-  assembler_.Assemble(stream, problem, jacobians, residuals, csr_hessian_, rhs);
+  assembler_.Assemble(stream, jacobians, residuals, csr_hessian_, rhs);
 }
 
 void NormalEquations::ExtractHessianDiagonal(cudaStream_t stream, dvector<float> &diagonal) const {
@@ -176,7 +170,7 @@ void NormalEquations::WriteWorkingLhsToSolver(cudaStream_t stream) {
   const bool block = UsesBlockStorage();
   const size_t num_values = block ? bsr_hessian_.values.size() : csr_hessian_.values.size();
   if (num_values == 0) return;
-  const int *rows = block ? tile_rows_.data() : entry_row_.data();
+  const int *rows = row_of_entry_.data();
   const int *col_ids = block ? bsr_hessian_.col_ids.data() : csr_hessian_.col_ids.data();
   const float *hessian = block ? bsr_hessian_.values.data() : csr_hessian_.values.data();
   const float *scale = ColumnScale() != nullptr ? ColumnScale()->data() : nullptr;
@@ -199,22 +193,6 @@ void NormalEquations::WriteWorkingLhsToSolver(cudaStream_t stream) {
     launch(write_working_lhs_kernel<false, int>, storage.entry_slot);
   }
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-}
-
-void NormalEquations::BuildWorkingLhs(cudaStream_t stream) {
-  if (UsesBlockStorage()) {
-    CopyBSRSparseMatrix(stream, bsr_hessian_, bsr_lhs_);
-    if (ColumnScale() != nullptr) {
-      ScaleSymmetric(stream, bsr_lhs_, *ColumnScale(), tile_rows_);
-    }
-    if (Damping() != nullptr) AddScaledDiagonal(stream, 1.f, *Damping(), bsr_lhs_, bsr_lhs_);
-    if (Mask() != nullptr) ZeroMaskedRowsColumns(stream, bsr_lhs_, *Mask());
-    return;
-  }
-  CopyCSRSparseMatrix(stream, csr_hessian_, csr_lhs_);
-  if (ColumnScale() != nullptr) ScaleSymmetricCSR(stream, csr_lhs_, *ColumnScale());
-  if (Damping() != nullptr) AddScaledDiagonalAt(stream, 1.f, *Damping(), csr_diagonal_, csr_lhs_);
-  if (Mask() != nullptr) ZeroMaskedRowsColumns(stream, csr_lhs_, *Mask());
 }
 
 void NormalEquations::MultiplyHessian(cudaStream_t stream, const dvector<float> &x,

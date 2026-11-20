@@ -19,8 +19,6 @@
 
 #include <cuda_runtime.h>
 
-#include <vector>
-
 #include "cunls/common/types.h"
 
 namespace cunls {
@@ -40,11 +38,13 @@ class Problem;
  * Block column offsets are cumulative sums of tangent dimensions, so they are
  * automatically multiples of the gcd.
  *
+ * The edge is capped at 16, the largest tile the block SpMV accumulates
+ * (MultiplyBSRByDenseVector).
+ *
  * @param problem The optimization problem.
- * @param max_block_size Upper bound on the returned edge length.
  * @return The tile edge, or 1 when block storage is not worthwhile.
  */
-int ChooseHessianBlockSize(const Problem &problem, int max_block_size = 16);
+int ChooseHessianBlockSize(const Problem &problem);
 
 /**
  * @brief Extracts the main diagonal of a BSR matrix.
@@ -55,48 +55,17 @@ int ChooseHessianBlockSize(const Problem &problem, int max_block_size = 16);
  */
 void ExtractDiagonal(cudaStream_t stream, const BSRSparseMatrix &matrix, dvector<float> &diagonal);
 
-/**
- * @brief Computes result = matrix + scale * diag(diagonal) for BSR storage.
- *
- * @param stream CUDA stream for GPU operations.
- * @param scale Scaling factor applied to the diagonal values.
- * @param diagonal Diagonal values to add; length matrix.NumRows().
- * @param matrix Input BSR matrix.
- * @param[out] result Output BSR matrix; may alias @p matrix for in-place.
- */
-void AddScaledDiagonal(cudaStream_t stream, float scale, const dvector<float> &diagonal,
-                       const BSRSparseMatrix &matrix, BSRSparseMatrix &result);
-
-/**
- * @brief Symmetric diagonal scaling: A_ij *= scale[i] * scale[j].
- *
- * @param stream CUDA stream for GPU operations.
- * @param[in,out] matrix BSR matrix updated in place.
- * @param scale Length must equal matrix.NumRows().
- * @param[out] row_of_tile Caller-owned scratch mapping tile index to block row;
- *        resized as needed and rebuilt on each call.
- */
-void ScaleSymmetric(cudaStream_t stream, BSRSparseMatrix &matrix, const dvector<float> &scale,
-                    dvector<int> &row_of_tile);
-
-/**
- * @brief Deep-copies a BSR matrix (structure and values).
- *
- * The structure is always copied, not just the values: equal sizes do not imply
- * equal connectivity when one solver instance is reused across problems.
- *
- * @param stream CUDA stream for GPU operations.
- * @param input Source matrix.
- * @param[out] output Destination matrix.
- */
-void CopyBSRSparseMatrix(cudaStream_t stream, const BSRSparseMatrix &input,
-                         BSRSparseMatrix &output);
-
-/** @brief Copies only the values of a BSR matrix with the same structure. */
-void CopyBSRValues(cudaStream_t stream, const BSRSparseMatrix &input, BSRSparseMatrix &output);
-
 /** @brief y = A * x for block storage (y is resized to the row count). */
 void MultiplyBSRByDenseVector(cudaStream_t stream, const BSRSparseMatrix &matrix,
                               const dvector<float> &x, dvector<float> &y);
+
+/**
+ * @brief y = A * x for block storage with the pattern of @p structure (its row
+ * offsets, column indices, block size and longest row; not its values) and the
+ * values @p values, laid out as structure.values would be. @p x and @p y are
+ * device arrays of structure.NumRows() floats.
+ */
+void MultiplyBSRValuesByDenseVector(cudaStream_t stream, const BSRSparseMatrix &structure,
+                                    const float *values, const float *x, float *y);
 
 }  // namespace cunls

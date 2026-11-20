@@ -5,7 +5,6 @@ add_library(cunls_common OBJECT
   cusparse_helper.cpp
   log.cpp
   profiler.cpp
-  utils.cpp
 )
 
 target_link_libraries(cunls_common PRIVATE spdlog::spdlog)

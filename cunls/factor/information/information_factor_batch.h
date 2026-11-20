@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <numeric>
 #include <sstream>
 #include <type_traits>
 #include <utility>
@@ -73,6 +72,23 @@ void ApplyInformationToJacobianItems(const float *sqrt_information, float *jacob
                                      cudaStream_t stream);
 
 /**
+ * @brief Evaluates `inner` under FactorBatch::Evaluate's item contract and
+ * multiplies each item's residual and Jacobian by the row-major
+ * sqrt-information matrix of the item's factor (factor_ids[t], or
+ * t % inner.NumActiveFactors()); see ApplyInformationToResidualItems. The
+ * evaluation of InformationFactorBatch and of the Python information wrapper.
+ *
+ * @param inner The weighted factor batch.
+ * @param sqrt_information Device array of inner.NumActiveFactors() row-major
+ *        matrices of inner.ResidualsSize()^2 floats.
+ * @return false (nothing weighted) if inner's evaluation fails, true otherwise.
+ */
+bool EvaluateWithSqrtInformation(const FactorBatch &inner, const float *sqrt_information,
+                                 float *residuals, float *jacobians,
+                                 float const *const *state_pointers, cudaStream_t stream,
+                                 const int *factor_ids, size_t num_factor_ids);
+
+/**
  * @brief Wrapper factor that applies square-root information matrices.
  *
  * This class wraps a SizedFactorBatch and applies square-root information
@@ -89,7 +105,7 @@ void ApplyInformationToJacobianItems(const float *sqrt_information, float *jacob
  * remain valid for the lifetime of this object. The memory layout is: [mat0:
  * residual_size^2 floats][mat1: residual_size^2 floats]...
  */
-template <class T, typename std::enable_if_t<IsDerivedFromAnySizedFactorBatch<T>::value, int> = 0>
+template <class T, typename std::enable_if_t<HasSizedLayout<T>::value, int> = 0>
 class InformationFactorBatch : public T::sized_layout {
  public:
   using InformationMatrix = Matrix<T::residual_size_>;
@@ -112,11 +128,10 @@ class InformationFactorBatch : public T::sized_layout {
   InformationFactorBatch(const InformationMatrix *sqrt_information_matrices_ptr, size_t capacity,
                          Args &&...sized_factor_batch_args)
       : sqrt_information_matrices_ptr_(sqrt_information_matrices_ptr),
-        num_matrices_(capacity),
         factor_batch_(std::forward<Args>(sized_factor_batch_args)...) {
-    if (num_matrices_ != factor_batch_.Capacity()) {
+    if (capacity != factor_batch_.Capacity()) {
       std::stringstream ss;
-      ss << "Capacity of the sqrt information matrices (" << num_matrices_
+      ss << "Capacity of the sqrt information matrices (" << capacity
          << ") must match the wrapped factor batch's capacity (" << factor_batch_.Capacity() << ")";
       LogError(ss.str());
       throw std::invalid_argument(ss.str());
@@ -171,35 +186,9 @@ class InformationFactorBatch : public T::sized_layout {
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
                 cudaStream_t stream, const int *factor_ids = nullptr,
                 size_t num_factor_ids = 0) const override {
-    const size_t num_items = num_factor_ids == 0 ? this->NumActiveFactors() : num_factor_ids;
-    if (num_items == 0 || NumActiveFactors() == 0) {
-      return true;
-    }
-    if (!factor_batch_.Evaluate(residuals, jacobians, state_pointers, stream, factor_ids,
-                                num_items)) {
-      return false;
-    }
-
-    auto info_ptr = reinterpret_cast<const float *>(sqrt_information_matrices_ptr_);
-    const size_t rsize = T::residual_size_;
-    const size_t num_factors = factor_batch_.NumActiveFactors();
-
-    if (residuals != nullptr) {
-      ApplyInformationToResidualItems(info_ptr, residuals, rsize, num_items, factor_ids,
-                                      num_factors, stream);
-    }
-
-    if (jacobians == nullptr) {
-      return true;
-    }
-
-    auto state_sizes = this->StateSizes();
-    const size_t jacobian_pitch = std::accumulate(state_sizes.begin(), state_sizes.end(), 0);
-
-    ApplyInformationToJacobianItems(info_ptr, jacobians, rsize, jacobian_pitch, num_items,
-                                    factor_ids, num_factors, stream);
-
-    return true;
+    return EvaluateWithSqrtInformation(
+        factor_batch_, reinterpret_cast<const float *>(sqrt_information_matrices_ptr_), residuals,
+        jacobians, state_pointers, stream, factor_ids, num_factor_ids);
   }
 
  private:
@@ -208,9 +197,6 @@ class InformationFactorBatch : public T::sized_layout {
   /// Pointer to user-managed device memory containing square-root information
   /// matrices.
   const InformationMatrix *sqrt_information_matrices_ptr_;
-
-  /// Number of per-factor square-root information matrices (equals batch size).
-  size_t num_matrices_;
 };
 
 }  // namespace cunls

@@ -74,8 +74,6 @@ class SO2PriorFactorBatch : public SizedFactorBatch<1, 1> {
                 size_t num_factor_ids = 0) const final;
 
  private:
-  SO2PriorFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing target rotations.
   const Matrix<2> *observations_ptr_;
 };

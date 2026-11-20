@@ -51,8 +51,9 @@ class DenseLDLTSolver : public DenseLinearSolverBase {
   /**
    * @copydoc DenseLinearSolverBase::EnsureBuffersSize
    *
-   * Pre-allocates the LDLT factors, permutation, scratch vectors and status
-   * buffers so that subsequent Solve() calls do not allocate.
+   * Pre-allocates the permutation, the solve scratch vector and the status
+   * buffers so that subsequent Solve() calls do not allocate (the factor
+   * overwrites the dense matrix in place).
    */
   void EnsureBuffersSize(cudaStream_t stream, size_t n) final;
 
@@ -82,11 +83,8 @@ class DenseLDLTSolver : public DenseLinearSolverBase {
                          dvector<float> &result) final;
 
  private:
-  dvector<float> ldlt_factor_;            ///< In-place LDLT factor storage.
   dvector<int> permutation_;              ///< Pivot permutation vector.
-  dvector<float> permuted_rhs_;           ///< P * b scratch vector.
-  dvector<float> permuted_solution_;      ///< Permuted solution scratch.
-  dvector<float> intermediate_solution_;  ///< Intermediate solve scratch.
+  dvector<float> intermediate_solution_;  ///< Solve scratch: y, then z, then the permuted x.
 
   /// Device-side kernel status flags (index 0 = factorize, index 1 = solve).
   /// Each kernel writes 1 on success or 0 on failure.

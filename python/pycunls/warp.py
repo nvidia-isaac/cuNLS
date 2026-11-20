@@ -39,13 +39,13 @@ Requires ``warp-lang`` (``pip install warp-lang``).
 """
 
 
-import typing
 from typing import Any, List, NamedTuple, Sequence, Tuple, Union
 
 import numpy as np
 
 import warp as wp
 
+from pycunls._arrays import cached_stream, is_warp_function, warp_length, warp_result_type
 from pycunls._pycunls_core import CustomFactorBatch, CustomStateBatch
 
 
@@ -188,11 +188,7 @@ class WarpFactorBatch(CustomFactorBatch):
         stream_handle : int
             The raw ``cudaStream_t`` handle (as an integer).
         """
-        stream = self._streams.get(stream_handle)
-        if stream is None:
-            stream = wp.Stream(self._device, cuda_stream=stream_handle)
-            self._streams[stream_handle] = stream
-        return stream
+        return cached_stream(self._streams, stream_handle, self._device)
 
     def items(self, residuals_ptr: int, jacobians_ptr: int, state_pointers_ptr: int,
               stream_handle: int, factor_ids_ptr: int, num_factor_ids: int) -> FactorItems:
@@ -376,11 +372,7 @@ class WarpStateBatch(CustomStateBatch):
         stream_handle : int
             The raw ``cudaStream_t`` handle (as an integer).
         """
-        stream = self._streams.get(stream_handle)
-        if stream is None:
-            stream = wp.Stream(self._device, cuda_stream=stream_handle)
-            self._streams[stream_handle] = stream
-        return stream
+        return cached_stream(self._streams, stream_handle, self._device)
 
     # ------------------------------------------------------------------
     # Override point
@@ -476,11 +468,6 @@ def jacobian_index(item: int, row: int, column: int, num_rows: int, num_columns:
 # WarpPoseFactorBatch: a residual function of one pose, autodiff Jacobian
 # ======================================================================
 
-def _warp_length(t) -> int:
-    """1 for a scalar Warp type, N for a wp.vecN, 0 for anything else."""
-    return 1 if t in (float, wp.float32) else int(getattr(t, "_length_", 0))
-
-
 class WarpPoseFactorBatch(WarpFactorBatch):
     """A factor over one SE(3) pose from a residual function alone; Warp differentiates it.
 
@@ -520,19 +507,12 @@ class WarpPoseFactorBatch(WarpFactorBatch):
 
     def __init__(self, residual, data, capacity: int, jacobian: str = "auto",
                  device: str = "cuda:0") -> None:
-        if type(residual).__name__ != "Function" or not type(residual).__module__.startswith(
-                "warp"):
+        if not is_warp_function(residual):
             raise TypeError("WarpPoseFactorBatch: residual is not a Warp function (got "
                             f"{type(residual).__name__}). Fix: decorate it with @wp.func.")
         types = list(residual.input_types.values())
-        ret = None
-        if getattr(residual, "func", None) is not None:
-            try:   # resolves string annotations (`from __future__ import annotations`)
-                ret = typing.get_type_hints(residual.func).get("return")
-            except Exception:   # an annotation Python cannot evaluate: fall back to Warp's view
-                ret = residual.func.__annotations__.get("return")
-        ret = ret or residual.value_type or float
-        m = _warp_length(ret)
+        ret = warp_result_type(residual)
+        m = warp_length(ret)
         if len(types) != 2 or not wp.types.types_equal(types[0], wp.transform) or m == 0:
             raise TypeError("WarpPoseFactorBatch: the residual has the wrong signature (got "
                             f"arguments {types} and result {ret}, expected (X: wp.transform, data: "

@@ -52,27 +52,13 @@ size_t RejectionsToMaxDamping(const LevenbergMarquardtMinimizerOptions &o) {
  * small lambda says little about whether progress is still possible).
  */
 MinimizerOptions BaseOptions(const LevenbergMarquardtMinimizerOptions &o) {
-  if (!(o.lambda_min > 0.f)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_min must be positive, got " +
-                                std::to_string(o.lambda_min));
-  }
-  if (!(o.lambda_max >= o.lambda_min)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_max (" +
-                                std::to_string(o.lambda_max) + ") must be >= lambda_min (" +
-                                std::to_string(o.lambda_min) + ")");
-  }
-  if (!(o.initial_lambda <= o.lambda_max)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: initial_lambda (" +
-                                std::to_string(o.initial_lambda) + ") must be <= lambda_max (" +
-                                std::to_string(o.lambda_max) + ")");
-  }
-  if (!(o.lambda_upscale > 1.f)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: lambda_upscale must be > 1, got " +
-                                std::to_string(o.lambda_upscale));
-  }
+  const std::string where = "LevenbergMarquardtMinimizer::LevenbergMarquardtMinimizer";
+  internal::ValidateDamping(where, o.initial_lambda, o.lambda_min, o.lambda_max, o.lambda_upscale,
+                            o.lambda_downscale);
   if (!(o.min_diagonal >= 0.f)) {
-    throw std::invalid_argument("LevenbergMarquardtMinimizer: min_diagonal must be >= 0, got " +
-                                std::to_string(o.min_diagonal));
+    throw std::invalid_argument(where + ": min_diagonal is negative (got " +
+                                std::to_string(o.min_diagonal) +
+                                ", expected >= 0). Fix: use e.g. 1e-6.");
   }
   MinimizerOptions base = o.base_options;
   if (base.max_consecutive_rejected_steps > 0) {
@@ -159,6 +145,34 @@ __global__ void classify_kernel(size_t num_problems, const float *cost, const fl
 }
 
 }  // namespace
+
+void internal::ValidateDamping(const std::string &where, float initial_lambda, float lambda_min,
+                               float lambda_max, float lambda_upscale, float lambda_downscale) {
+  auto fail = [&](const std::string &what, float got, const std::string &expected,
+                  const std::string &fix) {
+    throw std::invalid_argument(where + ": " + what + " (got " + std::to_string(got) +
+                                ", expected " + expected + "). Fix: " + fix + ".");
+  };
+  if (!(lambda_min > 0.f)) {
+    fail("lambda_min must be positive", lambda_min, "> 0", "use a small positive floor, e.g. 1e-6");
+  }
+  if (!(lambda_max >= lambda_min)) {
+    fail("lambda_max is below lambda_min", lambda_max, ">= " + std::to_string(lambda_min),
+         "raise lambda_max");
+  }
+  if (!(initial_lambda >= 0.f && initial_lambda <= lambda_max)) {
+    fail("initial_lambda is outside [0, lambda_max]", initial_lambda,
+         "in [0, " + std::to_string(lambda_max) + "]", "use e.g. 1e-3");
+  }
+  if (!(lambda_upscale > 1.f)) {
+    fail("lambda_upscale must grow the damping on a rejected step", lambda_upscale, "> 1",
+         "use e.g. 2");
+  }
+  if (!(lambda_downscale > 0.f && lambda_downscale <= 1.f)) {
+    fail("lambda_downscale must shrink the damping on a good step", lambda_downscale, "in (0, 1]",
+         "use e.g. 0.5");
+  }
+}
 
 LevenbergMarquardtMinimizer::LevenbergMarquardtMinimizer(
     const LevenbergMarquardtMinimizerOptions &options)

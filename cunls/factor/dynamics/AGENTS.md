@@ -24,6 +24,7 @@ Vehicle and body models as multiple-shooting defects between consecutive traject
 ## Conventions
 
 - Euler defects with per-factor time steps, analytic Jacobians; each kernel in its factor's own
-  `.cu`, Lie operations from `cunls/math/lie_device.cuh`.
+  `.cu`; Lie operations, the step defects, rigid-body pose rows and the warp-row writer come
+  from `cunls/math/lie_device.cuh`.
 - Not to be confused with `cunls/factor/kinematics/` (articulated robots, joint coordinates).
 - Guide: `docs/sphinx/dynamics.rst`; batched MPC on top: `python/pycunls/mpc.py`.

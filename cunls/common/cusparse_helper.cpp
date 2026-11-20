@@ -20,44 +20,34 @@
 #include <cuda_runtime.h>
 #include <cusparse.h>
 
-#include "cunls/common/log.h"
-
 namespace cunls {
 
 const char *cusparseGetErrorString(int status) {
   return ::cusparseGetErrorString(static_cast<cusparseStatus_t>(status));
 }
 
-/** @copydoc cuSPARSEHandle::~cuSPARSEHandle */
-cuSPARSEHandle::~cuSPARSEHandle() {
-  if (handle_ != nullptr) {
-    WARN_ON_CUSPARSE_ERROR(cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
+namespace {
+
+void *CreateCusparseHandle(cudaStream_t stream) {
+  cusparseHandle_t handle = nullptr;
+  THROW_ON_CUSPARSE_ERROR(cusparseCreate(&handle));
+  THROW_ON_CUSPARSE_ERROR(cusparseSetStream(handle, stream));
+  return handle;
+}
+
+void DestroyCusparseHandle(void *handle, bool may_throw) {
+  const cusparseStatus_t status = cusparseDestroy(static_cast<cusparseHandle_t>(handle));
+  if (may_throw) {
+    THROW_ON_CUSPARSE_ERROR(status);
+  } else {
+    WARN_ON_CUSPARSE_ERROR(status);
   }
 }
 
-/** @copydoc cuSPARSEHandle::GetHandle */
-void *cuSPARSEHandle::GetHandle(cudaStream_t stream) {
-  if (stream == nullptr) {
-    const std::string msg = "cuSPARSEHandle recieved invalid CUDA stream.";
-    LogError(msg);
-    throw std::invalid_argument(msg);
-  }
+}  // namespace
 
-  if (stream == stream_ && handle_ != nullptr) {
-    return handle_;
-  }
-
-  if (handle_ != nullptr) {
-    THROW_ON_CUSPARSE_ERROR(cusparseDestroy(static_cast<cusparseHandle_t>(handle_)));
-  }
-
-  stream_ = stream;
-  cusparseHandle_t h = nullptr;
-  THROW_ON_CUSPARSE_ERROR(cusparseCreate(&h));
-  THROW_ON_CUSPARSE_ERROR(cusparseSetStream(h, stream_));
-  handle_ = static_cast<void *>(h);
-  return handle_;
-}
+cuSPARSEHandle::cuSPARSEHandle()
+    : StreamBoundHandle("cuSPARSEHandle", &CreateCusparseHandle, &DestroyCusparseHandle) {}
 
 /** @copydoc cuSPARSEMatrixDescription::operator=(cuSPARSEMatrixDescription&&)
  */

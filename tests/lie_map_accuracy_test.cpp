@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-// Accuracy of the batched exp / log kernels in float32 across scales, from
-// near-identity elements (where series and closed forms switch) to large
-// ones: SE2 exp and log against a double-precision closed form, and
+// Accuracy of the exp / log maps in float32 across scales, from near-identity
+// elements (where series and closed forms switch) to large ones; the
+// exponentials of SE2, Sim2 and Sim3 are the state batches' Plus from the
+// identity: SE2 exp and log against a double-precision closed form, and
 // log(exp(xi)) round trips for SE2, Sim3 and SL4; SE3 exp and log against a
-// double-precision closed form; Sim2 exp, log and the fused Sim2 Plus against a
+// double-precision closed form; Sim2 log and the fused Sim2 Plus against a
 // double-precision closed form; the fused Sim3 Plus against a double-precision
 // matrix exponential.
 
@@ -85,6 +86,24 @@ double MaxError(const std::vector<float> &a, const std::vector<float> &b) {
   return worst;
 }
 
+/**
+ * Exp of kN tangents through a state batch's Plus from the identity (the
+ * library's exponential map for that group), `dim` x `dim` matrices.
+ */
+template <class States>
+dvector<float> ExpThroughPlus(const dvector<float> &xi, int dim, cudaStream_t stream) {
+  const size_t ambient = static_cast<size_t>(dim) * dim;
+  std::vector<float> identity(kN * ambient, 0.f);
+  for (size_t i = 0; i < kN; ++i) {
+    for (int k = 0; k < dim; ++k) identity[i * ambient + k * (dim + 1)] = 1.f;
+  }
+  dvector<float> d_x(identity), out(kN * ambient);
+  States states(d_x.data(), kN);
+  states.SetNumActiveStates(kN);
+  states.Plus(d_x.data(), xi.data(), out.data(), stream);
+  return out;
+}
+
 class LieMapAccuracy : public ::testing::TestWithParam<float> {};
 
 TEST_P(LieMapAccuracy, SE2ExpAndLogMatchDoublePrecision) {
@@ -102,8 +121,8 @@ TEST_P(LieMapAccuracy, SE2ExpAndLogMatchDoublePrecision) {
     const double t[9] = {c, -s, a * vx - b * vy, s, c, b * vx + a * vy, 0.0, 0.0, 1.0};
     std::copy(t, t + 9, ref.begin() + 9 * i);
   }
-  dvector<float> d_xi(xi), d_t(kN * 9), d_log(kN * 3);
-  ComputeExpSE2(stream.GetStream(), d_xi.data(), 3, 9, kN, d_t.data());
+  dvector<float> d_xi(xi), d_log(kN * 3);
+  const dvector<float> d_t = ExpThroughPlus<SE2StateBatch>(d_xi, 3, stream.GetStream());
   ComputeLogSE2(stream.GetStream(), d_t.data(), 9, 3, kN, d_log.data());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   const float tol = 2e-6f * std::max(1.f, scale);
@@ -283,15 +302,14 @@ void SmallLogScaleSim2(std::vector<float> &xi, std::vector<float> &ref) {
 // the first-order term in lambda (dropping it below 1e-4 errs by |u| |lambda| / 2)
 // and coefficients that do not cancel in float32: (1 - e^-lambda) / lambda
 // carries the rounding of e^-lambda, up to 6e-8 / |lambda| (6e-4 at 1e-4).
-TEST(LieMapAccuracy, Sim2ExpAndLogStayAccurateAtSmallLogScales) {
+// The log inverts the double-precision exponentials.
+TEST(LieMapAccuracy, Sim2LogStaysAccurateAtSmallLogScales) {
   CudaStream stream;
   std::vector<float> xi, ref;
   SmallLogScaleSim2(xi, ref);
-  dvector<float> d_xi(xi), d_ref(ref), d_t(kN * 9), d_log(kN * 4);
-  ComputeExpSim2(stream.GetStream(), d_xi.data(), 4, 9, kN, d_t.data());
+  dvector<float> d_ref(ref), d_log(kN * 4);
   ComputeLogSim2(stream.GetStream(), d_ref.data(), 9, 4, kN, d_log.data());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-  EXPECT_LT(MaxError(ToHost(d_t), ref), 4e-6) << "exp";
   EXPECT_LT(MaxError(ToHost(d_log), xi), 1e-5) << "log of the reference transforms";
 }
 
@@ -314,8 +332,8 @@ TEST_P(LieMapAccuracy, Sim3LogInvertsExp) {
   CudaStream stream;
   std::vector<float> xi = RandomTangents(7, scale, 2);
   ClampRotations(xi, 7, 0, 3);
-  dvector<float> d_xi(xi), d_t(kN * 16), d_log(kN * 7);
-  ComputeExpSim3(stream.GetStream(), d_xi.data(), 7, 16, kN, d_t.data());
+  dvector<float> d_xi(xi), d_log(kN * 7);
+  const dvector<float> d_t = ExpThroughPlus<Similarity3StateBatch>(d_xi, 4, stream.GetStream());
   ComputeLogSim3(stream.GetStream(), d_t.data(), 16, 7, kN, d_log.data());
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
   EXPECT_LT(MaxError(ToHost(d_log), xi), 2e-5 * std::max(1.f, scale)) << "scale " << scale;

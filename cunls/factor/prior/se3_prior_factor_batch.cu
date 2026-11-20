@@ -75,9 +75,7 @@ __global__ void collect_and_multiply_se3_prior_kernel(float const *const *state_
   const float i10 = I[4], i11 = I[5], i12 = I[6], i13 = I[7];
   const float i20 = I[8], i21 = I[9], i22 = I[10], i23 = I[11];
 
-  // cuBLAS col-major with row-major data: result_row = I_row * C_row
-  // (CUBLAS_OP_N,CUBLAS_OP_N with C_col=C_row^T, I_col=I_row^T gives
-  //  C_row^T * I_row^T = (I_row * C_row)^T, so result_row = I * C)
+  // out = I * C (row-major 3x4 active part; row 3 is [0 0 0 1]).
   out[0] = i00 * c00 + i01 * c10 + i02 * c20;
   out[1] = i00 * c01 + i01 * c11 + i02 * c21;
   out[2] = i00 * c02 + i01 * c12 + i02 * c22;

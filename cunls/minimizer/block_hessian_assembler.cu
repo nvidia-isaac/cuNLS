@@ -127,8 +127,7 @@ __global__ void AssembleBlockHessianKernel(
   for (int p = lane; p < tangent_dim; p += kWarpSize) {
     int col = cols_src[s_block_of_col[p]];
     if (col < 0) {
-      // Constant state: this row and column of H_f are dropped, which
-      // is the block-level equivalent of the col_id == -1 triplet filter.
+      // Constant state: this row and column of H_f are dropped.
       s_global_col[p] = -1;
       s_row_start[p] = -1;
     } else {
@@ -228,7 +227,7 @@ void BlockHessianAssembler::Initialize(cudaStream_t stream, const Problem &probl
   auto range = profiler_domain_.CreateDomainRange("Initialize");
   num_cols_ = num_cols;
   block_size_ = 1;
-  structure_builder_.Build(stream, problem, num_cols, hessian, /*want_scatter_maps=*/true);
+  structure_builder_.Build(stream, problem, num_cols, hessian);
   BuildPlans(problem);
 }
 
@@ -237,8 +236,7 @@ void BlockHessianAssembler::Initialize(cudaStream_t stream, const Problem &probl
   auto range = profiler_domain_.CreateDomainRange("Initialize");
   num_cols_ = num_cols;
   block_size_ = block_size;
-  structure_builder_.Build(stream, problem, num_cols, block_size, hessian,
-                           /*want_scatter_maps=*/true);
+  structure_builder_.Build(stream, problem, num_cols, block_size, hessian);
   BuildPlans(problem);
 }
 
@@ -306,18 +304,18 @@ void BlockHessianAssembler::BuildPlans(const Problem &problem) {
   }
 }
 
-void BlockHessianAssembler::Assemble(cudaStream_t stream, const Problem &problem,
-                                     const float *jacobian_values, const float *residuals,
-                                     CSRSparseMatrix &hessian, dvector<float> &rhs) {
+void BlockHessianAssembler::Assemble(cudaStream_t stream, const float *jacobian_values,
+                                     const float *residuals, CSRSparseMatrix &hessian,
+                                     dvector<float> &rhs) {
   auto range = profiler_domain_.CreateDomainRange("Assemble");
   PrepareOutputs(stream, hessian.values, rhs);
   LaunchAssembly(stream, jacobian_values, residuals, hessian.row_offsets.data(),
                  hessian.values.data(), rhs.data(), /*block_storage=*/false);
 }
 
-void BlockHessianAssembler::Assemble(cudaStream_t stream, const Problem &problem,
-                                     const float *jacobian_values, const float *residuals,
-                                     BSRSparseMatrix &hessian, dvector<float> &rhs) {
+void BlockHessianAssembler::Assemble(cudaStream_t stream, const float *jacobian_values,
+                                     const float *residuals, BSRSparseMatrix &hessian,
+                                     dvector<float> &rhs) {
   auto range = profiler_domain_.CreateDomainRange("Assemble");
   PrepareOutputs(stream, hessian.values, rhs);
   LaunchAssembly(stream, jacobian_values, residuals, hessian.row_offsets.data(),

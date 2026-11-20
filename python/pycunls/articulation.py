@@ -266,7 +266,7 @@ def loop_closure(topology: ArticulationTopology, joint_type: ArticulationJointTy
     and the child frame ``X_C X_c``. It is built from existing factors on
     :class:`pycunls.LinkFrameFactorBatch` views of the two frames, each wrapped as an equality:
 
-    * Ball (3 rows): the origins coincide (``VectorBetweenFactorBatch3`` on two Position views).
+    * Ball (3 rows): the origins coincide (``VectorBetweenFactorBatch`` on two Position views).
     * Revolute (3 + 3): the origins coincide, and ``SE3AxisAlignmentFactorBatch`` on two Pose
       views keeps the axes aligned.
     * Prismatic (3 + 2): the rotations are equal (``SO3BetweenFactorBatch`` on two Orientation
@@ -339,7 +339,7 @@ def loop_closure(topology: ArticulationTopology, joint_type: ArticulationJointTy
     if joint_type in (JT.Ball, JT.Revolute):
         zeros = wp.zeros(3 * n, dtype=wp.float32, device=device)
         keep.append(zeros)
-        add(_core.VectorBetweenFactorBatch3(zeros, n), _core.FrameView.Position)
+        add(_core.VectorBetweenFactorBatch(zeros, n, dim=3), _core.FrameView.Position)
     if joint_type == JT.Revolute:
         add(_core.SE3AxisAlignmentFactorBatch(axes, n), _core.FrameView.Pose)
     if joint_type == JT.Prismatic:

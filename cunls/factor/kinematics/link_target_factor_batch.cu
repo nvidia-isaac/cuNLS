@@ -38,21 +38,6 @@ __device__ __forceinline__ int FactorIndex(int t, const int *factor_ids, int num
   return t < num_factors ? t : t % num_factors;
 }
 
-/** R (row-major 3x3) of the quaternion (x, y, z, w), normalized. */
-__device__ __forceinline__ void QuatToMatrix(const float *q, float *R) {
-  const float n = rsqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-  const float x = q[0] * n, y = q[1] * n, z = q[2] * n, w = q[3] * n;
-  R[0] = 1.f - 2.f * (y * y + z * z);
-  R[1] = 2.f * (x * y - z * w);
-  R[2] = 2.f * (x * z + y * w);
-  R[3] = 2.f * (x * y + z * w);
-  R[4] = 1.f - 2.f * (x * x + z * z);
-  R[5] = 2.f * (y * z - x * w);
-  R[6] = 2.f * (x * z - y * w);
-  R[7] = 2.f * (y * z + x * w);
-  R[8] = 1.f - 2.f * (x * x + y * y);
-}
-
 /**
  * One group of G lanes per item: every lane computes the residual (a few
  * dozen flops), lane 0 writes it, and lane l writes Jacobian columns
@@ -121,7 +106,7 @@ __global__ void __launch_bounds__(kBlockSize)
       float q[4], Roff[9];
 #pragma unroll
       for (int i = 0; i < 4; ++i) q[i] = __ldg(frames + stride * f + at + i);
-      QuatToMatrix(q, Roff);
+      lie_device::QuatToMatrix<true>(q, Roff);
       lie_device::MatMul3x3(RL, Roff, Rcur);
     } else {
 #pragma unroll
@@ -132,7 +117,7 @@ __global__ void __launch_bounds__(kBlockSize)
     float q[4], Rt[9];
 #pragma unroll
     for (int i = 0; i < 4; ++i) q[i] = __ldg(targets + tstride * f + tat + i);
-    QuatToMatrix(q, Rt);
+    lie_device::QuatToMatrix<true>(q, Rt);
     float M[9];  // Rcur Rtᵀ
 #pragma unroll
     for (int a = 0; a < 3; ++a) {

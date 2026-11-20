@@ -55,8 +55,7 @@ __global__ void collect_and_multiply_sl4_prior_kernel(float const *const *state_
   const float c4 = cv[4], c5 = cv[5], c6 = cv[6], c7 = cv[7];
   const float c8 = cv[8], c9 = cv[9], c10 = cv[10], c11 = cv[11];
   const float c12 = cv[12], c13 = cv[13], c14 = cv[14], c15 = cv[15];
-  // T_target^{-1}, derived from the measurement in place (zeros if singular,
-  // as ComputeInverseSL4 does).
+  // T_target^{-1}, derived from the measurement in place (zeros if singular).
   float I[16];
   if (!lie_device::Inv4(tv, I)) {
 #pragma unroll

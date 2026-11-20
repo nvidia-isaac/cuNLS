@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Array conversions and streams shared by the pure-Python layers (Warp-based)."""
+"""Array conversions, streams and Warp function types shared by the pure-Python layers."""
+
+import typing
 
 import numpy as np
 import warp as wp
@@ -42,9 +44,10 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
                         f"np.asarray({name}).") from exc
 
 
-def to_device(a, dtype, name: str, owner: str) -> wp.array:
-    """Contiguous device copy (``wp.array``) of an array-like, keeping its shape."""
-    host = np.ascontiguousarray(to_numpy(a, dtype, name, owner))
+def to_device(a, dtype=None, name: str = "array", owner: str = "pycunls") -> wp.array:
+    """Contiguous device copy (``wp.array``) of an array-like, keeping its shape (and its dtype
+    when ``dtype`` is None)."""
+    host = np.ascontiguousarray(a if dtype is None else to_numpy(a, dtype, name, owner))
     return wp.array(host, dtype=wp.dtype_from_numpy(host.dtype), device=wp.get_cuda_device())
 
 
@@ -63,3 +66,35 @@ def warp_stream(stream) -> wp.Stream:
     else:
         handle = int(stream.__cuda_stream__()[1])
     return wp.Stream(wp.get_cuda_device(), cuda_stream=handle)
+
+
+def cached_stream(cache: dict, handle: int, device) -> wp.Stream:
+    """The ``wp.Stream`` wrapping the raw ``cudaStream_t`` ``handle``, made once per handle and
+    kept in ``cache``, so a callback does not build a new one at every evaluation."""
+    stream = cache.get(handle)
+    if stream is None:
+        stream = cache[handle] = wp.Stream(device, cuda_stream=handle)
+    return stream
+
+
+def is_warp_function(obj) -> bool:
+    """Whether ``obj`` is a ``@wp.func`` (Warp's Function class; its module moved between Warp
+    versions)."""
+    return type(obj).__name__ == "Function" and type(obj).__module__.startswith("warp")
+
+
+def warp_length(t) -> int:
+    """1 for a scalar Warp type, N for a wp.vecN, 0 for anything else."""
+    return 1 if t in (float, wp.float32) else int(getattr(t, "_length_", 0))
+
+
+def warp_result_type(fn):
+    """The result type of the ``@wp.func`` ``fn``, also when its annotations are strings
+    (``from __future__ import annotations``); float when it has none."""
+    result = None
+    if getattr(fn, "func", None) is not None:
+        try:
+            result = typing.get_type_hints(fn.func).get("return")
+        except Exception:  # an annotation Python cannot evaluate: fall back to the raw one
+            result = fn.func.__annotations__.get("return")
+    return result or fn.value_type or float

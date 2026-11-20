@@ -16,9 +16,21 @@
  */
 
 #pragma once
+#include <stdexcept>
+#include <string>
+
 #include "factor_batch.h"
 
 namespace cunls {
+
+/** @brief `dim`, checked to be at least 1 (vector factor batches). */
+inline size_t CheckedVectorDim(const char *cls, int dim) {
+  if (dim < 1) {
+    throw std::invalid_argument(std::string(cls) + ": dim must be at least 1 (got " +
+                                std::to_string(dim) + "). Fix: pass the vector size.");
+  }
+  return static_cast<size_t>(dim);
+}
 
 /**
  * @brief Compile-time sized base class for batched factors.

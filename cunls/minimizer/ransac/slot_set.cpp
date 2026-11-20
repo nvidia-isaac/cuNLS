@@ -88,10 +88,10 @@ void SlotSet::AllocateBuffers(cudaStream_t stream, const RansacLayout &layout) {
     buf.table_cand.resize(buf.items * r.nb);
     buf.factor_ids.resize(SampleRows(r) ? buf.items : 0);
     if (buf.items > 0 && !SampleRows(r)) {  // fixed: depends only on replica addresses
-      LaunchSlotTables(stream, state_views(), r.blocks.data(), r.num_factors, r.nb, num_slots_, 0,
-                       false, buf.table_cur.data());
-      LaunchSlotTables(stream, state_views(), r.blocks.data(), r.num_factors, r.nb, num_slots_, 0,
-                       true, buf.table_cand.data());
+      LaunchSlotTables(stream, state_views(), r.blocks.data(), r.num_factors, r.nb, nullptr,
+                       num_slots_, 0, false, buf.table_cur.data());
+      LaunchSlotTables(stream, state_views(), r.blocks.data(), r.num_factors, r.nb, nullptr,
+                       num_slots_, 0, true, buf.table_cand.data());
     }
   }
   workspace_.resize(ResidualBatchWorkspaceNumFloats(max_items));
@@ -169,8 +169,7 @@ void SlotSet::AllocateSolver(const RansacLayout &layout) {
   for (auto *v : {&cost_cur_, &cost_cand_, &predicted_, &step_sq_, &lambda_, &score_}) {
     v->resize(slots);
   }
-  for (auto *v :
-       {&solve_ok_, &active_, &accept_, &valid_, &iterations_, &num_accepted_, &inliers_}) {
+  for (auto *v : {&solve_ok_, &active_, &accept_, &valid_, &iterations_, &inliers_}) {
     v->resize(slots);
   }
   active_count_.resize(1);
@@ -228,13 +227,13 @@ void SlotSet::CopySlotIf(cudaStream_t stream, const RansacLayout &layout, const 
   }
 }
 
-void SlotSet::WriteBack(cudaStream_t stream, const RansacLayout &layout, int slot) const {
+void SlotSet::WriteBack(cudaStream_t stream, const RansacLayout &layout) const {
   for (size_t j = 0; j < replicas_.size(); ++j) {
     const StateLayout &s = layout.states()[j];
     if (s.replicated) {
-      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(
-          s.batch->StateDevicePtr(0), replicas_[j].cur.data() + slot * s.slot_floats,
-          s.slot_floats * sizeof(float), cudaMemcpyDeviceToDevice, stream));
+      THROW_ON_CUDA_ERROR(cudaMemcpyAsync(s.batch->StateDevicePtr(0), replicas_[j].cur.data(),
+                                          s.slot_floats * sizeof(float), cudaMemcpyDeviceToDevice,
+                                          stream));
     }
   }
 }
@@ -310,7 +309,7 @@ void SlotSet::Evaluate(cudaStream_t stream, const RansacLayout &layout, Target t
 
 void SlotSet::ResetSolver(cudaStream_t stream, float initial_lambda) {
   LaunchResetSlots(stream, num_slots_, initial_lambda, active_.data(), lambda_.data(),
-                   valid_.data(), iterations_.data(), num_accepted_.data());
+                   valid_.data(), iterations_.data());
 }
 
 void SlotSet::Iterate(cudaStream_t stream, const RansacLayout &layout,
@@ -330,7 +329,7 @@ void SlotSet::Iterate(cudaStream_t stream, const RansacLayout &layout,
   LaunchSlotCost(stream, items, num_slots_, cost_cand_.data(), cost_scratch_.data());
   LaunchAccept(stream, num_slots_, settings.policy, cost_cur_.data(), cost_cand_.data(),
                predicted_.data(), step_sq_.data(), solve_ok_.data(), active_.data(), lambda_.data(),
-               accept_.data(), valid, iterations_.data(), num_accepted_.data());
+               accept_.data(), valid, iterations_.data());
   AcceptCandidates(stream, layout);
 }
 

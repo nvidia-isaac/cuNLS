@@ -29,15 +29,16 @@ constexpr float kDiagonalEpsilonAbs = 1e-7f;
 
 /// Checks whether any diagonal element of an n x n column-major matrix has
 /// absolute value below the threshold. Sets *status = 0 if any diagonal is
-/// near-zero, 1 otherwise.
+/// near-zero, 1 otherwise (one block).
 __global__ void check_diagonal_kernel(const float *__restrict__ matrix, int n, int lda,
                                       float threshold, int *__restrict__ status) {
-  *status = 1;
+  bool singular = false;
   for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    if (fabsf(matrix[i * lda + i]) <= threshold) {
-      atomicExch(status, 0);
-    }
+    singular = singular || fabsf(matrix[i * lda + i]) <= threshold;
   }
+  // One write after the vote: a thread setting 1 cannot overwrite another's 0.
+  const int any_singular = __syncthreads_or(singular);
+  if (threadIdx.x == 0) *status = any_singular ? 0 : 1;
 }
 
 }  // namespace
@@ -71,36 +72,27 @@ bool DenseQRSolver::FactorizeAndSolve(cudaStream_t stream, int n, const dvector<
     }
   }
 
-  // 3. Copy rhs into work vector (ormqr and trsm operate in-place on it).
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(rhs_copy_.data(), rhs.data(), n * sizeof(float),
+  // 3. Copy rhs into result (ormqr and trsm operate in place on it).
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(result.data(), rhs.data(), n * sizeof(float),
                                       cudaMemcpyDeviceToDevice, stream));
 
   // 4. Apply Q^T to the rhs: y = Q^T * b.
-  THROW_ON_CUSOLVER_ERROR(cusolverDnSormqr(cusolver, CUBLAS_SIDE_LEFT, CUBLAS_OP_T, n, 1, n,
-                                           dense_matrix_.data(), n, tau_.data(), rhs_copy_.data(),
-                                           n, workspace_.data(),
-                                           static_cast<int>(workspace_.size()), dev_info_.data()));
+  THROW_ON_CUSOLVER_ERROR(cusolverDnSormqr(
+      cusolver, CUBLAS_SIDE_LEFT, CUBLAS_OP_T, n, 1, n, dense_matrix_.data(), n, tau_.data(),
+      result.data(), n, workspace_.data(), static_cast<int>(workspace_.size()), dev_info_.data()));
 
   // 5. Solve the upper-triangular system R x = y via cuBLAS trsm.
   auto cublas = static_cast<cublasHandle_t>(cublas_handle_.GetHandle(stream));
   const float alpha = 1.0f;
   THROW_ON_CUBLAS_ERROR(cublasStrsm(cublas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N,
                                     CUBLAS_DIAG_NON_UNIT, n, 1, &alpha, dense_matrix_.data(), n,
-                                    rhs_copy_.data(), n));
-
-  // 6. Copy solution out.
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(result.data(), rhs_copy_.data(), n * sizeof(float),
-                                      cudaMemcpyDeviceToDevice, stream));
-
+                                    result.data(), n));
   return true;
 }
 
 void DenseQRSolver::EnsureBuffersSize(cudaStream_t stream, size_t n) {
   if (tau_.size() != n) {
     tau_.resize(n);
-  }
-  if (rhs_copy_.size() != n) {
-    rhs_copy_.resize(n);
   }
   if (dev_info_.size() != 1) {
     dev_info_.resize(1);
@@ -117,7 +109,7 @@ void DenseQRSolver::EnsureBuffersSize(cudaStream_t stream, size_t n) {
     int ormqr_lwork = 0;
     THROW_ON_CUSOLVER_ERROR(cusolverDnSormqr_bufferSize(
         handle, CUBLAS_SIDE_LEFT, CUBLAS_OP_T, static_cast<int>(n), 1, static_cast<int>(n),
-        dense_matrix_.data(), static_cast<int>(n), tau_.data(), rhs_copy_.data(),
+        dense_matrix_.data(), static_cast<int>(n), tau_.data(), dense_matrix_.data(),
         static_cast<int>(n), &ormqr_lwork));
 
     int lwork = (geqrf_lwork > ormqr_lwork) ? geqrf_lwork : ormqr_lwork;

@@ -7,10 +7,8 @@
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
 #include "cunls/factor/between/similarity3_between_factor_batch.h"
-#include "cunls/math/dense_matrix_ops.h"
 #include "cunls/math/lie_device.cuh"
 #include "cunls/math/sim_lie_math.h"
-#include "cunls/math/so_se_lie_math.h"
 
 namespace cunls {
 
@@ -41,7 +39,6 @@ constexpr size_t kSim3JacobianStride = 98;
  * @brief Fused kernel: collect L/R Sim(3), compute (L^{-1} * R) * Delta.
  *
  * Full 4x4 row-major multiply (128 FMAs for 2 matmuls). Inline Sim(3) inverse.
- * Replaces: collect + InverseSim3 + 2x cuBLAS 4x4 GEMM.
  */
 __global__ void collect_and_compute_sim3_between_error_kernel(float const *const *state_pointers,
                                                               const Matrix<4> *deltas,
@@ -97,8 +94,7 @@ __global__ void collect_and_compute_sim3_between_error_kernel(float const *const
   const float t32 = i33 * r14;
   const float t33 = i33 * r15;
 
-  // error = D * temp  (row-major: D_row * temp_row)
-  // cuBLAS col-major convention: C_col = A_col * B_col => C_row = B_row * A_row
+  // error = D * temp  (row-major)
   const float d0 = D[0], d1 = D[1], d2 = D[2], d3 = D[3];
   const float d4 = D[4], d5 = D[5], d6 = D[6], d7 = D[7];
   const float d8 = D[8], d9 = D[9], d10 = D[10], d11 = D[11];
@@ -122,287 +118,9 @@ __global__ void collect_and_compute_sim3_between_error_kernel(float const *const
   out[15] = d12 * t03 + d13 * t13 + d14 * t23 + d15 * t33;
 }
 
-// Device function: compute J_r^{-1}(xi) for Sim(3), 7x7, row-major into J[49].
-// Duplicates the logic from jacobian_right_inverse_sim3_kernel to allow
-// inlining.
-__device__ __forceinline__ void sim3_jr_inv(const float *xi, float *J) {
-  float w[3] = {xi[0], xi[1], xi[2]};
-  float u[3] = {xi[3], xi[4], xi[5]};
-  float lam = xi[6];
-
-  float theta2 = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
-
-  if (theta2 + lam * lam < 1e-6f) {
-    for (int i = 0; i < 49; ++i) J[i] = 0.0f;
-    J[0] = 1.f;
-    J[8] = 1.f;
-    J[16] = 1.f;
-    J[24] = 1.f;
-    J[32] = 1.f;
-    J[40] = 1.f;
-    J[48] = 1.f;
-    J[1] += -0.5f * w[2];
-    J[2] += 0.5f * w[1];
-    J[7] += 0.5f * w[2];
-    J[9] += -0.5f * w[0];
-    J[14] += -0.5f * w[1];
-    J[15] += 0.5f * w[0];
-    J[24] += 0.5f * lam;
-    J[25] += -0.5f * w[2];
-    J[26] += 0.5f * w[1];
-    J[31] += 0.5f * w[2];
-    J[32] += 0.5f * lam;
-    J[33] += -0.5f * w[0];
-    J[38] += -0.5f * w[1];
-    J[39] += 0.5f * w[0];
-    J[40] += 0.5f * lam;
-    J[22] += -0.5f * u[2];  // row 3 of the 0.5 [u]_x block: [0, -u2, u1] / 2
-    J[23] += 0.5f * u[1];
-    J[28] += 0.5f * u[2];
-    J[30] += -0.5f * u[0];
-    J[35] += -0.5f * u[1];
-    J[36] += 0.5f * u[0];
-    J[27] = -0.5f * u[0];
-    J[34] = -0.5f * u[1];
-    J[41] = -0.5f * u[2];
-    return;
-  }
-
-  float theta = sqrtf(theta2);
-  float a0 = 1.0f, a1 = 0.5f, a2;
-  if (theta2 > 1e-6f) {
-    float st = sinf(theta), ct = cosf(theta);
-    a2 = 1.0f / theta2 - (1.0f + ct) / (2.0f * theta * st);
-  } else {
-    a2 = 1.0f / 12.0f + theta2 / 720.0f;
-  }
-
-  // W = skew(w), W^2 = W*W
-  float W[9], W2[9];
-  W[0] = 0;
-  W[1] = -w[2];
-  W[2] = w[1];
-  W[3] = w[2];
-  W[4] = 0;
-  W[5] = -w[0];
-  W[6] = -w[1];
-  W[7] = w[0];
-  W[8] = 0;
-#pragma unroll
-  for (int r = 0; r < 3; ++r)
-#pragma unroll
-    for (int c = 0; c < 3; ++c)
-      W2[r * 3 + c] = W[r * 3] * W[c] + W[r * 3 + 1] * W[3 + c] + W[r * 3 + 2] * W[6 + c];
-
-  // U = skew(u), UW = U*W, UW2 = U*W2
-  float U_mat[9], UW[9], UW2[9];
-  U_mat[0] = 0;
-  U_mat[1] = -u[2];
-  U_mat[2] = u[1];
-  U_mat[3] = u[2];
-  U_mat[4] = 0;
-  U_mat[5] = -u[0];
-  U_mat[6] = -u[1];
-  U_mat[7] = u[0];
-  U_mat[8] = 0;
-#pragma unroll
-  for (int r = 0; r < 3; ++r)
-#pragma unroll
-    for (int c = 0; c < 3; ++c) {
-      UW[r * 3 + c] =
-          U_mat[r * 3] * W[c] + U_mat[r * 3 + 1] * W[3 + c] + U_mat[r * 3 + 2] * W[6 + c];
-      UW2[r * 3 + c] =
-          U_mat[r * 3] * W2[c] + U_mat[r * 3 + 1] * W2[3 + c] + U_mat[r * 3 + 2] * W2[6 + c];
-    }
-
-  float wu_cross[3] = {w[1] * u[2] - w[2] * u[1], w[2] * u[0] - w[0] * u[2],
-                       w[0] * u[1] - w[1] * u[0]};
-  float dot_wu = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
-  float W2u[3] = {w[0] * dot_wu - theta2 * u[0], w[1] * dot_wu - theta2 * u[1],
-                  w[2] * dot_wu - theta2 * u[2]};
-
-  constexpr float c1 = 0.5f, c2 = 1.f / 12.f, c4 = -1.f / 720.f, c6 = 1.f / 30240.f;
-  constexpr float d0v = 0.5f, d1v = 1.f / 12.f, d3v = -1.f / 720.f, d5v = 1.f / 30240.f;
-
-  float ma = lam, mb = 1.0f, mc = 0.0f;
-  float sa = 0.0f, sb = 0.0f, sc = 0.0f;
-
-  float Bn[9], SB[9];
-#pragma unroll
-  for (int i = 0; i < 9; ++i) {
-    Bn[i] = U_mat[i];
-    SB[i] = 0.0f;
-  }
-
-  sa += c1 * ma;
-  sb += c1 * mb;
-  sc += c1 * mc;
-#pragma unroll
-  for (int i = 0; i < 9; ++i) SB[i] += c1 * Bn[i];
-
-  {
-    float na = lam * ma, nb2 = lam * mb + ma - theta2 * mc, nc = lam * mc + mb;
-    ma = na;
-    mb = nb2;
-    mc = nc;
-  }
-
-  // Bn iteration for n=2
-  {
-    float WB[9];
-#pragma unroll
-    for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 3; ++c)
-        WB[r * 3 + c] = W[r * 3] * Bn[c] + W[r * 3 + 1] * Bn[3 + c] + W[r * 3 + 2] * Bn[6 + c];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) Bn[i] = UW[i] + lam * Bn[i] + WB[i];
-  }
-
-  sa += c2 * ma;
-  sb += c2 * mb;
-  sc += c2 * mc;
-#pragma unroll
-  for (int i = 0; i < 9; ++i) SB[i] += c2 * Bn[i];
-
-  // n=3
-  {
-    float na = lam * ma, nb2 = lam * mb + ma - theta2 * mc, nc = lam * mc + mb;
-    ma = na;
-    mb = nb2;
-    mc = nc;
-  }
-  {
-    float WB[9];
-#pragma unroll
-    for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 3; ++c)
-        WB[r * 3 + c] = W[r * 3] * Bn[c] + W[r * 3 + 1] * Bn[3 + c] + W[r * 3 + 2] * Bn[6 + c];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) Bn[i] = UW2[i] + lam * Bn[i] + WB[i];
-  }
-
-  // n=4
-  {
-    float na = lam * ma, nb2 = lam * mb + ma - theta2 * mc, nc = lam * mc + mb;
-    ma = na;
-    mb = nb2;
-    mc = nc;
-  }
-  {
-    float UWn[9], WB[9];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) UWn[i] = -theta2 * UW[i];
-#pragma unroll
-    for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 3; ++c)
-        WB[r * 3 + c] = W[r * 3] * Bn[c] + W[r * 3 + 1] * Bn[3 + c] + W[r * 3 + 2] * Bn[6 + c];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
-  }
-
-  sa += c4 * ma;
-  sb += c4 * mb;
-  sc += c4 * mc;
-#pragma unroll
-  for (int i = 0; i < 9; ++i) SB[i] += c4 * Bn[i];
-
-  // n=5
-  {
-    float na = lam * ma, nb2 = lam * mb + ma - theta2 * mc, nc = lam * mc + mb;
-    ma = na;
-    mb = nb2;
-    mc = nc;
-  }
-  {
-    float UWn[9], WB[9];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) UWn[i] = -theta2 * UW2[i];
-#pragma unroll
-    for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 3; ++c)
-        WB[r * 3 + c] = W[r * 3] * Bn[c] + W[r * 3 + 1] * Bn[3 + c] + W[r * 3 + 2] * Bn[6 + c];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
-  }
-
-  // n=6
-  {
-    float na = lam * ma, nb2 = lam * mb + ma - theta2 * mc, nc = lam * mc + mb;
-    ma = na;
-    mb = nb2;
-    mc = nc;
-  }
-  {
-    float UWn[9], WB[9];
-    float t4 = theta2 * theta2;
-#pragma unroll
-    for (int i = 0; i < 9; ++i) UWn[i] = t4 * U_mat[i];
-#pragma unroll
-    for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 3; ++c)
-        WB[r * 3 + c] = W[r * 3] * Bn[c] + W[r * 3 + 1] * Bn[3 + c] + W[r * 3 + 2] * Bn[6 + c];
-#pragma unroll
-    for (int i = 0; i < 9; ++i) Bn[i] = UWn[i] + lam * Bn[i] + WB[i];
-  }
-
-  sa += c6 * ma;
-  sb += c6 * mb;
-  sc += c6 * mc;
-#pragma unroll
-  for (int i = 0; i < 9; ++i) SB[i] += c6 * Bn[i];
-
-  // Assemble 7x7 output
-  for (int i = 0; i < 49; ++i) J[i] = 0.0f;
-
-    // Block(0,0): SO(3) J_r^{-1}
-#pragma unroll
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c) {
-      float val = a1 * W[r * 3 + c] + a2 * W2[r * 3 + c];
-      if (r == c) val += a0;
-      J[r * 7 + c] = val;
-    }
-    // Block(1,1): I + sa + sb*W + sc*W2
-#pragma unroll
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c) {
-      float val = sb * W[r * 3 + c] + sc * W2[r * 3 + c];
-      if (r == c) val += 1.0f + sa;
-      J[(r + 3) * 7 + (c + 3)] = val;
-    }
-    // Block(1,0): SB
-#pragma unroll
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c) J[(r + 3) * 7 + c] = SB[r * 3 + c];
-
-  // Block(1,2): column 6, computed from M^n series applied to u
-  float ma_s[6], mb_s[6], mc_s[6];
-  ma_s[0] = 1.f;
-  mb_s[0] = 0.f;
-  mc_s[0] = 0.f;
-  ma_s[1] = lam;
-  mb_s[1] = 1.f;
-  mc_s[1] = 0.f;
-#pragma unroll
-  for (int n = 1; n < 5; ++n) {
-    ma_s[n + 1] = lam * ma_s[n];
-    mb_s[n + 1] = lam * mb_s[n] + ma_s[n] - theta2 * mc_s[n];
-    mc_s[n + 1] = lam * mc_s[n] + mb_s[n];
-  }
-  float sd_a = d0v * ma_s[0] + d1v * ma_s[1] + d3v * ma_s[3] + d5v * ma_s[5];
-  float sd_b = d0v * mb_s[0] + d1v * mb_s[1] + d3v * mb_s[3] + d5v * mb_s[5];
-  float sd_c = d0v * mc_s[0] + d1v * mc_s[1] + d3v * mc_s[3] + d5v * mc_s[5];
-
-  J[3 * 7 + 6] = -(sd_a * u[0] + sd_b * wu_cross[0] + sd_c * W2u[0]);
-  J[4 * 7 + 6] = -(sd_a * u[1] + sd_b * wu_cross[1] + sd_c * W2u[1]);
-  J[5 * 7 + 6] = -(sd_a * u[2] + sd_b * wu_cross[2] + sd_c * W2u[2]);
-  J[48] = 1.0f;
-}
-
 // Fused kernel: computes the full 7x14 Jacobian for Sim(3) between factor.
-// Left block (cols 0-6):  H_left  = -J_l^{-1}(r) * Ad(Delta) = -J_r^{-1}(-r) *
-// Ad Right block (cols 7-13): H_right =  J_r^{-1}(r) Eliminates 6 separate
-// kernel launches + cuBLAS GEMM.
+// Left block (cols 0-6):  H_left  = -J_l^{-1}(r) * Ad(Delta) = -J_r^{-1}(-r) * Ad
+// Right block (cols 7-13): H_right =  J_r^{-1}(r)
 __global__ void __launch_bounds__(128, 2)
     sim3_between_fused_jacobians_kernel(const float *__restrict__ residuals,
                                         const Matrix<4> *__restrict__ deltas, int num_items,
@@ -415,14 +133,14 @@ __global__ void __launch_bounds__(128, 2)
 
   // Compute J_r^{-1}(r) for right block
   float Jr[49];
-  sim3_jr_inv(r, Jr);
+  lie_device::Sim3JrInv(r, Jr);
 
   // Compute J_r^{-1}(-r) = J_l^{-1}(r) for left block
   float neg_r[7];
 #pragma unroll
   for (int i = 0; i < 7; ++i) neg_r[i] = -r[i];
   float Jl[49];
-  sim3_jr_inv(neg_r, Jl);
+  lie_device::Sim3JrInv(neg_r, Jl);
 
   // Ad(Delta) 7x7, derived from the measurement in place (nothing cached)
   float Ad[49];

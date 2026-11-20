@@ -112,8 +112,6 @@ class SymmetricPointToPlaneFactorBatch : public SizedFactorBatch<1, 6> {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  SymmetricPointToPlaneFactorBatch() = default;
-
   /// Pointer to user-managed device memory containing target points (p).
   const Vector3 *p_observations_ptr_;
 

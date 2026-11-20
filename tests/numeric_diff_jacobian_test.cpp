@@ -123,7 +123,15 @@ dvector<Element> RandomExp(size_t n, std::mt19937 &rng, float rot_mag, float tra
   const float *in = reinterpret_cast<const float *>(twists_d.data());
   float *o = reinterpret_cast<float *>(out.data());
   if constexpr (T == 3) {
-    ComputeExpSO3(stream.GetStream(), in, 3, 3, 9, n, o);
+    // SO3StateBatch::Plus from the identity.
+    std::vector<float> identity(n * 9, 0.f);
+    for (size_t i = 0; i < n; i++)
+      identity[i * 9] = identity[i * 9 + 4] = identity[i * 9 + 8] = 1.f;
+    dvector<float> identity_d(identity);
+    SO3StateBatch states(identity_d.data(), n);
+    states.SetNumActiveStates(n);
+    states.Plus(identity_d.data(), in, o, stream.GetStream());
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));  // identity_d is freed below
   } else {
     ComputeExpSE3(stream.GetStream(), in, 6, 4, 16, n, o);
   }

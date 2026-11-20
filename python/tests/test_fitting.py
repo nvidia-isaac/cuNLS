@@ -71,6 +71,17 @@ def quadratic_surface(x: wp.vec2, p: vec5) -> float:
     return p[0] + p[1] * x[0] + p[2] * x[1] + p[3] * x[0] * x[1] + p[4] * x[0] * x[0]
 
 
+vec13 = wp.types.vector(length=13, dtype=float)
+
+
+@wp.func
+def cosine_series(x: float, p: vec13) -> float:
+    s = float(0.0)
+    for k in range(13):
+        s += p[k] * wp.cos(float(k) * x)
+    return s
+
+
 @wp.func
 def one_argument(x: float) -> float:
     return x
@@ -196,6 +207,16 @@ def test_vector_input_and_five_parameters_match_linear_least_squares():
     np.testing.assert_allclose(res.params, np.linalg.lstsq(design, y, rcond=None)[0], atol=1e-4)
 
 
+def test_thirteen_parameters_match_linear_least_squares():
+    x = np.linspace(0, np.pi, 80)
+    design = np.cos(np.arange(13)[None] * x[:, None])
+    y = design @ np.random.default_rng(7).normal(0, 1, 13) + np.random.default_rng(8).normal(
+        0, 0.01, 80)
+    res = pycunls.fit(cosine_series, x, y, p0=np.zeros(13))
+    assert res.converged and res.params.shape == (13,)
+    np.testing.assert_allclose(res.params, np.linalg.lstsq(design, y, rcond=None)[0], atol=1e-3)
+
+
 def test_wrong_model_shows_in_reduced_chi2():
     x, _ = _decay_data()
     rng = np.random.default_rng(5)
@@ -236,8 +257,6 @@ def test_errors_explain_the_mistake():
         pycunls.fit(decay, x, y, p0=[1, 1])
     with pytest.raises(ValueError, match="jacobian must be 'auto', 'autodiff' or 'numeric'"):
         pycunls.fit(decay, x, y, p0=[1, 1, 0], jacobian="analytic")
-    with pytest.raises(ValueError, match="up to 12 parameters"):
-        pycunls.fit(decay, x, y, p0=np.zeros(13))
     with pytest.raises(ValueError, match="starts=K needs finite bounds"):
         pycunls.fit(decay, x, y, p0=[1, 1, 0], starts=4)
     with pytest.raises(ValueError, match="loss must be one of"):

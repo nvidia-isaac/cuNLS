@@ -99,10 +99,29 @@ __global__ void AdjacencyKernel(int nb, const int *first_row, const int *row_off
 }
 
 /**
+ * Position of permuted row `row` (at or after the panel's first column) in a
+ * panel: its own columns by arithmetic, its below rows by binary search.
+ */
+__device__ int PanelRowPosition(const Panel &panel, const int *below_rows, int row) {
+  if (row < panel.col + panel.width) return row - panel.col;
+  const int *rows = below_rows + panel.rows_offset;
+  int lo = 0, hi = panel.height - panel.width;
+  while (lo < hi) {
+    const int mid = (lo + hi) / 2;
+    if (rows[mid] < row) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return panel.width + lo;
+}
+
+/**
  * One warp per row i of A: the factor offset of every nonzero (i, j) whose
  * permuted position (i', j') is in the lower triangle, else -1. The row i'
- * is found in the panel of column j' by arithmetic (its own columns) or by
- * binary search in its below rows. diagonal_index[i'] = the nonzero (i, i).
+ * is found in the panel of column j' (PanelRowPosition). diagonal_index[i'] =
+ * the nonzero (i, i).
  */
 template <typename Index>
 __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_ids,
@@ -117,22 +136,7 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
     if (ip >= jp) {
       const int p = col_panel[jp];
       const Panel panel = panels[p];
-      int pos;
-      if (ip < panel.col + panel.width) {
-        pos = ip - panel.col;
-      } else {
-        const int *rows = below_rows + panel.rows_offset;
-        int lo = 0, hi = panel.height - panel.width;
-        while (lo < hi) {
-          const int mid = (lo + hi) / 2;
-          if (rows[mid] < ip) {
-            lo = mid + 1;
-          } else {
-            hi = mid;
-          }
-        }
-        pos = panel.width + lo;
-      }
+      const int pos = PanelRowPosition(panel, below_rows, ip);
       d = static_cast<Index>(panel.offset + static_cast<int64_t>(jp - panel.col) * panel.height +
                              pos);
       if (ip == jp) diagonal_index[ip] = e;
@@ -143,8 +147,7 @@ __global__ void AssemblyMapKernel(int n, const int *row_offsets, const int *col_
 
 /**
  * The relative map: for run r (one warp), the positions in its target panel
- * of the source's below rows from the run on (the target's own columns by
- * arithmetic, its below rows by binary search).
+ * of the source's below rows from the run on (PanelRowPosition).
  */
 __global__ void RelmapKernel(int num_runs, const Run *runs, const Panel *panels,
                              const int *below_rows, int *relmap) {
@@ -152,26 +155,10 @@ __global__ void RelmapKernel(int num_runs, const Run *runs, const Panel *panels,
   if (r >= num_runs) return;
   const Run run = runs[r];
   const Panel source = panels[run.source], target = panels[run.target];
-  const int *rows = below_rows + source.rows_offset, *target_rows = below_rows + target.rows_offset;
-  const int count = source.height - source.width, target_count = target.height - target.width;
+  const int *rows = below_rows + source.rows_offset;
+  const int count = source.height - source.width;
   for (int i = run.begin + lane; i < count; i += 32) {
-    const int row = rows[i];
-    int pos;
-    if (row < target.col + target.width) {
-      pos = row - target.col;
-    } else {
-      int lo = 0, hi = target_count;
-      while (lo < hi) {
-        const int mid = (lo + hi) / 2;
-        if (target_rows[mid] < row) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
-        }
-      }
-      pos = target.width + lo;
-    }
-    relmap[run.relmap_offset + i - run.begin] = pos;
+    relmap[run.relmap_offset + i - run.begin] = PanelRowPosition(target, below_rows, rows[i]);
   }
 }
 
@@ -220,7 +207,6 @@ __global__ void DiagonalSlotKernel(int count, const int *columns, const int *dia
   }
 }
 
-/** out[perm[i]] = in[i]. */
 /**
  * panel_active[p] = 1 if any column of panel p is a needed row (row_active of
  * its original column != 0), else 0 (SparseLinearSolver::SetRowActivity).
@@ -237,6 +223,7 @@ __global__ void PanelActivityKernel(int num_panels, const Panel *panels, const i
   panel_active[p] = active;
 }
 
+/** out[perm[i]] = in[i]. */
 __global__ void UnpermuteKernel(int n, const int *perm, const float *in, float *out) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) out[perm[i]] = in[i];
@@ -1037,9 +1024,9 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
   wide_assembly_ = plan.factor_size > INT_MAX;
   assembly_dst_.resize(wide_assembly_ ? 0 : spd_matrix.col_ids.size());
   assembly_dst64_.resize(wide_assembly_ ? spd_matrix.col_ids.size() : 0);
-  diagonal_index_.resize(n);
   if (n > 0) {
-    THROW_ON_CUDA_ERROR(cudaMemsetAsync(diagonal_index_.data(), 0xFF, n * sizeof(int), stream));
+    dvector<int> diagonal_index(n);  // per permuted column: its diagonal nonzero of A, or -1
+    THROW_ON_CUDA_ERROR(cudaMemsetAsync(diagonal_index.data(), 0xFF, n * sizeof(int), stream));
     std::vector<int> iperm(n), col_panel(n);
     for (size_t c = 0; c < n; ++c) iperm[plan.perm[c]] = static_cast<int>(c);
     for (size_t p = 0; p < np; ++p) {
@@ -1052,12 +1039,12 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
       AssemblyMapKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(
           static_cast<int>(n), spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
           d_iperm.data(), d_col_panel.data(), panels_.data(), below_rows_.data(),
-          assembly_dst64_.data(), diagonal_index_.data());
+          assembly_dst64_.data(), diagonal_index.data());
     } else {
       AssemblyMapKernel<<<Blocks(32 * n), kThreads, 0, stream>>>(
           static_cast<int>(n), spd_matrix.row_offsets.data(), spd_matrix.col_ids.data(),
           d_iperm.data(), d_col_panel.data(), panels_.data(), below_rows_.data(),
-          assembly_dst_.data(), diagonal_index_.data());
+          assembly_dst_.data(), diagonal_index.data());
     }
     THROW_ON_CUDA_ERROR(cudaGetLastError());
     // The columns whose diagonal entry of A the factorization needs (zero-pivot test): all
@@ -1080,11 +1067,11 @@ bool BlockSparseCholeskySolver::Initialize(cudaStream_t stream, const Problem & 
     const int count = static_cast<int>(columns.size());
     if (count > 0 && wide_assembly_) {
       DiagonalSlotKernel<<<Blocks(count), kThreads, 0, stream>>>(
-          count, diagonal_columns_.data(), diagonal_index_.data(), assembly_dst64_.data(),
+          count, diagonal_columns_.data(), diagonal_index.data(), assembly_dst64_.data(),
           diagonal_slot_.data());
     } else if (count > 0) {
       DiagonalSlotKernel<<<Blocks(count), kThreads, 0, stream>>>(
-          count, diagonal_columns_.data(), diagonal_index_.data(), assembly_dst_.data(),
+          count, diagonal_columns_.data(), diagonal_index.data(), assembly_dst_.data(),
           diagonal_slot_.data());
     }
     THROW_ON_CUDA_ERROR(cudaGetLastError());

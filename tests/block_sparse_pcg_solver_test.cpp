@@ -224,34 +224,6 @@ void ToCsr(const System &s, CSRSparseMatrix &m) {
   test_utils::CreateCSRSparseMatrix(s.row_ptr, s.col_ids, s.values, m);
 }
 
-/** Uploads a host System as 3x3 block storage (rows and columns tiled by 3). */
-void ToBsr3(const System &s, BSRSparseMatrix &m) {
-  std::vector<int> row_ptr = {0};
-  std::vector<int> col_ids;
-  std::vector<float> values;
-  int max_tiles = 0;
-  for (int br = 0; br < s.n / 3; ++br) {
-    std::map<int, std::array<float, 9>> tiles;
-    for (int r = 0; r < 3; ++r) {
-      for (int e = s.row_ptr[3 * br + r]; e < s.row_ptr[3 * br + r + 1]; ++e) {
-        tiles[s.col_ids[e] / 3][3 * r + s.col_ids[e] % 3] = s.values[e];
-      }
-    }
-    for (const auto &[c, tile] : tiles) {
-      col_ids.push_back(c);
-      values.insert(values.end(), tile.begin(), tile.end());
-    }
-    max_tiles = std::max(max_tiles, static_cast<int>(tiles.size()));
-    row_ptr.push_back(static_cast<int>(col_ids.size()));
-  }
-  m.row_offsets = dvector<int>(row_ptr);
-  m.col_ids = dvector<int>(col_ids);
-  m.values = dvector<float>(values);
-  m.block_size = 3;
-  m.num_block_rows = s.n / 3;
-  m.max_tiles_per_row = max_tiles;
-}
-
 /** Multiplies every value in the 3x6 block of (point, its first body) and its transpose by f. */
 void ScalePointBlock(System &s, int num_bodies, int point, float f) {
   const int row = 6 * num_bodies + 3 * point;
@@ -437,6 +409,60 @@ TEST(BlockSparsePCGSolverTest, RejectsInvalidOptions) {
   expect_invalid(o, "check_period");
 }
 
+// On a block-diagonal SPD matrix of B x B tiles the block-Jacobi preconditioner
+// is the inverse, so one PCG iteration gives the exact solution: checks the
+// tile factor and apply kernels of the sizes compiled in (7, 8, 15, 16) and of
+// the runtime-size ones (9, 12).
+TEST(BlockSparsePCGSolverTest, OneIterationSolvesBlockDiagonalSystems) {
+  for (const int tile : {7, 8, 9, 12, 15, 16}) {
+    SCOPED_TRACE("tile " + std::to_string(tile));
+    constexpr int kTiles = 300;
+    System s;
+    s.n = tile * kTiles;
+    std::mt19937 rng(static_cast<unsigned>(tile));
+    std::uniform_real_distribution<float> u(-1.f, 1.f);
+    std::vector<float> dense(static_cast<size_t>(tile) * tile);
+    s.row_ptr.push_back(0);
+    for (int t = 0; t < kTiles; ++t) {
+      std::vector<float> r(dense.size());
+      for (float &v : r) v = u(rng);
+      for (int i = 0; i < tile; ++i) {  // R Rᵀ + tile I
+        for (int j = 0; j < tile; ++j) {
+          float v = i == j ? static_cast<float>(tile) : 0.f;
+          for (int k = 0; k < tile; ++k) v += r[i * tile + k] * r[j * tile + k];
+          dense[i * tile + j] = v;
+        }
+      }
+      for (int i = 0; i < tile; ++i) {
+        for (int j = 0; j < tile; ++j) {
+          s.col_ids.push_back(t * tile + j);
+          s.values.push_back(dense[i * tile + j]);
+        }
+        s.row_ptr.push_back(static_cast<int>(s.col_ids.size()));
+      }
+    }
+    std::vector<float> b;
+    test_utils::GenerateRandomVector(s.n, b);
+    BlockSparsePCGOptions options;
+    options.block_size = tile;
+    options.relative_tolerance = 0.f;
+    options.absolute_tolerance = 0.f;
+    options.max_iterations = 1;
+    const auto [x, iterations] = SolveOnce(s, b, options);
+    ASSERT_EQ(iterations, 1);
+    double err = 0.0, norm = 0.0;
+    for (int i = 0; i < s.n; ++i) {
+      double hx = 0.0;
+      for (int e = s.row_ptr[i]; e < s.row_ptr[i + 1]; ++e) {
+        hx += static_cast<double>(s.values[e]) * x[s.col_ids[e]];
+      }
+      err += (hx - b[i]) * (hx - b[i]);
+      norm += static_cast<double>(b[i]) * b[i];
+    }
+    EXPECT_LT(std::sqrt(err / norm), 1e-5);
+  }
+}
+
 // The layout derived from a Problem's state batches must not replace the
 // user's block_layout: a solver initialized from a Problem and then reused on
 // a raw matrix (Problem without state batches) solves exactly like a fresh
@@ -542,16 +568,12 @@ TEST(BlockSparsePCGSolverTest, DeterministicModeRepeatsSolvesWithLongRows) {
  * every repeat; both match a double product.
  */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductMatchesReferenceAndRepeats) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   const System s = MakeBundleAdjustmentSystem(kBaBodies, kBaPoints, kBaMaxBodiesPerPoint);
   CSRSparseMatrix csr;
   BSRSparseMatrix bsr;
   ToCsr(s, csr);
-  ToBsr3(s, bsr);
+  ToBsr(s, 3, bsr);
   std::vector<float> x;
   test_utils::GenerateRandomVector(s.n, x);
   bool fallback = true;
@@ -572,11 +594,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductMatchesReferenceAndRepeats
  * the scalar fallback.  Both stay accurate and repeatable.
  */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesOutliers) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   std::vector<float> x;
   for (const auto &[scale, expect_fallback] : {std::pair{0x1p30f, false}, {0x1p60f, true}}) {
     System s = MakeBundleAdjustmentSystem(kBaBodies, kBaPoints, kBaMaxBodiesPerPoint);
@@ -586,7 +604,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesOutliers) {
     CSRSparseMatrix csr;
     BSRSparseMatrix bsr;
     ToCsr(s, csr);
-    ToBsr3(s, bsr);
+    ToBsr(s, 3, bsr);
     bool fallback = !expect_fallback;
     const std::vector<float> y_csr = BaProduct(csr, 1, kBaBodies, kBaPoints, x, &fallback);
     EXPECT_EQ(fallback, expect_fallback);
@@ -605,11 +623,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesOutliers) {
  * recomputed with the scalar product and stay accurate and repeatable.
  */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesSmallCameraBlocks) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   std::vector<float> x;
   test_utils::GenerateRandomVector(6 * kBaBodies + 3 * kBaPoints, x);
   for (const float scale : {0x1p-10f, 0x1p-20f, 0x1p-30f}) {
@@ -618,7 +632,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesSmallCameraBlocks) 
     CSRSparseMatrix csr;
     BSRSparseMatrix bsr;
     ToCsr(s, csr);
-    ToBsr3(s, bsr);
+    ToBsr(s, 3, bsr);
     bool fallback = true;
     const std::vector<float> y_csr = BaProduct(csr, 1, kBaBodies, kBaPoints, x, &fallback);
     EXPECT_FALSE(fallback);
@@ -637,11 +651,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesSmallCameraBlocks) 
  * couplings, so its pose rows stay exactly zero.
  */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesTermsRoundedToZero) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   std::vector<float> x;
   test_utils::GenerateRandomVector(6 * kBaBodies + 3 * kBaPoints, x);
   for (int i = 0; i < static_cast<int>(x.size()); ++i) {
@@ -659,7 +669,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesTermsRoundedToZero)
     CSRSparseMatrix csr;
     BSRSparseMatrix bsr;
     ToCsr(s, csr);
-    ToBsr3(s, bsr);
+    ToBsr(s, 3, bsr);
     bool fallback = true;
     for (const bool tiles : {false, true}) {
       const std::vector<float> y = tiles ? BaProduct(bsr, 3, kBaBodies, kBaPoints, x, &fallback)
@@ -680,16 +690,12 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductHandlesTermsRoundedToZero)
  * the same iterate as the generic product.
  */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductMatchesGenericSolve) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   const System s = MakeBundleAdjustmentSystem(kBaBodies, kBaPoints, kBaMaxBodiesPerPoint);
   CSRSparseMatrix csr;
   BSRSparseMatrix bsr;
   ToCsr(s, csr);
-  ToBsr3(s, bsr);
+  ToBsr(s, 3, bsr);
   std::vector<float> b;
   test_utils::GenerateRandomVector(s.n, b);
   BlockSparsePCGOptions generic = BaOptions(kBaBodies, kBaPoints, false);
@@ -718,11 +724,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductMatchesGenericSolve) {
  * product and still solves.
  */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductFallsBackToGeneric) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   System s = MakeBundleAdjustmentSystem(kBaBodies, 2000, 4);
   CSRSparseMatrix csr;
   ToCsr(s, csr);
@@ -749,11 +751,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductFallsBackToGeneric) {
 
 /** Scalar CSR where row 6b + 1 has as many pose columns as row 6b, but not the same ones. */
 TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductRejectsMismatchedPoseColumns) {
-  int device = 0;
-  int cc_major = 0;
-  THROW_ON_CUDA_ERROR(cudaGetDevice(&device));
-  THROW_ON_CUDA_ERROR(cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device));
-  if (cc_major < 8) GTEST_SKIP() << "needs sm_80 or newer";
+  if (!BaProductSupported()) GTEST_SKIP() << "needs sm_80 or newer";
   System s = MakeBundleAdjustmentSystem(kBaBodies, 2000, 4);
   // Row 7 holds the pose columns of bodies 0..2; swap column 0 for column 18 (body 3).
   const int e0 = s.row_ptr[7];
@@ -783,7 +781,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductConcurrentInstances) {
   CSRSparseMatrix a;
   BSRSparseMatrix b;
   ToCsr(sa, a);
-  ToBsr3(sb, b);
+  ToBsr(sb, 3, b);
   std::vector<float> xa;
   std::vector<float> xb;
   test_utils::GenerateRandomVector(sa.n, xa);
@@ -879,7 +877,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductNonFiniteInputs) {
   CSRSparseMatrix csr;
   BSRSparseMatrix bsr;
   ToCsr(s, csr);
-  ToBsr3(s, bsr);
+  ToBsr(s, 3, bsr);
   std::vector<float> x;
   test_utils::GenerateRandomVector(s.n, x);
   const float inf = std::numeric_limits<float>::infinity();
@@ -902,7 +900,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductNonFiniteInputs) {
     CSRSparseMatrix bad_csr;
     BSRSparseMatrix bad_bsr;
     ToCsr(bad, bad_csr);
-    ToBsr3(bad, bad_bsr);
+    ToBsr(bad, 3, bad_bsr);
     for (const int block_size : {1, 3}) {
       SCOPED_TRACE("case " + std::to_string(c) + ", block size " + std::to_string(block_size));
       CudaStream stream;
@@ -952,7 +950,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductPointsWithoutCameras) {
     CSRSparseMatrix csr;
     BSRSparseMatrix bsr;
     ToCsr(s, csr);
-    ToBsr3(s, bsr);
+    ToBsr(s, 3, bsr);
     std::vector<float> x;
     test_utils::GenerateRandomVector(s.n, x);
     bool fallback = true;
@@ -989,7 +987,7 @@ TEST(BlockSparsePCGSolverTest, BundleAdjustmentProductPatternChangeAfterInitiali
   ToCsr(s, csr);
   ToCsr(other, other_csr);
   ToCsr(coupled, coupled_csr);
-  ToBsr3(s, bsr);
+  ToBsr(s, 3, bsr);
   std::vector<float> b;
   test_utils::GenerateRandomVector(s.n, b);
   BlockSparsePCGOptions ba = BaOptions(kBaBodies, kPoints, true);
@@ -1036,7 +1034,7 @@ TEST(BlockSparsePCGSolverTest, DISABLED_BundleAdjustmentProductTiming) {
     CSRSparseMatrix csr;
     BSRSparseMatrix bsr;
     ToCsr(s, csr);
-    ToBsr3(s, bsr);
+    ToBsr(s, 3, bsr);
     std::vector<float> x;
     test_utils::GenerateRandomVector(s.n, x);
     dvector<float> d_x(x);

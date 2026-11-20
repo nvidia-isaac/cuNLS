@@ -27,8 +27,7 @@ constexpr int kBlockSize = 256;
 /**
  * Fused SE(3) Plus: out[i] = x[i] * Exp(delta[i]) with 4x4 matrices in
  * row-major (16 floats per matrix). Exp uses the SO(3) left Jacobian for
- * translation and Rodrigues for rotation, matching the former ComputeExpSE3 +
- * batched GEMM path.
+ * translation and Rodrigues for rotation.
  */
 __global__ void se3_plus_fused_kernel(const float *__restrict__ x, const float *__restrict__ delta,
                                       float *__restrict__ out, int n) {

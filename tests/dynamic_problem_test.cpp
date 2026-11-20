@@ -240,12 +240,9 @@ TEST(DynamicProblem, ValidationCatchesBadConnectivity) {
   EXPECT_FALSE(bound.problem.Validate(stream.GetStream()));
 }
 
-TEST(DynamicProblem, HostListMustCoverTheActiveFactors) {
+// A short host list is rejected by SizeCheck.HostListMustCoverActiveFactors.
+TEST(DynamicProblem, SetStatePointersRejectsIndexTables) {
   BoundProblem bound(BoundProblem::Form::kHostList);
-  bound.problem.SetStatePointers(0,
-                                 std::vector<float *>(2 * 10, bound.state_batch.StateDevicePtr(0)));
-  bound.between.SetNumActiveFactors(11);
-  EXPECT_FALSE(bound.problem.CheckConsistency());
   EXPECT_THROW(bound.problem.SetStatePointers(1, {}), std::logic_error);  // index-table batch
 }
 

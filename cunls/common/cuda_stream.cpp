@@ -17,6 +17,9 @@
 
 #include "cunls/common/cuda_stream.h"
 
+#include <stdexcept>
+#include <string>
+
 #include "cunls/common/helper.h"
 
 namespace cunls {
@@ -55,4 +58,30 @@ CudaStream::~CudaStream() {
 
 /** @brief Returns a reference to the underlying cudaStream_t handle. */
 cudaStream_t &CudaStream::GetStream() { return stream; }
+
+StreamBoundHandle::StreamBoundHandle(const char *name, CreateFn create, DestroyFn destroy)
+    : name_(name), create_(create), destroy_(destroy) {}
+
+StreamBoundHandle::~StreamBoundHandle() {
+  if (handle_ != nullptr) destroy_(handle_, false);
+}
+
+void *StreamBoundHandle::GetHandle(cudaStream_t stream) {
+  if (stream == nullptr) {
+    const std::string msg = std::string(name_) +
+                            "::GetHandle: the CUDA stream is null (got nullptr, expected a created "
+                            "stream). Fix: pass CudaStream::GetStream() or another created stream.";
+    LogError(msg);
+    throw std::invalid_argument(msg);
+  }
+  if (stream == stream_ && handle_ != nullptr) return handle_;
+  if (handle_ != nullptr) {
+    void *old = handle_;
+    handle_ = nullptr;  // not destroyed twice if destroy_ throws
+    destroy_(old, true);
+  }
+  handle_ = create_(stream);
+  stream_ = stream;
+  return handle_;
+}
 }  // namespace cunls

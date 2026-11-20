@@ -64,14 +64,7 @@ void bind_minimizer(nb::module_ &m) {
       .def(
           "subproblem_termination_reasons",
           [](const cunls::Minimizer &self) {
-            const size_t n = self.NumSubproblems();
-            auto *host = new int[n > 0 ? n : 1];
-            nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<int *>(p); });
-            if (n > 0 && self.SubproblemTerminationReasons() != nullptr) {
-              THROW_ON_CUDA_ERROR(cudaMemcpy(host, self.SubproblemTerminationReasons(),
-                                             n * sizeof(int), cudaMemcpyDeviceToHost));
-            }
-            return nb::ndarray<nb::numpy, int, nb::ndim<1>>(host, {n}, owner);
+            return device_to_numpy(self.SubproblemTerminationReasons(), self.NumSubproblems());
           },
           "The last minimize() call's TerminationReason value of every subproblem "
           "(Problem.set_problem_partition), as a numpy int array: e.g. "

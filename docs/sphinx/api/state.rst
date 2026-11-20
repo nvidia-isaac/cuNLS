@@ -146,26 +146,28 @@ and properties.
 
 .. _py-vector-state-batches:
 
-------------------------------------------------------------------------------------------------------
-``pycunls.VectorStateBatch1`` / ``VectorStateBatch2`` / ``VectorStateBatch3`` / ``VectorStateBatch6``
-------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+``pycunls.VectorStateBatch``
+--------------------------------------------------------------------------------
 
-Euclidean vector states where tangent and ambient dimensions coincide.  The
-suffix indicates the dimension (1, 2, 3, or 6).  Plus is simple addition:
-:math:`x \oplus \delta = x + \delta`.
+Euclidean vector states of any size ``dim``, where tangent and ambient
+dimensions coincide.  Plus is simple addition:
+:math:`x \oplus \delta = x + \delta`.  ``VectorStateBatch1`` / ``2`` / ``3`` /
+``4`` / ``6`` / ``12`` are the same class with ``dim`` fixed.
 
 **Constructors**
 
 .. code-block:: python
 
-   # All optimizable:
-   sb = pycunls.VectorStateBatch3(data, capacity)
+   # All optimizable; dim from data shaped (capacity, dim) or an array of wp.vecN:
+   sb = pycunls.VectorStateBatch(data, capacity)
+   sb = pycunls.VectorStateBatch(flat_data, capacity, dim=13)
 
    # With constant (frozen) states:
-   sb = pycunls.VectorStateBatch3(data, capacity, const_state_ids, const_capacity)
+   sb = pycunls.VectorStateBatch(data, capacity, const_state_ids, const_capacity)
 
 - **data** (``DevicePointer``) — contiguous GPU buffer of
-  ``capacity × Dim`` floats.  The state batch does **not** copy the data;
+  ``capacity × dim`` floats.  The state batch does **not** copy the data;
   it stores the pointer and reads/writes the buffer directly.  The caller
   must keep the underlying allocation alive for the lifetime of the state
   batch.
@@ -179,6 +181,8 @@ suffix indicates the dimension (1, 2, 3, or 6).  Plus is simple addition:
 - **const_capacity** (``int``, optional) — number of entries the
   *const_state_ids* buffer holds (the active count is set with
   ``set_num_active_states``).
+- **dim** (``int``, keyword) — the vector size; required for a flat array or a
+  raw pointer.  ``sb.dim`` reads it back.
 
 .. _py-lie-state-batches:
 
@@ -553,7 +557,9 @@ SizedStateBatch<AmbientDim, TangentDim>
 
 Generic base with compile-time ambient and tangent dimensions. Storage layout:
 contiguous states, each of **AmbientDim** floats. Derived classes implement
-:cpp:func:`Plus` for their manifold.
+:cpp:func:`Plus` for their manifold. It derives from
+:code:`DynamicSizedStateBatch(ambient_size, tangent_size, ...)`, which holds the
+same bookkeeping with the sizes set at run time.
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 VectorStateBatch<Dim>
@@ -562,6 +568,8 @@ VectorStateBatch<Dim>
 Header: :code:`cunls/state/vector_state_batch.h`
 
 Euclidean vector state (e.g. landmarks, biases). Tangent and ambient spaces coincide.
+:code:`DynamicVectorStateBatch(dim, ...)` is the same with the size set at run time
+(:code:`VectorStateBatch<Dim>` derives from it; Python's ``VectorStateBatch``).
 
 .. list-table::
    :header-rows: 1
@@ -816,12 +824,6 @@ each batch’s :cpp:func:`Plus`.
 
 .. cpp:function:: StateBatchOps()
 
-  :returns: [out] Constructor has no return value.
-
-.. cpp:function:: StateBatchOps(cudaStream_t stream, const std::vector<StateBatch*>& state_batches)
-
-  :param ``stream``: [in] CUDA stream used to initialize mappings.
-  :param ``state_batches``: [in] Ordered list of state batches.
   :returns: [out] Constructor has no return value.
 
 .. cpp:function:: void Preprocess(cudaStream_t stream, const std::vector<StateBatch*>& state_batches)

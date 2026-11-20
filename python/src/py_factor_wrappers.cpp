@@ -18,7 +18,6 @@
 #include "py_factor_wrappers.h"
 
 #include <numeric>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -26,7 +25,6 @@
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/information/information_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
-#include "cunls/robustifier/scaled_loss_function_batch.h"
 
 PyFactorBatch::PyFactorBatch(size_t res_size, std::vector<size_t> state_sizes, size_t capacity)
     : FactorBatch(capacity), residual_size_(res_size), state_sizes_(std::move(state_sizes)) {}
@@ -48,11 +46,8 @@ size_t PyFactorBatch::ResidualsSize() const { return residual_size_; }
 
 std::vector<size_t> PyFactorBatch::StateSizes() const { return state_sizes_; }
 
-namespace {
-
-// A wrapped constraint would be hidden from AugmentedLagrangianMinimizer (it
-// finds constraints by type) and solved as an ordinary weighted residual.
-void RejectConstraint(const cunls::FactorBatch *inner, const char *wrapper) {
+PyWrappedFactorBatch::PyWrappedFactorBatch(cunls::FactorBatch *inner, const char *wrapper)
+    : inner_(inner) {
   if (dynamic_cast<const cunls::ConstraintFactorBatchBase *>(inner) != nullptr) {
     throw std::invalid_argument(std::string(wrapper) +
                                 ": cannot wrap a constraint factor batch (constraints are hard; "
@@ -60,127 +55,48 @@ void RejectConstraint(const cunls::FactorBatch *inner, const char *wrapper) {
   }
 }
 
-}  // namespace
+size_t PyWrappedFactorBatch::ResidualsSize() const { return inner_->ResidualsSize(); }
 
-PyInformationFactorBatch::PyInformationFactorBatch(cunls::FactorBatch *inner,
-                                                   const float *sqrt_information_matrices_ptr)
-    : inner_(inner), sqrt_info_ptr_(sqrt_information_matrices_ptr) {
-  RejectConstraint(inner_, "InformationFactorBatch");
-}
+size_t PyWrappedFactorBatch::NumActiveFactors() const { return inner_->NumActiveFactors(); }
 
-size_t PyInformationFactorBatch::ResidualsSize() const { return inner_->ResidualsSize(); }
+size_t PyWrappedFactorBatch::Capacity() const { return inner_->Capacity(); }
 
-size_t PyInformationFactorBatch::NumActiveFactors() const { return inner_->NumActiveFactors(); }
-
-size_t PyInformationFactorBatch::Capacity() const { return inner_->Capacity(); }
-
-void PyInformationFactorBatch::SetNumActiveFactors(size_t num_active_factors) {
+void PyWrappedFactorBatch::SetNumActiveFactors(size_t num_active_factors) {
   inner_->SetNumActiveFactors(num_active_factors);
 }
 
-std::vector<size_t> PyInformationFactorBatch::StateSizes() const { return inner_->StateSizes(); }
+std::vector<size_t> PyWrappedFactorBatch::StateSizes() const { return inner_->StateSizes(); }
+
+PyInformationFactorBatch::PyInformationFactorBatch(cunls::FactorBatch *inner,
+                                                   const float *sqrt_information_matrices_ptr)
+    : PyWrappedFactorBatch(inner, "InformationFactorBatch"),
+      sqrt_info_ptr_(sqrt_information_matrices_ptr) {}
 
 bool PyInformationFactorBatch::Evaluate(float *residuals, float *jacobians,
                                         float const *const *state_pointers, cudaStream_t stream,
                                         const int *factor_ids, size_t num_factor_ids) const {
-  const size_t nf = inner_->NumActiveFactors();
-  const size_t num_items = num_factor_ids == 0 ? nf : num_factor_ids;
-  if (num_items == 0 || nf == 0) return true;
-  if (!inner_->Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_items)) {
-    return false;
-  }
-
-  // Item t is weighted by the matrix of its factor (factor_ids[t] or t % nf).
-  const size_t rsize = inner_->ResidualsSize();
-  cunls::ApplyInformationToResidualItems(sqrt_info_ptr_, residuals, rsize, num_items, factor_ids,
-                                         nf, stream);
-  if (jacobians == nullptr) return true;
-
-  auto sbs = inner_->StateSizes();
-  const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
-  cunls::ApplyInformationToJacobianItems(sqrt_info_ptr_, jacobians, rsize, jpitch, num_items,
-                                         factor_ids, nf, stream);
-  return true;
+  return cunls::EvaluateWithSqrtInformation(*inner_, sqrt_info_ptr_, residuals, jacobians,
+                                            state_pointers, stream, factor_ids, num_factor_ids);
 }
 
 PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner, float weight)
-    : inner_(inner), uniform_weight_(weight), per_factor_weights_(nullptr) {
-  RejectConstraint(inner_, "WeightedFactorBatch");
-}
+    : PyWrappedFactorBatch(inner, "WeightedFactorBatch"),
+      uniform_weight_(weight),
+      per_factor_weights_(nullptr) {}
 
 PyWeightedFactorBatch::PyWeightedFactorBatch(cunls::FactorBatch *inner,
                                              const float *per_factor_weights)
-    : inner_(inner), uniform_weight_(0.0f), per_factor_weights_(per_factor_weights) {
-  RejectConstraint(inner_, "WeightedFactorBatch");
+    : PyWrappedFactorBatch(inner, "WeightedFactorBatch"),
+      uniform_weight_(0.0f),
+      per_factor_weights_(per_factor_weights) {
   if (per_factor_weights_ == nullptr) {
     throw std::invalid_argument("WeightedFactorBatch: per_factor_weights must not be null");
   }
 }
 
-size_t PyWeightedFactorBatch::ResidualsSize() const { return inner_->ResidualsSize(); }
-
-size_t PyWeightedFactorBatch::NumActiveFactors() const { return inner_->NumActiveFactors(); }
-
-size_t PyWeightedFactorBatch::Capacity() const { return inner_->Capacity(); }
-
-void PyWeightedFactorBatch::SetNumActiveFactors(size_t num_active_factors) {
-  inner_->SetNumActiveFactors(num_active_factors);
-}
-
-std::vector<size_t> PyWeightedFactorBatch::StateSizes() const { return inner_->StateSizes(); }
-
 bool PyWeightedFactorBatch::Evaluate(float *residuals, float *jacobians,
                                      float const *const *state_pointers, cudaStream_t stream,
                                      const int *factor_ids, size_t num_factor_ids) const {
-  const size_t nf = inner_->NumActiveFactors();
-  const size_t num_items = num_factor_ids == 0 ? nf : num_factor_ids;
-  if (num_items == 0 || nf == 0) return true;
-  if (!inner_->Evaluate(residuals, jacobians, state_pointers, stream, factor_ids, num_items)) {
-    return false;
-  }
-
-  // Item t is weighted by the weight of its factor (factor_ids[t] or t % nf).
-  const size_t rsize = inner_->ResidualsSize();
-  if (per_factor_weights_ != nullptr) {
-    cunls::ApplyPerFactorWeightToResiduals(per_factor_weights_, residuals, rsize, num_items, stream,
-                                           factor_ids, nf);
-  } else {
-    cunls::ApplyUniformWeightToResiduals(uniform_weight_, residuals, num_items * rsize, stream);
-  }
-
-  if (jacobians == nullptr) return true;
-
-  auto sbs = inner_->StateSizes();
-  const size_t jpitch = std::accumulate(sbs.begin(), sbs.end(), size_t{0});
-
-  if (per_factor_weights_ != nullptr) {
-    cunls::ApplyPerFactorWeightToJacobians(per_factor_weights_, jacobians, rsize, jpitch, num_items,
-                                           stream, factor_ids, nf);
-  } else {
-    cunls::ApplyUniformWeightToJacobians(uniform_weight_, jacobians, num_items * rsize * jpitch,
-                                         stream);
-  }
-  return true;
-}
-
-PyScaledLossFunctionBatch::PyScaledLossFunctionBatch(cunls::LossFunctionBatch *inner, float a)
-    : inner_(inner), a_(a) {
-  if (inner == nullptr) {
-    throw std::invalid_argument("ScaledLossFunctionBatch: inner must not be null");
-  }
-  if (a_ <= 0.0f) {
-    std::stringstream ss;
-    ss << "ScaledLossFunctionBatch: scale factor a (" << a_ << ") must be positive";
-    throw std::invalid_argument(ss.str());
-  }
-}
-
-bool PyScaledLossFunctionBatch::Evaluate(float *s, float3 *out, int num_losses,
-                                         cudaStream_t stream) const {
-  if (num_losses <= 0) {
-    return true;
-  }
-  inner_->Evaluate(s, out, num_losses, stream);
-  cunls::ApplyScaling(a_, out, num_losses, stream);
-  return true;
+  return cunls::EvaluateWeighted(*inner_, uniform_weight_, per_factor_weights_, residuals,
+                                 jacobians, state_pointers, stream, factor_ids, num_factor_ids);
 }

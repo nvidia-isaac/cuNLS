@@ -20,7 +20,6 @@
 #include <vector>
 
 #include "cunls/factor/factor_batch.h"
-#include "cunls/robustifier/loss_function_batch.h"
 
 // Python trampoline for cunls::FactorBatch.
 //
@@ -49,19 +48,35 @@ class PyFactorBatch : public cunls::FactorBatch {
   std::vector<size_t> StateSizes() const override;
 };
 
-// Polymorphic wrapper that applies sqrt-information matrices to any
-// FactorBatch. Unlike the C++ template InformationFactorBatch<T>, this operates
-// on the FactorBatch* interface so Python users never need to name
-// specializations.
-class PyInformationFactorBatch : public cunls::FactorBatch {
+// Base of the polymorphic Python wrappers around another FactorBatch: holds
+// the wrapped batch (not owned) and forwards the sizes to it (residual size,
+// state sizes, active count and capacity).
+class PyWrappedFactorBatch : public cunls::FactorBatch {
  public:
-  PyInformationFactorBatch(cunls::FactorBatch *inner, const float *sqrt_information_matrices_ptr);
-
   size_t ResidualsSize() const override;
   size_t NumActiveFactors() const override;
   size_t Capacity() const override;                              // of the wrapped batch
   void SetNumActiveFactors(size_t num_active_factors) override;  // forwarded to the wrapped batch
   std::vector<size_t> StateSizes() const override;
+
+ protected:
+  // Throws std::invalid_argument if `inner` is a constraint batch: a wrapped
+  // constraint would be hidden from AugmentedLagrangianMinimizer (it finds
+  // constraints by type) and solved as an ordinary residual. `wrapper` names
+  // the Python class in the message.
+  PyWrappedFactorBatch(cunls::FactorBatch *inner, const char *wrapper);
+
+  cunls::FactorBatch *inner_;
+};
+
+// Polymorphic wrapper that applies sqrt-information matrices to any
+// FactorBatch. Unlike the C++ template InformationFactorBatch<T>, this operates
+// on the FactorBatch* interface so Python users never need to name
+// specializations.
+class PyInformationFactorBatch : public PyWrappedFactorBatch {
+ public:
+  PyInformationFactorBatch(cunls::FactorBatch *inner, const float *sqrt_information_matrices_ptr);
+
   cunls::FactorBatch *Inner() const { return inner_; }  // the wrapped batch (not owned)
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
@@ -69,23 +84,17 @@ class PyInformationFactorBatch : public cunls::FactorBatch {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  cunls::FactorBatch *inner_;
   const float *sqrt_info_ptr_;
 };
 
 // Polymorphic wrapper that applies scalar weights to any FactorBatch.
 // Supports uniform (single float) and per-factor (device array) weights.
-class PyWeightedFactorBatch : public cunls::FactorBatch {
+class PyWeightedFactorBatch : public PyWrappedFactorBatch {
  public:
   PyWeightedFactorBatch(cunls::FactorBatch *inner, float weight);
 
   PyWeightedFactorBatch(cunls::FactorBatch *inner, const float *per_factor_weights);
 
-  size_t ResidualsSize() const override;
-  size_t NumActiveFactors() const override;
-  size_t Capacity() const override;                              // of the wrapped batch
-  void SetNumActiveFactors(size_t num_active_factors) override;  // forwarded to the wrapped batch
-  std::vector<size_t> StateSizes() const override;
   cunls::FactorBatch *Inner() const { return inner_; }  // the wrapped batch (not owned)
 
   bool Evaluate(float *residuals, float *jacobians, float const *const *state_pointers,
@@ -93,22 +102,6 @@ class PyWeightedFactorBatch : public cunls::FactorBatch {
                 size_t num_factor_ids = 0) const override;
 
  private:
-  cunls::FactorBatch *inner_;
   float uniform_weight_;
   const float *per_factor_weights_;
-};
-
-// Polymorphic wrapper that scales the output of any LossFunctionBatch.
-// Unlike the C++ template ScaledLossFunctionBatch<T>, this operates on the
-// LossFunctionBatch* interface so Python users never need to name
-// specializations.
-class PyScaledLossFunctionBatch : public cunls::LossFunctionBatch {
- public:
-  PyScaledLossFunctionBatch(cunls::LossFunctionBatch *inner, float a);
-
-  bool Evaluate(float *s, float3 *out, int num_losses, cudaStream_t stream) const override;
-
- private:
-  cunls::LossFunctionBatch *inner_;
-  float a_;
 };

@@ -34,13 +34,11 @@ constexpr size_t kSim2TransformStride = 9;
 constexpr size_t kSim2TangentStride = 4;
 
 /**
- * @brief Fused kernel: given pre-computed L^{-1}, read R from state_pointers,
- *        compute error = D * (L_inv * R). Fully unrolled 3x3.
- *
- * Replaces 2x cuBLAS 3x3 GEMM.
+ * @brief Fused kernel: read L and R from state_pointers, invert L in place
+ *        (lie_device::InverseSim2) and compute error = D * (L^{-1} * R).
+ *        Fully unrolled 3x3.
  */
 __global__ void compute_sim2_between_error_kernel(float const *const *state_pointers,
-                                                  const Matrix<3> *left_inverse,
                                                   const Matrix<3> *deltas, size_t num_items,
                                                   Matrix<3> *errors, const int *factor_ids,
                                                   int num_factors) {
@@ -49,9 +47,11 @@ __global__ void compute_sim2_between_error_kernel(float const *const *state_poin
   const int m = FactorMeasurementIndex(tid, factor_ids, num_factors);
 
   const float *__restrict__ R = state_pointers[2 * tid + 1];
-  const float *__restrict__ I = left_inverse[tid].data();
   const float *__restrict__ D = deltas[m].data();
   float *__restrict__ out = errors[tid].data();
+
+  float I[9];  // L^{-1}
+  lie_device::InverseSim2(state_pointers[2 * tid], I);
 
   const float i0 = I[0], i1 = I[1], i2 = I[2];
   const float i3 = I[3], i4 = I[4], i5 = I[5];
@@ -86,16 +86,6 @@ __global__ void compute_sim2_between_error_kernel(float const *const *state_poin
   out[6] = d6 * t00 + d7 * t10 + d8 * t20;
   out[7] = d6 * t01 + d7 * t11 + d8 * t21;
   out[8] = d6 * t02 + d7 * t12 + d8 * t22;
-}
-
-/**
- * @brief Gather left Sim(2) poses from state pointers.
- */
-__global__ void collect_sim2_left_poses_kernel(float const *const *state_pointers, size_t num_items,
-                                               Matrix<3> *pose_left) {
-  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= (int)num_items) return;
-  pose_left[tid] = *reinterpret_cast<const Matrix<3> *>(state_pointers[2 * tid]);
 }
 
 /**
@@ -166,10 +156,7 @@ __global__ void __launch_bounds__(256, 4)
 
 Similarity2BetweenFactorBatch::Similarity2BetweenFactorBatch(
     const Similarity2Transform *pose_deltas_ptr, size_t capacity)
-    : SizedFactorBatch(capacity),
-      pose_deltas_ptr_(pose_deltas_ptr),
-      poses_left_(capacity),
-      poses_left_inverse_(capacity) {}
+    : SizedFactorBatch(capacity), pose_deltas_ptr_(pose_deltas_ptr), errors_(capacity) {}
 
 bool Similarity2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
                                              float const *const *state_pointers,
@@ -180,31 +167,19 @@ bool Similarity2BetweenFactorBatch::Evaluate(float *residuals, float *jacobians,
     return true;
   }
   const int num_factors = static_cast<int>(NumActiveFactors());
-  poses_left_.resize(num_items);  // keeps capacity: allocates at most once per size
-  poses_left_inverse_.resize(num_items);
+  errors_.resize(num_items);  // keeps capacity: allocates at most once per size
   size_t num_blocks = (num_items + kBlockSize - 1) / kBlockSize;
 
-  // Collect left poses for inverse computation
-  collect_sim2_left_poses_kernel<<<num_blocks, kBlockSize, 0, stream>>>(state_pointers, num_items,
-                                                                        poses_left_.data());
-  THROW_ON_CUDA_ERROR(cudaGetLastError());
-
-  // Compute T_left^{-1} using the library's Sim2 inverse
-  ComputeInverseSim2(stream, reinterpret_cast<const float *>(poses_left_.data()),
-                     kSim2TransformStride, kSim2TransformStride, num_items,
-                     reinterpret_cast<float *>(poses_left_inverse_.data()));
-
-  // Fused: (L^{-1} * R) * D in one kernel (replaces 2x cuBLAS GEMM)
+  // Fused: L^{-1} (inline), then (L^{-1} * R) * D, in one kernel.
   compute_sim2_between_error_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
-      state_pointers, poses_left_inverse_.data(), pose_deltas_ptr_, num_items, poses_left_.data(),
-      factor_ids, num_factors);
+      state_pointers, pose_deltas_ptr_, num_items, errors_.data(), factor_ids, num_factors);
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 
-  // Step 5: residual = Log(error)
-  ComputeLogSim2(stream, reinterpret_cast<const float *>(poses_left_.data()), kSim2TransformStride,
+  // residual = Log(error)
+  ComputeLogSim2(stream, reinterpret_cast<const float *>(errors_.data()), kSim2TransformStride,
                  kSim2TangentStride, num_items, residuals);
 
-  // Step 6: Jacobian = [-J_l^{-1}(r)*Ad(Delta) | J_r^{-1}(r)]
+  // Jacobian = [-J_l^{-1}(r)*Ad(Delta) | J_r^{-1}(r)]
   if (jacobians != nullptr) {
     sim2_between_jacobian_kernel<<<num_blocks, kBlockSize, 0, stream>>>(
         residuals, reinterpret_cast<const float *>(pose_deltas_ptr_), kSim2TransformStride,

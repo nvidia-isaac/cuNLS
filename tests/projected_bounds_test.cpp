@@ -45,30 +45,23 @@
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
 
 constexpr float kInf = std::numeric_limits<float>::infinity();
 
-enum class Kind { kGaussNewton, kLevenbergMarquardt };
+using Kind = test_utils::MinimizerKind;
 
 std::unique_ptr<Minimizer> MakeMinimizer(Kind kind,
                                          JacobianMode jacobians = JacobianMode::kAnalytic) {
-  MinimizerOptions options;
-  options.max_num_iterations = 50;
+  MinimizerOptions options = test_utils::ConvergedSolveOptions();
   options.jacobian_mode = jacobians;
   // One-sided differences: a perturbation clamped at an upper bound would give
   // a zero derivative there (see NumericJacobiansMatchReference).
   options.numeric_diff_options.method = NumericDiffOptions::Method::kForward;
-  options.state_tolerance = 1e-12f;
-  options.cost_tolerance = 1e-12f;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
-  if (kind == Kind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = options;
-  lm.relative_reduction_tolerance = 1e-12f;
-  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+  return test_utils::MakeMinimizer(kind, options, 1e-12f);
 }
 
 /**

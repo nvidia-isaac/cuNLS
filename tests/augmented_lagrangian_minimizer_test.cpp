@@ -49,29 +49,17 @@
 #include "cunls/robustifier/huber_loss_function_batch.h"
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
 
-enum class Kind { kGaussNewton, kLevenbergMarquardt };
+using Kind = test_utils::MinimizerKind;
 
 std::unique_ptr<Minimizer> MakeMinimizer(Kind kind, size_t max_num_iterations = 50) {
-  MinimizerOptions options;
+  MinimizerOptions options = test_utils::ConvergedSolveOptions();
   options.max_num_iterations = max_num_iterations;
-  options.state_tolerance = 1e-12f;
-  options.cost_tolerance = 1e-12f;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
-  if (kind == Kind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = options;
-  lm.relative_reduction_tolerance = 1e-12f;
-  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
-}
-
-std::vector<float> Download(const dvector<float> &v) {
-  std::vector<float> out(v.size());
-  v.CopyToHost(out.data(), out.size());
-  return out;
+  return test_utils::MakeMinimizer(kind, options, 1e-12f);
 }
 
 /**
@@ -147,7 +135,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, BoxProjection) {
   const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
-  const auto result = Download(b.x);
+  const auto result = test_utils::ToHost(b.x);
   double expected_cost = 0.0;
   for (size_t i = 0; i < 6; ++i) {
     const float expected = b.Projection(i);
@@ -183,9 +171,50 @@ TEST_P(AugmentedLagrangianMinimizerTest, HalfspaceProjection) {
     const auto summary = solver.Minimize(stream.GetStream(), problem);
     EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
     const float excess = std::max(0.f, a[0] * target[0] + a[1] * target[1] - b) / 5.f;
-    const auto result = Download(x);
+    const auto result = test_utils::ToHost(x);
     EXPECT_NEAR(result[0], target[0] - excess * a[0], 2e-4f);
     EXPECT_NEAR(result[1], target[1] - excess * a[1], 2e-4f);
+  }
+}
+
+// The runtime-sized vector classes at a size with no fixed-size class: state 0 is projected on
+// a box, state 1 on the halfspace sum(x) <= -3.
+TEST_P(AugmentedLagrangianMinimizerTest, RuntimeSizedVectorProjections) {
+  constexpr int kDim = 13;
+  constexpr float kOffset = -3.f;
+  std::vector<float> target(2 * kDim);
+  for (int i = 0; i < 2 * kDim; ++i) target[i] = 0.5f * static_cast<float>(i % 7) - 1.5f;
+  dvector<float> x(std::vector<float>(2 * kDim, 0.f)), t(target);
+  dvector<float> lo(std::vector<float>(kDim, -1.f)), hi(std::vector<float>(kDim, 1.f));
+  dvector<float> normal(std::vector<float>(kDim, 1.f)), offset(std::vector<float>{kOffset});
+  DynamicVectorStateBatch states(kDim, x.data(), 2);
+  states.SetNumActiveStates(2);
+  DynamicPriorVectorFactorBatch prior(kDim, t.data(), 2);
+  prior.SetNumActiveFactors(2);
+  DynamicBoundFactorBatch bound(kDim, lo.data(), hi.data(), 1);
+  bound.SetNumActiveFactors(1);
+  DynamicHalfspaceFactorBatch halfspace(kDim, normal.data(), offset.data(), 1);
+  halfspace.SetNumActiveFactors(1);
+  ConstraintFactorBatch constraint(&halfspace, ConstraintKind::kInequality);
+  Problem problem;
+  problem.AddStateBatch(&states);
+  problem.AddFactorBatch(&prior, {states.StateDevicePtr(0), states.StateDevicePtr(1)});
+  problem.AddFactorBatch(&bound, {states.StateDevicePtr(0)});
+  problem.AddFactorBatch(&constraint, {states.StateDevicePtr(1)});
+
+  CudaStream stream;
+  auto inner = MakeMinimizer(GetParam());
+  AugmentedLagrangianMinimizer solver(*inner);
+  const auto summary = solver.Minimize(stream.GetStream(), problem);
+  EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
+  float sum = 0.f;
+  for (int i = 0; i < kDim; ++i) sum += target[kDim + i];
+  const float excess = std::max(0.f, sum - kOffset) / kDim;
+  ASSERT_GT(excess, 0.1f);  // the halfspace is active
+  const auto result = test_utils::ToHost(x);
+  for (int i = 0; i < kDim; ++i) {
+    EXPECT_NEAR(result[i], std::clamp(target[i], -1.f, 1.f), 2e-4f) << "box " << i;
+    EXPECT_NEAR(result[kDim + i], target[kDim + i] - excess, 2e-4f) << "halfspace " << i;
   }
 }
 
@@ -232,7 +261,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, AffineEqualityMatchesKkt) {
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
-  const auto result = Download(x);
+  const auto result = test_utils::ToHost(x);
   for (int k = 0; k < 4; ++k) EXPECT_NEAR(result[k], expected[k], 2e-4) << "component " << k;
   // The multipliers converge to the KKT multipliers y (x = t - Aᵀλ).
   std::vector<float> lambda(2);
@@ -268,7 +297,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, BatchedBoxProjections) {
   // Finished subproblems keep their multipliers, so they stay feasible while
   // the others iterate.
   EXPECT_LE(summary.max_violation, 1e-4f);
-  const auto result = Download(b.x);
+  const auto result = test_utils::ToHost(b.x);
   for (int i = 0; i < kBatch * 3; ++i) {
     EXPECT_NEAR(result[i], b.Projection(i), 2e-4f) << "subproblem " << i / 3;
   }
@@ -301,7 +330,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, BatchFinishesBesideAnInfeasibleSubprobl
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxPenalty);
   EXPECT_EQ(summary.num_converged, static_cast<size_t>(kBatch - 1));
   EXPECT_EQ(summary.num_max_penalty, 1u);
-  const auto result = Download(b.x);
+  const auto result = test_utils::ToHost(b.x);
   for (int i = 0; i < kBatch; ++i) {
     if (i == kInfeasible) continue;
     EXPECT_NEAR(result[i], b.Projection(i), 2e-4f) << "subproblem " << i;
@@ -362,7 +391,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, Se2GoalEquality) {
     auto inner = MakeMinimizer(GetParam());
     AugmentedLagrangianMinimizer solver(*inner);
     const auto summary = solver.Minimize(stream.GetStream(), problem);
-    const auto all = Download(poses);
+    const auto all = test_utils::ToHost(poses);
     last_pose->assign(all.end() - 9, all.end());
     return summary;
   };
@@ -396,7 +425,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, NoConstraintsIsPlainSolve) {
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_EQ(summary.outer_iterations, 1u);
-  const auto result = Download(x);
+  const auto result = test_utils::ToHost(x);
   EXPECT_NEAR(result[0], 1.f, 1e-5f);
   EXPECT_NEAR(result[2], 3.f, 1e-5f);
 }
@@ -433,11 +462,6 @@ TEST_P(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatAppli
   EXPECT_NE(summary.message.find("inner solve's iteration cap (1)"), std::string::npos)
       << summary.message;
   EXPECT_EQ(summary.message.find("raise max_num_iterations"), std::string::npos) << summary.message;
-}
-
-TEST(AugmentedLagrangianMinimizerSummary, StatusIsNotDeterminedUntilSet) {
-  EXPECT_EQ(AugmentedLagrangianMinimizerSummary().status,
-            AugmentedLagrangianMinimizerStatus::kNotDetermined);
 }
 
 // An inner solve that fails (here: a NaN objective, NonFiniteCost) while the
@@ -503,7 +527,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, WarmStartReusesMultipliers) {
   const auto warm = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(warm.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LT(warm.outer_iterations, cold.outer_iterations);
-  const auto result = Download(b.x);
+  const auto result = test_utils::ToHost(b.x);
   EXPECT_NEAR(result[0], 1.f, 2e-4f);
   EXPECT_NEAR(result[1], -1.f, 2e-4f);
   EXPECT_NEAR(result[2], 0.5f, 2e-4f);
@@ -528,7 +552,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, RealTimeBudget) {
     EXPECT_EQ(summary.outer_iterations, 12u);
     EXPECT_TRUE(std::isnan(summary.final_cost));
     EXPECT_LE(summary.max_violation, 1e-3f) << "call " << call;
-    const auto result = Download(b.x);
+    const auto result = test_utils::ToHost(b.x);
     for (size_t i = 0; i < 6; ++i) {
       EXPECT_NEAR(result[i], b.Projection(i), 1e-3f) << "call " << call << " component " << i;
     }
@@ -566,7 +590,7 @@ TEST_P(AugmentedLagrangianMinimizerTest, RobustObjective) {
     AugmentedLagrangianMinimizer solver(*inner);
     const auto summary = solver.Minimize(stream.GetStream(), problem);
     EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged) << robust;
-    EXPECT_NEAR(Download(x)[0], robust ? 0.5f : 2.01f, 2e-3f) << "robust " << robust;
+    EXPECT_NEAR(test_utils::ToHost(x)[0], robust ? 0.5f : 2.01f, 2e-3f) << "robust " << robust;
   }
 }
 
@@ -642,7 +666,7 @@ TEST(ConstraintFactorBatch, AugmentedLagrangianRows) {
                                    cudaMemcpyHostToDevice));
     ASSERT_TRUE(constraint.Evaluate(res.data(), jac.data(), ptrs.data(), stream.GetStream()));
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-    const auto r = Download(res), j = Download(jac);
+    const auto r = test_utils::ToHost(res), j = test_utils::ToHost(jac);
     // z = s c + λ/ρ = (-1 + 0.1, 4 - 0.25) = (-0.9, 3.75); √ρ = 2.
     if (kind == ConstraintKind::kEquality) {
       EXPECT_NEAR(r[0], -1.8f, 1e-6f);

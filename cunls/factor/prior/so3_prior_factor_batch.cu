@@ -43,11 +43,8 @@ constexpr size_t kSO3BlockSize = 256;
 
 /**
  * @brief Fused kernel: collect SO(3) rotations from state pointers and compute
- *        R_error = R_target^T * R_current in a single pass.
- *
- * Replaces the separate collect + cuBLAS batched GEMM path. For 3x3 matrices
- * the per-thread inline multiply is ~50x faster than cuBLAS due to eliminated
- * launch overhead and register pressure.
+ *        R_error = R_target^T * R_current in a single pass (per-thread
+ *        inline 3x3 multiply).
  */
 __global__ void collect_and_multiply_so3_kernel(float const *const *state_pointers,
                                                 const Matrix<3> *targets, size_t num_items,

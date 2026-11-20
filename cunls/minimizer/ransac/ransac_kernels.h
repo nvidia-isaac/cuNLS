@@ -125,12 +125,11 @@ struct DevicePolicy {
 
 /** @brief Round statistics kept on the device, read once per round. */
 struct DeviceStats {
-  float best_score;      ///< Best score so far (lower is better).
-  int best_inliers;      ///< Inliers of the best-so-far estimate.
-  int improved;          ///< 1 if the last selection improved the best score.
-  int best_slot;         ///< Slot that produced the improvement in the last selection.
-  int valid_total;       ///< Valid hypotheses accumulated over rounds.
-  float last_min_score;  ///< Best score within the last selection.
+  float best_score;  ///< Best score so far (lower is better).
+  int best_inliers;  ///< Inliers of the best-so-far estimate.
+  int improved;      ///< 1 if the last selection improved the best score.
+  int best_slot;     ///< Slot that produced the improvement in the last selection.
+  int valid_total;   ///< Valid hypotheses accumulated over rounds.
 };
 
 // ---------------------------------------------------------------------------
@@ -205,19 +204,12 @@ void LaunchSampleTables(cudaStream_t stream, const StateView *states, const int2
 
 /**
  * @brief num_slots pointer tables: local slot p evaluates every factor against
- * replica `slot_offset + p`.
+ * replica slot_index[p] (device array), or `slot_offset + p` when slot_index
+ * is null (current or candidate replicas).
  */
 void LaunchSlotTables(cudaStream_t stream, const StateView *states, const int2 *blocks,
-                      int num_factors, int nb, int num_slots, int slot_offset, bool candidate,
-                      float **tables);
-
-/**
- * @brief Pointer tables for slots listed in slot_index: local slot p evaluates
- * every factor against replica slot_index[p].
- */
-void LaunchIndexedSlotTables(cudaStream_t stream, const StateView *states, const int2 *blocks,
-                             int num_factors, int nb, const int *slot_index, int num_slots,
-                             float **tables);
+                      int num_factors, int nb, const int *slot_index, int num_slots,
+                      int slot_offset, bool candidate, float **tables);
 
 /**
  * @brief Tables and factor ids for evaluating a factor subset: item
@@ -325,17 +317,17 @@ void LaunchSolve(cudaStream_t stream, int num_slots, int dim, SolverKind solver,
 void LaunchAccept(cudaStream_t stream, int num_slots, const DevicePolicy &policy,
                   const float *cost_cur, const float *cost_cand, const float *predicted,
                   const float *step_sq, const int *solve_ok, int *active, float *lambda,
-                  int *accept, int *valid, int *iterations, int *num_accepted);
+                  int *accept, int *valid, int *iterations);
 
 /** @brief *count = number of slots with active[p] != 0 (one block, deterministic). */
 void LaunchCountActive(cudaStream_t stream, int num_slots, const int *active, int *count);
 
 /**
  * @brief Resets per-slot solver state: active = 1, lambda = initial, valid = 1
- * (if given), iteration and accept counters = 0.
+ * (if given), iteration counter = 0.
  */
 void LaunchResetSlots(cudaStream_t stream, int num_slots, float initial_lambda, int *active,
-                      float *lambda, int *valid, int *iterations, int *num_accepted);
+                      float *lambda, int *valid, int *iterations);
 
 // ---------------------------------------------------------------------------
 // Scoring and selection (scoring_kernels.cu)

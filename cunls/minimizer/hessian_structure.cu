@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cunls/common/helper.h"
@@ -45,10 +46,10 @@ int GridFor(size_t count) { return static_cast<int>((count + kBlockSize - 1) / k
 
 /**
  * One thread per (factor, state slot).  Resolves the factor's state pointer to a
- * global column offset by testing it against one state batch's storage range,
- * exactly like `col_ids_kernel` does for the triplet path.  Threads whose
- * pointer belongs to a different batch leave the entry untouched, so the caller
- * runs this once per state batch over a `-1`-initialized output.
+ * global column offset by testing it against one state batch's storage range.
+ * Threads whose pointer belongs to a different batch leave the entry
+ * untouched, so the caller runs this once per state batch over a
+ * `-1`-initialized output.
  */
 __global__ void ResolveFactorColumnsKernel(int num_entries, int num_blocks_per_factor,
                                            float const *const *__restrict__ state_pointers,
@@ -62,8 +63,7 @@ __global__ void ResolveFactorColumnsKernel(int num_entries, int num_blocks_per_f
     return;
   }
 
-  // A factor's state slot only maps onto this batch if the tangent dims agree;
-  // mirrors the guard in FillColIdsInJacobianBlock.
+  // A factor's state slot only maps onto this batch if the tangent dims agree.
   int block = idx % num_blocks_per_factor;
   if (block_sizes[block] != tangent_dim) {
     return;
@@ -167,55 +167,6 @@ __global__ void GatherUniquePairsKernel(int num_valid, const uint64_t *__restric
   pair_col_tangent[g] = tangent_at_col[col];
 }
 
-/**
- * One thread per block pair.  Atomically accumulates per-row non-zero counts
- * for every row the pair spans.
- */
-__global__ void ComputeBlockRowCountsKernel(int num_pairs, const int *__restrict__ pair_row,
-                                            const int *__restrict__ row_tangent,
-                                            const int *__restrict__ col_tangent,
-                                            int *__restrict__ row_counts) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_pairs) {
-    return;
-  }
-  int row = pair_row[idx];
-  int tiles = row_tangent[idx];
-  int width = col_tangent[idx];
-  for (int i = 0; i < tiles; i++) {
-    atomicAdd(&row_counts[row + i], width);
-  }
-}
-
-/**
- * One thread block per block pair.  Writes the dense column indices of the tile
- * into the CSR col_ids array.  Every row of the block row shares the same
- * `write_offset`, which is what makes the assembler's scatter map so small.
- */
-__global__ void ExpandBlockPairsKernel(int num_pairs, const int *__restrict__ pair_row,
-                                       const int *__restrict__ pair_col,
-                                       const int *__restrict__ row_tangent,
-                                       const int *__restrict__ col_tangent,
-                                       const int *__restrict__ write_offset,
-                                       const int *__restrict__ row_offsets,
-                                       int *__restrict__ col_ids) {
-  int pair = blockIdx.x;
-  if (pair >= num_pairs) {
-    return;
-  }
-  int row = pair_row[pair];
-  int col = pair_col[pair];
-  int height = row_tangent[pair];
-  int width = col_tangent[pair];
-  int offset = write_offset[pair];
-  int total = height * width;
-  for (int k = threadIdx.x; k < total; k += blockDim.x) {
-    int row_in_block = k / width;
-    int col_in_block = k - row_in_block * width;
-    col_ids[row_offsets[row + row_in_block] + offset + col_in_block] = col + col_in_block;
-  }
-}
-
 /** out[i] = in[i] / divisor. */
 __global__ void DivideKernel(int count, int divisor, const int *__restrict__ in,
                              int *__restrict__ out) {
@@ -248,10 +199,11 @@ __global__ void ComputeBlockRowTileCountsKernel(int num_pairs, int block_size,
 
 /**
  * One thread block per block pair.  Writes the tile column indices of the pair
- * into the BSR col_ids array.  As in the scalar case, every block row of the
- * pair shares the same tile-valued `write_offset`.
+ * into the col_ids array (b = 1: the scalar CSR column indices).  Every block
+ * row of the pair shares the same tile-valued `write_offset`, which is what
+ * makes the assembler's scatter map so small.
  */
-__global__ void ExpandBlockPairsBSRKernel(
+__global__ void ExpandBlockPairsKernel(
     int num_pairs, int block_size, const int *__restrict__ pair_row,
     const int *__restrict__ pair_col, const int *__restrict__ row_tangent,
     const int *__restrict__ col_tangent, const int *__restrict__ write_offset,
@@ -496,95 +448,31 @@ int HessianStructureBuilder::DiscoverBlockPairs(cudaStream_t stream, const Probl
 }
 
 void HessianStructureBuilder::Build(cudaStream_t stream, const Problem &problem, int num_cols,
-                                    CSRSparseMatrix &output, bool want_scatter_maps) {
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-
-  dvector<int> pair_fields;
-  dvector<int> pair_order;
-  dvector<int> pair_group;
-  size_t num_valid = 0;
-  const int num_pairs =
-      DiscoverBlockPairs(stream, problem, num_cols, pair_fields, pair_order, pair_group, num_valid);
-
-  output.row_offsets.resize(static_cast<size_t>(num_cols) + 1);
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(output.row_offsets.data(), 0,
-                                      output.row_offsets.size() * sizeof(int), stream));
-  write_offsets_.resize(want_scatter_maps ? total_pairs_ : 0);
-
-  if (total_pairs_ == 0 || num_cols == 0) {
-    output.col_ids.resize(0);
-    output.values.resize(0);
-    return;
-  }
-
-  const size_t stride = static_cast<size_t>(num_pairs);
-  int *pair_row = pair_fields.data();
-  int *pair_col = pair_row + stride;
-  int *row_tangent = pair_col + stride;
-  int *col_tangent = row_tangent + stride;
-  int *write_offset = col_tangent + stride;
-
-  dvector<int> row_counts(static_cast<size_t>(num_cols));
-  THROW_ON_CUDA_ERROR(
-      cudaMemsetAsync(row_counts.data(), 0, static_cast<size_t>(num_cols) * sizeof(int), stream));
-
-  if (num_pairs > 0) {
-    // Pairs are sorted by (row, col), so a segmented scan over the block row
-    // gives each tile's offset within the row.
-    thrust::exclusive_scan_by_key(stream_policy, thrust::device_pointer_cast(pair_row),
-                                  thrust::device_pointer_cast(pair_row) + num_pairs,
-                                  thrust::device_pointer_cast(col_tangent),
-                                  thrust::device_pointer_cast(write_offset));
-
-    ComputeBlockRowCountsKernel<<<GridFor(num_pairs), kBlockSize, 0, stream>>>(
-        num_pairs, pair_row, row_tangent, col_tangent, row_counts.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-  }
-
-  {
-    thrust::device_ptr<int> counts(row_counts.data());
-    thrust::device_ptr<int> offsets(output.row_offsets.data());
-    thrust::inclusive_scan(stream_policy, counts, counts + num_cols, offsets + 1);
-  }
-
-  if (pinned_buf_.size() < 2) {
-    pinned_buf_.resize(2);
-  }
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(), output.row_offsets.data() + num_cols,
-                                      sizeof(int), cudaMemcpyDeviceToHost, stream));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
-  const int total_nnz = pinned_buf_[0];
-
-  output.col_ids.resize(static_cast<size_t>(total_nnz));
-  output.values.resize(static_cast<size_t>(total_nnz));
-
-  if (num_pairs > 0) {
-    ExpandBlockPairsKernel<<<num_pairs, kBlockSize, 0, stream>>>(
-        num_pairs, pair_row, pair_col, row_tangent, col_tangent, write_offset,
-        output.row_offsets.data(), output.col_ids.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-  }
-
-  if (want_scatter_maps) {
-    ScatterWriteOffsetsKernel<<<GridFor(total_pairs_), kBlockSize, 0, stream>>>(
-        static_cast<int>(total_pairs_), static_cast<int>(num_valid), pair_order.data(),
-        pair_group.data(), write_offset, write_offsets_.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-  }
-
-  // The scratch buffers go out of scope; the kernels above read them.
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+                                    CSRSparseMatrix &output) {
+  BuildPattern(stream, problem, num_cols, 1, output.row_offsets, output.col_ids, output.values,
+               nullptr);
 }
 
 void HessianStructureBuilder::Build(cudaStream_t stream, const Problem &problem, int num_cols,
-                                    int block_size, BSRSparseMatrix &output,
-                                    bool want_scatter_maps) {
-  auto stream_policy = thrust::cuda::par_nosync.on(stream);
-
+                                    int block_size, BSRSparseMatrix &output) {
   if (block_size < 1 || num_cols % block_size != 0) {
-    throw std::runtime_error(
-        "HessianStructureBuilder: block size must divide the tangent dimension");
+    throw std::invalid_argument(
+        "HessianStructureBuilder::Build: the block size does not divide the free tangent "
+        "dimension (got block size " +
+        std::to_string(block_size) + ", " + std::to_string(num_cols) +
+        " columns, expected a divisor). Fix: use ChooseHessianBlockSize().");
   }
+  output.block_size = block_size;
+  output.num_block_rows = num_cols / block_size;
+  BuildPattern(stream, problem, num_cols, block_size, output.row_offsets, output.col_ids,
+               output.values, &output.max_tiles_per_row);
+}
+
+void HessianStructureBuilder::BuildPattern(cudaStream_t stream, const Problem &problem,
+                                           int num_cols, int block_size, dvector<int> &row_offsets,
+                                           dvector<int> &col_ids, dvector<float> &values,
+                                           int *max_tiles_per_row) {
+  auto stream_policy = thrust::cuda::par_nosync.on(stream);
 
   dvector<int> pair_fields;
   dvector<int> pair_order;
@@ -594,17 +482,15 @@ void HessianStructureBuilder::Build(cudaStream_t stream, const Problem &problem,
       DiscoverBlockPairs(stream, problem, num_cols, pair_fields, pair_order, pair_group, num_valid);
 
   const int num_block_rows = num_cols / block_size;
-  output.block_size = block_size;
-  output.num_block_rows = num_block_rows;
-  output.max_tiles_per_row = 0;
-  output.row_offsets.resize(static_cast<size_t>(num_block_rows) + 1);
-  THROW_ON_CUDA_ERROR(cudaMemsetAsync(output.row_offsets.data(), 0,
-                                      output.row_offsets.size() * sizeof(int), stream));
-  write_offsets_.resize(want_scatter_maps ? total_pairs_ : 0);
+  if (max_tiles_per_row != nullptr) *max_tiles_per_row = 0;
+  row_offsets.resize(static_cast<size_t>(num_block_rows) + 1);
+  THROW_ON_CUDA_ERROR(
+      cudaMemsetAsync(row_offsets.data(), 0, row_offsets.size() * sizeof(int), stream));
+  write_offsets_.resize(total_pairs_);
 
   if (total_pairs_ == 0 || num_cols == 0) {
-    output.col_ids.resize(0);
-    output.values.resize(0);
+    col_ids.resize(0);
+    values.resize(0);
     return;
   }
 
@@ -616,63 +502,67 @@ void HessianStructureBuilder::Build(cudaStream_t stream, const Problem &problem,
   int *write_offset = col_tangent + stride;
 
   // Tile counts, not scalar column counts: a (row_tangent x col_tangent) pair
-  // occupies (row_tangent / b) x (col_tangent / b) tiles.
-  dvector<int> tiles_per_pair(stride);
+  // occupies (row_tangent / b) x (col_tangent / b) tiles (b = 1: scalar entries).
+  dvector<int> tiles_per_pair(block_size > 1 ? stride : 0);
+  const int *tiles = block_size > 1 ? tiles_per_pair.data() : col_tangent;
   dvector<int> block_row_counts(static_cast<size_t>(num_block_rows));
   THROW_ON_CUDA_ERROR(
       cudaMemsetAsync(block_row_counts.data(), 0, block_row_counts.size() * sizeof(int), stream));
 
   if (num_pairs > 0) {
-    DivideKernel<<<GridFor(num_pairs), kBlockSize, 0, stream>>>(num_pairs, block_size, col_tangent,
-                                                                tiles_per_pair.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
+    if (block_size > 1) {
+      DivideKernel<<<GridFor(num_pairs), kBlockSize, 0, stream>>>(
+          num_pairs, block_size, col_tangent, tiles_per_pair.data());
+      THROW_ON_CUDA_ERROR(cudaGetLastError());
+    }
 
+    // Pairs are sorted by (row, col), so a segmented scan over the block row
+    // gives each pair's tile offset within the row.
     thrust::exclusive_scan_by_key(stream_policy, thrust::device_pointer_cast(pair_row),
                                   thrust::device_pointer_cast(pair_row) + num_pairs,
-                                  thrust::device_pointer_cast(tiles_per_pair.data()),
+                                  thrust::device_pointer_cast(tiles),
                                   thrust::device_pointer_cast(write_offset));
 
     ComputeBlockRowTileCountsKernel<<<GridFor(num_pairs), kBlockSize, 0, stream>>>(
-        num_pairs, block_size, pair_row, row_tangent, tiles_per_pair.data(),
-        block_row_counts.data());
+        num_pairs, block_size, pair_row, row_tangent, tiles, block_row_counts.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
   if (num_block_rows > 0) {
     thrust::device_ptr<int> counts(block_row_counts.data());
-    // Peak row length before the scan destroys it; the SpMV picks its schedule
-    // from this.
-    output.max_tiles_per_row = *thrust::max_element(stream_policy, counts, counts + num_block_rows);
-    thrust::device_ptr<int> offsets(output.row_offsets.data());
+    if (max_tiles_per_row != nullptr) {
+      // Peak row length before the scan destroys it; the SpMV picks its
+      // schedule from this.
+      *max_tiles_per_row = *thrust::max_element(stream_policy, counts, counts + num_block_rows);
+    }
+    thrust::device_ptr<int> offsets(row_offsets.data());
     thrust::inclusive_scan(stream_policy, counts, counts + num_block_rows, offsets + 1);
   }
 
   if (pinned_buf_.size() < 2) {
     pinned_buf_.resize(2);
   }
-  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(),
-                                      output.row_offsets.data() + num_block_rows, sizeof(int),
-                                      cudaMemcpyDeviceToHost, stream));
+  THROW_ON_CUDA_ERROR(cudaMemcpyAsync(pinned_buf_.data(), row_offsets.data() + num_block_rows,
+                                      sizeof(int), cudaMemcpyDeviceToHost, stream));
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   const int total_tiles = pinned_buf_[0];
 
-  output.col_ids.resize(static_cast<size_t>(total_tiles));
-  output.values.resize(static_cast<size_t>(total_tiles) * block_size * block_size);
+  col_ids.resize(static_cast<size_t>(total_tiles));
+  values.resize(static_cast<size_t>(total_tiles) * block_size * block_size);
 
   if (num_pairs > 0) {
-    ExpandBlockPairsBSRKernel<<<num_pairs, kBlockSize, 0, stream>>>(
+    ExpandBlockPairsKernel<<<num_pairs, kBlockSize, 0, stream>>>(
         num_pairs, block_size, pair_row, pair_col, row_tangent, col_tangent, write_offset,
-        output.row_offsets.data(), output.col_ids.data());
+        row_offsets.data(), col_ids.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   }
 
-  if (want_scatter_maps) {
-    ScatterWriteOffsetsKernel<<<GridFor(total_pairs_), kBlockSize, 0, stream>>>(
-        static_cast<int>(total_pairs_), static_cast<int>(num_valid), pair_order.data(),
-        pair_group.data(), write_offset, write_offsets_.data());
-    THROW_ON_CUDA_ERROR(cudaGetLastError());
-  }
+  ScatterWriteOffsetsKernel<<<GridFor(total_pairs_), kBlockSize, 0, stream>>>(
+      static_cast<int>(total_pairs_), static_cast<int>(num_valid), pair_order.data(),
+      pair_group.data(), write_offset, write_offsets_.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
 
+  // The scratch buffers go out of scope; the kernels above read them.
   THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 

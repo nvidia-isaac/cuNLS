@@ -21,9 +21,10 @@
  * constant-velocity SE(3) motion-prior factor and its covariance-weighted
  * (MotionPriorInformationFactorBatch) variant.
  *
- * Builds a single long pose+velocity chain (up to tens of thousands of
- * poses, i.e. as many CV factors as SyntheticPGOTest's largest loop-closure
- * case has between factors) and times/profiles Problem construction and
+ * Builds a single long pose+velocity chain (1k poses in the regular suite;
+ * add the instantiations of tens of thousands of poses, as many CV factors as
+ * SyntheticPGOTest's largest loop-closure case has between factors, to
+ * profile) and times/profiles Problem construction and
  * LevenbergMarquardtMinimizer::Minimize with NVTX ranges, so the run can be
  * inspected under `nsys profile` (build with -DENABLE_PROFILING=ON).
  */
@@ -303,10 +304,9 @@ TEST_P(MotionPriorPerfTest, InformationWeightedConverges) {
   EXPECT_LE(summary.final_cost, summary.initial_cost);
 }
 
+// One size in the regular suite: the larger chains (up to 50k poses) exercise
+// the same code paths and are for profiling; add sizes locally when needed.
 INSTANTIATE_TEST_SUITE_P(Sizes, MotionPriorPerfTest,
-                         ::testing::Values(MotionPriorPerfParams{1000, "P1k"},
-                                           MotionPriorPerfParams{5000, "P5k"},
-                                           MotionPriorPerfParams{20000, "P20k"},
-                                           MotionPriorPerfParams{50000, "P50k"}));
+                         ::testing::Values(MotionPriorPerfParams{1000, "P1k"}));
 
 }  // namespace cunls

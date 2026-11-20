@@ -11,7 +11,8 @@ Weighting by square-root information matrices: whitening a factor's residuals an
 
 - `information_factor_batch.h` (+ `information_factor_batch_kernels.cu`): the generic
   `InformationFactorBatch<T>` wrapper (residual and Jacobian of factor f multiplied by its
-  row-major sqrt-information matrix), and the item-contract helpers
+  row-major sqrt-information matrix), `EvaluateWithSqrtInformation` (the same for any inner
+  batch; the Python wrapper uses it), and the item-contract helpers
   `ApplyInformationToResidualItems` / `ApplyInformationToJacobianItems`.
 - `motion_prior_information.{h,cu}`: closed-form `Q(dt)^-1 = M(dt) (x) Qc^-1` for the
   `cunls/factor/motion/` factors, and `MotionPriorInformationFactorBatch<T, Dim>` (the motion

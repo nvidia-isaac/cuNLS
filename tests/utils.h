@@ -34,6 +34,7 @@
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
+#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/state/vector_state_batch.h"
 
 namespace cunls {
@@ -370,6 +371,55 @@ std::vector<Vector<Dim>> CopyStateToHost(const VectorStateBatch<Dim> &state_batc
   THROW_ON_CUDA_ERROR(
       cudaMemcpy(out.data(), vec_ptr, num_blocks * sizeof(Vector<Dim>), cudaMemcpyDeviceToHost));
   return out;
+}
+
+/** @brief Host copy of a device vector. */
+template <typename T>
+std::vector<T> ToHost(const dvector<T> &d) {
+  std::vector<T> h(d.size());
+  if (!h.empty()) d.CopyToHost(h.data(), h.size());
+  return h;
+}
+
+/** @brief Device copy of a host vector. */
+template <typename T>
+dvector<T> ToDevice(const std::vector<T> &h) {
+  dvector<T> d(h.size());
+  if (!h.empty()) d.CopyFromHost(h.data(), h.size());
+  return d;
+}
+
+// ============================================================================
+// Minimizers
+// ============================================================================
+
+/** @brief The two minimizers, for tests that run with either. */
+enum class MinimizerKind { kGaussNewton, kLevenbergMarquardt };
+
+/**
+ * @brief A GaussNewtonMinimizer or LevenbergMarquardtMinimizer with `options`;
+ *        Levenberg-Marquardt also with `relative_reduction_tolerance`.
+ */
+inline std::unique_ptr<Minimizer> MakeMinimizer(MinimizerKind kind, const MinimizerOptions &options,
+                                                float relative_reduction_tolerance = 1e-6f) {
+  if (kind == MinimizerKind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = options;
+  lm.relative_reduction_tolerance = relative_reduction_tolerance;
+  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+}
+
+/**
+ * @brief Options that run small problems to convergence: DenseLDLT, 50
+ *        iterations, state and cost tolerances 1e-12.
+ */
+inline MinimizerOptions ConvergedSolveOptions() {
+  MinimizerOptions options;
+  options.max_num_iterations = 50;
+  options.state_tolerance = 1e-12f;
+  options.cost_tolerance = 1e-12f;
+  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+  return options;
 }
 
 // ============================================================================

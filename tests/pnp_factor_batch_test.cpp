@@ -33,13 +33,11 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/helper.h"
 #include "cunls/common/types.h"
-#include "cunls/factor/reprojection_factor_batch.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
 #include "cunls/math/so_se_lie_math.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/se3_state_batch.h"
-#include "cunls/state/vector_state_batch.h"
 #include "tests/utils.h"
 
 namespace cunls {
@@ -218,80 +216,6 @@ class PnPFactorBatchTest : public ::testing::Test {
   dvector<Point3D> points_device_;
   dvector<Observation2D> obs_device_;
 };
-
-TEST_F(PnPFactorBatchTest, JacobianMatchesReprojectionPoseBlock) {
-  const size_t n = 6;
-  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  pnp.SetNumActiveFactors(pnp.Capacity());
-  ReprojectionFactorBatch reproj(obs_device_.data(), n, kZThr);
-  reproj.SetNumActiveFactors(reproj.Capacity());
-  VectorStateBatch<3> point_batch(reinterpret_cast<float *>(points_device_.data()), n);
-  point_batch.SetNumActiveStates(point_batch.Capacity(), point_batch.ConstCapacity());
-  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose_device_.data()), 1);
-  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
-
-  std::vector<const float *> sp_reproj;
-  sp_reproj.reserve(2 * n);
-  std::vector<const float *> sp_pnp;
-  sp_pnp.reserve(n);
-  for (size_t i = 0; i < n; i++) {
-    sp_reproj.push_back(reinterpret_cast<const float *>(pose_state.StateDevicePtr(0)));
-    sp_reproj.push_back(reinterpret_cast<const float *>(point_batch.StateDevicePtr(i)));
-    sp_pnp.push_back(reinterpret_cast<const float *>(pose_state.StateDevicePtr(0)));
-  }
-
-  dvector<float> r_pnp(n * 2);
-  dvector<float> j_pnp(n * 12);
-  dvector<float> j_r(n * 18);
-  dvector<const float *> dev_reproj(sp_reproj);
-  dvector<const float *> dev_pnp(sp_pnp);
-
-  CudaStream stream;
-  ASSERT_TRUE(pnp.Evaluate(r_pnp.data(), j_pnp.data(), dev_pnp.data(), stream.GetStream()));
-  ASSERT_TRUE(reproj.Evaluate(r_pnp.data(), j_r.data(), dev_reproj.data(), stream.GetStream()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> hj_pnp(n * 12);
-  std::vector<float> hj_r(n * 18);
-  j_pnp.CopyToHost(hj_pnp.data(), hj_pnp.size());
-  j_r.CopyToHost(hj_r.data(), hj_r.size());
-
-  for (size_t i = 0; i < n; i++) {
-    for (int row = 0; row < 2; row++) {
-      for (int c = 0; c < 6; c++) {
-        EXPECT_NEAR(hj_pnp[i * 12 + row * 6 + c], hj_r[i * 18 + row * 9 + c], 1e-4f);
-      }
-    }
-  }
-}
-
-TEST_F(PnPFactorBatchTest, EvaluateNearZeroAtGroundTruth) {
-  const size_t n = 20;
-  PnPFactorBatch pnp(obs_device_.data(), points_device_.data(), n, kZThr);
-  pnp.SetNumActiveFactors(pnp.Capacity());
-  SE3StateBatch pose_state(reinterpret_cast<const float *>(pose_device_.data()), 1);
-  pose_state.SetNumActiveStates(pose_state.Capacity(), pose_state.ConstCapacity());
-
-  std::vector<const float *> sp;
-  sp.reserve(n);
-  for (size_t i = 0; i < n; i++) {
-    sp.push_back(reinterpret_cast<const float *>(pose_state.StateDevicePtr(0)));
-  }
-  dvector<const float *> dev_sp(sp);
-
-  dvector<float> residuals(n * 2);
-  CudaStream stream;
-  ASSERT_TRUE(pnp.Evaluate(residuals.data(), nullptr, dev_sp.data(), stream.GetStream()));
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream.GetStream()));
-
-  std::vector<float> hr(n * 2);
-  residuals.CopyToHost(hr.data(), hr.size());
-  float m = 0.0f;
-  for (float x : hr) {
-    m = std::max(m, std::fabs(x));
-  }
-  EXPECT_LT(m, 1e-5f);
-}
 
 TEST_F(PnPFactorBatchTest, LevenbergMarquardtConverges) {
   const size_t n = kMaxCorrespondences;

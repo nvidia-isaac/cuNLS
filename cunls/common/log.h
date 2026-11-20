@@ -16,17 +16,13 @@
  */
 
 #pragma once
+#include <cstddef>
 #include <functional>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <tuple>
-
-// Check for C++20 support
-#if defined(__cpp_lib_format) && __cpp_lib_format >= 201907L
-#include <format>
-#define CPP_20_OR_GREATER
-#endif
+#include <type_traits>
+#include <utility>
 
 namespace cunls {
 
@@ -36,24 +32,17 @@ namespace cunls {
 enum class Verbosity { Silent = 0, Error, Warning, Message, Debug };
 
 /**
- * @brief Log output destinations.
- */
-enum class Sink { Console = 0, File, ConsoleAndFile };
-
-/**
- * @brief Configures the global logger settings.
+ * @brief Sets the verbosity of the global logger (console output, or the
+ * SetLogCallback() callback).
  *
  * @param verbosity Maximum verbosity level to output (messages above this
  *                  level are suppressed).
- * @param sink      Where to send log output (console, file, or both).
- * @param file_path Path to the log file (required when sink includes File).
  */
-void SetLoggerOptions(Verbosity verbosity, Sink sink = Sink::Console,
-                      const std::string &file_path = "");
+void SetLoggerOptions(Verbosity verbosity);
 
 /**
  * @brief Receives every log message that passes the verbosity level
- * (SetLoggerOptions) instead of the console / file sinks.
+ * (SetLoggerOptions) instead of the console.
  *
  * May be called from any thread that runs cuNLS work; must not throw.
  */
@@ -110,153 +99,108 @@ void LogMessage(std::string_view msg);
  */
 void LogDebug(std::string_view msg);
 
-#ifdef CPP_20_OR_GREATER
+namespace internal {
+
 /**
- * @brief Logs a formatted message at the given verbosity level (C++20 path).
+ * @brief Writes @p value to @p out, formatted by @p spec, the part of a
+ * replacement field after ':' ("" for none).
  *
- * Uses std::format-style placeholders (e.g. "{}", "{0}") for argument
- * substitution.
- *
- * @tparam Args Variadic argument types forwarded to std::vformat_to.
- * @param verbosity The severity level of this message.
- * @param fmt       Format string with {} placeholders.
- * @param args      Values to substitute into the format string.
+ * Floating-point values take `.N` (precision) optionally followed by `f`
+ * (fixed), `e` (scientific) or `g` (general), as std::format does; other specs
+ * and other types print the value as `out << value`.
  */
-template <typename... Args>
-inline void Log(Verbosity verbosity, std::string_view fmt, Args &&...args) {
-  std::string buf;
-  std::vformat_to(std::back_inserter(buf), fmt, std::make_format_args(args...));
-  Log(verbosity, buf);
-}
-#else
-namespace {
-/**
- * @brief Writes the argument at the given tuple index to the stream.
- *
- * This is a helper for the C++17 formatting fallback. It selects the
- * argument at compile-time index @p Index if it matches @p target_index.
- *
- * @tparam Index  Compile-time tuple index to check.
- * @tparam Tuple  The tuple type holding all arguments.
- * @param oss          Output string stream to write into.
- * @param args         Tuple of all formatting arguments.
- * @param target_index Runtime index of the argument to output.
- */
-template <size_t Index, typename Tuple>
-void format_arg_at_index(std::ostringstream &oss, const Tuple &args, size_t target_index) {
-  if (Index == target_index && Index < std::tuple_size_v<Tuple>) {
-    oss << std::get<Index>(args);
+template <typename T>
+void WriteFormatted(std::ostringstream &out, const T &value, std::string_view spec) {
+  if constexpr (std::is_floating_point_v<T>) {
+    if (spec.size() >= 2 && spec[0] == '.') {
+      size_t end = 1;
+      int precision = 0;
+      while (end < spec.size() && spec[end] >= '0' && spec[end] <= '9') {
+        precision = 10 * precision + (spec[end++] - '0');
+      }
+      const char type = end < spec.size() ? spec[end] : 'g';
+      if (end > 1 && end + (end < spec.size() ? 1 : 0) == spec.size() &&
+          (type == 'f' || type == 'e' || type == 'g')) {
+        const std::ios_base::fmtflags flags = out.flags();
+        const std::streamsize old_precision = out.precision(precision);
+        if (type == 'f') out << std::fixed;
+        if (type == 'e') out << std::scientific;
+        out << value;
+        out.flags(flags);
+        out.precision(old_precision);
+        return;
+      }
+    }
   }
+  out << value;
+}
+
+/** @brief Writes argument @p index of @p args to @p out (WriteFormatted). */
+template <size_t... I, typename... Args>
+void WriteArgument(std::ostringstream &out, size_t index, std::string_view spec,
+                   std::index_sequence<I...>, const Args &...args) {
+  ((I == index ? WriteFormatted(out, args, spec) : void()), ...);
 }
 
 /**
- * @brief Recursively dispatches to format_arg_at_index for all tuple indices.
- *
- * Uses fold expression to try each tuple index until the target is found.
- *
- * @tparam Indices  Index sequence matching tuple size.
- * @tparam Tuple    The tuple type holding all arguments.
- * @param oss          Output string stream to write into.
- * @param args         Tuple of all formatting arguments.
- * @param target_index Runtime index of the argument to output.
- */
-template <size_t... Indices, typename Tuple>
-void format_arg_recursive(std::ostringstream &oss, const Tuple &args, size_t target_index,
-                          std::index_sequence<Indices...>) {
-  (format_arg_at_index<Indices>(oss, args, target_index), ...);
-}
-
-/**
- * @brief Simple format string parser for C++17 (fallback for pre-C++20).
- *
- * Replaces {} or {N} placeholders in the format string with the
- * corresponding argument values, similar to std::format.
- *
- * @tparam Args Variadic argument types.
- * @param fmt_str Format string with {} or {N} placeholders.
- * @param args    Values to substitute into the format string.
- * @return Formatted string with all placeholders replaced.
+ * @brief Formats @p fmt with @p args, std::format style: `{}` takes the next
+ * argument, `{N}` argument N, and either may carry a spec after ':' (see
+ * WriteFormatted, e.g. `{:.2f}`). A field naming no argument is copied as is.
  */
 template <typename... Args>
-std::string vformat_to(std::string_view fmt_str, Args &&...args) {
-  std::ostringstream result;
-  std::string fmt(fmt_str);
-  auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
-  constexpr size_t num_args = sizeof...(Args);
-
+std::string Format(std::string_view fmt, const Args &...args) {
+  std::ostringstream out;
+  size_t next = 0;  // the argument of the next `{}`
   size_t pos = 0;
-  size_t arg_index = 0;
-
-  // Simple implementation: replace {} or {N} with arguments
-  while (pos < fmt.length()) {
-    size_t open_brace = fmt.find('{', pos);
-    if (open_brace == std::string::npos) {
-      result << fmt.substr(pos);
+  while (pos < fmt.size()) {
+    const size_t open = fmt.find('{', pos);
+    const size_t close = open == std::string_view::npos ? open : fmt.find('}', open);
+    if (close == std::string_view::npos) {
+      out << fmt.substr(pos);
       break;
     }
-
-    result << fmt.substr(pos, open_brace - pos);
-
-    size_t close_brace = fmt.find('}', open_brace);
-    if (close_brace == std::string::npos) {
-      result << fmt.substr(open_brace);
-      break;
-    }
-
-    // Extract placeholder content
-    std::string placeholder = fmt.substr(open_brace + 1, close_brace - open_brace - 1);
-
-    if (placeholder.empty()) {
-      // Empty placeholder {} - use next argument in order
-      if (arg_index < num_args) {
-        format_arg_recursive(result, args_tuple, arg_index, std::make_index_sequence<num_args>{});
-        arg_index++;
-      } else {
-        result << "{}";
-      }
+    out << fmt.substr(pos, open - pos);
+    const std::string_view field = fmt.substr(open + 1, close - open - 1);
+    const size_t colon = field.find(':');
+    const std::string_view id = field.substr(0, colon);
+    const std::string_view spec =
+        colon == std::string_view::npos ? std::string_view() : field.substr(colon + 1);
+    size_t index = next;
+    bool valid = true;
+    if (id.empty()) {
+      ++next;
     } else {
-      // Try to parse as number
-      size_t requested_idx = 0;
-      bool is_valid_number = true;
-      try {
-        requested_idx = std::stoull(placeholder);
-      } catch (const std::invalid_argument &) {
-        is_valid_number = false;
-      } catch (const std::out_of_range &) {
-        is_valid_number = false;
-      }
-
-      if (is_valid_number && requested_idx < num_args) {
-        format_arg_recursive(result, args_tuple, requested_idx,
-                             std::make_index_sequence<num_args>{});
-      } else {
-        result << "{" << placeholder << "}";
+      index = 0;
+      for (char c : id) {
+        valid = valid && c >= '0' && c <= '9';
+        index = 10 * index + static_cast<size_t>(c - '0');
       }
     }
-
-    pos = close_brace + 1;
+    if (valid && index < sizeof...(Args)) {
+      WriteArgument(out, index, spec, std::index_sequence_for<Args...>{}, args...);
+    } else {
+      out << '{' << field << '}';
+    }
+    pos = close + 1;
   }
-
-  return result.str();
+  return out.str();
 }
-}  // namespace
+
+}  // namespace internal
 
 /**
- * @brief Logs a formatted message at the given verbosity level (C++17 path).
+ * @brief Logs a formatted message at the given verbosity level.
  *
- * Uses the vformat_to fallback for {} placeholder substitution.
- *
- * @tparam Args Variadic argument types.
+ * @tparam Args Argument types (anything with an `operator<<`).
  * @param verbosity The severity level of this message.
- * @param fmt       Format string with {} placeholders.
+ * @param fmt       Format string with std::format-style fields: `{}`, `{N}`,
+ *                  and a precision spec for floating-point values (`{:.2f}`).
  * @param args      Values to substitute into the format string.
  */
 template <typename... Args>
 inline void Log(Verbosity verbosity, std::string_view fmt, Args &&...args) {
-  std::string buf = vformat_to(fmt, std::forward<Args>(args)...);
-  Log(verbosity, buf);
+  Log(verbosity, internal::Format(fmt, args...));
 }
-#endif
 
 /**
  * @brief Logs a formatted message at Error verbosity.

@@ -127,7 +127,6 @@ class BlockSparseCholeskySolver : public SparseLinearSolver {
   dvector<int> assembly_dst_;        ///< Per nonzero of A: its factor offset, or -1 (upper).
   dvector<int64_t> assembly_dst64_;  ///< The same for a factor of more than 2^31 entries.
   bool wide_assembly_ = false;       ///< assembly_dst64_ is in use (not assembly_dst_).
-  dvector<int> diagonal_index_;      ///< Per permuted column: its diagonal nonzero of A, or -1.
   /// Permuted columns whose diagonal entry of A the factorization reads from original_: all
   /// but those of the first level's small panels (their warps read it from the panel).
   dvector<int> diagonal_columns_;

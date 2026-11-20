@@ -118,12 +118,6 @@ struct CustomBinaryFunctor {
   }
 };
 
-/** @copydoc StateBatchOps::StateBatchOps(cudaStream_t, const
- * std::vector<StateBatch*>&) */
-StateBatchOps::StateBatchOps(cudaStream_t stream, const std::vector<StateBatch *> &state_batches) {
-  Preprocess(stream, state_batches);
-}
-
 /** @copydoc ComputeStateColumnOffsets */
 void ComputeStateColumnOffsets(cudaStream_t stream, int first_column, const StateBatch *state_batch,
                                DeviceVector<int> &column_offsets) {

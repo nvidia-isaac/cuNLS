@@ -53,17 +53,7 @@ void ComputeStateColumnOffsets(cudaStream_t stream, int first_column, const Stat
  */
 class StateBatchOps {
  public:
-  /**
-   * @brief Constructs and preprocesses the operator for the given state
-   * batches.
-   *
-   * @param stream        CUDA stream for asynchronous GPU operations during
-   * preprocessing.
-   * @param state_batches Vector of pointers to state batches to manage.
-   */
-  StateBatchOps(cudaStream_t stream, const std::vector<StateBatch *> &state_batches);
-
-  /** @brief Default constructor. Call Preprocess() before use. */
+  /** @brief Empty operator. Call Preprocess() before use. */
   StateBatchOps() = default;
 
   /**
@@ -71,7 +61,7 @@ class StateBatchOps {
    * structures.
    *
    * Initializes the full-to-reduced state mapping and the per-batch update
-   * buffer. Must be called before Plus() if the default constructor was used.
+   * buffer. Must be called before Plus().
    *
    * @param stream        CUDA stream for asynchronous GPU operations.
    * @param state_batches Vector of pointers to state batches to manage.

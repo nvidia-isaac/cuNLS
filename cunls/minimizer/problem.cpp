@@ -190,16 +190,6 @@ const std::vector<float *> &Problem::HostStatePointers(size_t residual_batch_ind
   return view;
 }
 
-const std::vector<std::vector<float *>> &Problem::GetStatePointers() const {
-  for (size_t i = 0; i < connectivity_.size(); ++i) {
-    const std::vector<float *> &view = HostStatePointers(i);
-    if (&view != &state_pointers_[i]) {
-      state_pointers_[i] = view;
-    }
-  }
-  return state_pointers_;
-}
-
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -302,15 +292,6 @@ std::string Problem::SizeError() const {
            "num_const) before solving (Python: set_num_active_factors, set_num_active_states).";
   }
   return "";
-}
-
-bool Problem::CheckForValidInputs() const {
-  const std::string error = SizeError();
-  if (!error.empty()) {
-    LogError("{}", error);
-    return false;
-  }
-  return true;
 }
 
 void Problem::SetProblemPartition(size_t num_problems,
@@ -490,14 +471,8 @@ bool Problem::Validate(cudaStream_t stream) const {
   return false;
 }
 
-/**
- * @brief Validates the complete problem structure: the inputs on the host,
- * then the graph on the GPU (Validate), whatever the connectivity kind.
- */
 bool Problem::CheckConsistency() const {
-  if (!CheckForValidInputs()) {
-    return false;
-  }
+  // Validate checks the sizes on the host first (SizeError), then the graph on the GPU.
   CudaStream stream;
   return Validate(stream.GetStream());
 }

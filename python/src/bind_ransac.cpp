@@ -61,13 +61,7 @@ MaskArray InlierMask(const RansacMinimizer &self, size_t index) {
         "inlier_mask: no mask for residual batch " + std::to_string(index) +
         " (index out of range, an always_on batch, or minimize() has not run)");
   }
-  const size_t n = self.InlierMaskSize(index);
-  auto *host = new uint8_t[n];
-  nb::capsule owner(host, [](void *p) noexcept { delete[] static_cast<uint8_t *>(p); });
-  if (n > 0) {
-    THROW_ON_CUDA_ERROR(cudaMemcpy(host, device, n, cudaMemcpyDeviceToHost));
-  }
-  return MaskArray(host, {n}, owner);
+  return device_to_numpy(device, self.InlierMaskSize(index));
 }
 
 RansacSummary Minimize(RansacMinimizer &self, cunls::CudaStream &stream, cunls::Problem &problem) {
