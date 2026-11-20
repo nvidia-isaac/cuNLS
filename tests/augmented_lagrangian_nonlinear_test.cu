@@ -82,9 +82,12 @@ class HsRows : public FactorBatch {
   int kind_;
 };
 
-/** The inner minimizer: Levenberg-Marquardt, run to convergence. */
-std::unique_ptr<LevenbergMarquardtMinimizer> MakeMinimizer() {
-  return test_utils::MakeLevenbergMarquardt(test_utils::ConvergedSolveOptions(), 1e-12f);
+/** Augmented Lagrangian options whose inner solves run to convergence. */
+AugmentedLagrangianMinimizerOptions Options() {
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = test_utils::ConvergedSolveOptions();
+  lm.relative_reduction_tolerance = 1e-12f;
+  return test_utils::WithInnerSettings(lm);
 }
 
 
@@ -102,8 +105,7 @@ TEST(HockSchittkowski, Hs6NonlinearEquality) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&objective, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0)});
-  auto inner = MakeMinimizer();
-  const auto summary = AugmentedLagrangianMinimizer(*inner).Minimize(stream.GetStream(), problem);
+  const auto summary = AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
   std::vector<float> result(2);
@@ -130,8 +132,7 @@ TEST(HockSchittkowski, Hs2ActiveBound) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&objective, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&bounds, {states.StateDevicePtr(0)});
-  auto inner = MakeMinimizer();
-  const auto summary = AugmentedLagrangianMinimizer(*inner).Minimize(stream.GetStream(), problem);
+  const auto summary = AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   std::vector<float> result(2);
   x.CopyToHost(result.data(), 2);

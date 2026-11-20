@@ -61,7 +61,6 @@ struct Mpc {
   std::unique_ptr<SE2PriorFactorBatch> track;
   std::unique_ptr<WeightedFactorBatch<PriorVectorFactorBatch<2>>> effort;
   Problem problem;
-  std::unique_ptr<LevenbergMarquardtMinimizer> inner;
   std::unique_ptr<AugmentedLagrangianMinimizer> solver;
 
   Mpc() {
@@ -129,23 +128,19 @@ struct Mpc {
     problem.SetProblemPartition(B, {pose_ids.data(), control_ids.data()});
     problem.SetStateStages({pose_stages.data(), control_stages.data()});
 
-    MinimizerOptions mo;
-    mo.sparse_linear_solver_type = SparseLinearSolverType::BlockTridiagonal;
-    mo.state_tolerance = 1e-5f;
-    LevenbergMarquardtMinimizerOptions lm;
-    lm.base_options = mo;
-    inner = std::make_unique<LevenbergMarquardtMinimizer>(lm);
     AugmentedLagrangianMinimizerOptions options;
+    options.base_options.sparse_linear_solver_type = SparseLinearSolverType::BlockTridiagonal;
+    options.base_options.state_tolerance = 1e-5f;
+    options.base_options.reuse_structure = true;
     options.warm_start = true;
-    options.reuse_structure = true;
     options.max_penalty = 1e4f;
-    solver = std::make_unique<AugmentedLagrangianMinimizer>(*inner, options);
+    solver = std::make_unique<AugmentedLagrangianMinimizer>(options);
     // After the first (converged) call: the real-time budget.
-    options.real_time = true;
+    options.base_options.real_time = true;
+    options.base_options.max_num_iterations = 2;
+    options.base_options.max_line_search_steps = 2;
     options.max_outer_iterations = 2;
     options.inner_iterations = 2;
-    options.final_inner_iterations = 2;
-    options.inner_line_search_steps = 2;
     options.max_penalty = 1e3f;
     real_time_options = options;
   }

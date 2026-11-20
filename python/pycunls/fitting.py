@@ -599,12 +599,12 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
         options["relative_reduction_tolerance"] = 1e-7
     if lower is not None:
         options["max_outer_iterations"] = 1  # no constraint rows: one solve of max_iterations
-    minimizer, al = make_solver(method, lower is not None, options, "fit")
-    summary = (minimizer if al is None else al).minimize(stream, problem)
+    solver = make_solver(method, lower is not None, options, "fit")
+    summary = solver.minimize(stream, problem)
 
     # ---- results -----------------------------------------------------------------------------
-    # Why each fit stopped (with bounds: the wrapped minimizer's last solve).
-    codes = np.asarray(minimizer.subproblem_termination_reasons())
+    # Why each fit stopped (with bounds: the last inner solve's reason).
+    codes = np.asarray(solver.subproblem_termination_reasons())
     with wp.ScopedStream(solver_stream):
         p_final = params.numpy().astype(np.float64)
         ws = fitted.workspace(rows)

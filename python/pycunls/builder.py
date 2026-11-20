@@ -58,8 +58,8 @@ _LM_OPTIONS = ("initial_lambda", "relative_reduction_tolerance", "lambda_upscale
                "lambda_downscale", "lambda_max", "lambda_min", "min_diagonal",
                "step_accept_threshold", "lambda_downscale_threshold")
 _AL_OPTIONS = ("constraint_tolerance", "max_outer_iterations", "inner_iterations",
-               "final_inner_iterations", "inner_line_search_steps", "initial_penalty",
-               "penalty_increase", "max_penalty", "violation_decrease", "max_bound_refinements")
+               "initial_penalty", "penalty_increase", "max_penalty", "violation_decrease",
+               "max_bound_refinements")
 
 
 def _resolve(cls_or_name, base, kind: str):
@@ -347,7 +347,7 @@ class ProblemBuilder:
             method: ``"lm"`` (Levenberg-Marquardt, default) or ``"gn"`` (Gauss-Newton). With box
                 bounds (``add_states(..., bounds=...)``) or constraint factor batches,
                 Levenberg-Marquardt runs inside the augmented Lagrangian minimizer ("gn" raises),
-                and ``max_num_iterations`` caps its full inner solves (``final_inner_iterations``).
+                and ``max_num_iterations`` caps its full inner solves.
             validate: Run :func:`pycunls.diagnose` before the first solve (and again after
                 add_states / add_factors): errors raise
                 ``ValueError`` (with the fix), warnings (e.g. a gauge freedom) warn.
@@ -390,60 +390,46 @@ class ProblemBuilder:
         reuse = options.pop("reuse_structure", None)
         key = (method, constrained, tuple(sorted((k, repr(v)) for k, v in options.items())))
         if self._solver is None or self._solver[0] != key or reuse is False:
-            self._solver = (key,) + make_solver(method, constrained, options,
-                                                "ProblemBuilder.solve")
-        _, minimizer, al = self._solver
+            self._solver = (key, make_solver(method, constrained, options,
+                                             "ProblemBuilder.solve"))
+        solver = self._solver[1]
         # Uploads and StateHandle.set() run on Warp's stream; the solve on self.stream (and
         # minimize() synchronizes it before returning).
         wp.synchronize_stream(wp.get_stream(wp.get_cuda_device()))
-        if al is not None:
-            summary = al.minimize(self.stream, self.problem)
-        else:
-            summary = minimizer.minimize(self.stream, self.problem)
+        summary = solver.minimize(self.stream, self.problem)
         self._solved_once = True
         return SolveResult(summary, bool(summary.converged()), summary.message, self)
 
 
 def make_solver(method: str, constrained: bool, options: dict, caller: str):
-    """(minimizer, augmented Lagrangian wrapper or None) for ``method`` ("lm" or "gn") and the
-    solver ``options`` by name (as :meth:`ProblemBuilder.solve` takes them). A ``constrained``
-    problem (bounds or constraint factors) runs Levenberg-Marquardt inside the augmented
-    Lagrangian, whose options set the budget: ``max_num_iterations`` becomes its
-    ``final_inner_iterations`` unless that is given. ``caller`` names the API in errors."""
+    """The solver for ``method`` ("lm" or "gn") and the solver ``options`` by name (as
+    :meth:`ProblemBuilder.solve` takes them): a ``constrained`` problem (bounds or constraint
+    factors) gets an :class:`pycunls.AugmentedLagrangianMinimizer`, whose ``max_num_iterations``
+    caps its full inner solves. ``caller`` names the API in errors."""
     if constrained and method != "lm":
         raise ValueError(f"{caller}: bounds and constraints are solved with Levenberg-Marquardt "
                          f"(got method={method!r}, expected 'lm'). Fix: drop method={method!r}.")
-    base = _make_solver_options(options)
-    if method == "lm":
-        lm = _core.LevenbergMarquardtMinimizerOptions()
-        lm.base_options = base
-        for key in _LM_OPTIONS:
-            if key in options:
-                setattr(lm, key, options[key])
-        minimizer = _core.LevenbergMarquardtMinimizer(lm)
+    if constrained:
+        solver_options = _core.AugmentedLagrangianMinimizerOptions()
+    elif method == "lm":
+        solver_options = _core.LevenbergMarquardtMinimizerOptions()
     else:
-        minimizer = _core.GaussNewtonMinimizer(base)
-    if not constrained:
-        return minimizer, None
-    al = _core.AugmentedLagrangianMinimizerOptions()
-    if "max_num_iterations" in options:
-        al.final_inner_iterations = options["max_num_iterations"]
-    for key in _AL_OPTIONS:
-        if key in options:
-            setattr(al, key, options[key])
-    al.reuse_structure = True  # warm_start stays off: every solve starts from zero multipliers
-    return minimizer, _core.AugmentedLagrangianMinimizer(minimizer, al)
-
-
-def _make_solver_options(options):
-    base = _core.MinimizerOptions()
+        solver_options = None
+    base = _core.MinimizerOptions() if solver_options is None else solver_options.base_options
     for key in _MINIMIZER_OPTIONS:
         if key in options:
             setattr(base, key, options[key])
     # The builder sees every structural change (add_states / add_factors drop the solver), so a
     # kept solver may always skip the setup; a new one runs it on its first call.
     base.reuse_structure = True
-    return base
+    if solver_options is None:
+        return _core.GaussNewtonMinimizer(base)
+    for key in _LM_OPTIONS + (_AL_OPTIONS if constrained else ()):
+        if key in options:
+            setattr(solver_options, key, options[key])
+    if constrained:  # warm_start stays off: every solve starts from zero multipliers
+        return _core.AugmentedLagrangianMinimizer(solver_options)
+    return _core.LevenbergMarquardtMinimizer(solver_options)
 
 
 def solve(factor_class, *measurements, initial, connect, state_class=None,

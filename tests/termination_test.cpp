@@ -214,22 +214,22 @@ TEST(TerminationTest, RealTimeSolvesAreGraphCapturable) {
 TEST(TerminationTest, RealTimeAugmentedLagrangianWithoutConstraintsIsNotDetermined) {
   CudaStream stream;
   PriorProblem p({50.f, -30.f}, false);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = Options();
-  lm.initial_lambda = 1e4f;  // one heavily damped step: far from the minimum
-  LevenbergMarquardtMinimizer inner(lm);
   AugmentedLagrangianMinimizerOptions options;
-  options.real_time = true;
+  options.base_options = Options();
+  options.initial_lambda = 1e4f;  // one heavily damped step: far from the minimum
+  options.base_options.real_time = true;
+  options.base_options.max_num_iterations = 1;
   options.max_outer_iterations = 1;
-  options.final_inner_iterations = 1;
-  AugmentedLagrangianMinimizer al(inner, options);
+  AugmentedLagrangianMinimizer al(options);
   const AugmentedLagrangianMinimizerSummary summary = al.Minimize(stream.GetStream(), p.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kNotDetermined) << summary.message;
   EXPECT_FALSE(summary.Converged());
   EXPECT_EQ(summary.num_converged, 0u);
 
-  // A converging call (the default options) establishes the outcome.
-  al.SetOptions(AugmentedLagrangianMinimizerOptions());
+  // A converging call (the default budget) establishes the outcome.
+  options.base_options = Options();
+  options.max_outer_iterations = AugmentedLagrangianMinimizerOptions().max_outer_iterations;
+  al.SetOptions(options);
   const AugmentedLagrangianMinimizerSummary full = al.Minimize(stream.GetStream(), p.problem);
   EXPECT_TRUE(full.Converged()) << full.message;
   EXPECT_EQ(full.num_converged, 1u);
@@ -243,7 +243,9 @@ TEST(TerminationTest, AllConstantStatesCountEverySubproblem) {
   LevenbergMarquardtMinimizer minimizer(lm);
   const MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), p.problem);
   EXPECT_EQ(Count(summary, TerminationReason::NoFreeStates), 3u);
-  AugmentedLagrangianMinimizer al(minimizer);
+  AugmentedLagrangianMinimizerOptions al_options;
+  al_options.base_options = Options();
+  AugmentedLagrangianMinimizer al(al_options);
   const AugmentedLagrangianMinimizerSummary wrapped = al.Minimize(stream.GetStream(), p.problem);
   EXPECT_TRUE(wrapped.Converged()) << wrapped.message;
   EXPECT_EQ(wrapped.num_converged, 3u);

@@ -182,9 +182,9 @@ struct MinimizerOptions {
    * the summary has num_iterations = max_num_iterations, NaN costs and
    * TerminationReason::NotDetermined (as SubproblemTerminationReasons()). The
    * first call sets up the structure and synchronizes; with reuse_structure
-   * the following calls can be captured in a CUDA graph. Inside
-   * AugmentedLagrangianMinimizer use AugmentedLagrangianMinimizerOptions::
-   * real_time instead. Default: false
+   * the following calls can be captured in a CUDA graph. In
+   * AugmentedLagrangianMinimizerOptions::base_options it makes the whole
+   * augmented Lagrangian call real time. Default: false
    */
   bool real_time = false;
 

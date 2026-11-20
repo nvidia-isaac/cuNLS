@@ -52,15 +52,16 @@ namespace {
 
 constexpr float kInf = std::numeric_limits<float>::infinity();
 
-/** The inner minimizer of the augmented Lagrangian, run to convergence. */
-std::unique_ptr<LevenbergMarquardtMinimizer> MakeMinimizer(
-    JacobianMode jacobians = JacobianMode::kAnalytic) {
-  MinimizerOptions options = test_utils::ConvergedSolveOptions();
-  options.jacobian_mode = jacobians;
+/** Augmented Lagrangian options whose inner solves run to convergence. */
+AugmentedLagrangianMinimizerOptions Options(JacobianMode jacobians = JacobianMode::kAnalytic) {
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = test_utils::ConvergedSolveOptions();
+  lm.base_options.jacobian_mode = jacobians;
   // One-sided differences: a perturbation clamped at an upper bound would give
   // a zero derivative there (see NumericJacobiansMatchReference).
-  options.numeric_diff_options.method = NumericDiffOptions::Method::kForward;
-  return test_utils::MakeLevenbergMarquardt(options, 1e-12f);
+  lm.base_options.numeric_diff_options.method = NumericDiffOptions::Method::kForward;
+  lm.relative_reduction_tolerance = 1e-12f;
+  return test_utils::WithInnerSettings(lm);
 }
 
 /**
@@ -145,8 +146,7 @@ void SolveCoupledChains(int num_chains, JacobianMode jacobians, double tolerance
   // Bounds are enforced by the augmented Lagrangian (here without constraint
   // rows: every subproblem is feasible, one full inner solve with the default
   // line search).
-  auto minimizer = MakeMinimizer(jacobians);
-  AugmentedLagrangianMinimizer(*minimizer).Minimize(stream.GetStream(), problem);
+  AugmentedLagrangianMinimizer(Options(jacobians)).Minimize(stream.GetStream(), problem);
 
   std::vector<float> result(total);
   x.CopyToHost(result.data(), total);
@@ -210,7 +210,8 @@ TEST(ProjectedBounds, EarlyExitWritesProjectedStates) {
     lm_options.base_options = options;
     LevenbergMarquardtMinimizer lm(lm_options);
     EXPECT_THROW(lm.Minimize(stream.GetStream(), problem), std::invalid_argument);
-    AugmentedLagrangianMinimizer(lm).Minimize(stream.GetStream(), problem);
+    AugmentedLagrangianMinimizer(test_utils::WithInnerSettings(lm_options))
+        .Minimize(stream.GetStream(), problem);
     std::vector<float> result(4);
     x.CopyToHost(result.data(), 4);
     EXPECT_EQ(result, (std::vector<float>{1.f, -1.f, 0.5f, 1.f})) << chains << " subproblems";
@@ -235,15 +236,14 @@ TEST(ProjectedBounds, RealTimeBoundsOnlySolveIsGraphCapturable) {
   std::vector<float *> ptrs;
   for (int i = 0; i < 4; ++i) ptrs.push_back(states.StateDevicePtr(i));
   problem.AddFactorBatch(&prior, ptrs);
-  LevenbergMarquardtMinimizer lm;
   AugmentedLagrangianMinimizerOptions options;
-  options.real_time = true;
-  options.reuse_structure = true;
+  options.base_options.real_time = true;
+  options.base_options.reuse_structure = true;
+  options.base_options.max_num_iterations = 4;
+  options.base_options.max_line_search_steps = 0;
   options.max_outer_iterations = 1;
-  options.final_inner_iterations = 4;
-  options.inner_line_search_steps = 0;
   options.max_bound_refinements = 0;
-  AugmentedLagrangianMinimizer solver(lm, options);
+  AugmentedLagrangianMinimizer solver(options);
   CudaStream stream;
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kNotDetermined);

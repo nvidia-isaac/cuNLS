@@ -30,7 +30,7 @@ from numpy.typing import NDArray
 
 class CudaStream:
     """
-    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other alive. minimize() synchronizes the stream before returning, except on the real-time paths (MinimizerOptions.real_time, AugmentedLagrangianMinimizerOptions.real_time), which read nothing back: read their results on the same stream, or synchronize it first.
+    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other alive. minimize() synchronizes the stream before returning, except on the real-time paths (MinimizerOptions.real_time, also in AugmentedLagrangianMinimizerOptions), which read nothing back: read their results on the same stream, or synchronize it first.
     """
 
     @overload
@@ -188,7 +188,7 @@ class MinimizerOptions:
     @property
     def real_time(self) -> bool:
         """
-        Fixed budget without host synchronization: exactly max_num_iterations iterations, each with exactly max_line_search_steps line-search evaluations; the summary has NaN costs and TerminationReason.NotDetermined. The first call sets the structure up; with reuse_structure the following calls can be captured in a CUDA graph. Inside AugmentedLagrangianMinimizer use AugmentedLagrangianMinimizerOptions.real_time instead. Default: False.
+        Fixed budget without host synchronization: exactly max_num_iterations iterations, each with exactly max_line_search_steps line-search evaluations; the summary has NaN costs and TerminationReason.NotDetermined. The first call sets the structure up; with reuse_structure the following calls can be captured in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the whole augmented Lagrangian call real time. Default: False.
         """
 
     @real_time.setter
@@ -2358,7 +2358,7 @@ class ScaledLossFunctionBatch(LossFunctionBatch):
 
 class Minimizer:
     """
-    Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer. Not constructible; accepts either (e.g. AugmentedLagrangianMinimizer's inner minimizer).
+    Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer. Not constructible; accepts either.
     """
 
     def minimize(self, stream: CudaStream, problem: Problem) -> MinimizerSummary:
@@ -2391,9 +2391,9 @@ class LevenbergMarquardtMinimizer(Minimizer):
 
     def __init__(self, options: LevenbergMarquardtMinimizerOptions = ...) -> None: ...
 
-class AugmentedLagrangianMinimizerOptions:
+class AugmentedLagrangianMinimizerOptions(LevenbergMarquardtMinimizerOptions):
     """
-    Options of the augmented Lagrangian: the outer loop and the budget of the inner solves. The budget comes from these options alone, with or without constraint batches: each outer iteration runs inner_iterations inner iterations, the last one (and a subproblem's first after it is feasible) final_inner_iterations; each inner iteration does inner_line_search_steps line-search evaluations and max_bound_refinements bound refinements. The wrapped minimizer's max_num_iterations, max_line_search_steps and real_time are not used.
+    Options of AugmentedLagrangianMinimizer: those of its private inner Levenberg-Marquardt solver (the LevenbergMarquardtMinimizerOptions fields: damping, base_options with the linear solver and tolerances) and of the outer loop. Four base_options fields set the budget of a call, with or without constraint batches: max_num_iterations caps a subproblem's full inner solve (its first after it is feasible, and every subproblem's in the last outer iteration; without constraint batches every subproblem is feasible from the start, so this caps a bounds-only solve; default 50); max_line_search_steps is the line search of the inner solves (default 10 here); real_time runs a fixed budget without host synchronization (exactly max_outer_iterations outer iterations of inner_iterations inner iterations, the last max_num_iterations; costs in the summary are NaN; without constraint batches nothing is read back, status NotDetermined, so the call can be captured in a CUDA graph once the structure is set up); reuse_structure skips the structure setup of a call whose problem structure is unchanged.
     """
 
     def __init__(self) -> None: ...
@@ -2420,22 +2420,6 @@ class AugmentedLagrangianMinimizerOptions:
 
     @inner_iterations.setter
     def inner_iterations(self, arg: int, /) -> None: ...
-
-    @property
-    def final_inner_iterations(self) -> int:
-        """
-        Iteration cap of a subproblem's full inner solve: its first after it is feasible, and every subproblem's in the last outer iteration. Without constraint batches every subproblem is feasible from the start, so this is the iteration cap of a bounds-only solve. Must be > 0. Default: 50.
-        """
-
-    @final_inner_iterations.setter
-    def final_inner_iterations(self, arg: int, /) -> None: ...
-
-    @property
-    def inner_line_search_steps(self) -> int:
-        """Line-search steps of the inner solves. Default: 10."""
-
-    @inner_line_search_steps.setter
-    def inner_line_search_steps(self, arg: int, /) -> None: ...
 
     @property
     def initial_penalty(self) -> float:
@@ -2477,31 +2461,13 @@ class AugmentedLagrangianMinimizerOptions:
     def warm_start(self, arg: bool, /) -> None: ...
 
     @property
-    def reuse_structure(self) -> bool:
-        """
-        The problem's structure is unchanged since the previous call (same batches, connectivity, active/constant counts, partition): skip the structure setup. Default: False.
-        """
-
-    @reuse_structure.setter
-    def reuse_structure(self, arg: bool, /) -> None: ...
-
-    @property
     def max_bound_refinements(self) -> int:
         """
-        Box-bounded states: at most this many extra solves per inner iteration holding the free components the step would push through their bound (exactly this many with real_time). Default: 3.
+        Box-bounded states: at most this many extra solves per inner iteration holding the free components the step would push through their bound (exactly this many with base_options.real_time). Default: 3.
         """
 
     @max_bound_refinements.setter
     def max_bound_refinements(self, arg: int, /) -> None: ...
-
-    @property
-    def real_time(self) -> bool:
-        """
-        Fixed budget without host synchronization (one read-back at the end): exactly max_outer_iterations outer iterations of inner_iterations inner iterations (the last final_inner_iterations). Costs in the summary are NaN. Without constraint batches nothing is read back (status NotDetermined), so the call can be captured in a CUDA graph once the structure is set up. Default: False.
-        """
-
-    @real_time.setter
-    def real_time(self, arg: bool, /) -> None: ...
 
 class AugmentedLagrangianMinimizerStatus(enum.Enum):
     """
@@ -2603,10 +2569,10 @@ class AugmentedLagrangianMinimizerSummary:
 
 class AugmentedLagrangianMinimizer:
     """
-    Augmented Lagrangian solver for problems with constraint factor batches (ConstraintFactorBatch, BoundFactorBatchN) or box-bounded states (VectorStateBatch.set_bounds), around a LevenbergMarquardtMinimizer (minimizer: its damping, linear solver and tolerances apply; the budget comes from options, an AugmentedLagrangianMinimizerOptions). Raises ValueError when the minimizer's options have real_time set (set options.real_time instead).
+    Augmented Lagrangian solver for problems with constraint factor batches (ConstraintFactorBatch, BoundFactorBatchN) or box-bounded states (VectorStateBatch.set_bounds), with a private inner Levenberg-Marquardt solver built from options (an AugmentedLagrangianMinimizerOptions).
     """
 
-    def __init__(self, minimizer: LevenbergMarquardtMinimizer, options: AugmentedLagrangianMinimizerOptions = ...) -> None: ...
+    def __init__(self, options: AugmentedLagrangianMinimizerOptions = ...) -> None: ...
 
     def minimize(self, stream: CudaStream, problem: Problem) -> AugmentedLagrangianMinimizerSummary:
         """
@@ -2616,11 +2582,16 @@ class AugmentedLagrangianMinimizer:
     @property
     def options(self) -> AugmentedLagrangianMinimizerOptions:
         """
-        Options of the following calls (a copy; assign a modified one). Assigning keeps the warm-start state.
+        Options of the following calls (a copy; assign a modified one). Assigning changes the outer loop and the budget (base_options.max_num_iterations, max_line_search_steps, real_time, reuse_structure) and keeps the warm-start state; the inner solver keeps the damping, linear solver and tolerances it was built with (create a new minimizer to change those).
         """
 
     @options.setter
     def options(self, arg: AugmentedLagrangianMinimizerOptions, /) -> None: ...
+
+    def subproblem_termination_reasons(self) -> Annotated[NDArray[numpy.int32], dict(shape=(None,))]:
+        """
+        The TerminationReason value of every subproblem's last inner solve in the last minimize() call (Problem.set_problem_partition), as a numpy int array.
+        """
 
 class Problem:
     """

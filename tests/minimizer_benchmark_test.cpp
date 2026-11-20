@@ -63,6 +63,7 @@
 #include "cunls/state/se2_state_batch.h"
 #include "cunls/state/se3_state_batch.h"
 #include "cunls/state/vector_state_batch.h"
+#include "tests/utils.h"
 
 namespace cunls {
 namespace {
@@ -380,8 +381,8 @@ void BoundedChains(const std::string &name, int chains, int n, SparseLinearSolve
   if (chains > 1) problem.SetProblemPartition(chains, {d_ids.data()});
 
   CudaStream stream;
-  auto run = [&](LevenbergMarquardtMinimizer &inner, const char *label) {
-    AugmentedLagrangianMinimizer solver_al(inner);
+  auto run = [&](const LevenbergMarquardtMinimizerOptions &lm, const char *label) {
+    AugmentedLagrangianMinimizer solver_al(test_utils::WithInnerSettings(lm));
     auto reset = [&] {
       THROW_ON_CUDA_ERROR(
           cudaMemcpy(x.data(), init.data(), total * sizeof(float), cudaMemcpyDeviceToDevice));
@@ -408,8 +409,7 @@ void BoundedChains(const std::string &name, int chains, int n, SparseLinearSolve
     LevenbergMarquardtMinimizerOptions lm;
     lm.base_options = o;
     lm.relative_reduction_tolerance = 1e-10f;
-    LevenbergMarquardtMinimizer minimizer(lm);
-    run(minimizer, "LM");
+    run(lm, "LM");
   }
 }
 
@@ -483,9 +483,9 @@ void ConstrainedChains(const std::string &name, int chains, int n, double infeas
   if (chains > 1) problem.SetProblemPartition(chains, {d_ids.data()});
 
   CudaStream stream;
-  AugmentedLagrangianMinimizerOptions al;  // defaults (max_penalty 1e8)
-  auto run = [&](LevenbergMarquardtMinimizer &inner, const char *label) {
-    AugmentedLagrangianMinimizer solver(inner, al);
+  // The augmented Lagrangian defaults (max_penalty 1e8).
+  auto run = [&](const LevenbergMarquardtMinimizerOptions &lm, const char *label) {
+    AugmentedLagrangianMinimizer solver(test_utils::WithInnerSettings(lm));
     size_t outer = 0;
     Print(name, label,
           Time(
@@ -509,8 +509,7 @@ void ConstrainedChains(const std::string &name, int chains, int n, double infeas
     LevenbergMarquardtMinimizerOptions lm;
     lm.base_options = o;
     lm.relative_reduction_tolerance = 1e-10f;
-    LevenbergMarquardtMinimizer minimizer(lm);
-    run(minimizer, "LM");
+    run(lm, "LM");
   }
 }
 
@@ -587,7 +586,6 @@ TEST(MinimizerBenchmark, DISABLED_RealTimeMpc) {
   mo.state_tolerance = 1e-5f;
   LevenbergMarquardtMinimizerOptions lm;
   lm.base_options = mo;
-  LevenbergMarquardtMinimizer inner(lm);
   CudaStream stream;
   auto reset = [&] {
     THROW_ON_CUDA_ERROR(cudaMemcpy(poses.data(), init_poses.data(), p.size() * sizeof(float),
@@ -602,23 +600,23 @@ TEST(MinimizerBenchmark, DISABLED_RealTimeMpc) {
     return out;
   };
   {
-    AugmentedLagrangianMinimizerOptions options;
+    AugmentedLagrangianMinimizerOptions options = test_utils::WithInnerSettings(lm);
     options.max_penalty = 1e4f;
-    AugmentedLagrangianMinimizer solver(inner, options);
+    AugmentedLagrangianMinimizer solver(options);
     Print("al_mpc_16x20_converged", "LM",
           Time(20, reset, [&] { return summary(solver.Minimize(stream.GetStream(), problem)); }));
   }
   {
-    AugmentedLagrangianMinimizerOptions options;
+    AugmentedLagrangianMinimizerOptions options = test_utils::WithInnerSettings(lm);
     options.warm_start = true;
-    options.reuse_structure = true;
-    options.real_time = true;
+    options.base_options.reuse_structure = true;
+    options.base_options.real_time = true;
+    options.base_options.max_num_iterations = 2;
+    options.base_options.max_line_search_steps = 2;
     options.max_outer_iterations = 2;
     options.inner_iterations = 2;
-    options.final_inner_iterations = 2;
-    options.inner_line_search_steps = 2;
     options.max_penalty = 1e3f;
-    AugmentedLagrangianMinimizer solver(inner, options);
+    AugmentedLagrangianMinimizer solver(options);
     Print("al_mpc_16x20_real_time", "LM",
           Time(
               200, [] {}, [&] { return summary(solver.Minimize(stream.GetStream(), problem)); }));

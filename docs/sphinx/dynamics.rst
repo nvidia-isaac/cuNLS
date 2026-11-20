@@ -112,5 +112,5 @@ Example: a Carter drives to a goal
    problem.add_factor_batch(hard, ptrs)
    # problem.add_factor_batch(goal / effort / limits ...)
    wp.synchronize_stream(wp.get_stream())   # the uploads (Warp's stream) before the solve
-   pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer()).minimize(
+   pycunls.AugmentedLagrangianMinimizer().minimize(
        pycunls.CudaStream(), problem)

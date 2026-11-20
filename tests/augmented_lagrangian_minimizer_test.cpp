@@ -53,11 +53,21 @@
 namespace cunls {
 namespace {
 
-/** The inner minimizer: Levenberg-Marquardt, run to convergence. */
+/** A Levenberg-Marquardt minimizer run to convergence (for plain solves). */
 std::unique_ptr<LevenbergMarquardtMinimizer> MakeMinimizer(size_t max_num_iterations = 50) {
   MinimizerOptions options = test_utils::ConvergedSolveOptions();
   options.max_num_iterations = max_num_iterations;
   return test_utils::MakeLevenbergMarquardt(options, 1e-12f);
+}
+
+/** Augmented Lagrangian options whose inner solves run to convergence. */
+AugmentedLagrangianMinimizerOptions Options() {
+  AugmentedLagrangianMinimizerOptions options;
+  const size_t line_search = options.base_options.max_line_search_steps;
+  options.base_options = test_utils::ConvergedSolveOptions();
+  options.base_options.max_line_search_steps = line_search;
+  options.relative_reduction_tolerance = 1e-12f;
+  return options;
 }
 
 /**
@@ -127,8 +137,7 @@ TEST(AugmentedLagrangianMinimizerTest, BoxProjection) {
   const MixedBox box;
   BoxProblem<3> b(box.target, box.lower, box.upper);
   CudaStream stream;
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizer solver(*inner);
+  AugmentedLagrangianMinimizer solver(Options());
   const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
@@ -163,8 +172,7 @@ TEST(AugmentedLagrangianMinimizerTest, HalfspaceProjection) {
     problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
     problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0)});
 
-    auto inner = MakeMinimizer();
-    AugmentedLagrangianMinimizer solver(*inner);
+    AugmentedLagrangianMinimizer solver(Options());
     const auto summary = solver.Minimize(stream.GetStream(), problem);
     EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
     const float excess = std::max(0.f, a[0] * target[0] + a[1] * target[1] - b) / 5.f;
@@ -200,8 +208,7 @@ TEST(AugmentedLagrangianMinimizerTest, RuntimeSizedVectorProjections) {
   problem.AddFactorBatch(&constraint, {states.StateDevicePtr(1)});
 
   CudaStream stream;
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizer solver(*inner);
+  AugmentedLagrangianMinimizer solver(Options());
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   float sum = 0.f;
@@ -253,8 +260,7 @@ TEST(AugmentedLagrangianMinimizerTest, AffineEqualityMatchesKkt) {
   problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0), states.StateDevicePtr(0)});
 
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizer solver(*inner);
+  AugmentedLagrangianMinimizer solver(Options());
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
@@ -285,8 +291,7 @@ TEST(AugmentedLagrangianMinimizerTest, BatchedBoxProjections) {
   BoxProblem<3> b(target, lower, upper, /*partitioned=*/true);
   CudaStream stream;
 
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizer solver(*inner);
+  AugmentedLagrangianMinimizer solver(Options());
   const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_EQ(summary.num_problems, static_cast<size_t>(kBatch));
@@ -319,10 +324,9 @@ TEST(AugmentedLagrangianMinimizerTest, BatchFinishesBesideAnInfeasibleSubproblem
   BoxProblem<1> b(target, lower, upper, /*partitioned=*/true);
   CudaStream stream;
 
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizerOptions options;
+  AugmentedLagrangianMinimizerOptions options = Options();
   options.max_penalty = 1e4f;
-  AugmentedLagrangianMinimizer solver(*inner, options);
+  AugmentedLagrangianMinimizer solver(options);
   const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxPenalty);
   EXPECT_EQ(summary.num_converged, static_cast<size_t>(kBatch - 1));
@@ -385,8 +389,7 @@ TEST(AugmentedLagrangianMinimizerTest, Se2GoalEquality) {
     } else {
       problem.AddFactorBatch(&soft_goal, {states.StateDevicePtr(kPoses - 1)});
     }
-    auto inner = MakeMinimizer();
-    AugmentedLagrangianMinimizer solver(*inner);
+    AugmentedLagrangianMinimizer solver(Options());
     const auto summary = solver.Minimize(stream.GetStream(), problem);
     const auto all = test_utils::ToHost(poses);
     last_pose->assign(all.end() - 9, all.end());
@@ -418,8 +421,7 @@ TEST(AugmentedLagrangianMinimizerTest, NoConstraintsIsOneFullSolve) {
   Problem problem;
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizer solver(*inner);
+  AugmentedLagrangianMinimizer solver(Options());
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_EQ(summary.outer_iterations, 1u);
@@ -429,7 +431,7 @@ TEST(AugmentedLagrangianMinimizerTest, NoConstraintsIsOneFullSolve) {
 }
 
 // A capped solve names the cap that stopped it: max_num_iterations for a plain
-// Minimize(), the AugmentedLagrangianMinimizer's budget (final_inner_iterations)
+// Minimize(), the AugmentedLagrangianMinimizer's budget (base_options.max_num_iterations)
 // when it runs the solve, where raising max_num_iterations would not help.
 TEST(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatApplied) {
   CudaStream stream;
@@ -450,15 +452,15 @@ TEST(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatApplied
       << plain.message;
 
   x.CopyFromHost(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1}.data(), 9);
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizerOptions al;
+  AugmentedLagrangianMinimizerOptions al = Options();
   al.max_outer_iterations = 1;
-  al.final_inner_iterations = 1;
-  AugmentedLagrangianMinimizer solver(*inner, al);
+  al.base_options.max_num_iterations = 1;
+  AugmentedLagrangianMinimizer solver(al);
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxOuterIterations);
   EXPECT_EQ(summary.inner_iterations, 1u);
-  EXPECT_NE(summary.message.find("final_inner_iterations"), std::string::npos) << summary.message;
+  EXPECT_NE(summary.message.find("base_options.max_num_iterations"), std::string::npos)
+      << summary.message;
   EXPECT_EQ(summary.message.find("raise max_num_iterations"), std::string::npos) << summary.message;
 }
 
@@ -481,8 +483,7 @@ TEST(AugmentedLagrangianMinimizerTest, FailedInnerSolveIsNotConvergence) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0)});
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizer solver(*inner);
+  AugmentedLagrangianMinimizer solver(Options());
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kInnerSolveFailed)
       << summary.message;
@@ -496,10 +497,9 @@ TEST(AugmentedLagrangianMinimizerTest, FailedInnerSolveIsNotConvergence) {
 TEST(AugmentedLagrangianMinimizerTest, InfeasibleStopsAtMaxPenalty) {
   BoxProblem<1> b({0.f}, {1.f}, {-1.f});
   CudaStream stream;
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizerOptions options;
+  AugmentedLagrangianMinimizerOptions options = Options();
   options.max_penalty = 1e4f;
-  AugmentedLagrangianMinimizer solver(*inner, options);
+  AugmentedLagrangianMinimizer solver(options);
   const auto summary = solver.Minimize(stream.GetStream(), b.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kMaxPenalty);
   EXPECT_EQ(summary.num_max_penalty, 1u);
@@ -513,10 +513,9 @@ TEST(AugmentedLagrangianMinimizerTest, InfeasibleStopsAtMaxPenalty) {
 TEST(AugmentedLagrangianMinimizerTest, WarmStartReusesMultipliers) {
   BoxProblem<3> b({2.f, -3.f, 0.5f}, std::vector<float>(3, -1.f), std::vector<float>(3, 1.f));
   CudaStream stream;
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizerOptions options;
+  AugmentedLagrangianMinimizerOptions options = Options();
   options.warm_start = true;
-  AugmentedLagrangianMinimizer solver(*inner, options);
+  AugmentedLagrangianMinimizer solver(options);
   const auto cold = solver.Minimize(stream.GetStream(), b.problem);
   ASSERT_EQ(cold.status, AugmentedLagrangianMinimizerStatus::kConverged);
   const std::vector<float> perturbed = {0.9f, -0.8f, 0.3f};
@@ -537,15 +536,14 @@ TEST(AugmentedLagrangianMinimizerTest, RealTimeBudget) {
   const MixedBox box;
   BoxProblem<3> b(box.target, box.lower, box.upper);
   CudaStream stream;
-  auto inner = MakeMinimizer();
-  AugmentedLagrangianMinimizerOptions options;
-  options.real_time = true;
+  AugmentedLagrangianMinimizerOptions options = Options();
+  options.base_options.real_time = true;
   options.max_outer_iterations = 12;
   options.inner_iterations = 3;
-  options.final_inner_iterations = 3;
+  options.base_options.max_num_iterations = 3;
   options.warm_start = true;
-  options.reuse_structure = true;
-  AugmentedLagrangianMinimizer solver(*inner, options);
+  options.base_options.reuse_structure = true;
+  AugmentedLagrangianMinimizer solver(options);
   for (int call = 0; call < 2; ++call) {
     const auto summary = solver.Minimize(stream.GetStream(), b.problem);
     EXPECT_EQ(summary.outer_iterations, 12u);
@@ -585,8 +583,7 @@ TEST(AugmentedLagrangianMinimizerTest, RobustObjective) {
       problem.AddFactorBatch(&prior, ptrs);
     }
     problem.AddFactorBatch(&bound, {states.StateDevicePtr(0)});
-    auto inner = MakeMinimizer();
-    AugmentedLagrangianMinimizer solver(*inner);
+    AugmentedLagrangianMinimizer solver(Options());
     const auto summary = solver.Minimize(stream.GetStream(), problem);
     EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged) << robust;
     EXPECT_NEAR(test_utils::ToHost(x)[0], robust ? 0.5f : 2.01f, 2e-3f) << "robust " << robust;
@@ -614,8 +611,7 @@ TEST(AugmentedLagrangianMinimizerTest, RejectsMisusedConstraints) {
     problem.AddStateBatch(&states);
     problem.AddFactorBatch(&prior, ptr);
     problem.AddFactorBatch(&bound, &huber, ptr);
-    auto inner = MakeMinimizer();
-    AugmentedLagrangianMinimizer solver(*inner);
+    AugmentedLagrangianMinimizer solver(Options());
     EXPECT_THROW(solver.Minimize(stream.GetStream(), problem), std::invalid_argument);
   }
   {
@@ -629,22 +625,17 @@ TEST(AugmentedLagrangianMinimizerTest, RejectsMisusedConstraints) {
 }
 
 TEST(AugmentedLagrangianMinimizerOptions, RejectsInvalidOptions) {
-  auto inner = MakeMinimizer();
   AugmentedLagrangianMinimizerOptions options;
   options.max_outer_iterations = 0;
-  EXPECT_THROW(AugmentedLagrangianMinimizer(*inner, options), std::invalid_argument);
+  EXPECT_THROW(AugmentedLagrangianMinimizer{options}, std::invalid_argument);
   options = AugmentedLagrangianMinimizerOptions();
   options.inner_iterations = 0;
-  EXPECT_THROW(AugmentedLagrangianMinimizer(*inner, options), std::invalid_argument);
+  EXPECT_THROW(AugmentedLagrangianMinimizer{options}, std::invalid_argument);
   options = AugmentedLagrangianMinimizerOptions();
-  options.final_inner_iterations = 0;
-  EXPECT_THROW(AugmentedLagrangianMinimizer(*inner, options), std::invalid_argument);
-  // Real time is the augmented Lagrangian's option, not the wrapped minimizer's.
-  MinimizerOptions real_time = test_utils::ConvergedSolveOptions();
-  real_time.real_time = true;
-  EXPECT_THROW(AugmentedLagrangianMinimizer(*test_utils::MakeLevenbergMarquardt(real_time)),
-               std::invalid_argument);
-  AugmentedLagrangianMinimizer solver(*inner);
+  options.base_options.max_num_iterations = 0;
+  EXPECT_THROW(AugmentedLagrangianMinimizer{options}, std::invalid_argument);
+  EXPECT_EQ(AugmentedLagrangianMinimizerOptions().base_options.max_line_search_steps, 10u);
+  AugmentedLagrangianMinimizer solver;
   options = AugmentedLagrangianMinimizerOptions();
   options.max_outer_iterations = 0;
   EXPECT_THROW(solver.SetOptions(options), std::invalid_argument);

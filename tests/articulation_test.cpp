@@ -773,10 +773,9 @@ TEST(ArticulationSolve, BoundedIKReachesTargetsWithinLimits) {
   dvector<int> d_ids(ids);
   problem.SetProblemPartition(n, {d_ids.data()});
 
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options.max_num_iterations = 100;
-  LevenbergMarquardtMinimizer inner(lm);
-  AugmentedLagrangianMinimizer solver(inner);
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options.max_num_iterations = 100;
+  AugmentedLagrangianMinimizer solver(options);
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_NE(summary.status, AugmentedLagrangianMinimizerStatus::kInnerSolveFailed);
 
@@ -841,10 +840,9 @@ TEST(ArticulationSolve, ZeroWidthBoundsFreezeADof) {
   for (int s = 0; s < n; ++s) ids[s] = s;
   dvector<int> d_ids(ids);
   problem.SetProblemPartition(n, {d_ids.data()});
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options.max_num_iterations = 100;
-  LevenbergMarquardtMinimizer inner(lm);
-  AugmentedLagrangianMinimizer solver(inner);
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options.max_num_iterations = 100;
+  AugmentedLagrangianMinimizer solver(options);
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_NE(summary.status, AugmentedLagrangianMinimizerStatus::kInnerSolveFailed);
 
@@ -892,8 +890,7 @@ TEST(ArticulationSolve, MimicJointHolds) {
   for (int s = 0; s < n; ++s) ptrs[s] = states.StateDevicePtr(s);
   problem.AddFactorBatch(&posture, ptrs);
   problem.AddFactorBatch(&coupled, ptrs);
-  LevenbergMarquardtMinimizer inner;
-  AugmentedLagrangianMinimizer solver(inner);
+  AugmentedLagrangianMinimizer solver;
   CudaStream stream;
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged) << summary.message;
@@ -1013,21 +1010,17 @@ TEST(ArticulationBenchmark, DISABLED_IkThroughput) {
         if (solver_type == SparseLinearSolverType::BlockTridiagonal) {
           problem.SetStateStages({stages.data()});
         }
-        LevenbergMarquardtMinimizerOptions lm;
-        lm.base_options.max_num_iterations = 16;
-        lm.base_options.sparse_linear_solver_type = solver_type;
-        LevenbergMarquardtMinimizer inner(lm);
         AugmentedLagrangianMinimizerOptions al;
-        al.real_time = true;
-        al.max_outer_iterations = 1;
-        al.inner_iterations = 16;
-        al.final_inner_iterations = 16;
-        al.inner_line_search_steps =
+        al.base_options.sparse_linear_solver_type = solver_type;
+        al.base_options.real_time = true;
+        al.base_options.reuse_structure = true;
+        al.base_options.max_num_iterations = 16;
+        al.base_options.max_line_search_steps =
             std::getenv("IK_BENCH_LS") ? std::atoi(std::getenv("IK_BENCH_LS")) : 0;
+        al.max_outer_iterations = 1;
         al.max_bound_refinements =
             std::getenv("IK_BENCH_REFINE") ? std::atoi(std::getenv("IK_BENCH_REFINE")) : 0;
-        al.reuse_structure = true;
-        AugmentedLagrangianMinimizer solver(inner, al);
+        AugmentedLagrangianMinimizer solver(al);
         CudaStream stream;
         std::vector<double> ms;
         for (int rep = 0; rep < 11; ++rep) {
@@ -1688,12 +1681,10 @@ std::pair<AugmentedLagrangianMinimizerSummary, std::vector<float>> SolveFourBar(
   for (int s = 0; s < n; ++s) ids[s] = s;
   dvector<int> d_ids(ids);
   problem.SetProblemPartition(n, {d_ids.data()});
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options.max_num_iterations = 100;
-  LevenbergMarquardtMinimizer inner(lm);
   AugmentedLagrangianMinimizerOptions al;
+  al.base_options.max_num_iterations = 100;
   al.constraint_tolerance = 1e-5f;
-  AugmentedLagrangianMinimizer solver(inner, al);
+  AugmentedLagrangianMinimizer solver(al);
   const auto summary = solver.Minimize(stream.GetStream(), problem);
   dvector<float> q(size_t(n) * C);
   states.GetJointQ(q.data(), n, stream.GetStream());

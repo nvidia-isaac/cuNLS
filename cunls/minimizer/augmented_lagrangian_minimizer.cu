@@ -327,7 +327,7 @@ std::string Describe(const AugmentedLagrangianMinimizerSummary &summary,
   std::ostringstream out;
   out.precision(4);
   const size_t not_converged = summary.num_problems - summary.num_converged;
-  if (options.real_time) {
+  if (options.base_options.real_time) {
     out << "Real-time solve: " << summary.outer_iterations << " outer iterations, max violation "
         << summary.max_violation << " (tolerance " << options.constraint_tolerance << ").";
     return out.str();
@@ -346,8 +346,9 @@ std::string Describe(const AugmentedLagrangianMinimizerSummary &summary,
           << options.constraint_tolerance << "); " << not_converged << " of "
           << summary.num_problems
           << " subproblems still running. Fix: raise max_outer_iterations, or "
-             "final_inner_iterations when the inner solves stop at their iteration cap; with "
-             "constraints also initial_penalty, and check that they can be met together.";
+             "base_options.max_num_iterations when the inner solves stop at their iteration "
+             "cap; with constraints also initial_penalty, and check that they can be met "
+             "together.";
       break;
     case AugmentedLagrangianMinimizerStatus::kMaxPenalty:
       out << "Not converged: " << summary.num_max_penalty << " of " << summary.num_problems
@@ -391,27 +392,21 @@ void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) 
 }  // namespace
 
 AugmentedLagrangianMinimizer::AugmentedLagrangianMinimizer(
-    LevenbergMarquardtMinimizer &minimizer, const AugmentedLagrangianMinimizerOptions &options)
-    : minimizer_(minimizer) {
-  if (minimizer.Options().real_time) {
-    const std::string msg =
-        "AugmentedLagrangianMinimizer: the wrapped minimizer has real_time set (got true, "
-        "expected false). Fix: set AugmentedLagrangianMinimizerOptions::real_time instead.";
-    LogError(msg);
-    throw std::invalid_argument(msg);
-  }
+    const AugmentedLagrangianMinimizerOptions &options)
+    : minimizer_(options) {
   SetOptions(options);
 }
 
 void AugmentedLagrangianMinimizer::SetOptions(const AugmentedLagrangianMinimizerOptions &options) {
   if (!(options.initial_penalty > 0.f) || !(options.max_penalty >= options.initial_penalty) ||
       !(options.penalty_increase >= 1.f) || !(options.constraint_tolerance >= 0.f) ||
-      options.inner_iterations == 0 || options.final_inner_iterations == 0 ||
+      options.inner_iterations == 0 || options.base_options.max_num_iterations == 0 ||
       options.max_outer_iterations == 0) {
     const std::string msg =
         "AugmentedLagrangianMinimizerOptions: need initial_penalty > 0, max_penalty >= "
         "initial_penalty, penalty_increase >= 1, constraint_tolerance >= 0, "
-        "inner_iterations > 0, final_inner_iterations > 0 and max_outer_iterations > 0";
+        "inner_iterations > 0, base_options.max_num_iterations > 0 and "
+        "max_outer_iterations > 0";
     LogError(msg);
     throw std::invalid_argument(msg);
   }
@@ -463,7 +458,7 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
       bound_step_mask_.data(), bound_mask_.data(), bound_extra_.data(), bound_count_.data(),
       rhs.size());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
-  if (!options_.real_time) {
+  if (!options_.base_options.real_time) {
     int count = 0;
     THROW_ON_CUDA_ERROR(
         cudaMemcpyAsync(&count, bound_count_.data(), sizeof(int), cudaMemcpyDeviceToHost, stream));
@@ -516,7 +511,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   const bool warm = options_.warm_start && same_constraints;
   // Structure reuse across calls (the caller vouches for an unchanged
   // structure; the inner minimizer checks the sizes again).
-  const bool reuse = options_.reuse_structure && same_constraints;
+  const bool reuse = options_.base_options.reuse_structure && same_constraints;
 
   // Box-bounded states: the reduced-system column of every state (unless the
   // structure is reused), then the initial values of the free states clamped
@@ -528,7 +523,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     if (HasBoxBounds(state_batches[b])) bounded_.push_back(b);
   }
   if (!bounded_.empty()) {
-    if (!(options_.reuse_structure && problem_ == &problem) ||
+    if (!(options_.base_options.reuse_structure && problem_ == &problem) ||
         column_offsets_.size() != state_batches.size()) {
       problem.CheckSizes();
       column_offsets_.resize(state_batches.size());
@@ -558,7 +553,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   signature_ = signature;
   problem_ = &problem;
 
-  const size_t final_cap = options_.final_inner_iterations;
+  const size_t final_cap = options_.base_options.max_num_iterations;
   num_problems_ = problem.NumProblems();
   size_t total_rows = 0;
   if (reuse) {
@@ -593,7 +588,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   const bool keep_state = warm && penalty_.size() == num_slots;
   if (keep_state && num_slots > 0) {
     decay_penalty_kernel<<<Blocks(num_slots), kThreads, 0, stream>>>(
-        penalty_.data(), num_slots, options_.real_time ? 1.f : options_.penalty_increase,
+        penalty_.data(), num_slots, options_.base_options.real_time ? 1.f : options_.penalty_increase,
         options_.initial_penalty, options_.max_penalty);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   } else {
@@ -601,7 +596,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     Fill(stream, penalty_, options_.initial_penalty);
     for (ConstraintBatchState &con : constraints_) con.batch->ResetMultipliers(stream);
   }
-  if (!(keep_state && options_.real_time) || prev_violation_.size() != num_slots) {
+  if (!(keep_state && options_.base_options.real_time) || prev_violation_.size() != num_slots) {
     prev_violation_.resize(num_slots);
     Fill(stream, prev_violation_, INFINITY);
   }
@@ -612,7 +607,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   // (its first inner solve is its full solve). A real-time call then has
   // nothing to track (nothing is read back): only its inner solves run.
   const bool feasible = constraints_.empty();
-  const bool track = !(feasible && options_.real_time);
+  const bool track = !(feasible && options_.base_options.real_time);
   static_assert(kPolishing == -1, "the memset below writes -1 (bytes 0xff)");
   if (track) {
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(problem_status_.data(), feasible ? 0xff : 0,
@@ -621,7 +616,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   if (d_out_.size() < kNumOut) d_out_.resize(kNumOut);
   ScatterPenalties(stream, constraints_, penalty_, num_problems_);
 
-  const bool real_time = options_.real_time;
+  const bool real_time = options_.base_options.real_time;
   // Without constraint batches the objective is the inner solves' cost: their
   // summaries report it, and it is not evaluated separately.
   const bool evaluate_objective = !real_time && !feasible;
@@ -659,7 +654,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       THROW_ON_CUDA_ERROR(cudaGetLastError());
       inner_solve.problem_iteration_cap = iteration_cap_.data();
     }
-    inner_solve.max_line_search_steps = options_.inner_line_search_steps;
+    inner_solve.max_line_search_steps = options_.base_options.max_line_search_steps;
     inner_solve.fixed_iterations = real_time;
     inner_solve.problem_at_cap = track ? at_cap_.data() : nullptr;
     // Finished subproblems (done or stalled) keep their states: re-solving one

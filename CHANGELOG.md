@@ -38,10 +38,9 @@ From 0.4.3 the shared library's SONAME carries the full version (`libcunls.so.0.
 loader rejects a program built against another release instead of running it with the wrong
 headers. The Python wheels link cuNLS statically and are not affected.
 
-- `AugmentedLagrangianMinimizer(LevenbergMarquardtMinimizer &, options)`: Gauss-Newton is no longer
-  accepted as the inner minimizer, and the options alone set the inner solves' budget (see the
-  Python section: `final_inner_iterations` defaults to 50, the wrapped minimizer's
-  `max_num_iterations`, `max_line_search_steps` and `real_time` are not used).
+- `AugmentedLagrangianMinimizer(options)` owns its Levenberg-Marquardt inner solver (Gauss-Newton
+  is no longer an inner minimizer), built from `AugmentedLagrangianMinimizerOptions`, which now
+  extends `LevenbergMarquardtMinimizerOptions` (see the Python section).
 - `Minimizer::Minimize`, `AugmentedLagrangianMinimizer::Minimize` and `RansacMinimizer::Minimize`
   throw `std::invalid_argument` when the current device or the stream's device is not the device
   of the problem's states (`Problem::Device`), or when a minimizer is reused on another device.
@@ -80,15 +79,21 @@ Removed from the installed headers, with replacements:
 
 - `pycunls.warp.WarpPoseFactorBatch` is removed: `WarpFunctionFactorBatch` with a
   `(X: wp.transform, data)` residual does the same.
-- `AugmentedLagrangianMinimizer` takes a `LevenbergMarquardtMinimizer` only (C++ too), and its
-  options alone set the budget of its inner solves, with or without constraint batches:
-  `final_inner_iterations` defaults to 50 and must be positive (0 no longer means "the inner
-  minimizer's `max_num_iterations`", or `inner_iterations` in real time: real-time callers set it
-  to their per-call budget), and the wrapped minimizer's `max_num_iterations`,
-  `max_line_search_steps` and `real_time` are not used (`real_time` set there raises). A
-  bounds-only problem runs the general loop: one outer iteration when its full inner solve
-  converges, and a real-time call reads nothing back. `fit(..., bounds=..., method="gn")` and
-  `ProblemBuilder.solve(method="gn")` with bounds or constraint factors raise `ValueError`.
+- `AugmentedLagrangianMinimizer(options)` takes no minimizer: it owns a private
+  Levenberg-Marquardt inner solver (Gauss-Newton is no longer an inner minimizer), built from
+  `AugmentedLagrangianMinimizerOptions`, which now extends `LevenbergMarquardtMinimizerOptions`
+  (damping fields and `base_options`) with the outer-loop fields. The options set the budget of a
+  call, with or without constraint batches, through `base_options`: `max_num_iterations` caps a
+  subproblem's full inner solve (was `final_inner_iterations`; 50; in real time it is the last
+  outer iteration's budget: real-time callers set it, it no longer falls back to
+  `inner_iterations`), `max_line_search_steps` is the inner line search (was
+  `inner_line_search_steps`; 10 by default here), and `real_time` / `reuse_structure` replace the
+  fields of the same names. Assigning `solver.options` changes the outer loop and the budget; the
+  inner solver keeps the damping, linear solver and tolerances it was built with. A bounds-only
+  problem runs the general loop: one outer iteration when its full inner solve converges, and a
+  real-time call reads nothing back. `Horizon.build` (MPC) takes `options` only (no
+  `minimizer=`). `fit(..., bounds=..., method="gn")` and `ProblemBuilder.solve(method="gn")` with
+  bounds or constraint factors raise `ValueError`.
 - A bool where a device array or pointer is expected raises `TypeError`: e.g.
   `ArticulationStateBatch(topology, capacity, False)`, whose third argument is now
   `const_state_ids`; pass `apply_joint_limits=False` by keyword.

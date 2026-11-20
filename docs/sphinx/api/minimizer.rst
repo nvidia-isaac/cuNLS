@@ -148,8 +148,8 @@ then override individual fields.
   exactly ``max_line_search_steps`` line-search evaluations; the summary has
   NaN costs and ``TerminationReason.NotDetermined``.  The first call sets the
   structure up; with ``reuse_structure`` the following calls can be captured
-  in a CUDA graph.  Inside ``AugmentedLagrangianMinimizer`` set
-  ``AugmentedLagrangianMinimizerOptions.real_time`` instead.
+  in a CUDA graph.  In ``AugmentedLagrangianMinimizerOptions.base_options`` it makes
+  the whole augmented Lagrangian call real time.
 - **state_tolerance** (``float``, default ``1e-6``) — convergence threshold
   on the squared norm of the tangent-space step :math:`\|\Delta x\|^2`.
   When the step is smaller than this value the minimizer declares

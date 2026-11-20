@@ -200,13 +200,12 @@ def test_bounded_ik_with_mimic(arm, stream):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     _one_factor_per_instance(problem, states, (position, posture, coupled), n)
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    base = lm.base_options
+    options = pycunls.AugmentedLagrangianMinimizerOptions()
+    base = options.base_options
     base.cost_tolerance = 1e-12  # absolute: residuals are millimeters
     base.state_tolerance = 1e-12
     base.max_num_iterations = 100
-    lm.base_options = base
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm))
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
     wp.synchronize()
     summary = solver.minimize(stream, problem)
     assert summary.max_violation < 1e-4, summary.message
@@ -322,7 +321,7 @@ def test_four_bar_closes(arm, stream):
     _one_factor_per_instance(problem, states, (posture, *loop.constraints), n)
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     options.constraint_tolerance = 1e-5
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), options)
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
     wp.synchronize()
     summary = solver.minimize(stream, problem)
     assert summary.converged(), summary.message
@@ -654,14 +653,11 @@ def test_inverse_kinematics_recipe(arm, stream):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     _one_factor_per_instance(problem, states, (pose,), n)
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    base = lm.base_options
+    options = pycunls.AugmentedLagrangianMinimizerOptions()
+    base = options.base_options
     base.cost_tolerance, base.state_tolerance, base.max_num_iterations = 1e-12, 1e-12, 60
-    base.reuse_structure = True
-    lm.base_options = base
-    al = pycunls.AugmentedLagrangianMinimizerOptions()
-    al.reuse_structure = True                                        # the wrapper's own flag
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm), al)
+    base.reuse_structure = True                                      # second round reuses it
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
 
     for _ in range(2):                                               # second round: new targets
         seeds_q = lo + (hi - lo) * rng.uniform(0.0, 1.0, (n, topo.coord_count))

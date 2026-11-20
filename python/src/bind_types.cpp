@@ -221,7 +221,7 @@ void bind_types(nb::module_ &m) {
       "also accepts such an object directly, so Warp work and cuNLS work can share one "
       "wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other "
       "alive. minimize() synchronizes the stream before returning, except on the real-time "
-      "paths (MinimizerOptions.real_time, AugmentedLagrangianMinimizerOptions.real_time), which read "
+      "paths (MinimizerOptions.real_time, also in AugmentedLagrangianMinimizerOptions), which read "
       "nothing back: read their results on the same stream, or synchronize it first.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)
       .def(
@@ -379,8 +379,8 @@ void bind_types(nb::module_ &m) {
               "iterations, each with exactly max_line_search_steps line-search evaluations; "
               "the summary has NaN costs and TerminationReason.NotDetermined. The first call "
               "sets the structure up; with reuse_structure the following calls can be captured "
-              "in a CUDA graph. Inside AugmentedLagrangianMinimizer use "
-              "AugmentedLagrangianMinimizerOptions.real_time instead. Default: False.")
+              "in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the "
+              "whole augmented Lagrangian call real time. Default: False.")
       .def_rw("state_tolerance", &cunls::MinimizerOptions::state_tolerance,
               "Converged when the squared step norm |dx|^2 falls below this (absolute, tangent "
               "units). Default: 1e-6.")

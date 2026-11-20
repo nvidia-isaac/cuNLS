@@ -31,7 +31,7 @@ CI runs the same four commands, parameterized by `CUDA_VERSION` / `UBUNTU_VERSIO
   `ArticulationTopology` + `ArticulationStateBatch`). `FactorBatch`: batched residuals with
   analytic Jacobians (kinematic factors and `LinkFrameFactorBatch` in `cunls/factor/kinematics/`).
   `Problem` composes them; `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`, their RANSAC
-  versions, and `AugmentedLagrangianMinimizer` (constraints, box bounds; wraps LM) solve; a
+  versions, and `AugmentedLagrangianMinimizer` (constraints, box bounds; its own LM inner solves) solve; a
   problem runs on the device of its states (`Problem::Device`). Umbrella header:
   `cunls/cunls.h`.
 - `python/pycunls`: bindings plus `fitting.py` (`fit`), `builder.py` (`ProblemBuilder`, `solve`),

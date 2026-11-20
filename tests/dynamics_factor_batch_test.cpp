@@ -324,16 +324,10 @@ TEST(SE2DifferentialDriveFactorBatch, ReachesGoalWithAugmentedLagrangianMinimize
   problem.AddFactorBatch(&effort, control_ptrs);
   problem.AddFactorBatch(&limits, control_ptrs);
 
-  MinimizerOptions options;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
-  options.max_num_iterations = 100;
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = options;
-  LevenbergMarquardtMinimizer inner(lm);
   AugmentedLagrangianMinimizerOptions al;
-  al.final_inner_iterations = 100;
-  const auto summary =
-      AugmentedLagrangianMinimizer(inner, al).Minimize(stream.GetStream(), problem);
+  al.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseLDLT;
+  al.base_options.max_num_iterations = 100;
+  const auto summary = AugmentedLagrangianMinimizer(al).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
 

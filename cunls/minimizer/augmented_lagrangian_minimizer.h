@@ -31,19 +31,44 @@
 namespace cunls {
 
 /**
- * @brief Options of AugmentedLagrangianMinimizer, including the budget of its
- * inner solves.
+ * @brief Options of AugmentedLagrangianMinimizer: those of its inner
+ * Levenberg-Marquardt solves (the base struct) and of the outer loop.
  *
- * The budget of a call comes from these options alone, with or without
- * constraint batches: each outer iteration runs one inner solve of at most
- * inner_iterations iterations; the last outer iteration, and a subproblem's
- * first inner solve after it is feasible, run at most final_inner_iterations;
- * every inner iteration does at most inner_line_search_steps line-search
- * evaluations and max_bound_refinements bound refinements. real_time runs all
- * of it exactly. The wrapped minimizer's max_num_iterations,
- * max_line_search_steps and real_time are not used.
+ * The inner solver is private to AugmentedLagrangianMinimizer and built from
+ * the LevenbergMarquardtMinimizerOptions part: damping, linear solver,
+ * tolerances, Jacobian mode. Four of its fields set the budget of the call,
+ * with or without constraint batches:
+ *
+ * - base_options.max_num_iterations: iteration cap of a subproblem's full
+ *   inner solve, its first after it is feasible (and every subproblem's in the
+ *   last outer iteration), the solve that establishes stationarity. Without
+ *   constraint batches every subproblem is feasible from the start, so this
+ *   is the iteration cap of a bounds-only solve. Must be > 0. Default: 50
+ * - base_options.max_line_search_steps: line-search steps of the inner
+ *   solves (see MinimizerOptions::max_line_search_steps): the inequality rows
+ *   make the cost piecewise quadratic, and a step that activates rows the
+ *   linear model did not see can overshoot. Default here: 10
+ * - base_options.real_time: a fixed budget without host synchronization but
+ *   one read-back at the end. Exactly max_outer_iterations outer iterations;
+ *   each runs exactly inner_iterations inner iterations (the last one
+ *   base_options.max_num_iterations), each with exactly max_line_search_steps
+ *   line-search evaluations and max_bound_refinements bound refinements.
+ *   Penalties, multipliers and per-subproblem status are updated on the
+ *   device; the summary reports the last outer iteration's violation and
+ *   status, and NaN costs. Without constraint batches there is no violation
+ *   to report: nothing is read back (status kNotDetermined), so the call can
+ *   be captured in a CUDA graph once the structure is set up. Typical use
+ *   (receding horizon): a converged first solve, then real time with
+ *   warm_start and reuse_structure (SetOptions). Default: false
+ * - base_options.reuse_structure: the problem's structure is unchanged since
+ *   the previous Minimize call (see MinimizerOptions::reuse_structure): skip
+ *   the structure setup of the inner solves and of the constraint maps.
+ *   Within one call the outer iterations always reuse it. Default: false
  */
-struct AugmentedLagrangianMinimizerOptions {
+struct AugmentedLagrangianMinimizerOptions : LevenbergMarquardtMinimizerOptions {
+  /** @brief The defaults, with a 10-step line search in the inner solves. */
+  AugmentedLagrangianMinimizerOptions() { base_options.max_line_search_steps = 10; }
+
   /**
    * @brief A subproblem is feasible when every scaled constraint row satisfies
    * |c| <= tol (equalities) or c <= tol (inequalities). Default: 1e-4
@@ -58,24 +83,6 @@ struct AugmentedLagrangianMinimizerOptions {
    * yet satisfied (inexact augmented Lagrangian). Default: 5
    */
   size_t inner_iterations = 5;
-
-  /**
-   * @brief Iteration cap of a subproblem's full inner solve: its first inner
-   * solve after it is feasible (and every subproblem's in the last outer
-   * iteration), the solve that establishes stationarity. Each subproblem of a
-   * partitioned problem gets its own, without waiting for the others. Without
-   * constraint batches every subproblem is feasible from the start, so this is
-   * the iteration cap of a bounds-only solve. Must be > 0. Default: 50
-   */
-  size_t final_inner_iterations = 50;
-
-  /**
-   * @brief Line-search steps of the inner solves (see
-   * MinimizerOptions::max_line_search_steps): the inequality rows make the
-   * cost piecewise quadratic, and a step that activates rows the linear model
-   * did not see can overshoot. Default: 10
-   */
-  size_t inner_line_search_steps = 10;
 
   /** @brief Initial penalty ρ0 of every constraint batch and subproblem. Default: 10 */
   float initial_penalty = 10.f;
@@ -99,7 +106,7 @@ struct AugmentedLagrangianMinimizerOptions {
   /**
    * @brief Start from the multipliers of the previous Minimize call
    * (receding-horizon warm start) instead of λ = 0, and from its penalties
-   * divided by penalty_increase (at least initial_penalty); with real_time,
+   * divided by penalty_increase (at least initial_penalty); in real time,
    * from its penalties and violation history as they are (the penalty
    * schedule continues across calls). Only effective when the constraint
    * batches and their sizes are unchanged. Default: false
@@ -107,39 +114,15 @@ struct AugmentedLagrangianMinimizerOptions {
   bool warm_start = false;
 
   /**
-   * @brief The problem's structure is unchanged since the previous Minimize
-   * call (see MinimizerOptions::reuse_structure): skip the structure setup
-   * of the inner minimizer and of the constraint maps. Within one call the
-   * outer iterations always reuse it. Default: false
-   */
-  bool reuse_structure = false;
-
-  /**
    * @brief Box-bounded states (VectorStateBatch::SetBounds): at most this many
    * extra linear solves per inner iteration that also hold the free
    * components the step would push through their bound (active-set
-   * refinement; rarely more than one is needed). With real_time exactly this
+   * refinement; rarely more than one is needed). In real time exactly this
    * many (there is no read-back to stop early), so real-time callers may set
    * 0 or 1; Levenberg-Marquardt's damping usually does without them.
    * Default: 3
    */
   size_t max_bound_refinements = 3;
-
-  /**
-   * @brief Real-time mode: a fixed budget and no host synchronization but one
-   * read-back at the end. Exactly max_outer_iterations outer iterations; each
-   * runs exactly inner_iterations inner iterations (the last one
-   * final_inner_iterations), each with exactly inner_line_search_steps
-   * line-search evaluations and max_bound_refinements bound refinements.
-   * Penalties, multipliers and per-subproblem status are updated on the
-   * device; the summary reports the last outer iteration's violation and
-   * status, and NaN costs. Without constraint batches there is no violation
-   * to report: nothing is read back (status kNotDetermined), so the call can
-   * be captured in a CUDA graph once the structure is set up. Typical use
-   * (receding horizon): a converged first solve, then real time with
-   * warm_start and reuse_structure (SetOptions). Default: false
-   */
-  bool real_time = false;
 };
 
 /** @brief Why the outer loop stopped. */
@@ -212,7 +195,7 @@ struct ConstraintBatchState {
  * @brief Solves problems with constraint factor batches
  * (ConstraintFactorBatchBase: ConstraintFactorBatch, BoundFactorBatch) or
  * box-bounded states (VectorStateBatch::SetBounds) by the augmented Lagrangian
- * method around a Levenberg-Marquardt minimizer.
+ * method around a Levenberg-Marquardt minimizer of its own.
  *
  * @verbatim
  *   λ = 0, μ = 0, ρ = ρ0
@@ -228,14 +211,14 @@ struct ConstraintBatchState {
  * With a problem partition (Problem::SetProblemPartition) every subproblem has
  * its own penalties per constraint batch and stops on its own: a subproblem
  * that becomes feasible gets its own full inner solve in the next outer
- * iteration (final_inner_iterations) and finishes there, while the others
+ * iteration (base_options.max_num_iterations) and finishes there, while the others
  * continue with capped solves; it never waits for another subproblem.
  * Multiplier and penalty updates run on the device, with one small read-back
  * per outer iteration. Box bounds are held in every inner solve
  * (HoldActiveBounds). Without constraint batches every subproblem is feasible
  * from the start: its first inner solve is its full solve, and a bounds-only
- * call takes one outer iteration when that solve converges. The budget rule
- * is in AugmentedLagrangianMinimizerOptions.
+ * call takes one outer iteration when that solve converges. The budget of a
+ * call is in AugmentedLagrangianMinimizerOptions.
  *
  * The multipliers and penalties live in the constraint batches, so the batches
  * may be solved again with warm_start.
@@ -243,18 +226,11 @@ struct ConstraintBatchState {
 class AugmentedLagrangianMinimizer {
  public:
   /**
-   * @brief Wraps a Levenberg-Marquardt minimizer.
-   * @param minimizer Inner minimizer (not owned; must outlive this object).
-   *        Its damping, linear solver and convergence tolerances apply to the
-   *        inner solves; their budget comes from `options` (its
-   *        max_num_iterations and max_line_search_steps are not used).
-   * @param options Options of the outer loop and of the inner solves' budget.
-   * @throws std::invalid_argument on invalid options (see SetOptions), or when
-   *         the minimizer's options have real_time set (real time is
-   *         AugmentedLagrangianMinimizerOptions::real_time).
+   * @brief Builds the minimizer and its private inner Levenberg-Marquardt
+   * solver from `options`.
+   * @throws std::invalid_argument on invalid options (see SetOptions).
    */
   explicit AugmentedLagrangianMinimizer(
-      LevenbergMarquardtMinimizer &minimizer,
       const AugmentedLagrangianMinimizerOptions &options = AugmentedLagrangianMinimizerOptions());
 
   AugmentedLagrangianMinimizer(const AugmentedLagrangianMinimizer &) = delete;
@@ -281,15 +257,30 @@ class AugmentedLagrangianMinimizer {
   const AugmentedLagrangianMinimizerOptions &Options() const { return options_; }
 
   /**
-   * @brief Replaces the options for the following calls; the warm-start state
-   * (multipliers, penalties, structure) is kept. Typical use: a converged
-   * first solve, then a fixed real-time budget.
+   * @brief Replaces the options of the following calls: the outer loop and
+   * the budget (base_options.max_num_iterations, max_line_search_steps,
+   * real_time, reuse_structure); the warm-start state (multipliers, penalties,
+   * structure) is kept. The inner solver keeps the damping, linear solver and
+   * tolerances it was built with (a new minimizer changes those). Typical use:
+   * a converged first solve, then a fixed real-time budget.
    * @throws std::invalid_argument unless initial_penalty > 0, max_penalty >=
    *         initial_penalty, penalty_increase >= 1, constraint_tolerance >= 0,
-   *         inner_iterations > 0, final_inner_iterations > 0 and
+   *         inner_iterations > 0, base_options.max_num_iterations > 0 and
    *         max_outer_iterations > 0.
    */
   void SetOptions(const AugmentedLagrangianMinimizerOptions &options);
+
+  /**
+   * @brief Device array of the last Minimize() call's subproblem count of ints
+   * (Problem::NumProblems()): the TerminationReason value of each
+   * subproblem's last inner solve (see Minimizer::SubproblemTerminationReasons).
+   */
+  const int *SubproblemTerminationReasons() const {
+    return minimizer_.SubproblemTerminationReasons();
+  }
+
+  /** @brief Number of entries of SubproblemTerminationReasons(). */
+  size_t NumSubproblems() const { return minimizer_.NumSubproblems(); }
 
  private:
   /**
@@ -312,7 +303,7 @@ class AugmentedLagrangianMinimizer {
                         dvector<float> &rhs, const dvector<float> *step);
 
   // Implementation state; the behaviour lives in augmented_lagrangian_minimizer.cu.
-  LevenbergMarquardtMinimizer &minimizer_;  ///< Inner minimizer.
+  LevenbergMarquardtMinimizer minimizer_;  ///< The inner solver, built from the options.
   AugmentedLagrangianMinimizerOptions options_;
 
   std::vector<internal::ConstraintBatchState>

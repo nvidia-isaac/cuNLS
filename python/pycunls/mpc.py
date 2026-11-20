@@ -466,21 +466,20 @@ class Horizon:
 
     # --- build -------------------------------------------------------------------------
 
-    def build(self, minimizer=None,
-              options: Optional[pycunls.AugmentedLagrangianMinimizerOptions] = None,
+    def build(self, options: Optional[pycunls.AugmentedLagrangianMinimizerOptions] = None,
               real_time: Optional[Tuple[int, int]] = None):
         """Assemble the problem and return a :class:`Controller`.
 
-        ``minimizer`` defaults to Levenberg-Marquardt with the block-tridiagonal
-        linear solver (the problem declares its stages) and a state tolerance of
-        1e-5 (pass your own :class:`pycunls.LevenbergMarquardtMinimizer` to change
-        either; the augmented Lagrangian wraps Levenberg-Marquardt only).
+        ``options`` default to the block-tridiagonal linear solver (the problem
+        declares its stages), a state tolerance of 1e-5, a warm start, structure
+        reuse and the penalty cap :data:`MAX_PENALTY` (pass your own
+        :class:`pycunls.AugmentedLagrangianMinimizerOptions` to change them).
 
         ``real_time=(outer, inner)``: after the first solve (which converges),
         every solve runs a fixed budget of ``outer`` augmented-Lagrangian
         iterations of ``inner`` minimizer iterations each (two line-search
         halvings per iteration), without host synchronization but one read-back
-        (:attr:`pycunls.AugmentedLagrangianMinimizerOptions.real_time`), with
+        (``base_options.real_time`` of :class:`pycunls.AugmentedLagrangianMinimizerOptions`), with
         the penalty capped at :data:`REAL_TIME_MAX_PENALTY`. The warm start
         carries the solution and the multipliers forward, so the iterations of
         consecutive steps add up, as in real-time iteration schemes.
@@ -504,31 +503,25 @@ class Horizon:
         stages.append(to_device(np.tile(np.arange(N, dtype=np.int32), B)))
         self._keep += stages
         problem.set_state_stages(stages)
-        default_minimizer = minimizer is None
-        if minimizer is None:
-            mo = pycunls.MinimizerOptions()
-            mo.sparse_linear_solver_type = pycunls.SparseLinearSolverType.BlockTridiagonal
-            mo.max_num_iterations = 50
+        if options is None:
+            options = pycunls.AugmentedLagrangianMinimizerOptions()
+            options.base_options.sparse_linear_solver_type = (
+                pycunls.SparseLinearSolverType.BlockTridiagonal)
             # The default 1e-6 on the squared step norm (summed over every
             # unknown) is beyond what float32 iterative solves reach on a
             # horizon of thousands of unknowns. 1e-5 keeps a warm-started
             # solve at a few iterations; 1e-4 let Levenberg-Marquardt stop
             # short (quadrotors drifting off their hover points).
-            mo.state_tolerance = 1e-5
-            lm = pycunls.LevenbergMarquardtMinimizerOptions()
-            lm.base_options = mo
-            minimizer = pycunls.LevenbergMarquardtMinimizer(lm)
-        if options is None:
-            options = pycunls.AugmentedLagrangianMinimizerOptions()
+            options.base_options.state_tolerance = 1e-5
+            options.base_options.reuse_structure = True  # the horizon's structure never changes
             options.warm_start = True
-            options.reuse_structure = True  # the horizon's structure never changes
             options.max_penalty = MAX_PENALTY
-            if real_time is not None and default_minimizer:
+            if real_time is not None:
                 # Levenberg-Marquardt's damping keeps the projected steps
                 # descending without the extra refinement solves (each a full
                 # linear solve per iteration in real time).
                 options.max_bound_refinements = 0
-        return Controller(self, problem, minimizer, options, real_time)
+        return Controller(self, problem, options, real_time)
 
 
 # ---------------------------------------------------------------------------
@@ -539,9 +532,9 @@ class Horizon:
 class Controller:
     """Solves a :class:`Horizon`'s problem and runs the receding horizon."""
 
-    def __init__(self, horizon: Horizon, problem, minimizer, options, real_time=None):
-        self.horizon, self.problem, self.minimizer = horizon, problem, minimizer
-        self.solver = pycunls.AugmentedLagrangianMinimizer(minimizer, options)
+    def __init__(self, horizon: Horizon, problem, options, real_time=None):
+        self.horizon, self.problem = horizon, problem
+        self.solver = pycunls.AugmentedLagrangianMinimizer(options)
         self.summary = None
         self._started = False
         self._real_time = real_time
@@ -562,21 +555,21 @@ class Controller:
         warp_stream(stream).wait_stream(device_stream)
         self.summary = self.solver.minimize(stream, self.problem)
         device_stream.wait_stream(warp_stream(stream))  # later writes and reads wait for the solve
-        if self._real_time is not None and not self.solver.options.real_time:
+        if self._real_time is not None and not self.solver.options.base_options.real_time:
             outer, inner = self._real_time
             o = self.solver.options
-            o.real_time = True
+            o.base_options.real_time = True
+            o.base_options.max_num_iterations = int(inner)
+            o.base_options.max_line_search_steps = 2
+            o.base_options.reuse_structure = True
             o.max_outer_iterations = int(outer)
             o.inner_iterations = int(inner)
-            o.final_inner_iterations = int(inner)
-            o.inner_line_search_steps = 2
             # A few iterations per step cannot absorb large penalties: the
             # penalty term swamps the costs and the closed loop drifts
             # (quadrotors). The multipliers carry the constraints across steps.
             o.max_penalty = min(o.max_penalty, REAL_TIME_MAX_PENALTY)
             o.initial_penalty = min(o.initial_penalty, o.max_penalty)
             o.warm_start = True
-            o.reuse_structure = True
             self.solver.options = o
         return self.summary
 

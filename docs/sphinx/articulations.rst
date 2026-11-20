@@ -247,7 +247,7 @@ Python example: bounded inverse kinematics from a URDF
    problem.add_factor_batch(pose, [states], instance)
    problem.set_problem_partition(n, [instance])             # each problem converges and stops alone
 
-   solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
+   solver = pycunls.AugmentedLagrangianMinimizer()
    summary = solver.minimize(stream, problem)
    q = wp.zeros((n, topo.coord_count), dtype=wp.float32)
    states.get_joint_q(q, n, stream)   # asynchronous, on the same stream as q.numpy()
@@ -288,14 +288,13 @@ pieces that make that cheap:
   links) at every evaluation: write the next targets into the same arrays (``wp.copy``, a
   kernel) on the stream the solve runs on (with ``stream = wp.get_stream()`` as above, any Warp
   work is; work on another stream is not ordered with the solve) and call ``minimize`` again. Repeated solves skip the structure
-  setup with ``reuse_structure`` set on the augmented Lagrangian's own options (it passes its
-  flag to the inner solves):
+  setup with ``base_options.reuse_structure`` of the augmented Lagrangian's options:
 
   .. code-block:: python
 
-     al = pycunls.AugmentedLagrangianMinimizerOptions()
-     al.reuse_structure = True
-     solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), al)
+     options = pycunls.AugmentedLagrangianMinimizerOptions()
+     options.base_options.reuse_structure = True
+     solver = pycunls.AugmentedLagrangianMinimizer(options)
 * **Several seeds per problem.** Make ``problems x seeds`` instances (seeds next to each other),
   give each instance its own subproblem, solve once, then compare the link-pose errors of each
   problem's seeds and keep the best one.
