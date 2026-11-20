@@ -200,6 +200,7 @@ void bind_state(nb::module_ &m) {
             auto *po = reinterpret_cast<float *>(extract_device_ptr(
                 out, "float32", "out", n * self.AmbientSize(), "num_active_states x ambient_size"));
             nb::gil_scoped_release release;
+            DeviceScope scope(device_of(px));
             auto *bounded = dynamic_cast<cunls::BoxBoundedStates *>(&self);
             if (ignore_bounds && bounded != nullptr) {
               bounded->PlusIgnoringBounds(px, pd, po, stream.GetStream());

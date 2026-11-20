@@ -469,6 +469,7 @@ MinimizerSummary Minimizer::Minimize(cudaStream_t stream, Problem &problem) {
   settings.max_num_iterations = options_.max_num_iterations;
   settings.max_line_search_steps = options_.max_line_search_steps;
   settings.reuse_structure = options_.reuse_structure;
+  settings.fixed_iterations = options_.real_time;
   return internal::InnerMinimize(*this, stream, problem, settings);
 }
 
@@ -496,6 +497,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
           "states (VectorStateBatch::SetBounds); solve it with AugmentedLagrangianMinimizer");
     }
   }
+  problem.CheckDevice("Minimizer::Minimize", stream, &m.device_);
   auto range = m.profiler_domain_.CreateDomainRange("Minimize");
   const MinimizerOptions &options = m.options_;
   MinimizerSystem &system = m.system_;

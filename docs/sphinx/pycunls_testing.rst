@@ -16,7 +16,7 @@ Install the test dependencies:
    cd python
    pip install ".[test]"
 
-This installs ``pytest`` and ``cupy-cuda12x`` (used only by
+This installs ``pytest`` and ``cupy-cuda13x`` (used only by
 ``test_cupy_interop.py``; ``warp-lang`` is a runtime dependency).
 
 ===============================================================================

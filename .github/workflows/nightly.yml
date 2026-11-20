@@ -47,8 +47,10 @@ jobs:
     if: needs.check-changes.outputs.should_build == 'true'
     uses: ./.github/workflows/build-and-test.yml
     with:
-      # Cells without "python" use the image's (3.10 on Ubuntu 22.04, 3.12 on 24.04); the
-      # Ubuntu 22.04 "python" cells add the other wheels the release publishes.
+      # Python wheels are CUDA 13 only: the CUDA 12 cells (12.6, 12.8, Orin) build and test C++.
+      # CUDA 13 cells without "python" use the image's (3.10 on Ubuntu 22.04, 3.12 on 24.04); the
+      # Ubuntu 22.04 "python" cells add the other wheels the release publishes. The 3.11 cell
+      # tests the lowest Warp the wheel allows ("warp").
       # Jetson CUDA versions must match the host JetPack driver: Orin runs
       # JetPack 6.1 (CUDA 12.6, Ubuntu 22.04) and Thor runs JetPack 7.1
       # (CUDA 13.0, Ubuntu 24.04).
@@ -60,11 +62,7 @@ jobs:
           {"ubuntu":"24.04","cuda":"12.6.3","archs":"75-real;80-real;86-real;89-real;90"},
           {"ubuntu":"24.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"},
           {"ubuntu":"24.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"},
-          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.11"},
-          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.12"},
-          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.13"},
-          {"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.14"},
-          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.11"},
+          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.11","warp":"warp-lang==1.18.*"},
           {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.12"},
           {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.13"},
           {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","python":"3.14"},

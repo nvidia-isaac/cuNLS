@@ -175,6 +175,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "validate",
           [](const cunls::Problem &self, cunls::CudaStream &stream) {
+            DeviceScope scope(self.Device());
             return self.Validate(stream.GetStream());
           },
           nb::arg("stream"),
@@ -183,6 +184,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "find_structure_error",
           [](const cunls::Problem &self, cunls::CudaStream &stream) {
+            DeviceScope scope(self.Device());
             return self.FindStructureError(stream.GetStream());
           },
           nb::arg("stream"),
@@ -267,6 +269,10 @@ void bind_problem(nb::module_ &m) {
           "landmarks of a bundle adjustment). Every factor may touch at most one non-constant "
           "state of these batches; they must share one tangent size of 1 to 3. An empty list "
           "clears the declaration.")
+      .def_prop_ro("device", &cunls::Problem::Device,
+                   "CUDA device ordinal of the problem's states (-1 when no state batch has "
+                   "device memory). minimize(), validate() and find_structure_error() run on "
+                   "this device, whatever device is current.")
       .def_prop_ro("num_problems", &cunls::Problem::NumProblems,
                    "Number of subproblems (set_problem_partition); 0 or 1 means one problem.");
 }

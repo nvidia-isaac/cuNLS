@@ -52,11 +52,13 @@ jobs:
     needs: lint
     uses: ./.github/workflows/build-and-test.yml
     with:
+      # Python wheels are CUDA 13 only: the CUDA 12 cells build and test C++. The Ubuntu 22.04
+      # CUDA 13 cell tests the lowest Warp the wheel allows ("warp"), 24.04 and Thor the newest.
       matrix_json: |
         [
           {"ubuntu":"22.04","cuda":"12.6.3","archs":"75-real;80-real;86-real;89-real;90"},
           {"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"},
-          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"},
+          {"ubuntu":"22.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","warp":"warp-lang==1.18.*"},
           {"ubuntu":"24.04","cuda":"12.6.3","archs":"75-real;80-real;86-real;89-real;90"},
           {"ubuntu":"24.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"},
           {"ubuntu":"24.04","cuda":"13.2.0","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"},

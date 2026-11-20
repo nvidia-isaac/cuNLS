@@ -27,8 +27,9 @@ if [ -n "${RELEASE_TAG:-}" ]; then
 fi
 
 DOCKERFILE="$SOURCE_DIR/scripts/Dockerfile"
-DOCKER_BUILD_ARGS=()
-[ -n "${CUDA_VERSION:-}" ] && DOCKER_BUILD_ARGS+=(--build-arg "CUDA_VERSION=$CUDA_VERSION")
+# The wheels are CUDA 13 only (the C++ scripts keep the Dockerfile's default toolkit).
+CUDA_VERSION=${CUDA_VERSION:-13.2.0}
+DOCKER_BUILD_ARGS=(--build-arg "CUDA_VERSION=$CUDA_VERSION")
 [ -n "${UBUNTU_VERSION:-}" ] && DOCKER_BUILD_ARGS+=(--build-arg "UBUNTU_VERSION=$UBUNTU_VERSION")
 [ -n "${BASE_IMAGE:-}" ] && DOCKER_BUILD_ARGS+=(--build-arg "BASE_IMAGE=$BASE_IMAGE")
 [ -n "${UBUNTU_PORTS_MIRROR:-}" ] \
@@ -47,7 +48,7 @@ docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -e OUTPUT_DIR=/cunls_install \
   -e RELEASE_COMMIT="$RELEASE_COMMIT" \
   -e RELEASE_TAG="${RELEASE_TAG:-}" \
-  -e CUDA_VERSION="${CUDA_VERSION:-}" \
+  -e CUDA_VERSION="$CUDA_VERSION" \
   -e PYTHON_VERSION="${PYTHON_VERSION:-}" \
   -e CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-}" \
   cunls:local bash /cunls/scripts/build_pycunls.sh

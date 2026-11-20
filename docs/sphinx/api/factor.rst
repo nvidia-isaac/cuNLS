@@ -873,11 +873,11 @@ zero-copy pointer wrapping so you never need to manually construct
                residual_size=...,
                state_sizes=[...],
                capacity=capacity,
-               device="cuda:0",
            )
 
-- **device** (``str``, default ``"cuda:0"``) — Warp device string used when
-  creating ``wp.array`` wrappers via ``wrap_array``.
+- **device** (``str`` or ``wp.Device``, default None) — the CUDA device the factor's data lives
+  on, used by ``wrap_array`` and the stream wrappers. None: Warp's current device at
+  construction (``wp.get_device()``, which follows ``wp.ScopedDevice``).
 
 **Helper methods** (inherited — do not override)
 
@@ -915,6 +915,81 @@ zero-copy pointer wrapping so you never need to manually construct
   5. Launch a ``@wp.kernel`` with ``dim=num_factor_ids`` on that stream.
 
 See :ref:`pycunls_tutorial:Custom Warp Factor` for a complete example.
+
+.. _py-warp-function-factor-batch:
+
+``pycunls.warp.WarpFunctionFactorBatch``
+--------------------------------------------------------------------------------
+
+A factor from a residual function alone: a ``@wp.func`` of the factor's states, in slot order,
+and optionally of one per-factor data item (its last argument, ``data[f]`` for factor ``f``:
+any Warp type, a ``@wp.struct`` for several fields), returning a ``float`` or a ``wp.vecM``
+(:math:`M` residual rows). No kernel to write: Warp differentiates the function.
+
+.. code-block:: python
+
+   from pycunls.warp import WarpFunctionFactorBatch
+
+   @wp.func
+   def reprojection(T: wp.transform, p: wp.vec3, uv: wp.vec2) -> wp.vec2:
+       q = wp.transform_point(wp.transform_inverse(T), p)     # T: world_from_camera
+       return wp.vec2(q[0] / q[2], q[1] / q[2]) - uv
+
+   factor = WarpFunctionFactorBatch(reprojection, data=observations, capacity=n)  # (n,) wp.vec2
+   factor.set_num_active_factors(n)
+   problem.add_factor_batch(factor, [poses, points], index_table)  # slots in argument order
+
+Each argument type decides the state the slot reads and the update the Jacobian is taken with
+respect to:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Argument type
+     - State batch (``FrameView`` view)
+     - Tangent
+     - Update
+   * - ``wp.transform``
+     - ``SE3StateBatch`` (``FrameView.Pose``)
+     - 6
+     - :math:`X\,Exp([\omega, v])`
+   * - ``wp.quat``
+     - ``SO3StateBatch`` (``FrameView.Orientation``)
+     - 3
+     - :math:`R\,Exp(\omega)`
+   * - ``float``
+     - ``VectorStateBatch`` (dim 1)
+     - 1
+     - :math:`x + d`
+   * - ``wp.vecN`` (any N)
+     - ``VectorStateBatch`` (dim N; ``FrameView.Position`` for N = 3)
+     - N
+     - :math:`x + d`
+
+States without a Warp value type (SE(2), Sim(2/3), SL(4), articulation coordinates) need a
+``WarpFactorBatch``. ``factor.slot_states`` names each slot's state batch class;
+``ProblemBuilder`` and ``pycunls.diagnose`` report a slot connected to a batch of another layout
+(e.g. an ``SO3StateBatch`` on a ``wp.vec3`` argument: both have tangent size 3).
+
+- **residual** — the ``@wp.func`` above.
+- **data** (``wp.array``, optional) — at least ``capacity`` items of the residual's last argument
+  type; None when the residual takes only states.
+- **capacity** (``int``) — factors the data holds; the batch starts with 0 active factors.
+- **jacobian** — ``"auto"`` (default): Warp's reverse-mode automatic differentiation, checked
+  once, at the first evaluation with Jacobians (one synchronization), against central
+  differences; on a mismatch it warns and uses central differences from then on (Warp unrolls
+  loops only up to ``wp.config.max_unroll`` iterations). ``"autodiff"`` or ``"numeric"``
+  (central differences): one of them, without the check. Or a ``@wp.func`` with the residual's
+  arguments returning ``wp.types.matrix(shape=(M, J), dtype=float)``: the analytic Jacobian
+  (:math:`J` = the sum of the tangent sizes; columns in argument order, with the conventions of
+  the table). ``factor.jacobian_mode`` tells which one is in use.
+- **device** (default None) — ``data.device``, or Warp's current device when there is no data.
+
+An evaluation replays a few recorded launches on the minimizer's stream: the reverse pass gives
+all :math:`M` Jacobian rows in one launch (the residual function runs once per row in it). With
+``"auto"``, run one evaluation (a solve, or ``pycunls.evaluate``) before capturing a CUDA graph,
+so that the one-time check is not captured. A ``WarpFactorBatch`` with an analytic Jacobian
+kernel is faster: prototype with this class, and write the kernel where evaluation time matters.
 
 .. _factor-cpp-api:
 

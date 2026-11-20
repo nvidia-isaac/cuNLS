@@ -113,7 +113,7 @@ solve on Warp's stream itself (every ``stream`` argument accepts a
 ``wp.Stream``: ``minimizer.minimize(wp.get_stream(), problem)``), which keeps
 uploads and solve in order without synchronizing. ``minimize`` synchronizes
 its stream before it returns, so the results can be read right after it (the
-real-time paths, ``fixed_iterations`` and the augmented Lagrangian's
+real-time paths, ``MinimizerOptions.real_time`` and the augmented Lagrangian's
 ``real_time``, do not: read their results on the same stream, or synchronize
 it first).
 

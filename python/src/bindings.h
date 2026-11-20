@@ -34,6 +34,40 @@
 
 namespace nb = nanobind;
 
+// Makes `device` current for the scope (when >= 0 and not current already) and restores the
+// caller's device at its end: a native call runs on the device of the data it touches, whatever
+// device the Python caller made current. Warp uses each device's primary context, the one the
+// runtime selects. Use it around every call that launches work on a problem or a batch.
+class DeviceScope {
+ public:
+  explicit DeviceScope(int device) {
+    if (device < 0) return;
+    int current = -1;
+    if (cudaGetDevice(&current) != cudaSuccess || current == device) return;
+    if (cudaSetDevice(device) == cudaSuccess) previous_ = current;
+  }
+  ~DeviceScope() {
+    if (previous_ >= 0) cudaSetDevice(previous_);
+  }
+  DeviceScope(const DeviceScope &) = delete;
+  DeviceScope &operator=(const DeviceScope &) = delete;
+
+ private:
+  int previous_ = -1;  ///< The caller's device to restore; -1: nothing was switched.
+};
+
+// The device of a device pointer (cudaPointerGetAttributes), or -1 for anything else.
+inline int device_of(const void *ptr) {
+  cudaPointerAttributes attributes{};
+  if (ptr == nullptr || cudaPointerGetAttributes(&attributes, ptr) != cudaSuccess) {
+    (void)cudaGetLastError();
+    return -1;
+  }
+  return attributes.type == cudaMemoryTypeDevice || attributes.type == cudaMemoryTypeManaged
+             ? attributes.device
+             : -1;
+}
+
 // Extracts a raw GPU device pointer from a Python object: a plain int (already a pointer) or a
 // device array (__cuda_array_interface__); when obj is an array, checks that its dtype is
 // `dtype` (e.g. "float32"), raising TypeError naming `name` otherwise. Plain ints (raw pointers)

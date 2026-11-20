@@ -144,6 +144,7 @@ struct Mpc {
     options.real_time = true;
     options.max_outer_iterations = 2;
     options.inner_iterations = 2;
+    options.final_inner_iterations = 2;
     options.inner_line_search_steps = 2;
     options.max_penalty = 1e3f;
     real_time_options = options;

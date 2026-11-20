@@ -44,18 +44,13 @@ from pathlib import Path
 from packaging.version import Version
 
 cuda = os.environ['CUDA_VERSION']
-major = cuda.split('.')[0]
-if major not in ('12', '13'):
-    raise SystemExit(f'Unsupported CUDA version: {cuda}; expected CUDA 12 or 13')
+if cuda.split('.')[0] != '13':
+    raise SystemExit(f'build_pycunls.sh: pycunls wheels build with CUDA 13 only (got CUDA_VERSION={cuda}, '
+                     'expected 13.x). Fix: CUDA_VERSION=13.2.0 ./scripts/build_pycunls_in_docker.sh <dir>.')
 sha = os.environ['RELEASE_COMMIT']
 if not re.fullmatch(r'[0-9a-f]{40}', sha):
     raise SystemExit('RELEASE_COMMIT must be the full original checkout SHA')
-path = Path('pyproject.toml')
-text = path.read_text()
-text, count = re.subn(r'^name = "pycunls"$', f'name = "pycunls-cu{major}"', text, flags=re.M)
-if count != 1:
-    raise SystemExit('Expected one pycunls project name in pyproject.toml')
-text = text.replace('cupy-cuda12x', f'cupy-cuda{major}x')
+text = Path('pyproject.toml').read_text()
 tag = os.environ['RELEASE_TAG']
 if tag:
     if not tag.startswith('v'):
@@ -69,7 +64,6 @@ if tag:
     init_version = re.findall(r'^__version__ = "([^"]+)"$', Path('pycunls/__init__.py').read_text(), flags=re.M)
     if init_version != [str(version)]:
         raise SystemExit(f'Import version {init_version} differs from {tag}; update version sources before tagging')
-path.write_text(text)
 Path('pycunls/_build_provenance.json').write_text(json.dumps({
     'git_sha': sha, 'cuda_version': cuda,
 }, sort_keys=True) + '\n')

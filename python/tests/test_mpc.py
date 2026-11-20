@@ -60,14 +60,12 @@ def inner(kind):
     mo = pycunls.MinimizerOptions()
     mo.sparse_linear_solver_type = pycunls.SparseLinearSolverType.BlockTridiagonal
     mo.state_tolerance = 1e-5  # as Horizon.build's default
-    if kind == "gn":
-        return pycunls.GaussNewtonMinimizer(mo)
     lm = pycunls.LevenbergMarquardtMinimizerOptions()
     lm.base_options = mo
     return pycunls.LevenbergMarquardtMinimizer(lm)
 
 
-KINDS = ["default", "gn", "lm"]
+KINDS = ["default", "lm"]  # the augmented Lagrangian wraps Levenberg-Marquardt
 # Converged solves every step, or the real-time budget (1 outer x 2 inner
 # iterations after a converged first solve).
 MODES = [None, (1, 2)]

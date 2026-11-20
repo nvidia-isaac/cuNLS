@@ -29,14 +29,13 @@ import warp as wp
 import pycunls
 
 
-def make_minimizer(kind):
+def make_minimizer():
+    """The augmented Lagrangian's inner minimizer, run to convergence."""
     options = pycunls.MinimizerOptions()
     options.max_num_iterations = 50
     options.state_tolerance = 1e-12
     options.cost_tolerance = 1e-12
     options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.DenseLDLT
-    if kind == "gn":
-        return pycunls.GaussNewtonMinimizer(options)
     lm = pycunls.LevenbergMarquardtMinimizerOptions()
     lm.base_options = options
     lm.relative_reduction_tolerance = 1e-12
@@ -54,8 +53,7 @@ BOX = (np.array([2.0, -3.0, 0.5, 7.0, -4.0, 0.25], dtype=np.float32),
        np.array([1, 1, 1, 3, np.inf, np.inf], dtype=np.float32))
 
 
-@pytest.mark.parametrize("kind", ["gn", "lm"])
-def test_box_projection(stream, kind):
+def test_box_projection(stream):
     target, lower, upper = BOX
     x = wp.zeros(6, dtype=wp.float32)
     t, lo, hi = wp.array(target), wp.array(lower), wp.array(upper)
@@ -73,15 +71,14 @@ def test_box_projection(stream, kind):
     problem.add_factor_batch(prior, ptrs)
     problem.add_factor_batch(bounds, ptrs)
 
-    solver = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind))
+    solver = pycunls.AugmentedLagrangianMinimizer(make_minimizer())
     summary = solver.minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
     assert summary.max_violation <= 1e-4
     np.testing.assert_allclose(x.numpy(), np.clip(target, lower, upper), atol=2e-4)
 
 
-@pytest.mark.parametrize("kind", ["gn", "lm"])
-def test_projected_state_bounds(stream, kind):
+def test_projected_state_bounds(stream):
     """The same box through VectorStateBatch.set_bounds: solved by the augmented
     Lagrangian without outer iterations (projected Gauss-Newton), exact, from an
     infeasible initial guess; the minimizers alone reject the bounded problem."""
@@ -98,14 +95,13 @@ def test_projected_state_bounds(stream, kind):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(2)])
-    minimizer = make_minimizer(kind)
+    minimizer = make_minimizer()
     with pytest.raises(ValueError):
         minimizer.minimize(stream, problem)
     summary = pycunls.AugmentedLagrangianMinimizer(minimizer).minimize(stream, problem)
     assert summary.outer_iterations == 1
-    # LM stops when its float32 cost decrease vanishes, a little before GN's exact step.
-    atol = 1e-5 if kind == "gn" else 1e-3
-    np.testing.assert_allclose(x.numpy(), np.clip(target, lower, upper), atol=atol)
+    # LM stops when its float32 cost decrease vanishes, a little before the exact minimum.
+    np.testing.assert_allclose(x.numpy(), np.clip(target, lower, upper), atol=1e-3)
     states.set_bounds(None, None)
     assert not states.has_bounds
     with pytest.raises(ValueError):
@@ -139,8 +135,7 @@ def solve_qp_reference(P, q, G, h, A, b):
     return best
 
 
-@pytest.mark.parametrize("kind", ["gn", "lm"])
-def test_random_convex_qps_match_reference(stream, kind):
+def test_random_convex_qps_match_reference(stream):
     rng = np.random.default_rng(3)
     batch, n, m_in, m_eq = 32, 3, 4, 1
     qps = []
@@ -188,16 +183,15 @@ def test_random_convex_qps_match_reference(stream, kind):
     problem.add_factor_batch(equalities, [p for p in ptr for _ in range(m_eq)])
     problem.set_problem_partition(batch, [wp.array(np.arange(batch, dtype=np.int32))])
 
-    solver = pycunls.AugmentedLagrangianMinimizer(make_minimizer(kind))
+    solver = pycunls.AugmentedLagrangianMinimizer(make_minimizer())
     summary = solver.minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged, summary
     assert summary.num_converged == batch
     assert summary.max_violation <= 1e-4
     result = x.numpy().reshape(batch, n)
-    # Float32 inner solves stop when the cost decrease vanishes (LM a little
-    # before GN), and their accept / stop decisions vary run to run with the
-    # atomic cost sums: x lands up to ~6e-4 from the float64 optimum (LM; GN
-    # ~4.5e-4) over 30 runs each.
+    # Float32 inner solves stop when the cost decrease vanishes, and their
+    # accept / stop decisions vary run to run with the atomic cost sums: x lands
+    # up to ~6e-4 from the float64 optimum over 30 runs.
     np.testing.assert_allclose(result, expected, atol=2e-3)
 
 
@@ -253,7 +247,7 @@ def test_hs6_python_factor_as_nonlinear_equality(stream):
     for batch in (objective, constraint):
         batch.set_num_active_factors(1)
         problem.add_factor_batch(batch, [states.state_device_ptr(0)])
-    summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer("lm")).minimize(stream, problem)
+    summary = pycunls.AugmentedLagrangianMinimizer(make_minimizer()).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.Converged
     assert summary.max_violation <= 1e-4
     np.testing.assert_allclose(x.numpy(), [1.0, 1.0], atol=1e-3)
@@ -290,3 +284,58 @@ def test_constraint_wrapper_api(stream):
     assert options.constraint_tolerance == pytest.approx(1e-4)
     assert options.inner_line_search_steps == 10
     assert pycunls.MinimizerOptions().max_line_search_steps == 0
+
+
+# ---------------------------------------------------------------------------
+# The augmented Lagrangian wraps Levenberg-Marquardt; real time is its option
+# ---------------------------------------------------------------------------
+
+
+def test_augmented_lagrangian_takes_levenberg_marquardt_only():
+    with pytest.raises(TypeError):
+        pycunls.AugmentedLagrangianMinimizer(pycunls.GaussNewtonMinimizer())
+    lm = pycunls.LevenbergMarquardtMinimizerOptions()
+    lm.base_options.real_time = True
+    with pytest.raises(ValueError, match="real_time"):
+        pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm))
+    with pytest.raises(ValueError, match="final_inner_iterations"):
+        options = pycunls.AugmentedLagrangianMinimizerOptions()
+        options.final_inner_iterations = 0
+        pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), options)
+
+
+def test_bounds_with_gauss_newton_raise():
+    @wp.func
+    def line(x: float, p: wp.vec2) -> float:
+        return p[0] * x + p[1]
+
+    x = np.linspace(0.0, 1.0, 8)
+    with pytest.raises(ValueError, match="method='gn'"):
+        pycunls.fit(line, x, 2.0 * x + 1.0, p0=[0.0, 0.0], bounds=(-5.0, 5.0), method="gn")
+    builder = pycunls.ProblemBuilder()
+    points = builder.add_states(pycunls.VectorStateBatch3, initial=np.zeros((2, 3)),
+                                bounds=(-np.ones((2, 3)), np.ones((2, 3))))
+    builder.add_factors(pycunls.PriorVectorFactorBatch3, np.full((2, 3), 3.0),
+                        connect=(points, np.arange(2)))
+    with pytest.raises(ValueError, match="method='gn'"):
+        builder.solve(method="gn")
+    np.testing.assert_allclose(builder.solve()[points], np.ones((2, 3)), atol=1e-3)
+
+
+def test_real_time_minimizer_reads_nothing_back(stream):
+    x = wp.zeros(6, dtype=wp.float32)
+    states = pycunls.VectorStateBatch3(x, 2)
+    states.set_num_active_states(2)
+    prior = pycunls.PriorVectorFactorBatch3(wp.array(np.full(6, 2.0, dtype=np.float32)), 2)
+    prior.set_num_active_factors(2)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(2)])
+    options = pycunls.MinimizerOptions()
+    options.max_num_iterations = 3
+    options.real_time = True
+    summary = pycunls.GaussNewtonMinimizer(options).minimize(stream, problem)
+    assert summary.num_iterations == 3
+    assert summary.termination_reason == pycunls.TerminationReason.NotDetermined
+    assert np.isnan(summary.final_cost)
+    np.testing.assert_allclose(x.numpy(), 2.0, atol=1e-5)

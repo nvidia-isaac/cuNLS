@@ -54,6 +54,7 @@ void bind_minimizer(nb::module_ &m) {
             cunls::MinimizerSummary summary;
             {
               nb::gil_scoped_release release;
+              DeviceScope scope(problem.Device());
               summary = self.Minimize(stream.GetStream(), problem);
             }
             return summary;
@@ -94,7 +95,14 @@ void bind_minimizer(nb::module_ &m) {
 
   // --- Augmented Lagrangian outer loop for problems with constraint batches ---
   nb::class_<cunls::AugmentedLagrangianMinimizerOptions>(
-      m, "AugmentedLagrangianMinimizerOptions", "Options of the augmented Lagrangian outer loop.")
+      m, "AugmentedLagrangianMinimizerOptions",
+      "Options of the augmented Lagrangian: the outer loop and the budget of the inner solves. "
+      "The budget comes from these options alone, with or without constraint batches: each "
+      "outer iteration runs inner_iterations inner iterations, the last one (and a "
+      "subproblem's first after it is feasible) final_inner_iterations; each inner iteration "
+      "does inner_line_search_steps line-search evaluations and max_bound_refinements bound "
+      "refinements. The wrapped minimizer's max_num_iterations, max_line_search_steps and "
+      "real_time are not used.")
       .def(nb::init<>())
       .def_rw("constraint_tolerance",
               &cunls::AugmentedLagrangianMinimizerOptions::constraint_tolerance,
@@ -106,8 +114,10 @@ void bind_minimizer(nb::module_ &m) {
               "Iteration cap of the inner solves while infeasible. Default: 5.")
       .def_rw("final_inner_iterations",
               &cunls::AugmentedLagrangianMinimizerOptions::final_inner_iterations,
-              "Iteration cap of the inner solves once feasible; 0: the inner minimizer's "
-              "max_num_iterations. Default: 0.")
+              "Iteration cap of a subproblem's full inner solve: its first after it is feasible, "
+              "and every subproblem's in the last outer iteration. Without constraint batches "
+              "every subproblem is feasible from the start, so this is the iteration cap of a "
+              "bounds-only solve. Must be > 0. Default: 50.")
       .def_rw("inner_line_search_steps",
               &cunls::AugmentedLagrangianMinimizerOptions::inner_line_search_steps,
               "Line-search steps of the inner solves. Default: 10.")
@@ -133,8 +143,9 @@ void bind_minimizer(nb::module_ &m) {
       .def_rw("real_time", &cunls::AugmentedLagrangianMinimizerOptions::real_time,
               "Fixed budget without host synchronization (one read-back at the end): exactly "
               "max_outer_iterations outer iterations of inner_iterations inner iterations "
-              "(the last final_inner_iterations if > 0). Costs in the summary are NaN. "
-              "Default: False.");
+              "(the last final_inner_iterations). Costs in the summary are NaN. Without "
+              "constraint batches nothing is read back (status NotDetermined), so the call can "
+              "be captured in a CUDA graph once the structure is set up. Default: False.");
 
   nb::enum_<cunls::AugmentedLagrangianMinimizerStatus>(
       m, "AugmentedLagrangianMinimizerStatus",
@@ -195,12 +206,13 @@ void bind_minimizer(nb::module_ &m) {
   nb::class_<cunls::AugmentedLagrangianMinimizer>(
       m, "AugmentedLagrangianMinimizer",
       "Augmented Lagrangian solver for problems with constraint factor batches "
-      "(ConstraintFactorBatch, BoundFactorBatchN), around a Gauss-Newton or "
-      "Levenberg-Marquardt minimizer (minimizer), with options: "
-      "AugmentedLagrangianMinimizerOptions. Also the solver for box-bounded states "
-      "(VectorStateBatch.set_bounds). Without constraints or bounds it is the wrapped "
-      "minimizer.")
-      .def(nb::init<cunls::Minimizer &, const cunls::AugmentedLagrangianMinimizerOptions &>(),
+      "(ConstraintFactorBatch, BoundFactorBatchN) or box-bounded states "
+      "(VectorStateBatch.set_bounds), around a LevenbergMarquardtMinimizer (minimizer: its "
+      "damping, linear solver and tolerances apply; the budget comes from options, an "
+      "AugmentedLagrangianMinimizerOptions). Raises ValueError when the minimizer's options "
+      "have real_time set (set options.real_time instead).")
+      .def(nb::init<cunls::LevenbergMarquardtMinimizer &,
+                    const cunls::AugmentedLagrangianMinimizerOptions &>(),
            nb::arg("minimizer"), nb::arg("options") = cunls::AugmentedLagrangianMinimizerOptions(),
            nb::keep_alive<1, 2>())
       .def(
@@ -210,6 +222,7 @@ void bind_minimizer(nb::module_ &m) {
             cunls::AugmentedLagrangianMinimizerSummary summary;
             {
               nb::gil_scoped_release release;
+              DeviceScope scope(problem.Device());
               summary = self.Minimize(stream.GetStream(), problem);
             }
             return summary;

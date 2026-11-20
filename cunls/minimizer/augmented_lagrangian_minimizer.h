@@ -24,12 +24,25 @@
 
 #include "cunls/common/types.h"
 #include "cunls/factor/constraint_factor_batch.h"
+#include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/minimizer.h"
 #include "cunls/minimizer/problem.h"
 
 namespace cunls {
 
-/** @brief Options of the augmented Lagrangian outer loop. */
+/**
+ * @brief Options of AugmentedLagrangianMinimizer, including the budget of its
+ * inner solves.
+ *
+ * The budget of a call comes from these options alone, with or without
+ * constraint batches: each outer iteration runs one inner solve of at most
+ * inner_iterations iterations; the last outer iteration, and a subproblem's
+ * first inner solve after it is feasible, run at most final_inner_iterations;
+ * every inner iteration does at most inner_line_search_steps line-search
+ * evaluations and max_bound_refinements bound refinements. real_time runs all
+ * of it exactly. The wrapped minimizer's max_num_iterations,
+ * max_line_search_steps and real_time are not used.
+ */
 struct AugmentedLagrangianMinimizerOptions {
   /**
    * @brief A subproblem is feasible when every scaled constraint row satisfies
@@ -50,16 +63,17 @@ struct AugmentedLagrangianMinimizerOptions {
    * @brief Iteration cap of a subproblem's full inner solve: its first inner
    * solve after it is feasible (and every subproblem's in the last outer
    * iteration), the solve that establishes stationarity. Each subproblem of a
-   * partitioned problem gets its own, without waiting for the others. 0 means
-   * the wrapped minimizer's MinimizerOptions::max_num_iterations. Default: 0
+   * partitioned problem gets its own, without waiting for the others. Without
+   * constraint batches every subproblem is feasible from the start, so this is
+   * the iteration cap of a bounds-only solve. Must be > 0. Default: 50
    */
-  size_t final_inner_iterations = 0;
+  size_t final_inner_iterations = 50;
 
   /**
    * @brief Line-search steps of the inner solves (see
    * MinimizerOptions::max_line_search_steps): the inequality rows make the
-   * cost piecewise quadratic, and a Gauss-Newton step that activates rows the
-   * model did not see can overshoot. Default: 10
+   * cost piecewise quadratic, and a step that activates rows the linear model
+   * did not see can overshoot. Default: 10
    */
   size_t inner_line_search_steps = 10;
 
@@ -104,10 +118,10 @@ struct AugmentedLagrangianMinimizerOptions {
    * @brief Box-bounded states (VectorStateBatch::SetBounds): at most this many
    * extra linear solves per inner iteration that also hold the free
    * components the step would push through their bound (active-set
-   * refinement of projected Gauss-Newton; rarely more than one is needed).
-   * With real_time exactly this many (there is no read-back to stop early),
-   * so real-time callers may set 0 or 1; Levenberg-Marquardt's damping
-   * usually does without them. Default: 3
+   * refinement; rarely more than one is needed). With real_time exactly this
+   * many (there is no read-back to stop early), so real-time callers may set
+   * 0 or 1; Levenberg-Marquardt's damping usually does without them.
+   * Default: 3
    */
   size_t max_bound_refinements = 3;
 
@@ -115,13 +129,15 @@ struct AugmentedLagrangianMinimizerOptions {
    * @brief Real-time mode: a fixed budget and no host synchronization but one
    * read-back at the end. Exactly max_outer_iterations outer iterations; each
    * runs exactly inner_iterations inner iterations (the last one
-   * final_inner_iterations if > 0), each with exactly inner_line_search_steps
+   * final_inner_iterations), each with exactly inner_line_search_steps
    * line-search evaluations and max_bound_refinements bound refinements.
    * Penalties, multipliers and per-subproblem status are updated on the
    * device; the summary reports the last outer iteration's violation and
-   * status, and NaN costs. Typical use (receding horizon): a converged first
-   * solve, then real time with warm_start and reuse_structure (SetOptions).
-   * Default: false
+   * status, and NaN costs. Without constraint batches there is no violation
+   * to report: nothing is read back (status kNotDetermined), so the call can
+   * be captured in a CUDA graph once the structure is set up. Typical use
+   * (receding horizon): a converged first solve, then real time with
+   * warm_start and reuse_structure (SetOptions). Default: false
    */
   bool real_time = false;
 };
@@ -169,8 +185,7 @@ struct AugmentedLagrangianMinimizerSummary {
 
   /**
    * @brief One or two sentences for a person or an agent: the outcome and,
-   * when not converged, the likely causes and what to try. Without
-   * constraint batches, the wrapped minimizer's MinimizerSummary::message.
+   * when not converged, the likely causes and what to try.
    */
   std::string message;
 
@@ -195,9 +210,9 @@ struct ConstraintBatchState {
 
 /**
  * @brief Solves problems with constraint factor batches
- * (ConstraintFactorBatchBase: ConstraintFactorBatch, BoundFactorBatch) by the
- * augmented Lagrangian method around a Gauss-Newton or Levenberg-Marquardt
- * minimizer.
+ * (ConstraintFactorBatchBase: ConstraintFactorBatch, BoundFactorBatch) or
+ * box-bounded states (VectorStateBatch::SetBounds) by the augmented Lagrangian
+ * method around a Levenberg-Marquardt minimizer.
  *
  * @verbatim
  *   λ = 0, μ = 0, ρ = ρ0
@@ -216,8 +231,11 @@ struct ConstraintBatchState {
  * iteration (final_inner_iterations) and finishes there, while the others
  * continue with capped solves; it never waits for another subproblem.
  * Multiplier and penalty updates run on the device, with one small read-back
- * per outer iteration. Without constraint batches the call is the wrapped
- * minimizer's Minimize.
+ * per outer iteration. Box bounds are held in every inner solve
+ * (HoldActiveBounds). Without constraint batches every subproblem is feasible
+ * from the start: its first inner solve is its full solve, and a bounds-only
+ * call takes one outer iteration when that solve converges. The budget rule
+ * is in AugmentedLagrangianMinimizerOptions.
  *
  * The multipliers and penalties live in the constraint batches, so the batches
  * may be solved again with warm_start.
@@ -225,16 +243,18 @@ struct ConstraintBatchState {
 class AugmentedLagrangianMinimizer {
  public:
   /**
-   * @brief Wraps an inner minimizer.
-   * @param minimizer Inner minimizer, GaussNewtonMinimizer or
-   *        LevenbergMarquardtMinimizer (not owned; must outlive this object).
-   *        Its options apply to the inner solves, except the iteration cap and
-   *        line search, which this class sets per outer iteration.
-   * @param options Outer-loop options.
-   * @throws std::invalid_argument on invalid options (see SetOptions).
+   * @brief Wraps a Levenberg-Marquardt minimizer.
+   * @param minimizer Inner minimizer (not owned; must outlive this object).
+   *        Its damping, linear solver and convergence tolerances apply to the
+   *        inner solves; their budget comes from `options` (its
+   *        max_num_iterations and max_line_search_steps are not used).
+   * @param options Options of the outer loop and of the inner solves' budget.
+   * @throws std::invalid_argument on invalid options (see SetOptions), or when
+   *         the minimizer's options have real_time set (real time is
+   *         AugmentedLagrangianMinimizerOptions::real_time).
    */
   explicit AugmentedLagrangianMinimizer(
-      Minimizer &minimizer,
+      LevenbergMarquardtMinimizer &minimizer,
       const AugmentedLagrangianMinimizerOptions &options = AugmentedLagrangianMinimizerOptions());
 
   AugmentedLagrangianMinimizer(const AugmentedLagrangianMinimizer &) = delete;
@@ -246,7 +266,8 @@ class AugmentedLagrangianMinimizer {
    *
    * On return the problem's states hold the result and the constraint batches
    * hold the final multipliers and penalties (the warm start of a following
-   * call). Enqueues work on `stream` and synchronizes it before returning.
+   * call). Enqueues work on `stream` and synchronizes it before returning,
+   * except a real-time call without constraint batches (see real_time).
    *
    * @param stream CUDA stream for all device work.
    * @param problem Problem to solve; its states are updated in place.
@@ -265,17 +286,18 @@ class AugmentedLagrangianMinimizer {
    * first solve, then a fixed real-time budget.
    * @throws std::invalid_argument unless initial_penalty > 0, max_penalty >=
    *         initial_penalty, penalty_increase >= 1, constraint_tolerance >= 0,
-   *         inner_iterations > 0 and max_outer_iterations > 0.
+   *         inner_iterations > 0, final_inner_iterations > 0 and
+   *         max_outer_iterations > 0.
    */
   void SetOptions(const AugmentedLagrangianMinimizerOptions &options);
 
  private:
   /**
-   * @brief Projected Gauss-Newton for the box-bounded states, run by every
-   * inner solve as its InnerSolve::restrict_system, at the current `state`.
+   * @brief Bound handling of the box-bounded states, run by every inner solve
+   * as its InnerSolve::restrict_system, at the current `state`.
    *
-   * Before the solve (`step` null), once the linear system is built (and,
-   * for Levenberg-Marquardt, damped): the components that sit at a bound
+   * Before the solve (`step` null), once the linear system is built and
+   * damped: the components that sit at a bound
    * with the steepest-descent direction (the right-hand side) pointing
    * outward are masked out of the system (LinearSystem::SetMask with
    * bound_mask_; their rhs entries zeroed here), so their step is exactly 0.
@@ -290,7 +312,7 @@ class AugmentedLagrangianMinimizer {
                         dvector<float> &rhs, const dvector<float> *step);
 
   // Implementation state; the behaviour lives in augmented_lagrangian_minimizer.cu.
-  Minimizer &minimizer_;  ///< Inner minimizer.
+  LevenbergMarquardtMinimizer &minimizer_;  ///< Inner minimizer.
   AugmentedLagrangianMinimizerOptions options_;
 
   std::vector<internal::ConstraintBatchState>
@@ -323,6 +345,7 @@ class AugmentedLagrangianMinimizer {
   dvector<float> bound_extra_;      ///< Per column: 0 where newly held by a refinement.
   dvector<int> bound_count_;        ///< Components newly held by the last refinement.
   size_t refinements_ = 0;          ///< Refinements of the current inner iteration.
+  int device_ = -1;  ///< Device of the buffers above (that of the first problem solved).
 };
 
 }  // namespace cunls

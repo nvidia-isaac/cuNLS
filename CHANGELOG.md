@@ -4,6 +4,24 @@
 
 ### Changes
 
+- Python wheels are CUDA 13 only: one package, `pycunls-cu13` (R580+ driver), depending on
+  `warp-lang>=1.18` (the `warp-lang<1.18` cap is gone, so pycunls installs next to current Warp).
+  There is no `pycunls-cu12` any more; the C++ library still supports CUDA 12.6+ and 13 (Jetson
+  Orin and Thor). Building the bindings with CUDA 12 stops at configure, and importing pycunls
+  on a pre-R580 driver raises `ImportError` with the fix.
+- `MinimizerOptions.real_time` (C++ `MinimizerOptions::real_time`): Gauss-Newton and
+  Levenberg-Marquardt run exactly `max_num_iterations` iterations without host synchronization,
+  so a solve can be captured in a CUDA graph after its first call.
+- Devices: a problem runs on the device of its states. `minimize()`, `evaluate_batch()`,
+  `validate()` and the articulation and state helpers make that device current themselves
+  (`Problem.device` tells which), so callers need no `wp.ScopedDevice` around them; C++
+  `Minimize()` rejects a call from another device or with a stream of another device. The Warp
+  batch classes default to `device=None` (Warp's current device) instead of `"cuda:0"`.
+- `pycunls.warp.WarpFunctionFactorBatch`: a factor from a Warp residual function over any number
+  of states (`wp.transform`, `wp.quat`, `float`, `wp.vecN`), with Jacobians from Warp's automatic
+  differentiation (checked against central differences), central differences, or an analytic
+  Warp function. `diagnose()` and `ProblemBuilder` report a state batch connected to a slot
+  whose layout it does not have (e.g. an `SO3StateBatch` on a `wp.vec3` argument).
 - Python vector batches take any size at run time: `VectorStateBatch(data, capacity, dim=n)`,
   `PriorVectorFactorBatch`, `VectorBetweenFactorBatch`, `BoundFactorBatch`,
   `HalfspaceFactorBatch` (dim from an `(N, n)` array or the `dim` keyword); `fit()` takes any
@@ -19,6 +37,14 @@ Before 1.0 a release may change the C++ API and ABI; rebuild against each releas
 From 0.4.3 the shared library's SONAME carries the full version (`libcunls.so.0.4.3`), so the
 loader rejects a program built against another release instead of running it with the wrong
 headers. The Python wheels link cuNLS statically and are not affected.
+
+- `AugmentedLagrangianMinimizer(LevenbergMarquardtMinimizer &, options)`: Gauss-Newton is no longer
+  accepted as the inner minimizer, and the options alone set the inner solves' budget (see the
+  Python section: `final_inner_iterations` defaults to 50, the wrapped minimizer's
+  `max_num_iterations`, `max_line_search_steps` and `real_time` are not used).
+- `Minimizer::Minimize`, `AugmentedLagrangianMinimizer::Minimize` and `RansacMinimizer::Minimize`
+  throw `std::invalid_argument` when the current device or the stream's device is not the device
+  of the problem's states (`Problem::Device`), or when a minimizer is reused on another device.
 
 Removed from the installed headers, with replacements:
 
@@ -52,6 +78,17 @@ Removed from the installed headers, with replacements:
 
 ### Breaking changes (Python)
 
+- `pycunls.warp.WarpPoseFactorBatch` is removed: `WarpFunctionFactorBatch` with a
+  `(X: wp.transform, data)` residual does the same.
+- `AugmentedLagrangianMinimizer` takes a `LevenbergMarquardtMinimizer` only (C++ too), and its
+  options alone set the budget of its inner solves, with or without constraint batches:
+  `final_inner_iterations` defaults to 50 and must be positive (0 no longer means "the inner
+  minimizer's `max_num_iterations`", or `inner_iterations` in real time: real-time callers set it
+  to their per-call budget), and the wrapped minimizer's `max_num_iterations`,
+  `max_line_search_steps` and `real_time` are not used (`real_time` set there raises). A
+  bounds-only problem runs the general loop: one outer iteration when its full inner solve
+  converges, and a real-time call reads nothing back. `fit(..., bounds=..., method="gn")` and
+  `ProblemBuilder.solve(method="gn")` with bounds or constraint factors raise `ValueError`.
 - A bool where a device array or pointer is expected raises `TypeError`: e.g.
   `ArticulationStateBatch(topology, capacity, False)`, whose third argument is now
   `const_state_ids`; pass `apply_joint_limits=False` by keyword.

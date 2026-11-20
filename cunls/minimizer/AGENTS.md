@@ -55,5 +55,10 @@ guides: `docs/sphinx/constraints.rst`, `docs/sphinx/ransac.rst`.
   per-hypothesis normal equations, factorization and scoring use fixed reduction orders (same
   seed, same bits). By default an inlier needs a non-zero Jacobian on a free state.
 - Real time: `reuse_structure` skips structure setup when the caller vouches for it (a host size
-  signature is checked); `InnerSolve::fixed_iterations` / AL `real_time` fix the line-search and
-  refinement counts and read nothing back until the end (summary costs NaN).
+  signature is checked); `MinimizerOptions::real_time` (`InnerSolve::fixed_iterations`) / AL
+  `real_time` fix the line-search and refinement counts and read nothing back until the end
+  (summary costs NaN; AL without constraint batches reads nothing back at all).
+- `AugmentedLagrangianMinimizer` wraps a `LevenbergMarquardtMinimizer` only and takes the budget
+  of every inner solve from its own options (one rule with or without constraint batches; a
+  problem without them starts every subproblem as feasible, so its first inner solve is the full
+  solve).

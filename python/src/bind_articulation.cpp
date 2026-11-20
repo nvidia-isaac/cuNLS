@@ -217,6 +217,7 @@ void bind_articulation(nb::module_ &m) {
               [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
                  cunls::CudaStream &stream, size_t stride) {
                 const size_t C = self.Topology().CoordCount();
+                DeviceScope scope(device_of(self.StateDevicePtr(0)));
                 self.SetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
                                stream.GetStream(), stride);
               },
@@ -235,6 +236,7 @@ void bind_articulation(nb::module_ &m) {
               [](cunls::ArticulationStateBatch &self, nb::handle joint_q, size_t num_states,
                  cunls::CudaStream &stream, size_t stride) {
                 const size_t C = self.Topology().CoordCount();
+                DeviceScope scope(device_of(self.StateDevicePtr(0)));
                 self.GetJointQ(StridedFloats(joint_q, "joint_q", num_states, C, stride), num_states,
                                stream.GetStream(), stride);
               },
@@ -249,6 +251,7 @@ void bind_articulation(nb::module_ &m) {
               [](cunls::ArticulationStateBatch &self, nb::handle transforms, size_t num_states,
                  cunls::CudaStream &stream, size_t stride) {
                 const size_t per = 7 * static_cast<size_t>(self.Topology().LinkCount());
+                DeviceScope scope(device_of(self.StateDevicePtr(0)));
                 self.GetLinkTransforms(
                     StridedFloats(transforms, "transforms", num_states, per, stride), num_states,
                     stream.GetStream(), stride);
@@ -276,6 +279,7 @@ void bind_articulation(nb::module_ &m) {
           .def(
               "refresh",
               [](cunls::ArticulationStateBatch &self, cunls::CudaStream &stream) {
+                DeviceScope scope(device_of(self.StateDevicePtr(0)));
                 self.RefreshDerivedData(stream.GetStream());
               },
               nb::arg("stream"),

@@ -38,7 +38,7 @@ import warp as wp
 
 from pycunls._arrays import warp_stream
 from pycunls._summary import _plain
-from pycunls.catalog import effective_factor
+from pycunls.catalog import effective_factor, slot_mismatch, slot_states
 from pycunls._pycunls_core import ArticulationStateBatch, CudaStream, Problem
 
 
@@ -380,7 +380,39 @@ class Issue:
         return f"[{self.severity}] {self.message}"
 
 
-def _gauge_issues(problem: Problem, state_batches) -> List[Issue]:
+def _connections(problem: Problem, state_batches) -> Dict[int, np.ndarray]:
+    """Per factor batch with active factors: (state batch, state) of every slot of every factor,
+    shape (factors, slots, 2), -1 where a pointer is in no state batch."""
+    out = {}
+    for i in range(problem.num_residual_batches):
+        fb = problem.factor_batch(i)
+        if fb.num_active_factors:
+            slots = len(fb.state_sizes())
+            out[i] = _locate(_pointer_table(problem, i), state_batches).reshape(-1, slots, 2)
+    return out
+
+
+def _slot_issues(problem: Problem, state_batches, connections) -> List[Issue]:
+    """Factor slots connected to state batches of another layout than the slot reads (see
+    ``slot_mismatch`` in ``pycunls/catalog.py``); checked before any evaluation, which would
+    read the states in the wrong layout."""
+    issues = []
+    for i, where in connections.items():
+        fb = problem.factor_batch(i)
+        expected = slot_states(effective_factor(fb)[0])
+        sizes = list(fb.state_sizes())
+        if expected is None or len(expected) != len(sizes):
+            continue
+        for slot, size in enumerate(sizes):
+            for j in np.unique(where[:, slot, 0]):
+                message = j >= 0 and slot_mismatch(f"factor batch {_batch_name(problem, i)}",
+                                                   slot, size, state_batches[j], expected[slot])
+                if message:
+                    issues.append(Issue("error", message))
+    return issues
+
+
+def _gauge_issues(problem: Problem, state_batches, connections) -> List[Issue]:
     """Connected groups of free states that only relative factors touch (no prior, no constant)."""
     # Union-find over (state batch, state) keys.
     parent: Dict[tuple, tuple] = {}
@@ -392,15 +424,10 @@ def _gauge_issues(problem: Problem, state_batches) -> List[Issue]:
         return a
 
     anchored = set()
-    for i in range(problem.num_residual_batches):
-        fb = problem.factor_batch(i)
-        if fb.num_active_factors == 0:
-            continue
-        _, _, role = effective_factor(fb)
+    for i, where in connections.items():
+        _, _, role = effective_factor(problem.factor_batch(i))
         if role == "inactive":
             continue
-        slots = len(fb.state_sizes())
-        where = _locate(_pointer_table(problem, i), state_batches).reshape(-1, slots, 2)
         keys = [[(int(a), int(b)) for a, b in row] for row in where]
         for row in keys:
             for key in row[1:]:
@@ -440,7 +467,9 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     FREE quaternion written directly to the state is reported only through its effect.
 
     Checks, in order: the structure (``Problem.find_structure_error``: active counts,
-    connectivity, unconstrained states), non-finite state values, non-finite residuals at the
+    connectivity, unconstrained states), state batches connected to factor slots that read
+    another layout (built-in factors and ``WarpFunctionFactorBatch``; no evaluation runs then),
+    non-finite state values, non-finite residuals at the
     current states (per factor batch, with the first bad factor), and gauge freedoms (groups of
     free states that only between-type factors connect, with no constant state or prior). The
     gauge check is a heuristic, not a rank test: wrapped factors are judged by the factor they
@@ -462,6 +491,10 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
     if error:
         return [Issue("error", error)]
     state_batches = problem.state_batches()
+    connections = _connections(problem, state_batches)
+    issues = _slot_issues(problem, state_batches, connections)
+    if issues:
+        return issues
     # Derived caches (articulation link poses) follow the coordinates, as in a solve: a cache
     # left non-finite by an earlier evaluation does not hide repaired coordinates.
     _refresh_derived_state_data(problem, stream)
@@ -495,5 +528,5 @@ def diagnose(problem: Problem, stream: Optional[CudaStream] = None) -> List[Issu
                 f"in the factor's domain (e.g. points in front of the camera).{hint}"))
         if not b.evaluate_ok:
             issues.append(Issue("error", f"Factor batch {b.name} reported an evaluation failure."))
-    issues.extend(_gauge_issues(problem, state_batches))
+    issues.extend(_gauge_issues(problem, state_batches, connections))
     return issues

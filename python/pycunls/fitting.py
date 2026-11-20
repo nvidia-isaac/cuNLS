@@ -446,12 +446,14 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
             in units of the weighted residual (e.g. 2 = two sigma).
         loss_scale: See ``loss``.
         bounds: ``(lower, upper)``, each a scalar or ``(P,)`` or ``(B, P)``; ``±np.inf`` for
-            unbounded. Solved by the augmented Lagrangian (projected) minimizer.
+            unbounded. Solved by Levenberg-Marquardt inside the augmented Lagrangian minimizer
+            (``method="gn"`` raises).
         starts: Multiple starts against local minima: an int ``K`` draws ``K`` starts uniformly
             within finite ``bounds`` (the first is ``p0``), or an array ``(K, P)`` of starts. Every
             start is solved (all in one solve); per fit, the start with the lowest objective (the
             robust one with ``loss``) wins; starts where the model is not finite never win.
-        method: ``"lm"`` (Levenberg-Marquardt, default, robust) or ``"gn"`` (Gauss-Newton).
+        method: ``"lm"`` (Levenberg-Marquardt, default, robust) or ``"gn"`` (Gauss-Newton; not
+            with ``bounds``).
         max_iterations: Iteration cap of the solve.
         jacobian: ``"auto"`` (autodiff, checked against central differences at ``p0``),
             ``"autodiff"`` or ``"numeric"`` (central differences).
@@ -595,7 +597,9 @@ def fit(model: Callable, x, y, p0, *, sigma=None, loss: Optional[Union[str, Any]
                "cost_tolerance": 1e-14}
     if method == "lm":
         options["relative_reduction_tolerance"] = 1e-7
-    minimizer, al = make_solver(method, lower is not None, options)
+    if lower is not None:
+        options["max_outer_iterations"] = 1  # no constraint rows: one solve of max_iterations
+    minimizer, al = make_solver(method, lower is not None, options, "fit")
     summary = (minimizer if al is None else al).minimize(stream, problem)
 
     # ---- results -----------------------------------------------------------------------------

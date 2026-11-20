@@ -397,7 +397,9 @@ Writing the inner factor
 
 Two ways, both in ``pycunls.warp``:
 
-* **A residual function only** (``WarpPoseFactorBatch``): a Warp function of one pose and one
+* **A residual function only** (``WarpFunctionFactorBatch``, see
+  :ref:`py-warp-function-factor-batch`): a Warp function of the frames (a ``wp.transform`` for a
+  ``Pose`` view, ``wp.vec3`` for ``Position``, ``wp.quat`` for ``Orientation``) and of one
   per-factor data item; Warp's automatic differentiation provides the Jacobian (checked once
   against central differences):
 
@@ -409,7 +411,8 @@ Two ways, both in ``pycunls.warp``:
          u = wp.normalize(d)
          return wp.vec4(u[0], u[1], u[2] - 1.0, wp.length(d) - 0.35)   # look along +z from 0.35 m
 
-     inner = pycunls.warp.WarpPoseFactorBatch(look_at, wp.array(points, dtype=wp.vec3), n)
+     inner = pycunls.warp.WarpFunctionFactorBatch(look_at, data=wp.array(points, dtype=wp.vec3),
+                                                  capacity=n)
      camera = pycunls.LinkFrameFactorBatch(topo, inner, frame_slots=[(0, pycunls.FrameView.Pose)],
                                            topology_links=wrist_links, frame_offsets=mounts)
 
@@ -433,9 +436,9 @@ Two ways, both in ``pycunls.warp``:
   :math:`d = R^T (t - p)`, has :math:`\partial d / \partial \omega = [d]_\times` and
   :math:`\partial d / \partial v = -I`.
 
-The analytic form is faster (one kernel instead of one forward and one reverse pass per residual
-row; for the example's look-at objective the whole solve took 1.25x to 1.45x longer with
-autodiff); the autodiff form is quicker to write and a reference for the analytic one. When only the
+The analytic form is faster (one kernel, while the reverse pass of the residual-function form
+runs the function once per residual row); the residual-function form is quicker to write and a
+reference for the analytic one. When only the
 origin or only the rotation matters, a position or orientation view keeps the factor smaller.
 Check either with ``pycunls.check_jacobians(problem)`` before solving.
 

@@ -380,7 +380,7 @@ void BoundedChains(const std::string &name, int chains, int n, SparseLinearSolve
   if (chains > 1) problem.SetProblemPartition(chains, {d_ids.data()});
 
   CudaStream stream;
-  auto run = [&](Minimizer &inner, const char *label) {
+  auto run = [&](LevenbergMarquardtMinimizer &inner, const char *label) {
     AugmentedLagrangianMinimizer solver_al(inner);
     auto reset = [&] {
       THROW_ON_CUDA_ERROR(
@@ -404,10 +404,6 @@ void BoundedChains(const std::string &name, int chains, int n, SparseLinearSolve
   };
   MinimizerOptions o = Options(solver, 50);
   o.max_line_search_steps = 0;
-  {
-    GaussNewtonMinimizer gn(o);
-    run(gn, "GN");
-  }
   {
     LevenbergMarquardtMinimizerOptions lm;
     lm.base_options = o;
@@ -488,7 +484,7 @@ void ConstrainedChains(const std::string &name, int chains, int n, double infeas
 
   CudaStream stream;
   AugmentedLagrangianMinimizerOptions al;  // defaults (max_penalty 1e8)
-  auto run = [&](Minimizer &inner, const char *label) {
+  auto run = [&](LevenbergMarquardtMinimizer &inner, const char *label) {
     AugmentedLagrangianMinimizer solver(inner, al);
     size_t outer = 0;
     Print(name, label,
@@ -509,10 +505,6 @@ void ConstrainedChains(const std::string &name, int chains, int n, double infeas
     std::printf("  outer_iterations=%zu\n", outer);
   };
   MinimizerOptions o = Options(SparseLinearSolverType::BlockSparseCholesky, 50);
-  {
-    GaussNewtonMinimizer gn(o);
-    run(gn, "GN");
-  }
   {
     LevenbergMarquardtMinimizerOptions lm;
     lm.base_options = o;
@@ -623,6 +615,7 @@ TEST(MinimizerBenchmark, DISABLED_RealTimeMpc) {
     options.real_time = true;
     options.max_outer_iterations = 2;
     options.inner_iterations = 2;
+    options.final_inner_iterations = 2;
     options.inner_line_search_steps = 2;
     options.max_penalty = 1e3f;
     AugmentedLagrangianMinimizer solver(inner, options);

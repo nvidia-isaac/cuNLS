@@ -397,16 +397,26 @@ dvector<T> ToDevice(const std::vector<T> &h) {
 enum class MinimizerKind { kGaussNewton, kLevenbergMarquardt };
 
 /**
+ * @brief A LevenbergMarquardtMinimizer with `options` and
+ *        `relative_reduction_tolerance` (the inner minimizer of
+ *        AugmentedLagrangianMinimizer).
+ */
+inline std::unique_ptr<LevenbergMarquardtMinimizer> MakeLevenbergMarquardt(
+    const MinimizerOptions &options, float relative_reduction_tolerance = 1e-6f) {
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = options;
+  lm.relative_reduction_tolerance = relative_reduction_tolerance;
+  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+}
+
+/**
  * @brief A GaussNewtonMinimizer or LevenbergMarquardtMinimizer with `options`;
  *        Levenberg-Marquardt also with `relative_reduction_tolerance`.
  */
 inline std::unique_ptr<Minimizer> MakeMinimizer(MinimizerKind kind, const MinimizerOptions &options,
                                                 float relative_reduction_tolerance = 1e-6f) {
   if (kind == MinimizerKind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = options;
-  lm.relative_reduction_tolerance = relative_reduction_tolerance;
-  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+  return MakeLevenbergMarquardt(options, relative_reduction_tolerance);
 }
 
 /**

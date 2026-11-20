@@ -1,8 +1,16 @@
 # Installing cuNLS
 
 cuNLS ships as a Python package (`pycunls`) and as a CUDA/C++ library (`cunls`). Both need an
-NVIDIA GPU. Prebuilt Python wheels are on PyPI as `pycunls-cu12` and `pycunls-cu13`
-([from PyPI](#from-pypi)); the rest of this page covers building from source.
+NVIDIA GPU. Prebuilt Python wheels are on PyPI as `pycunls-cu13` ([from PyPI](#from-pypi)); the
+rest of this page covers building from source.
+
+| Part | CUDA | Driver | Platforms |
+|---|---|---|---|
+| C++ library (`libcunls`, CMake package) | 12.6+ and 13 | R525+ (CUDA 12), R580+ (CUDA 13) | x86_64; Jetson Orin (CUDA 12.6), Jetson Thor (CUDA 13) |
+| Python (`pycunls-cu13`) | 13 | R580+ | x86_64 wheels on PyPI; aarch64 (Jetson Thor) from source |
+
+On CUDA 12 systems (for example Jetson Orin with JetPack 6), use the C++ library: importing
+`pycunls` on a driver older than CUDA 13 raises an `ImportError` that says so.
 
 - [Python package](#python-package-pycunls): install from PyPI, or build the wheel in Docker or
   locally, and check it with `python -m pycunls doctor`.
@@ -15,7 +23,8 @@ More detail: [Python installation](docs/sphinx/pycunls_installation.rst) and
 ## Prerequisites
 
 - NVIDIA GPU with a compatible driver (x86_64 or Jetson / aarch64, Linux)
-- CUDA Toolkit (`nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`)
+- CUDA Toolkit (`nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`): 12.6 or newer for the C++
+  library, 13 for `pycunls`
 - CMake >= 3.22
 - C++17 compiler
 - GNU Make
@@ -29,33 +38,30 @@ the toolchain comes with the image (`scripts/Dockerfile`).
 
 `pycunls` exposes cuNLS to Python via [nanobind](https://github.com/wjakob/nanobind). Its
 runtime dependencies are NumPy and [NVIDIA Warp](https://github.com/NVIDIA/warp)
-(`warp-lang<1.18`): Warp arrays hold the GPU data, and custom factors, states and `fit()` models
-are Warp kernels and functions. The bindings accept any GPU array with
-`__cuda_array_interface__` (Warp, PyTorch, CuPy, ...) or a raw device pointer. The wheel
-statically links the cuNLS core library and dynamically links the CUDA runtime libraries, so it
-is specific to the CUDA version it was built with.
+(`warp-lang>=1.18`, whose PyPI wheels are CUDA 13 builds): Warp arrays hold the GPU data, and
+custom factors, states and `fit()` models are Warp kernels and functions. The bindings accept any
+GPU array with `__cuda_array_interface__` (Warp, PyTorch, CuPy, ...) or a raw device pointer. The
+wheel statically links the cuNLS core library and dynamically links the CUDA 13 runtime
+libraries; it needs an R580 or newer driver.
 
 ### From PyPI
 
-Wheels for x86_64 Linux, Python 3.10 to 3.14, one package per CUDA major version. They do not
+Wheels for x86_64 Linux, Python 3.10 to 3.14, CUDA 13 (driver R580 or newer). They do not
 bundle the CUDA libraries they link against (`cudart`, `cublas`, `cusparse`, `cusolver`,
 `nvJitLink`): install them from NVIDIA's pip packages (pycunls finds them in the same
-environment, no `LD_LIBRARY_PATH`) or use a system CUDA toolkit.
+environment, no `LD_LIBRARY_PATH`) or use a system CUDA 13 toolkit.
 
 ```bash
-# CUDA 13 (driver R580 or newer); CUDA 12 (R525 or newer): -cu12 and ==12.8.*
 pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
 pip install "nvidia-cudss-cu13==0.8.*"   # optional, only for SparseLinearSolverType.cuDSS
 python -m pycunls doctor                 # checks the GPU, the native module, a solve, cuDSS
 ```
 
 Install the CUDA libraries through the `cuda-toolkit` metapackage, which pins one CUDA release:
-unpinned `nvidia-*` packages can mix releases (the newest `nvidia-cusolver-cu12` needs the newest
-`nvidia-cublas-cu12`), and the import then fails with `undefined symbol`. A directory on
+unpinned `nvidia-*` packages can mix releases (the newest `nvidia-cusolver-cu13` needs the newest
+`nvidia-cublas-cu13`), and the import then fails with `undefined symbol`. A directory on
 `LD_LIBRARY_PATH` takes precedence over the pip packages. pycunls 0.4.0 does not search the pip
-packages: add `<site-packages>/nvidia/cu13/lib` (CUDA 13) or the
-`nvidia/{cuda_runtime,cublas,cusparse,cusolver,cu12}/lib` directories (CUDA 12) to
-`LD_LIBRARY_PATH`, or upgrade.
+packages: add `<site-packages>/nvidia/cu13/lib` to `LD_LIBRARY_PATH`, or upgrade.
 
 ### Build the wheel in Docker
 
@@ -65,14 +71,15 @@ packages: add `<site-packages>/nvidia/cu13/lib` (CUDA 13) or the
 
 The output directory defaults to `./dist`. The script builds the wheel inside a container with
 the source mounted read-only. Intermediate build directories live inside the container and are
-discarded; only the final `.whl` file is written to the host output directory.
+discarded; only the final `.whl` file is written to the host output directory. The image uses
+CUDA 13.2.0 unless `CUDA_VERSION` names another CUDA 13 release; a CUDA 12 `CUDA_VERSION` stops
+with the fix, as the wheels are CUDA 13 only.
 
-Docker wheels use the distribution name `pycunls-cu12` or `pycunls-cu13` (and the matching
-CuPy in the `test` extra); both use `import pycunls`. With `RELEASE_TAG=v<version>`, the Docker
-build uses the committed checkout, excluding local changes and generated files. The tag version must match
-`python/pyproject.toml` and `python/pycunls/__init__.py`. Wheels include the source commit and
-measured CUDA toolkit version and are repaired with auditwheel while keeping CUDA libraries
-external.
+The wheel's distribution name is `pycunls-cu13`; it is imported as `pycunls`. With
+`RELEASE_TAG=v<version>`, the Docker build uses the committed checkout, excluding local changes
+and generated files. The tag version must match `python/pyproject.toml` and
+`python/pycunls/__init__.py`. Wheels include the source commit and measured CUDA toolkit version
+and are repaired with auditwheel while keeping CUDA libraries external.
 
 ### Build the wheel locally
 
@@ -81,12 +88,10 @@ pip install scikit-build-core nanobind
 (cd python && pip wheel . --no-build-isolation --no-deps --wheel-dir ../dist)
 ```
 
-The `test` extra of a local wheel declares the CUDA 12 CuPy (`cupy-cuda12x`, from
-`python/pyproject.toml`, used only by an interoperability test); only the Docker build switches
-it to `cupy-cuda13x` for CUDA 13. For local CUDA 13 testing, install `cupy-cuda13x` yourself.
-
-`warp-lang` is capped below 1.18: the 1.18 PyPI wheels are built with CUDA 13 and need an R580+
-driver, and older drivers (JetPack 6 on Jetson Orin) leave Warp CPU-only.
+The bindings need a CUDA 13 toolkit: configuring them with CUDA 12 stops with the fix. When
+`/usr/local/cuda` is a CUDA 12 toolkit, name the CUDA 13 compiler, for example
+`CMAKE_ARGS="-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc"` before `pip wheel`. The C++
+library alone (`BUILD_PYTHON_BINDINGS=OFF`, the default) also builds with CUDA 12.
 
 ### Install the wheel
 
@@ -108,7 +113,7 @@ pip install -e ".[test]" --no-build-isolation
 ```
 
 This installs `pycunls` with its runtime dependencies (`numpy`, `warp-lang`) and the test
-dependencies (`pytest`, and `cupy-cuda12x` for the one CuPy interoperability test). `test` is the
+dependencies (`pytest`, and `cupy-cuda13x` for the one CuPy interoperability test). `test` is the
 only optional dependency group.
 
 After changing the bindings, regenerate the type stub with
@@ -215,10 +220,12 @@ Tests require a GPU.
 pytest -v python/tests
 ```
 
-Or in Docker, against a wheel built by `build_pycunls_in_docker.sh`:
+Or in Docker, against a wheel built by `build_pycunls_in_docker.sh` (the test runs in the CUDA 13
+image that script built):
 
 ```bash
 ./scripts/test_pycunls_in_docker.sh ./dist
+WARP_REQUIREMENT="warp-lang==1.18.*" ./scripts/test_pycunls_in_docker.sh ./dist   # the lowest Warp
 ```
 
 ### C++ tests

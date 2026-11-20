@@ -473,7 +473,8 @@ class Horizon:
 
         ``minimizer`` defaults to Levenberg-Marquardt with the block-tridiagonal
         linear solver (the problem declares its stages) and a state tolerance of
-        1e-5 (pass your own minimizer to change either).
+        1e-5 (pass your own :class:`pycunls.LevenbergMarquardtMinimizer` to change
+        either; the augmented Lagrangian wraps Levenberg-Marquardt only).
 
         ``real_time=(outer, inner)``: after the first solve (which converges),
         every solve runs a fixed budget of ``outer`` augmented-Lagrangian
@@ -567,7 +568,7 @@ class Controller:
             o.real_time = True
             o.max_outer_iterations = int(outer)
             o.inner_iterations = int(inner)
-            o.final_inner_iterations = 0
+            o.final_inner_iterations = int(inner)
             o.inner_line_search_steps = 2
             # A few iterations per step cannot absorb large penalties: the
             # penalty term swamps the costs and the closed loop drifts

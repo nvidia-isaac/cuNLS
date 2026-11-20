@@ -17,8 +17,8 @@ env:
   PYPI_PUBLISH_REPOSITORY: nvidia-isaac/cuNLS
   PYPI_ASSET_SOURCE: github-release
   WHEEL_DIR: pypi-wheels
+  # The wheels are CUDA 13 only (the C++ library also supports CUDA 12).
   KITMAKER_PROJECTS: |
-    pycunls-cu12=6865
     pycunls-cu13=6866
   PYPI_PLATFORM: manylinux_*_x86_64
   PYPI_PROVENANCE_PATH: pycunls/_build_provenance.json
@@ -26,12 +26,7 @@ env:
   # One cell per wheel, all built on Ubuntu 22.04: the wheel tag follows the build's glibc
   # (manylinux_2_35), which also installs on newer distributions.
   PYPI_PUBLISH_CELLS: &release_cells >-
-    [{"cuda":"12.8.1","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.10"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.11","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.11"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.12","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.12"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.13","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.13"},
-     {"cuda":"12.8.1","ubuntu":"22.04","python":"3.14","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda12.8.1-ubuntu22.04-py3.14"},
-     {"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.10"},
+    [{"cuda":"13.2.0","ubuntu":"22.04","python":"3.10","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.10"},
      {"cuda":"13.2.0","ubuntu":"22.04","python":"3.11","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.11"},
      {"cuda":"13.2.0","ubuntu":"22.04","python":"3.12","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.12"},
      {"cuda":"13.2.0","ubuntu":"22.04","python":"3.13","arch":"x86_64","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120","artifact_dir":"pycunls-x86_64-cuda13.2.0-ubuntu22.04-py3.13"},

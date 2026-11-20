@@ -145,10 +145,9 @@ Notes
     startup, so setting it from inside an already-running process (for
     example via ``os.environ[...]`` in a live Python interpreter, before
     constructing a ``cuDSSLinearSolver``) has no effect on ``dlopen()``.
-    The ``pycunls`` wheel also finds ``nvidia-cudss-cu12``/``nvidia-cudss-cu13``
-    0.8 installed with pip into the same environment, with no
-    ``LD_LIBRARY_PATH`` (its native module has a ``RUNPATH`` to those
-    directories).
+    The ``pycunls-cu13`` wheel also finds ``nvidia-cudss-cu13`` 0.8 installed
+    with pip into the same environment, with no ``LD_LIBRARY_PATH`` (its
+    native module has a ``RUNPATH`` to that directory).
   - Requesting the cuDSS solver without ``libcudss.so`` reachable raises a
     ``std::runtime_error`` (Python: ``RuntimeError``) describing how to fix
     it, rather than a linker error or crash.

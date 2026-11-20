@@ -9,7 +9,9 @@ on:
           Optional: platform (default "x86_64"), runner (default ["self-hosted","gpu"]),
           base_image (overrides the Docker base image), ports_mirror (Ubuntu Ports mirror URL),
           python (build and test only a wheel for this Python version, e.g. "3.13";
-          without it, the C++ libraries too and a wheel for the image's python3).
+          without it, the C++ libraries too and a wheel for the image's python3),
+          warp (a pip requirement that pins Warp in the Python tests, e.g. "warp-lang==1.18.*").
+          Wheels are CUDA 13 only: cells with CUDA 12 build and test the C++ libraries alone.
           Example: [{"ubuntu":"22.04","cuda":"12.8.1","archs":"75-real;80-real;86-real;89-real;90-real;100-real;120"}]
         type: string
         required: true
@@ -53,6 +55,7 @@ jobs:
       PYTHON_VERSION: ${{ matrix.config.python }}
       BASE_IMAGE: ${{ matrix.config.base_image }}
       UBUNTU_PORTS_MIRROR: ${{ matrix.config.ports_mirror }}
+      WARP_REQUIREMENT: ${{ matrix.config.warp }}
 
     steps:
       - name: Verify GPU
@@ -72,10 +75,13 @@ jobs:
         if: ${{ !matrix.config.python }}
         run: ./scripts/test_cunls_in_docker.sh ./output
 
+      # The Python wheels are CUDA 13 builds; CUDA 12 cells cover the C++ libraries only.
       - name: Build Python wheel
+        if: ${{ startsWith(matrix.config.cuda, '13.') }}
         run: ./scripts/build_pycunls_in_docker.sh ./output/wheel
 
       - name: Run Python tests
+        if: ${{ startsWith(matrix.config.cuda, '13.') }}
         run: ./scripts/test_pycunls_in_docker.sh ./output/wheel
 
       - name: Upload C++ test results
@@ -88,7 +94,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Python test results
-        if: always()
+        if: ${{ always() && startsWith(matrix.config.cuda, '13.') }}
         uses: actions/upload-artifact@v6
         with:
           name: test-results-python-${{ env.CONFIG_NAME }}
@@ -120,7 +126,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Python wheel
-        if: inputs.upload_binaries
+        if: ${{ inputs.upload_binaries && startsWith(matrix.config.cuda, '13.') }}
         uses: actions/upload-artifact@v6
         with:
           name: pycunls-${{ env.CONFIG_NAME }}

@@ -144,9 +144,9 @@ def main():
     num_states = len(chain.gt)
 
     # 2. Upload states and factor data as Warp arrays.
-    states_gpu = wp.array(chain.initial, dtype=wp.float32, device="cuda:0")
-    log_ratios_wp = wp.array(chain.measurements, dtype=wp.float32, device="cuda:0")
-    prior_wp = wp.array(chain.gt[:1], dtype=wp.float32, device="cuda:0")
+    states_gpu = wp.array(chain.initial, dtype=wp.float32)
+    log_ratios_wp = wp.array(chain.measurements, dtype=wp.float32)
+    prior_wp = wp.array(chain.gt[:1], dtype=wp.float32)
 
     # 3. The custom state batch and the two custom factor batches.
     #    Capacity vs. active count. A batch is constructed with its capacity: how many states (or

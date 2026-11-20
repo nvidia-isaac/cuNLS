@@ -176,6 +176,19 @@ struct MinimizerOptions {
   size_t max_num_iterations = 50;
 
   /**
+   * @brief Real-time mode: a fixed budget and no host synchronization.
+   * Exactly max_num_iterations iterations, each with exactly
+   * max_line_search_steps line-search evaluations; nothing is read back, so
+   * the summary has num_iterations = max_num_iterations, NaN costs and
+   * TerminationReason::NotDetermined (as SubproblemTerminationReasons()). The
+   * first call sets up the structure and synchronizes; with reuse_structure
+   * the following calls can be captured in a CUDA graph. Inside
+   * AugmentedLagrangianMinimizer use AugmentedLagrangianMinimizerOptions::
+   * real_time instead. Default: false
+   */
+  bool real_time = false;
+
+  /**
    * @brief Convergence threshold for state updates.
    *
    * A subproblem has converged when its squared step norm falls below this
@@ -613,6 +626,7 @@ class Minimizer {
   ProblemPartition partition_;              ///< Subproblems and their step bookkeeping.
   MinimizerState current_state_;            ///< States before the step.
   MinimizerState updated_state_;            ///< States at the trial point.
+  int device_ = -1;  ///< Device of the buffers above (that of the first problem solved).
   profiler::Domain profiler_domain_{"Minimizer"};
 };
 

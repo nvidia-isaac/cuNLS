@@ -118,7 +118,8 @@ def test_real_time_augmented_lagrangian_without_constraints_is_not_determined(st
     lm.initial_lambda = 1e4  # one heavily damped step: far from the minimum
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     options.real_time = True
-    options.inner_iterations = 1
+    options.max_outer_iterations = 1
+    options.final_inner_iterations = 1
     inner = pycunls.LevenbergMarquardtMinimizer(lm)
     summary = pycunls.AugmentedLagrangianMinimizer(inner, options).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.NotDetermined
