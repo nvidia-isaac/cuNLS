@@ -238,7 +238,7 @@ except ImportError:
     if _sys.argv[:1] != ["-m"]:
         raise
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 __all__ = [
     "CudaStream",
