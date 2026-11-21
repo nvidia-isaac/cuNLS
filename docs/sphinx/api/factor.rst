@@ -967,8 +967,9 @@ respect to:
      - :math:`x + d`
 
 States without a Warp value type (SE(2), Sim(2/3), SL(4), articulation coordinates) need a
-``WarpFactorBatch``. ``factor.slot_states`` names each slot's state batch class;
-``ProblemBuilder`` and ``pycunls.diagnose`` report a slot connected to a batch of another layout
+``WarpFactorBatch``. Register the factor with ``Problem.add_factor_batch`` (``ProblemBuilder``
+constructs only catalog factors from measurement arrays). ``factor.slot_states`` names each slot's
+state batch class; ``pycunls.diagnose`` reports a slot connected to a batch of another layout
 (e.g. an ``SO3StateBatch`` on a ``wp.vec3`` argument: both have tangent size 3).
 
 - **residual** — the ``@wp.func`` above.
@@ -987,8 +988,10 @@ States without a Warp value type (SE(2), Sim(2/3), SL(4), articulation coordinat
 
 An evaluation replays a few recorded launches on the minimizer's stream: the reverse pass gives
 all :math:`M` Jacobian rows in one launch (the residual function runs once per row in it). With
-``"auto"``, run one evaluation (a solve, or ``pycunls.evaluate``) before capturing a CUDA graph,
-so that the one-time check is not captured. A ``WarpFactorBatch`` with an analytic Jacobian
+``"auto"``, run one solve before capturing a CUDA graph, so that the one-time check is not
+captured (the check needs Jacobians: ``pycunls.evaluate`` does not run it). Work arrays are kept
+for the last two item counts: a captured graph replays those it was captured with, so keep the
+active counts unchanged while a graph is in use. A ``WarpFactorBatch`` with an analytic Jacobian
 kernel is faster: prototype with this class, and write the kernel where evaluation time matters.
 
 .. _factor-cpp-api:

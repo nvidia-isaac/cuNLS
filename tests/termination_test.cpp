@@ -251,6 +251,40 @@ TEST(TerminationTest, AllConstantStatesCountEverySubproblem) {
   EXPECT_EQ(wrapped.num_converged, 3u);
 }
 
+// A solver reused on an all-constant problem with more subproblems reports one
+// NoFreeStates reason per subproblem of that problem (not the earlier call's
+// table); in real time that call reads nothing back and can be captured.
+TEST(TerminationTest, AllConstantProblemAfterAnotherOne) {
+  CudaStream stream;
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options = Options();
+  AugmentedLagrangianMinimizer al(options);
+  PriorProblem first({5.f, -3.f}, false);
+  ASSERT_TRUE(al.Minimize(stream.GetStream(), first.problem).Converged());
+  PriorProblem constant({5.f, -3.f, 1.f, 1.f, 0.f, 0.f}, true, /*all_constant=*/true);
+  const auto summary = al.Minimize(stream.GetStream(), constant.problem);
+  EXPECT_TRUE(summary.Converged()) << summary.message;
+  ASSERT_EQ(al.NumSubproblems(), 3u);
+  std::vector<int> reasons(3);
+  THROW_ON_CUDA_ERROR(cudaMemcpy(reasons.data(), al.SubproblemTerminationReasons(),
+                                 3 * sizeof(int), cudaMemcpyDeviceToHost));
+  for (int r : reasons) EXPECT_EQ(r, static_cast<int>(TerminationReason::NoFreeStates));
+
+  MinimizerOptions real_time = Options();
+  real_time.real_time = true;
+  real_time.reuse_structure = true;
+  GaussNewtonMinimizer gn(real_time);
+  gn.Minimize(stream.GetStream(), constant.problem);
+  cudaGraph_t graph = nullptr;
+  ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+            cudaSuccess);
+  const MinimizerSummary captured = gn.Minimize(stream.GetStream(), constant.problem);
+  ASSERT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+  EXPECT_EQ(captured.termination_reason, TerminationReason::NoFreeStates);
+  EXPECT_TRUE(std::isnan(captured.final_cost));
+  cudaGraphDestroy(graph);
+}
+
 // A problem lives on the device of its states. Minimize() runs there and
 // rejects a call made from another device or with a stream of another device
 // (needs two GPUs).

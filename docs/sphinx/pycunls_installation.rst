@@ -36,7 +36,8 @@ library: importing ``pycunls`` on a driver older than CUDA 13 raises an
 Install from PyPI
 ===============================================================================
 
-Wheels for x86_64 Linux, Python 3.10 to 3.14, CUDA 13 (driver R580 or newer):
+Wheels for x86_64 Linux with glibc 2.35 or newer (Ubuntu 22.04 and later; build from
+source on older distributions), Python 3.10 to 3.14, CUDA 13 (driver R580 or newer):
 
 .. code-block:: bash
 
@@ -148,7 +149,10 @@ CUDA libraries
 The wheel links ``cudart``, ``cublas``, ``cusparse`` and ``cusolver`` without
 bundling them. Its native module searches, in order: ``LD_LIBRARY_PATH``, the
 NVIDIA pip packages next to it in ``site-packages`` (``nvidia/cu13/lib``),
-then the system library cache (a CUDA 13 toolkit under ``/usr/local/cuda``).
+then the system library cache. A CUDA 13 toolkit under ``/usr/local/cuda`` is
+found only when its ``lib64`` directory is in the cache (``ldconfig``) or on
+``LD_LIBRARY_PATH`` (e.g. ``export LD_LIBRARY_PATH=/usr/local/cuda/lib64``),
+which a runfile installation does not set up.
 Install the pip packages from one CUDA release with
 ``pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"``.
 

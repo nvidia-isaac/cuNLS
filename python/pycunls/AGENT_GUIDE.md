@@ -148,7 +148,7 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
 | `MaxRejectedSteps` with a cost that stopped changing | float32 round-off at the minimum | usually fine: check residuals |
 | `MaxIterations` | not finished | raise `max_num_iterations`; check the cost history |
 | `No residual batch has active factors` | forgot `set_num_active_factors` | set the active counts |
-| `... box-bounded states ... AugmentedLagrangianMinimizer` | bounds with GN/LM | wrap a `LevenbergMarquardtMinimizer` in `AugmentedLagrangianMinimizer` (`fit`/`ProblemBuilder` do; `method="gn"` with bounds raises) |
+| `... box-bounded states ... AugmentedLagrangianMinimizer` | bounds with GN/LM | solve with `AugmentedLagrangianMinimizer()` (settings in `AugmentedLagrangianMinimizerOptions`; `fit`/`ProblemBuilder` do; `method="gn"` with bounds raises) |
 | `ImportError: the driver supports CUDA 12.x but pycunls is built with CUDA 13` | pre-R580 driver | install an R580+ driver; on CUDA 12 systems use the C++ library |
 | warning `Gauge freedom` | relative factors only | `constant=[0]` or a prior |
 | fit: `TypeError: model must be a Warp function` | a Python/NumPy model | rewrite it as `@wp.func` of one sample |

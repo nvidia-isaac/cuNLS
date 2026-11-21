@@ -415,15 +415,18 @@ def effective_factor(batch) -> Tuple[object, Optional[FactorInfo], str]:
 
 def slot_states(batch) -> Optional[List[str]]:
     """The state batch class each state slot of a factor batch reads, or None when unknown: the
-    catalog's ``FactorInfo.states`` for a built-in factor, ``slot_states`` for a
-    ``pycunls.warp.WarpFunctionFactorBatch`` (decided by its residual's argument types), None for
-    other custom factors and for wrappers without states of their own (see
+    catalog's ``FactorInfo.states`` for a built-in factor (or a subclass of one), ``slot_states``
+    for a ``pycunls.warp.WarpFunctionFactorBatch`` (decided by its residual's argument types),
+    None for other custom factors and for wrappers without states of their own (see
     :func:`effective_factor`)."""
     slots = getattr(batch, "slot_states", None)
     if slots is not None:
         return list(slots)
-    info = factor_info(type(batch).__name__)
-    return list(info.states) if info is not None and info.states else None
+    for cls in type(batch).__mro__:
+        info = factor_info(cls.__name__)
+        if info is not None:
+            return list(info.states) if info.states else None
+    return None
 
 
 def slot_mismatch(factor: str, slot: int, size: int, batch, expected: Optional[str]
@@ -436,10 +439,13 @@ def slot_mismatch(factor: str, slot: int, size: int, batch, expected: Optional[s
     got = type(batch).__name__
     vector = bool(expected) and expected.startswith("VectorStateBatch")
     base = "VectorStateBatch" if vector else expected
-    is_base = base is not None and base in {c.__name__ for c in type(batch).__mro__}
+    names = [c.__name__ for c in type(batch).__mro__]
+    is_base = base is not None and base in names
     if is_base and batch.tangent_size == size:
         return None
-    if base is not None and state_info(got) is not None and not is_base:
+    # A built-in state batch, or a subclass of one, stores the built-in layout.
+    built_in = next((n for n in names if state_info(n) is not None), None)
+    if base is not None and built_in is not None and not is_base:
         return (f"slot {slot} of {factor} needs a {expected}, got a {got}: the factor reads the "
                 f"state layout of {expected} ({state_info(expected).layout}). Fix: connect "
                 f"slot {slot} to a pycunls.{expected}.")

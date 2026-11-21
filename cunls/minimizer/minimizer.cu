@@ -539,9 +539,16 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   updated.Recreate(stream, problem);
 
   summary.num_free_parameters = m.state_ops_.NumReducedStates();
-  // No optimizable states (all constant): nothing to solve.
+  // No optimizable states (all constant): nothing to solve. The reason is known
+  // on the host; a real-time call reads nothing back (no cost).
   if (m.state_ops_.NumReducedStates() == 0) {
-    summary.initial_cost = ComputeCost(stream, problem, current, scratch);
+    // The setup above is complete for such a problem: the next call may reuse it.
+    structure.problem = &problem;
+    structure.signature = std::move(signature);
+    partition.TerminateAll(stream, problem.NumProblems(),
+                           static_cast<int>(TerminationReason::NoFreeStates));
+    summary.initial_cost = fixed ? std::numeric_limits<float>::quiet_NaN()
+                                 : ComputeCost(stream, problem, current, scratch);
     summary.final_cost = summary.initial_cost;
     summary.termination_reason = TerminationReason::NoFreeStates;
     summary.num_problems_by_reason.assign(kNumTerminationReasons, 0);

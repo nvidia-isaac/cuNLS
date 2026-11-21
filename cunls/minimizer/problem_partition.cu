@@ -598,6 +598,21 @@ void ProblemPartition::StepControl(cudaStream_t stream, const StepControlParams 
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 
+namespace {
+__global__ void fill_int_kernel(size_t n, int value, int *out) {
+  const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+  if (i < n) out[i] = value;
+}
+}  // namespace
+
+void ProblemPartition::TerminateAll(cudaStream_t stream, size_t num_problems, int reason) {
+  num_problems_ = num_problems;
+  termination_.resize(num_problems);
+  fill_int_kernel<<<Blocks(num_problems), kThreads, 0, stream>>>(num_problems, reason,
+                                                                  termination_.data());
+  THROW_ON_CUDA_ERROR(cudaGetLastError());
+}
+
 void ProblemPartition::FinishTermination(cudaStream_t stream, unsigned int *d_counts) {
   THROW_ON_CUDA_ERROR(
       cudaMemsetAsync(d_counts, 0, kNumTerminationReasons * sizeof(unsigned int), stream));

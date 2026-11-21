@@ -9,8 +9,10 @@ rest of this page covers building from source.
 | C++ library (`libcunls`, CMake package) | 12.6+ and 13 | R525+ (CUDA 12), R580+ (CUDA 13) | x86_64; Jetson Orin (CUDA 12.6), Jetson Thor (CUDA 13) |
 | Python (`pycunls-cu13`) | 13 | R580+ | x86_64 wheels on PyPI; aarch64 (Jetson Thor) from source |
 
-On CUDA 12 systems (for example Jetson Orin with JetPack 6), use the C++ library: importing
-`pycunls` on a driver older than CUDA 13 raises an `ImportError` that says so.
+What decides is the driver, not the installed toolkit: a machine with a CUDA 12 toolkit and an
+R580 or newer driver runs the wheel with the CUDA 13 pip libraries. With an older driver (for
+example Jetson Orin with JetPack 6), use the C++ library: importing `pycunls` on a driver older
+than CUDA 13 raises an `ImportError` that says so.
 
 - [Python package](#python-package-pycunls): install from PyPI, or build the wheel in Docker or
   locally, and check it with `python -m pycunls doctor`.
@@ -46,7 +48,8 @@ libraries; it needs an R580 or newer driver.
 
 ### From PyPI
 
-Wheels for x86_64 Linux, Python 3.10 to 3.14, CUDA 13 (driver R580 or newer). They do not
+Wheels for x86_64 Linux with glibc 2.35 or newer (Ubuntu 22.04 and later; build from source on
+older distributions), Python 3.10 to 3.14, CUDA 13 (driver R580 or newer). They do not
 bundle the CUDA libraries they link against (`cudart`, `cublas`, `cusparse`, `cusolver`,
 `nvJitLink`): install them from NVIDIA's pip packages (pycunls finds them in the same
 environment, no `LD_LIBRARY_PATH`) or use a system CUDA 13 toolkit.

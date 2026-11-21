@@ -186,6 +186,41 @@ def test_auto_falls_back_to_central_differences_when_autodiff_disagrees(stream):
     assert all(check.ok for check in pycunls.check_jacobians(problem, stream))
 
 
+@wp.func
+def _vector1(x: float, a: float) -> wp.types.vector(length=1, dtype=wp.float32):
+    return wp.types.vector(x * x - a, length=1, dtype=wp.float32)
+
+
+@wp.func
+def _root(x: float, a: float) -> float:
+    return wp.sqrt(x) - a  # central differences step below 0 near x = 0: NaN
+
+
+def test_length_one_vector_residual(stream):
+    rng, n = np.random.default_rng(6), 8
+    batch, _ = _states("vec1", rng, n)
+    factor = WarpFunctionFactorBatch(_vector1, data=wp.zeros(n, dtype=float), capacity=n)
+    problem = _problem(factor, [batch], n)
+    assert all(check.ok for check in pycunls.check_jacobians(problem, stream))
+
+
+def test_auto_keeps_autodiff_where_central_differences_leave_the_domain(stream):
+    n = 4
+    x = wp.array(np.full(n, 5e-4, dtype=np.float32))
+    batch = pycunls.VectorStateBatch(x, n, dim=1)
+    batch.set_num_active_states(n)
+    factor = WarpFunctionFactorBatch(_root, data=wp.zeros(n, dtype=float), capacity=n)
+    problem = _problem(factor, [batch], n)
+    residuals = wp.zeros(n, dtype=float)
+    jacobians = wp.zeros(n, dtype=float)
+    table = wp.array(np.full(n, x.ptr, dtype=np.uint64) + 4 * np.arange(n, dtype=np.uint64))
+    factor.evaluate_batch(residuals, jacobians, table, stream)
+    wp.synchronize()
+    assert factor.jacobian_mode == "autodiff"
+    np.testing.assert_allclose(jacobians.numpy(), 0.5 / np.sqrt(5e-4), rtol=1e-3)
+    assert problem is not None
+
+
 @wp.struct
 class _Target:
     point: wp.vec3
@@ -273,6 +308,13 @@ def test_slot_connected_to_another_layout_is_reported(stream):
         assert f"needs a {expected}, got a {type(wrong).__name__}" in issues[0].message
         assert "Fix:" in issues[0].message
     assert slot_mismatch("f", 0, 3, rotations, "SO3StateBatch") is None
+
+    class Rotations(pycunls.SO3StateBatch):  # a subclass stores the built-in layout too
+        pass
+
+    subclass = Rotations(wp.zeros(9 * n, dtype=float), n)
+    assert "needs a SE2StateBatch, got a Rotations" in slot_mismatch("f", 0, 3, subclass,
+                                                                      "SE2StateBatch")
     assert slot_mismatch("f", 0, 3, vectors, "VectorStateBatch") is None
     assert "tangent size 6" in slot_mismatch("f", 0, 6, vectors, "VectorStateBatch")
 
@@ -298,6 +340,8 @@ def test_rejects_wrong_signatures():
         WarpFunctionFactorBatch(_scalar, data=wp.zeros(4, dtype=wp.vec2), capacity=4)
     with pytest.raises(ValueError, match="fewer items than the capacity.*Fix:"):
         WarpFunctionFactorBatch(_scalar, data=data, capacity=8)
+    with pytest.raises(ValueError, match="one-dimensional.*Fix:"):
+        WarpFunctionFactorBatch(_scalar, data=wp.zeros((4, 1), dtype=float), capacity=4)
     with pytest.raises(ValueError, match="jacobian='fd'.*Fix:"):
         WarpFunctionFactorBatch(_scalar, data=data, capacity=4, jacobian="fd")
     with pytest.raises(TypeError, match="Jacobian function.*Fix:"):
@@ -317,4 +361,5 @@ def test_device_defaults_to_the_current_cuda_device():
         assert str(WarpFactorBatch(1, [1], 4)._device) == "cuda:1"
         assert str(WarpFunctionFactorBatch(_cross, capacity=4)._device) == "cuda:1"
         data = wp.zeros(4, dtype=float, device="cuda:0")
-    assert str(WarpFunctionFactorBatch(_scalar, data=data, capacity=4)._device) == "cuda:0"
+        # data.device wins over the current device.
+        assert str(WarpFunctionFactorBatch(_scalar, data=data, capacity=4)._device) == "cuda:0"

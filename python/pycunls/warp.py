@@ -533,7 +533,7 @@ _SOURCES = itertools.count()
 
 
 def _kernels(namespace: dict, num_states: int, has_data: bool, M: int, J: int,
-             slots: List[_Slot], analytic: bool) -> dict:
+             slots: List[_Slot], analytic: bool, vector: bool) -> dict:
     """Compiles the kernels of one residual function (Warp kernels have a fixed argument list, so
     their source is generated for the function's states). The source is registered with
     ``linecache``, where Warp's code generation reads a function's source."""
@@ -566,7 +566,7 @@ def _kernels(namespace: dict, num_states: int, has_data: bool, M: int, J: int,
                     f"        jac[t, row, {offsets[k]} + j] = g{k}[j]\n    a{k}[t, row] = D{k}()\n")
         return body
 
-    rows_of = "r" if M == 1 else "r[i]"
+    rows_of = "r[i]" if vector else "r"
     steps = "".join(f"d{k}: wp.array2d(dtype=D{k}), " for k in range(K))
     grads = "".join(f"a{k}: wp.array2d(dtype=D{k}), " for k in range(K))
     src = f'''
@@ -588,7 +588,7 @@ def rows(
     {states}{steps}{data}out: wp.array2d(dtype=float)):
     t, row = wp.tid()
     r = {call([plus(k, f"d{k}[t, row]") for k in range(K)])}
-    out[t, row] = {"r" if M == 1 else "r[row]"}
+    out[t, row] = {"r[row]" if vector else "r"}
 
 
 @wp.kernel(module="unique")
@@ -602,7 +602,7 @@ def numeric({states}{data}h: float, jac: wp.array3d(dtype=float)):
 {"".join(unit(k) for k in range(K))}    rp = {call([plus(k, f"e{k}") for k in range(K)])}
     rm = {call([plus(k, f"-e{k}") for k in range(K)])}
     for i in range({M}):
-        jac[t, i, c] = ({"rp" if M == 1 else "rp[i]"} - {"rm" if M == 1 else "rm[i]"}) / (2.0 * h)
+        jac[t, i, c] = ({"rp[i]" if vector else "rp"} - {"rm[i]" if vector else "rm"}) / (2.0 * h)
 '''
     if analytic:
         src += f'''
@@ -635,6 +635,7 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
             return wp.vec2(q[0] / q[2], q[1] / q[2]) - uv
 
         factor = WarpFunctionFactorBatch(reprojection, data=observations, capacity=n)
+        factor.set_num_active_factors(n)
         problem.add_factor_batch(factor, [poses, points], index_table)  # slots in argument order
 
     Each argument type decides the state the slot reads and the update the Jacobian is taken
@@ -657,8 +658,10 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
     * ``"auto"`` (default): Warp's reverse-mode automatic differentiation, checked once (at the
       first evaluation with Jacobians, one synchronization) against central differences; on a
       mismatch it warns and uses central differences from then on (Warp unrolls loops only up
-      to ``wp.config.max_unroll`` iterations). Run one evaluation (a solve, or
-      ``pycunls.evaluate``) before capturing a CUDA graph, so that the check is not captured.
+      to ``wp.config.max_unroll`` iterations; reference entries that are not finite, e.g. a
+      difference step outside the residual's domain, are not compared). Run one solve before
+      capturing a CUDA graph, so that the check (it needs Jacobians: ``pycunls.evaluate`` does
+      not run it) is not captured.
     * ``"autodiff"`` or ``"numeric"`` (central differences): one of them, without the check.
     * a ``@wp.func`` with the residual's arguments that returns a
       ``wp.types.matrix(shape=(M, J), dtype=float)``: the analytic Jacobian, J = the sum of the
@@ -666,7 +669,10 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
 
     An evaluation is a few recorded launches on the minimizer's stream (re-recorded only for new
     buffers or item counts). An analytic :class:`WarpFactorBatch` kernel is still faster:
-    prototype with this class, and write one where the evaluation time matters.
+    prototype with this class, and write one where the evaluation time matters. Work arrays are
+    kept for the last two item counts: a captured CUDA graph replays those of the counts it was
+    captured with, so keep the active counts unchanged while a graph is in use (as
+    ``reuse_structure`` requires anyway).
 
     Parameters
     ----------
@@ -721,6 +727,10 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
                 raise TypeError(f"{name}: data must be a wp.array of the residual's last argument "
                                 f"type (got {getattr(data, 'dtype', type(data).__name__)}, "
                                 f"expected {item_type}). Fix: wp.array(items, dtype=...).")
+            if data.ndim != 1:
+                raise ValueError(f"{name}: data must be a one-dimensional array of items (got shape "
+                                 f"{data.shape}, expected (capacity,)). Fix: one item per factor; a "
+                                 "@wp.struct or wp.vecN item for several values.")
             if data.shape[0] < capacity:
                 raise ValueError(f"{name}: data holds fewer items than the capacity (got "
                                  f"{data.shape[0]}, expected >= {capacity}). Fix: one data item "
@@ -757,7 +767,8 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
                      "_quat_at": _quat_at, "_plus_se3": _plus_se3, "_plus_so3": _plus_so3}
         for k, (t, s) in enumerate(zip(state_types, slots)):
             namespace[f"T{k}"], namespace[f"D{k}"] = t, s.step
-        self._kernels = _kernels(namespace, len(slots), has_data, M, J, slots, mode == "analytic")
+        self._kernels = _kernels(namespace, len(slots), has_data, M, J, slots, mode == "analytic",
+                                 wp.types.type_is_vector(ret))
         # Item count -> work arrays and recorded launches, for the current and the previous count
         # only (in-flight kernels of the previous evaluation may still read its arrays; older sets
         # are released, so a changing active count does not accumulate GPU memory).
@@ -773,18 +784,21 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
             del self._work[next(iter(self._work))]  # the least recently used count
         return work
 
-    def _arrays(self, work: dict, n: int, autodiff: bool) -> dict:
-        """Gathered states (and for autodiff zero steps, their gradients and the output seed)."""
+    def _arrays(self, work: dict, n: int, autodiff: bool, stream: wp.Stream) -> dict:
+        """Gathered states (and for autodiff zero steps, their gradients and the output seed),
+        initialized on the evaluation's ``stream``, so its kernels see them filled."""
         d, m = self._device, self._m
         if "s" not in work:
             work["s"] = [wp.empty(n, dtype=t, device=d) for t in self._state_types]
         if autodiff and "d" not in work:
-            work["d"] = [wp.zeros((n, m), dtype=t, device=d) for t in self._step_types]
-            work["a"] = [wp.zeros((n, m), dtype=t, device=d) for t in self._step_types]
-            work["ones"] = wp.ones((n, m), dtype=float, device=d)
+            with wp.ScopedStream(stream):
+                work["d"] = [wp.zeros((n, m), dtype=t, device=d) for t in self._step_types]
+                work["a"] = [wp.zeros((n, m), dtype=t, device=d) for t in self._step_types]
+                work["ones"] = wp.ones((n, m), dtype=float, device=d)
         return work
 
-    def _record(self, mode: str, n: int, ptrs: tuple, jac: Any = None) -> List[wp.Launch]:
+    def _record(self, mode: str, n: int, ptrs: tuple, stream: wp.Stream,
+                jac: Any = None) -> List[wp.Launch]:
         """The launches of one evaluation in ``mode`` ("residual", "autodiff", "numeric" or
         "analytic"), recorded once per item count and set of buffers (an evaluation then only
         replays them); ``jac`` replaces the Jacobian output (not cached)."""
@@ -809,7 +823,7 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
 
         launches = [rec(kern["residual"], n, [p, *item], [out])] if mode != "autodiff" else []
         if mode in ("autodiff", "numeric"):
-            s = self._arrays(work, n, mode == "autodiff")["s"]
+            s = self._arrays(work, n, mode == "autodiff", stream)["s"]
             launches.append(rec(kern["gather"], n, [p], s))
         if mode == "autodiff":
             inputs = [*s, *work["d"], *item]
@@ -836,7 +850,7 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
         stream = self.make_warp_stream(stream_handle)
         ptrs = (residuals_ptr, jacobians_ptr, state_pointers_ptr, factor_ids_ptr)
         mode = self.jacobian_mode if jacobians_ptr != 0 else "residual"
-        for launch in self._record("autodiff" if mode == "auto" else mode, n, ptrs):
+        for launch in self._record("autodiff" if mode == "auto" else mode, n, ptrs, stream):
             launch.launch(stream)
         if mode == "auto":
             self._check_autodiff(n, ptrs, stream)
@@ -846,14 +860,22 @@ class WarpFunctionFactorBatch(WarpFactorBatch):
         """First evaluation with Jacobians in "auto" mode: the autodiff Jacobian just written
         against central differences (one synchronization); on a mismatch, warn and use central
         differences from now on."""
-        numeric = wp.zeros((n, self._m, self._num_columns), dtype=float, device=self._device)
-        for launch in self._record("numeric", n, ptrs, jac=numeric):
-            launch.launch(stream)
         jac = self.wrap_array(ptrs[1], wp.float32, (n, self._m, self._num_columns))
         with wp.ScopedStream(stream):
+            numeric = wp.zeros((n, self._m, self._num_columns), dtype=float, device=self._device)
+            for launch in self._record("numeric", n, ptrs, stream, jac=numeric):
+                launch.launch(stream)
             a, b = jac.numpy(), numeric.numpy()
-            error = float(np.max(np.abs(a - b) / (1.0 + np.abs(b)))) if a.size else 0.0
-            if not np.isfinite(error) or error > 1e-2:
+            # Central differences can step outside the residual's domain: a non-finite reference
+            # entry says nothing about the autodiff one; a non-finite autodiff entry against a
+            # finite reference is wrong.
+            finite_a, finite_b = np.isfinite(a), np.isfinite(b)
+            both = finite_a & finite_b
+            error = (float(np.max(np.abs(a[both] - b[both]) / (1.0 + np.abs(b[both]))))
+                     if both.any() else 0.0)
+            if np.any(finite_b & ~finite_a):
+                error = float("inf")
+            if error > 1e-2:
                 warnings.warn(f"WarpFunctionFactorBatch: the autodiff Jacobian of "
                               f"{self.residual.key} differs from central differences (relative "
                               f"error {error:.3g}); using central differences from now on. Fix: "

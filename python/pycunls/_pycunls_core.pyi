@@ -30,7 +30,7 @@ from numpy.typing import NDArray
 
 class CudaStream:
     """
-    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other alive. minimize() synchronizes the stream before returning, except on the real-time paths (MinimizerOptions.real_time, also in AugmentedLagrangianMinimizerOptions), which read nothing back: read their results on the same stream, or synchronize it first.
+    A CUDA stream for cuNLS work. CudaStream() creates one (destroyed with the object; sync_on_destroy: synchronize before destroying). CudaStream(other) wraps a stream created elsewhere without owning it: other is a wp.Stream (any object with an integer cuda_stream attribute), an object with the CUDA stream protocol __cuda_stream__ (PyTorch, CuPy), or an integer cudaStream_t handle. Every stream= argument of pycunls also accepts such an object directly, so Warp work and cuNLS work can share one wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other alive. minimize() synchronizes the stream before returning, except on the real-time paths (MinimizerOptions.real_time, also in AugmentedLagrangianMinimizerOptions; an augmented Lagrangian call with constraint batches still reads its final status back), which read nothing back: read their results on the same stream, or synchronize it first.
     """
 
     @overload
@@ -188,7 +188,7 @@ class MinimizerOptions:
     @property
     def real_time(self) -> bool:
         """
-        Fixed budget without host synchronization: exactly max_num_iterations iterations, each with exactly max_line_search_steps line-search evaluations; the summary has NaN costs and TerminationReason.NotDetermined. The first call sets the structure up; with reuse_structure the following calls can be captured in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the whole augmented Lagrangian call real time. Default: False.
+        Fixed budget without host synchronization: exactly max_num_iterations iterations, each with exactly max_line_search_steps line-search evaluations; the summary has NaN costs and TerminationReason.NotDetermined. The first call sets the structure up; with reuse_structure the following calls can be captured in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the whole augmented Lagrangian call real time. Needs disable_safety_checks (the default): the safety checks read solver failures back. Default: False.
         """
 
     @real_time.setter

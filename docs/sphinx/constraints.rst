@@ -258,7 +258,6 @@ C++
    problem.AddFactorBatch(&bounds, ptrs);
    problem.AddFactorBatch(&on_plane, ptrs);
 
-   cunls::LevenbergMarquardtMinimizer inner;
-   cunls::AugmentedLagrangianMinimizerOptions options;  // constraint_tolerance, ...
-   cunls::AugmentedLagrangianMinimizer solver(inner, options);
+   cunls::AugmentedLagrangianMinimizerOptions options;  // constraint_tolerance, base_options, ...
+   cunls::AugmentedLagrangianMinimizer solver(options);
    cunls::AugmentedLagrangianMinimizerSummary summary = solver.Minimize(stream, problem);

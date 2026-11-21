@@ -149,7 +149,10 @@ then override individual fields.
   NaN costs and ``TerminationReason.NotDetermined``.  The first call sets the
   structure up; with ``reuse_structure`` the following calls can be captured
   in a CUDA graph.  In ``AugmentedLagrangianMinimizerOptions.base_options`` it makes
-  the whole augmented Lagrangian call real time.
+  the whole augmented Lagrangian call real time; with constraint batches that call
+  still reads its final status back once (and synchronizes), without them it reads
+  nothing back.  Real time needs ``disable_safety_checks`` (the default): the safety
+  checks read solver failures back after every solve.
 - **state_tolerance** (``float``, default ``1e-6``) — convergence threshold
   on the squared norm of the tangent-space step :math:`\|\Delta x\|^2`.
   When the step is smaller than this value the minimizer declares
