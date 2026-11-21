@@ -321,6 +321,7 @@ class RansacMinimizer {
   const RansacMinimizerOptions options_;
   const ransac_internal::SolverSettings settings_;  ///< Step rule and dense solver.
   ransac_internal::RansacContext context_;          ///< Layout, slots, scorer, statistics.
+  int device_ = -1;  ///< Device of the buffers above (that of the first problem solved).
 };
 
 /**

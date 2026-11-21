@@ -60,6 +60,14 @@ NAMESPACE_END(NB_NAMESPACE)
 
 namespace {
 
+// The device of a host list of state pointers (that of the first one; the problem's device for an
+// empty list): connectivity tables are allocated there, so they live with the states whatever
+// device the caller made current.
+int ListDevice(const cunls::Problem &problem, const std::vector<uintptr_t> &state_ptrs) {
+  return state_ptrs.empty() ? problem.Device()
+                            : device_of(reinterpret_cast<const void *>(state_ptrs.front()));
+}
+
 // Python int device addresses as state pointers.
 std::vector<float *> StatePointers(const std::vector<uintptr_t> &addresses) {
   std::vector<float *> ptrs(addresses.size());
@@ -102,6 +110,7 @@ void bind_problem(nb::module_ &m) {
           [](cunls::Problem &self, cunls::FactorBatch *factor_batch,
              const std::vector<uintptr_t> &state_ptrs,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
+            DeviceScope scope(ListDevice(self, state_ptrs));
             self.AddFactorBatch(factor_batch, StatePointers(state_ptrs), jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::arg("state_pointers"),
@@ -116,6 +125,7 @@ void bind_problem(nb::module_ &m) {
           [](cunls::Problem &self, cunls::FactorBatch *factor_batch, cunls::LossFunctionBatch *loss,
              const std::vector<uintptr_t> &state_ptrs,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
+            DeviceScope scope(ListDevice(self, state_ptrs));
             self.AddFactorBatch(factor_batch, loss, StatePointers(state_ptrs),
                                 jacobian_mode_override);
           },
@@ -151,9 +161,10 @@ void bind_problem(nb::module_ &m) {
              const std::vector<cunls::StateBatch *> &slot_state_batches, nb::handle indices,
              cunls::LossFunctionBatch *loss,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
-            self.AddFactorBatch(factor_batch, loss, slot_state_batches,
-                                reinterpret_cast<const int *>(
-                                    extract_device_ptr(indices, "int32", "state_indices")),
+            const auto *ids = reinterpret_cast<const int *>(
+                extract_device_ptr(indices, "int32", "state_indices"));
+            DeviceScope scope(device_of(ids));
+            self.AddFactorBatch(factor_batch, loss, slot_state_batches, ids,
                                 jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::arg("slot_state_batches"), nb::arg("state_indices"),
@@ -167,6 +178,7 @@ void bind_problem(nb::module_ &m) {
           "set_state_pointers",
           [](cunls::Problem &self, size_t residual_batch_index,
              const std::vector<uintptr_t> &state_ptrs) {
+            DeviceScope scope(ListDevice(self, state_ptrs));
             self.SetStatePointers(residual_batch_index, StatePointers(state_ptrs));
           },
           nb::arg("residual_batch_index"), nb::arg("state_pointers"),
@@ -175,6 +187,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "validate",
           [](const cunls::Problem &self, cunls::CudaStream &stream) {
+            DeviceScope scope(self.Device());
             return self.Validate(stream.GetStream());
           },
           nb::arg("stream"),
@@ -183,6 +196,7 @@ void bind_problem(nb::module_ &m) {
       .def(
           "find_structure_error",
           [](const cunls::Problem &self, cunls::CudaStream &stream) {
+            DeviceScope scope(self.Device());
             return self.FindStructureError(stream.GetStream());
           },
           nb::arg("stream"),
@@ -267,6 +281,10 @@ void bind_problem(nb::module_ &m) {
           "landmarks of a bundle adjustment). Every factor may touch at most one non-constant "
           "state of these batches; they must share one tangent size of 1 to 3. An empty list "
           "clears the declaration.")
+      .def_prop_ro("device", &cunls::Problem::Device,
+                   "CUDA device ordinal of the problem's states (-1 when no state batch has "
+                   "device memory). minimize(), validate() and find_structure_error() run on "
+                   "this device, whatever device is current.")
       .def_prop_ro("num_problems", &cunls::Problem::NumProblems,
                    "Number of subproblems (set_problem_partition); 0 or 1 means one problem.");
 }

@@ -153,6 +153,14 @@ class ProblemPartition {
    */
   void FinishTermination(cudaStream_t stream, unsigned int *d_counts);
 
+  /**
+   * @brief For a call that stops before Build() (nothing to optimize): sizes
+   * Termination() to `num_problems` subproblems and records `reason` (a
+   * TerminationReason value) for each, so that NumProblems() and
+   * Termination() describe this call, not an earlier one. Asynchronous.
+   */
+  void TerminateAll(cudaStream_t stream, size_t num_problems, int reason);
+
   /** @brief Clears the shortened flags of the line search (start of an iteration). */
   void ResetLineSearch(cudaStream_t stream);
 

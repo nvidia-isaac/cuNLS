@@ -68,6 +68,7 @@ RansacMinimizer::RansacMinimizer(const RansacMinimizerOptions &options,
     : options_(options), settings_(settings) {}
 
 RansacSummary RansacMinimizer::Minimize(cudaStream_t stream, Problem &problem) {
+  problem.CheckDevice("RansacMinimizer::Minimize", stream, &device_);
   // Derived state data (articulation link poses) must match the coordinates
   // before the hypothesis slots copy the states.
   for (StateBatch *batch : problem.GetStateBatches()) RefreshDerivedStateData(batch, stream);

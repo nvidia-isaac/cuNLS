@@ -2,8 +2,10 @@
 
 cuNLS: GPU nonlinear least-squares solver, CUDA/C++17 with nanobind Python bindings (`pycunls`),
 Linux x86_64 / aarch64. CMake 3.22+; GoogleTest and pytest (both need a GPU). Dependencies (cuDSS,
-spdlog, CUDA toolkit libraries) come in through CMake `FetchContent`. The wheel links `libcunls.a`
-statically and is specific to a CUDA version. Each directory under `cunls/` has an `AGENTS.md`
+spdlog, CUDA toolkit libraries) come in through CMake `FetchContent`. Python wheels
+(`pycunls-cu13`) are CUDA 13 only and link `libcunls.a` statically; the C++ library supports CUDA
+12.6+ and 13 (the CUDA 12 CI cells build and test C++ only, which keeps CUDA 13-only APIs out of
+library code). Each directory under `cunls/` has an `AGENTS.md`
 (classes, data flow, invariants): read it before changing that module.
 
 ## Layout
@@ -29,11 +31,12 @@ CI runs the same four commands, parameterized by `CUDA_VERSION` / `UBUNTU_VERSIO
   `ArticulationTopology` + `ArticulationStateBatch`). `FactorBatch`: batched residuals with
   analytic Jacobians (kinematic factors and `LinkFrameFactorBatch` in `cunls/factor/kinematics/`).
   `Problem` composes them; `GaussNewtonMinimizer` / `LevenbergMarquardtMinimizer`, their RANSAC
-  versions, and `AugmentedLagrangianMinimizer` (constraints, box bounds) solve. Umbrella header:
+  versions, and `AugmentedLagrangianMinimizer` (constraints, box bounds; its own LM inner solves) solve; a
+  problem runs on the device of its states (`Problem::Device`). Umbrella header:
   `cunls/cunls.h`.
 - `python/pycunls`: bindings plus `fitting.py` (`fit`), `builder.py` (`ProblemBuilder`, `solve`),
   `diagnostics.py`, `catalog.py`, `articulation.py`, `mpc.py`, `warp.py` (`WarpFactorBatch`,
-  `WarpStateBatch`, `WarpPoseFactorBatch`). Every `stream=` also takes a `wp.Stream` or any
+  `WarpStateBatch`, `WarpFunctionFactorBatch`). Every `stream=` also takes a `wp.Stream` or any
   `__cuda_stream__` object. `AGENT_GUIDE.md` ships in the wheel (`python -m pycunls guide`); its
   section 4 lists the conventions users must get right.
 

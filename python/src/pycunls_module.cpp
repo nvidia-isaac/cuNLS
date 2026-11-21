@@ -29,6 +29,18 @@ NB_MODULE(_pycunls_core, m) {
       "Python bindings for cuNLS: CUDA-accelerated nonlinear least "
       "squares solver";
 
+  // pycunls is a CUDA 13 build: an older driver cannot run it (no driver at all, 0, imports as
+  // before so that docs builds work). NB_MODULE raises the exception as ImportError.
+  int driver = 0;
+  if (cudaDriverGetVersion(&driver) == cudaSuccess && driver > 0 && driver < 13000) {
+    const std::string version =
+        std::to_string(driver / 1000) + "." + std::to_string(driver % 1000 / 10);
+    throw std::runtime_error("pycunls: the driver supports CUDA " + version +
+                             " but pycunls is built with CUDA 13 (got " + version +
+                             ", expected 13.0 or newer). Fix: install an R580 or newer driver; on "
+                             "CUDA 12 systems (Jetson Orin) use the C++ library.");
+  }
+
   bind_types(m);         // CudaStream, enums, MinimizerOptions, etc.
   bind_state(m);         // StateBatch subclasses (VectorStateBatch, SE3StateBatch, ...)
   bind_factor(m);        // FactorBatch subclasses + CustomFactorBatch trampoline

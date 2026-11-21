@@ -19,7 +19,7 @@ the environment. Every class and function also documents itself: `help(pycunls.X
 | gross outliers in geometric matches (PnP, registration) | `RansacLevenbergMarquardtMinimizer` | `python/examples/ransac_pnp.py` |
 | hard constraints, MPC | `AugmentedLagrangianMinimizer`, `pycunls.mpc` | `python/examples/supermarket_drones.py` |
 | a robot (URDF or joint arrays): inverse kinematics with hard joint limits | `ArticulationTopology` (`pycunls.articulation.topology_from_urdf`, or `topology_from_joint_arrays` for one articulation of a simulator scene's joint arrays), `ArticulationStateBatch`, `LinkPoseFactorBatch` + `AugmentedLagrangianMinimizer` | `python/tests/test_articulation.py`, `docs/sphinx/articulations.rst` |
-| a robot objective of your own (look-at, stay above a table, clearance, a frame relative to an object pose) | an existing factor on a link frame view through `LinkFrameFactorBatch` (`FrameView.Pose`: SE3 factors; `Position`: vector factors such as `HalfspaceFactorBatch3`; `Orientation`: SO3 factors), or your own: `pycunls.warp.WarpPoseFactorBatch` (residual function, autodiff Jacobian) or a `WarpFactorBatch` (analytic) | `python/examples/robot_custom_objective.py`, `docs/sphinx/articulations.rst` |
+| a robot objective of your own (look-at, stay above a table, clearance, a frame relative to an object pose) | an existing factor on a link frame view through `LinkFrameFactorBatch` (`FrameView.Pose`: SE3 factors; `Position`: vector factors such as `HalfspaceFactorBatch3`; `Orientation`: SO3 factors), or your own: `pycunls.warp.WarpFunctionFactorBatch` (a residual function of poses, rotations and vectors; autodiff Jacobian) or a `WarpFactorBatch` (analytic) | `python/examples/robot_custom_objective.py`, `docs/sphinx/articulations.rst` |
 | a robot with closed loops or mimic joints | the same, plus `pycunls.articulation.loop_closure(...)` constraints / `MimicJointFactorBatch` wrapped in `ConstraintFactorBatch(..., ConstraintKind.Equality)` | `docs/sphinx/articulations.rst` |
 | a residual no built-in factor computes, inside a larger graph | a Warp factor (`pycunls.warp.WarpFactorBatch`) | `python/examples/custom_warp_factor.py` |
 
@@ -94,8 +94,13 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   `stream = wp.get_stream()`; uploads, solves and reads then run in order without extra
   synchronization. With a separate `pycunls.CudaStream()`, call
   `wp.synchronize_stream(wp.get_stream())` before `minimize`. `minimize` synchronizes its stream
-  before returning, except on the real-time paths (`fixed_iterations`, the augmented Lagrangian's
-  `real_time`): read their results on the same stream, or synchronize it first.
+  before returning, except on the real-time paths (`MinimizerOptions.real_time`, the augmented
+  Lagrangian's `real_time`): read their results on the same stream, or synchronize it first.
+- **Devices.** A problem runs on the device of its state arrays: `minimize`, `evaluate_batch` and
+  the state helpers make that device current themselves (`problem.device`), so no
+  `wp.ScopedDevice` is needed around them. Objects made without device arrays (`WarpFactorBatch`,
+  `ArticulationTopology`, `CudaStream()`) use Warp's current device: create them inside
+  `wp.ScopedDevice(device)` on a multi-GPU machine.
 - **Poses are `world_from_body`, row-major 4x4 (SE3) or 3x3 (SE2).** Updates are on the right:
   `T' = T Exp(delta)`; se(3) tangent order is `[omega, v]` (rotation first), se(2) `[v_x, v_y,
   theta]`.
@@ -143,7 +148,8 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
 | `MaxRejectedSteps` with a cost that stopped changing | float32 round-off at the minimum | usually fine: check residuals |
 | `MaxIterations` | not finished | raise `max_num_iterations`; check the cost history |
 | `No residual batch has active factors` | forgot `set_num_active_factors` | set the active counts |
-| `... box-bounded states ... AugmentedLagrangianMinimizer` | bounds with GN/LM | wrap the minimizer in `AugmentedLagrangianMinimizer` (`fit`/`ProblemBuilder` do) |
+| `... box-bounded states ... AugmentedLagrangianMinimizer` | bounds with GN/LM | solve with `AugmentedLagrangianMinimizer()` (settings in `AugmentedLagrangianMinimizerOptions`; `fit`/`ProblemBuilder` do; `method="gn"` with bounds raises) |
+| `ImportError: the driver supports CUDA 12.x but pycunls is built with CUDA 13` | pre-R580 driver | install an R580+ driver; on CUDA 12 systems use the C++ library |
 | warning `Gauge freedom` | relative factors only | `constant=[0]` or a prior |
 | fit: `TypeError: model must be a Warp function` | a Python/NumPy model | rewrite it as `@wp.func` of one sample |
 | fit: high `reduced_chi2` with the right `sigma` | the model does not explain the data | change the model |

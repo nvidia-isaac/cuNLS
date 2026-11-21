@@ -76,13 +76,13 @@ Constraints
    ``disk_obstacles(obstacles, margin)`` (inequality; disks for SE(2) models,
    spheres for SE(3)) go through the augmented Lagrangian loop.
 
-``build(minimizer=None, options=None, real_time=None)``
+``build(options=None, real_time=None)``
 assembles the problem. It declares the stages of the states (x_k and u_k in
-stage k, ``pycunls.Problem.set_state_stages``), so the default inner
-minimizer, Levenberg-Marquardt, uses the block-tridiagonal linear solver
+stage k, ``pycunls.Problem.set_state_stages``), so the default options select
+the block-tridiagonal linear solver for the inner Levenberg-Marquardt solves
 (``SparseLinearSolverType.BlockTridiagonal``: the Riccati recursion, one warp
-per trajectory). The default AL options enable the warm start and the reuse of
-the problem structure across steps and cap the penalty at ``mpc.MAX_PENALTY``.
+per trajectory). They also enable the warm start and the reuse of the problem
+structure across steps and cap the penalty at ``mpc.MAX_PENALTY``.
 
 ===============================================================================
 Real-time mode
@@ -102,9 +102,9 @@ On an RTX PRO 5000 a step takes about 0.3 ms for a Carter with a 50-step
 horizon, 0.6 ms for a quadrotor (40 steps) and 2.3 ms for 1024 quadrupeds
 (20 steps); the closed-loop tests track as well as with converged steps.
 
-The underlying options are ``pycunls.AugmentedLagrangianMinimizerOptions.real_time``
-and ``reuse_structure``, and the solver's ``options``
-property (assigning keeps the warm-start state).
+The underlying options are ``base_options.real_time`` and
+``base_options.reuse_structure`` of ``pycunls.AugmentedLagrangianMinimizerOptions``,
+and the solver's ``options`` property (assigning keeps the warm-start state).
 
 ===============================================================================
 Controller

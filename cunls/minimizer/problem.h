@@ -222,6 +222,31 @@ class Problem {
   std::string FindStructureError(cudaStream_t stream) const;
 
   /**
+   * @brief The CUDA device that holds the problem's states: the device of the
+   * first state batch's memory (cudaPointerGetAttributes), or -1 when no
+   * state batch has device memory. The minimizers run on this device.
+   */
+  int Device() const;
+
+  /**
+   * @brief Checks, before a call launches work on this problem, that the
+   * current device and `stream` belong to Device(), and with
+   * `buffers_device` that the caller's own buffers do too: *buffers_device is
+   * the device of the caller's first call (-1 before it) and is set to
+   * Device() then. Called at the start of every Minimize(); Python bindings
+   * make the device current themselves.
+   * @param caller Named in the error message, e.g. "Minimizer::Minimize".
+   * @param stream The stream of the call; its device is checked when the CUDA
+   *        runtime can tell it (12.8 and newer; not for the default streams,
+   *        not while the stream is being captured into a CUDA graph).
+   * @param buffers_device In/out, may be null: the device of the caller's buffers.
+   * @return Device().
+   * @throws std::invalid_argument when the current device, the stream's device
+   *         or the caller's buffers are on another device.
+   */
+  int CheckDevice(const char *caller, cudaStream_t stream, int *buffers_device = nullptr) const;
+
+  /**
    * @brief Brings every residual batch's device pointer table up to date for
    * a solve: index tables are expanded into pointers (one kernel each, on
    * `stream`). Called by the minimizers at the start of every Minimize.

@@ -10,11 +10,10 @@ obstacle clearance, goal conditions. cuNLS supports
 - inequality constraints :math:`c(x) \le 0`,
 - bounds :math:`l \le x \le u` on the components of vector states.
 
-All three are solved by ``AugmentedLagrangianMinimizer`` around a
-Gauss-Newton or Levenberg-Marquardt minimizer; the minimizers alone reject a
-problem with constraints. Bounds are a property of the state batch
-(``set_bounds``) and are enforced by **projection** (projected Gauss-Newton in
-the inner solves): the iterates never leave the box, and no multipliers or
+All three are solved by ``AugmentedLagrangianMinimizer``, which runs its own
+Levenberg-Marquardt inner solves; the minimizers alone reject a problem with
+constraints. Bounds are a property of the state batch (``set_bounds``) and are
+enforced by **projection** in the inner solves: the iterates never leave the box, and no multipliers or
 penalties are involved. Equality and inequality constraints are solved by the
 **augmented Lagrangian** (AL) outer loop. A constraint is a factor batch whose
 "residual" is the constraint value, so every factor (built-in, custom, Warp,
@@ -57,7 +56,7 @@ Python example
    for fb in (prior, on_plane):
        problem.add_factor_batch(fb, ptrs)
 
-   solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer())
+   solver = pycunls.AugmentedLagrangianMinimizer()
    wp.synchronize_stream(wp.get_stream())   # the uploads (Warp's stream) before the solve
    summary = solver.minimize(pycunls.CudaStream(), problem)
    print(summary.status, summary.max_violation, summary.outer_iterations)
@@ -69,8 +68,19 @@ Python example
 inner solve hit a non-finite cost or step: check the factors and initial states);
 ``summary.converged()`` is ``status == Converged``.
 
-``AugmentedLagrangianMinimizer`` works on any problem: without constraint batches it
-is the wrapped minimizer.
+``AugmentedLagrangianMinimizer`` works on any problem: without constraint batches every
+subproblem is feasible from the start, so the call is one full inner solve
+(``base_options.max_num_iterations``), one outer iteration when that solve converges.
+
+``AugmentedLagrangianMinimizerOptions`` extends ``LevenbergMarquardtMinimizerOptions``: its
+damping fields and ``base_options`` (linear solver, tolerances, Jacobian mode) configure the
+private inner solver, and the outer-loop fields (``constraint_tolerance``,
+``max_outer_iterations``, ``inner_iterations``, the penalties, ``warm_start``,
+``max_bound_refinements``) are its own. The budget of a call, with or without constraint
+batches: each outer iteration runs ``inner_iterations`` inner iterations, the last one (and a
+subproblem's first after it is feasible) ``base_options.max_num_iterations`` (default 50);
+each inner iteration does ``base_options.max_line_search_steps`` line-search evaluations
+(default 10 here) and ``max_bound_refinements`` bound refinements.
 
 ===============================================================================
 Bounds on vector states
@@ -82,8 +92,7 @@ Bounds on vector states
    None`` removes them). The arrays are read at every solve and may be
    rewritten between solves.
 
-``AugmentedLagrangianMinimizer`` runs projected Gauss-Newton in its inner
-solves: the initial values are clamped into the box; at each iteration the
+``AugmentedLagrangianMinimizer`` holds the bounds in its inner solves: the initial values are clamped into the box; at each iteration the
 components that sit at a bound with the gradient pointing outward are held
 (they leave the linear solve, their step is zero); a free component the
 solved step would still push through its bound is held as well and the
@@ -92,13 +101,13 @@ system solved again (an active-set refinement, at most
 step, line-search steps included, is clamped into the box (the bounded
 state's :math:`\oplus`). Constant states are never projected (a measured initial
 state outside its bounds stays as it is). A problem with bounds and no
-constraint batches costs one inner solve (no outer iterations).
+constraint batches costs one full inner solve (one outer iteration when it converges).
 ``GaussNewtonMinimizer``, ``LevenbergMarquardtMinimizer`` and the RANSAC
 minimizers reject a problem with bounded states.
 
 Compared with bounds as AL constraints (``BoundFactorBatch`` below), this is
 exact at every iteration, needs no outer iterations, and keeps the
-Gauss-Newton step well-defined when many bounds are active at once (saturated
+linear system well-defined when many bounds are active at once (saturated
 controls). Prefer it for limits on vector states.
 
 ===============================================================================
@@ -168,7 +177,7 @@ solve is therefore an ordinary least-squares solve. The outer loop:
    a violation still falling is limited by the short solve, not by the
    penalty, and a larger penalty would only worsen the conditioning;
 4. once a subproblem is feasible, its next inner solve runs to convergence
-   (``final_inner_iterations``); a subproblem that is feasible after an inner
+   (``base_options.max_num_iterations``); a subproblem that is feasible after an inner
    solve that converged on its own (not at the iteration cap) is done, and
    keeps its multipliers while the others continue. With a partition, each
    subproblem gets this full solve as soon as it is feasible itself: it never
@@ -187,14 +196,15 @@ Batched problems
    ``BlockSparseCholesky`` solver (see :doc:`simple_api`).
 
 Line search
-   The inequality rows make the cost piecewise quadratic: a Gauss-Newton step
-   can activate rows the model did not see and overshoot. The inner solves
-   therefore use a backtracking line search (``inner_line_search_steps``,
-   see ``MinimizerOptions.max_line_search_steps``): any step that decreases
-   the cost, possibly halved, is taken. Gauss-Newton with this line search is
-   usually the better inner solver for strongly curved constraints; with
-   Levenberg-Marquardt the damping, dominated by the constraint rows at large
-   penalties, slows progress along them.
+   The inequality rows make the cost piecewise quadratic: a step can activate
+   rows the linear model did not see and overshoot. The inner solves
+   therefore use a backtracking line search (``base_options.max_line_search_steps``,
+   10 by default, see ``MinimizerOptions.max_line_search_steps``): any step that
+   decreases the cost, possibly halved, is taken. At large penalties the
+   Levenberg-Marquardt damping, dominated by the constraint rows, can slow
+   progress along strongly curved constraints: raise
+   ``base_options.max_num_iterations`` or ``max_outer_iterations`` when a solve
+   stops at its iteration cap.
 
 Status
    ``Converged`` (every subproblem feasible and stationary),
@@ -206,16 +216,20 @@ Status
    factors.
 
 Real time
-   ``options.real_time = True``: exactly ``max_outer_iterations`` outer
-   iterations of ``inner_iterations`` inner iterations, every decision on the
-   GPU, one read-back per call (the summary's costs are NaN). With
-   ``warm_start`` and ``reuse_structure`` the penalties and violation history
-   continue from call to call. ``solver.options = o`` switches the options between calls
-   and keeps the warm-start state (a converged first solve, then a real-time
-   budget).
+   ``options.base_options.real_time = True``: exactly ``max_outer_iterations``
+   outer iterations of ``inner_iterations`` inner iterations (the last
+   ``base_options.max_num_iterations``), every decision on the GPU, one read-back per
+   call (the summary's costs are NaN). Without constraint batches there is
+   nothing to read back: the call can be captured in a CUDA graph once the
+   structure is set up. With
+   ``warm_start`` and ``base_options.reuse_structure`` the penalties and violation
+   history continue from call to call. ``solver.options = o`` switches the outer loop
+   and the budget between calls and keeps the warm-start state (a converged first
+   solve, then a real-time budget); the inner solver keeps the damping, linear solver
+   and tolerances it was built with.
 
 Structure reuse
-   ``options.reuse_structure = True``: the problem's structure (batches,
+   ``options.base_options.reuse_structure = True``: the problem's structure (batches,
    connectivity, active and constant counts, partition) is unchanged since the
    previous call; the inner minimizer skips its setup (index expansion, Hessian
    pattern, the linear solver's analysis). A size check falls back to the full
@@ -244,7 +258,6 @@ C++
    problem.AddFactorBatch(&bounds, ptrs);
    problem.AddFactorBatch(&on_plane, ptrs);
 
-   cunls::LevenbergMarquardtMinimizer inner;
-   cunls::AugmentedLagrangianMinimizerOptions options;  // constraint_tolerance, ...
-   cunls::AugmentedLagrangianMinimizer solver(inner, options);
+   cunls::AugmentedLagrangianMinimizerOptions options;  // constraint_tolerance, base_options, ...
+   cunls::AugmentedLagrangianMinimizer solver(options);
    cunls::AugmentedLagrangianMinimizerSummary summary = solver.Minimize(stream, problem);

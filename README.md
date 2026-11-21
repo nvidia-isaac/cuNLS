@@ -18,12 +18,13 @@
 ---
 
 ```bash
-pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"   # CUDA 12: -cu12, ==12.8.*
+pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
 python -m pycunls doctor
 ```
 
-Wheels for x86_64 Linux, Python 3.10-3.14; CUDA libraries, cuDSS and source builds (C++ library,
-Jetson): [INSTALL.md](INSTALL.md).
+Wheels for x86_64 Linux, Python 3.10-3.14, CUDA 13 (R580+ driver). The C++ library builds with
+CUDA 12.6+ and 13, including Jetson Orin and Thor. CUDA libraries, cuDSS and source builds:
+[INSTALL.md](INSTALL.md).
 
 **cuNLS** solves nonlinear least-squares problems entirely on the GPU: any factor graph over
 Euclidean and manifold states, with robust losses, constraints and bounds,

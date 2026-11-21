@@ -26,7 +26,7 @@ import warp as wp
 
 import pycunls
 from pycunls.articulation import loop_closure, topology_from_joint_arrays, topology_from_urdf
-from pycunls.warp import WarpFactorBatch, WarpPoseFactorBatch
+from pycunls.warp import WarpFactorBatch, WarpFunctionFactorBatch
 
 JT = pycunls.ArticulationJointType
 
@@ -200,13 +200,12 @@ def test_bounded_ik_with_mimic(arm, stream):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     _one_factor_per_instance(problem, states, (position, posture, coupled), n)
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    base = lm.base_options
+    options = pycunls.AugmentedLagrangianMinimizerOptions()
+    base = options.base_options
     base.cost_tolerance = 1e-12  # absolute: residuals are millimeters
     base.state_tolerance = 1e-12
     base.max_num_iterations = 100
-    lm.base_options = base
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm))
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
     wp.synchronize()
     summary = solver.minimize(stream, problem)
     assert summary.max_violation < 1e-4, summary.message
@@ -322,7 +321,7 @@ def test_four_bar_closes(arm, stream):
     _one_factor_per_instance(problem, states, (posture, *loop.constraints), n)
     options = pycunls.AugmentedLagrangianMinimizerOptions()
     options.constraint_tolerance = 1e-5
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(), options)
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
     wp.synchronize()
     summary = solver.minimize(stream, problem)
     assert summary.converged(), summary.message
@@ -491,14 +490,16 @@ def _pose_problem(arm, stream, inner, n, rng):
     return problem, states
 
 
-def test_warp_pose_factor_autodiff_matches_analytic(arm, stream):
-    """WarpPoseFactorBatch (residual function only, Warp autodiff Jacobian) solves like the
-    analytic _FrameHeight factor; a vector residual passes check_jacobians in every mode."""
+def test_warp_function_factor_on_a_pose_view_matches_analytic(arm, stream):
+    """WarpFunctionFactorBatch (residual function only, Warp autodiff Jacobian) on a Pose view
+    solves like the analytic _FrameHeight factor; a vector residual passes check_jacobians in
+    every mode."""
     n = 16
     heights = np.random.default_rng(6).uniform(0.3, 0.6, n).astype(np.float32)
     results = []
     for inner in (_FrameHeight(wp.array(heights), n),
-                  WarpPoseFactorBatch(_frame_height_residual, wp.array(heights), n)):
+                  WarpFunctionFactorBatch(_frame_height_residual, data=wp.array(heights),
+                                          capacity=n)):
         problem, states = _pose_problem(arm, stream, inner, n, np.random.default_rng(4))
         for check in pycunls.check_jacobians(problem, stream):
             assert check.ok, check
@@ -513,16 +514,17 @@ def test_warp_pose_factor_autodiff_matches_analytic(arm, stream):
     targets = wp.array(np.random.default_rng(7).uniform(-0.5, 0.5, (n, 3)).astype(np.float32)
                        + np.array([0.3, 0.0, 0.6], np.float32), dtype=wp.vec3)
     for mode in ("auto", "autodiff", "numeric"):
-        inner = WarpPoseFactorBatch(_look_at_residual, targets, n, jacobian=mode)
+        inner = WarpFunctionFactorBatch(_look_at_residual, data=targets, capacity=n,
+                                        jacobian=mode)
         problem, _ = _pose_problem(arm, stream, inner, n, np.random.default_rng(5))
         for check in pycunls.check_jacobians(problem, stream):
             assert check.ok, (mode, check)
         if mode == "auto":
-            assert inner.mode == "autodiff"   # the one-time check accepted the autodiff Jacobian
+            assert inner.jacobian_mode == "autodiff"   # the one-time check accepted autodiff
 
 
-def test_warp_pose_factor_accepts_postponed_annotations_and_bounds_its_buffers(tmp_path,
-                                                                                monkeypatch):
+def test_warp_function_factor_accepts_postponed_annotations_and_bounds_its_buffers(
+        tmp_path, monkeypatch):
     """A residual from a module with `from __future__ import annotations` (string annotations);
     work buffers of only the two most recent item counts are kept."""
     import importlib
@@ -534,24 +536,11 @@ def test_warp_pose_factor_accepts_postponed_annotations_and_bounds_its_buffers(t
         "    return wp.transform_get_translation(X)[2] - h\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     module = importlib.import_module("postponed_residual")
-    factor = WarpPoseFactorBatch(module.height, wp.zeros(8, dtype=float), 8)
-    assert factor.residuals_size == 1
+    factor = WarpFunctionFactorBatch(module.height, data=wp.zeros(8, dtype=float), capacity=8)
+    assert factor.residuals_size == 1 and factor.slot_states == ("SE3StateBatch",)
     for n in range(1, 6):
         factor._buffers(n)
     assert sorted(factor._work) == [4, 5]
-
-
-def test_warp_pose_factor_rejects_wrong_signatures():
-    @wp.func
-    def two_floats(a: float, b: float) -> float:
-        return a + b
-
-    with pytest.raises(TypeError, match="Fix:"):
-        WarpPoseFactorBatch(two_floats, wp.zeros(4, dtype=float), 4)
-    with pytest.raises(TypeError, match="Fix:"):
-        WarpPoseFactorBatch(lambda X, d: 0.0, wp.zeros(4, dtype=float), 4)
-    with pytest.raises(ValueError, match="Fix:"):
-        WarpPoseFactorBatch(_frame_height_residual, wp.zeros(4, dtype=float), 4, jacobian="fd")
 
 
 def _scene_arrays():
@@ -664,14 +653,11 @@ def test_inverse_kinematics_recipe(arm, stream):
     problem = pycunls.Problem()
     problem.add_state_batch(states)
     _one_factor_per_instance(problem, states, (pose,), n)
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    base = lm.base_options
+    options = pycunls.AugmentedLagrangianMinimizerOptions()
+    base = options.base_options
     base.cost_tolerance, base.state_tolerance, base.max_num_iterations = 1e-12, 1e-12, 60
-    base.reuse_structure = True
-    lm.base_options = base
-    al = pycunls.AugmentedLagrangianMinimizerOptions()
-    al.reuse_structure = True                                        # the wrapper's own flag
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm), al)
+    base.reuse_structure = True                                      # second round reuses it
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
 
     for _ in range(2):                                               # second round: new targets
         seeds_q = lo + (hi - lo) * rng.uniform(0.0, 1.0, (n, topo.coord_count))

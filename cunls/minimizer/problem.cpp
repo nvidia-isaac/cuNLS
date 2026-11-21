@@ -156,6 +156,65 @@ void Problem::ExpandIndices(size_t residual_batch_index, cudaStream_t stream) co
       stream, c.user_indices, NumStatePointers(residual_batch_index), slots, c.table.data());
 }
 
+int Problem::Device() const {
+  for (const StateBatch *batch : state_batches_) {
+    if (batch->Capacity() == 0) continue;
+    cudaPointerAttributes attributes{};
+    if (cudaPointerGetAttributes(&attributes, batch->StateDevicePtr(0)) != cudaSuccess) {
+      (void)cudaGetLastError();  // not a CUDA pointer: clear the error
+      continue;
+    }
+    if (attributes.type == cudaMemoryTypeDevice || attributes.type == cudaMemoryTypeManaged) {
+      return attributes.device;
+    }
+  }
+  return -1;
+}
+
+int Problem::CheckDevice(const char *caller, cudaStream_t stream, int *buffers_device) const {
+  const int device = Device();
+  if (device < 0) return device;
+  const auto fail = [&](const char *what, int got, const std::string &fix) {
+    std::ostringstream msg;
+    msg << caller << ": " << what << " device " << got << " but the problem's states are on device "
+        << device << " (got " << got << ", expected " << device << "). Fix: " << fix;
+    LogError(msg.str());
+    throw std::invalid_argument(msg.str());
+  };
+  int current = -1;
+  THROW_ON_CUDA_ERROR(cudaGetDevice(&current));
+  if (current != device) {
+    fail("the current device is", current,
+         "make device " + std::to_string(device) + " current (cudaSetDevice) before the call.");
+  }
+#if CUDART_VERSION >= 12080
+  // Not while the stream is being captured into a graph: cudaStreamGetDevice there fails the
+  // capture with some drivers.
+  const bool own_stream =
+      stream != nullptr && stream != cudaStreamLegacy && stream != cudaStreamPerThread;
+  cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
+  if (own_stream) THROW_ON_CUDA_ERROR(cudaStreamIsCapturing(stream, &capture));
+  if (own_stream && capture == cudaStreamCaptureStatusNone) {
+    int stream_device = -1;
+    THROW_ON_CUDA_ERROR(cudaStreamGetDevice(stream, &stream_device));
+    if (stream_device != device) {
+      fail("the stream is on", stream_device,
+           "pass a stream of device " + std::to_string(device) +
+               " (Python: wp.get_stream(\"cuda:" + std::to_string(device) + "\")).");
+    }
+  }
+#else
+  (void)stream;
+#endif
+  if (buffers_device != nullptr) {
+    if (*buffers_device >= 0 && *buffers_device != device) {
+      fail("this solver's buffers are on", *buffers_device, "use one solver per device.");
+    }
+    *buffers_device = device;
+  }
+  return device;
+}
+
 void Problem::PrepareStatePointers(cudaStream_t stream) const {
   for (size_t i = 0; i < connectivity_.size(); ++i) {
     if (connectivity_[i].kind == Connectivity::Kind::kDeviceIndices) {

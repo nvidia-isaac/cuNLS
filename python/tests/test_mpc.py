@@ -53,21 +53,21 @@ def carter_plant(T, u, dt):
     return T @ se2_exp(dt * v, 0.0, dt * w)
 
 
-def inner(kind):
-    """Inner minimizer of the AL loop (None: the Horizon.build default)."""
+def options(kind):
+    """Augmented Lagrangian options for Horizon.build (None: its defaults; "options": the same
+    settings passed explicitly, with the default bound refinements)."""
     if kind == "default":
         return None
-    mo = pycunls.MinimizerOptions()
-    mo.sparse_linear_solver_type = pycunls.SparseLinearSolverType.BlockTridiagonal
-    mo.state_tolerance = 1e-5  # as Horizon.build's default
-    if kind == "gn":
-        return pycunls.GaussNewtonMinimizer(mo)
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    lm.base_options = mo
-    return pycunls.LevenbergMarquardtMinimizer(lm)
+    o = pycunls.AugmentedLagrangianMinimizerOptions()
+    o.base_options.sparse_linear_solver_type = pycunls.SparseLinearSolverType.BlockTridiagonal
+    o.base_options.state_tolerance = 1e-5  # as Horizon.build's default
+    o.base_options.reuse_structure = True
+    o.warm_start = True
+    o.max_penalty = mpc.MAX_PENALTY
+    return o
 
 
-KINDS = ["default", "gn", "lm"]
+KINDS = ["default", "options"]
 # Converged solves every step, or the real-time budget (1 outer x 2 inner
 # iterations after a converged first solve).
 MODES = [None, (1, 2)]
@@ -89,7 +89,7 @@ def test_carter_tracks_lines_closed_loop(stream, kind, real_time):
     h.control_effort(weight=0.01)
     h.control_rate(weight=0.05)
     h.control_bounds(-umax, umax)
-    ctrl = h.build(minimizer=inner(kind), real_time=real_time)
+    ctrl = h.build(options=options(kind), real_time=real_time)
     poses = [se2(0, 0, 0) for _ in range(B)]
     for t in range(60):
         h.pose_reference.assign(reference(t + 1)[:, 1:])
@@ -113,7 +113,7 @@ def test_carter_drives_around_disk_closed_loop(stream, kind, real_time):
     h.control_effort(weight=0.01)
     h.control_bounds(-30.0, 30.0)
     h.disk_obstacles(np.array([[[center[0], center[1], radius]]], np.float32), margin=margin)
-    ctrl = h.build(minimizer=inner(kind), real_time=real_time)
+    ctrl = h.build(options=options(kind), real_time=real_time)
     T, closest = se2(0, 0, 0), np.inf
     for t in range(80):
         u0 = ctrl.step(stream, pose=T[None].astype(np.float32)).numpy()[0]
@@ -136,7 +136,7 @@ def test_car_lane_keeping_closed_loop(stream, kind, real_time):
     h.control_effort(weight=0.05)
     h.control_bounds([-3.0, -0.5], [3.0, 0.5])
     h.vector_bounds("speed_steer", [0.0, -0.4], [10.0, 0.4])
-    ctrl = h.build(minimizer=inner(kind), real_time=real_time)
+    ctrl = h.build(options=options(kind), real_time=real_time)
     # Start 1 m off the lane, at 4 m/s.
     T, z = se2(0.0, 1.0, 0.0), np.array([4.0, 0.0])
     for t in range(60):
@@ -199,7 +199,7 @@ def test_quadrotors_fly_to_waypoints_closed_loop(stream, kind, real_time):
     h.controls.fill_(hover)
     h.control_effort(weight=0.05, nominal=np.full((B, N, 4), hover))
     h.control_bounds(0.0, fmax)
-    ctrl = h.build(minimizer=inner(kind), real_time=real_time)
+    ctrl = h.build(options=options(kind), real_time=real_time)
     T = [start[b].astype(np.float64) for b in range(B)]
     v = [np.zeros(3) for _ in range(B)]
     w = [np.zeros(3) for _ in range(B)]
@@ -230,7 +230,7 @@ def test_quadruped_stands_closed_loop(stream, kind, real_time):
     h.track_vector("velocity", np.zeros((1, N + 1, 3)), weight=1.0)
     h.track_vector("rates", np.zeros((1, N + 1, 3)), weight=1.0)
     h.control_effort(weight=1e-3)
-    ctrl = h.build(minimizer=inner(kind), real_time=real_time)
+    ctrl = h.build(options=options(kind), real_time=real_time)
     zero = np.zeros((1, 3), np.float32)
     for t in range(5):
         F = ctrl.step(stream, pose=base[None], velocity=zero, rates=zero).numpy()

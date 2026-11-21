@@ -168,6 +168,7 @@ void bind_factor(nb::module_ &m) {
             bool ok;
             {
               nb::gil_scoped_release release;
+              DeviceScope scope(device_of(r));
               ok = self.Evaluate(r, j, table, stream.GetStream());
             }
             return ok;

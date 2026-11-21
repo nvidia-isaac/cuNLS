@@ -305,6 +305,13 @@ endif(ENABLE_PROFILING)
 
 option(BUILD_PYTHON_BINDINGS "Build Python bindings via nanobind" OFF)
 if(BUILD_PYTHON_BINDINGS)
+  # pycunls ships CUDA 13 builds only; the C++ library alone also builds with CUDA 12.
+  if(CUDAToolkit_VERSION_MAJOR LESS 13)
+    message(FATAL_ERROR "BUILD_PYTHON_BINDINGS: the Python bindings need CUDA 13 (got CUDA "
+      "${CUDAToolkit_VERSION}, expected 13.x). Fix: configure with a CUDA 13 toolkit "
+      "(-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.x/bin/nvcc), or -DBUILD_PYTHON_BINDINGS=OFF for "
+      "the C++ library.")
+  endif()
   add_subdirectory(python)
 endif()
 

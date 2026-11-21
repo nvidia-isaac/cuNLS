@@ -160,12 +160,11 @@ struct Trajectories {
     bounds_lo = dvector<float>(lo);
     bounds_hi = dvector<float>(hi);
     control_states->SetBounds(bounds_lo.data(), bounds_hi.data());
-    LevenbergMarquardtMinimizerOptions lm;
-    lm.base_options.sparse_linear_solver_type = type;
-    lm.base_options.column_scaling = ColumnScaling::HessianDiagonal;
-    lm.base_options.max_num_iterations = 6;
-    LevenbergMarquardtMinimizer inner(lm);
-    AugmentedLagrangianMinimizer minimizer(inner);
+    AugmentedLagrangianMinimizerOptions al;
+    al.base_options.sparse_linear_solver_type = type;
+    al.base_options.column_scaling = ColumnScaling::HessianDiagonal;
+    al.base_options.max_num_iterations = 6;
+    AugmentedLagrangianMinimizer minimizer(al);
     CudaStream stream;
     minimizer.Minimize(stream.GetStream(), problem);
     std::vector<float> out(poses.size() + controls.size());

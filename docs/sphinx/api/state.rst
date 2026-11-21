@@ -400,11 +400,11 @@ zero-copy pointer wrapping so you never need to manually construct
                ambient_size=...,
                tangent_size=...,
                capacity=capacity,
-               device="cuda:0",
            )
 
-- **device** (``str``, default ``"cuda:0"``) — Warp device string used when
-  creating ``wp.array`` wrappers via ``wrap_array``.
+- **device** (``str`` or ``wp.Device``, default None) — the CUDA device of ``data``, used by
+  ``wrap_array`` and the stream wrappers. None: ``data.device`` for a ``wp.array``, else Warp's
+  current device at construction (``wp.get_device()``, which follows ``wp.ScopedDevice``).
 
 **Helper methods** (inherited — do not override)
 

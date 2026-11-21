@@ -37,7 +37,6 @@
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/factor/weighted_factor_batch.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
@@ -46,12 +45,11 @@
 namespace cunls {
 namespace {
 
-using Kind = test_utils::MinimizerKind;
-
-std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
-  MinimizerOptions options;
-  options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
-  return test_utils::MakeMinimizer(kind, options);
+/** The solver of the bounded chains (an augmented Lagrangian without constraint rows). */
+std::unique_ptr<AugmentedLagrangianMinimizer> MakeSolver() {
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options.sparse_linear_solver_type = SparseLinearSolverType::DenseCholesky;
+  return std::make_unique<AugmentedLagrangianMinimizer>(options);
 }
 
 /** Chains of n 2-D points pulled to targets and smoothed, with bounds. */
@@ -109,38 +107,38 @@ struct Chains {
     x.CopyFromHost(zero.data(), zero.size());
   }
 
-  /** One solve through the augmented Lagrangian (the states are bounded; no constraint rows). */
-  std::vector<float> Solve(Minimizer &minimizer, bool reuse, bool fixed = false,
+  /** One solve with `solver`'s budget set for it (no constraint rows: one full inner solve). */
+  std::vector<float> Solve(AugmentedLagrangianMinimizer &solver, bool reuse, bool fixed = false,
                            size_t iterations = 50) {
     CudaStream stream;
-    AugmentedLagrangianMinimizerOptions options;
-    options.inner_line_search_steps = fixed ? 3 : 10;
-    options.reuse_structure = reuse;
-    options.real_time = fixed;
-    options.inner_iterations = iterations;
-    options.final_inner_iterations = iterations;
-    AugmentedLagrangianMinimizer(minimizer, options).Minimize(stream.GetStream(), problem);
+    AugmentedLagrangianMinimizerOptions options = solver.Options();
+    options.max_outer_iterations = 1;
+    options.base_options.max_line_search_steps = fixed ? 3 : 10;
+    options.base_options.reuse_structure = reuse;
+    options.base_options.real_time = fixed;
+    options.base_options.max_num_iterations = iterations;
+    solver.SetOptions(options);
+    solver.Minimize(stream.GetStream(), problem);
     std::vector<float> out(2 * total);
     x.CopyToHost(out.data(), out.size());
     return out;
   }
 };
 
-class StructureReuseTest : public ::testing::TestWithParam<std::tuple<Kind, int>> {};
+class StructureReuseTest : public ::testing::TestWithParam<int> {};
 
 TEST_P(StructureReuseTest, MatchesFreshSolves) {
-  const Kind kind = std::get<0>(GetParam());
-  Chains chains(std::get<1>(GetParam()));
+  Chains chains(GetParam());
   // Levenberg-Marquardt's accept/reject decisions compare float32 costs summed
   // with atomics; near the minimum they can go either way, so two identical
   // solves agree only to about 1e-3.
-  const float tolerance = kind == Kind::kGaussNewton ? 1e-5f : 1e-3f;
-  auto reused = MakeMinimizer(kind);
+  const float tolerance = 1e-3f;
+  auto reused = MakeSolver();
   for (unsigned seed = 1; seed <= 3; ++seed) {
     chains.Reset(seed);
     const auto with_reuse = chains.Solve(*reused, /*reuse=*/seed > 1);
     chains.Reset(seed);
-    auto fresh = MakeMinimizer(kind);
+    auto fresh = MakeSolver();
     const auto expected = chains.Solve(*fresh, /*reuse=*/false);
     for (size_t i = 0; i < expected.size(); ++i) {
       EXPECT_NEAR(with_reuse[i], expected[i], tolerance) << "seed " << seed << " component " << i;
@@ -152,7 +150,7 @@ TEST_P(StructureReuseTest, MatchesFreshSolves) {
   chains.Reset(9);
   const auto after_resize = chains.Solve(*reused, /*reuse=*/true);
   chains.Reset(9);
-  auto fresh = MakeMinimizer(kind);
+  auto fresh = MakeSolver();
   const auto expected = chains.Solve(*fresh, /*reuse=*/false);
   for (size_t i = 0; i < expected.size(); ++i) {
     EXPECT_NEAR(after_resize[i], expected[i], tolerance) << "component " << i;
@@ -160,15 +158,14 @@ TEST_P(StructureReuseTest, MatchesFreshSolves) {
 }
 
 TEST_P(StructureReuseTest, FixedIterationsReachTheSameSolution) {
-  const Kind kind = std::get<0>(GetParam());
-  Chains chains(std::get<1>(GetParam()));
-  const float tolerance = kind == Kind::kGaussNewton ? 1e-4f : 1e-3f;
+  Chains chains(GetParam());
+  const float tolerance = 1e-3f;
   chains.Reset(4);
-  auto converged = MakeMinimizer(kind);
+  auto converged = MakeSolver();
   const auto expected = chains.Solve(*converged, /*reuse=*/false);
   // As a receding horizon uses it: a converged call, then fixed-iteration
   // calls reusing its structure (the partition is built on the first of them).
-  auto real_time = MakeMinimizer(kind);
+  auto real_time = MakeSolver();
   chains.Reset(4);
   chains.Solve(*real_time, /*reuse=*/false);
   for (int call = 1; call <= 2; ++call) {
@@ -180,10 +177,7 @@ TEST_P(StructureReuseTest, FixedIterationsReachTheSameSolution) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(Minimizers, StructureReuseTest,
-                         ::testing::Combine(::testing::Values(Kind::kGaussNewton,
-                                                              Kind::kLevenbergMarquardt),
-                                            ::testing::Values(1, 3)));
+INSTANTIATE_TEST_SUITE_P(Chains, StructureReuseTest, ::testing::Values(1, 3));
 
 }  // namespace
 }  // namespace cunls

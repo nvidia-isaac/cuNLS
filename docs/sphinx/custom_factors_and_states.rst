@@ -226,6 +226,11 @@ C++ default 0 to ``NumActiveFactors()``).
 With NVIDIA Warp
 -------------------------------------------------------------------------------
 
+Without writing a kernel: ``pycunls.warp.WarpFunctionFactorBatch`` turns a ``@wp.func`` of the
+factor's states (``wp.transform`` for SE(3), ``wp.quat`` for SO(3), ``float`` or ``wp.vecN`` for
+vectors) and of a per-factor data item into a factor, with Warp's automatic differentiation for
+the Jacobian (:ref:`py-warp-function-factor-batch`). An analytic kernel, as below, is faster.
+
 ``pycunls.warp.WarpFactorBatch`` and ``WarpStateBatch`` wrap the raw pointers
 as ``warp.array`` objects and cuNLS's stream as a ``warp.Stream``, so the kernel
 is ordered with the rest of the minimizer's work. For a factor,

@@ -202,9 +202,9 @@ def main():
         print(issue)
 
     # 5. Solve: augmented Lagrangian (bounds + clearance) around Levenberg-Marquardt.
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    lm.base_options.max_num_iterations = 100
-    solver = pycunls.AugmentedLagrangianMinimizer(pycunls.LevenbergMarquardtMinimizer(lm))
+    options = pycunls.AugmentedLagrangianMinimizerOptions()
+    options.base_options.max_num_iterations = 100
+    solver = pycunls.AugmentedLagrangianMinimizer(options)
     summary = solver.minimize(stream, problem)
 
     # 6. Check every solution in NumPy from the link transforms.

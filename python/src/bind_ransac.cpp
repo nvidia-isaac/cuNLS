@@ -66,6 +66,7 @@ MaskArray InlierMask(const RansacMinimizer &self, size_t index) {
 
 RansacSummary Minimize(RansacMinimizer &self, cunls::CudaStream &stream, cunls::Problem &problem) {
   nb::gil_scoped_release release;  // custom Python factors re-acquire it
+  DeviceScope scope(problem.Device());
   return self.Minimize(stream.GetStream(), problem);
 }
 

@@ -120,9 +120,9 @@ def run_chain_example(title, use_numeric_jacobian):
     num_states = len(chain.gt)
 
     # 2. Upload states, the anchor value and the measurements as Warp arrays.
-    states_gpu = wp.array(chain.initial, dtype=wp.float32, device="cuda:0")
-    prior_gpu = wp.array(chain.gt[:1], dtype=wp.float32, device="cuda:0")
-    measurements_wp = wp.array(chain.measurements, dtype=wp.float32, device="cuda:0")
+    states_gpu = wp.array(chain.initial, dtype=wp.float32)
+    prior_gpu = wp.array(chain.gt[:1], dtype=wp.float32)
+    measurements_wp = wp.array(chain.measurements, dtype=wp.float32)
 
     # 3. Scalar states; one difference factor per pair (x_i, x_{i+1}); a
     #    built-in prior anchoring x_0.

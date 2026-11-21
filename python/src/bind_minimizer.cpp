@@ -47,13 +47,14 @@ void bind_minimizer(nb::module_ &m) {
   nb::class_<cunls::Minimizer>(
       m, "Minimizer",
       "Common base of GaussNewtonMinimizer and LevenbergMarquardtMinimizer. Not "
-      "constructible; accepts either (e.g. AugmentedLagrangianMinimizer's inner minimizer).")
+      "constructible; accepts either.")
       .def(
           "minimize",
           [](cunls::Minimizer &self, cunls::CudaStream &stream, cunls::Problem &problem) {
             cunls::MinimizerSummary summary;
             {
               nb::gil_scoped_release release;
+              DeviceScope scope(problem.Device());
               summary = self.Minimize(stream.GetStream(), problem);
             }
             return summary;
@@ -93,8 +94,21 @@ void bind_minimizer(nb::module_ &m) {
            nb::arg("options") = cunls::LevenbergMarquardtMinimizerOptions());
 
   // --- Augmented Lagrangian outer loop for problems with constraint batches ---
-  nb::class_<cunls::AugmentedLagrangianMinimizerOptions>(
-      m, "AugmentedLagrangianMinimizerOptions", "Options of the augmented Lagrangian outer loop.")
+  nb::class_<cunls::AugmentedLagrangianMinimizerOptions, cunls::LevenbergMarquardtMinimizerOptions>(
+      m, "AugmentedLagrangianMinimizerOptions",
+      "Options of AugmentedLagrangianMinimizer: those of its private inner Levenberg-Marquardt "
+      "solver (the LevenbergMarquardtMinimizerOptions fields: damping, base_options with the "
+      "linear solver and tolerances) and of the outer loop. Four base_options fields set the "
+      "budget of a call, with or without constraint batches: max_num_iterations caps a "
+      "subproblem's full inner solve (its first after it is feasible, and every subproblem's in "
+      "the last outer iteration; without constraint batches every subproblem is feasible from "
+      "the start, so this caps a bounds-only solve; default 50); max_line_search_steps is the "
+      "line search of the inner solves (default 10 here); real_time runs a fixed budget without "
+      "host synchronization (exactly max_outer_iterations outer iterations of inner_iterations "
+      "inner iterations, the last max_num_iterations; costs in the summary are NaN; without "
+      "constraint batches nothing is read back, status NotDetermined, so the call can be "
+      "captured in a CUDA graph once the structure is set up); reuse_structure skips the "
+      "structure setup of a call whose problem structure is unchanged.")
       .def(nb::init<>())
       .def_rw("constraint_tolerance",
               &cunls::AugmentedLagrangianMinimizerOptions::constraint_tolerance,
@@ -104,13 +118,6 @@ void bind_minimizer(nb::module_ &m) {
               "Maximum number of multiplier updates. Default: 20.")
       .def_rw("inner_iterations", &cunls::AugmentedLagrangianMinimizerOptions::inner_iterations,
               "Iteration cap of the inner solves while infeasible. Default: 5.")
-      .def_rw("final_inner_iterations",
-              &cunls::AugmentedLagrangianMinimizerOptions::final_inner_iterations,
-              "Iteration cap of the inner solves once feasible; 0: the inner minimizer's "
-              "max_num_iterations. Default: 0.")
-      .def_rw("inner_line_search_steps",
-              &cunls::AugmentedLagrangianMinimizerOptions::inner_line_search_steps,
-              "Line-search steps of the inner solves. Default: 10.")
       .def_rw("initial_penalty", &cunls::AugmentedLagrangianMinimizerOptions::initial_penalty,
               "Initial penalty rho0. Default: 10.")
       .def_rw("penalty_increase", &cunls::AugmentedLagrangianMinimizerOptions::penalty_increase,
@@ -121,20 +128,11 @@ void bind_minimizer(nb::module_ &m) {
               "Required violation decrease eta before the penalty grows. Default: 0.25.")
       .def_rw("warm_start", &cunls::AugmentedLagrangianMinimizerOptions::warm_start,
               "Start from the previous call's multipliers and penalties. Default: False.")
-      .def_rw("reuse_structure", &cunls::AugmentedLagrangianMinimizerOptions::reuse_structure,
-              "The problem's structure is unchanged since the previous call (same batches, "
-              "connectivity, active/constant counts, partition): skip the structure setup. "
-              "Default: False.")
       .def_rw("max_bound_refinements",
               &cunls::AugmentedLagrangianMinimizerOptions::max_bound_refinements,
               "Box-bounded states: at most this many extra solves per inner iteration holding "
               "the free components the step would push through their bound (exactly this many "
-              "with real_time). Default: 3.")
-      .def_rw("real_time", &cunls::AugmentedLagrangianMinimizerOptions::real_time,
-              "Fixed budget without host synchronization (one read-back at the end): exactly "
-              "max_outer_iterations outer iterations of inner_iterations inner iterations "
-              "(the last final_inner_iterations if > 0). Costs in the summary are NaN. "
-              "Default: False.");
+              "with base_options.real_time). Default: 3.");
 
   nb::enum_<cunls::AugmentedLagrangianMinimizerStatus>(
       m, "AugmentedLagrangianMinimizerStatus",
@@ -195,14 +193,11 @@ void bind_minimizer(nb::module_ &m) {
   nb::class_<cunls::AugmentedLagrangianMinimizer>(
       m, "AugmentedLagrangianMinimizer",
       "Augmented Lagrangian solver for problems with constraint factor batches "
-      "(ConstraintFactorBatch, BoundFactorBatchN), around a Gauss-Newton or "
-      "Levenberg-Marquardt minimizer (minimizer), with options: "
-      "AugmentedLagrangianMinimizerOptions. Also the solver for box-bounded states "
-      "(VectorStateBatch.set_bounds). Without constraints or bounds it is the wrapped "
-      "minimizer.")
-      .def(nb::init<cunls::Minimizer &, const cunls::AugmentedLagrangianMinimizerOptions &>(),
-           nb::arg("minimizer"), nb::arg("options") = cunls::AugmentedLagrangianMinimizerOptions(),
-           nb::keep_alive<1, 2>())
+      "(ConstraintFactorBatch, BoundFactorBatchN) or box-bounded states "
+      "(VectorStateBatch.set_bounds), with a private inner Levenberg-Marquardt solver built "
+      "from options (an AugmentedLagrangianMinimizerOptions).")
+      .def(nb::init<const cunls::AugmentedLagrangianMinimizerOptions &>(),
+           nb::arg("options") = cunls::AugmentedLagrangianMinimizerOptions())
       .def(
           "minimize",
           [](cunls::AugmentedLagrangianMinimizer &self, cunls::CudaStream &stream,
@@ -210,6 +205,7 @@ void bind_minimizer(nb::module_ &m) {
             cunls::AugmentedLagrangianMinimizerSummary summary;
             {
               nb::gil_scoped_release release;
+              DeviceScope scope(problem.Device());
               summary = self.Minimize(stream.GetStream(), problem);
             }
             return summary;
@@ -223,6 +219,16 @@ void bind_minimizer(nb::module_ &m) {
              const cunls::AugmentedLagrangianMinimizerOptions &options) {
             self.SetOptions(options);
           },
-          "Options of the following calls (a copy; assign a modified one). Assigning keeps "
-          "the warm-start state.");
+          "Options of the following calls (a copy; assign a modified one). Assigning changes "
+          "the outer loop and the budget (base_options.max_num_iterations, "
+          "max_line_search_steps, real_time, reuse_structure) and keeps the warm-start state; "
+          "the inner solver keeps the damping, linear solver and tolerances it was built with "
+          "(create a new minimizer to change those).")
+      .def(
+          "subproblem_termination_reasons",
+          [](const cunls::AugmentedLagrangianMinimizer &self) {
+            return device_to_numpy(self.SubproblemTerminationReasons(), self.NumSubproblems());
+          },
+          "The TerminationReason value of every subproblem's last inner solve in the last "
+          "minimize() call (Problem.set_problem_partition), as a numpy int array.");
 }

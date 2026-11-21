@@ -12,15 +12,52 @@ needed.
    (``libcunls.so`` / ``libcunls.a``, headers and CMake config) instead, see
    :doc:`installation`.
 
+.. list-table:: Supported platforms
+   :header-rows: 1
+
+   * - Part
+     - CUDA
+     - Driver
+     - Platforms
+   * - C++ library (``libcunls``, CMake package)
+     - 12.6+ and 13
+     - R525+ (CUDA 12), R580+ (CUDA 13)
+     - x86_64; Jetson Orin (CUDA 12.6), Jetson Thor (CUDA 13)
+   * - Python (``pycunls-cu13``)
+     - 13
+     - R580+
+     - x86_64 wheels on PyPI; aarch64 (Jetson Thor) from source
+
+On CUDA 12 systems (for example Jetson Orin with JetPack 6), use the C++
+library: importing ``pycunls`` on a driver older than CUDA 13 raises an
+``ImportError`` that says so.
+
 ===============================================================================
-Prerequisites
+Install from PyPI
 ===============================================================================
 
-- CUDA Toolkit (with `nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`)
+Wheels for x86_64 Linux with glibc 2.35 or newer (Ubuntu 22.04 and later; build from
+source on older distributions), Python 3.10 to 3.14, CUDA 13 (driver R580 or newer):
+
+.. code-block:: bash
+
+   pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
+   python -m pycunls doctor
+
+The ``cuda-toolkit`` packages supply the CUDA libraries the wheel links (see
+`CUDA libraries`_); a system CUDA 13 toolkit works too.
+
+===============================================================================
+Prerequisites (source builds)
+===============================================================================
+
+- CUDA Toolkit 13 (with `nvcc`, `cudart`, `cuBLAS`, `cuSPARSE`, `cuSOLVER`);
+  configuring the bindings with CUDA 12 stops with the fix (the C++ library
+  alone also builds with CUDA 12)
 - CMake >= 3.22
 - C++17 compiler
 - Python >= 3.10
-- NVIDIA GPU driver compatible with your CUDA Toolkit
+- NVIDIA GPU driver R580 or newer
 
 ===============================================================================
 Install from source (pip)
@@ -43,7 +80,7 @@ To also install the test dependencies:
 
 .. code-block:: bash
 
-   pip install ".[test]"   # pytest, and cupy-cuda12x for one interoperability test
+   pip install ".[test]"   # pytest, and cupy-cuda13x for one interoperability test
 
 ===============================================================================
 Build a wheel
@@ -55,7 +92,9 @@ Build a wheel
    pip wheel . -w dist/
 
 The resulting ``.whl`` file in ``dist/`` can be installed on any machine with
-a compatible CUDA Toolkit and GPU driver.
+CUDA 13 libraries and an R580 or newer driver. When ``/usr/local/cuda`` is a
+CUDA 12 toolkit, name the CUDA 13 compiler, for example
+``CMAKE_ARGS="-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc"``.
 
 ===============================================================================
 Dependencies
@@ -63,14 +102,13 @@ Dependencies
 
 **Required (installed automatically by pip):**
 
-- `warp-lang <https://nvidia.github.io/warp/>`_ (``<1.18``) — `NVIDIA Warp
+- `warp-lang <https://nvidia.github.io/warp/>`_ (``>=1.18``, whose PyPI
+  wheels are CUDA 13 builds) — `NVIDIA Warp
   <https://developer.nvidia.com/warp-python>`_: GPU arrays (``wp.array``),
   custom factor and state kernels (see :doc:`pycunls_tutorial`) and
   ``pycunls.fit`` models. All pycunls constructors accept a ``wp.array``, any
   other array with ``__cuda_array_interface__`` (PyTorch, CuPy, ...) or a raw
-  ``int`` device pointer. Warp 1.18 is excluded because its PyPI wheels need
-  an R580+ driver (older drivers, such as JetPack 6 on Jetson Orin, leave
-  Warp CPU-only).
+  ``int`` device pointer.
 - `numpy <https://numpy.org/>`_ — host arrays (results, ``fit`` and
   ``ProblemBuilder`` inputs).
 
@@ -98,7 +136,7 @@ Optional: cuDSS sparse solver
 cuDSS is an **optional runtime dependency**: the ``pycunls`` wheel neither
 bundles nor requires it, and every other sparse linear solver works without
 it. To use ``SparseLinearSolverType.cuDSS``, either ``pip install
-"nvidia-cudss-cu13==0.8.*"`` (``nvidia-cudss-cu12`` for CUDA 12) into the same
+"nvidia-cudss-cu13==0.8.*"`` into the same
 environment, which ``pycunls`` finds without any setup, or make a cuDSS 0.8
 ``libcudss.so`` reachable through ``LD_LIBRARY_PATH`` *before* starting
 ``python``; requesting it otherwise raises ``RuntimeError``. See
@@ -110,11 +148,12 @@ CUDA libraries
 
 The wheel links ``cudart``, ``cublas``, ``cusparse`` and ``cusolver`` without
 bundling them. Its native module searches, in order: ``LD_LIBRARY_PATH``, the
-NVIDIA pip packages next to it in ``site-packages`` (``nvidia/cu13/lib`` for
-CUDA 13; ``nvidia/{cuda_runtime,cublas,cusparse,cusolver,cu12}/lib`` for
-CUDA 12), then the system library cache (a CUDA toolkit under
-``/usr/local/cuda``). Install the pip packages from one CUDA release with
-``pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"``
-(``==12.8.*`` for ``pycunls-cu12``).
+NVIDIA pip packages next to it in ``site-packages`` (``nvidia/cu13/lib``),
+then the system library cache. A CUDA 13 toolkit under ``/usr/local/cuda`` is
+found only when its ``lib64`` directory is in the cache (``ldconfig``) or on
+``LD_LIBRARY_PATH`` (e.g. ``export LD_LIBRARY_PATH=/usr/local/cuda/lib64``),
+which a runfile installation does not set up.
+Install the pip packages from one CUDA release with
+``pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"``.
 
 Next: :doc:`pycunls_quick_start`.

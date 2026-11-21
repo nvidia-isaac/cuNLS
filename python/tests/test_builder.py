@@ -217,7 +217,7 @@ def test_bounds_use_the_augmented_lagrangian_and_repeated_solves_reuse_it():
     assert result.converged
     np.testing.assert_allclose(result[x], [[1, 0.5], [0.2, 0.2], [-1, 0]], atol=1e-3)
     solver = pb._solver
-    assert solver[2] is not None  # the augmented Lagrangian wrapper
+    assert isinstance(solver[1], pycunls.AugmentedLagrangianMinimizer)
     prior.set_measurements(-target)
     x.set(np.zeros((3, 2)))
     result = pb.solve()

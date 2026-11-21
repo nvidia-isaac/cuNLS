@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -165,38 +166,69 @@ TEST(TerminationTest, PartitionCountsEverySubproblemAndReportsTheWorst) {
   EXPECT_TRUE(IsConvergence(static_cast<TerminationReason>(reasons[2])));
 }
 
-TEST(TerminationTest, RealTimeSolvesDoNotDetermineTheReason) {
-  CudaStream stream;
-  PriorProblem p({5.f, -3.f}, false);
-  GaussNewtonMinimizer minimizer(Options());
-  internal::InnerSolve inner;
-  inner.max_num_iterations = 2;
-  inner.fixed_iterations = true;
-  const MinimizerSummary summary =
-      internal::InnerMinimize(minimizer, stream.GetStream(), p.problem, inner);
-  EXPECT_EQ(summary.termination_reason, TerminationReason::NotDetermined);
-  EXPECT_TRUE(summary.num_problems_by_reason.empty());
-  EXPECT_FALSE(summary.Converged());
+// MinimizerOptions::real_time: exactly max_num_iterations iterations and no
+// host synchronization, so nothing is determined; after a first call that sets
+// the structure up, a call can be captured in a CUDA graph (a read-back or a
+// synchronization would fail the capture).
+TEST(TerminationTest, RealTimeSolvesAreGraphCapturable) {
+  for (const bool levenberg_marquardt : {false, true}) {
+    SCOPED_TRACE(levenberg_marquardt ? "Levenberg-Marquardt" : "Gauss-Newton");
+    CudaStream stream;
+    const std::vector<float> start = {5.f, -3.f};
+    PriorProblem p(start, false);
+    MinimizerOptions options = Options();
+    options.max_num_iterations = 2;
+    options.real_time = true;
+    options.reuse_structure = true;
+    GaussNewtonMinimizer gn(options);
+    LevenbergMarquardtMinimizerOptions lm;
+    lm.base_options = options;
+    LevenbergMarquardtMinimizer lm_minimizer(lm);
+    Minimizer &minimizer = levenberg_marquardt ? static_cast<Minimizer &>(lm_minimizer) : gn;
+    const MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), p.problem);
+    EXPECT_EQ(summary.termination_reason, TerminationReason::NotDetermined);
+    EXPECT_TRUE(summary.num_problems_by_reason.empty());
+    EXPECT_EQ(summary.num_iterations, 2u);
+    EXPECT_TRUE(std::isnan(summary.final_cost));
+    EXPECT_FALSE(summary.Converged());
+
+    p.states.CopyFromHost(start.data(), start.size());
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t exec = nullptr;
+    ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+              cudaSuccess);
+    minimizer.Minimize(stream.GetStream(), p.problem);
+    ASSERT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+    ASSERT_EQ(cudaGraphInstantiate(&exec, graph, 0), cudaSuccess);
+    ASSERT_EQ(cudaGraphLaunch(exec, stream.GetStream()), cudaSuccess);
+    ASSERT_EQ(cudaStreamSynchronize(stream.GetStream()), cudaSuccess);
+    std::vector<float> x(2);
+    p.states.CopyToHost(x.data(), x.size());
+    EXPECT_NEAR(x[0], 1.f, 1e-2f);
+    EXPECT_NEAR(x[1], 2.f, 1e-2f);
+    cudaGraphExecDestroy(exec);
+    cudaGraphDestroy(graph);
+  }
 }
 
 TEST(TerminationTest, RealTimeAugmentedLagrangianWithoutConstraintsIsNotDetermined) {
   CudaStream stream;
   PriorProblem p({50.f, -30.f}, false);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = Options();
-  lm.initial_lambda = 1e4f;  // one heavily damped step: far from the minimum
-  LevenbergMarquardtMinimizer inner(lm);
   AugmentedLagrangianMinimizerOptions options;
-  options.real_time = true;
-  options.inner_iterations = 1;
-  AugmentedLagrangianMinimizer al(inner, options);
+  options.base_options = Options();
+  options.initial_lambda = 1e4f;  // one heavily damped step: far from the minimum
+  options.base_options.real_time = true;
+  options.base_options.max_num_iterations = 1;
+  options.max_outer_iterations = 1;
+  AugmentedLagrangianMinimizer al(options);
   const AugmentedLagrangianMinimizerSummary summary = al.Minimize(stream.GetStream(), p.problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kNotDetermined) << summary.message;
   EXPECT_FALSE(summary.Converged());
   EXPECT_EQ(summary.num_converged, 0u);
 
-  // The same call without real_time establishes the outcome.
-  options.real_time = false;
+  // A converging call (the default budget) establishes the outcome.
+  options.base_options = Options();
+  options.max_outer_iterations = AugmentedLagrangianMinimizerOptions().max_outer_iterations;
   al.SetOptions(options);
   const AugmentedLagrangianMinimizerSummary full = al.Minimize(stream.GetStream(), p.problem);
   EXPECT_TRUE(full.Converged()) << full.message;
@@ -206,13 +238,79 @@ TEST(TerminationTest, RealTimeAugmentedLagrangianWithoutConstraintsIsNotDetermin
 TEST(TerminationTest, AllConstantStatesCountEverySubproblem) {
   CudaStream stream;
   PriorProblem p({5.f, -3.f, 1.f, 1.f, 0.f, 0.f}, true, /*all_constant=*/true);
-  GaussNewtonMinimizer minimizer(Options());
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = Options();
+  LevenbergMarquardtMinimizer minimizer(lm);
   const MinimizerSummary summary = minimizer.Minimize(stream.GetStream(), p.problem);
   EXPECT_EQ(Count(summary, TerminationReason::NoFreeStates), 3u);
-  AugmentedLagrangianMinimizer al(minimizer);
+  AugmentedLagrangianMinimizerOptions al_options;
+  al_options.base_options = Options();
+  AugmentedLagrangianMinimizer al(al_options);
   const AugmentedLagrangianMinimizerSummary wrapped = al.Minimize(stream.GetStream(), p.problem);
   EXPECT_TRUE(wrapped.Converged()) << wrapped.message;
   EXPECT_EQ(wrapped.num_converged, 3u);
+}
+
+// A solver reused on an all-constant problem with more subproblems reports one
+// NoFreeStates reason per subproblem of that problem (not the earlier call's
+// table); in real time that call reads nothing back and can be captured.
+TEST(TerminationTest, AllConstantProblemAfterAnotherOne) {
+  CudaStream stream;
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options = Options();
+  AugmentedLagrangianMinimizer al(options);
+  PriorProblem first({5.f, -3.f}, false);
+  ASSERT_TRUE(al.Minimize(stream.GetStream(), first.problem).Converged());
+  PriorProblem constant({5.f, -3.f, 1.f, 1.f, 0.f, 0.f}, true, /*all_constant=*/true);
+  const auto summary = al.Minimize(stream.GetStream(), constant.problem);
+  EXPECT_TRUE(summary.Converged()) << summary.message;
+  ASSERT_EQ(al.NumSubproblems(), 3u);
+  std::vector<int> reasons(3);
+  THROW_ON_CUDA_ERROR(cudaMemcpy(reasons.data(), al.SubproblemTerminationReasons(), 3 * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
+  for (int r : reasons) EXPECT_EQ(r, static_cast<int>(TerminationReason::NoFreeStates));
+
+  MinimizerOptions real_time = Options();
+  real_time.real_time = true;
+  real_time.reuse_structure = true;
+  GaussNewtonMinimizer gn(real_time);
+  gn.Minimize(stream.GetStream(), constant.problem);
+  cudaGraph_t graph = nullptr;
+  ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+            cudaSuccess);
+  const MinimizerSummary captured = gn.Minimize(stream.GetStream(), constant.problem);
+  ASSERT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+  EXPECT_EQ(captured.termination_reason, TerminationReason::NoFreeStates);
+  EXPECT_TRUE(std::isnan(captured.final_cost));
+  cudaGraphDestroy(graph);
+}
+
+// A problem lives on the device of its states. Minimize() runs there and
+// rejects a call made from another device or with a stream of another device
+// (needs two GPUs).
+TEST(TerminationTest, MinimizeRunsOnTheProblemsDevice) {
+  int current = -1, count = 0;
+  ASSERT_EQ(cudaGetDevice(&current), cudaSuccess);
+  ASSERT_EQ(cudaGetDeviceCount(&count), cudaSuccess);
+  {
+    PriorProblem p({5.f, -3.f}, false);
+    EXPECT_EQ(p.problem.Device(), current);
+  }
+  if (count < 2) GTEST_SKIP() << "needs two GPUs";
+  const int other = current == 0 ? 1 : 0;
+  ASSERT_EQ(cudaSetDevice(other), cudaSuccess);
+  {
+    PriorProblem p({5.f, -3.f}, false);  // states on `other`
+    ASSERT_EQ(cudaSetDevice(current), cudaSuccess);
+    CudaStream stream;  // on `current`
+    LevenbergMarquardtMinimizer minimizer;
+    EXPECT_THROW(minimizer.Minimize(stream.GetStream(), p.problem), std::invalid_argument);
+    ASSERT_EQ(cudaSetDevice(other), cudaSuccess);
+    EXPECT_THROW(minimizer.Minimize(stream.GetStream(), p.problem), std::invalid_argument);
+    CudaStream other_stream;
+    EXPECT_TRUE(minimizer.Minimize(other_stream.GetStream(), p.problem).Converged());
+  }
+  ASSERT_EQ(cudaSetDevice(current), cudaSuccess);
 }
 
 TEST(TerminationTest, EveryReasonHasAName) {

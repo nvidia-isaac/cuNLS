@@ -77,3 +77,39 @@ def test_cuda_stream_wraps_other_streams_without_owning_them():
     np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
     with pytest.raises(TypeError, match="Fix:"):
         pycunls.CudaStream("not a stream")
+
+
+# ---------------------------------------------------------------------------
+# Devices: a problem runs on the device of its states
+# ---------------------------------------------------------------------------
+
+
+def _prior_problem_on(device):
+    with wp.ScopedDevice(device):
+        x = wp.zeros(6, dtype=wp.float32)
+        states = pycunls.VectorStateBatch3(x, 2)
+        states.set_num_active_states(2)
+        prior = pycunls.PriorVectorFactorBatch3(wp.array(np.full(6, 2.0, dtype=np.float32)), 2)
+        prior.set_num_active_factors(2)
+        problem = pycunls.Problem()
+        problem.add_state_batch(states)
+        problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(2)])
+    return x, problem, (states, prior)
+
+
+def test_problem_device_is_the_device_of_its_states():
+    assert pycunls.Problem().device == -1
+    x, problem, _ = _prior_problem_on(wp.get_cuda_device())
+    assert problem.device == x.device.ordinal
+
+
+@pytest.mark.skipif(wp.get_cuda_device_count() < 2, reason="needs two GPUs")
+def test_minimize_runs_on_the_problems_device_whatever_is_current():
+    x, problem, _ = _prior_problem_on("cuda:1")
+    minimizer = pycunls.LevenbergMarquardtMinimizer()
+    with wp.ScopedDevice("cuda:0"):  # another device is current: minimize switches itself
+        summary = minimizer.minimize(wp.get_stream("cuda:1"), problem)
+        assert summary.converged(), summary.message
+        with pytest.raises(ValueError, match="stream"):
+            minimizer.minimize(wp.get_stream("cuda:0"), problem)
+    np.testing.assert_allclose(x.numpy(), 2.0, atol=1e-4)

@@ -33,7 +33,6 @@
 #include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/sized_factor_batch.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
-#include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/minimizer/problem.h"
 #include "cunls/state/vector_state_batch.h"
@@ -83,16 +82,16 @@ class HsRows : public FactorBatch {
   int kind_;
 };
 
-using Kind = test_utils::MinimizerKind;
-
-std::unique_ptr<Minimizer> MakeMinimizer(Kind kind) {
-  return test_utils::MakeMinimizer(kind, test_utils::ConvergedSolveOptions(), 1e-12f);
+/** Augmented Lagrangian options whose inner solves run to convergence. */
+AugmentedLagrangianMinimizerOptions Options() {
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = test_utils::ConvergedSolveOptions();
+  lm.relative_reduction_tolerance = 1e-12f;
+  return test_utils::WithInnerSettings(lm);
 }
 
-class HockSchittkowski : public ::testing::TestWithParam<Kind> {};
-
 // HS6: min (1 - x1)²  s.t.  10 (x2 - x1²) = 0, from (-1.2, 1); x* = (1, 1).
-TEST_P(HockSchittkowski, Hs6NonlinearEquality) {
+TEST(HockSchittkowski, Hs6NonlinearEquality) {
   CudaStream stream;
   dvector<float> x(std::vector<float>{-1.2f, 1.f});
   VectorStateBatch<2> states(x.data(), 1);
@@ -105,8 +104,8 @@ TEST_P(HockSchittkowski, Hs6NonlinearEquality) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&objective, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0)});
-  auto inner = MakeMinimizer(GetParam());
-  const auto summary = AugmentedLagrangianMinimizer(*inner).Minimize(stream.GetStream(), problem);
+  const auto summary =
+      AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
   std::vector<float> result(2);
@@ -118,7 +117,7 @@ TEST_P(HockSchittkowski, Hs6NonlinearEquality) {
 // HS2: min 100 (x2 - x1²)² + (1 - x1)²  s.t.  x2 >= 1.5; x* = (1.2243707, 1.5)
 // (started in its basin: from (-2, 1) a local method may stop at the other
 // KKT point on the bound, x1 = -1.2210).
-TEST_P(HockSchittkowski, Hs2ActiveBound) {
+TEST(HockSchittkowski, Hs2ActiveBound) {
   constexpr float kInf = std::numeric_limits<float>::infinity();
   CudaStream stream;
   dvector<float> x(std::vector<float>{2.f, 1.f});
@@ -133,17 +132,14 @@ TEST_P(HockSchittkowski, Hs2ActiveBound) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&objective, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&bounds, {states.StateDevicePtr(0)});
-  auto inner = MakeMinimizer(GetParam());
-  const auto summary = AugmentedLagrangianMinimizer(*inner).Minimize(stream.GetStream(), problem);
+  const auto summary =
+      AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   std::vector<float> result(2);
   x.CopyToHost(result.data(), 2);
   EXPECT_NEAR(result[0], 1.2243707f, 2e-4f);
   EXPECT_NEAR(result[1], 1.5f, 2e-4f);
 }
-
-INSTANTIATE_TEST_SUITE_P(Minimizers, HockSchittkowski,
-                         ::testing::Values(Kind::kGaussNewton, Kind::kLevenbergMarquardt));
 
 }  // namespace
 }  // namespace cunls

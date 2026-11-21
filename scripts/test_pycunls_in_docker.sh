@@ -17,10 +17,13 @@ fi
 TTY_FLAG=""
 [ -t 0 ] && TTY_FLAG="-it"
 
+# Runs in the CUDA 13 image cunls:local that build_pycunls_in_docker.sh built (test_pycunls.sh
+# checks it). WARP_REQUIREMENT (e.g. "warp-lang==1.18.*") pins Warp; empty: the newest allowed.
 # Container mounts:
 #   /cunls          (ro) — source tree
 #   /cunls_install  (rw) — wheel dir + test output (host: $WHEEL_DIR)
 docker run --runtime=nvidia --gpus all --rm $TTY_FLAG \
   -v "$(pwd):/cunls:ro" \
   -v "$WHEEL_DIR:/cunls_install" \
+  -e WARP_REQUIREMENT="${WARP_REQUIREMENT:-}" \
   cunls:local bash /cunls/scripts/test_pycunls.sh

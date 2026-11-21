@@ -104,23 +104,21 @@ def test_to_dict_is_json_ready_and_report_leads_with_the_outcome(stream):
 
 def test_augmented_lagrangian_summary_has_message_and_converged(stream):
     problem, _keep = _priors([5, -3])
-    inner = pycunls.LevenbergMarquardtMinimizer()
-    summary = pycunls.AugmentedLagrangianMinimizer(inner).minimize(stream, problem)
+    summary = pycunls.AugmentedLagrangianMinimizer().minimize(stream, problem)
     assert summary.converged()
-    assert summary.message  # the wrapped minimizer's message without constraints
+    assert summary.message
     assert summary.to_dict()["status"] == "Converged"
     assert summary.report().startswith("AugmentedLagrangianMinimizerSummary: converged")
 
 
 def test_real_time_augmented_lagrangian_without_constraints_is_not_determined(stream):
     problem, (states, *_rest) = _priors([50, -30])
-    lm = pycunls.LevenbergMarquardtMinimizerOptions()
-    lm.initial_lambda = 1e4  # one heavily damped step: far from the minimum
     options = pycunls.AugmentedLagrangianMinimizerOptions()
-    options.real_time = True
-    options.inner_iterations = 1
-    inner = pycunls.LevenbergMarquardtMinimizer(lm)
-    summary = pycunls.AugmentedLagrangianMinimizer(inner, options).minimize(stream, problem)
+    options.initial_lambda = 1e4  # one heavily damped step: far from the minimum
+    options.base_options.real_time = True
+    options.base_options.max_num_iterations = 1
+    options.max_outer_iterations = 1
+    summary = pycunls.AugmentedLagrangianMinimizer(options).minimize(stream, problem)
     assert summary.status == pycunls.AugmentedLagrangianMinimizerStatus.NotDetermined
     assert not summary.converged() and summary.num_converged == 0
     d = summary.to_dict()

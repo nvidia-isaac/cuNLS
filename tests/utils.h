@@ -33,6 +33,7 @@
 #include "cunls/common/types.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/linear_solver/sparse_linear_solver.h"
+#include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
 #include "cunls/minimizer/levenberg_marquardt_minimizer.h"
 #include "cunls/state/vector_state_batch.h"
@@ -397,16 +398,44 @@ dvector<T> ToDevice(const std::vector<T> &h) {
 enum class MinimizerKind { kGaussNewton, kLevenbergMarquardt };
 
 /**
+ * @brief A LevenbergMarquardtMinimizer with `options` and
+ *        `relative_reduction_tolerance` (the inner minimizer of
+ *        AugmentedLagrangianMinimizer).
+ */
+inline std::unique_ptr<LevenbergMarquardtMinimizer> MakeLevenbergMarquardt(
+    const MinimizerOptions &options, float relative_reduction_tolerance = 1e-6f) {
+  LevenbergMarquardtMinimizerOptions lm;
+  lm.base_options = options;
+  lm.relative_reduction_tolerance = relative_reduction_tolerance;
+  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+}
+
+/**
+ * @brief AugmentedLagrangianMinimizerOptions whose inner solver has the settings
+ *        of `lm` (damping, linear solver, tolerances); the budget fields
+ *        (base_options.max_num_iterations, max_line_search_steps, real_time,
+ *        reuse_structure) keep the augmented Lagrangian defaults.
+ */
+inline AugmentedLagrangianMinimizerOptions WithInnerSettings(
+    const LevenbergMarquardtMinimizerOptions &lm) {
+  AugmentedLagrangianMinimizerOptions options;
+  const MinimizerOptions budget = options.base_options;
+  static_cast<LevenbergMarquardtMinimizerOptions &>(options) = lm;
+  options.base_options.max_num_iterations = budget.max_num_iterations;
+  options.base_options.max_line_search_steps = budget.max_line_search_steps;
+  options.base_options.real_time = budget.real_time;
+  options.base_options.reuse_structure = budget.reuse_structure;
+  return options;
+}
+
+/**
  * @brief A GaussNewtonMinimizer or LevenbergMarquardtMinimizer with `options`;
  *        Levenberg-Marquardt also with `relative_reduction_tolerance`.
  */
 inline std::unique_ptr<Minimizer> MakeMinimizer(MinimizerKind kind, const MinimizerOptions &options,
                                                 float relative_reduction_tolerance = 1e-6f) {
   if (kind == MinimizerKind::kGaussNewton) return std::make_unique<GaussNewtonMinimizer>(options);
-  LevenbergMarquardtMinimizerOptions lm;
-  lm.base_options = options;
-  lm.relative_reduction_tolerance = relative_reduction_tolerance;
-  return std::make_unique<LevenbergMarquardtMinimizer>(lm);
+  return MakeLevenbergMarquardt(options, relative_reduction_tolerance);
 }
 
 /**

@@ -119,17 +119,18 @@ def doctor() -> Tuple[bool, List[dict]]:
         return "cuDSS solver available"
 
     results.append(_check("python", python_version, "use Python 3.10 or newer"))
-    gpu = _check("gpu", warp_gpu, "install a CUDA driver that supports your Warp build (pip "
-                 "install warp-lang); check nvidia-smi and CUDA_VISIBLE_DEVICES")
-    module = _check("native module", native, "reinstall the pycunls wheel built for your CUDA "
-                    "version (pip install pycunls-cu12 / pycunls-cu13)")
+    gpu = _check("gpu", warp_gpu, "pip install \"warp-lang>=1.18\" and an R580 or newer driver "
+                 "(CUDA 13, which pycunls and Warp's PyPI wheels need); check nvidia-smi and "
+                 "CUDA_VISIBLE_DEVICES")
+    module = _check("native module", native, "reinstall the wheel (pip install pycunls-cu13 "
+                    "\"cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*\")")
     results += [gpu, module]
     solved = _check("solve", solve, "run with CUNLS_LOG_LEVEL=debug and report the output",
                     needs=(gpu, module))
     results.append(solved)
     results.append(_check("fit", fit, "check the solve result above", needs=(solved,)))
     results.append(_check("cudss", cudss, "optional (SparseLinearSolverType.cuDSS only): pip "
-                          "install nvidia-cudss-cu12/cu13==0.8.*, or put a cuDSS 0.8 libcudss.so "
+                          "install nvidia-cudss-cu13==0.8.*, or put a cuDSS 0.8 libcudss.so "
                           "on LD_LIBRARY_PATH", required=False,
                           needs=(gpu, module)))
     ok = all(r["ok"] for r in results if r["required"])

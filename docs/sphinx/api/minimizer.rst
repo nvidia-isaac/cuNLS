@@ -143,6 +143,16 @@ then override individual fields.
 - **max_num_iterations** (``int``, default ``50``) — upper bound on the
   number of nonlinear iterations.  The minimizer stops early if a
   convergence criterion is met.
+- **real_time** (``bool``, default ``False``) — a fixed budget without host
+  synchronization: exactly ``max_num_iterations`` iterations, each with
+  exactly ``max_line_search_steps`` line-search evaluations; the summary has
+  NaN costs and ``TerminationReason.NotDetermined``.  The first call sets the
+  structure up; with ``reuse_structure`` the following calls can be captured
+  in a CUDA graph.  In ``AugmentedLagrangianMinimizerOptions.base_options`` it makes
+  the whole augmented Lagrangian call real time; with constraint batches that call
+  still reads its final status back once (and synchronizes), without them it reads
+  nothing back.  Real time needs ``disable_safety_checks`` (the default): the safety
+  checks read solver failures back after every solve.
 - **state_tolerance** (``float``, default ``1e-6``) — convergence threshold
   on the squared norm of the tangent-space step :math:`\|\Delta x\|^2`.
   When the step is smaller than this value the minimizer declares
@@ -344,8 +354,8 @@ parameters for Levenberg-Marquardt.
 --------------------------------------------------------------------------------
 
 Common base of ``GaussNewtonMinimizer`` and ``LevenbergMarquardtMinimizer``.
-Not constructible; use it to accept either minimizer (for example the inner
-minimizer of ``AugmentedLagrangianMinimizer``).  Each iteration builds the
+Not constructible; use it to accept either minimizer (the inner minimizer of
+``AugmentedLagrangianMinimizer`` is a ``LevenbergMarquardtMinimizer``).  Each iteration builds the
 normal equations :math:`J^T J \,\Delta x = -J^T r` at the current states,
 lets the subclass adjust them (Levenberg-Marquardt adds its damping), solves
 for the step, evaluates the cost at the trial states (with optional line
@@ -744,6 +754,9 @@ sparse linear solver choice, bounds, line search and structure reuse. Every
 criterion is applied per subproblem.
 
 - **max_num_iterations** [in]: Maximum number of iterations. Default: 50.
+- **real_time** [in]: Fixed budget without host synchronization (exactly
+  max_num_iterations iterations, nothing read back; graph-capturable after
+  the first call). Default: false.
 - **state_tolerance** [in]: Convergence threshold on squared step norm; optimizer
   terminates when the step norm falls below this. Default: 1e-6.
 - **cost_tolerance** [in]: Convergence threshold on cost; optimizer terminates
