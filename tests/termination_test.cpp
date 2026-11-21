@@ -266,8 +266,8 @@ TEST(TerminationTest, AllConstantProblemAfterAnotherOne) {
   EXPECT_TRUE(summary.Converged()) << summary.message;
   ASSERT_EQ(al.NumSubproblems(), 3u);
   std::vector<int> reasons(3);
-  THROW_ON_CUDA_ERROR(cudaMemcpy(reasons.data(), al.SubproblemTerminationReasons(),
-                                 3 * sizeof(int), cudaMemcpyDeviceToHost));
+  THROW_ON_CUDA_ERROR(cudaMemcpy(reasons.data(), al.SubproblemTerminationReasons(), 3 * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
   for (int r : reasons) EXPECT_EQ(r, static_cast<int>(TerminationReason::NoFreeStates));
 
   MinimizerOptions real_time = Options();

@@ -161,10 +161,11 @@ void bind_problem(nb::module_ &m) {
              const std::vector<cunls::StateBatch *> &slot_state_batches, nb::handle indices,
              cunls::LossFunctionBatch *loss,
              std::optional<cunls::JacobianMode> jacobian_mode_override) {
-            const auto *ids =
-                reinterpret_cast<const int *>(extract_device_ptr(indices, "int32", "state_indices"));
+            const auto *ids = reinterpret_cast<const int *>(
+                extract_device_ptr(indices, "int32", "state_indices"));
             DeviceScope scope(device_of(ids));
-            self.AddFactorBatch(factor_batch, loss, slot_state_batches, ids, jacobian_mode_override);
+            self.AddFactorBatch(factor_batch, loss, slot_state_batches, ids,
+                                jacobian_mode_override);
           },
           nb::arg("factor_batch"), nb::arg("slot_state_batches"), nb::arg("state_indices"),
           nb::arg("loss_function").none() = nullptr,

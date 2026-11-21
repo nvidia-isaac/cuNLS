@@ -33,8 +33,8 @@ NB_MODULE(_pycunls_core, m) {
   // before so that docs builds work). NB_MODULE raises the exception as ImportError.
   int driver = 0;
   if (cudaDriverGetVersion(&driver) == cudaSuccess && driver > 0 && driver < 13000) {
-    const std::string version = std::to_string(driver / 1000) + "." +
-                                std::to_string(driver % 1000 / 10);
+    const std::string version =
+        std::to_string(driver / 1000) + "." + std::to_string(driver % 1000 / 10);
     throw std::runtime_error("pycunls: the driver supports CUDA " + version +
                              " but pycunls is built with CUDA 13 (got " + version +
                              ", expected 13.0 or newer). Fix: install an R580 or newer driver; on "

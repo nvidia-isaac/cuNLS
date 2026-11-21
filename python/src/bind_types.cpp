@@ -221,7 +221,8 @@ void bind_types(nb::module_ &m) {
       "also accepts such an object directly, so Warp work and cuNLS work can share one "
       "wp.Stream without wait_stream or ScopedStream juggling. CudaStream(other) keeps other "
       "alive. minimize() synchronizes the stream before returning, except on the real-time "
-      "paths (MinimizerOptions.real_time, also in AugmentedLagrangianMinimizerOptions; an augmented "
+      "paths (MinimizerOptions.real_time, also in AugmentedLagrangianMinimizerOptions; an "
+      "augmented "
       "Lagrangian call with constraint batches still reads its final status back), which read "
       "nothing back: read their results on the same stream, or synchronize it first.")
       .def(nb::init<bool>(), nb::arg("sync_on_destroy") = false)

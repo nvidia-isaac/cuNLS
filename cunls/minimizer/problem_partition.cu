@@ -609,7 +609,7 @@ void ProblemPartition::TerminateAll(cudaStream_t stream, size_t num_problems, in
   num_problems_ = num_problems;
   termination_.resize(num_problems);
   fill_int_kernel<<<Blocks(num_problems), kThreads, 0, stream>>>(num_problems, reason,
-                                                                  termination_.data());
+                                                                 termination_.data());
   THROW_ON_CUDA_ERROR(cudaGetLastError());
 }
 

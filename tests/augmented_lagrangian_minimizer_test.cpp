@@ -130,7 +130,6 @@ struct MixedBox {
   std::vector<float> upper = {1.f, 1.f, 1.f, 3.f, kInf, kInf};
 };
 
-
 // min ½‖x - t‖² s.t. lo <= x <= hi: x = clamp(t, lo, hi). Some components are
 // unbounded on one side (±inf), some targets are inside the box.
 TEST(AugmentedLagrangianMinimizerTest, BoxProjection) {
@@ -445,8 +444,7 @@ TEST(AugmentedLagrangianMinimizerTest, IterationCapMessageNamesTheCapThatApplied
   Problem problem;
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&prior, {states.StateDevicePtr(0)});
-  const MinimizerSummary plain =
-      MakeMinimizer(1)->Minimize(stream.GetStream(), problem);
+  const MinimizerSummary plain = MakeMinimizer(1)->Minimize(stream.GetStream(), problem);
   ASSERT_EQ(plain.termination_reason, TerminationReason::MaxIterations) << plain.message;
   EXPECT_NE(plain.message.find("reached max_num_iterations (1)"), std::string::npos)
       << plain.message;
@@ -640,7 +638,6 @@ TEST(AugmentedLagrangianMinimizerOptions, RejectsInvalidOptions) {
   options.max_outer_iterations = 0;
   EXPECT_THROW(solver.SetOptions(options), std::invalid_argument);
 }
-
 
 // The AL transform: equality r = √ρ (s c + λ/ρ); an inactive inequality row
 // (s c + μ/ρ <= 0) has zero residual and zero Jacobian.

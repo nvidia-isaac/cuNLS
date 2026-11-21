@@ -588,8 +588,9 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   const bool keep_state = warm && penalty_.size() == num_slots;
   if (keep_state && num_slots > 0) {
     decay_penalty_kernel<<<Blocks(num_slots), kThreads, 0, stream>>>(
-        penalty_.data(), num_slots, options_.base_options.real_time ? 1.f : options_.penalty_increase,
-        options_.initial_penalty, options_.max_penalty);
+        penalty_.data(), num_slots,
+        options_.base_options.real_time ? 1.f : options_.penalty_increase, options_.initial_penalty,
+        options_.max_penalty);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
   } else {
     penalty_.resize(num_slots);
@@ -678,8 +679,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
 
     // Constraint values and violations at the new states.
     if (num_slots > 0) {
-      THROW_ON_CUDA_ERROR(
-          cudaMemsetAsync(violation_.data(), 0, num_slots * sizeof(float), stream));
+      THROW_ON_CUDA_ERROR(cudaMemsetAsync(violation_.data(), 0, num_slots * sizeof(float), stream));
     }
     size_t offset = 0;
     for (size_t c = 0; c < constraints_.size(); ++c) {

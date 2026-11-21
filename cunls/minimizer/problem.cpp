@@ -193,8 +193,8 @@ int Problem::CheckDevice(const char *caller, cudaStream_t stream, int *buffers_d
     THROW_ON_CUDA_ERROR(cudaStreamGetDevice(stream, &stream_device));
     if (stream_device != device) {
       fail("the stream is on", stream_device,
-           "pass a stream of device " + std::to_string(device) + " (Python: wp.get_stream(\"cuda:" +
-               std::to_string(device) + "\")).");
+           "pass a stream of device " + std::to_string(device) +
+               " (Python: wp.get_stream(\"cuda:" + std::to_string(device) + "\")).");
     }
   }
 #else

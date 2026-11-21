@@ -90,7 +90,6 @@ AugmentedLagrangianMinimizerOptions Options() {
   return test_utils::WithInnerSettings(lm);
 }
 
-
 // HS6: min (1 - x1)²  s.t.  10 (x2 - x1²) = 0, from (-1.2, 1); x* = (1, 1).
 TEST(HockSchittkowski, Hs6NonlinearEquality) {
   CudaStream stream;
@@ -105,7 +104,8 @@ TEST(HockSchittkowski, Hs6NonlinearEquality) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&objective, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&constraint, {states.StateDevicePtr(0)});
-  const auto summary = AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
+  const auto summary =
+      AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   EXPECT_LE(summary.max_violation, 1e-4f);
   std::vector<float> result(2);
@@ -132,14 +132,14 @@ TEST(HockSchittkowski, Hs2ActiveBound) {
   problem.AddStateBatch(&states);
   problem.AddFactorBatch(&objective, {states.StateDevicePtr(0)});
   problem.AddFactorBatch(&bounds, {states.StateDevicePtr(0)});
-  const auto summary = AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
+  const auto summary =
+      AugmentedLagrangianMinimizer(Options()).Minimize(stream.GetStream(), problem);
   EXPECT_EQ(summary.status, AugmentedLagrangianMinimizerStatus::kConverged);
   std::vector<float> result(2);
   x.CopyToHost(result.data(), 2);
   EXPECT_NEAR(result[0], 1.2243707f, 2e-4f);
   EXPECT_NEAR(result[1], 1.5f, 2e-4f);
 }
-
 
 }  // namespace
 }  // namespace cunls
