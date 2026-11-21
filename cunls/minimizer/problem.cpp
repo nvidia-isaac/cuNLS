@@ -188,7 +188,13 @@ int Problem::CheckDevice(const char *caller, cudaStream_t stream, int *buffers_d
          "make device " + std::to_string(device) + " current (cudaSetDevice) before the call.");
   }
 #if CUDART_VERSION >= 12080
-  if (stream != nullptr && stream != cudaStreamLegacy && stream != cudaStreamPerThread) {
+  // Not while the stream is being captured into a graph: cudaStreamGetDevice there fails the
+  // capture with some drivers.
+  const bool own_stream =
+      stream != nullptr && stream != cudaStreamLegacy && stream != cudaStreamPerThread;
+  cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
+  if (own_stream) THROW_ON_CUDA_ERROR(cudaStreamIsCapturing(stream, &capture));
+  if (own_stream && capture == cudaStreamCaptureStatusNone) {
     int stream_device = -1;
     THROW_ON_CUDA_ERROR(cudaStreamGetDevice(stream, &stream_device));
     if (stream_device != device) {

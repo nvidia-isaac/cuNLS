@@ -237,7 +237,8 @@ class Problem {
    * make the device current themselves.
    * @param caller Named in the error message, e.g. "Minimizer::Minimize".
    * @param stream The stream of the call; its device is checked when the CUDA
-   *        runtime can tell it (12.8 and newer; not for the default streams).
+   *        runtime can tell it (12.8 and newer; not for the default streams,
+   *        not while the stream is being captured into a CUDA graph).
    * @param buffers_device In/out, may be null: the device of the caller's buffers.
    * @return Device().
    * @throws std::invalid_argument when the current device, the stream's device
