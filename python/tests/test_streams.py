@@ -48,6 +48,29 @@ def test_a_warp_stream_is_accepted_as_the_solver_stream():
     np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
 
 
+
+def test_a_captured_call_that_would_synchronize_raises_with_the_fix():
+    """The first real-time call sets up the structure, which synchronizes: captured, it raises
+    before enqueuing anything (the capture ends normally). After one call outside the capture,
+    the captured call replays the solve."""
+    problem, x, targets = _prior_problem(4)
+    options = pycunls.LevenbergMarquardtMinimizerOptions()
+    options.base_options.real_time = True
+    options.base_options.reuse_structure = True
+    options.base_options.max_num_iterations = 3
+    minimizer = pycunls.LevenbergMarquardtMinimizer(options)
+    stream = wp.get_stream()
+    with pytest.raises(ValueError, match=r"run one Minimize\(\) call on the problem before"):
+        with wp.ScopedCapture():
+            minimizer.minimize(stream, problem)
+    minimizer.minimize(stream, problem)
+    x.zero_()
+    with wp.ScopedCapture() as capture:
+        minimizer.minimize(stream, problem)
+    wp.capture_launch(capture.graph)
+    np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-3)
+
+
 def test_cuda_stream_keeps_a_temporary_warp_stream_alive():
     """CudaStream(wp.Stream(...)): the temporary Warp stream must outlive the wrapper's use."""
     import gc

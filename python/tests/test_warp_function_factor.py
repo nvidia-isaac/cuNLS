@@ -350,15 +350,16 @@ def test_rejects_wrong_signatures():
 
 def test_device_defaults_to_the_current_cuda_device():
     device = wp.get_device()
-    assert WarpFactorBatch(1, [1], 4)._device == device
-    assert WarpStateBatch(wp.zeros(4, dtype=float), 1, 1, 4)._device == device
+    assert WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=4)._device == device
+    assert WarpStateBatch(data=wp.zeros(4, dtype=float), ambient_size=1, tangent_size=1,
+                          capacity=4)._device == device
     assert WarpFunctionFactorBatch(_cross, capacity=4)._device == device
     with pytest.raises(ValueError, match="CUDA device.*Fix:"):
-        WarpFactorBatch(1, [1], 4, device="cpu")
+        WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=4, device="cpu")
     if wp.get_cuda_device_count() < 2:
         pytest.skip("wp.ScopedDevice: needs two visible GPUs")
     with wp.ScopedDevice("cuda:1"):
-        assert str(WarpFactorBatch(1, [1], 4)._device) == "cuda:1"
+        assert str(WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=4)._device) == "cuda:1"
         assert str(WarpFunctionFactorBatch(_cross, capacity=4)._device) == "cuda:1"
         data = wp.zeros(4, dtype=float, device="cuda:0")
         # data.device wins over the current device.

@@ -249,7 +249,13 @@ class AugmentedLagrangianMinimizer {
    * @param problem Problem to solve; its states are updated in place.
    * @return Outer and inner iteration counts, violation, costs and status.
    * @throws std::invalid_argument if a constraint batch has a robust loss, or
-   *         as Minimizer::Minimize for an invalid problem.
+   *         as Minimizer::Minimize for an invalid problem, or if `stream` is
+   *         being captured into a CUDA graph and the call would synchronize:
+   *         a converging solve, a real-time solve with constraint batches
+   *         (its status is read back at the end), or a call that sets up the
+   *         structure (the first call on the problem, or any call without
+   *         base_options.reuse_structure). It throws before enqueuing any
+   *         work, so the capture stays valid.
    */
   AugmentedLagrangianMinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
 

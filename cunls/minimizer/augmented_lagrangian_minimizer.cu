@@ -512,6 +512,37 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   // Structure reuse across calls (the caller vouches for an unchanged
   // structure; the inner minimizer checks the sizes again).
   const bool reuse = options_.base_options.reuse_structure && same_constraints;
+  // A call captured into a CUDA graph must not synchronize or allocate: it is
+  // real time, has no status to read back (no constraint batches) and reuses
+  // the structure of an earlier call (the inner solve checks its own part).
+  // Checked before any work, so the capture stays valid.
+  if (internal::StreamIsCapturing(stream)) {
+    const std::string capturing =
+        "AugmentedLagrangianMinimizer::Minimize: the stream is being captured into a CUDA "
+        "graph, but ";
+    if (!options_.base_options.real_time) {
+      throw std::invalid_argument(
+          capturing +
+          "a converging solve reads its progress back every outer iteration (got "
+          "real_time=false, expected true). Fix: set base_options.real_time, or solve outside "
+          "the capture.");
+    }
+    if (!constraints.empty()) {
+      throw std::invalid_argument(
+          capturing + "a real-time solve with constraint batches reads its status back at the " +
+          "end (got " + std::to_string(constraints.size()) +
+          " constraint batches, expected none). Fix: solve outside the capture; real-time solves "
+          "without constraint batches (box bounds only) can be captured.");
+    }
+    if (!reuse) {
+      throw std::invalid_argument(
+          capturing +
+          "this call sets up the problem's structure, which synchronizes (got a first call, a "
+          "call without reuse_structure or changed sizes; expected a structure an earlier call "
+          "set up). Fix: set base_options.reuse_structure and run one Minimize() call on the "
+          "problem before the capture.");
+    }
+  }
 
   // Box-bounded states: the reduced-system column of every state (unless the
   // structure is reused), then the initial values of the free states clamped

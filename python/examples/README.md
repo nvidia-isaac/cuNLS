@@ -174,8 +174,8 @@ A residual no built-in factor computes, written as an NVIDIA Warp kernel and sol
 regular `Problem` with a built-in prior. A chain of scalars is solved from difference
 measurements twice: with a kernel that writes the residual and its analytic Jacobian, and with a
 residual-only kernel whose Jacobian pycunls computes by finite differences
-(`jacobian_mode_override=pycunls.JacobianMode.numeric`). The kernels read their states through
-the state pointer table cuNLS passes in (`state_value` in `example_utils/gpu.py`). Python version of
+(`jacobian_mode_override=pycunls.JacobianMode.numeric`). A `WarpFactorBatch` is the kernel plus
+the factor's sizes; the kernel reads its states with `pycunls.warp.scalar_at`. Python version of
 [`examples/custom_factor`](../../examples/custom_factor).
 
 ```bash
@@ -215,9 +215,9 @@ Custom Warp State Batch Example (positive-scalar manifold)
 ## Custom kinematic objectives (`robot_custom_objective.py`)
 
 Objectives of your own on a robot arm, written as ordinary factors. A 7-DOF arm aims a wrist
-camera at 512 points, one inverse-kinematics problem per point: a Warp factor (`LookAtFactor`,
-4 rows on one SE(3) pose, written with the `pycunls.warp` helpers `pose_at` and
-`jacobian_index`) asks the camera to look at the point from 0.35 m; the built-in
+camera at 512 points, one inverse-kinematics problem per point: a Warp factor (`look_at_kernel`,
+4 rows on one SE(3) pose read with `pycunls.warp.pose_at`) asks the camera to look at the point
+from 0.35 m; the built-in
 `SE3SphereClearanceFactorBatch` keeps the elbow off an obstacle, and the built-in
 `HalfspaceFactorBatch3` keeps the camera above a table, both wrapped as inequalities.
 `LinkFrameFactorBatch` hands each factor a view of a frame on a link (`FrameView.Pose` for the

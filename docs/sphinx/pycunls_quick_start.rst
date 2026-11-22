@@ -117,7 +117,13 @@ real-time paths (``MinimizerOptions.real_time``, also as
 ``AugmentedLagrangianMinimizerOptions.base_options.real_time``) do not: read
 their results on the same stream, or synchronize it first. The one exception is
 an augmented Lagrangian real-time call with constraint batches, which reads its
-final status back and synchronizes once at the end (no graph capture).
+final status back and synchronizes once at the end (no graph capture). To
+capture a real-time call in a CUDA graph (``wp.ScopedCapture``), set
+``reuse_structure`` and run one call before the capture: the first call sets up
+the structure and synchronizes. A captured call that would synchronize (the
+first one, a converging one, or a real-time augmented Lagrangian call with
+constraint batches) raises ``ValueError`` with this fix, before it enqueues any
+work.
 
 .. code-block:: python
 

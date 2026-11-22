@@ -22,27 +22,25 @@ Solves a chain of scalars x_0..x_{N-1} from difference measurements
 
 plus a built-in prior on x_0, twice:
 
-* Part 1 (``ScalarDiffFactor``): the Warp kernel computes the residual and
-  its (constant) analytic Jacobian [-1, +1]; ``evaluate`` is one line with
-  ``WarpFactorBatch.items`` (the call's arguments as Warp arrays) and
-  ``WarpFactorBatch.launch`` (one thread per item, standard arguments appended).
-* Part 2 (``ScalarDiffResidualOnlyFactor``): the kernel computes only the
-  residual (and ``evaluate`` shows the raw arguments: ``wrap_array``,
-  ``factor_ids``, ``make_warp_stream``); the factor is registered with
+* Part 1 (``scalar_diff_kernel``): the Warp kernel computes the residual and
+  its (constant) analytic Jacobian [-1, +1].
+* Part 2 (``scalar_diff_residual_only_kernel``): the kernel computes only the
+  residual; the factor is registered with
   ``jacobian_mode_override=pycunls.JacobianMode.numeric`` and pycunls
   differentiates it by finite differences.
 
-Both factors follow the item contract of ``WarpFactorBatch.evaluate``: item t
-reads the measurement of its factor ``ids[t]`` and its own two states, which
-the kernel reads directly through the state pointer table.
+A ``WarpFactorBatch`` is its kernel plus sizes: ``residual_size=1`` (one
+residual per factor) and ``state_sizes=[1, 1]`` (two scalar states). The
+kernel's last four parameters are filled by pycunls with arrays of exactly those
+shapes: ``factor_ids`` (n), ``states`` (n, 2), ``residuals`` (n, 1) and
+``jacobians`` (n, 1, 2); thread t evaluates factor ``factor_ids[t]``.
 """
 
 import warp as wp
 
 import pycunls
-from pycunls.warp import WarpFactorBatch
+from pycunls.warp import WarpFactorBatch, scalar_at
 from example_utils import datasets, metrics, report
-from example_utils.gpu import state_value
 
 wp.init()
 
@@ -50,66 +48,33 @@ wp.init()
 # ── Part 1: residual and analytic Jacobian ──────────────────────────────────
 
 @wp.kernel
-def scalar_diff_kernel(measurements: wp.array(dtype=wp.float32),
-                       ids: wp.array(dtype=wp.int32),
-                       state_pointers: wp.array(dtype=wp.uint64),
-                       residuals: wp.array(dtype=wp.float32),
-                       jacobians: wp.array(dtype=wp.float32),
-                       write_jacobians: int):
-    t = wp.tid()                                                # item
-    left = state_value(state_pointers, 2 * t, 0)                # x_i
-    right = state_value(state_pointers, 2 * t + 1, 0)           # x_{i+1}
-    residuals[t] = (right - left) - measurements[ids[t]]        # measurement of its factor
-    if write_jacobians != 0:
-        jacobians[2 * t] = -1.0                                 # d r / d x_i
-        jacobians[2 * t + 1] = 1.0                              # d r / d x_{i+1}
-
-
-class ScalarDiffFactor(WarpFactorBatch):
-    """residual = (x_right - x_left) - m; one residual, two scalar states."""
-
-    def __init__(self, measurements, capacity):
-        # capacity: measurements the buffer holds (fixed). self.num_active_factors is the
-        # active count: 0 until set_num_active_factors().
-        super().__init__(residual_size=1, state_sizes=[1, 1], capacity=capacity)
-        self.measurements = measurements
-
-    def evaluate(self, *args):
-        """Item t looks up its factor's data by ids[t] and reads its state through the
-        pointer table (see WarpFactorBatch.items)."""
-        return self.launch(scalar_diff_kernel, self.items(*args), [self.measurements])
+def scalar_diff_kernel(measurements: wp.array(dtype=wp.float32),    # the factor's own input
+                       factor_ids: wp.array(dtype=wp.int32),          # (n,)       filled by
+                       states: wp.array2d(dtype=wp.uint64),           # (n, 2)     pycunls
+                       residuals: wp.array2d(dtype=wp.float32),       # (n, 1)
+                       jacobians: wp.array3d(dtype=wp.float32)):      # (n, 1, 2)
+    t = wp.tid()                                                # one thread per factor
+    left = scalar_at(states[t, 0])                              # x_i: state 0
+    right = scalar_at(states[t, 1])                             # x_{i+1}: state 1
+    residuals[t, 0] = (right - left) - measurements[factor_ids[t]]
+    if jacobians.shape[0] > 0:                                  # no rows: residuals only
+        jacobians[t, 0, 0] = -1.0                               # d r / d x_i
+        jacobians[t, 0, 1] = 1.0                                # d r / d x_{i+1}
 
 
 # ── Part 2: residual only, numeric Jacobian ─────────────────────────────────
 
 @wp.kernel
 def scalar_diff_residual_only_kernel(measurements: wp.array(dtype=wp.float32),
-                                     ids: wp.array(dtype=wp.int32),
-                                     state_pointers: wp.array(dtype=wp.uint64),
-                                     residuals: wp.array(dtype=wp.float32)):
+                                     factor_ids: wp.array(dtype=wp.int32),
+                                     states: wp.array2d(dtype=wp.uint64),
+                                     residuals: wp.array2d(dtype=wp.float32),
+                                     jacobians: wp.array3d(dtype=wp.float32)):
     t = wp.tid()
-    left = state_value(state_pointers, 2 * t, 0)
-    right = state_value(state_pointers, 2 * t + 1, 0)
-    residuals[t] = (right - left) - measurements[ids[t]]
-
-
-class ScalarDiffResidualOnlyFactor(WarpFactorBatch):
-    """Same residual, no Jacobian code: register it with JacobianMode.numeric."""
-
-    def __init__(self, measurements, capacity):
-        super().__init__(residual_size=1, state_sizes=[1, 1], capacity=capacity)
-        self.measurements = measurements
-
-    def evaluate(self, residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-                 factor_ids_ptr, num_factor_ids):
-        n = num_factor_ids
-        ids = self.factor_ids(factor_ids_ptr, n)
-        state_pointers = self.wrap_array(state_pointers_ptr, wp.uint64, 2 * n)
-        wp.launch(scalar_diff_residual_only_kernel, dim=n,
-                  inputs=[self.measurements, ids, state_pointers,
-                          self.wrap_array(residuals_ptr, wp.float32, n)],
-                  stream=self.make_warp_stream(stream_handle))
-        return True
+    left = scalar_at(states[t, 0])
+    right = scalar_at(states[t, 1])
+    residuals[t, 0] = (right - left) - measurements[factor_ids[t]]
+    # No Jacobian: with JacobianMode.numeric, jacobians never has rows.
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
@@ -153,14 +118,14 @@ def run_chain_example(title, use_numeric_jacobian):
     #    only; the prior keeps its analytic Jacobian.
     problem = pycunls.Problem()
     problem.add_state_batch(states)
+    kernel = scalar_diff_residual_only_kernel if use_numeric_jacobian else scalar_diff_kernel
+    diff = WarpFactorBatch(kernel, inputs=[measurements_wp],
+                           residual_size=1, state_sizes=[1, 1], capacity=diff_capacity)
+    diff.set_num_active_factors(num_diff_factors)  # active count
     if use_numeric_jacobian:
-        diff = ScalarDiffResidualOnlyFactor(measurements_wp, diff_capacity)
-        diff.set_num_active_factors(num_diff_factors)  # active count
         problem.add_factor_batch(diff, diff_pointers,
                                  jacobian_mode_override=pycunls.JacobianMode.numeric)
     else:
-        diff = ScalarDiffFactor(measurements_wp, diff_capacity)
-        diff.set_num_active_factors(num_diff_factors)  # active count
         problem.add_factor_batch(diff, diff_pointers)
     problem.add_factor_batch(prior, [states.state_device_ptr(0)])
     assert problem.check_consistency(), "Problem consistency check failed"

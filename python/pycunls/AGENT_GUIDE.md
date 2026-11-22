@@ -96,11 +96,16 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   `wp.synchronize_stream(wp.get_stream())` before `minimize`. `minimize` synchronizes its stream
   before returning, except on the real-time paths (`MinimizerOptions.real_time`, the augmented
   Lagrangian's `real_time`): read their results on the same stream, or synchronize it first.
+  To capture a real-time solve in a CUDA graph (`wp.ScopedCapture`), set `reuse_structure` and
+  run one `minimize` call before the capture (the first call sets up and synchronizes); a captured
+  call that would synchronize raises `ValueError` with this fix.
 - **Devices.** A problem runs on the device of its state arrays: `minimize`, `evaluate_batch` and
   the state helpers make that device current themselves (`problem.device`), so no
-  `wp.ScopedDevice` is needed around them. Objects made without device arrays (`WarpFactorBatch`,
-  `ArticulationTopology`, `CudaStream()`) use Warp's current device: create them inside
-  `wp.ScopedDevice(device)` on a multi-GPU machine.
+  `wp.ScopedDevice` is needed around them. `ArticulationTopology` (and
+  `topology_from_joint_arrays`, `topology_from_urdf`) takes `device=`, defaulting to the device of
+  the GPU arrays it is given; its `ArticulationStateBatch`es live on its device. Objects made
+  without device arrays (`WarpFactorBatch`, `CudaStream()`) use Warp's current device: create
+  them inside `wp.ScopedDevice(device)` on a multi-GPU machine.
 - **Poses are `world_from_body`, row-major 4x4 (SE3) or 3x3 (SE2).** Updates are on the right:
   `T' = T Exp(delta)`; se(3) tangent order is `[omega, v]` (rotation first), se(2) `[v_x, v_y,
   theta]`.
@@ -123,6 +128,17 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   (position, quaternion x, y, z, w). Joint limits are hard bounds
   (solve with `AugmentedLagrangianMinimizer`). Loop-closing joints are not tree joints: add them
   as the equality constraints `pycunls.articulation.loop_closure` returns.
+- **Warp factor kernels.** For poses, rotations and vectors prefer
+  `pycunls.warp.WarpFunctionFactorBatch` (a residual `@wp.func`, no kernel). A kernel factor is
+  `WarpFactorBatch(kernel, inputs=[...], residual_size=M, state_sizes=[...], capacity=n)`: the
+  kernel's own parameters (`inputs`) first, then exactly `factor_ids: wp.array(dtype=wp.int32),
+  states: wp.array2d(dtype=wp.uint64), residuals: wp.array2d(dtype=float), jacobians:
+  wp.array3d(dtype=float)`. Thread `t` reads its data at `factor_ids[t]` and its states with
+  `pycunls.warp.scalar_at` / `point_at` / `pose_at` / `rotation_at(states[t, k])`, writes
+  `residuals[t, i]`, and writes `jacobians[t, i, c]` only under `if jacobians.shape[0] > 0`.
+  A custom manifold is `WarpStateBatch(plus_kernel, data=..., ambient_size=A, tangent_size=T,
+  capacity=n)`, the kernel ending with `x: wp.array2d(dtype=float)` (n, A), `delta` (n, T) and
+  `x_plus_delta` (n, A): one thread per state, replicas included.
 
 ## 5. After a solve: check, do not assume
 

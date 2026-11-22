@@ -237,6 +237,17 @@ std::vector<size_t> StructureSignature(const Problem &problem) {
 
 namespace internal {
 
+bool StreamIsCapturing(cudaStream_t stream) {
+  cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+  if (cudaStreamIsCapturing(stream, &status) != cudaSuccess) {
+    // The legacy default stream while another stream captures in global mode:
+    // not a capture of this stream (work on it fails that capture anyway).
+    (void)cudaGetLastError();
+    return false;
+  }
+  return status != cudaStreamCaptureStatusNone;
+}
+
 void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOptions &options,
                     StateBatchOps &state_ops, MinimizerSystem &system) {
   // Cheap host-only guard (no device work): sizes within capacities,
@@ -497,6 +508,32 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
           "states (VectorStateBatch::SetBounds); solve it with AugmentedLagrangianMinimizer");
     }
   }
+  // Structure setup is skipped when the caller vouches for an unchanged
+  // structure and the sizes agree.
+  std::vector<size_t> signature = StructureSignature(problem);
+  internal::MinimizerStructure &structure = m.structure_;
+  const bool set_up =
+      inner.reuse_structure && structure.problem == &problem && signature == structure.signature;
+  // A call captured into a CUDA graph must not synchronize or allocate: it is
+  // real time, on a structure an earlier call set up completely (with the
+  // solver's analysis, unless nothing is free). Checked before any work, so the
+  // capture stays valid.
+  if (internal::StreamIsCapturing(stream)) {
+    if (!inner.fixed_iterations) {
+      throw std::invalid_argument(
+          "Minimizer::Minimize: the stream is being captured into a CUDA graph, but a "
+          "converging solve reads its progress back every iteration (got real_time=false, "
+          "expected true). Fix: set MinimizerOptions::real_time, or solve outside the capture.");
+    }
+    if (!set_up || !(structure.solver_ready || m.state_ops_.NumReducedStates() == 0)) {
+      throw std::invalid_argument(
+          "Minimizer::Minimize: the stream is being captured into a CUDA graph, but this call "
+          "sets up the problem's structure, which synchronizes (got a first call, a call "
+          "without reuse_structure or changed sizes; expected a structure an earlier call set "
+          "up). Fix: set MinimizerOptions::reuse_structure and run one Minimize() call on the "
+          "problem before the capture.");
+    }
+  }
   problem.CheckDevice("Minimizer::Minimize", stream, &m.device_);
   auto range = m.profiler_domain_.CreateDomainRange("Minimize");
   const MinimizerOptions &options = m.options_;
@@ -521,12 +558,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
         cudaMemsetAsync(inner.problem_at_cap, 0, problem.NumProblems() * sizeof(int), stream));
   }
 
-  // Structure setup, unless the caller vouches for an unchanged structure and
-  // the sizes agree.
-  std::vector<size_t> signature = StructureSignature(problem);
-  internal::MinimizerStructure &structure = m.structure_;
-  if (!(inner.reuse_structure && structure.problem == &problem &&
-        signature == structure.signature)) {
+  if (!set_up) {
     structure = {};  // invalid until the setup below completes
     auto setup_range = m.profiler_domain_.CreateDomainRange("SetUpStructure");
     SetUpStructure(stream, problem, options, m.state_ops_, system);

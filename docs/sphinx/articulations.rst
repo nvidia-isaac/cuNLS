@@ -415,17 +415,16 @@ Two ways, both in ``pycunls.warp``:
      camera = pycunls.LinkFrameFactorBatch(topo, inner, frame_slots=[(0, pycunls.FrameView.Pose)],
                                            topology_links=wrist_links, frame_offsets=mounts)
 
-* **An analytic Jacobian** (a ``WarpFactorBatch`` whose ``state_sizes`` match the views: 6 for a
-  pose, 3 for a position or orientation; see :doc:`custom_factors_and_states`). The device
-  functions ``pose_at``, ``point_at`` and ``rotation_at`` read one entry of the item-major
-  pointer table in its view's layout (a ``wp.transform``, a ``wp.vec3``, a ``wp.mat33``): state
-  *k* of item *t* is entry ``t * K + k`` for a factor with *K* states. ``jacobian_index`` gives
-  the position of a Jacobian entry:
+* **An analytic Jacobian** (a ``WarpFactorBatch`` kernel whose ``state_sizes`` match the views:
+  6 for a pose, 3 for a position or orientation; see :doc:`custom_factors_and_states`). The
+  device functions ``pose_at``, ``point_at`` and ``rotation_at`` read a view in its layout (a
+  ``wp.transform``, a ``wp.vec3``, a ``wp.mat33``) from the kernel's ``states[t, k]`` pointer,
+  and ``jacobians[t, row, column]`` takes the entry:
 
   .. code-block:: python
 
-     X = pycunls.warp.pose_at(state_pointers, t * K + 0)  # state 0 of item t, a wp.transform
-     jacobians[pycunls.warp.jacobian_index(t, row, column, num_rows, num_columns)] = value
+     X = pycunls.warp.pose_at(states[t, 0])     # state 0 of thread t, a wp.transform
+     jacobians[t, row, column] = value          # when jacobians.shape[0] > 0
 
   For a pose, Jacobian columns are with respect to the right perturbation
   :math:`X\,Exp([\omega, v])`, under which, to first order, :math:`p \to p + R\,v` and

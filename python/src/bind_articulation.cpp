@@ -21,8 +21,10 @@
 
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/pair.h>
+#include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -65,6 +67,49 @@ std::vector<T> HostValues(nb::handle obj, const char *name) {
   }
   auto array = nb::cast<nb::ndarray<const T, nb::ndim<1>, nb::device::cpu>>(flat);
   return std::vector<T>(array.data(), array.data() + array.shape(0));
+}
+
+// The CUDA device `device` names for `owner`: an int, "cuda" (the current device), "cuda:N",
+// or an object with an int `ordinal` (wp.Device). Raises ValueError with the fix for anything
+// else, or for an ordinal no GPU of this machine has.
+int DeviceOrdinal(nb::handle device, const char *owner) {
+  int ordinal = -1;
+  if (nb::isinstance<nb::int_>(device)) {
+    ordinal = nb::cast<int>(device);
+  } else if (nb::isinstance<nb::str>(device)) {
+    const std::string name = nb::cast<std::string>(device);
+    if (name == "cuda") {
+      if (cudaGetDevice(&ordinal) != cudaSuccess) ordinal = -1;
+    } else if (name.rfind("cuda:", 0) == 0 && name.size() > 5 &&
+               name.find_first_not_of("0123456789", 5) == std::string::npos) {
+      ordinal = std::stoi(name.substr(5));
+    }
+  } else if (nb::hasattr(device, "ordinal")) {
+    ordinal = nb::cast<int>(device.attr("ordinal"));
+  }
+  int count = 0;
+  if (cudaGetDeviceCount(&count) != cudaSuccess) count = 0;
+  (void)cudaGetLastError();
+  if (ordinal < 0 || ordinal >= count) {
+    const std::string got = nb::cast<std::string>(nb::repr(device));
+    throw nb::value_error((std::string(owner) + ": device " + got +
+                           " is not a CUDA device of this machine (got " + got +
+                           ", expected cuda:0 to cuda:" + std::to_string(count - 1) +
+                           "). Fix: pass device=\"cuda:N\" or a CUDA wp.Device.")
+                              .c_str());
+  }
+  return ordinal;
+}
+
+// The device of the first GPU array (__cuda_array_interface__) among `arrays`, or -1.
+int FirstArrayDevice(std::initializer_list<nb::handle> arrays) {
+  for (nb::handle a : arrays) {
+    if (a.is_none() || !nb::hasattr(a, "__cuda_array_interface__")) continue;
+    nb::object data = a.attr("__cuda_array_interface__")["data"];
+    const int device = device_of(reinterpret_cast<const void *>(nb::cast<uintptr_t>(data[0])));
+    if (device >= 0) return device;
+  }
+  return -1;
 }
 
 // Optional device float array (None: nullptr) of count x per_item values.
@@ -115,7 +160,10 @@ void bind_articulation(nb::module_ &m) {
       "(7 floats per joint: position, quaternion x, y, z, w), joint_q_start / joint_qd_start "
       "(J + 1 offsets), joint_axis (3 floats per DOF), joint_dof_dim ((linear, angular) per joint, "
       "for D6), limit_lower / limit_upper (per DOF; |value| >= 1e5 or inf: unbounded), root_pose "
-      "(the frame root joints attach to). Loop-closing joints are not part of the tree: add them "
+      "(the frame root joints attach to). device (keyword): the CUDA device the topology is "
+      "uploaded to, and that the state batches built on it live on: an int, \"cuda:N\" or a "
+      "wp.Device; None: the device of the GPU arrays given, else the current device. "
+      "Loop-closing joints are not part of the tree: add them "
       "as constraints with pycunls.articulation.loop_closure. Forward kinematics: X_world(child) = "
       "X_world(parent) joint_X_p "
       "X_joint(q) joint_X_c^-1 (docs/sphinx/articulations.rst).")
@@ -125,7 +173,15 @@ void bind_articulation(nb::module_ &m) {
              nb::handle joint_child, nb::handle joint_X_p, nb::handle joint_X_c,
              nb::handle joint_q_start, nb::handle joint_qd_start, nb::handle joint_axis,
              nb::handle joint_dof_dim, nb::handle limit_lower, nb::handle limit_upper,
-             nb::handle root_pose) {
+             nb::handle root_pose, nb::handle device) {
+            // Uploaded to `device`, else to the device of the GPU arrays given, else to the
+            // current device.
+            const int target =
+                device.is_none()
+                    ? FirstArrayDevice({joint_type, joint_parent, joint_child, joint_X_p, joint_X_c,
+                                        joint_q_start, joint_qd_start, joint_axis, joint_dof_dim,
+                                        limit_lower, limit_upper, root_pose})
+                    : DeviceOrdinal(device, "ArticulationTopology");
             cunls::ArticulationDescription d;
             d.joint_type = HostValues<int>(joint_type, "joint_type");
             d.joint_parent = HostValues<int>(joint_parent, "joint_parent");
@@ -148,13 +204,15 @@ void bind_articulation(nb::module_ &m) {
               }
               for (int i = 0; i < 7; ++i) d.root_pose[i] = root[i];
             }
+            DeviceScope scope(target);
             new (self) cunls::ArticulationTopology(d);
           },
           nb::arg("joint_type"), nb::arg("joint_parent"), nb::arg("joint_child"),
           nb::arg("joint_X_p"), nb::arg("joint_X_c"), nb::arg("joint_q_start"),
           nb::arg("joint_qd_start"), nb::arg("joint_axis"),
           nb::arg("joint_dof_dim").none() = nb::none(), nb::arg("limit_lower").none() = nb::none(),
-          nb::arg("limit_upper").none() = nb::none(), nb::arg("root_pose").none() = nb::none())
+          nb::arg("limit_upper").none() = nb::none(), nb::arg("root_pose").none() = nb::none(),
+          nb::kw_only(), nb::arg("device").none() = nb::none())
       .def_prop_ro("joint_count", &cunls::ArticulationTopology::JointCount,
                    "Number of joints J (== number of links).")
       .def_prop_ro("link_count", &cunls::ArticulationTopology::LinkCount,
@@ -188,9 +246,9 @@ void bind_articulation(nb::module_ &m) {
           m, "ArticulationStateBatch", nb::dynamic_attr(),
           "Instances of one articulation (topology): each instance's joint_q plus a cache of link "
           "poses and motion columns that the kinematic factors read. The storage is owned "
-          "(capacity "
-          "x topology.ambient_size); write coordinates with set_joint_q and read them with "
-          "get_joint_q. Tangent per joint, in joint_qd order: one scalar per PRISMATIC/REVOLUTE/D6 "
+          "(capacity x topology.ambient_size, on the topology's device); write coordinates with "
+          "set_joint_q and read them with get_joint_q. Tangent per joint, in joint_qd order: one "
+          "scalar per PRISMATIC/REVOLUTE/D6 "
           "axis; BALL a rotation vector in the parent-anchor frame (quat <- Exp(d) * quat); FREE "
           "(dp, dtheta) in the parent-anchor frame. With apply_joint_limits the topology's limits "
           "are "
@@ -203,6 +261,8 @@ void bind_articulation(nb::module_ &m) {
               [](cunls::ArticulationStateBatch *self, const cunls::ArticulationTopology &topology,
                  size_t capacity, nb::handle const_ids, size_t const_capacity,
                  bool apply_joint_limits) {
+                // The storage lives on the topology's device (that of its arrays).
+                DeviceScope scope(device_of(topology.View().order));
                 new (self) cunls::ArticulationStateBatch(topology, capacity,
                                                          const_state_ids(const_ids, const_capacity),
                                                          const_capacity, apply_joint_limits);

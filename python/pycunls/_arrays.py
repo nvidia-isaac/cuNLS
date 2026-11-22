@@ -44,6 +44,18 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
                         f"np.asarray({name}).") from exc
 
 
+def gpu_device(*arrays):
+    """The Warp device of the first GPU array among ``arrays`` (a ``wp.array`` on a CUDA device,
+    or any array exposing ``__cuda_array_interface__``), or None when none is one."""
+    for a in arrays:
+        if isinstance(a, wp.array):
+            if a.device.is_cuda:
+                return a.device
+        elif hasattr(type(a), "__cuda_array_interface__"):
+            return wp.array(a, copy=False).device
+    return None
+
+
 def to_device(a, dtype=None, name: str = "array", owner: str = "pycunls") -> wp.array:
     """Contiguous device copy (``wp.array``) of an array-like, keeping its shape (and its dtype
     when ``dtype`` is None)."""

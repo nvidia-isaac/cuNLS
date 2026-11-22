@@ -15,10 +15,11 @@
 
 """Tests for the Warp-based custom state batch integration.
 
-Defines a positive-scalar state batch where the Plus operation is
-multiplicative (x (+) delta = x * exp(delta)).  Paired with a log-space
-prior factor, this exercises the full CustomStateBatch → C++ trampoline →
-Python callback round-trip during optimisation.
+A positive-scalar state batch whose Plus is multiplicative (x (+) delta = x * exp(delta)),
+written twice: as a ``WarpStateBatch`` kernel (its last three parameters filled by pycunls), with
+its signature checks, replicas and inputs, and as a subclass overriding ``plus`` with the raw
+pointers (the full-control route). Paired with a log-space prior factor, both exercise the
+CustomStateBatch -> C++ trampoline -> Python callback round-trip during optimisation.
 """
 
 import numpy as np
@@ -34,16 +35,28 @@ wp.init()
 # ── Warp kernels ────────────────────────────────────────────────────────────
 
 @wp.kernel
-def _positive_plus_kernel(
-    x: wp.array(dtype=wp.float32),
-    delta: wp.array(dtype=wp.float32),
-    x_plus_delta: wp.array(dtype=wp.float32),
-    n: int,
-):
-    """Multiplicative retraction: x_plus = x * exp(delta)."""
+def _positive_plus_kernel(x: wp.array2d(dtype=wp.float32), delta: wp.array2d(dtype=wp.float32),
+                          x_plus_delta: wp.array2d(dtype=wp.float32)):
+    """Multiplicative retraction: x_plus = x * exp(delta), one thread per state."""
     i = wp.tid()
-    if i >= n:
-        return
+    x_plus_delta[i, 0] = x[i, 0] * wp.exp(delta[i, 0])
+
+
+@wp.kernel
+def _scaled_plus_kernel(scale: float, x: wp.array2d(dtype=wp.float32),
+                        delta: wp.array2d(dtype=wp.float32),
+                        x_plus_delta: wp.array2d(dtype=wp.float32)):
+    """x + scale * delta on a 2-vector state: a kernel with an input of its own."""
+    i = wp.tid()
+    for k in range(2):
+        x_plus_delta[i, k] = x[i, k] + scale * delta[i, k]
+
+
+@wp.kernel
+def _flat_plus_kernel(x: wp.array(dtype=wp.float32), delta: wp.array(dtype=wp.float32),
+                      x_plus_delta: wp.array(dtype=wp.float32)):
+    """The same retraction on flat arrays, for the plus() override."""
+    i = wp.tid()
     x_plus_delta[i] = x[i] * wp.exp(delta[i])
 
 
@@ -70,23 +83,27 @@ def _log_prior_kernel(
         jacobians[i] = 1.0
 
 
-# ── Custom state batch ──────────────────────────────────────────────────────
+# ── Custom state batches ────────────────────────────────────────────────────
 
-class PositiveScalarStateBatch(WarpStateBatch):
-    """Positive-scalar manifold: Plus(x, delta) = x * exp(delta)."""
+def positive_states(data, capacity, **kwargs):
+    """Positive-scalar manifold from its kernel: Plus(x, delta) = x * exp(delta)."""
+    return WarpStateBatch(_positive_plus_kernel, data=data, ambient_size=1, tangent_size=1,
+                          capacity=capacity, **kwargs)
+
+
+class PositiveScalarOverride(WarpStateBatch):
+    """The same manifold through a plus() override (raw pointers, full control)."""
 
     def __init__(self, data, capacity, **kwargs):
-        super().__init__(data, ambient_size=1, tangent_size=1,
-                         capacity=capacity, **kwargs)
+        super().__init__(data=data, ambient_size=1, tangent_size=1, capacity=capacity, **kwargs)
 
     def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
         n = self.num_active_states * num_replicas  # contiguous replicas, per-state manifold
-        x = self.wrap_array(x_ptr, wp.float32, n)
-        delta = self.wrap_array(delta_ptr, wp.float32, n)
-        x_out = self.wrap_array(x_plus_delta_ptr, wp.float32, n)
-        stream = self.make_warp_stream(stream_handle)
-        wp.launch(_positive_plus_kernel, dim=n,
-                  inputs=[x, delta, x_out, n], stream=stream)
+        wp.launch(_flat_plus_kernel, dim=n,
+                  inputs=[self.wrap_array(x_ptr, wp.float32, n),
+                          self.wrap_array(delta_ptr, wp.float32, n)],
+                  outputs=[self.wrap_array(x_plus_delta_ptr, wp.float32, n)],
+                  stream=self.make_warp_stream(stream_handle))
 
 
 # ── Custom factor for log-space prior ───────────────────────────────────────
@@ -129,7 +146,7 @@ class TestCustomStateBatch:
 
     def test_basic_properties(self):
         data = wp.ones(10, dtype=wp.float32)
-        sb = PositiveScalarStateBatch(data, 10)
+        sb = positive_states(data, 10)
         assert sb.capacity == 10
         assert sb.num_active_states == 0  # zero until set
         sb.set_num_active_states(10)
@@ -139,7 +156,7 @@ class TestCustomStateBatch:
 
     def test_state_device_ptr(self):
         data = wp.ones(5, dtype=wp.float32)
-        sb = PositiveScalarStateBatch(data, 5)
+        sb = positive_states(data, 5)
         sb.set_num_active_states(sb.capacity, sb.const_capacity)
         p0 = sb.state_device_ptr(0)
         p1 = sb.state_device_ptr(1)
@@ -152,12 +169,46 @@ class TestCustomStateBatch:
         with pytest.raises(RuntimeError, match="must be overridden"):
             sb.plus(0, 0, 0, 0, 1)
 
+    def test_plus_covers_every_replica(self, stream):
+        """n = replicas x active states: the kernel never sees the replica count."""
+        sb = positive_states(wp.ones(4, dtype=wp.float32), 4)
+        sb.set_num_active_states(3)
+        x = wp.array(np.arange(1, 7, dtype=np.float32))            # 2 replicas x 3 states
+        delta = wp.array(np.log(np.full(6, 2.0, np.float32)))
+        out = wp.zeros(6, dtype=wp.float32)
+        sb.plus(x.ptr, delta.ptr, out.ptr, stream.get_stream(), 2)
+        wp.synchronize()
+        np.testing.assert_allclose(out.numpy(), 2.0 * np.arange(1, 7), rtol=1e-6)
+
+    def test_inputs_are_read_at_every_update(self, stream):
+        sb = WarpStateBatch(_scaled_plus_kernel, inputs=[1.0], data=wp.zeros(4, dtype=float),
+                            ambient_size=2, tangent_size=2, capacity=2)
+        sb.set_num_active_states(2)
+        x, delta, out = (wp.array(np.ones(4, np.float32)) for _ in range(3))
+        for scale in (1.0, 3.0):
+            sb.inputs[0] = scale
+            sb.plus(x.ptr, delta.ptr, out.ptr, stream.get_stream(), 1)
+            wp.synchronize()
+            np.testing.assert_allclose(out.numpy(), 1.0 + scale)
+
+    def test_signature_errors_say_what_and_how_to_fix(self):
+        data = wp.ones(4, dtype=wp.float32)
+        sizes = dict(data=data, ambient_size=1, tangent_size=1, capacity=4)
+        with pytest.raises(TypeError, match="x: wp.array2d.*Fix:"):
+            WarpStateBatch(_flat_plus_kernel, **sizes)
+        with pytest.raises(ValueError, match="got 0 inputs, expected 1: scale.*Fix:"):
+            WarpStateBatch(_scaled_plus_kernel, **sizes)
+        with pytest.raises(ValueError, match="inputs without a kernel.*Fix:"):
+            WarpStateBatch(inputs=[1.0], **sizes)
+        no_kernel = WarpStateBatch(**sizes)
+        no_kernel.set_num_active_states(1)
+        with pytest.raises(NotImplementedError, match="Fix:"):
+            no_kernel.plus(0, 0, 0, 0, 1)
+
     def test_with_const_ids(self):
         data = wp.ones(10, dtype=wp.float32)
         const_ids = wp.array([0], dtype=wp.int32)
-        sb = PositiveScalarStateBatch(data, 10,
-                                      const_state_ids=const_ids,
-                                      const_capacity=1)
+        sb = positive_states(data, 10, const_state_ids=const_ids, const_capacity=1)
         assert (sb.capacity, sb.const_capacity) == (10, 1)
         sb.set_num_active_states(10, 1)
         assert sb.num_active_states == 10
@@ -166,7 +217,8 @@ class TestCustomStateBatch:
 class TestPositiveScalarEndToEnd:
     """End-to-end optimisation with the positive-scalar custom state batch."""
 
-    def test_converges_to_target(self, stream):
+    @pytest.mark.parametrize("make", [positive_states, PositiveScalarOverride])
+    def test_converges_to_target(self, stream, make):
         """Solve a log-space prior problem and verify recovery of targets."""
         rng = np.random.default_rng(42)
         n = 20
@@ -177,7 +229,7 @@ class TestPositiveScalarEndToEnd:
         states_gpu = wp.array(initial)
         obs_wp = wp.array(targets, dtype=wp.float32, device="cuda:0")
 
-        sb = PositiveScalarStateBatch(states_gpu, n)
+        sb = make(states_gpu, n)
         sb.set_num_active_states(sb.capacity, sb.const_capacity)
         fb = LogPriorFactor(obs_wp, n)
         fb.set_num_active_factors(fb.capacity)

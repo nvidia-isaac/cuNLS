@@ -32,108 +32,55 @@ import numpy as np
 import warp as wp
 
 import pycunls
-from pycunls.warp import WarpFactorBatch, WarpStateBatch
+from pycunls.warp import WarpFactorBatch, WarpStateBatch, scalar_at
 from example_utils import datasets, metrics, report
-from example_utils.gpu import state_value
 
 wp.init()
 
 
 # ── Custom state: x (+) delta = x * exp(delta) ──────────────────────────────
+# A WarpStateBatch is its Plus kernel plus sizes. pycunls fills the kernel's parameters with
+# x (n, A), delta (n, T) and x_plus_delta (n, A): A = ambient_size floats stored per state,
+# T = tangent_size floats per step, n = every active state (of every RANSAC replica).
 
 @wp.kernel
-def positive_plus_kernel(x: wp.array(dtype=wp.float32), delta: wp.array(dtype=wp.float32),
-                         x_plus_delta: wp.array(dtype=wp.float32)):
-    i = wp.tid()
-    x_plus_delta[i] = x[i] * wp.exp(delta[i])
-
-
-class PositiveScalarStateBatch(WarpStateBatch):
-    """Ambient size 1 (the positive value), tangent size 1 (delta in R)."""
-
-    def __init__(self, data, capacity, **kwargs):
-        super().__init__(data, ambient_size=1, tangent_size=1, capacity=capacity, **kwargs)
-
-    def plus(self, x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas):
-        # The arrays hold num_replicas contiguous copies of the active states
-        # (num_active_states, at most the capacity); every state is independent,
-        # so all copies are one flat launch.
-        n = self.num_active_states * num_replicas
-        wp.launch(positive_plus_kernel, dim=n,
-                  inputs=[self.wrap_array(x_ptr, wp.float32, n),
-                          self.wrap_array(delta_ptr, wp.float32, n),
-                          self.wrap_array(x_plus_delta_ptr, wp.float32, n)],
-                  stream=self.make_warp_stream(stream_handle))
+def positive_plus_kernel(x: wp.array2d(dtype=wp.float32),               # (n, 1)
+                         delta: wp.array2d(dtype=wp.float32),           # (n, 1)
+                         x_plus_delta: wp.array2d(dtype=wp.float32)):   # (n, 1)
+    i = wp.tid()                                                        # one thread per state
+    x_plus_delta[i, 0] = x[i, 0] * wp.exp(delta[i, 0])
 
 
 # ── Custom factors ──────────────────────────────────────────────────────────
+# Each is a WarpFactorBatch: its kernel plus sizes. pycunls fills the last four kernel
+# parameters: factor_ids (n,), states (n, K), residuals (n, M), jacobians (n, M, J).
 
 @wp.kernel
-def log_prior_kernel(observations: wp.array(dtype=wp.float32), ids: wp.array(dtype=wp.int32),
-                     state_pointers: wp.array(dtype=wp.uint64),
-                     residuals: wp.array(dtype=wp.float32),
-                     jacobians: wp.array(dtype=wp.float32), write_jacobians: int):
-    t = wp.tid()                                                     # item
-    x = state_value(state_pointers, t, 0)                            # its one state
-    residuals[t] = wp.log(x) - wp.log(observations[ids[t]])          # observation of its factor
-    if write_jacobians != 0:
-        jacobians[t] = 1.0
-
-
-@wp.kernel
-def log_ratio_kernel(measurements: wp.array(dtype=wp.float32), ids: wp.array(dtype=wp.int32),
-                     state_pointers: wp.array(dtype=wp.uint64),
-                     residuals: wp.array(dtype=wp.float32), jacobians: wp.array(dtype=wp.float32),
-                     write_jacobians: int):
-    t = wp.tid()
-    left = state_value(state_pointers, 2 * t, 0)
-    right = state_value(state_pointers, 2 * t + 1, 0)
-    residuals[t] = wp.log(right) - wp.log(left) - measurements[ids[t]]
-    if write_jacobians != 0:
-        jacobians[2 * t] = -1.0
-        jacobians[2 * t + 1] = 1.0
-
-
-class LogPriorFactor(WarpFactorBatch):
+def log_prior_kernel(observations: wp.array(dtype=wp.float32),
+                     factor_ids: wp.array(dtype=wp.int32), states: wp.array2d(dtype=wp.uint64),
+                     residuals: wp.array2d(dtype=wp.float32),
+                     jacobians: wp.array3d(dtype=wp.float32)):
     """residual = log(x) - log(target); one state."""
-
-    def __init__(self, observations, capacity):
-        super().__init__(residual_size=1, state_sizes=[1], capacity=capacity)
-        self.observations = observations
-
-    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
-        n = num_factor_ids                                   # number of items
-        ids = self.factor_ids(factor_ids_ptr, n)             # factor of each item
-        state_pointers = self.wrap_array(sp_ptr, wp.uint64, n)   # item t's state
-        write_jacobians = 1 if jac_ptr != 0 else 0           # 0 = residuals only
-        jacobians = (self.wrap_array(jac_ptr, wp.float32, n) if write_jacobians
-                     else wp.zeros(1, dtype=wp.float32, device=self._device))
-        wp.launch(log_prior_kernel, dim=n,
-                  inputs=[self.observations, ids, state_pointers,
-                          self.wrap_array(res_ptr, wp.float32, n), jacobians, write_jacobians],
-                  stream=self.make_warp_stream(stream_handle))
-        return True
+    t = wp.tid()
+    x = scalar_at(states[t, 0])
+    residuals[t, 0] = wp.log(x) - wp.log(observations[factor_ids[t]])
+    if jacobians.shape[0] > 0:
+        jacobians[t, 0, 0] = 1.0           # d r / d delta (the tangent of x * exp(delta))
 
 
-class LogRatioBetweenFactor(WarpFactorBatch):
+@wp.kernel
+def log_ratio_kernel(measurements: wp.array(dtype=wp.float32),
+                     factor_ids: wp.array(dtype=wp.int32), states: wp.array2d(dtype=wp.uint64),
+                     residuals: wp.array2d(dtype=wp.float32),
+                     jacobians: wp.array3d(dtype=wp.float32)):
     """residual = log(x_right / x_left) - m; two states."""
-
-    def __init__(self, measurements, capacity):
-        super().__init__(residual_size=1, state_sizes=[1, 1], capacity=capacity)
-        self.measurements = measurements
-
-    def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids):
-        n = num_factor_ids
-        ids = self.factor_ids(factor_ids_ptr, n)
-        state_pointers = self.wrap_array(sp_ptr, wp.uint64, 2 * n)  # [2t], [2t + 1]
-        write_jacobians = 1 if jac_ptr != 0 else 0
-        jacobians = (self.wrap_array(jac_ptr, wp.float32, 2 * n) if write_jacobians
-                     else wp.zeros(1, dtype=wp.float32, device=self._device))
-        wp.launch(log_ratio_kernel, dim=n,
-                  inputs=[self.measurements, ids, state_pointers,
-                          self.wrap_array(res_ptr, wp.float32, n), jacobians, write_jacobians],
-                  stream=self.make_warp_stream(stream_handle))
-        return True
+    t = wp.tid()
+    left = scalar_at(states[t, 0])
+    right = scalar_at(states[t, 1])
+    residuals[t, 0] = wp.log(right) - wp.log(left) - measurements[factor_ids[t]]
+    if jacobians.shape[0] > 0:
+        jacobians[t, 0, 0] = -1.0
+        jacobians[t, 0, 1] = 1.0
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
@@ -161,9 +108,12 @@ def main():
     states_capacity = num_states  # every slot solved: active = capacity
     between_capacity = num_states - 1
     prior_capacity = 1
-    states = PositiveScalarStateBatch(states_gpu, states_capacity)
-    between = LogRatioBetweenFactor(log_ratios_wp, between_capacity)
-    prior = LogPriorFactor(prior_wp, prior_capacity)
+    states = WarpStateBatch(positive_plus_kernel, data=states_gpu, ambient_size=1,
+                            tangent_size=1, capacity=states_capacity)
+    between = WarpFactorBatch(log_ratio_kernel, inputs=[log_ratios_wp], residual_size=1,
+                              state_sizes=[1, 1], capacity=between_capacity)
+    prior = WarpFactorBatch(log_prior_kernel, inputs=[prior_wp], residual_size=1,
+                            state_sizes=[1], capacity=prior_capacity)
     num_between_factors = between_capacity
     num_prior_factors = 1
     states.set_num_active_states(num_states)  # active counts

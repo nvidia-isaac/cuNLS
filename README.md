@@ -18,7 +18,7 @@
 ---
 
 ```bash
-pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
+pip install pycunls-cu13
 python -m pycunls doctor
 ```
 
