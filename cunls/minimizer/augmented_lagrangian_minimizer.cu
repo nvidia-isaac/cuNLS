@@ -389,6 +389,26 @@ void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) 
   }
 }
 
+/**
+ * The sizes a call's setup depends on: the subproblem count, every state batch
+ * with its active and constant counts, and every residual batch with its active
+ * count and number of state pointers (the inner minimizer checks the same).
+ */
+std::vector<size_t> SizeSignature(const Problem &problem) {
+  std::vector<size_t> sizes{problem.NumProblems()};
+  for (const StateBatch *batch : problem.GetStateBatches()) {
+    sizes.insert(sizes.end(), {reinterpret_cast<size_t>(batch), batch->NumActiveStates(),
+                               batch->NumConstStates()});
+  }
+  const auto &residual_batches = problem.GetResidualBatches();
+  for (size_t i = 0; i < residual_batches.size(); ++i) {
+    const FactorBatch *batch = residual_batches[i].GetFactorBatch();
+    sizes.insert(sizes.end(), {reinterpret_cast<size_t>(batch), batch->NumActiveFactors(),
+                               problem.NumStatePointers(i)});
+  }
+  return sizes;
+}
+
 }  // namespace
 
 AugmentedLagrangianMinimizer::AugmentedLagrangianMinimizer(
@@ -439,6 +459,12 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
     // Before the solve: hold where the steepest-descent direction points outward.
     refinements_ = 0;
     mark(rhs.data(), bound_mask_);
+    // The refinement buffers are sized here too, so that a call after
+    // SetOptions raises max_bound_refinements does not allocate (it may be
+    // captured into a CUDA graph).
+    bound_step_mask_.resize(rhs.size());
+    bound_extra_.resize(rhs.size());
+    if (bound_count_.size() < 1) bound_count_.resize(1);
     system.SetMask(&bound_mask_);
     ElementwiseMultiplyInPlace(stream, rhs.data(), bound_mask_.data(), rhs.size());
     return false;
@@ -451,8 +477,6 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
   if (refinements_ >= options_.max_bound_refinements) return false;
   ++refinements_;
   mark(step->data(), bound_step_mask_);
-  bound_extra_.resize(rhs.size());
-  if (bound_count_.size() < 1) bound_count_.resize(1);
   THROW_ON_CUDA_ERROR(cudaMemsetAsync(bound_count_.data(), 0, sizeof(int), stream));
   hold_outward_kernel<<<Blocks(rhs.size()), kThreads, 0, stream>>>(
       bound_step_mask_.data(), bound_mask_.data(), bound_extra_.data(), bound_count_.data(),
@@ -509,9 +533,43 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   signature.emplace_back(nullptr, problem.NumProblems());
   const bool same_constraints = signature == signature_ && problem_ == &problem;
   const bool warm = options_.warm_start && same_constraints;
-  // Structure reuse across calls (the caller vouches for an unchanged
-  // structure; the inner minimizer checks the sizes again).
-  const bool reuse = options_.base_options.reuse_structure && same_constraints;
+  // Structure reuse across calls: the caller vouches for an unchanged
+  // structure, and the sizes (state and factor counts) must agree too, as the
+  // inner minimizer requires.
+  std::vector<size_t> structure = SizeSignature(problem);
+  const bool reuse = options_.base_options.reuse_structure && same_constraints &&
+                     structure == structure_signature_;
+  // A call captured into a CUDA graph must not synchronize or allocate: it is
+  // real time, has no status to read back (no constraint batches) and reuses
+  // the structure of an earlier call (the inner solve checks its own part).
+  // Checked before any work, so the capture stays valid.
+  if (internal::StreamIsCapturing(stream)) {
+    const std::string capturing =
+        "AugmentedLagrangianMinimizer::Minimize: the stream is being captured into a CUDA "
+        "graph, but ";
+    if (!options_.base_options.real_time) {
+      throw std::invalid_argument(
+          capturing +
+          "a converging solve reads its progress back every outer iteration (got "
+          "real_time=false, expected true). Fix: set base_options.real_time, or solve outside "
+          "the capture.");
+    }
+    if (!constraints.empty()) {
+      throw std::invalid_argument(
+          capturing + "a real-time solve with constraint batches reads its status back at the " +
+          "end (got " + std::to_string(constraints.size()) +
+          " constraint batches, expected none). Fix: solve outside the capture; real-time solves "
+          "without constraint batches (box bounds only) can be captured.");
+    }
+    if (!reuse) {
+      throw std::invalid_argument(
+          capturing +
+          "this call sets up the problem's structure, which synchronizes (got a first call, a "
+          "call without reuse_structure or changed sizes; expected a structure an earlier call "
+          "set up). Fix: set base_options.reuse_structure and run one Minimize() call on the "
+          "problem before the capture.");
+    }
+  }
 
   // Box-bounded states: the reduced-system column of every state (unless the
   // structure is reused), then the initial values of the free states clamped
@@ -523,8 +581,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     if (HasBoxBounds(state_batches[b])) bounded_.push_back(b);
   }
   if (!bounded_.empty()) {
-    if (!(options_.base_options.reuse_structure && problem_ == &problem) ||
-        column_offsets_.size() != state_batches.size()) {
+    if (!reuse || column_offsets_.size() != state_batches.size()) {
       problem.CheckSizes();
       column_offsets_.resize(state_batches.size());
       int first_column = 0;
@@ -551,6 +608,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     return HoldActiveBounds(s, state, system, rhs, step);
   };
   signature_ = signature;
+  structure_signature_ = std::move(structure);
   problem_ = &problem;
 
   const size_t final_cap = options_.base_options.max_num_iterations;

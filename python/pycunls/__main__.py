@@ -122,8 +122,9 @@ def doctor() -> Tuple[bool, List[dict]]:
     gpu = _check("gpu", warp_gpu, "pip install \"warp-lang>=1.18\" and an R580 or newer driver "
                  "(CUDA 13, which pycunls and Warp's PyPI wheels need); check nvidia-smi and "
                  "CUDA_VISIBLE_DEVICES")
-    module = _check("native module", native, "reinstall the wheel (pip install pycunls-cu13 "
-                    "\"cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*\")")
+    module = _check("native module", native, "reinstall the wheel with its CUDA libraries "
+                    "(pip install --force-reinstall pycunls-cu13), or check that LD_LIBRARY_PATH "
+                    "names no older CUDA 13 libraries")
     results += [gpu, module]
     solved = _check("solve", solve, "run with CUNLS_LOG_LEVEL=debug and report the output",
                     needs=(gpu, module))

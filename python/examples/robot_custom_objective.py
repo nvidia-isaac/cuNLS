@@ -19,8 +19,8 @@ on link frames (``LinkFrameFactorBatch``).
 A 7-DOF arm carries a camera on its wrist. For each of 512 inspection points, find joint angles
 such that
 
-* the camera looks at the point from 0.35 m: a **custom Warp factor** ``LookAtFactor`` over one
-  SE(3) pose (the camera), with r = (u - e_z, |d| - 0.35), d = R^T (target - p), u = d / |d|;
+* the camera looks at the point from 0.35 m: a **custom Warp factor** (``look_at_kernel``) over
+  one SE(3) pose (the camera), with r = (u - e_z, |d| - 0.35), d = R^T (target - p), u = d / |d|;
 * the elbow keeps 0.15 m from a spherical obstacle: the **built-in**
   ``SE3SphereClearanceFactorBatch`` on the elbow's pose, an inequality constraint;
 * the camera stays above a table plane: the **built-in** ``HalfspaceFactorBatch3`` on the
@@ -44,7 +44,7 @@ import warp as wp
 
 import pycunls
 from pycunls.articulation import topology_from_urdf
-from pycunls.warp import WarpFactorBatch, jacobian_index, pose_at
+from pycunls.warp import WarpFactorBatch, pose_at
 from example_utils import report
 
 wp.init()
@@ -81,47 +81,35 @@ ARM_URDF = """<robot name="arm7">
 # ── The custom factor: an ordinary SE(3) factor, written in Warp ─────────────────────────────
 
 @wp.kernel
-def look_at_kernel(targets: wp.array(dtype=wp.vec3), standoff: float,
-                   ids: wp.array(dtype=wp.int32),
-                   state_pointers: wp.array(dtype=wp.uint64),
-                   residuals: wp.array(dtype=float), jacobians: wp.array(dtype=float),
-                   write_jacobians: int):
+def look_at_kernel(targets: wp.array(dtype=wp.vec3), standoff: float,     # the factor's inputs
+                   factor_ids: wp.array(dtype=wp.int32),                   # (n,)
+                   states: wp.array2d(dtype=wp.uint64),                    # (n, 1): the camera
+                   residuals: wp.array2d(dtype=float),                     # (n, 4)
+                   jacobians: wp.array3d(dtype=float)):                    # (n, 4, 6)
+    """4 rows on one SE(3) pose: look at targets[f] along +z from `standoff` meters."""
     t = wp.tid()
-    X = pose_at(state_pointers, t)                 # camera pose: item t's only state (K = 1)
+    X = pose_at(states[t, 0])                                      # the camera pose
     R = wp.quat_to_matrix(wp.transform_get_rotation(X))
     p = wp.transform_get_translation(X)
-    d = wp.transpose(R) * (targets[ids[t]] - p)                    # target in the camera frame
+    d = wp.transpose(R) * (targets[factor_ids[t]] - p)             # target in the camera frame
     dist = wp.length(d)
     u = d / dist
-    residuals[4 * t + 0] = u[0]                                    # u - e_z: look along +z
-    residuals[4 * t + 1] = u[1]
-    residuals[4 * t + 2] = u[2] - 1.0
-    residuals[4 * t + 3] = dist - standoff
-    if write_jacobians != 0:
+    residuals[t, 0] = u[0]                                         # u - e_z: look along +z
+    residuals[t, 1] = u[1]
+    residuals[t, 2] = u[2] - 1.0
+    residuals[t, 3] = dist - standoff
+    if jacobians.shape[0] > 0:
         # Right perturbation X Exp([w, v]): d' = d + d x w - v, so dd/dw = [d]x, dd/dv = -I.
         # du/dd = (I - u u^T) / |d|, d|d|/dd = u^T (and u^T [d]x = 0).
         P = (wp.identity(n=3, dtype=float) - wp.outer(u, u)) / dist
         Jw = P * wp.skew(d)
         for r in range(3):
             for k in range(3):
-                jacobians[jacobian_index(t, r, k, 4, 6)] = Jw[r, k]          # columns 0-2: w
-                jacobians[jacobian_index(t, r, 3 + k, 4, 6)] = -P[r, k]      # columns 3-5: v
+                jacobians[t, r, k] = Jw[r, k]                      # columns 0-2: w
+                jacobians[t, r, 3 + k] = -P[r, k]                  # columns 3-5: v
         for k in range(3):
-            jacobians[jacobian_index(t, 3, k, 4, 6)] = 0.0
-            jacobians[jacobian_index(t, 3, 3 + k, 4, 6)] = -u[k]
-
-
-class LookAtFactor(WarpFactorBatch):
-    """4 rows on one SE(3) pose: look at targets[f] along +z from `standoff` meters."""
-
-    def __init__(self, targets, standoff, capacity):
-        super().__init__(residual_size=4, state_sizes=[6], capacity=capacity)
-        self.targets, self.standoff = targets, standoff
-
-    def evaluate(self, *args):
-        """Item t looks up its factor's data by ids[t] and reads its state through the
-        pointer table (see WarpFactorBatch.items)."""
-        return self.launch(look_at_kernel, self.items(*args), [self.targets, self.standoff])
+            jacobians[t, 3, k] = 0.0
+            jacobians[t, 3, 3 + k] = -u[k]
 
 
 # ── Checks in NumPy ──────────────────────────────────────────────────────────────────────────
@@ -161,7 +149,8 @@ def main():
     #    feeds that slot a view of a frame on a robot link instead of a state: frame_slots names
     #    the slot and the view, topology_links the link per factor (an index into
     #    robot.link_names), frame_offsets where the frame sits on the link.
-    look_at = LookAtFactor(wp.array(points, dtype=wp.vec3), STANDOFF, n)
+    look_at = WarpFactorBatch(look_at_kernel, inputs=[wp.array(points, dtype=wp.vec3), STANDOFF],
+                              residual_size=4, state_sizes=[6], capacity=n)
     wrist_links = wp.full(n, wrist, dtype=wp.int32)                # the camera is on the wrist
     camera_mounts = wp.array(np.tile(CAMERA_ON_WRIST, n))          # ... at this mount
     camera = pycunls.LinkFrameFactorBatch(

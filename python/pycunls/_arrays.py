@@ -21,6 +21,17 @@ import numpy as np
 import warp as wp
 
 
+def interface_device(a):
+    """The Warp device of an array exposing ``__cuda_array_interface__``, which names no device:
+    from DLPack (``__dlpack_device__``, as CuPy and PyTorch provide), else None (Warp then
+    assumes its current device when wrapping the array)."""
+    dlpack_device = getattr(a, "__dlpack_device__", None)
+    if dlpack_device is None:
+        return None
+    kind, ordinal = dlpack_device()
+    return wp.get_device(f"cuda:{int(ordinal)}") if int(kind) in (2, 13) else None  # CUDA, managed
+
+
 def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
     """Host copy of an array-like as ``dtype``: NumPy, lists, Warp arrays, or any GPU array
     exposing ``__cuda_array_interface__`` (CuPy, PyTorch). ``owner`` names the caller in errors."""
@@ -28,7 +39,7 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
         if isinstance(a, wp.array):
             a = a.numpy()
         elif hasattr(type(a), "__cuda_array_interface__"):
-            view = wp.array(a, copy=False)
+            view = wp.array(a, copy=False, device=interface_device(a))
             # Warp ignores the producer stream the interface names: order the copy after it
             # (None: no ordering needed; 1 and 2 are the legacy and per-thread default streams,
             # which are also valid stream handles).
@@ -42,6 +53,34 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
         raise TypeError(f"{owner}: {name} must be array-like (got {type(a).__name__}, expected "
                         "a NumPy array, list, wp.array or another GPU array). Fix: pass "
                         f"np.asarray({name}).") from exc
+
+
+def cuda_device(device, owner: str) -> wp.Device:
+    """The CUDA device ``device`` names (``"cuda:N"``, ``"cuda"`` or a ``wp.Device``); None:
+    Warp's current device (``wp.get_device()``, which follows ``wp.ScopedDevice``). ``owner``
+    names the caller in the error."""
+    try:
+        resolved = wp.get_device(device)
+    except ValueError:
+        resolved = None
+    if resolved is None or not resolved.is_cuda:
+        raise ValueError(f"{owner}: the device must be a CUDA device of this machine (got "
+                         f"{device!r}, expected 'cuda:N' or a CUDA wp.Device). Fix: pass "
+                         "device='cuda:N', or create it under wp.ScopedDevice('cuda:N').")
+    return resolved
+
+
+def gpu_device(*arrays):
+    """The Warp device of the first GPU array among ``arrays`` (a ``wp.array`` on a CUDA device,
+    or any array exposing ``__cuda_array_interface__``: see :func:`interface_device`), or None
+    when none is one."""
+    for a in arrays:
+        if isinstance(a, wp.array):
+            if a.device.is_cuda:
+                return a.device
+        elif hasattr(type(a), "__cuda_array_interface__"):
+            return interface_device(a) or wp.array(a, copy=False).device
+    return None
 
 
 def to_device(a, dtype=None, name: str = "array", owner: str = "pycunls") -> wp.array:

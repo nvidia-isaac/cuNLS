@@ -63,6 +63,8 @@ Test modules
      - All robust loss function batches (Huber, Cauchy, Arctan,
        SoftLOne, Tolerant, Tukey, Trivial, Scaled).
    * - ``test_warp_factor.py``
-     - Custom `WarpFactorBatch` subclass end-to-end test.
+     - `WarpFactorBatch` kernel factors (signature checks, residual-only and RANSAC
+       evaluations) and an `evaluate` override, end to end.
    * - ``test_warp_state.py``
-     - Custom `WarpStateBatch` subclass end-to-end test.
+     - `WarpStateBatch` Plus kernels (signature checks, replicas, inputs) and a `plus`
+       override, end to end.

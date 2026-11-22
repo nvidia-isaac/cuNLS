@@ -228,23 +228,36 @@ With NVIDIA Warp
 
 Without writing a kernel: ``pycunls.warp.WarpFunctionFactorBatch`` turns a ``@wp.func`` of the
 factor's states (``wp.transform`` for SE(3), ``wp.quat`` for SO(3), ``float`` or ``wp.vecN`` for
-vectors) and of a per-factor data item into a factor, with Warp's automatic differentiation for
-the Jacobian (:ref:`py-warp-function-factor-batch`). An analytic kernel, as below, is faster.
+vectors) and of a per-factor data item into a factor, with Warp's automatic differentiation,
+central differences or a ``@wp.func`` Jacobian of your own (:ref:`py-warp-function-factor-batch`).
+Write a kernel, as below, for states without a Warp value type (SE(2), Sim(3), SL(4),
+articulation coordinates, custom states) or for the fastest evaluation.
 
-``pycunls.warp.WarpFactorBatch`` and ``WarpStateBatch`` wrap the raw pointers
-as ``warp.array`` objects and cuNLS's stream as a ``warp.Stream``, so the kernel
-is ordered with the rest of the minimizer's work. For a factor,
-``WarpFactorBatch.items(*args)`` turns the arguments of ``evaluate`` into Warp
-arrays: the factor of every item (``ids``, so a kernel can always read
-``ids[t]``, whether or not the caller passed factor ids), the state pointer
-table, the residuals, the Jacobians (or a stand-in with ``write_jacobians = 0``)
-and the stream. ``WarpFactorBatch.launch(kernel, items, inputs)`` launches one
-thread per item with the factor's own ``inputs`` followed by those standard
-arguments. The state pointers arrive as a table of 64-bit addresses: read item
-``t``'s state inside the kernel with
-``wp.array(ptr=state_ptrs[t], shape=(J,), dtype=wp.float32)`` (or
-``pycunls.warp.pose_at`` / ``point_at`` / ``rotation_at`` for poses, points and
-rotations):
+``pycunls.warp.WarpFactorBatch`` is a factor evaluated by your own Warp kernel:
+construct it with the kernel, the kernel's own inputs and the factor's sizes; no
+subclass is needed. The kernel runs one thread per evaluated factor on cuNLS's
+stream, so it is ordered with the rest of the minimizer's work. Its last four
+parameters are filled by pycunls, with shapes from the sizes (:math:`M` =
+``residual_size``, :math:`K` = ``len(state_sizes)``, :math:`J` =
+``sum(state_sizes)``):
+
+``factor_ids`` (:math:`n`), read
+  The factor thread ``t`` evaluates: index per-factor data with it. The regular
+  minimizers evaluate each active factor once (``0 .. n-1``); RANSAC evaluates
+  the same factors against many hypotheses, so ids repeat.
+``states`` (:math:`n \times K`), read
+  Pointers to thread ``t``'s states. Read one with ``pycunls.warp.scalar_at`` /
+  ``point_at`` / ``pose_at`` / ``rotation_at``, or
+  ``wp.array(ptr=states[t, k], shape=(A,), dtype=float)`` for any layout.
+``residuals`` (:math:`n \times M`), written
+  Thread ``t``'s residuals.
+``jacobians`` (:math:`n \times M \times J`), written
+  Thread ``t``'s Jacobian block, columns state by state (with respect to each
+  state's tangent). It has no rows when only residuals are needed: write it
+  under ``if jacobians.shape[0] > 0``.
+
+The constructor checks the kernel's signature and raises with the fix when the
+last four parameters or the number of ``inputs`` do not match. The line fit:
 
 .. code-block:: python
 
@@ -254,70 +267,57 @@ rotations):
    from pycunls.warp import WarpFactorBatch, WarpStateBatch
 
    @wp.kernel
-   def line_kernel(xs: wp.array(dtype=wp.float32), ys: wp.array(dtype=wp.float32),
-                   ids: wp.array(dtype=wp.int32), state_ptrs: wp.array(dtype=wp.uint64),
-                   res: wp.array(dtype=wp.float32), jac: wp.array(dtype=wp.float32),
-                   write_jac: int):
-       t = wp.tid()                                      # item
-       f = ids[t]                                        # measurement of item t
-       ab = wp.array(ptr=state_ptrs[t], shape=(2,), dtype=wp.float32)  # state of item t
-       res[t] = ab[0] * xs[f] + ab[1] - ys[f]            # row t
-       if write_jac != 0:
-           jac[2 * t] = xs[f]
-           jac[2 * t + 1] = 1.0
+   def line_kernel(xs: wp.array(dtype=wp.float32), ys: wp.array(dtype=wp.float32),  # inputs
+                   factor_ids: wp.array(dtype=wp.int32), states: wp.array2d(dtype=wp.uint64),
+                   residuals: wp.array2d(dtype=wp.float32),
+                   jacobians: wp.array3d(dtype=wp.float32)):
+       t = wp.tid()
+       f = factor_ids[t]                                       # the point of thread t
+       ab = wp.array(ptr=states[t, 0], shape=(2,), dtype=wp.float32)   # its line (a, b)
+       residuals[t, 0] = ab[0] * xs[f] + ab[1] - ys[f]
+       if jacobians.shape[0] > 0:
+           jacobians[t, 0, 0] = xs[f]
+           jacobians[t, 0, 1] = 1.0
 
+   def line_fit_factor(xs, ys):
+       # residual size 1, one state of tangent size 2, one factor per point
+       return WarpFactorBatch(line_kernel, inputs=[xs, ys],
+                              residual_size=1, state_sizes=[2], capacity=xs.shape[0])
 
-   class LineFitFactorBatch(WarpFactorBatch):
-       def __init__(self, xs, ys):
-           # residual size 1, one state of tangent size 2, capacity len(xs)
-           super().__init__(residual_size=1, state_sizes=[2], capacity=xs.shape[0])
-           self.xs, self.ys = xs, ys                     # wp.arrays; keep them alive
+For full control (several kernels, another GPU library), subclass
+``WarpFactorBatch`` without a kernel and override ``evaluate``, which receives
+the raw arguments ``(res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr,
+num_factor_ids)`` of the contract above; ``wrap_array``, ``factor_ids`` and
+``make_warp_stream`` convert them one by one.
 
-       def evaluate(self, *args):
-           # line_kernel(xs, ys, ids, state_ptrs, res, jac, write_jac): the factor's inputs,
-           # then the standard arguments launch() appends.
-           return self.launch(line_kernel, self.items(*args), [self.xs, self.ys])
-
-For anything ``items`` does not cover, ``evaluate`` receives the raw arguments
-``(res_ptr, jac_ptr, sp_ptr, stream_handle, factor_ids_ptr, num_factor_ids)``;
-``wrap_array``, ``factor_ids`` and ``make_warp_stream`` convert them one by one.
-
-The state pointer table holds ``n * B`` entries, item-major (item ``t``'s
-``k``-th state is ``state_ptrs[t * B + k]``): read **per item**, not per
-factor.
-
-A custom state works the same way. Here, a 2D Euclidean state written by
-hand (a manifold would change only the kernel body):
+A custom state works the same way: ``pycunls.warp.WarpStateBatch`` is a state
+batch whose *Plus* is your own kernel, one thread per state, ending with
+``x`` (:math:`n \times A`), ``delta`` (:math:`n \times T`) and ``x_plus_delta``
+(:math:`n \times A`); :math:`n` covers every replica, so the kernel never sees
+``num_replicas``. Here, a 2D Euclidean state written by hand (a manifold would
+change only the kernel body):
 
 .. code-block:: python
 
    @wp.kernel
-   def plus_kernel(x: wp.array(dtype=wp.float32), d: wp.array(dtype=wp.float32),
-                   out: wp.array(dtype=wp.float32)):
+   def plus_kernel(x: wp.array2d(dtype=wp.float32), delta: wp.array2d(dtype=wp.float32),
+                   x_plus_delta: wp.array2d(dtype=wp.float32)):
        i = wp.tid()
-       out[i] = x[i] + d[i]
+       for k in range(2):
+           x_plus_delta[i, k] = x[i, k] + delta[i, k]
 
-
-   class LineState(WarpStateBatch):
-       def __init__(self, data):
-           super().__init__(data, ambient_size=2, tangent_size=2, capacity=1)
-
-       def plus(self, x_ptr, delta_ptr, out_ptr, stream_handle, num_replicas):
-           n = 2 * self.num_active_states * num_replicas   # every float of every replica
-           wp.launch(plus_kernel, dim=n,
-                     inputs=[self.wrap_array(x_ptr, wp.float32, n),
-                             self.wrap_array(delta_ptr, wp.float32, n),
-                             self.wrap_array(out_ptr, wp.float32, n)],
-                     stream=self.make_warp_stream(stream_handle))
+   def line_state(data):
+       return WarpStateBatch(plus_kernel, data=data, ambient_size=2, tangent_size=2,
+                             capacity=1)
 
 Using them with RANSAC (``xs``, ``ys``: NumPy arrays of the points):
 
 .. code-block:: python
 
    ab = wp.zeros(2, dtype=wp.float32)
-   state = LineState(ab)
-   factor = LineFitFactorBatch(wp.array(xs, dtype=wp.float32),
-                               wp.array(ys, dtype=wp.float32))
+   state = line_state(ab)
+   factor = line_fit_factor(wp.array(xs, dtype=wp.float32),
+                            wp.array(ys, dtype=wp.float32))
    state.set_num_active_states(1)          # active sizes start at 0
    factor.set_num_active_factors(len(xs))
    problem = pycunls.Problem()
@@ -333,9 +333,7 @@ Using them with RANSAC (``xs``, ``ys``: NumPy arrays of the points):
    mask = ransac.inlier_mask(0)
 
 Complete Warp versions: ``python/examples/custom_warp_factor.py`` and
-``python/examples/custom_warp_state.py`` (they read the states with the
-``state_value`` helper of ``python/examples/example_utils/gpu.py``), and the
-:doc:`pycunls_tutorial`.
+``python/examples/custom_warp_state.py``, and the :doc:`pycunls_tutorial`.
 
 -------------------------------------------------------------------------------
 With other GPU libraries

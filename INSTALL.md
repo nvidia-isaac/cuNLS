@@ -49,22 +49,23 @@ libraries; it needs an R580 or newer driver.
 ### From PyPI
 
 Wheels for x86_64 Linux with glibc 2.35 or newer (Ubuntu 22.04 and later; build from source on
-older distributions), Python 3.10 to 3.14, CUDA 13 (driver R580 or newer). They do not
-bundle the CUDA libraries they link against (`cudart`, `cublas`, `cusparse`, `cusolver`,
-`nvJitLink`): install them from NVIDIA's pip packages (pycunls finds them in the same
-environment, no `LD_LIBRARY_PATH`) or use a system CUDA 13 toolkit.
+older distributions), Python 3.10 to 3.14, CUDA 13 (driver R580 or newer).
 
 ```bash
-pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
+pip install pycunls-cu13
 pip install "nvidia-cudss-cu13==0.8.*"   # optional, only for SparseLinearSolverType.cuDSS
 python -m pycunls doctor                 # checks the GPU, the native module, a solve, cuDSS
 ```
 
-Install the CUDA libraries through the `cuda-toolkit` metapackage, which pins one CUDA release:
-unpinned `nvidia-*` packages can mix releases (the newest `nvidia-cusolver-cu13` needs the newest
-`nvidia-cublas-cu13`), and the import then fails with `undefined symbol`. A directory on
-`LD_LIBRARY_PATH` takes precedence over the pip packages. pycunls 0.4.0 does not search the pip
-packages: add `<site-packages>/nvidia/cu13/lib` to `LD_LIBRARY_PATH`, or upgrade.
+The wheel links the CUDA libraries `cudart`, `cublas`, `cusparse` and `cusolver` (and, through
+them, `nvJitLink`) without bundling them, and depends on NVIDIA's pip packages for them:
+`cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14`. PyTorch's CUDA 13 wheels
+depend on the same packages, pinned to one release; pycunls accepts any CUDA 13 release, so pip
+installs one copy of each library for both. pycunls finds them in the environment without
+`LD_LIBRARY_PATH`; a directory on `LD_LIBRARY_PATH` (e.g. a system CUDA 13 toolkit) takes
+precedence. pycunls 0.4.3 and earlier do not depend on these packages: install them with
+`pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.*"`; pycunls 0.4.0 also
+needs `<site-packages>/nvidia/cu13/lib` on `LD_LIBRARY_PATH` (it does not search the pip packages).
 
 ### Build the wheel in Docker
 

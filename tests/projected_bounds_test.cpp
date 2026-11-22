@@ -268,6 +268,101 @@ TEST(ProjectedBounds, RealTimeBoundsOnlySolveIsGraphCapturable) {
   cudaGraphDestroy(graph);
 }
 
+/** Four 1-vectors in [-1, 1] pulled by priors to 3, -4, 0.5 and 2: a bounds-only problem. */
+struct BoundedPriors {
+  const std::vector<float> start = {0.f, 0.f, 0.f, 0.f};
+  const std::vector<float> projected = {1.f, -1.f, 0.5f, 1.f};  // the solution
+  dvector<float> x{start}, t{std::vector<float>{3.f, -4.f, 0.5f, 2.f}};
+  dvector<float> lo{std::vector<float>(4, -1.f)}, hi{std::vector<float>(4, 1.f)};
+  VectorStateBatch<1> states{x.data(), 4};
+  PriorVectorFactorBatch<1> prior{reinterpret_cast<const Vector<1> *>(t.data()), 4};
+  Problem problem;
+
+  BoundedPriors() {
+    states.SetNumActiveStates(4);
+    states.SetBounds(lo.data(), hi.data());
+    prior.SetNumActiveFactors(4);
+    problem.AddStateBatch(&states);
+    std::vector<float *> ptrs;
+    for (int i = 0; i < 4; ++i) ptrs.push_back(states.StateDevicePtr(i));
+    problem.AddFactorBatch(&prior, ptrs);
+  }
+
+  std::vector<float> X() const {
+    std::vector<float> out(4);
+    x.CopyToHost(out.data(), 4);
+    return out;
+  }
+};
+
+AugmentedLagrangianMinimizerOptions RealTimeBoundsOptions(size_t refinements) {
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options.real_time = true;
+  options.base_options.reuse_structure = true;
+  options.base_options.max_num_iterations = 4;
+  options.base_options.max_line_search_steps = 0;
+  options.max_outer_iterations = 1;
+  options.max_bound_refinements = refinements;
+  return options;
+}
+
+// Raising max_bound_refinements after the first call (SetOptions) allocates
+// nothing: the refinement buffers are sized with the bound mask, so the next
+// call is still captured, and the replayed graph runs the refinement.
+TEST(ProjectedBounds, MoreBoundRefinementsAfterTheFirstCallStayCapturable) {
+  BoundedPriors p;
+  AugmentedLagrangianMinimizer solver(RealTimeBoundsOptions(0));
+  CudaStream stream;
+  solver.Minimize(stream.GetStream(), p.problem);
+  solver.SetOptions(RealTimeBoundsOptions(1));
+
+  p.x.CopyFromHost(p.start.data(), p.start.size());
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t exec = nullptr;
+  ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+            cudaSuccess);
+  solver.Minimize(stream.GetStream(), p.problem);
+  ASSERT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+  ASSERT_EQ(cudaGraphInstantiate(&exec, graph, 0), cudaSuccess);
+  ASSERT_EQ(cudaGraphLaunch(exec, stream.GetStream()), cudaSuccess);
+  ASSERT_EQ(cudaStreamSynchronize(stream.GetStream()), cudaSuccess);
+  const auto result = p.X();
+  for (int i = 0; i < 4; ++i) EXPECT_NEAR(result[i], p.projected[i], 1e-3f) << i;
+  cudaGraphExecDestroy(exec);
+  cudaGraphDestroy(graph);
+}
+
+// After the active counts change, reuse_structure sets the bounds up again
+// (the per-state columns of the old count are not reused), and a captured call
+// throws before it records anything, the projection into the box included.
+TEST(ProjectedBounds, ChangedActiveCountsAreSetUpAgain) {
+  BoundedPriors p;
+  AugmentedLagrangianMinimizer solver(RealTimeBoundsOptions(0));
+  CudaStream stream;
+  solver.Minimize(stream.GetStream(), p.problem);
+  p.states.SetNumActiveStates(2);
+  p.prior.SetNumActiveFactors(2);
+
+  p.x.CopyFromHost(p.start.data(), p.start.size());
+  cudaGraph_t graph = nullptr;
+  ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+            cudaSuccess);
+  EXPECT_THROW(solver.Minimize(stream.GetStream(), p.problem), std::invalid_argument);
+  ASSERT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+  size_t num_nodes = 1;
+  ASSERT_EQ(cudaGraphGetNodes(graph, nullptr, &num_nodes), cudaSuccess);
+  EXPECT_EQ(num_nodes, 0u) << "work was recorded before the call threw";
+  cudaGraphDestroy(graph);
+
+  solver.Minimize(stream.GetStream(), p.problem);  // outside the capture: set up again
+  ASSERT_EQ(cudaStreamSynchronize(stream.GetStream()), cudaSuccess);
+  const auto result = p.X();
+  EXPECT_NEAR(result[0], p.projected[0], 1e-3f);
+  EXPECT_NEAR(result[1], p.projected[1], 1e-3f);
+  EXPECT_EQ(result[2], 0.f);  // inactive: untouched
+  EXPECT_EQ(result[3], 0.f);
+}
+
 TEST(ProjectedBounds, SetBoundsNeedsBothOrNeither) {
   dvector<float> x(std::vector<float>(2, 0.f)), lo(std::vector<float>(2, -1.f));
   VectorStateBatch<2> states(x.data(), 1);

@@ -15,7 +15,7 @@ endif()
 # Native code for every GPU generation the toolkit supports (no PTX JIT at load time).
 include(cmake/CudaArchitectures.cmake)
 
-project(cunls VERSION 0.4.3 LANGUAGES CXX CUDA)
+project(cunls VERSION 0.4.4 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -136,7 +136,7 @@ if(NOT BUILD_SHARED_LIBS)
 endif()
 
 if(BUILD_SHARED_LIBS)
-  # Before 1.0 any release may change the ABI (CHANGELOG.md): the SONAME carries the full
+  # Before 1.0 any release may change the ABI: the SONAME carries the full
   # version, so a program built against another release does not load this one.
   set_target_properties(cunls PROPERTIES
       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

@@ -855,64 +855,74 @@ Python example.
 ``pycunls.warp.WarpFactorBatch``
 --------------------------------------------------------------------------------
 
-Convenience base for custom factors implemented with `NVIDIA Warp
-<https://developer.nvidia.com/warp-python>`_ kernels.
-Inherits from ``CustomFactorBatch`` and provides helper methods for
-zero-copy pointer wrapping so you never need to manually construct
-``wp.array`` objects from raw device addresses.
+A factor evaluated by your own `NVIDIA Warp <https://developer.nvidia.com/warp-python>`_
+kernel: residuals and analytic Jacobians, the fastest Python form. You write the kernel and
+construct the batch with it; no subclass is needed.
 
 **Constructor**
 
 .. code-block:: python
 
-   from pycunls.warp import WarpFactorBatch
+   from pycunls.warp import WarpFactorBatch, scalar_at
 
-   class MyWarpFactor(WarpFactorBatch):
-       def __init__(self, capacity):
-           super().__init__(
-               residual_size=...,
-               state_sizes=[...],
-               capacity=capacity,
-           )
+   @wp.kernel
+   def diff_kernel(measurements: wp.array(dtype=float),   # your parameters (inputs), then:
+                   factor_ids: wp.array(dtype=wp.int32),    # (n,)       read
+                   states: wp.array2d(dtype=wp.uint64),     # (n, K)     read
+                   residuals: wp.array2d(dtype=float),      # (n, M)     write
+                   jacobians: wp.array3d(dtype=float)):     # (n, M, J)  write; 0 rows: skip
+       t = wp.tid()
+       left = scalar_at(states[t, 0])
+       right = scalar_at(states[t, 1])
+       residuals[t, 0] = (right - left) - measurements[factor_ids[t]]
+       if jacobians.shape[0] > 0:
+           jacobians[t, 0, 0] = -1.0
+           jacobians[t, 0, 1] = 1.0
 
-- **device** (``str`` or ``wp.Device``, default None) — the CUDA device the factor's data lives
-  on, used by ``wrap_array`` and the stream wrappers. None: Warp's current device at
-  construction (``wp.get_device()``, which follows ``wp.ScopedDevice``).
+   diff = WarpFactorBatch(diff_kernel, inputs=[measurements],
+                          residual_size=1, state_sizes=[1, 1], capacity=n)
 
-**Helper methods** (inherited — do not override)
+- **kernel** (``wp.Kernel``, optional) — the kernel. Its last four parameters are filled by
+  pycunls; the constructor checks their types and raises with the fix otherwise. None: a
+  subclass overrides ``evaluate`` (below).
+- **inputs** (sequence) — the kernel's own arguments, the parameters before ``factor_ids``, in
+  order (typically the per-factor data arrays). Read at every evaluation: replace one through
+  ``batch.inputs[i] = ...`` or update the arrays in place.
+- **residual_size** (keyword) — residuals per factor, :math:`M`.
+- **state_sizes** (keyword) — tangent size of each state a factor reads, in slot order;
+  :math:`K` = its length, :math:`J` = its sum.
+- **capacity** (keyword) — factors the data holds; the batch starts with 0 active factors.
+- **device** (``str`` or ``wp.Device``, default None) — the CUDA device of the factor's data.
+  None: Warp's current device at construction (``wp.get_device()``, which follows
+  ``wp.ScopedDevice``).
 
-- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of an
-  existing GPU allocation as a Warp array.  *ptr* is the device address,
-  *dtype* a Warp data type (e.g. ``wp.float32``), and *shape* an ``int`` or
-  tuple giving the array dimensions.  The returned ``wp.array`` shares the
-  memory; no allocation or copy occurs.
+**The kernel.** One thread per evaluated factor: thread ``t`` evaluates factor
+``factor_ids[t]`` (index per-factor data with it) at the states ``states[t, k]`` points to,
+writes ``residuals[t, i]`` and, when ``jacobians`` has rows, ``jacobians[t, i, c]``. The
+columns are state by state: ``state_sizes[0]`` columns of state 0 first, with respect to the
+state's tangent (for a pose, the right perturbation ``X Exp([omega, v])``). ``jacobians`` has
+no rows when only residuals are needed (line search, ``JacobianMode.numeric``). The minimizers
+evaluate each active factor once (``factor_ids`` is ``0 .. n-1``); RANSAC evaluates the same
+factors against several state sets, so ``factor_ids`` repeats.
 
-- ``factor_ids(factor_ids_ptr: int, num_items: int) -> wp.array`` — the
-  factor index of every item as an ``int32`` Warp array: wraps
-  ``factor_ids_ptr`` when it is non-null, otherwise returns (and caches)
-  ``arange(num_items) % num_active_factors``. Kernels can then always read
-  ``ids[t]``.
+**Reading states** (device functions of ``pycunls.warp``, each taking one ``states[t, k]``
+pointer): ``scalar_at`` (``VectorStateBatch1``, a ``float``), ``point_at``
+(``VectorStateBatch3`` or ``FrameView.Position``, a ``wp.vec3``), ``pose_at``
+(``SE3StateBatch`` or ``FrameView.Pose``, a ``wp.transform``) and ``rotation_at``
+(``SO3StateBatch`` or ``FrameView.Orientation``, a ``wp.mat33``). Other layouts:
+``wp.array(ptr=states[t, k], shape=(A,), dtype=float)`` with the state's ambient size ``A``.
 
-- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — wraps a raw
-  ``cudaStream_t`` (passed as ``int``) as a ``wp.Stream``.  Use the
-  returned stream in ``wp.launch(..., stream=stream)`` to ensure the Warp
-  kernel executes on the minimizer's CUDA stream.
+**Full control.** For several kernels or another GPU library, subclass without a kernel and
+override ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
+factor_ids_ptr, num_factor_ids) -> bool`` (the ``CustomFactorBatch.evaluate`` contract, flat
+arrays). These helpers convert its arguments:
 
-**Methods to override**
-
-- ``evaluate(residuals_ptr, jacobians_ptr, state_pointers_ptr, stream_handle,
-  factor_ids_ptr, num_factor_ids) -> bool``
-  — same contract as ``CustomFactorBatch.evaluate``.  Typical
-  implementations:
-
-  1. Wrap the state pointer table with ``self.wrap_array(state_pointers_ptr,
-     wp.uint64, num_factor_ids * K)``; the kernel reads item *t*'s state *k*
-     with ``wp.array(ptr=state_pointers[t * K + k], shape=(J,), dtype=float)``.
-  2. Get per-item factor indices with ``self.factor_ids(factor_ids_ptr,
-     num_factor_ids)`` and read measurements through them.
-  3. Wrap the output buffers with ``self.wrap_array``.
-  4. Build a ``wp.Stream`` with ``self.make_warp_stream``.
-  5. Launch a ``@wp.kernel`` with ``dim=num_factor_ids`` on that stream.
+- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of a device pointer.
+- ``factor_ids(factor_ids_ptr: int, num_items: int) -> wp.array`` — the factor index of every
+  item as an ``int32`` array: wraps ``factor_ids_ptr`` when it is non-null, otherwise returns
+  (and caches) ``arange(num_items) % num_active_factors``.
+- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — the minimizer's stream, for
+  ``wp.launch(..., stream=...)``.
 
 See :ref:`pycunls_tutorial:Custom Warp Factor` for a complete example.
 

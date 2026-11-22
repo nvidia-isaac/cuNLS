@@ -15,16 +15,12 @@
 
 """Tests for the Warp-based custom factor integration.
 
-Defines a ``WarpPriorFactor`` (vector-prior: ``residual = state - obs``,
-``Jacobian = I``) entirely in Python/Warp and uses it in a full pycunls
-optimisation loop.  This exercises:
-  - ``WarpFactorBatch.wrap_array`` (zero-copy pointer wrapping)
-  - ``WarpFactorBatch.make_warp_stream`` (stream forwarding)
-  - The ``PyFactorBatch`` C++ trampoline (GIL acquire, Python callback)
-  - End-to-end convergence with a Warp-based factor
-
-The test is intentionally kept simple (a linear least-squares prior) so that
-convergence is guaranteed in a single Gauss-Newton step.
+A vector prior (``residual = state - obs``, ``Jacobian = I``) written twice:
+  - as a ``WarpFactorBatch`` kernel (the kernel's last four parameters filled by pycunls), with
+    its signature checks, residual-only evaluations and repeated factor ids (RANSAC);
+  - as a subclass overriding ``evaluate`` with the raw pointers (``wrap_array``,
+    ``factor_ids``, ``make_warp_stream``: the full-control route).
+Both solve a linear least-squares prior in one Gauss-Newton step.
 """
 
 import numpy as np
@@ -99,17 +95,111 @@ class WarpPriorFactor(WarpFactorBatch):
         return True
 
 
+@wp.kernel
+def _prior3_kernel(observations: wp.array(dtype=wp.vec3), factor_ids: wp.array(dtype=wp.int32),
+                   states: wp.array2d(dtype=wp.uint64), residuals: wp.array2d(dtype=float),
+                   jacobians: wp.array3d(dtype=float)):
+    t = wp.tid()
+    x = wp.array(ptr=states[t, 0], shape=(3,), dtype=float)
+    obs = observations[factor_ids[t]]
+    for d in range(3):
+        residuals[t, d] = x[d] - obs[d]
+    if jacobians.shape[0] > 0:
+        for d in range(3):
+            for c in range(3):
+                jacobians[t, d, c] = wp.where(d == c, 1.0, 0.0)
+
+
+def _prior_problem(n):
+    """n 3-vectors at 0 pulled to their observations by the kernel factor."""
+    targets = np.arange(3 * n, dtype=np.float32).reshape(n, 3)
+    x = wp.zeros(3 * n, dtype=float)
+    states = pycunls.VectorStateBatch3(x, n)
+    states.set_num_active_states(n)
+    prior = WarpFactorBatch(_prior3_kernel, inputs=[wp.array(targets, dtype=wp.vec3)],
+                            residual_size=3, state_sizes=[3], capacity=n)
+    prior.set_num_active_factors(n)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    return problem, prior, states, x, targets
+
+
+@wp.kernel
+def _wrong_tail(observations: wp.array(dtype=wp.vec3), factor_ids: wp.array(dtype=wp.int32),
+                states: wp.array(dtype=wp.uint64), residuals: wp.array2d(dtype=float),
+                jacobians: wp.array3d(dtype=float)):
+    pass
+
+
+class TestKernelFactor:
+    """A WarpFactorBatch built from a kernel: no subclass, shaped arrays."""
+
+    def test_solves_and_passes_check_jacobians(self, stream):
+        problem, prior, states, x, targets = _prior_problem(64)
+        problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(64)])
+        for check in pycunls.check_jacobians(problem, stream):
+            assert check.ok, check
+        summary = pycunls.GaussNewtonMinimizer().minimize(stream, problem)
+        assert summary.converged(), summary.message
+        np.testing.assert_allclose(x.numpy().reshape(-1, 3), targets, atol=1e-4)
+
+    def test_residuals_only_with_a_numeric_jacobian(self, stream):
+        """JacobianMode.numeric evaluates residuals only: the kernel sees zero-row jacobians."""
+        problem, prior, states, x, targets = _prior_problem(8)
+        problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(8)],
+                                 jacobian_mode_override=pycunls.JacobianMode.numeric)
+        summary = pycunls.LevenbergMarquardtMinimizer().minimize(stream, problem)
+        assert summary.converged(), summary.message
+        np.testing.assert_allclose(x.numpy().reshape(-1, 3), targets, atol=1e-3)
+
+    def test_inputs_are_read_at_every_evaluation(self, stream):
+        problem, prior, states, x, targets = _prior_problem(4)
+        problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(4)])
+        pycunls.GaussNewtonMinimizer().minimize(stream, problem)
+        prior.inputs[0] = wp.array(-targets, dtype=wp.vec3)   # new data, same batch
+        pycunls.GaussNewtonMinimizer().minimize(stream, problem)
+        np.testing.assert_allclose(x.numpy().reshape(-1, 3), -targets, atol=1e-4)
+
+    def test_repeated_factor_ids(self, stream):
+        """Explicit ids (as RANSAC passes them) select each thread's factor."""
+        problem, prior, states, x, targets = _prior_problem(4)
+        problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(4)])
+        n = 6
+        ids = wp.array(np.array([3, 1, 3, 0, 2, 1], np.int32))
+        table = wp.array(np.full(n, states.state_device_ptr(0), np.uint64))
+        residuals = wp.zeros(3 * n, dtype=float)
+        prior.evaluate(residuals.ptr, 0, table.ptr, stream.get_stream(), ids.ptr, n)
+        wp.synchronize()
+        np.testing.assert_allclose(residuals.numpy().reshape(n, 3), -targets[ids.numpy()])
+
+    def test_signature_errors_say_what_and_how_to_fix(self):
+        obs = wp.zeros(1, dtype=wp.vec3)
+        with pytest.raises(TypeError, match="states: wp.array2d.*Fix:"):
+            WarpFactorBatch(_wrong_tail, inputs=[obs], residual_size=3, state_sizes=[3],
+                            capacity=1)
+        with pytest.raises(ValueError, match="got 2 inputs, expected 1: observations.*Fix:"):
+            WarpFactorBatch(_prior3_kernel, inputs=[obs, obs], residual_size=3,
+                            state_sizes=[3], capacity=1)
+        with pytest.raises(TypeError, match="not a Warp kernel.*Fix:"):
+            WarpFactorBatch(lambda: None, residual_size=3, state_sizes=[3], capacity=1)
+        with pytest.raises(ValueError, match="inputs without a kernel.*Fix:"):
+            WarpFactorBatch(inputs=[obs], residual_size=3, state_sizes=[3], capacity=1)
+        no_kernel = WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=1)
+        with pytest.raises(NotImplementedError, match="Fix:"):
+            no_kernel.evaluate(0, 0, 0, 0, 0, 1)
+
+
 class TestWarpFactorBatch:
-    """Verify WarpFactorBatch helpers and end-to-end convergence."""
+    """Verify WarpFactorBatch helpers and end-to-end convergence of an evaluate() override."""
     def test_wrap_array(self):
-        fb = WarpFactorBatch(1, [1], 10)
+        fb = WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=10)
         data = wp.zeros(5, dtype=wp.float32, device="cuda:0")
         arr = fb.wrap_array(data.ptr, wp.float32, 5)
         assert arr.shape == (5,)
 
     def test_default_factor_ids_cache_is_bounded(self):
         """Default ids are t % num_active_factors; only two active counts stay cached."""
-        fb = WarpFactorBatch(1, [1], 10)
+        fb = WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=10)
         for count in [3, 5, 7, 5, 9]:
             fb.set_num_active_factors(count)
             ids = fb.factor_ids(0, 2 * count).numpy()
@@ -120,7 +210,7 @@ class TestWarpFactorBatch:
 
     def test_default_factor_ids_need_active_factors(self):
         """Items without active factors are an error; zero items are fine."""
-        fb = WarpFactorBatch(1, [1], 10)  # 0 active factors
+        fb = WarpFactorBatch(residual_size=1, state_sizes=[1], capacity=10)  # 0 active factors
         assert fb.factor_ids(0, 0).shape == (0,)
         with pytest.raises(ValueError, match="set_num_active_factors"):
             fb.factor_ids(0, 4)

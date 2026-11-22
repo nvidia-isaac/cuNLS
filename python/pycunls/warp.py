@@ -18,18 +18,16 @@
 * :class:`WarpFunctionFactorBatch` is a factor from a residual function alone: a ``@wp.func`` of
   its states (poses, rotations, vectors) and of one per-factor data item. Its Jacobian comes from
   Warp's automatic differentiation, central differences, or a Jacobian function.
-* :class:`WarpFactorBatch` is the base class for factors evaluated by your own Warp kernels
-  (residuals and analytic Jacobians), the fastest form.
-* :class:`WarpStateBatch` is the base class for a custom manifold update (the *Plus* operation)
-  in Warp kernels.
+* :class:`WarpFactorBatch` is a factor evaluated by your own Warp kernel (residuals and
+  analytic Jacobians), the fastest form.
+* :class:`WarpStateBatch` is a state batch whose manifold update (the *Plus* operation) is
+  your own Warp kernel.
 
-The base classes wrap the raw device pointers the cuNLS minimizers pass into ``warp.array``
-objects, so that standard ``wp.launch()`` calls work. For kernels over poses, points and
-rotations (custom kinematic objectives through ``pycunls.LinkFrameFactorBatch`` among them), the
-device functions :func:`pose_at`, :func:`point_at` and :func:`rotation_at` read a state (pointer
-table entry ``t * K + k``: state k of item t) in the layout of ``SE3StateBatch``,
-``VectorStateBatch3`` and ``SO3StateBatch`` (the layouts of the ``FrameView`` views), and
-:func:`jacobian_index` gives the position of a Jacobian entry.
+The device functions :func:`scalar_at`, :func:`point_at`, :func:`pose_at` and
+:func:`rotation_at` read the state a ``states[t, k]`` pointer of a :class:`WarpFactorBatch`
+kernel points to, in the layout of ``VectorStateBatch1``, ``VectorStateBatch3``,
+``SE3StateBatch`` and ``SO3StateBatch`` (and of the ``FrameView`` views of
+``pycunls.LinkFrameFactorBatch``, for custom kinematic objectives).
 
 Requires ``warp-lang`` (``pip install warp-lang``).
 """
@@ -45,89 +43,139 @@ import numpy as np
 
 import warp as wp
 
-from pycunls._arrays import cached_stream, is_warp_function, warp_length, warp_result_type
+from pycunls._arrays import (cached_stream, cuda_device, is_warp_function, warp_length,
+                             warp_result_type)
 from pycunls._pycunls_core import CustomFactorBatch, CustomStateBatch
 
 
-def _cuda_device(device, owner: str) -> wp.Device:
-    """The Warp device a batch lives on: ``device``, or Warp's current device when it is None
-    (``wp.ScopedDevice`` included); it must be a CUDA device."""
-    resolved = wp.get_device(device)
-    if not resolved.is_cuda:
-        raise ValueError(f"{owner}: the device must be a CUDA device (got {resolved}, expected "
-                         "cuda:N). Fix: pass device='cuda:N', or create the batch under "
-                         "wp.ScopedDevice('cuda:N').")
-    return resolved
+# The parameters a kernel ends with (filled by pycunls): name, dtype, ndim, annotation.
+_FACTOR_KERNEL_TAIL = (("factor_ids", wp.int32, 1, "wp.array(dtype=wp.int32)"),
+                       ("states", wp.uint64, 2, "wp.array2d(dtype=wp.uint64)"),
+                       ("residuals", wp.float32, 2, "wp.array2d(dtype=float)"),
+                       ("jacobians", wp.float32, 3, "wp.array3d(dtype=float)"))
+_PLUS_KERNEL_TAIL = (("x", wp.float32, 2, "wp.array2d(dtype=float)"),
+                     ("delta", wp.float32, 2, "wp.array2d(dtype=float)"),
+                     ("x_plus_delta", wp.float32, 2, "wp.array2d(dtype=float)"))
 
 
-class FactorItems(NamedTuple):
-    """The arrays of one ``WarpFactorBatch.evaluate`` call, ready for a kernel (see
-    :meth:`WarpFactorBatch.items`)."""
-    num_items: int            #: items to evaluate (one thread each)
-    ids: wp.array             #: int32, the factor (measurement) index of each item
-    state_pointers: wp.array  #: uint64, item-major: state k of item t at t * K + k
-    residuals: wp.array       #: float32, residual i of item t at t * residual_size + i
-    jacobians: wp.array       #: float32 Jacobian blocks (jacobian_index), or a 1-float stand-in
-    write_jacobians: int      #: 1 when Jacobians are requested, else 0 (do not write them)
-    stream: wp.Stream         #: the stream cuNLS evaluates on
+def _check_kernel(kernel, inputs: Sequence, tail: tuple, owner: str) -> None:
+    """Raises with the fix unless ``kernel`` is a Warp kernel ending with the parameters of
+    ``tail`` and ``inputs`` fills every parameter before them."""
+    expected = ", ".join(f"{name}: {annotation}" for name, _, _, annotation in tail)
+    if not isinstance(kernel, wp.Kernel):
+        raise TypeError(f"{owner}: kernel is not a Warp kernel (got {type(kernel).__name__}, "
+                        "expected a @wp.kernel function). Fix: decorate it with @wp.kernel.")
+    args = kernel.adj.args
+    given = args[-len(tail):] if len(args) >= len(tail) else args
+    for (name, dtype, ndim, annotation), arg in itertools.zip_longest(tail, given):
+        ok = (arg is not None and wp.types.is_array(arg.type) and arg.type.ndim == ndim and
+              wp.types.types_equal(arg.type.dtype, dtype))
+        if not ok:
+            got = "nothing" if arg is None else f"{arg.label}: {wp.types.type_repr(arg.type)}"
+            raise TypeError(
+                f"{owner}: kernel {kernel.key} must end with the parameters {expected} (got "
+                f"{got} where {name}: {annotation} belongs). Fix: declare your own parameters "
+                f"first, then {expected}.")
+    num_own = len(args) - len(tail)
+    if len(inputs) != num_own:
+        own = ", ".join(a.label for a in args[:num_own]) or "none"
+        raise ValueError(
+            f"{owner}: inputs fills the kernel's parameters before {tail[0][0]} (got "
+            f"{len(inputs)} inputs, expected {num_own}: {own}). Fix: pass one value per "
+            "parameter, in order.")
 
 
 class WarpFactorBatch(CustomFactorBatch):
-    """Base class for user-defined factors evaluated via Warp kernels.
+    """A factor evaluated by your own Warp kernel: residuals and analytic Jacobians.
 
-    Subclasses override :meth:`evaluate`. The shortest form turns the raw call into Warp arrays
-    with :meth:`items` and launches one thread per item with :meth:`launch`, which appends the
-    standard arguments after the factor's own inputs::
+    The kernel runs one thread per evaluated factor and ends with four parameters that pycunls
+    fills; your own parameters come first and take ``inputs``::
 
         @wp.kernel
-        def diff_kernel(measurements: wp.array(dtype=float),          # the factor's inputs ...
-                        ids: wp.array(dtype=wp.int32),                  # ... then the standard
-                        state_pointers: wp.array(dtype=wp.uint64),      #     arguments of launch()
-                        residuals: wp.array(dtype=float), jacobians: wp.array(dtype=float),
-                        write_jacobians: int):
+        def diff_kernel(measurements: wp.array(dtype=float),   # yours (inputs), then always:
+                        factor_ids: wp.array(dtype=wp.int32),    # (n,)       read
+                        states: wp.array2d(dtype=wp.uint64),     # (n, K)     read
+                        residuals: wp.array2d(dtype=float),      # (n, M)     write
+                        jacobians: wp.array3d(dtype=float)):     # (n, M, J)  write; 0 rows: skip
             t = wp.tid()
-            ...
+            left = scalar_at(states[t, 0])
+            right = scalar_at(states[t, 1])
+            residuals[t, 0] = (right - left) - measurements[factor_ids[t]]
+            if jacobians.shape[0] > 0:
+                jacobians[t, 0, 0] = -1.0
+                jacobians[t, 0, 1] = 1.0
 
-        class DiffFactor(WarpFactorBatch):
-            def evaluate(self, *args):
-                return self.launch(diff_kernel, self.items(*args), [self.measurements])
+        diff = WarpFactorBatch(diff_kernel, inputs=[measurements],
+                               residual_size=1, state_sizes=[1, 1], capacity=n)
+
+    Thread ``t`` evaluates factor ``factor_ids[t]`` (index your per-factor data with it) at the
+    states ``states[t, k]`` points to (read them with :func:`scalar_at`, :func:`point_at`,
+    :func:`pose_at`, :func:`rotation_at`, or ``wp.array(ptr=states[t, k], ...)``). The shapes
+    come from the constructor: ``M = residual_size``, ``K = len(state_sizes)`` and
+    ``J = sum(state_sizes)``; Jacobian columns are state by state, ``state_sizes[0]`` columns of
+    state 0 first. ``jacobians`` has no rows when the caller needs residuals only: write it under
+    ``if jacobians.shape[0] > 0``. A minimizer evaluates every active factor once (``factor_ids``
+    is ``0 .. n-1``); RANSAC evaluates the same factors against several state sets, so
+    ``factor_ids`` repeats.
+
+    For full control (several kernels, another library), subclass without a kernel and override
+    :meth:`evaluate`; :meth:`wrap_array`, :meth:`factor_ids` and :meth:`make_warp_stream` convert
+    its raw arguments.
 
     Parameters
     ----------
+    kernel : wp.Kernel, optional
+        The kernel described above. None: the subclass overrides :meth:`evaluate`.
+    inputs : sequence
+        The kernel's own arguments (its parameters before ``factor_ids``), e.g. the per-factor
+        data arrays, in order. They are read at every evaluation: replace one through
+        ``batch.inputs[i] = ...``, or update the arrays in place.
     residual_size : int
-        Dimension of the residual vector per factor.
+        Residuals per factor (M).
     state_sizes : list[int]
-        Tangent dimensions of each state consumed by one factor.
+        Tangent size of each state a factor reads, in slot order (K = its length).
     capacity : int
-        Number of factors the measurement buffers hold. The batch starts
-        with 0 active factors: call :meth:`set_num_active_factors` before solving.
-        The active count is :attr:`num_active_factors`.
+        Number of factors the data holds. The batch starts with 0 active factors: call
+        :meth:`set_num_active_factors` before solving (:attr:`num_active_factors`).
     device : str or wp.Device, optional
-        The CUDA device the factor's data lives on. None (default): Warp's current device at
+        The CUDA device of the factor's data. None (default): Warp's current device at
         construction (``wp.get_device()``, which follows ``wp.ScopedDevice``).
     """
 
     def __init__(
         self,
+        kernel: Any = None,
+        inputs: Sequence = (),
+        *,
         residual_size: int,
         state_sizes: list[int],
         capacity: int,
         device: Any = None,
     ) -> None:
         super().__init__(residual_size, state_sizes, capacity)
-        device = self._device = _cuda_device(device, type(self).__name__)
+        owner = type(self).__name__
+        if kernel is not None:
+            _check_kernel(kernel, inputs, _FACTOR_KERNEL_TAIL, owner)
+        elif inputs:
+            raise ValueError(f"{owner}: inputs without a kernel (got {len(inputs)} inputs, "
+                             "expected none). Fix: pass the kernel they belong to.")
+        self.kernel, self.inputs = kernel, list(inputs)
+        device = self._device = cuda_device(device, owner)
         self._num_states = len(state_sizes)
         self._num_columns = int(sum(state_sizes))
         self._streams: dict = {}    # cudaStream_t handle -> wp.Stream (made once per handle)
-        # Passed as `jacobians` when none are requested (kernels skip it: write_jacobians = 0).
-        self._no_jacobians = wp.zeros(1, dtype=wp.float32, device=device)
+        # The Jacobian argument when only residuals are requested: no rows.
+        self._no_jacobians = wp.empty((0, residual_size, self._num_columns), dtype=wp.float32,
+                                      device=device)
+        # (states, residuals, jacobians pointers, item count) -> their arrays; the last few only.
+        self._arguments: collections.OrderedDict = collections.OrderedDict()
         self._default_ids: dict[Tuple[int, int], wp.array] = {}
         # Active counts with cached default ids: the current one and the one
         # before it (whose arrays in-flight kernels may still read).
         self._default_ids_counts: List[int] = []
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Helpers for an evaluate() of your own
     # ------------------------------------------------------------------
 
     def wrap_array(
@@ -141,7 +189,7 @@ class WarpFactorBatch(CustomFactorBatch):
         Parameters
         ----------
         ptr : int
-            Device pointer (as returned by the trampoline).
+            Device pointer (as :meth:`evaluate` receives it).
         dtype : warp dtype
             Element type, e.g. ``wp.float32``, ``wp.uint64``.
         shape : int or tuple[int, ...]
@@ -153,7 +201,7 @@ class WarpFactorBatch(CustomFactorBatch):
                         device=self._device, copy=False)
 
     def factor_ids(self, factor_ids_ptr: int, num_items: int) -> wp.array:
-        """Factor (measurement) index of every item, as an ``int32`` array.
+        """Factor index of every evaluated item, as an ``int32`` array.
 
         Wraps ``factor_ids_ptr`` when it is non-null; otherwise returns
         ``t % num_active_factors`` for ``t < num_items`` (built once per item count
@@ -202,38 +250,8 @@ class WarpFactorBatch(CustomFactorBatch):
         """
         return cached_stream(self._streams, stream_handle, self._device)
 
-    def items(self, residuals_ptr: int, jacobians_ptr: int, state_pointers_ptr: int,
-              stream_handle: int, factor_ids_ptr: int, num_factor_ids: int) -> FactorItems:
-        """The arguments of :meth:`evaluate` as Warp arrays (see :class:`FactorItems`):
-        ``state_pointers`` holds ``num_items * K`` entries (K = ``len(state_sizes)``),
-        ``residuals`` ``num_items * residual_size`` floats, ``jacobians`` the row-major Jacobian
-        blocks (``num_items * residual_size * sum(state_sizes)`` floats; index them with
-        :func:`jacobian_index`) or, when none are requested, a 1-float stand-in with
-        ``write_jacobians = 0``. Nothing is allocated except the default ids on a first use (see
-        :meth:`factor_ids`)."""
-        n, m = num_factor_ids, self.residuals_size
-        write = 1 if jacobians_ptr != 0 else 0
-        return FactorItems(
-            n, self.factor_ids(factor_ids_ptr, n),
-            self.wrap_array(state_pointers_ptr, wp.uint64, n * self._num_states),
-            self.wrap_array(residuals_ptr, wp.float32, n * m),
-            (self.wrap_array(jacobians_ptr, wp.float32, n * m * self._num_columns) if write
-             else self._no_jacobians),
-            write, self.make_warp_stream(stream_handle))
-
-    def launch(self, kernel, items: FactorItems, inputs: Sequence = ()) -> bool:
-        """Launches ``kernel`` with one thread per item on cuNLS's stream. Its arguments are
-        ``inputs`` (the factor's own arrays and values) followed by ``ids, state_pointers,
-        residuals, jacobians, write_jacobians`` from ``items``. Returns True, so that
-        ``evaluate`` can ``return self.launch(...)``."""
-        wp.launch(kernel, dim=items.num_items,
-                  inputs=[*inputs, items.ids, items.state_pointers, items.residuals,
-                          items.jacobians, items.write_jacobians],
-                  stream=items.stream, device=self._device)
-        return True
-
     # ------------------------------------------------------------------
-    # Override point
+    # Evaluation
     # ------------------------------------------------------------------
 
     def evaluate(
@@ -245,27 +263,23 @@ class WarpFactorBatch(CustomFactorBatch):
         factor_ids_ptr: int,
         num_factor_ids: int,
     ) -> bool:
-        """Evaluate residuals and Jacobians of ``num_factor_ids`` items.
+        """Evaluate residuals and Jacobians of ``num_factor_ids`` items: launches the kernel
+        (see the class docstring) on cuNLS's stream. Called by cuNLS with raw device pointers.
 
-        An *item* is one factor of this batch evaluated against one set of
-        states (the same contract as C++ ``FactorBatch::Evaluate``).
-        The regular minimizers call this with
-        ``num_factor_ids == num_active_factors``
-        and ``factor_ids_ptr == 0``, i.e. item *t* is factor *t*. The RANSAC
-        minimizers also evaluate the same factors against many state sets in
-        one call. Launch one thread per item; for item *t*:
+        Override it only for full control, in a subclass constructed without a kernel. An
+        *item* is one factor evaluated against one set of states (the C++
+        ``FactorBatch::Evaluate`` contract): the minimizers evaluate every active factor once
+        (``factor_ids_ptr == 0``, item *t* is factor *t*); RANSAC evaluates the same factors
+        against many state sets. For item *t*:
 
-        * its factor (measurement) index is ``factor_ids[t]`` if
-          ``factor_ids_ptr != 0``, otherwise ``t % num_active_factors``;
+        * its factor index is ``factor_ids[t]`` if ``factor_ids_ptr != 0``, otherwise
+          ``t % num_active_factors`` (:meth:`factor_ids` gives both as one array);
         * its *K* states are ``state_pointers[t * K + k]``;
-        * it writes ``residual_size`` residuals at ``t * residual_size`` and,
-          if requested, its row-major ``residual_size x sum(state_sizes)``
-          Jacobian block at ``t * residual_size * sum(state_sizes)``.
+        * it writes ``residual_size`` residuals at ``t * residual_size`` and, if requested, its
+          row-major ``residual_size x sum(state_sizes)`` Jacobian block at
+          ``t * residual_size * sum(state_sizes)``.
 
-        Override this method in your subclass. :meth:`items` converts the
-        arguments into Warp arrays and :meth:`launch` launches a kernel with
-        them (see the class docstring); for anything else, :meth:`wrap_array`
-        wraps a raw device pointer and :meth:`make_warp_stream` gives the
+        :meth:`wrap_array` wraps a raw device pointer and :meth:`make_warp_stream` gives the
         ``warp.Stream`` for ``wp.launch(..., stream=...)``.
 
         Parameters
@@ -295,9 +309,32 @@ class WarpFactorBatch(CustomFactorBatch):
         bool
             ``True`` on success.
         """
-        raise NotImplementedError(
-            "WarpFactorBatch.evaluate() must be overridden in a subclass."
-        )
+        if self.kernel is None:
+            raise NotImplementedError(
+                f"{type(self).__name__}: no kernel to evaluate (got kernel=None, expected a "
+                "@wp.kernel). Fix: pass the kernel and its inputs to the constructor, or "
+                "override evaluate() in a subclass.")
+        n = num_factor_ids
+        key = (state_pointers_ptr, residuals_ptr, jacobians_ptr, n)
+        arguments = self._arguments.get(key)
+        if arguments is None:
+            m = self.residuals_size
+            arguments = (
+                self.wrap_array(state_pointers_ptr, wp.uint64, (n, self._num_states)),
+                self.wrap_array(residuals_ptr, wp.float32, (n, m)),
+                (self.wrap_array(jacobians_ptr, wp.float32, (n, m, self._num_columns))
+                 if jacobians_ptr != 0 else self._no_jacobians))
+            self._arguments[key] = arguments
+            while len(self._arguments) > 8:     # cuNLS reuses a few buffers between calls
+                self._arguments.popitem(last=False)
+        else:
+            self._arguments.move_to_end(key)
+        states, residuals, jacobians = arguments
+        wp.launch(self.kernel, dim=n,
+                  inputs=[*self.inputs, self.factor_ids(factor_ids_ptr, n), states],
+                  outputs=[residuals, jacobians],
+                  stream=self.make_warp_stream(stream_handle), device=self._device)
+        return True
 
 
 # ======================================================================
@@ -305,21 +342,44 @@ class WarpFactorBatch(CustomFactorBatch):
 # ======================================================================
 
 class WarpStateBatch(CustomStateBatch):
-    """Base class for user-defined state batches with a Warp-based Plus.
+    """A state batch whose manifold update (Plus) is your own Warp kernel.
 
-    Subclasses must override :meth:`plus` and use ``wp.launch()`` to
-    compute the manifold retraction ``x_plus_delta = x (+) delta`` on the
-    GPU.
+    The kernel runs one thread per state and ends with three parameters that pycunls fills; your
+    own parameters, if any, come first and take ``inputs``::
+
+        @wp.kernel
+        def positive_plus(x: wp.array2d(dtype=float),               # (n, A)  read
+                          delta: wp.array2d(dtype=float),           # (n, T)  read
+                          x_plus_delta: wp.array2d(dtype=float)):   # (n, A)  write
+            i = wp.tid()
+            x_plus_delta[i, 0] = x[i, 0] * wp.exp(delta[i, 0])
+
+        states = WarpStateBatch(positive_plus, data=values,
+                                ambient_size=1, tangent_size=1, capacity=n)
+
+    Thread ``i`` writes ``x_plus_delta[i] = x[i] (+) delta[i]``: ``A = ambient_size`` floats
+    stored per state, ``T = tangent_size`` floats per step. ``n`` covers every active state of
+    every replica (RANSAC updates one replica per hypothesis in one call), each independently.
+    ``x_plus_delta`` never overlaps the inputs. The constructor checks the kernel's signature and
+    raises with the fix otherwise.
+
+    For full control (several kernels, another library), subclass without a kernel and override
+    :meth:`plus`; :meth:`wrap_array` and :meth:`make_warp_stream` convert its raw arguments.
 
     Parameters
     ----------
+    kernel : wp.Kernel, optional
+        The kernel described above. None: the subclass overrides :meth:`plus`.
+    inputs : sequence
+        The kernel's own arguments (its parameters before ``x``), in order. They are read at
+        every update: replace one through ``batch.inputs[i] = ...``.
     data : DevicePointer
         GPU array (e.g. ``wp.array``) or raw int pointer to the contiguous buffer
         holding ``capacity * ambient_size`` floats.
     ambient_size : int
-        Number of floats stored per state (storage dimension).
+        Number of floats stored per state (A).
     tangent_size : int
-        Number of floats per tangent-space update vector.
+        Number of floats per tangent-space step (T).
     capacity : int
         Number of states the buffer holds. The batch starts with 0
         active states: call :meth:`set_num_active_states` before solving.
@@ -335,6 +395,9 @@ class WarpStateBatch(CustomStateBatch):
 
     def __init__(
         self,
+        kernel: Any = None,
+        inputs: Sequence = (),
+        *,
         data: Any,
         ambient_size: int,
         tangent_size: int,
@@ -348,13 +411,22 @@ class WarpStateBatch(CustomStateBatch):
                              const_state_ids, const_capacity)
         else:
             super().__init__(data, ambient_size, tangent_size, capacity)
+        owner = type(self).__name__
+        if kernel is not None:
+            _check_kernel(kernel, inputs, _PLUS_KERNEL_TAIL, owner)
+        elif inputs:
+            raise ValueError(f"{owner}: inputs without a kernel (got {len(inputs)} inputs, "
+                             "expected none). Fix: pass the kernel they belong to.")
+        self.kernel, self.inputs = kernel, list(inputs)
         if device is None and isinstance(data, wp.array):
             device = data.device
-        self._device = _cuda_device(device, type(self).__name__)
+        self._device = cuda_device(device, owner)
         self._streams: dict = {}    # cudaStream_t handle -> wp.Stream (made once per handle)
+        # (x, delta, x_plus_delta pointers, state count) -> their arrays; the last few only.
+        self._arguments: collections.OrderedDict = collections.OrderedDict()
 
     # ------------------------------------------------------------------
-    # Helpers (same API as WarpFactorBatch)
+    # Helpers for a plus() of your own (same API as WarpFactorBatch)
     # ------------------------------------------------------------------
 
     def wrap_array(
@@ -368,7 +440,7 @@ class WarpStateBatch(CustomStateBatch):
         Parameters
         ----------
         ptr : int
-            Device pointer (as returned by the trampoline).
+            Device pointer (as :meth:`plus` receives it).
         dtype : warp dtype
             Element type, e.g. ``wp.float32``.
         shape : int or tuple[int, ...]
@@ -391,7 +463,7 @@ class WarpStateBatch(CustomStateBatch):
         return cached_stream(self._streams, stream_handle, self._device)
 
     # ------------------------------------------------------------------
-    # Override point
+    # Update
     # ------------------------------------------------------------------
 
     def plus(
@@ -402,20 +474,15 @@ class WarpStateBatch(CustomStateBatch):
         stream_handle: int,
         num_replicas: int,
     ) -> None:
-        """Apply the manifold retraction: ``x_plus_delta = x (+) delta``.
+        """Apply the manifold retraction ``x_plus_delta = x (+) delta``: launches the kernel (see
+        the class docstring) on cuNLS's stream. Called by cuNLS with raw device pointers.
 
-        The arrays hold ``num_replicas`` contiguous copies of the batch
-        (the same contract as C++ ``StateBatch::Plus``): with
-        ``N = num_active_states`` (the active count), replica *r* is states
-        ``[r * N, (r + 1) * N)``.
-        The regular minimizers pass ``num_replicas == 1``; the RANSAC
-        minimizers update one replica per hypothesis in a single call.
-        Process all ``num_replicas * N`` states, each independently.
-
-        Override this method in your subclass. Use :meth:`wrap_array` to
-        convert the raw device pointers into ``warp.array`` objects and
-        :meth:`make_warp_stream` to obtain a ``warp.Stream`` suitable for
-        ``wp.launch(..., stream=...)``.
+        Override it only for full control, in a subclass constructed without a kernel. The
+        arrays hold ``num_replicas`` contiguous copies of the batch (the C++
+        ``StateBatch::Plus`` contract): with ``N = num_active_states``, replica *r* is states
+        ``[r * N, (r + 1) * N)``. The regular minimizers pass ``num_replicas == 1``; the RANSAC
+        minimizers update one replica per hypothesis in a single call. Process all
+        ``num_replicas * N`` states, each independently.
 
         Parameters
         ----------
@@ -434,9 +501,29 @@ class WarpStateBatch(CustomStateBatch):
         num_replicas : int
             Number of contiguous copies (>= 1).
         """
-        raise NotImplementedError(
-            "WarpStateBatch.plus() must be overridden in a subclass."
-        )
+        if self.kernel is None:
+            raise NotImplementedError(
+                f"{type(self).__name__}: no kernel for the update (got kernel=None, expected a "
+                "@wp.kernel). Fix: pass the kernel (and its inputs) to the constructor, or "
+                "override plus() in a subclass.")
+        n = self.num_active_states * num_replicas
+        if n == 0:
+            return
+        key = (x_ptr, delta_ptr, x_plus_delta_ptr, n)
+        arguments = self._arguments.get(key)
+        if arguments is None:
+            a, t = self.ambient_size, self.tangent_size
+            arguments = (self.wrap_array(x_ptr, wp.float32, (n, a)),
+                         self.wrap_array(delta_ptr, wp.float32, (n, t)),
+                         self.wrap_array(x_plus_delta_ptr, wp.float32, (n, a)))
+            self._arguments[key] = arguments
+            while len(self._arguments) > 8:     # cuNLS reuses a few buffers between calls
+                self._arguments.popitem(last=False)
+        else:
+            self._arguments.move_to_end(key)
+        x, delta, x_plus_delta = arguments
+        wp.launch(self.kernel, dim=n, inputs=[*self.inputs, x, delta], outputs=[x_plus_delta],
+                  stream=self.make_warp_stream(stream_handle), device=self._device)
 
 
 # ======================================================================
@@ -444,40 +531,36 @@ class WarpStateBatch(CustomStateBatch):
 # ======================================================================
 
 @wp.func
-def pose_at(state_pointers: wp.array(dtype=wp.uint64), index: int) -> wp.transform:
-    """The SE(3) pose ``state_pointers[index]`` points to (``SE3StateBatch`` layout, or a
-    ``FrameView.Pose`` view: row-major 4x4 ``world_from_frame``), as a ``wp.transform``.
-    ``index`` is a position in the item-major pointer table: state k of item t is at
-    ``t * K + k`` for a factor with K states (``t`` when K = 1)."""
-    X = wp.array(ptr=state_pointers[index], shape=(16,), dtype=float)
+def scalar_at(state: wp.uint64) -> float:
+    """The value of the one-dimensional state ``state`` points to (``VectorStateBatch1``
+    layout), e.g. ``scalar_at(states[t, k])`` in a :class:`WarpFactorBatch` kernel."""
+    return wp.array(ptr=state, shape=(1,), dtype=float)[0]
+
+
+@wp.func
+def point_at(state: wp.uint64) -> wp.vec3:
+    """The 3D point ``state`` points to (``VectorStateBatch3`` layout, or a
+    ``FrameView.Position`` view: the frame's origin in the world)."""
+    x = wp.array(ptr=state, shape=(3,), dtype=float)
+    return wp.vec3(x[0], x[1], x[2])
+
+
+@wp.func
+def pose_at(state: wp.uint64) -> wp.transform:
+    """The SE(3) pose ``state`` points to (``SE3StateBatch`` layout, or a ``FrameView.Pose``
+    view: row-major 4x4 ``world_from_frame``), as a ``wp.transform``. Its tangent (Jacobian
+    columns) is ``[omega, v]`` of the right perturbation ``X Exp([omega, v])``."""
+    X = wp.array(ptr=state, shape=(16,), dtype=float)
     R = wp.mat33(X[0], X[1], X[2], X[4], X[5], X[6], X[8], X[9], X[10])
     return wp.transform(wp.vec3(X[3], X[7], X[11]), wp.quat_from_matrix(R))
 
 
 @wp.func
-def point_at(state_pointers: wp.array(dtype=wp.uint64), index: int) -> wp.vec3:
-    """The 3D point ``state_pointers[index]`` points to (``VectorStateBatch3`` layout, or a
-    ``FrameView.Position`` view: the frame's origin in the world); ``index`` as in
-    :func:`pose_at` (``t * K + k``)."""
-    x = wp.array(ptr=state_pointers[index], shape=(3,), dtype=float)
-    return wp.vec3(x[0], x[1], x[2])
-
-
-@wp.func
-def rotation_at(state_pointers: wp.array(dtype=wp.uint64), index: int) -> wp.mat33:
-    """The rotation ``state_pointers[index]`` points to (``SO3StateBatch`` layout, or a
-    ``FrameView.Orientation`` view: row-major 3x3 ``world_from_frame``); ``index`` as in
-    :func:`pose_at` (``t * K + k``)."""
-    R = wp.array(ptr=state_pointers[index], shape=(9,), dtype=float)
+def rotation_at(state: wp.uint64) -> wp.mat33:
+    """The rotation ``state`` points to (``SO3StateBatch`` layout, or a
+    ``FrameView.Orientation`` view: row-major 3x3 ``world_from_frame``)."""
+    R = wp.array(ptr=state, shape=(9,), dtype=float)
     return wp.mat33(R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8])
-
-
-@wp.func
-def jacobian_index(item: int, row: int, column: int, num_rows: int, num_columns: int) -> int:
-    """Position of Jacobian entry (row, column) of item ``item`` in the row-major
-    ``num_rows x num_columns`` blocks of ``WarpFactorBatch.evaluate`` (``num_columns`` = the sum
-    of ``state_sizes``; a state's columns start after those of the states before it)."""
-    return (item * num_rows + row) * num_columns + column
 
 
 # ======================================================================
@@ -499,10 +582,9 @@ def _plus_so3(q: wp.quat, d: wp.vec3) -> wp.quat:
 
 
 @wp.func
-def _quat_at(state_pointers: wp.array(dtype=wp.uint64), index: int) -> wp.quat:
-    """The rotation ``state_pointers[index]`` points to (``SO3StateBatch`` layout), as a
-    quaternion."""
-    return wp.quat_from_matrix(rotation_at(state_pointers, index))
+def _quat_at(state: wp.uint64) -> wp.quat:
+    """The rotation ``state`` points to (``SO3StateBatch`` layout), as a quaternion."""
+    return wp.quat_from_matrix(rotation_at(state))
 
 
 class _Slot(NamedTuple):
@@ -518,10 +600,10 @@ class _Slot(NamedTuple):
 def _slot(t) -> Union[_Slot, None]:
     """The :class:`_Slot` of a residual argument type, or None when it is not a state type."""
     if wp.types.types_equal(t, wp.transform):
-        return _Slot("SE3StateBatch", 6, wp.spatial_vector, "pose_at({p}, {i})",
+        return _Slot("SE3StateBatch", 6, wp.spatial_vector, "pose_at({p}[{i}])",
                      "_plus_se3({x}, {d})")
     if wp.types.types_equal(t, wp.quat):
-        return _Slot("SO3StateBatch", 3, wp.vec3, "_quat_at({p}, {i})", "_plus_so3({x}, {d})")
+        return _Slot("SO3StateBatch", 3, wp.vec3, "_quat_at({p}[{i}])", "_plus_so3({x}, {d})")
     vector = wp.types.type_is_vector(t) and getattr(t, "_wp_scalar_type_", None) == wp.float32
     if t in (float, wp.float32) or vector:
         return _Slot("VectorStateBatch", warp_length(t), t,

@@ -151,7 +151,7 @@ class ArticulationTopology {
 
   /**
    * @brief Validates `description`, sorts the joints parents first and uploads
-   * the topology.
+   * the topology to the current CUDA device.
    * @throws std::invalid_argument with "ArticulationTopology: <what> (got X,
    *         expected Y). Fix: <action>." for any inconsistency.
    */

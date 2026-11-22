@@ -377,30 +377,22 @@ def test_diagnose_names_out_of_range_links(arm, stream):
 
 
 @wp.kernel
-def _frame_height_kernel(heights: wp.array(dtype=float), ids: wp.array(dtype=wp.int32),
-                         state_pointers: wp.array(dtype=wp.uint64),
-                         residuals: wp.array(dtype=float), jacobians: wp.array(dtype=float),
-                         write_jacobians: int):
+def _frame_height_kernel(heights: wp.array(dtype=float), factor_ids: wp.array(dtype=wp.int32),
+                         states: wp.array2d(dtype=wp.uint64), residuals: wp.array2d(dtype=float),
+                         jacobians: wp.array3d(dtype=float)):
     t = wp.tid()
-    pose = wp.array(ptr=state_pointers[t], shape=(16,), dtype=float)  # row-major 4x4
-    residuals[t] = pose[11] - heights[ids[t]]                           # p_z - h
-    if write_jacobians != 0:
+    pose = wp.array(ptr=states[t, 0], shape=(16,), dtype=float)  # row-major 4x4
+    residuals[t, 0] = pose[11] - heights[factor_ids[t]]           # p_z - h
+    if jacobians.shape[0] > 0:
         for k in range(3):
-            jacobians[6 * t + k] = 0.0               # d p_z / d omega (body)
-            jacobians[6 * t + 3 + k] = pose[8 + k]   # d p_z / d v (body): row z of R
+            jacobians[t, 0, k] = 0.0               # d p_z / d omega (body)
+            jacobians[t, 0, 3 + k] = pose[8 + k]   # d p_z / d v (body): row z of R
 
 
-class _FrameHeight(WarpFactorBatch):
+def _frame_height(heights, capacity):
     """r = p_z - h on one SE(3) pose: a custom factor that knows nothing about robots."""
-
-    def __init__(self, heights, capacity):
-        super().__init__(residual_size=1, state_sizes=[6], capacity=capacity)
-        self.heights = heights
-
-    def evaluate(self, *args):
-        """Item t looks up its factor's data by ids[t] and reads its state through the
-        pointer table (see WarpFactorBatch.items)."""
-        return self.launch(_frame_height_kernel, self.items(*args), [self.heights])
+    return WarpFactorBatch(_frame_height_kernel, inputs=[heights], residual_size=1,
+                           state_sizes=[6], capacity=capacity)
 
 
 def test_link_frame_factor_with_a_warp_factor(arm, stream):
@@ -433,7 +425,7 @@ def test_link_frame_factor_with_a_warp_factor(arm, stream):
         wp.synchronize()
         return problem, before, summary, q.numpy()
 
-    inner = _FrameHeight(wp.array(heights), n)
+    inner = _frame_height(wp.array(heights), n)
     frame = pycunls.LinkFrameFactorBatch(topo, inner, frame_slots=[(0, pycunls.FrameView.Pose)],
                                          topology_links=tools,
                                          frame_offsets=wp.array(np.tile(offset, n)))
@@ -492,12 +484,12 @@ def _pose_problem(arm, stream, inner, n, rng):
 
 def test_warp_function_factor_on_a_pose_view_matches_analytic(arm, stream):
     """WarpFunctionFactorBatch (residual function only, Warp autodiff Jacobian) on a Pose view
-    solves like the analytic _FrameHeight factor; a vector residual passes check_jacobians in
+    solves like the analytic _frame_height factor; a vector residual passes check_jacobians in
     every mode."""
     n = 16
     heights = np.random.default_rng(6).uniform(0.3, 0.6, n).astype(np.float32)
     results = []
-    for inner in (_FrameHeight(wp.array(heights), n),
+    for inner in (_frame_height(wp.array(heights), n),
                   WarpFunctionFactorBatch(_frame_height_residual, data=wp.array(heights),
                                           capacity=n)):
         problem, states = _pose_problem(arm, stream, inner, n, np.random.default_rng(4))
@@ -602,7 +594,7 @@ def test_topology_from_joint_arrays_maps_scene_indices(stream):
 
 
 def test_warp_factor_batch_helpers_cache_streams():
-    inner = _FrameHeight(wp.zeros(4, dtype=float), 4)
+    inner = _frame_height(wp.zeros(4, dtype=float), 4)
     s = wp.Stream(wp.get_cuda_device())
     assert inner.make_warp_stream(s.cuda_stream) is inner.make_warp_stream(s.cuda_stream)
 
@@ -622,6 +614,91 @@ def test_topology_accepts_gpu_arrays():
     assert (a.joint_count, a.coord_count, a.dof_count) == (b.joint_count, b.coord_count,
                                                            b.dof_count)
     assert list(a.lower_limits) == list(b.lower_limits) == [-1.0]
+
+
+
+def _device_of(topology):
+    """The device of a topology: that of the state batches built on it (Problem.device)."""
+    problem = pycunls.Problem()
+    problem.add_state_batch(pycunls.ArticulationStateBatch(topology, 2))
+    return problem.device
+
+
+def test_topology_device_is_its_arrays_else_the_current_one(arm, tmp_path):
+    current = wp.get_cuda_device()
+    assert _device_of(arm.topology) == current.ordinal            # host data: the current device
+    host = dict(joint_type=[JT.Fixed.value, JT.Revolute.value], joint_parent=[-1, 0],
+                joint_child=[0, 1], joint_X_p=[0, 0, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0, 0, 1],
+                joint_X_c=[0, 0, 0, 0, 0, 0, 1] * 2, joint_q_start=[0, 0, 1],
+                joint_qd_start=[0, 0, 1], joint_axis=[0, 0, 1])
+    gpu = {k: wp.array(np.asarray(v, np.float32)) if k.startswith("joint_X") else v
+           for k, v in host.items()}
+    assert _device_of(pycunls.ArticulationTopology(**gpu)) == current.ordinal
+    path = tmp_path / "arm.urdf"
+    path.write_text(URDF)
+    for device in (f"cuda:{current.ordinal}", current, "cuda"):
+        assert _device_of(topology_from_urdf(str(path), device=device).topology) == \
+            current.ordinal
+    for device in ("cuda:99", "cpu", 1.5):
+        with pytest.raises(ValueError, match="CUDA device.*Fix:"):
+            topology_from_urdf(str(path), device=device)
+
+
+@pytest.mark.skipif(wp.get_cuda_device_count() < 2, reason="needs two GPUs")
+def test_articulations_live_on_their_arrays_device_whatever_is_current():
+    """A scene on cuda:1 gives a topology and states on cuda:1 while cuda:0 is current; host
+    data goes where device= (or wp.ScopedDevice) says."""
+    arrays, limits = _scene_arrays()
+    scene_on_1 = [wp.array(np.asarray(a), device="cuda:1") for a in arrays]
+    with wp.ScopedDevice("cuda:0"):
+        art = topology_from_joint_arrays(*scene_on_1, joints=range(3, 7), **limits)
+        assert _device_of(art.topology) == 1
+        host = topology_from_joint_arrays(*arrays, joints=range(3, 7), device="cuda:1", **limits)
+        assert _device_of(host.topology) == 1
+    with wp.ScopedDevice("cuda:1"):
+        assert _device_of(topology_from_joint_arrays(*arrays, joints=range(3, 7),
+                                                     **limits).topology) == 1
+
+
+class _InterfaceArray:
+    """A GPU array known only through __cuda_array_interface__ and __dlpack_device__ (as a CuPy
+    or PyTorch array is): its device comes from DLPack, not from Warp's current device."""
+
+    def __init__(self, array: wp.array, dlpack_device):
+        self._array, self._dlpack = array, dlpack_device
+
+    @property
+    def __cuda_array_interface__(self):
+        return self._array.__cuda_array_interface__
+
+    def __len__(self):
+        return len(self._array)
+
+    def __dlpack_device__(self):
+        return self._dlpack
+
+
+def test_interface_arrays_take_their_device_from_dlpack():
+    from pycunls._arrays import gpu_device, to_numpy
+
+    current = wp.get_cuda_device()
+    values = wp.array(np.arange(4, dtype=np.float32))
+    a = _InterfaceArray(values, (2, current.ordinal))     # kDLCUDA
+    assert gpu_device(a) == current
+    np.testing.assert_array_equal(to_numpy(a, np.float32, "a", "test"), np.arange(4))
+    assert gpu_device(_InterfaceArray(values, (1, 0))) == current  # kDLCPU: Warp's fallback
+
+
+@pytest.mark.skipif(wp.get_cuda_device_count() < 2, reason="needs two GPUs")
+def test_cupy_scene_arrays_on_another_gpu():
+    """CuPy arrays on cuda:1 while cuda:0 is current: the topology goes to cuda:1."""
+    cp = pytest.importorskip("cupy")
+    arrays, limits = _scene_arrays()
+    with cp.cuda.Device(1):
+        on_1 = [cp.asarray(np.asarray(a)) for a in arrays]
+    with wp.ScopedDevice("cuda:0"):
+        art = topology_from_joint_arrays(*on_1, joints=range(3, 7), **limits)
+        assert _device_of(art.topology) == 1
 
 
 def test_inverse_kinematics_recipe(arm, stream):

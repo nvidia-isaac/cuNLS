@@ -41,11 +41,11 @@ source on older distributions), Python 3.10 to 3.14, CUDA 13 (driver R580 or new
 
 .. code-block:: bash
 
-   pip install pycunls-cu13 "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"
+   pip install pycunls-cu13
    python -m pycunls doctor
 
-The ``cuda-toolkit`` packages supply the CUDA libraries the wheel links (see
-`CUDA libraries`_); a system CUDA 13 toolkit works too.
+The wheel depends on NVIDIA's pip packages for the CUDA libraries it links (see
+`CUDA libraries`_).
 
 ===============================================================================
 Prerequisites (source builds)
@@ -147,13 +147,13 @@ CUDA libraries
 ===============================================================================
 
 The wheel links ``cudart``, ``cublas``, ``cusparse`` and ``cusolver`` without
-bundling them. Its native module searches, in order: ``LD_LIBRARY_PATH``, the
-NVIDIA pip packages next to it in ``site-packages`` (``nvidia/cu13/lib``),
-then the system library cache. A CUDA 13 toolkit under ``/usr/local/cuda`` is
-found only when its ``lib64`` directory is in the cache (``ldconfig``) or on
-``LD_LIBRARY_PATH`` (e.g. ``export LD_LIBRARY_PATH=/usr/local/cuda/lib64``),
-which a runfile installation does not set up.
-Install the pip packages from one CUDA release with
-``pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.2.*"``.
+bundling them, and depends on NVIDIA's pip packages for them
+(``cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14``). PyTorch's CUDA 13
+wheels depend on the same packages, pinned to one release; pycunls accepts any
+CUDA 13 release, so one copy of each library serves both. The native module
+searches, in order: ``LD_LIBRARY_PATH``, the NVIDIA pip packages next to it in
+``site-packages`` (``nvidia/cu13/lib``), then the system library cache. A
+directory on ``LD_LIBRARY_PATH`` (such as a system CUDA 13 toolkit's
+``lib64``) therefore takes precedence over the pip packages.
 
 Next: :doc:`pycunls_quick_start`.

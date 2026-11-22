@@ -64,6 +64,9 @@ class ArticulationStateBatch : public StateBatch, public BoxBoundedStates, publi
    * coordinates 0, identity quaternions) with their cache computed. The active
    * count starts at 0: call SetNumActiveStates(n) before solving.
    *
+   * The storage is allocated on the current device, which must be the
+   * topology's (the Python binding makes it current itself).
+   *
    * @param topology Kinematic tree; must outlive this batch.
    * @param capacity Instances the storage holds.
    * @param apply_joint_limits Use the topology's limits as box bounds (when it

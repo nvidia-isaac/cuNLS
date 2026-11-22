@@ -4,11 +4,20 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pycunls-cu13"
-version = "0.4.3"
+version = "0.4.4"
 description = "Python bindings for cuNLS: CUDA-accelerated nonlinear least squares solver"
 requires-python = ">=3.10"
 # 1.18 is the first warp-lang whose PyPI wheels are CUDA 13 builds (the toolkit pycunls uses).
-dependencies = ["numpy", "warp-lang>=1.18"]
+# The native module links the CUDA 13 libraries without bundling them: they come from NVIDIA's
+# pip packages, the ones PyTorch's CUDA 13 wheels depend on too. Any CUDA 13 release works (the
+# wheel runs with 13.0.0, the first), so the resolver can pick the release another package pins
+# and the environment holds one copy of each library. The nvjitlink extra pins nvJitLink (which
+# cusparse and cusolver load) to that release: some releases' cusparse/cusolver extras do not.
+dependencies = [
+    "numpy",
+    "warp-lang>=1.18",
+    "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14",
+]
 
 [project.optional-dependencies]
 # cupy only for the interoperability test (any __cuda_array_interface__ array works).

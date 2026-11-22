@@ -382,10 +382,9 @@ scalars, quaternions, constrained subspaces).
 ``pycunls.warp.WarpStateBatch``
 --------------------------------------------------------------------------------
 
-Convenience base for custom state batches implemented with `NVIDIA Warp
-<https://developer.nvidia.com/warp-python>`_ kernels.  Inherits from ``CustomStateBatch`` and provides helper methods for
-zero-copy pointer wrapping so you never need to manually construct
-``wp.array`` objects from raw device addresses.
+A state batch whose manifold update (*Plus*) is your own `NVIDIA Warp
+<https://developer.nvidia.com/warp-python>`_ kernel. You write the kernel and construct the
+batch with it; no subclass is needed.
 
 **Constructor**
 
@@ -393,40 +392,43 @@ zero-copy pointer wrapping so you never need to manually construct
 
    from pycunls.warp import WarpStateBatch
 
-   class MyWarpState(WarpStateBatch):
-       def __init__(self, data, capacity):
-           super().__init__(
-               data,
-               ambient_size=...,
-               tangent_size=...,
-               capacity=capacity,
-           )
+   @wp.kernel
+   def positive_plus(x: wp.array2d(dtype=float),               # (n, A)  read
+                     delta: wp.array2d(dtype=float),           # (n, T)  read
+                     x_plus_delta: wp.array2d(dtype=float)):   # (n, A)  write
+       i = wp.tid()
+       x_plus_delta[i, 0] = x[i, 0] * wp.exp(delta[i, 0])
 
-- **device** (``str`` or ``wp.Device``, default None) — the CUDA device of ``data``, used by
-  ``wrap_array`` and the stream wrappers. None: ``data.device`` for a ``wp.array``, else Warp's
-  current device at construction (``wp.get_device()``, which follows ``wp.ScopedDevice``).
+   states = WarpStateBatch(positive_plus, data=values,
+                           ambient_size=1, tangent_size=1, capacity=n)
 
-**Helper methods** (inherited — do not override)
+- **kernel** (``wp.Kernel``, optional) — the kernel. Its last three parameters are filled by
+  pycunls; the constructor checks their types and raises with the fix otherwise. None: a
+  subclass overrides ``plus`` (below).
+- **inputs** (sequence) — the kernel's own arguments, the parameters before ``x``, in order.
+  Read at every update: replace one through ``batch.inputs[i] = ...``.
+- **data** (keyword) — the GPU buffer of ``capacity * ambient_size`` floats.
+- **ambient_size**, **tangent_size** (keyword) — floats stored per state (:math:`A`) and per
+  tangent step (:math:`T`).
+- **capacity** (keyword) — states the buffer holds; the batch starts with 0 active states.
+- **const_state_ids**, **const_capacity** (keyword, optional) — states held constant.
+- **device** (``str`` or ``wp.Device``, default None) — the CUDA device of ``data``. None:
+  ``data.device`` for a ``wp.array``, else Warp's current device at construction
+  (``wp.get_device()``, which follows ``wp.ScopedDevice``).
 
-- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of an
-  existing GPU allocation as a Warp array.  *ptr* is the device address,
-  *dtype* a Warp data type (e.g. ``wp.float32``), and *shape* an ``int`` or
-  tuple giving the array dimensions.  The returned ``wp.array`` shares the
-  memory; no allocation or copy occurs.
+**The kernel.** One thread per state: thread ``i`` writes
+``x_plus_delta[i] = x[i] (+) delta[i]``. ``n`` covers every active state of every replica
+(the RANSAC minimizers update one replica per hypothesis in one call), each independently;
+``x_plus_delta`` never overlaps the inputs.
 
-- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — wraps a raw
-  ``cudaStream_t`` (passed as ``int``) as a ``wp.Stream``.  Use the
-  returned stream in ``wp.launch(..., stream=stream)`` to ensure the Warp
-  kernel executes on the minimizer's CUDA stream.
+**Full control.** For several kernels or another GPU library, subclass without a kernel and
+override ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas) -> None`` (the
+``CustomStateBatch.plus`` contract: ``num_replicas × num_active_states`` states, flat arrays).
+These helpers convert its arguments:
 
-**Methods to override**
-
-- ``plus(x_ptr, delta_ptr, x_plus_delta_ptr, stream_handle, num_replicas) -> None`` —
-  same contract as ``CustomStateBatch.plus``.  Typical implementations wrap
-  the pointers with ``self.wrap_array`` (sized for
-  ``num_replicas × num_active_states`` states), build a ``wp.Stream`` with
-  ``self.make_warp_stream``, and launch a ``@wp.kernel`` with one thread per
-  state.
+- ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of a device pointer.
+- ``make_warp_stream(stream_handle: int) -> wp.Stream`` — the minimizer's stream, for
+  ``wp.launch(..., stream=...)``.
 
 See :ref:`pycunls_tutorial:Custom Warp State` for a complete example.
 

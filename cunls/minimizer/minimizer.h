@@ -182,7 +182,8 @@ struct MinimizerOptions {
    * the summary has num_iterations = max_num_iterations, NaN costs and
    * TerminationReason::NotDetermined (as SubproblemTerminationReasons()). The
    * first call sets up the structure and synchronizes; with reuse_structure
-   * the following calls can be captured in a CUDA graph. Needs
+   * the following calls can be captured in a CUDA graph (a captured call
+   * that would synchronize throws std::invalid_argument instead). Needs
    * disable_safety_checks (the default): the safety checks read solver
    * failures back after every solve. In
    * AugmentedLagrangianMinimizerOptions::base_options it makes the whole
@@ -415,6 +416,13 @@ struct InnerSolve {
 MinimizerSummary InnerMinimize(Minimizer &minimizer, cudaStream_t stream, Problem &problem,
                                const InnerSolve &inner);
 
+/**
+ * @brief Whether `stream` is being captured into a CUDA graph (also an
+ * invalidated capture that has not ended yet). The minimizers check it before
+ * any work, and throw instead of running a call that would synchronize.
+ */
+bool StreamIsCapturing(cudaStream_t stream);
+
 /** @brief What was set up for the last problem; skipped on reuse_structure. */
 struct MinimizerStructure {
   const Problem *problem = nullptr;  ///< Problem of the last setup.
@@ -533,7 +541,12 @@ class Minimizer {
    *         batches or box-bounded states (solve those with
    *         AugmentedLagrangianMinimizer), or its
    *         sizes, connectivity or partition are invalid (see
-   *         Problem::CheckSizes).
+   *         Problem::CheckSizes), or if `stream` is being captured into a
+   *         CUDA graph and the call would synchronize: a converging solve
+   *         (MinimizerOptions::real_time off), or a call that sets up the
+   *         structure (the first call on the problem, or any call without
+   *         reuse_structure). It throws before enqueuing any work, so the
+   *         capture stays valid.
    * @throws std::runtime_error if the linear solver fails and the method
    *         cannot recover from it (see RejectsFailedSolves()).
    */

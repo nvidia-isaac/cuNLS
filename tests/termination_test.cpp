@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -30,6 +31,7 @@
 #include "cunls/common/cuda_stream.h"
 #include "cunls/common/device_vector.h"
 #include "cunls/common/helper.h"
+#include "cunls/factor/constraint_factor_batch.h"
 #include "cunls/factor/prior/prior_vector_factor_batch.h"
 #include "cunls/minimizer/augmented_lagrangian_minimizer.h"
 #include "cunls/minimizer/gauss_newton_minimizer.h"
@@ -209,6 +211,100 @@ TEST(TerminationTest, RealTimeSolvesAreGraphCapturable) {
     cudaGraphExecDestroy(exec);
     cudaGraphDestroy(graph);
   }
+}
+
+/**
+ * Begins a capture on `stream`, expects `call` to throw std::invalid_argument
+ * naming `fix`, and expects the capture to end normally (nothing was enqueued).
+ */
+void ExpectThrowInCapture(CudaStream &stream, const std::function<void()> &call, const char *fix) {
+  ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+            cudaSuccess);
+  try {
+    call();
+    ADD_FAILURE() << "expected std::invalid_argument naming: " << fix;
+  } catch (const std::invalid_argument &e) {
+    EXPECT_NE(std::string(e.what()).find(fix), std::string::npos) << e.what();
+  }
+  cudaGraph_t graph = nullptr;
+  EXPECT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+  if (graph != nullptr) cudaGraphDestroy(graph);
+}
+
+// A captured call that would synchronize throws before it enqueues anything,
+// so the capture ends normally and the stream keeps working: a first real-time
+// call, a real-time call without reuse_structure and a converging call. The fix
+// the message names (one call before the capture) makes the next call
+// capturable.
+TEST(TerminationTest, CapturedCallsThatWouldSynchronizeThrow) {
+  CudaStream stream;
+  const std::vector<float> start = {5.f, -3.f};
+  PriorProblem p(start, false);
+  MinimizerOptions options = Options();
+  options.max_num_iterations = 2;
+  options.real_time = true;
+  options.reuse_structure = true;
+  GaussNewtonMinimizer real_time(options);
+  options.reuse_structure = false;
+  GaussNewtonMinimizer without_reuse(options);
+  options.real_time = false;
+  options.reuse_structure = true;
+  GaussNewtonMinimizer converging(options);
+
+  ExpectThrowInCapture(
+      stream, [&] { real_time.Minimize(stream.GetStream(), p.problem); },
+      "run one Minimize() call on the problem before the capture");
+  without_reuse.Minimize(stream.GetStream(), p.problem);
+  ExpectThrowInCapture(
+      stream, [&] { without_reuse.Minimize(stream.GetStream(), p.problem); },
+      "set MinimizerOptions::reuse_structure");
+  converging.Minimize(stream.GetStream(), p.problem);
+  ExpectThrowInCapture(
+      stream, [&] { converging.Minimize(stream.GetStream(), p.problem); },
+      "set MinimizerOptions::real_time");
+
+  // The fix: one call, then the captured call runs.
+  real_time.Minimize(stream.GetStream(), p.problem);
+  p.states.CopyFromHost(start.data(), start.size());
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t exec = nullptr;
+  ASSERT_EQ(cudaStreamBeginCapture(stream.GetStream(), cudaStreamCaptureModeThreadLocal),
+            cudaSuccess);
+  real_time.Minimize(stream.GetStream(), p.problem);
+  ASSERT_EQ(cudaStreamEndCapture(stream.GetStream(), &graph), cudaSuccess);
+  ASSERT_EQ(cudaGraphInstantiate(&exec, graph, 0), cudaSuccess);
+  ASSERT_EQ(cudaGraphLaunch(exec, stream.GetStream()), cudaSuccess);
+  ASSERT_EQ(cudaStreamSynchronize(stream.GetStream()), cudaSuccess);
+  std::vector<float> x(2);
+  p.states.CopyToHost(x.data(), x.size());
+  EXPECT_NEAR(x[0], 1.f, 1e-2f);
+  EXPECT_NEAR(x[1], 2.f, 1e-2f);
+  cudaGraphExecDestroy(exec);
+  cudaGraphDestroy(graph);
+}
+
+// The augmented Lagrangian refuses a first captured call too, and any captured
+// call with constraint batches (its status is read back at the end).
+TEST(TerminationTest, CapturedAugmentedLagrangianCallsThatWouldSynchronizeThrow) {
+  CudaStream stream;
+  PriorProblem p({5.f, -3.f}, false);
+  AugmentedLagrangianMinimizerOptions options;
+  options.base_options = Options();
+  options.base_options.real_time = true;
+  options.base_options.reuse_structure = true;
+  options.max_outer_iterations = 1;
+  AugmentedLagrangianMinimizer al(options);
+  ExpectThrowInCapture(
+      stream, [&] { al.Minimize(stream.GetStream(), p.problem); },
+      "run one Minimize() call on the problem before the capture");
+
+  ConstraintFactorBatch constraint(&p.priors, ConstraintKind::kEquality);
+  Problem constrained;
+  constrained.AddStateBatch(&p.state_batch);
+  constrained.AddFactorBatch(&constraint, std::vector<float *>{p.states.data()});
+  al.Minimize(stream.GetStream(), constrained);
+  ExpectThrowInCapture(
+      stream, [&] { al.Minimize(stream.GetStream(), constrained); }, "1 constraint batches");
 }
 
 TEST(TerminationTest, RealTimeAugmentedLagrangianWithoutConstraintsIsNotDetermined) {

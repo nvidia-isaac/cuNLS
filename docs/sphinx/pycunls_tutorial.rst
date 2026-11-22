@@ -319,7 +319,7 @@ Warp factor API used
    * - :ref:`VectorStateBatch1 <py-vector-state-batches>`
      - Stores all :math:`N` scalar states in :math:`\mathbb{R}^1`.
    * - :ref:`WarpFactorBatch <py-warp-factor-batch>`
-     - Base class for user-defined factors evaluated via Warp kernels.
+     - A factor evaluated by a Warp kernel: the difference factors.
        Provides ``wrap_array`` and ``make_warp_stream`` helpers.
    * - :ref:`PriorVectorFactorBatch1 <py-prior-vector-factor>`
      - Built-in prior factor that anchors :math:`x_0`.
@@ -332,43 +332,38 @@ Warp factor code walkthrough
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The solve lives in ``run_chain_example``, which ``main`` calls twice: Part 1
-with ``ScalarDiffFactor``, Part 2 with the residual-only factor and numeric
+with ``scalar_diff_kernel``, Part 2 with the residual-only kernel and numeric
 Jacobians.
 
 **Step 1 — Define the Warp kernel.**
-One thread per *item*: one factor evaluated at one set of states. Item ``t``
-reads the measurement of its factor ``ids[t]`` and its own two state values
-(through the state pointer table, with ``state_value``), and writes row ``t``. The regular minimizers evaluate each factor once
-(``ids[t] == t``); the RANSAC minimizers evaluate many items per factor (see
-:doc:`custom_factors_and_states`).
+One thread per factor. The kernel's own parameter (``measurements``) comes
+first; the last four are filled by pycunls, with shapes from the factor's sizes
+(step 6): thread ``t`` evaluates factor ``factor_ids[t]``, reads its two scalar
+states through ``states[t, 0]`` and ``states[t, 1]`` with
+``pycunls.warp.scalar_at``, and writes ``residuals[t, 0]`` and, when
+``jacobians`` has rows, ``jacobians[t, 0, :]``. ``jacobians`` has no rows when
+only residuals are needed. The regular minimizers evaluate each factor once
+(``factor_ids[t] == t``); the RANSAC minimizers evaluate the same factors
+against several state sets, so ids repeat (see :doc:`custom_factors_and_states`).
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
    :language: python
    :pyobject: scalar_diff_kernel
 
-**Step 2 — Subclass WarpFactorBatch.**
-``evaluate`` receives raw device pointers. ``factor_ids`` gives the factor
-of every item (``t % num_active_factors`` when cuNLS passes none), the
-state pointer table (``2 * n`` addresses, item ``t``'s states at ``2t`` and
-``2t + 1``) is wrapped as a ``wp.uint64`` array for the kernel, and the
-kernel runs on cuNLS's stream. When ``jacobians_ptr`` is 0 only residuals are wanted. The
-constructor passes the capacity (measurements the buffer holds) to the base
-class; ``num_active_factors`` is the active count, 0 until
-``set_num_active_factors``.
+**Step 2 — The factor batch: the kernel and its sizes.**
+A ``WarpFactorBatch`` is constructed with the kernel, its own inputs and the
+sizes that shape the arrays the kernel gets: ``residual_size=1`` gives
+``residuals`` (n, 1), ``state_sizes=[1, 1]`` gives ``states`` (n, 2) and
+``jacobians`` (n, 1, 2). The capacity is the number of measurements the data
+holds; ``num_active_factors`` is the active count, 0 until
+``set_num_active_factors`` (step 6).
 
-.. literalinclude:: ../../python/examples/custom_warp_factor.py
-   :language: python
-   :pyobject: ScalarDiffFactor
+.. code-block:: python
 
-**Step 3 — The state reader.**
-``state_value`` lives in ``example_utils/gpu.py`` and is reusable for any
-Warp factor: it reads one component of the state a table entry points to.
+   diff = WarpFactorBatch(scalar_diff_kernel, inputs=[measurements_wp],
+                          residual_size=1, state_sizes=[1, 1], capacity=diff_capacity)
 
-.. literalinclude:: ../../python/examples/example_utils/gpu.py
-   :language: python
-   :pyobject: state_value
-
-**Step 4 — Generate synthetic data.**
+**Step 3 — Generate synthetic data.**
 ``scalar_chain`` returns a monotonic chain, exact consecutive differences and a
 noisy initial guess.
 The data comes from ``python/examples/example_utils/datasets.py``; the
@@ -380,7 +375,7 @@ generators are ordinary NumPy code and are not part of the lesson.
    :end-before: # 2.
    :dedent: 4
 
-**Step 5 — Upload to the GPU.**
+**Step 4 — Upload to the GPU.**
 States, the prior target and the measurements (read inside the Warp kernel)
 go to Warp arrays.
 
@@ -390,7 +385,7 @@ go to Warp arrays.
    :end-before: # 3.
    :dedent: 4
 
-**Step 6 — Build states, factors and state pointers.**
+**Step 5 — Build states, factors and state pointers.**
 Difference factors read ``[x_i, x_{i+1}]``; the built-in prior anchors
 ``x_0``. Every batch starts with 0 active entries and is activated with
 ``set_num_active_states`` / ``set_num_active_factors``.
@@ -401,9 +396,9 @@ Difference factors read ``[x_i, x_{i+1}]``; the built-in prior anchors
    :end-before: # 4.
    :dedent: 4
 
-**Step 7 — Assemble the problem.**
-Part 2 registers the residual-only variant (same file,
-``ScalarDiffResidualOnlyFactor``) with ``JacobianMode.numeric``; the prior
+**Step 6 — Assemble the problem.**
+Part 2 registers the residual-only kernel (same file,
+``scalar_diff_residual_only_kernel``) with ``JacobianMode.numeric``; the prior
 keeps its analytic Jacobian (see :doc:`numeric_jacobians`).
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
@@ -412,7 +407,7 @@ keeps its analytic Jacobian (see :doc:`numeric_jacobians`).
    :end-before: # 5.
    :dedent: 4
 
-**Step 8 — Solve with Levenberg-Marquardt.**
+**Step 7 — Solve with Levenberg-Marquardt.**
 Same solver as in the previous examples. The uploads ran on Warp's stream and
 the solve runs on its own ``CudaStream``, so Warp's stream is synchronized
 first; ``minimize`` synchronizes its stream before returning.
@@ -423,7 +418,7 @@ first; ``minimize`` synchronizes its stream before returning.
    :end-before: # 6.
    :dedent: 4
 
-**Step 9 — Report and check.**
+**Step 8 — Report and check.**
 Compare with the ground truth and check.
 
 .. literalinclude:: ../../python/examples/custom_warp_factor.py
@@ -475,10 +470,9 @@ Warp state API used
    * - Class
      - Role
    * - :ref:`WarpStateBatch <py-warp-state-batch>`
-     - Base class for user-defined state batches with a Warp-based Plus.
-       Provides ``wrap_array`` and ``make_warp_stream`` helpers.
+     - The positive-scalar state: its Plus is a Warp kernel.
    * - :ref:`WarpFactorBatch <py-warp-factor-batch>`
-     - Base class for the custom log-prior and log-ratio factors.
+     - The custom log-prior and log-ratio factors, a kernel each.
    * - :ref:`Problem <py-problem-label>`
      - Assembles the factor graph.
    * - :ref:`LevenbergMarquardtMinimizer <py-lm-label>`
@@ -489,34 +483,35 @@ Warp state code walkthrough
 
 **Step 1 — Define the Plus kernel.**
 The retraction :math:`x \oplus \delta = x\,e^{\delta}` keeps every state
-positive.
+positive. One thread per state; pycunls fills the three parameters with
+``x`` (n, 1), ``delta`` (n, 1) and ``x_plus_delta`` (n, 1), where n covers every
+active state of every replica (1 replica for the regular minimizers, one per
+hypothesis for RANSAC), so the kernel never deals with replicas.
 
 .. literalinclude:: ../../python/examples/custom_warp_state.py
    :language: python
    :pyobject: positive_plus_kernel
 
-**Step 2 — Subclass WarpStateBatch.**
-``plus`` receives ``num_replicas`` contiguous copies of the batch (1 for the
-regular minimizers, one per hypothesis for RANSAC). Every state is independent,
-so all copies are one flat launch over ``num_replicas * num_active_states``
-states (``num_active_states`` is the active count, at most the capacity).
+**Step 2 — The state batch: the kernel and its sizes.**
+A ``WarpStateBatch`` is constructed with the kernel, the state buffer and the
+sizes that shape the kernel's arrays: ``ambient_size=1`` float stored per
+state and ``tangent_size=1`` float per step (step 6 builds it). Like every
+batch, it starts with 0 active states.
 
-.. literalinclude:: ../../python/examples/custom_warp_state.py
-   :language: python
-   :pyobject: PositiveScalarStateBatch
+.. code-block:: python
+
+   states = WarpStateBatch(positive_plus_kernel, data=states_gpu, ambient_size=1,
+                           tangent_size=1, capacity=states_capacity)
 
 **Step 3 — Define the factors.**
-Two custom factors in log space: a prior on ``x_0`` and a log-ratio between
-consecutive states. Both follow the same item pattern as in the custom factor
-example: measurement by ``ids[t]``, states and outputs by ``t``.
+Two custom factors in log space, a kernel each: a prior on ``x_0`` and a
+log-ratio between consecutive states, written as in the custom factor example
+(data by ``factor_ids[t]``, states by ``states[t, k]``, outputs by ``t``). Step
+6 builds a ``WarpFactorBatch`` from each.
 
 .. literalinclude:: ../../python/examples/custom_warp_state.py
    :language: python
    :pyobject: log_ratio_kernel
-
-.. literalinclude:: ../../python/examples/custom_warp_state.py
-   :language: python
-   :pyobject: LogRatioBetweenFactor
 
 **Step 4 — Generate synthetic data.**
 ``positive_chain`` returns a growing positive chain, its log-ratio
