@@ -101,9 +101,10 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   call that would synchronize raises `ValueError` with this fix.
 - **Devices.** A problem runs on the device of its state arrays: `minimize`, `evaluate_batch` and
   the state helpers make that device current themselves (`problem.device`), so no
-  `wp.ScopedDevice` is needed around them. `ArticulationTopology` (and
-  `topology_from_joint_arrays`, `topology_from_urdf`) takes `device=`, defaulting to the device of
-  the GPU arrays it is given; its `ArticulationStateBatch`es live on its device. Objects made
+  `wp.ScopedDevice` is needed around them. `ArticulationTopology` lives on the device of the GPU
+  arrays it is given, else the current one; `topology_from_joint_arrays` (default: its arrays'
+  device) and `topology_from_urdf` take `device=`. Its `ArticulationStateBatch`es live on its
+  device. Objects made
   without device arrays (`WarpFactorBatch`, `CudaStream()`) use Warp's current device: create
   them inside `wp.ScopedDevice(device)` on a multi-GPU machine.
 - **Poses are `world_from_body`, row-major 4x4 (SE3) or 3x3 (SE2).** Updates are on the right:

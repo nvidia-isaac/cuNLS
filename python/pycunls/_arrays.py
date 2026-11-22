@@ -44,6 +44,21 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
                         f"np.asarray({name}).") from exc
 
 
+def cuda_device(device, owner: str) -> wp.Device:
+    """The CUDA device ``device`` names (``"cuda:N"``, ``"cuda"`` or a ``wp.Device``); None:
+    Warp's current device (``wp.get_device()``, which follows ``wp.ScopedDevice``). ``owner``
+    names the caller in the error."""
+    try:
+        resolved = wp.get_device(device)
+    except ValueError:
+        resolved = None
+    if resolved is None or not resolved.is_cuda:
+        raise ValueError(f"{owner}: the device must be a CUDA device of this machine (got "
+                         f"{device!r}, expected 'cuda:N' or a CUDA wp.Device). Fix: pass "
+                         "device='cuda:N', or create it under wp.ScopedDevice('cuda:N').")
+    return resolved
+
+
 def gpu_device(*arrays):
     """The Warp device of the first GPU array among ``arrays`` (a ``wp.array`` on a CUDA device,
     or any array exposing ``__cuda_array_interface__``), or None when none is one."""

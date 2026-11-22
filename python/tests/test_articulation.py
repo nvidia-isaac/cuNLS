@@ -624,24 +624,30 @@ def _device_of(topology):
     return problem.device
 
 
-def test_topology_device_is_the_argument_else_its_arrays_else_the_current_one(arm):
+def test_topology_device_is_its_arrays_else_the_current_one(arm, tmp_path):
     current = wp.get_cuda_device()
+    assert _device_of(arm.topology) == current.ordinal            # host data: the current device
     host = dict(joint_type=[JT.Fixed.value, JT.Revolute.value], joint_parent=[-1, 0],
                 joint_child=[0, 1], joint_X_p=[0, 0, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0, 0, 1],
                 joint_X_c=[0, 0, 0, 0, 0, 0, 1] * 2, joint_q_start=[0, 0, 1],
                 joint_qd_start=[0, 0, 1], joint_axis=[0, 0, 1])
-    assert _device_of(arm.topology) == current.ordinal          # host data: the current device
-    for device in (current.ordinal, f"cuda:{current.ordinal}", current, "cuda"):
-        assert _device_of(pycunls.ArticulationTopology(**host, device=device)) == current.ordinal
+    gpu = {k: wp.array(np.asarray(v, np.float32)) if k.startswith("joint_X") else v
+           for k, v in host.items()}
+    assert _device_of(pycunls.ArticulationTopology(**gpu)) == current.ordinal
+    path = tmp_path / "arm.urdf"
+    path.write_text(URDF)
+    for device in (f"cuda:{current.ordinal}", current, "cuda"):
+        assert _device_of(topology_from_urdf(str(path), device=device).topology) == \
+            current.ordinal
     for device in ("cuda:99", "cpu", 1.5):
-        with pytest.raises(ValueError, match="not a CUDA device.*Fix:"):
-            pycunls.ArticulationTopology(**host, device=device)
+        with pytest.raises(ValueError, match="CUDA device.*Fix:"):
+            topology_from_urdf(str(path), device=device)
 
 
 @pytest.mark.skipif(wp.get_cuda_device_count() < 2, reason="needs two GPUs")
 def test_articulations_live_on_their_arrays_device_whatever_is_current():
     """A scene on cuda:1 gives a topology and states on cuda:1 while cuda:0 is current; host
-    data goes where device= says."""
+    data goes where device= (or wp.ScopedDevice) says."""
     arrays, limits = _scene_arrays()
     scene_on_1 = [wp.array(np.asarray(a), device="cuda:1") for a in arrays]
     with wp.ScopedDevice("cuda:0"):
@@ -649,6 +655,9 @@ def test_articulations_live_on_their_arrays_device_whatever_is_current():
         assert _device_of(art.topology) == 1
         host = topology_from_joint_arrays(*arrays, joints=range(3, 7), device="cuda:1", **limits)
         assert _device_of(host.topology) == 1
+    with wp.ScopedDevice("cuda:1"):
+        assert _device_of(topology_from_joint_arrays(*arrays, joints=range(3, 7),
+                                                     **limits).topology) == 1
 
 
 def test_inverse_kinematics_recipe(arm, stream):

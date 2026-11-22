@@ -43,7 +43,7 @@ import numpy as np
 import warp as wp
 
 from pycunls import _pycunls_core as _core
-from pycunls._arrays import gpu_device, to_numpy
+from pycunls._arrays import cuda_device, gpu_device, to_numpy
 from pycunls._pycunls_core import ArticulationJointType, ArticulationTopology
 
 __all__ = ["UrdfArticulation", "MimicJoint", "topology_from_urdf", "SceneArticulation",
@@ -122,8 +122,8 @@ def topology_from_urdf(path: str, floating_base: bool = False,
     Args:
         path: The URDF file.
         floating_base: Attach the root link with a FREE joint (6 DOFs) instead of FIXED.
-        device: The CUDA device of the topology (an int, ``"cuda:N"`` or a ``wp.Device``); the
-            state batches built on it live there. None: the current device.
+        device: The CUDA device of the topology (``"cuda:N"`` or a ``wp.Device``); the state
+            batches built on it live there. None: the current device.
 
     Returns:
         :class:`UrdfArticulation`.
@@ -224,11 +224,12 @@ def topology_from_urdf(path: str, floating_base: bool = False,
             mimics.append((name, mimic.get("joint"), float(mimic.get("offset", "0")),
                            float(mimic.get("multiplier", "1"))))
 
-    topology = ArticulationTopology(
-        joint_type=joint_type, joint_parent=parent, joint_child=child, joint_X_p=X_p,
-        joint_X_c=X_c, joint_q_start=q_start, joint_qd_start=qd_start,
-        joint_axis=np.asarray(axes, dtype=np.float32), joint_dof_dim=dof_dim,
-        limit_lower=lower, limit_upper=upper, device=device)
+    with wp.ScopedDevice(cuda_device(device, "topology_from_urdf")):
+        topology = ArticulationTopology(
+            joint_type=joint_type, joint_parent=parent, joint_child=child, joint_X_p=X_p,
+            joint_X_c=X_c, joint_q_start=q_start, joint_qd_start=qd_start,
+            joint_axis=np.asarray(axes, dtype=np.float32), joint_dof_dim=dof_dim,
+            limit_lower=lower, limit_upper=upper)
     for m, r, _, _ in mimics:
         if m not in dof_of_joint or r not in dof_of_joint:
             raise ValueError(f"topology_from_urdf: joint '{m}' mimics '{r}', but both must be "
@@ -421,9 +422,9 @@ def topology_from_joint_arrays(joint_type, joint_parent, joint_child, joint_X_p,
         joints: Scene joint indices of the articulation (an int array, a list or a ``range``,
             e.g. ``range(articulation_start[a], articulation_start[a + 1])``), or None for all.
         root_pose: Pose of the frame joints with parent -1 attach to (7 floats), default identity.
-        device: The CUDA device of the topology (an int, ``"cuda:N"`` or a ``wp.Device``); the
-            state batches built on it live there. None: the device of the GPU arrays given (a
-            scene on ``cuda:1`` gives a topology on ``cuda:1``), else the current device.
+        device: The CUDA device of the topology (``"cuda:N"`` or a ``wp.Device``); the state
+            batches built on it live there. None: the device of the GPU arrays given (a scene on
+            ``cuda:1`` gives a topology on ``cuda:1``), else the current device.
 
     Returns:
         A :class:`SceneArticulation`: the topology and the scene/local index maps.
@@ -444,10 +445,11 @@ def topology_from_joint_arrays(joint_type, joint_parent, joint_child, joint_X_p,
         states.set_joint_q(scene_q[art.coord_start:], worlds, stream, stride=coords_per_world)
     """
     owner = "topology_from_joint_arrays"
-    if device is None:
+    if device is None:   # the arrays are copied to the host below: keep their device
         device = gpu_device(joint_type, joint_parent, joint_child, joint_X_p, joint_X_c,
                             joint_q_start, joint_qd_start, joint_axis, joint_dof_dim, limit_lower,
                             limit_upper, root_pose)
+    device = cuda_device(device, owner)
     jt = to_numpy(joint_type, np.int32, "joint_type", owner).reshape(-1)
     parent = to_numpy(joint_parent, np.int32, "joint_parent", owner).reshape(-1)
     child = to_numpy(joint_child, np.int32, "joint_child", owner).reshape(-1)
@@ -510,12 +512,12 @@ def topology_from_joint_arrays(joint_type, joint_parent, joint_child, joint_X_p,
             kwargs[name] = to_numpy(values, np.float32, name, owner).reshape(-1)[dof_index]
     if root_pose is not None:
         kwargs["root_pose"] = to_numpy(root_pose, np.float32, "root_pose", owner).reshape(-1)
-    topology = ArticulationTopology(
-        joint_type=jt[tree], joint_parent=local_parent,
-        joint_child=np.arange(tree.size, dtype=np.int32), joint_X_p=xp[tree].reshape(-1),
-        joint_X_c=xc[tree].reshape(-1), joint_q_start=local_q_start,
-        joint_qd_start=local_qd_start, joint_axis=axis[dof_index].reshape(-1), device=device,
-        **kwargs)
+    with wp.ScopedDevice(device):
+        topology = ArticulationTopology(
+            joint_type=jt[tree], joint_parent=local_parent,
+            joint_child=np.arange(tree.size, dtype=np.int32), joint_X_p=xp[tree].reshape(-1),
+            joint_X_c=xc[tree].reshape(-1), joint_q_start=local_q_start,
+            joint_qd_start=local_qd_start, joint_axis=axis[dof_index].reshape(-1), **kwargs)
     return SceneArticulation(topology, tree, bodies, link_of_body, coord_index, dof_index,
                              int(coord_index[0]) if contiguous and coord_index.size else None,
                              np.asarray(loops, np.int32))

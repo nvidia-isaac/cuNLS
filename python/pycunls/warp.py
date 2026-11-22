@@ -43,19 +43,9 @@ import numpy as np
 
 import warp as wp
 
-from pycunls._arrays import cached_stream, is_warp_function, warp_length, warp_result_type
+from pycunls._arrays import (cached_stream, cuda_device, is_warp_function, warp_length,
+                             warp_result_type)
 from pycunls._pycunls_core import CustomFactorBatch, CustomStateBatch
-
-
-def _cuda_device(device, owner: str) -> wp.Device:
-    """The Warp device a batch lives on: ``device``, or Warp's current device when it is None
-    (``wp.ScopedDevice`` included); it must be a CUDA device."""
-    resolved = wp.get_device(device)
-    if not resolved.is_cuda:
-        raise ValueError(f"{owner}: the device must be a CUDA device (got {resolved}, expected "
-                         "cuda:N). Fix: pass device='cuda:N', or create the batch under "
-                         "wp.ScopedDevice('cuda:N').")
-    return resolved
 
 
 # The parameters a kernel ends with (filled by pycunls): name, dtype, ndim, annotation.
@@ -170,7 +160,7 @@ class WarpFactorBatch(CustomFactorBatch):
             raise ValueError(f"{owner}: inputs without a kernel (got {len(inputs)} inputs, "
                              "expected none). Fix: pass the kernel they belong to.")
         self.kernel, self.inputs = kernel, list(inputs)
-        device = self._device = _cuda_device(device, owner)
+        device = self._device = cuda_device(device, owner)
         self._num_states = len(state_sizes)
         self._num_columns = int(sum(state_sizes))
         self._streams: dict = {}    # cudaStream_t handle -> wp.Stream (made once per handle)
@@ -430,7 +420,7 @@ class WarpStateBatch(CustomStateBatch):
         self.kernel, self.inputs = kernel, list(inputs)
         if device is None and isinstance(data, wp.array):
             device = data.device
-        self._device = _cuda_device(device, owner)
+        self._device = cuda_device(device, owner)
         self._streams: dict = {}    # cudaStream_t handle -> wp.Stream (made once per handle)
         # (x, delta, x_plus_delta pointers, state count) -> their arrays; the last few only.
         self._arguments: collections.OrderedDict = collections.OrderedDict()
