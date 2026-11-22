@@ -318,6 +318,9 @@ class AugmentedLagrangianMinimizer {
   /// Constraint batches with their sizes, and the number of subproblems, of the
   /// last solve (warm_start and reuse_structure apply only when unchanged).
   std::vector<std::pair<const void *, size_t>> signature_;
+  /// State and factor counts of the last solve's problem (reuse_structure
+  /// applies only when they are unchanged).
+  std::vector<size_t> structure_signature_;
   const Problem *problem_ = nullptr;  ///< Problem of the last solve.
 
   dvector<float> penalty_;         ///< [constraint * P + p]

@@ -148,7 +148,7 @@ CUDA libraries
 
 The wheel links ``cudart``, ``cublas``, ``cusparse`` and ``cusolver`` without
 bundling them, and depends on NVIDIA's pip packages for them
-(``cuda-toolkit[cudart,cublas,cusparse,cusolver]>=13.0,<14``). PyTorch's CUDA 13
+(``cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14``). PyTorch's CUDA 13
 wheels depend on the same packages, pinned to one release; pycunls accepts any
 CUDA 13 release, so one copy of each library serves both. The native module
 searches, in order: ``LD_LIBRARY_PATH``, the NVIDIA pip packages next to it in

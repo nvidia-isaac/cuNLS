@@ -57,14 +57,15 @@ pip install "nvidia-cudss-cu13==0.8.*"   # optional, only for SparseLinearSolver
 python -m pycunls doctor                 # checks the GPU, the native module, a solve, cuDSS
 ```
 
-The wheel links the CUDA libraries `cudart`, `cublas`, `cusparse` and `cusolver` without bundling
-them, and depends on NVIDIA's pip packages for them:
-`cuda-toolkit[cudart,cublas,cusparse,cusolver]>=13.0,<14`. PyTorch's CUDA 13 wheels depend on the
-same packages, pinned to one release; pycunls accepts any CUDA 13 release, so pip installs one copy
-of each library for both. pycunls finds them in the environment without `LD_LIBRARY_PATH`; a
-directory on `LD_LIBRARY_PATH` (e.g. a system CUDA 13 toolkit) takes precedence. pycunls 0.4.3 and
-earlier do not depend on these packages: install them with
-`pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver]==13.*"`.
+The wheel links the CUDA libraries `cudart`, `cublas`, `cusparse` and `cusolver` (and, through
+them, `nvJitLink`) without bundling them, and depends on NVIDIA's pip packages for them:
+`cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14`. PyTorch's CUDA 13 wheels
+depend on the same packages, pinned to one release; pycunls accepts any CUDA 13 release, so pip
+installs one copy of each library for both. pycunls finds them in the environment without
+`LD_LIBRARY_PATH`; a directory on `LD_LIBRARY_PATH` (e.g. a system CUDA 13 toolkit) takes
+precedence. pycunls 0.4.3 and earlier do not depend on these packages: install them with
+`pip install "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]==13.*"`; pycunls 0.4.0 also
+needs `<site-packages>/nvidia/cu13/lib` on `LD_LIBRARY_PATH` (it does not search the pip packages).
 
 ### Build the wheel in Docker
 

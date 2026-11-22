@@ -11,11 +11,12 @@ requires-python = ">=3.10"
 # The native module links the CUDA 13 libraries without bundling them: they come from NVIDIA's
 # pip packages, the ones PyTorch's CUDA 13 wheels depend on too. Any CUDA 13 release works (the
 # wheel runs with 13.0.0, the first), so the resolver can pick the release another package pins
-# and the environment holds one copy of each library.
+# and the environment holds one copy of each library. The nvjitlink extra pins nvJitLink (which
+# cusparse and cusolver load) to that release: some releases' cusparse/cusolver extras do not.
 dependencies = [
     "numpy",
     "warp-lang>=1.18",
-    "cuda-toolkit[cudart,cublas,cusparse,cusolver]>=13.0,<14",
+    "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14",
 ]
 
 [project.optional-dependencies]
