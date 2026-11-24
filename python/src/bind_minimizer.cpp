@@ -63,6 +63,21 @@ void bind_minimizer(nb::module_ &m) {
           "Minimize the problem's cost from its current states; the states are updated in "
           "place. Returns a MinimizerSummary.")
       .def(
+          "initialize",
+          [](cunls::Minimizer &self, cunls::CudaStream &stream, cunls::Problem &problem) {
+            nb::gil_scoped_release release;
+            DeviceScope scope(problem.Device());
+            self.Initialize(stream.GetStream(), problem);
+          },
+          nb::arg("stream"), nb::arg("problem"),
+          "Set the problem's structure up without solving: the part of a first minimize() "
+          "call that synchronizes (Hessian pattern, subproblem maps, the linear solver's "
+          "analysis). Optional: minimize() does it itself when the structure is not set up. "
+          "Call it before capturing minimize() in a CUDA graph (real_time and reuse_structure "
+          "set; in base_options for Levenberg-Marquardt). Leaves the states unchanged; "
+          "synchronizes the stream. Raises "
+          "ValueError on a stream being captured.")
+      .def(
           "subproblem_termination_reasons",
           [](const cunls::Minimizer &self) {
             return device_to_numpy(self.SubproblemTerminationReasons(), self.NumSubproblems());
@@ -107,8 +122,9 @@ void bind_minimizer(nb::module_ &m) {
       "host synchronization (exactly max_outer_iterations outer iterations of inner_iterations "
       "inner iterations, the last max_num_iterations; costs in the summary are NaN; without "
       "constraint batches nothing is read back, status NotDetermined, so the call can be "
-      "captured in a CUDA graph once the structure is set up); reuse_structure skips the "
-      "structure setup of a call whose problem structure is unchanged.")
+      "captured in a CUDA graph once the structure is set up: initialize() before the "
+      "capture); reuse_structure skips the structure setup of a call whose problem structure "
+      "is unchanged.")
       .def(nb::init<>())
       .def_rw("constraint_tolerance",
               &cunls::AugmentedLagrangianMinimizerOptions::constraint_tolerance,
@@ -213,6 +229,22 @@ void bind_minimizer(nb::module_ &m) {
           nb::arg("stream"), nb::arg("problem"),
           "Minimize the objective subject to the constraint batches. Returns a "
           "AugmentedLagrangianMinimizerSummary.")
+      .def(
+          "initialize",
+          [](cunls::AugmentedLagrangianMinimizer &self, cunls::CudaStream &stream,
+             cunls::Problem &problem) {
+            nb::gil_scoped_release release;
+            DeviceScope scope(problem.Device());
+            self.Initialize(stream.GetStream(), problem);
+          },
+          nb::arg("stream"), nb::arg("problem"),
+          "Set the problem's structure up without solving: the part of a first minimize() "
+          "call that synchronizes (constraint maps, bounded columns, the inner solver's setup). "
+          "Optional: minimize() does it itself when the structure is not set up. Call it "
+          "before capturing minimize() in a CUDA graph (base_options.real_time and "
+          "reuse_structure set, no constraint batches). Leaves the states unchanged; the "
+          "multipliers and penalties of a new constraint layout start as in a first call. "
+          "Synchronizes the stream. Raises ValueError on a stream being captured.")
       .def_prop_rw(
           "options", [](const cunls::AugmentedLagrangianMinimizer &self) { return self.Options(); },
           [](cunls::AugmentedLagrangianMinimizer &self,

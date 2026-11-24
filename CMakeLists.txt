@@ -15,7 +15,7 @@ endif()
 # Native code for every GPU generation the toolkit supports (no PTX JIT at load time).
 include(cmake/CudaArchitectures.cmake)
 
-project(cunls VERSION 0.4.4 LANGUAGES CXX CUDA)
+project(cunls VERSION 0.4.5 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

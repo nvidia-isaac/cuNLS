@@ -1114,6 +1114,8 @@ bool BlockSparsePCGSolver::InitializeCommon(cudaStream_t stream, const Problem *
   if (d_scratch_.size() < scratch_size) {
     d_scratch_.resize(scratch_size);
   }
+  // The handle of the solves, created here: a solve then creates nothing, so it can be captured.
+  cusparse_handle_.GetHandle(stream);
 
   return true;
 }

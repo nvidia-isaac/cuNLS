@@ -11,9 +11,11 @@
   <code>Python</code>&ensp;·&ensp;<code>CUDA/C++</code>&ensp;·&ensp;<code>Factor graphs</code>&ensp;·&ensp;<code>Manifolds</code>&ensp;·&ensp;<code>RANSAC</code>&ensp;·&ensp;<code>Constraints</code>&ensp;·&ensp;<code>Agent-ready</code>
 </p>
 
+<!-- github-only: PyPI shows images up to 10 MB -->
 <p align="center">
   <img src="assets/cunls_overview.gif" alt="cuNLS overview: problem, benchmarks, RANSAC, MPC, Python" width="100%">
 </p>
+<!-- /github-only -->
 
 ---
 
@@ -29,7 +31,16 @@ CUDA 12.6+ and 13, including Jetson Orin and Thor. CUDA libraries, cuDSS and sou
 **cuNLS** solves nonlinear least-squares problems entirely on the GPU: any factor graph over
 Euclidean and manifold states, with robust losses, constraints and bounds,
 
+<!-- github-only: PyPI does not render math -->
+
 $$x^* = \arg\min_x \sum_i \rho_i\!\left(\left\|f_i(x)\right\|^2_{\Sigma_i}\right) \quad \text{s.t.} \quad c_j(x) = 0,\ \ c_k(x) \le 0,\ \ l \le x \le u$$
+
+<!-- /github-only -->
+<!-- pypi-only
+<p align="center">
+  <img src="assets/cunls_problem.png" alt="The cuNLS problem: objective, constraints and a factor graph" width="100%">
+</p>
+/pypi-only -->
 
 from curve fitting and thousands of small independent problems in one call to bundle
 adjustment, pose graphs, visual-inertial odometry and model-predictive control. On the

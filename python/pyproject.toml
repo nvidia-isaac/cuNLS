@@ -1,11 +1,36 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "nanobind>=2.4"]
+# 0.11: PEP 639 license metadata (license, license-files).
+requires = ["scikit-build-core>=0.11", "nanobind>=2.4"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "pycunls-cu13"
-version = "0.4.4"
+version = "0.4.5"
 description = "Python bindings for cuNLS: CUDA-accelerated nonlinear least squares solver"
+# python/README.md, LICENSE, NOTICE and third_party link to the repository's files; release builds
+# replace the README link with scripts/pypi_readme.py's output (absolute links, no GitHub-only parts).
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "third_party/LICENSES/*"]
+authors = [{ name = "NVIDIA Corporation" }]
+keywords = ["nonlinear least squares", "optimization", "factor graph", "bundle adjustment", "SLAM",
+            "CUDA", "GPU", "Warp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: GPU :: NVIDIA CUDA :: 13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
 requires-python = ">=3.10"
 # 1.18 is the first warp-lang whose PyPI wheels are CUDA 13 builds (the toolkit pycunls uses).
 # The native module links the CUDA 13 libraries without bundling them: they come from NVIDIA's
@@ -18,6 +43,12 @@ dependencies = [
     "warp-lang>=1.18",
     "cuda-toolkit[cudart,cublas,cusparse,cusolver,nvjitlink]>=13.0,<14",
 ]
+
+[project.urls]
+Homepage = "https://github.com/nvidia-isaac/cuNLS"
+Repository = "https://github.com/nvidia-isaac/cuNLS"
+Documentation = "https://github.com/nvidia-isaac/cuNLS/blob/main/docs/sphinx/index.rst"
+Issues = "https://github.com/nvidia-isaac/cuNLS/issues"
 
 [project.optional-dependencies]
 # cupy only for the interoperability test (any __cuda_array_interface__ array works).

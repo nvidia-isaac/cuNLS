@@ -220,8 +220,9 @@ Real time
    outer iterations of ``inner_iterations`` inner iterations (the last
    ``base_options.max_num_iterations``), every decision on the GPU, one read-back per
    call (the summary's costs are NaN). Without constraint batches there is
-   nothing to read back: the call can be captured in a CUDA graph once an
-   earlier call set up the structure (with ``base_options.reuse_structure``).
+   nothing to read back: the call can be captured in a CUDA graph once
+   ``initialize`` (or an earlier call) set up the structure (with
+   ``base_options.reuse_structure``).
    With
    ``warm_start`` and ``base_options.reuse_structure`` the penalties and violation
    history continue from call to call. ``solver.options = o`` switches the outer loop

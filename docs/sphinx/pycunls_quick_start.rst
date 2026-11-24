@@ -119,11 +119,12 @@ their results on the same stream, or synchronize it first. The one exception is
 an augmented Lagrangian real-time call with constraint batches, which reads its
 final status back and synchronizes once at the end (no graph capture). To
 capture a real-time call in a CUDA graph (``wp.ScopedCapture``), set
-``reuse_structure`` and run one call before the capture: the first call sets up
-the structure and synchronizes. A captured call that would synchronize (the
-first one, a converging one, or a real-time augmented Lagrangian call with
-constraint batches) raises ``ValueError`` with this fix, before it enqueues any
-work.
+``reuse_structure`` and call ``minimizer.initialize(stream, problem)`` before
+the capture: the structure setup synchronizes (``minimize`` runs it itself when
+the structure is not set up, so ``initialize`` is optional otherwise). A
+captured call that would synchronize (one on a structure that is not set up, a
+converging one, or a real-time augmented Lagrangian call with constraint
+batches) raises ``ValueError`` with this fix, before it enqueues any work.
 
 .. code-block:: python
 

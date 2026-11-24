@@ -510,7 +510,7 @@ inline std::vector<SparseLinearSolverType> AvailableSolverTypes(
 /**
  * @brief Solver ids of the typed minimizer tests.
  *
- * Ids 0 and 1 are the cuDSSLinearSolverMode values (cuDSS backend);
+ * Id 0 is the cuDSS backend;
  * kBlockSparsePCGSolverId and kBlockSparseCholeskySolverId select
  * BlockSparsePCG and BlockSparseCholesky, which need no cuDSS.
  */
@@ -532,7 +532,6 @@ inline void ConfigureTestSolver(int solver_id, MinimizerOptions &options) {
   }
   options.sparse_linear_solver_type = SparseLinearSolverType::cuDSS;
   options.sparse_linear_solver_config.cudss_solver_options = {
-      .mode = static_cast<cuDSSLinearSolverMode>(solver_id),
       .nthreads = 1,
       .threading_lib_path = "",
   };

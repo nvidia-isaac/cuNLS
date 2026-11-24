@@ -78,4 +78,4 @@ except ImportError:
     if _sys.argv[:1] != ["-m"]:
         raise
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"

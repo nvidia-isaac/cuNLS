@@ -248,7 +248,7 @@ bool StreamIsCapturing(cudaStream_t stream) {
   return status != cudaStreamCaptureStatusNone;
 }
 
-void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOptions &options,
+void SetUpStructure(cudaStream_t stream, const Problem &problem, const MinimizerOptions &options,
                     StateBatchOps &state_ops, MinimizerSystem &system) {
   // Cheap host-only guard (no device work): sizes within capacities,
   // connectivity covering the active factors, at least one active factor.
@@ -475,6 +475,80 @@ Minimizer::Minimizer(const MinimizerOptions &options) : options_(options) {
   system_.linear_system = internal::CreateLinearSystem(options_);
 }
 
+namespace {
+
+/** @brief GN / LM solve problems without constraint batches or box bounds (the AL's). */
+void RejectConstrained(const Problem &problem) {
+  for (const auto &rb : problem.GetResidualBatches()) {
+    if (dynamic_cast<const ConstraintFactorBatchBase *>(rb.GetFactorBatch()) != nullptr) {
+      throw std::invalid_argument(
+          "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has constraint "
+          "factor batches; solve it with AugmentedLagrangianMinimizer");
+    }
+  }
+  if (problem.HasBoxBounds()) {
+    throw std::invalid_argument(
+        "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has box-bounded "
+        "states (VectorStateBatch::SetBounds); solve it with AugmentedLagrangianMinimizer");
+  }
+}
+
+}  // namespace
+
+void Minimizer::Initialize(cudaStream_t stream, const Problem &problem) {
+  if (internal::StreamIsCapturing(stream)) {
+    throw std::invalid_argument(
+        "Minimizer::Initialize: the stream is being captured into a CUDA graph, but the setup "
+        "synchronizes. Fix: call Initialize() before the capture.");
+  }
+  problem.CheckDevice("Minimizer::Initialize", stream, &device_);
+  structure_ = {};  // invalid until the setup below completes
+  {
+    auto range = profiler_domain_.CreateDomainRange("SetUpStructure");
+    internal::SetUpStructure(stream, problem, options_, state_ops_, system_);
+  }
+  // The state snapshots of every call (also when nothing is free).
+  for (StateBatch *batch : problem.GetStateBatches()) RefreshDerivedStateData(batch, stream);
+  current_state_.Recreate(stream, problem);
+  updated_state_.Recreate(stream, problem);
+  const size_t num_free = state_ops_.NumReducedStates();
+  if (num_free == 0) {
+    // Nothing to solve: Minimize() only reports NoFreeStates per subproblem (sizes that array).
+    partition_.TerminateAll(stream, problem.NumProblems(),
+                            static_cast<int>(TerminationReason::NoFreeStates));
+  } else {
+    // The subproblem maps, then the linear solver's analysis of the system at
+    // the current states (some solvers read its values, not only its pattern).
+    partition_.Build(stream, problem, current_state_, num_free);
+    if (partition_.NumProblems() > 1) system_.row_active.resize(partition_.NumRows());
+    // The read-back slots: the partition's (total cost, active count, and with
+    // one subproblem whether its step was taken), and the subproblems per
+    // TerminationReason.
+    scratch_.d_scalars.resize(3);
+    scratch_.h_scalars.resize(3);
+    scratch_.d_termination_counts.resize(kNumTerminationReasons);
+    scratch_.h_termination_counts.resize(kNumTerminationReasons);
+    // The per-factor costs and their per-subproblem sums (sizes their buffers).
+    ComputeCostAsync(stream, problem, current_state_, scratch_, nullptr);
+    partition_.SumFactorCosts(stream, scratch_.buffer.data(), partition_.Cost());
+    internal::BuildSystem(stream, problem, current_state_, options_, system_, scratch_);
+    UpdateSystem(stream, 0, *system_.linear_system, partition_);
+    system_.step.resize(system_.rhs.size());
+    auto range = profiler_domain_.CreateDomainRange("PerformSymbolicAnalysis");
+    if (!system_.linear_system->PrepareSolver(stream, problem, system_.rhs, system_.step)) {
+      const std::string msg =
+          "Minimizer::Initialize: the linear solver rejected the system (see the log for its "
+          "reason). Fix: check the problem (Problem::FindStructureError), or choose another "
+          "MinimizerOptions::sparse_linear_solver_type.";
+      LogError(msg);
+      throw std::runtime_error(msg);
+    }
+  }
+  structure_.problem = &problem;
+  structure_.signature = StructureSignature(problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+}
+
 MinimizerSummary Minimizer::Minimize(cudaStream_t stream, Problem &problem) {
   internal::InnerSolve settings;
   settings.max_num_iterations = options_.max_num_iterations;
@@ -494,30 +568,15 @@ MinimizerSummary Minimizer::Minimize(cudaStream_t stream, Problem &problem) {
  */
 MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Problem &problem,
                                          const InnerSolve &inner) {
-  if (!inner.constraints_managed) {
-    for (const auto &rb : problem.GetResidualBatches()) {
-      if (dynamic_cast<const ConstraintFactorBatchBase *>(rb.GetFactorBatch()) != nullptr) {
-        throw std::invalid_argument(
-            "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has constraint "
-            "factor batches; solve it with AugmentedLagrangianMinimizer");
-      }
-    }
-    if (problem.HasBoxBounds()) {
-      throw std::invalid_argument(
-          "GaussNewtonMinimizer / LevenbergMarquardtMinimizer: the problem has box-bounded "
-          "states (VectorStateBatch::SetBounds); solve it with AugmentedLagrangianMinimizer");
-    }
-  }
+  if (!inner.constraints_managed) RejectConstrained(problem);
   // Structure setup is skipped when the caller vouches for an unchanged
   // structure and the sizes agree.
-  std::vector<size_t> signature = StructureSignature(problem);
-  internal::MinimizerStructure &structure = m.structure_;
-  const bool set_up =
-      inner.reuse_structure && structure.problem == &problem && signature == structure.signature;
+  const internal::MinimizerStructure &structure = m.structure_;
+  const bool set_up = inner.reuse_structure && structure.problem == &problem &&
+                      StructureSignature(problem) == structure.signature;
   // A call captured into a CUDA graph must not synchronize or allocate: it is
-  // real time, on a structure an earlier call set up completely (with the
-  // solver's analysis, unless nothing is free). Checked before any work, so the
-  // capture stays valid.
+  // real time, on a structure Initialize() (or an earlier call) set up. Checked
+  // before any work, so the capture stays valid.
   if (internal::StreamIsCapturing(stream)) {
     if (!inner.fixed_iterations) {
       throw std::invalid_argument(
@@ -525,13 +584,13 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
           "converging solve reads its progress back every iteration (got real_time=false, "
           "expected true). Fix: set MinimizerOptions::real_time, or solve outside the capture.");
     }
-    if (!set_up || !(structure.solver_ready || m.state_ops_.NumReducedStates() == 0)) {
+    if (!set_up) {
       throw std::invalid_argument(
           "Minimizer::Minimize: the stream is being captured into a CUDA graph, but this call "
-          "sets up the problem's structure, which synchronizes (got a first call, a call "
-          "without reuse_structure or changed sizes; expected a structure an earlier call set "
-          "up). Fix: set MinimizerOptions::reuse_structure and run one Minimize() call on the "
-          "problem before the capture.");
+          "sets up the problem's structure, which synchronizes (got a problem that is not set "
+          "up, a call without reuse_structure or changed sizes; expected a structure set up "
+          "before). Fix: set MinimizerOptions::reuse_structure and call Initialize(stream, "
+          "problem) before the capture.");
     }
   }
   problem.CheckDevice("Minimizer::Minimize", stream, &m.device_);
@@ -558,11 +617,10 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
         cudaMemsetAsync(inner.problem_at_cap, 0, problem.NumProblems() * sizeof(int), stream));
   }
 
-  if (!set_up) {
-    structure = {};  // invalid until the setup below completes
-    auto setup_range = m.profiler_domain_.CreateDomainRange("SetUpStructure");
-    SetUpStructure(stream, problem, options, m.state_ops_, system);
-  }
+  if (!set_up) m.Initialize(stream, problem);
+  // Initialize() just evaluated the costs and built the system at these states;
+  // reused unless the caller (the AL) changes states, penalties or masks in between.
+  const bool initialized_here = !set_up && !inner.constraints_managed;
 
   // Derived state data (articulation link poses) must match the coordinates
   // the caller or the bound projection wrote, before the states are copied.
@@ -574,9 +632,6 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   // No optimizable states (all constant): nothing to solve. The reason is known
   // on the host; a real-time call reads nothing back (no cost).
   if (m.state_ops_.NumReducedStates() == 0) {
-    // The setup above is complete for such a problem: the next call may reuse it.
-    structure.problem = &problem;
-    structure.signature = std::move(signature);
     partition.TerminateAll(stream, problem.NumProblems(),
                            static_cast<int>(TerminationReason::NoFreeStates));
     summary.initial_cost = fixed ? std::numeric_limits<float>::quiet_NaN()
@@ -589,15 +644,6 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     return done();
   }
 
-  if (!structure.partition_ready) {
-    partition.Build(stream, problem, current, m.state_ops_.NumReducedStates());
-    structure.partition_ready = true;
-  }
-
-  // d_scalars: the partition's read-back slots (total cost, active count, and
-  // with one subproblem whether its step was taken).
-  if (scratch.d_scalars.size() < 3) scratch.d_scalars.resize(3);
-  if (scratch.h_scalars.size() < 3) scratch.h_scalars.resize(3);
   float *d_out = scratch.d_scalars.data();
   auto read_back = [&](size_t slots = 2) {
     THROW_ON_CUDA_ERROR(cudaMemcpyAsync(scratch.h_scalars.data(), d_out, slots * sizeof(float),
@@ -607,10 +653,6 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   };
   // Why each subproblem stopped: counts per reason, read back with the final
   // synchronization (none in real time).
-  if (scratch.d_termination_counts.size() < kNumTerminationReasons) {
-    scratch.d_termination_counts.resize(kNumTerminationReasons);
-    scratch.h_termination_counts.resize(kNumTerminationReasons);
-  }
   auto finish_termination = [&]() {
     if (fixed) return;
     partition.FinishTermination(stream, scratch.d_termination_counts.data());
@@ -634,7 +676,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     partition.SumFactorCosts(stream, scratch.buffer.data(), costs);
   };
 
-  evaluate(current, partition.Cost());
+  if (!initialized_here) evaluate(current, partition.Cost());
   partition.InitStepControl(stream, options.cost_tolerance, inner.problem_frozen, d_out);
   float cost = std::numeric_limits<float>::quiet_NaN();
   size_t active = partition.NumProblems();
@@ -646,8 +688,6 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
   summary.initial_cost = cost;
   summary.final_cost = cost;
   if (active == 0 && !fixed) {
-    structure.problem = &problem;
-    structure.signature = std::move(signature);
     finish_termination();
     THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
     read_termination();
@@ -667,19 +707,7 @@ MinimizerSummary internal::InnerMinimize(Minimizer &m, cudaStream_t stream, Prob
     BuildSystem(stream, problem, current, options, system, scratch);
     update(iteration);
   };
-  build(0);
-  system.step.resize(system.rhs.size());
-  if (!structure.solver_ready) {
-    auto sa_range = m.profiler_domain_.CreateDomainRange("PerformSymbolicAnalysis");
-    if (!system.linear_system->PrepareSolver(stream, problem, system.rhs, system.step)) {
-      std::string str = "Failed to initialize linear solver";
-      LogError(str);
-      throw std::runtime_error(str);
-    }
-    structure.solver_ready = true;
-  }
-  structure.problem = &problem;
-  structure.signature = std::move(signature);
+  if (!initialized_here) build(0);
 
   StepControlParams params;
   params.max_consecutive_rejected_steps = static_cast<int>(options.max_consecutive_rejected_steps);

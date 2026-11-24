@@ -17,7 +17,7 @@
 and every public pycunls name is documented somewhere. Needs the source tree (the CI test step
 mounts it); skipped for an installed wheel alone."""
 
-import importlib
+import importlib.util
 import pathlib
 import re
 
@@ -83,3 +83,19 @@ def test_every_public_name_is_documented():
             continue
         missing.append(name)
     assert not missing, f"public names no docs page mentions: {missing}"
+
+
+def test_pypi_readme_is_self_contained():
+    """The PyPI page (scripts/pypi_readme.py) has no math or GitHub-only parts, links only by
+    absolute URL, and shows only repository images below PyPI's 10 MB image limit."""
+    spec = importlib.util.spec_from_file_location("pypi_readme", REPO / "scripts" / "pypi_readme.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    text = module.pypi_readme((REPO / "README.md").read_text(), "main")
+    assert "$$" not in text and "-only" not in text
+    relative = re.findall(r'(?:src|srcset|href)="(?!https://|#)[^"]*"|\]\((?![a-z]+:|#)[^)]*\)', text)
+    assert not relative, f"relative links on the PyPI page: {relative}"
+    prefix = "https://raw.githubusercontent.com/nvidia-isaac/cuNLS/main/"
+    for image in re.findall(re.escape(prefix) + r'([^"]+)"', text):
+        assert (REPO / image).is_file(), f"PyPI page image {image} is not in the repository"
+        assert (REPO / image).stat().st_size < 10_000_000, f"{image} is over PyPI's 10 MB image limit"

@@ -379,9 +379,10 @@ void bind_types(nb::module_ &m) {
       .def_rw("real_time", &cunls::MinimizerOptions::real_time,
               "Fixed budget without host synchronization: exactly max_num_iterations "
               "iterations, each with exactly max_line_search_steps line-search evaluations; "
-              "the summary has NaN costs and TerminationReason.NotDetermined. The first call "
-              "sets the structure up; with reuse_structure the following calls can be captured "
-              "in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the "
+              "the summary has NaN costs and TerminationReason.NotDetermined. The structure "
+              "setup synchronizes; with reuse_structure, calls on a structure initialize() (or "
+              "an earlier call) set up can be captured in a CUDA graph. In "
+              "AugmentedLagrangianMinimizerOptions.base_options it makes the "
               "whole augmented Lagrangian call real time. Needs disable_safety_checks (the "
               "default): the safety checks read solver failures back. Default: False.")
       .def_rw("state_tolerance", &cunls::MinimizerOptions::state_tolerance,
@@ -402,7 +403,8 @@ void bind_types(nb::module_ &m) {
           "0 (default) disables it.")
       .def_rw("reuse_structure", &cunls::MinimizerOptions::reuse_structure,
               "The problem's structure is unchanged since this minimizer's previous minimize() "
-              "on it (same batches, connectivity, active/constant counts, partition): later "
+              "or initialize() on it (same batches, connectivity, active/constant counts, "
+              "partition): later "
               "calls skip the structure setup. A size change falls back to the full setup. "
               "Default: False.")
       .def_rw("sparse_linear_solver_type", &cunls::MinimizerOptions::sparse_linear_solver_type,

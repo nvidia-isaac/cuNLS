@@ -181,9 +181,10 @@ struct MinimizerOptions {
    * max_line_search_steps line-search evaluations; nothing is read back, so
    * the summary has num_iterations = max_num_iterations, NaN costs and
    * TerminationReason::NotDetermined (as SubproblemTerminationReasons()). The
-   * first call sets up the structure and synchronizes; with reuse_structure
-   * the following calls can be captured in a CUDA graph (a captured call
-   * that would synchronize throws std::invalid_argument instead). Needs
+   * structure setup synchronizes; with reuse_structure, calls on a structure
+   * Initialize() (or an earlier call) set up can be captured in a CUDA graph (a
+   * captured call that would synchronize throws std::invalid_argument
+   * instead). Needs
    * disable_safety_checks (the default): the safety checks read solver
    * failures back after every solve. In
    * AugmentedLagrangianMinimizerOptions::base_options it makes the whole
@@ -338,10 +339,10 @@ struct MinimizerOptions {
 
   /**
    * @brief The problem's structure is unchanged since this minimizer's
-   * previous Minimize() call on it: same batches, connectivity (also the
-   * contents of device index tables), active and constant counts, constant
-   * ids and subproblem partition; only state values, factor data and state
-   * bounds may differ. Calls after the first then skip the structure setup (index
+   * previous Minimize() or Initialize() call on it: same batches, connectivity
+   * (also the contents of device index tables), active and constant counts,
+   * constant ids and subproblem partition; only state values, factor data and
+   * state bounds may differ. Later calls then skip the structure setup (index
    * expansion, Hessian pattern, symbolic analysis of the linear solver,
    * subproblem maps). A cheap host-side check of the sizes falls back to the
    * full setup when they differ; changes it cannot see (rewritten index
@@ -423,12 +424,13 @@ MinimizerSummary InnerMinimize(Minimizer &minimizer, cudaStream_t stream, Proble
  */
 bool StreamIsCapturing(cudaStream_t stream);
 
-/** @brief What was set up for the last problem; skipped on reuse_structure. */
+/**
+ * @brief The problem Minimizer::Initialize() set up last (null while none is, or
+ * while a setup is under way); calls with reuse_structure skip the setup.
+ */
 struct MinimizerStructure {
-  const Problem *problem = nullptr;  ///< Problem of the last setup.
+  const Problem *problem = nullptr;  ///< Problem of the last complete setup.
   std::vector<size_t> signature;     ///< Its size signature.
-  bool solver_ready = false;         ///< The solver's symbolic analysis has run.
-  bool partition_ready = false;      ///< The subproblem maps are built.
 };
 
 /** @brief The linearized problem and its solution. */
@@ -462,7 +464,7 @@ struct MinimizerScratch {
  * residuals and Jacobians, lays out the tangent space (`state_ops`) and builds
  * the Hessian pattern. Internal; tests use it to assemble systems in isolation.
  */
-void SetUpStructure(cudaStream_t stream, Problem &problem, const MinimizerOptions &options,
+void SetUpStructure(cudaStream_t stream, const Problem &problem, const MinimizerOptions &options,
                     StateBatchOps &state_ops, MinimizerSystem &system);
 
 /**
@@ -544,13 +546,37 @@ class Minimizer {
    *         Problem::CheckSizes), or if `stream` is being captured into a
    *         CUDA graph and the call would synchronize: a converging solve
    *         (MinimizerOptions::real_time off), or a call that sets up the
-   *         structure (the first call on the problem, or any call without
-   *         reuse_structure). It throws before enqueuing any work, so the
-   *         capture stays valid.
+   *         structure (a first call on the problem that Initialize() did not
+   *         set up, or any call without reuse_structure). It throws before
+   *         enqueuing any work, so the capture stays valid.
    * @throws std::runtime_error if the linear solver fails and the method
    *         cannot recover from it (see RejectsFailedSolves()).
    */
   MinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
+
+  /**
+   * @brief Sets the problem's structure up without solving: the work a
+   * Minimize() call does first when the structure is not set up (index
+   * expansion, Hessian pattern, subproblem maps, the linear solver's
+   * analysis), and the only part of it that synchronizes. Optional:
+   * Minimize() calls it itself on a first call, on a changed structure and on
+   * every call without MinimizerOptions::reuse_structure. Call it before
+   * capturing Minimize() in a CUDA graph (real_time and reuse_structure set),
+   * or to keep the setup out of the first solve.
+   *
+   * Assembles the system once at the current states (some solvers' analysis
+   * reads its values) and leaves the states unchanged. Accepts constraint
+   * batches and box-bounded states (AugmentedLagrangianMinimizer sets its inner
+   * solver up with it); Minimize() rejects those. Enqueues work on `stream`
+   * and synchronizes it before returning.
+   *
+   * @param stream CUDA stream for all device work; not one being captured.
+   * @param problem Problem the following Minimize() calls solve.
+   * @throws std::invalid_argument if `stream` is being captured into a CUDA
+   *         graph, or the problem's sizes or device are invalid.
+   * @throws std::runtime_error if the linear solver rejects the system.
+   */
+  void Initialize(cudaStream_t stream, const Problem &problem);
 
   /**
    * @brief Options the minimizer runs with (for Levenberg-Marquardt the base

@@ -97,8 +97,9 @@ Options go by name: `pb.solve(max_num_iterations=100, cost_tolerance=1e-10)`.
   before returning, except on the real-time paths (`MinimizerOptions.real_time`, the augmented
   Lagrangian's `real_time`): read their results on the same stream, or synchronize it first.
   To capture a real-time solve in a CUDA graph (`wp.ScopedCapture`), set `reuse_structure` and
-  run one `minimize` call before the capture (the first call sets up and synchronizes); a captured
-  call that would synchronize raises `ValueError` with this fix.
+  call `minimizer.initialize(stream, problem)` before the capture (the structure setup
+  synchronizes; `minimize` runs it itself otherwise); a captured call that would synchronize
+  raises `ValueError` with this fix.
 - **Devices.** A problem runs on the device of its state arrays: `minimize`, `evaluate_batch` and
   the state helpers make that device current themselves (`problem.device`), so no
   `wp.ScopedDevice` is needed around them. `ArticulationTopology` lives on the device of the GPU

@@ -18,7 +18,7 @@ the matrix in place. `SetRowActivity` is advisory. Factory: `sparse_linear_solve
 - Dense (`dense_linear_solver_base.h` owns the dense matrix and the entry map; subclasses supply
   `FactorizeAndSolve`): `DenseLDLTSolver` (pivoted, indefinite OK), `DenseCholeskySolver`,
   `DenseQRSolver` (cuSOLVER).
-- `cuDSSLinearSolver` (CSR only; `SlowInitFastSolve` / `FastInitSlowSolve`).
+- `cuDSSLinearSolver` (CSR only; `Initialize` analyzes the pattern, each `Solve` factorizes).
 - `BlockSparsePCGSolver`: block-Jacobi LDLT preconditioner, `H p` by
   `MultiplyBSRValuesByDenseVector` (`minimizer/bsr_matrix.h`), cuSPARSE
   (`CUSPARSE_SPMV_CSR_ALG2` in `deterministic_mode`) or `BaHessianProduct`
