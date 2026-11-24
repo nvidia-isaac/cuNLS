@@ -57,12 +57,14 @@ namespace cunls {
  *   device; the summary reports the last outer iteration's violation and
  *   status, and NaN costs. Without constraint batches there is no violation
  *   to report: nothing is read back (status kNotDetermined), so the call can
- *   be captured in a CUDA graph once the structure is set up. Typical use
+ *   be captured in a CUDA graph once the structure is set up (Initialize()
+ *   before the capture, with reuse_structure). Typical use
  *   (receding horizon): a converged first solve, then real time with
  *   warm_start and reuse_structure (SetOptions). Default: false
  * - base_options.reuse_structure: the problem's structure is unchanged since
- *   the previous Minimize call (see MinimizerOptions::reuse_structure): skip
- *   the structure setup of the inner solves and of the constraint maps.
+ *   the previous Minimize() or Initialize() call (see
+ *   MinimizerOptions::reuse_structure): skip the structure setup of the inner
+ *   solves and of the constraint maps.
  *   Within one call the outer iterations always reuse it. Default: false
  */
 struct AugmentedLagrangianMinimizerOptions : LevenbergMarquardtMinimizerOptions {
@@ -253,11 +255,35 @@ class AugmentedLagrangianMinimizer {
    *         being captured into a CUDA graph and the call would synchronize:
    *         a converging solve, a real-time solve with constraint batches
    *         (its status is read back at the end), or a call that sets up the
-   *         structure (the first call on the problem, or any call without
-   *         base_options.reuse_structure). It throws before enqueuing any
-   *         work, so the capture stays valid.
+   *         structure (a first call on the problem that Initialize() did not
+   *         set up, or any call without base_options.reuse_structure). It
+   *         throws before enqueuing any work, so the capture stays valid.
    */
   AugmentedLagrangianMinimizerSummary Minimize(cudaStream_t stream, Problem &problem);
+
+  /**
+   * @brief Sets the problem's structure up without solving: the work a
+   * Minimize() call does first when the structure is not set up (the
+   * constraint batches' subproblem maps, the bounded states' columns, and the
+   * inner solver's setup, see Minimizer::Initialize), and the only part of it
+   * that synchronizes. Optional: Minimize() calls it itself on a first call,
+   * on a changed structure and on every call without
+   * base_options.reuse_structure. Call it before capturing Minimize() in a
+   * CUDA graph (base_options.real_time and reuse_structure set, no constraint
+   * batches), or to keep the setup out of the first solve.
+   *
+   * Leaves the states unchanged; the multipliers and penalties of a new
+   * constraint layout start as in a first call (a warm start keeps those of an
+   * unchanged one). Enqueues work on `stream` and synchronizes it before
+   * returning.
+   *
+   * @param stream CUDA stream for all device work; not one being captured.
+   * @param problem Problem the following Minimize() calls solve.
+   * @throws std::invalid_argument if `stream` is being captured into a CUDA
+   *         graph, or for a problem Minimize() rejects.
+   * @throws std::runtime_error if the linear solver rejects the system.
+   */
+  void Initialize(cudaStream_t stream, const Problem &problem);
 
   /** @brief Options of the following Minimize() calls. */
   const AugmentedLagrangianMinimizerOptions &Options() const { return options_; }
@@ -289,6 +315,21 @@ class AugmentedLagrangianMinimizer {
   size_t NumSubproblems() const { return minimizer_.NumSubproblems(); }
 
  private:
+  /**
+   * @brief Initialize() without its checks and final synchronization: the
+   * constraint batches and signatures of `problem`, its bounded states
+   * (UpdateBoundedStates), and the inner solver's setup.
+   */
+  void SetUp(cudaStream_t stream, const Problem &problem);
+
+  /**
+   * @brief Finds the box-bounded state batches (bounded_) and the
+   * reduced-system column of every state (column_offsets_): always with
+   * `recompute` (the setup, also without bounds), otherwise only with bounds
+   * when the number of state batches changed.
+   */
+  void UpdateBoundedStates(cudaStream_t stream, const Problem &problem, bool recompute);
+
   /**
    * @brief Bound handling of the box-bounded states, run by every inner solve
    * as its InnerSolve::restrict_system, at the current `state`.

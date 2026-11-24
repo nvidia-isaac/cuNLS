@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -431,6 +432,12 @@ void ProblemPartition::Build(cudaStream_t stream, const Problem &problem,
   for (auto *v : {&active_, &rejected_, &reject_, &converged_, &outcome_, &accept_, &shortened_,
                   &termination_}) {
     v->resize(num_problems_);
+  }
+  // The reductions of one subproblem (SumFactorCosts, SumRows) allocate nothing in a solve.
+  if (num_problems_ == 1) {
+    const size_t partials =
+        std::max(ReducePartialCount(num_factor_items_), ReducePartialCount(num_rows_));
+    if (partials_.size() < partials) partials_.resize(partials);
   }
   // Without a partition (one subproblem) every state belongs to subproblem 0,
   // and every per-subproblem operation has a direct path: no maps to build or

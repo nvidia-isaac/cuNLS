@@ -12,8 +12,10 @@ guides: `docs/sphinx/constraints.rst`, `docs/sphinx/ransac.rst`.
   `Minimizer` (the one iteration loop: linear system, line search, structure reuse, per-subproblem
   bookkeeping; the private hooks `UpdateSystem` / `ClassifySteps` are the whole GN / LM
   difference; behaviour lives in free functions in `minimizer.cu`). `internal::InnerSolve` /
-  `InnerMinimize` are the AL's channel into the loop; `internal::SetUpStructure` /
-  `BuildSystem` also serve tests.
+  `InnerMinimize` are the AL's channel into the loop; `Initialize` is the one structure setup
+  (`InnerMinimize` runs it when the structure is not set up, the AL's `SetUp` for its inner
+  solver; it accepts constraint batches and bounds, `Minimize` rejects them for GN / LM);
+  `internal::SetUpStructure` / `BuildSystem` also serve tests.
 - `gauss_newton_minimizer.h`, `levenberg_marquardt_minimizer.h` (per-subproblem λ, fused
   λ-update + damping kernel; all LM state lives there).
 - `problem_partition.h`: `ProblemPartition` (subproblem maps and sums, the device step decision
@@ -55,7 +57,10 @@ guides: `docs/sphinx/constraints.rst`, `docs/sphinx/ransac.rst`.
   per-hypothesis normal equations, factorization and scoring use fixed reduction orders (same
   seed, same bits). By default an inlier needs a non-zero Jacobian on a free state.
 - Real time: `reuse_structure` skips structure setup when the caller vouches for it (a host size
-  signature is checked); `MinimizerOptions::real_time` (`InnerSolve::fixed_iterations`, also the
+  signature is checked). The setup (`Initialize`) sizes every buffer and creates every library
+  handle a solve uses, so a real-time call on a set-up structure allocates nothing and can be
+  captured (`TerminationTest.InitializeMakesTheFirstCallCapturable`; BlockSparsePCG reads back per
+  solve and cannot); `MinimizerOptions::real_time` (`InnerSolve::fixed_iterations`, also the
   AL's `base_options.real_time`) fixes the line-search and refinement counts and reads nothing back
   until the end (summary costs NaN; AL without constraint batches reads nothing back at all).
 - `AugmentedLagrangianMinimizer` owns a private `LevenbergMarquardtMinimizer` built from its

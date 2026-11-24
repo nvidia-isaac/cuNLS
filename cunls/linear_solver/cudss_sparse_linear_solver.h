@@ -27,27 +27,11 @@
 namespace cunls {
 
 /**
- * @brief Configuration modes for cuDSS linear solver.
- *
- * Controls the trade-off between initialization time and solve time.
- */
-enum class cuDSSLinearSolverMode {
-  SlowInitFastSolve,  ///< Slower initialization, faster subsequent solves.
-  FastInitSlowSolve,  ///< Faster initialization, slower subsequent solves (uses
-                      ///< refactorization).
-};
-
-/**
- * @brief Configuration options for the cuDSS-based sparse linear solver.
- *
- * Controls the solver mode, threading, and library path used during
- * factorization and solve phases.
+ * @brief Configuration options for the cuDSS-based sparse linear solver: the
+ * threading of its host-side operations.
  */
 struct cuDSSLinearSolverOptions {
-  cuDSSLinearSolverMode mode =
-      cuDSSLinearSolverMode::SlowInitFastSolve;  ///< Solver mode controlling
-                                                 ///< the init/solve trade-off.
-  int nthreads = 1;                              ///< Number of threads for host-side operations.
+  int nthreads = 1;  ///< Number of threads for host-side operations.
   std::string threading_lib_path =
       "";  ///< Path to the threading library (empty disables multi-threading).
 };
@@ -71,20 +55,15 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   /**
    * @brief Constructs a cuDSS linear solver.
    *
-   * Initializes the solver with the specified cuDSS algorithm configuration.
-   *
-   * @param options Solver configuration controlling the initialization/solve
-   *                trade-off and threading settings.
+   * @param options Threading settings of the cuDSS host-side operations.
    */
   cuDSSLinearSolver(cuDSSLinearSolverOptions options = cuDSSLinearSolverOptions());
 
   /**
    * @brief Performs setup for the sparse linear system.
    *
-   * Always runs the cuDSS symbolic analysis phase. For SlowInitFastSolve mode,
-   * that is all; for FastInitSlowSolve mode, also performs an initial
-   * factorization so that subsequent Solve calls can use cheaper
-   * refactorization.
+   * Runs the cuDSS symbolic analysis phase (reordering) of the pattern of
+   * @p spd_matrix; each Solve() factorizes the current values.
    *
    * Both @p rhs and @p result must be pre-allocated with the same number of
    * elements as the number of rows in @p spd_matrix; the solver does not
@@ -104,9 +83,8 @@ class cuDSSLinearSolver : public SparseLinearSolver {
   /**
    * @brief Solves a sparse SPD linear system Ax = b.
    *
-   * For SlowInitFastSolve mode, performs a full factorization followed by the
-   * solve phase. For FastInitSlowSolve mode, performs refactorization (reusing
-   * the symbolic analysis from Initialize) followed by the solve phase.
+   * Factorizes the current values (reusing the symbolic analysis of
+   * Initialize()), then runs the solve phase.
    *
    * @p rhs and @p result must already be allocated with the same number of
    * elements as the number of rows in @p spd_matrix. The solver does not

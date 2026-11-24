@@ -49,22 +49,33 @@ def test_a_warp_stream_is_accepted_as_the_solver_stream():
 
 
 
-def test_a_captured_call_that_would_synchronize_raises_with_the_fix():
-    """The first real-time call sets up the structure, which synchronizes: captured, it raises
-    before enqueuing anything (the capture ends normally). After one call outside the capture,
-    the captured call replays the solve."""
+@pytest.mark.parametrize("augmented_lagrangian", [False, True])
+def test_a_captured_call_that_would_synchronize_raises_with_the_fix(augmented_lagrangian):
+    """The structure setup synchronizes: a captured first call (and a captured initialize())
+    raises before enqueuing anything (the capture ends normally). After initialize() outside the
+    capture, which leaves the states unchanged, the first call is captured and replays the
+    solve."""
     problem, x, targets = _prior_problem(4)
-    options = pycunls.LevenbergMarquardtMinimizerOptions()
+    if augmented_lagrangian:
+        options = pycunls.AugmentedLagrangianMinimizerOptions()
+        options.max_outer_iterations = 1
+    else:
+        options = pycunls.LevenbergMarquardtMinimizerOptions()
     options.base_options.real_time = True
     options.base_options.reuse_structure = True
     options.base_options.max_num_iterations = 3
-    minimizer = pycunls.LevenbergMarquardtMinimizer(options)
+    minimizer = (pycunls.AugmentedLagrangianMinimizer(options) if augmented_lagrangian
+                 else pycunls.LevenbergMarquardtMinimizer(options))
     stream = wp.get_stream()
-    with pytest.raises(ValueError, match=r"run one Minimize\(\) call on the problem before"):
+    with pytest.raises(ValueError, match=r"call Initialize\(stream, problem\) before the capture"):
         with wp.ScopedCapture():
             minimizer.minimize(stream, problem)
-    minimizer.minimize(stream, problem)
-    x.zero_()
+    with pytest.raises(ValueError, match=r"call Initialize\(\) before the capture"):
+        with wp.ScopedCapture():
+            minimizer.initialize(stream, problem)
+    start = x.numpy().copy()
+    minimizer.initialize(stream, problem)
+    np.testing.assert_array_equal(x.numpy(), start)
     with wp.ScopedCapture() as capture:
         minimizer.minimize(stream, problem)
     wp.capture_launch(capture.graph)

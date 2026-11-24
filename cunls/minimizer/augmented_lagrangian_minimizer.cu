@@ -394,6 +394,38 @@ void FillStatus(const float *out, AugmentedLagrangianMinimizerSummary &summary) 
  * with its active and constant counts, and every residual batch with its active
  * count and number of state pointers (the inner minimizer checks the same).
  */
+/**
+ * @brief The problem's constraint batches (with their active counts), and the
+ * signature of warm starts: each batch with its count, then the subproblem count.
+ */
+std::vector<ConstraintBatchState> CollectConstraints(
+    const Problem &problem, std::vector<std::pair<const void *, size_t>> *signature) {
+  const auto &residual_batches = problem.GetResidualBatches();
+  std::vector<ConstraintBatchState> constraints;
+  signature->clear();
+  for (size_t i = 0; i < residual_batches.size(); ++i) {
+    auto *batch = dynamic_cast<ConstraintFactorBatchBase *>(residual_batches[i].GetFactorBatch());
+    if (batch == nullptr) continue;
+    constraints.push_back({i, batch, batch->NumActiveFactors(), {}});
+    signature->emplace_back(batch, batch->NumActiveFactors());
+  }
+  signature->emplace_back(nullptr, problem.NumProblems());
+  return constraints;
+}
+
+/** @brief A robust loss on a constraint batch is rejected (constraints are hard). */
+void RejectConstraintLosses(const Problem &problem) {
+  for (const auto &rb : problem.GetResidualBatches()) {
+    const LossFunctionBatch *loss = rb.GetLossFunction();
+    if (loss != nullptr && dynamic_cast<const TrivialLossFunctionBatch *>(loss) == nullptr &&
+        dynamic_cast<const ConstraintFactorBatchBase *>(rb.GetFactorBatch()) != nullptr) {
+      throw std::invalid_argument(
+          "AugmentedLagrangianMinimizer: a constraint factor batch has a robust loss; "
+          "constraints are hard and take no loss (robust losses belong on objective factors)");
+    }
+  }
+}
+
 std::vector<size_t> SizeSignature(const Problem &problem) {
   std::vector<size_t> sizes{problem.NumProblems()};
   for (const StateBatch *batch : problem.GetStateBatches()) {
@@ -497,21 +529,92 @@ bool AugmentedLagrangianMinimizer::HoldActiveBounds(cudaStream_t stream,
   return true;
 }
 
+void AugmentedLagrangianMinimizer::UpdateBoundedStates(cudaStream_t stream, const Problem &problem,
+                                                       bool recompute) {
+  const auto &state_batches = problem.GetStateBatches();
+  bounded_.clear();
+  for (size_t b = 0; b < state_batches.size(); ++b) {
+    if (HasBoxBounds(state_batches[b])) bounded_.push_back(b);
+  }
+  // The setup computes the columns of the current layout, also without bounds (a later call
+  // with reuse_structure may bound a state); a reuse call keeps them.
+  if (!recompute && (bounded_.empty() || column_offsets_.size() == state_batches.size())) return;
+  problem.CheckSizes();
+  column_offsets_.resize(state_batches.size());
+  int first_column = 0;
+  for (size_t b = 0; b < state_batches.size(); ++b) {
+    const StateBatch *batch = state_batches[b];
+    ComputeStateColumnOffsets(stream, first_column, batch, column_offsets_[b]);
+    first_column += static_cast<int>((batch->NumActiveStates() - batch->NumConstStates()) *
+                                     batch->TangentSize());
+  }
+  // HoldActiveBounds' masks, one entry per free column: a call allocates nothing.
+  for (auto *mask : {&bound_mask_, &bound_step_mask_, &bound_extra_}) mask->resize(first_column);
+  if (bound_count_.size() < 1) bound_count_.resize(1);
+}
+
+void AugmentedLagrangianMinimizer::SetUp(cudaStream_t stream, const Problem &problem) {
+  problem.CheckSizes();
+  std::vector<std::pair<const void *, size_t>> signature;
+  constraints_ = CollectConstraints(problem, &signature);
+  const bool same_constraints = signature == signature_ && problem_ == &problem;
+  problem_ = nullptr;  // not set up until the setup below completes
+  UpdateBoundedStates(stream, problem, true);
+  // The pointer tables of the constraint evaluations (the inner solver prepares its own).
+  if (!constraints_.empty()) problem.PrepareStatePointers(stream);
+  num_problems_ = problem.NumProblems();
+  for (ConstraintBatchState &con : constraints_) {
+    if (num_problems_ > 1 && con.num_factors > 0) {
+      con.factor_problem.resize(con.num_factors);
+      ComputeFactorProblemIds(stream, problem, con.residual_batch, con.factor_problem.data());
+    }
+  }
+  // The buffers of the outer loop (none is allocated in a call, so a call can be
+  // captured). Penalties, multipliers and violation history of a new constraint
+  // layout start as in a first call.
+  size_t total_rows = 0;
+  for (const ConstraintBatchState &con : constraints_) {
+    total_rows += con.num_factors * con.batch->ResidualsSize();
+  }
+  values_.resize(total_rows);
+  const size_t num_slots = constraints_.size() * num_problems_;
+  if (!same_constraints || penalty_.size() != num_slots) {
+    penalty_.resize(num_slots);
+    Fill(stream, penalty_, options_.initial_penalty);
+    for (ConstraintBatchState &con : constraints_) con.batch->ResetMultipliers(stream);
+    prev_violation_.resize(num_slots);
+    Fill(stream, prev_violation_, INFINITY);
+  }
+  violation_.resize(num_slots);
+  problem_status_.resize(num_problems_);
+  at_cap_.resize(num_problems_);
+  iteration_cap_.resize(num_problems_);
+  if (d_out_.size() < kNumOut) d_out_.resize(kNumOut);
+  minimizer_.Initialize(stream, problem);
+  signature_ = std::move(signature);
+  structure_signature_ = SizeSignature(problem);
+  problem_ = &problem;
+}
+
+void AugmentedLagrangianMinimizer::Initialize(cudaStream_t stream, const Problem &problem) {
+  if (internal::StreamIsCapturing(stream)) {
+    throw std::invalid_argument(
+        "AugmentedLagrangianMinimizer::Initialize: the stream is being captured into a CUDA "
+        "graph, but the setup synchronizes. Fix: call Initialize() before the capture.");
+  }
+  problem.CheckDevice("AugmentedLagrangianMinimizer::Initialize", stream, &device_);
+  RejectConstraintLosses(problem);
+  SetUp(stream, problem);
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
+}
+
 AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaStream_t stream,
                                                                            Problem &problem) {
   problem.CheckDevice("AugmentedLagrangianMinimizer::Minimize", stream, &device_);
   // A robust loss on the objective is fine (the inner solver applies it); on a
   // constraint it would down-weight large violations of a hard constraint and
   // corrupt the multiplier update, so it is rejected.
-  for (const auto &rb : problem.GetResidualBatches()) {
-    const LossFunctionBatch *loss = rb.GetLossFunction();
-    if (loss != nullptr && dynamic_cast<const TrivialLossFunctionBatch *>(loss) == nullptr &&
-        dynamic_cast<const ConstraintFactorBatchBase *>(rb.GetFactorBatch()) != nullptr) {
-      throw std::invalid_argument(
-          "AugmentedLagrangianMinimizer: a constraint factor batch has a robust loss; "
-          "constraints are hard and take no loss (robust losses belong on objective factors)");
-    }
-  }
+  RejectConstraintLosses(problem);
   const auto start = std::chrono::steady_clock::now();
   AugmentedLagrangianMinimizerSummary summary;
   summary.num_problems = problem.NumProblems();
@@ -520,25 +623,16 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
         .count();
   };
 
-  // Constraint batches, and whether they are the ones of the last solve.
-  const auto &residual_batches = problem.GetResidualBatches();
+  // Constraint batches, and whether they are the ones of the last setup.
   std::vector<std::pair<const void *, size_t>> signature;
-  std::vector<ConstraintBatchState> constraints;
-  for (size_t i = 0; i < residual_batches.size(); ++i) {
-    auto *batch = dynamic_cast<ConstraintFactorBatchBase *>(residual_batches[i].GetFactorBatch());
-    if (batch == nullptr) continue;
-    constraints.push_back({i, batch, batch->NumActiveFactors(), {}});
-    signature.emplace_back(batch, batch->NumActiveFactors());
-  }
-  signature.emplace_back(nullptr, problem.NumProblems());
+  const std::vector<ConstraintBatchState> constraints = CollectConstraints(problem, &signature);
   const bool same_constraints = signature == signature_ && problem_ == &problem;
   const bool warm = options_.warm_start && same_constraints;
   // Structure reuse across calls: the caller vouches for an unchanged
   // structure, and the sizes (state and factor counts) must agree too, as the
   // inner minimizer requires.
-  std::vector<size_t> structure = SizeSignature(problem);
   const bool reuse = options_.base_options.reuse_structure && same_constraints &&
-                     structure == structure_signature_;
+                     SizeSignature(problem) == structure_signature_;
   // A call captured into a CUDA graph must not synchronize or allocate: it is
   // real time, has no status to read back (no constraint batches) and reuses
   // the structure of an earlier call (the inner solve checks its own part).
@@ -565,33 +659,23 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
       throw std::invalid_argument(
           capturing +
           "this call sets up the problem's structure, which synchronizes (got a first call, a "
-          "call without reuse_structure or changed sizes; expected a structure an earlier call "
-          "set up). Fix: set base_options.reuse_structure and run one Minimize() call on the "
-          "problem before the capture.");
+          "call without reuse_structure or changed sizes; expected a structure set up before). "
+          "Fix: set base_options.reuse_structure and call Initialize(stream, problem) before the "
+          "capture.");
     }
   }
 
-  // Box-bounded states: the reduced-system column of every state (unless the
-  // structure is reused), then the initial values of the free states clamped
-  // into the box. The inner solves hold the active bounds (HoldActiveBounds)
-  // and the bounded Plus keeps their iterates in the box.
-  const auto &state_batches = problem.GetStateBatches();
-  bounded_.clear();
-  for (size_t b = 0; b < state_batches.size(); ++b) {
-    if (HasBoxBounds(state_batches[b])) bounded_.push_back(b);
+  // The setup (also of the inner solver), unless the structure is reused.
+  if (reuse) {
+    UpdateBoundedStates(stream, problem, false);
+  } else {
+    SetUp(stream, problem);
   }
+  // Box-bounded states: the initial values of the free states clamped into the
+  // box. The inner solves hold the active bounds (HoldActiveBounds) and the
+  // bounded Plus keeps their iterates in the box.
+  const auto &state_batches = problem.GetStateBatches();
   if (!bounded_.empty()) {
-    if (!reuse || column_offsets_.size() != state_batches.size()) {
-      problem.CheckSizes();
-      column_offsets_.resize(state_batches.size());
-      int first_column = 0;
-      for (size_t b = 0; b < state_batches.size(); ++b) {
-        const StateBatch *batch = state_batches[b];
-        ComputeStateColumnOffsets(stream, first_column, batch, column_offsets_[b]);
-        first_column += static_cast<int>((batch->NumActiveStates() - batch->NumConstStates()) *
-                                         batch->TangentSize());
-      }
-    }
     for (size_t b : bounded_) {
       StateBatch *batch = state_batches[b];
       const size_t n = batch->NumActiveStates() * batch->TangentSize();
@@ -607,31 +691,7 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
                                 dvector<float> &rhs, const dvector<float> *step) {
     return HoldActiveBounds(s, state, system, rhs, step);
   };
-  signature_ = signature;
-  structure_signature_ = std::move(structure);
-  problem_ = &problem;
-
   const size_t final_cap = options_.base_options.max_num_iterations;
-  num_problems_ = problem.NumProblems();
-  size_t total_rows = 0;
-  if (reuse) {
-    // Same constraint batches: keep their factor -> subproblem maps.
-    for (const ConstraintBatchState &con : constraints_)
-      total_rows += con.num_factors * con.batch->ResidualsSize();
-  } else {
-    problem.CheckSizes();
-    // The pointer tables of the constraint evaluations (the inner solves prepare their own).
-    if (!constraints.empty()) problem.PrepareStatePointers(stream);
-    constraints_ = std::move(constraints);
-    for (ConstraintBatchState &con : constraints_) {
-      total_rows += con.num_factors * con.batch->ResidualsSize();
-      if (num_problems_ > 1 && con.num_factors > 0) {
-        con.factor_problem.resize(con.num_factors);
-        ComputeFactorProblemIds(stream, problem, con.residual_batch, con.factor_problem.data());
-      }
-    }
-  }
-  if (values_.size() < total_rows) values_.resize(total_rows);
 
   const size_t num_slots = constraints_.size() * num_problems_;
   // A warm start keeps the multipliers and the penalties they were computed
@@ -643,25 +703,18 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
   // kept as they are.
   // Either way the kept penalties are clamped to [initial_penalty,
   // max_penalty] of the current options (which SetOptions may have changed).
-  const bool keep_state = warm && penalty_.size() == num_slots;
+  const bool keep_state = warm;
   if (keep_state && num_slots > 0) {
     decay_penalty_kernel<<<Blocks(num_slots), kThreads, 0, stream>>>(
         penalty_.data(), num_slots,
         options_.base_options.real_time ? 1.f : options_.penalty_increase, options_.initial_penalty,
         options_.max_penalty);
     THROW_ON_CUDA_ERROR(cudaGetLastError());
-  } else {
-    penalty_.resize(num_slots);
+  } else if (!keep_state) {
     Fill(stream, penalty_, options_.initial_penalty);
     for (ConstraintBatchState &con : constraints_) con.batch->ResetMultipliers(stream);
   }
-  if (!(keep_state && options_.base_options.real_time) || prev_violation_.size() != num_slots) {
-    prev_violation_.resize(num_slots);
-    Fill(stream, prev_violation_, INFINITY);
-  }
-  violation_.resize(num_slots);
-  problem_status_.resize(num_problems_);
-  at_cap_.resize(num_problems_);
+  if (!(keep_state && options_.base_options.real_time)) Fill(stream, prev_violation_, INFINITY);
   // Without constraint batches every subproblem is feasible: it starts polishing
   // (its first inner solve is its full solve). A real-time call then has
   // nothing to track (nothing is read back): only its inner solves run.
@@ -672,7 +725,6 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     THROW_ON_CUDA_ERROR(cudaMemsetAsync(problem_status_.data(), feasible ? 0xff : 0,
                                         num_problems_ * sizeof(int), stream));
   }
-  if (d_out_.size() < kNumOut) d_out_.resize(kNumOut);
   ScatterPenalties(stream, constraints_, penalty_, num_problems_);
 
   const bool real_time = options_.base_options.real_time;
@@ -689,7 +741,6 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
                              : std::numeric_limits<float>::quiet_NaN();
   summary.final_cost = summary.initial_cost;
 
-  if (!real_time) iteration_cap_.resize(num_problems_);
   std::array<float, kNumOut> out{};
   // Whether the next inner solve is a full solve for every iterating
   // subproblem: in real time every outer iteration may finish a subproblem
@@ -721,8 +772,8 @@ AugmentedLagrangianMinimizerSummary AugmentedLagrangianMinimizer::Minimize(cudaS
     inner_solve.problem_frozen = track ? problem_status_.data() : nullptr;
     inner_solve.constraints_managed = true;
     if (!bounded_.empty()) inner_solve.restrict_system = restrict_system;
-    // Later outer iterations solve the same structure.
-    inner_solve.reuse_structure = k > 0 || reuse;
+    // SetUp() (this call or an earlier one) set the inner solver up.
+    inner_solve.reuse_structure = true;
     const MinimizerSummary inner =
         internal::InnerMinimize(minimizer_, stream, problem, inner_solve);
     summary.inner_iterations += inner.num_iterations;

@@ -188,7 +188,7 @@ class MinimizerOptions:
     @property
     def real_time(self) -> bool:
         """
-        Fixed budget without host synchronization: exactly max_num_iterations iterations, each with exactly max_line_search_steps line-search evaluations; the summary has NaN costs and TerminationReason.NotDetermined. The first call sets the structure up; with reuse_structure the following calls can be captured in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the whole augmented Lagrangian call real time. Needs disable_safety_checks (the default): the safety checks read solver failures back. Default: False.
+        Fixed budget without host synchronization: exactly max_num_iterations iterations, each with exactly max_line_search_steps line-search evaluations; the summary has NaN costs and TerminationReason.NotDetermined. The structure setup synchronizes; with reuse_structure, calls on a structure initialize() (or an earlier call) set up can be captured in a CUDA graph. In AugmentedLagrangianMinimizerOptions.base_options it makes the whole augmented Lagrangian call real time. Needs disable_safety_checks (the default): the safety checks read solver failures back. Default: False.
         """
 
     @real_time.setter
@@ -233,7 +233,7 @@ class MinimizerOptions:
     @property
     def reuse_structure(self) -> bool:
         """
-        The problem's structure is unchanged since this minimizer's previous minimize() on it (same batches, connectivity, active/constant counts, partition): later calls skip the structure setup. A size change falls back to the full setup. Default: False.
+        The problem's structure is unchanged since this minimizer's previous minimize() or initialize() on it (same batches, connectivity, active/constant counts, partition): later calls skip the structure setup. A size change falls back to the full setup. Default: False.
         """
 
     @reuse_structure.setter
@@ -2298,8 +2298,8 @@ class LossFunctionBatch:
     """Abstract base class for batched robust loss functions."""
 
     def evaluate(self, s: object, out: object, count: int, stream: CudaStream) -> None:
-        r"""
-        Evaluates the loss on `count` squared residual norms s (float32 GPU array; may be overwritten) into out (float32 GPU array of count x 3: rho, rho', rho\'\' per entry), asynchronously on `stream`. The cost of a factor is 0.5 * rho(|r|^2).
+        """
+        Evaluates the loss on `count` squared residual norms s (float32 GPU array; may be overwritten) into out (float32 GPU array of count x 3: rho, rho', rho'' per entry), asynchronously on `stream`. The cost of a factor is 0.5 * rho(|r|^2).
         """
 
 class TrivialLossFunctionBatch(LossFunctionBatch):
@@ -2366,6 +2366,11 @@ class Minimizer:
         Minimize the problem's cost from its current states; the states are updated in place. Returns a MinimizerSummary.
         """
 
+    def initialize(self, stream: CudaStream, problem: Problem) -> None:
+        """
+        Set the problem's structure up without solving: the part of a first minimize() call that synchronizes (Hessian pattern, subproblem maps, the linear solver's analysis). Optional: minimize() does it itself when the structure is not set up. Call it before capturing minimize() in a CUDA graph (real_time and reuse_structure set; in base_options for Levenberg-Marquardt). Leaves the states unchanged; synchronizes the stream. Raises ValueError on a stream being captured.
+        """
+
     def subproblem_termination_reasons(self) -> Annotated[NDArray[numpy.int32], dict(shape=(None,))]:
         """
         The last minimize() call's TerminationReason value of every subproblem (Problem.set_problem_partition), as a numpy int array: e.g. np.flatnonzero(r >= int(TerminationReason.MaxIterations)) lists the subproblems that did not converge.
@@ -2393,7 +2398,7 @@ class LevenbergMarquardtMinimizer(Minimizer):
 
 class AugmentedLagrangianMinimizerOptions(LevenbergMarquardtMinimizerOptions):
     """
-    Options of AugmentedLagrangianMinimizer: those of its private inner Levenberg-Marquardt solver (the LevenbergMarquardtMinimizerOptions fields: damping, base_options with the linear solver and tolerances) and of the outer loop. Four base_options fields set the budget of a call, with or without constraint batches: max_num_iterations caps a subproblem's full inner solve (its first after it is feasible, and every subproblem's in the last outer iteration; without constraint batches every subproblem is feasible from the start, so this caps a bounds-only solve; default 50); max_line_search_steps is the line search of the inner solves (default 10 here); real_time runs a fixed budget without host synchronization (exactly max_outer_iterations outer iterations of inner_iterations inner iterations, the last max_num_iterations; costs in the summary are NaN; without constraint batches nothing is read back, status NotDetermined, so the call can be captured in a CUDA graph once the structure is set up); reuse_structure skips the structure setup of a call whose problem structure is unchanged.
+    Options of AugmentedLagrangianMinimizer: those of its private inner Levenberg-Marquardt solver (the LevenbergMarquardtMinimizerOptions fields: damping, base_options with the linear solver and tolerances) and of the outer loop. Four base_options fields set the budget of a call, with or without constraint batches: max_num_iterations caps a subproblem's full inner solve (its first after it is feasible, and every subproblem's in the last outer iteration; without constraint batches every subproblem is feasible from the start, so this caps a bounds-only solve; default 50); max_line_search_steps is the line search of the inner solves (default 10 here); real_time runs a fixed budget without host synchronization (exactly max_outer_iterations outer iterations of inner_iterations inner iterations, the last max_num_iterations; costs in the summary are NaN; without constraint batches nothing is read back, status NotDetermined, so the call can be captured in a CUDA graph once the structure is set up: initialize() before the capture); reuse_structure skips the structure setup of a call whose problem structure is unchanged.
     """
 
     def __init__(self) -> None: ...
@@ -2579,6 +2584,11 @@ class AugmentedLagrangianMinimizer:
         Minimize the objective subject to the constraint batches. Returns a AugmentedLagrangianMinimizerSummary.
         """
 
+    def initialize(self, stream: CudaStream, problem: Problem) -> None:
+        """
+        Set the problem's structure up without solving: the part of a first minimize() call that synchronizes (constraint maps, bounded columns, the inner solver's setup). Optional: minimize() does it itself when the structure is not set up. Call it before capturing minimize() in a CUDA graph (base_options.real_time and reuse_structure set, no constraint batches). Leaves the states unchanged; the multipliers and penalties of a new constraint layout start as in a first call. Synchronizes the stream. Raises ValueError on a stream being captured.
+        """
+
     @property
     def options(self) -> AugmentedLagrangianMinimizerOptions:
         """
@@ -2638,8 +2648,8 @@ class Problem:
         """
 
     def find_structure_error(self, stream: CudaStream) -> str:
-        r"""
-        The checks of validate(), returning the first failure as a message that names the batch and entry and says how to fix it; \'\' when the problem is well-formed. pycunls.diagnose() runs it together with the numerical checks.
+        """
+        The checks of validate(), returning the first failure as a message that names the batch and entry and says how to fix it; '' when the problem is well-formed. pycunls.diagnose() runs it together with the numerical checks.
         """
 
     def check_consistency(self) -> bool:

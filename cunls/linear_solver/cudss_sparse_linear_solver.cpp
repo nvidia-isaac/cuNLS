@@ -28,33 +28,12 @@
 namespace cunls {
 namespace {
 
-/**
- * @brief Maps cuDSSLinearSolverMode to the cuDSS reordering algorithm.
- *
- * @param mode Solver mode.
- * @return CUDSS_REORDERING_ALG_DEFAULT (SlowInitFastSolve) or
- * CUDSS_REORDERING_ALG_BTF_COLAMD (FastInitSlowSolve) with cuDSS >= 0.8;
- * CUDSS_ALG_DEFAULT / CUDSS_ALG_1 with older cuDSS.
- */
-int GetOrderingType(cuDSSLinearSolverMode mode) {
+/** @brief cuDSS's default reordering (CUDSS_ALG_DEFAULT before cuDSS 0.8). */
+int DefaultOrdering() {
 #ifdef CUNLS_CUDSS_NEW_API
-  switch (mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      return static_cast<int>(CUDSS_REORDERING_ALG_BTF_COLAMD);
-    default:
-      return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
-  }
+  return static_cast<int>(CUDSS_REORDERING_ALG_DEFAULT);
 #else
-  switch (mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      return static_cast<int>(CUDSS_ALG_DEFAULT);
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      return static_cast<int>(CUDSS_ALG_1);
-    default:
-      return static_cast<int>(CUDSS_ALG_DEFAULT);
-  }
+  return static_cast<int>(CUDSS_ALG_DEFAULT);
 #endif
 }
 
@@ -62,7 +41,7 @@ int GetOrderingType(cuDSSLinearSolverMode mode) {
 
 /** @copydoc cuDSSLinearSolver::cuDSSLinearSolver */
 cuDSSLinearSolver::cuDSSLinearSolver(cuDSSLinearSolverOptions options)
-    : options_(options), cudss_config_(GetOrderingType(options.mode), options.nthreads) {}
+    : options_(options), cudss_config_(DefaultOrdering(), options.nthreads) {}
 
 /** @copydoc cuDSSLinearSolver::Initialize */
 bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*problem*/,
@@ -108,20 +87,9 @@ bool cuDSSLinearSolver::Initialize(cudaStream_t stream, const Problem & /*proble
 
   auto cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
 
-  // Perform symbolic analysis phase
+  // Symbolic analysis only: each Solve() factorizes the current values.
   THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_ANALYSIS, cfg, cudss_data,
                                              desc_m, desc_result, desc_rhs));
-
-  // For FastInitSlowSolve, also perform initial factorization during
-  // initialization
-  switch (options_.mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      break;
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg,
-                                                 cudss_data, desc_m, desc_result, desc_rhs));
-  }
-
   return true;
 }
 
@@ -183,23 +151,11 @@ bool cuDSSLinearSolver::SolveWithValues(cudaStream_t stream, const CSRSparseMatr
   auto desc_rhs = reinterpret_cast<cudssMatrix_t>(rhs_desc.GetDescription());
   auto desc_result = reinterpret_cast<cudssMatrix_t>(result_desc.GetDescription());
 
-  // Determine factorization phase based on solver configuration
-  cudssPhase_t phase = CUDSS_PHASE_FACTORIZATION;
-  switch (options_.mode) {
-    case cuDSSLinearSolverMode::SlowInitFastSolve:
-      // Standard factorization
-      break;
-    case cuDSSLinearSolverMode::FastInitSlowSolve:
-      // Refactorize: reuses the analysis of the first factorization (faster).
-      phase = CUDSS_PHASE_REFACTORIZATION;
-      break;
-  }
-
   cudssConfig_t cfg = reinterpret_cast<cudssConfig_t>(cudss_config_.GetData());
 
-  // Perform factorization or refactorization
-  THROW_ON_CUDSS_ERROR(
-      GetCudssApi().Execute(dss_handle, phase, cfg, cudss_data, desc_m, desc_result, desc_rhs));
+  // Factorize the current values (reusing the analysis of Initialize()).
+  THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_FACTORIZATION, cfg, cudss_data,
+                                             desc_m, desc_result, desc_rhs));
   // Solve the linear system
   THROW_ON_CUDSS_ERROR(GetCudssApi().Execute(dss_handle, CUDSS_PHASE_SOLVE, cfg, cudss_data, desc_m,
                                              desc_result, desc_rhs));

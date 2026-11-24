@@ -183,10 +183,15 @@ void LevenbergMarquardtMinimizer::UpdateSystem(cudaStream_t stream, size_t itera
                                                const ProblemPartition &partition) {
   const size_t num_problems = partition.NumProblems();
   const bool first = iteration == 0;
-  if (first) {
+  if (first) {  // also the buffers of ClassifySteps: a captured call allocates nothing
     lambda_.resize(num_problems);
     next_lambda_.resize(num_problems);
     quality_.resize(num_problems);
+    diag_weight_.resize(num_problems);
+    matrix_weight_.resize(num_problems);
+    if (Options().column_scaling != ColumnScaling::None) {
+      system.ExtractHessianDiagonal(stream, unscaled_diagonal_);
+    }
   }
   // The damping λ_p max(diag(S H S), min_diagonal) of the rows of subproblem
   // p, with λ updated in the same pass.
@@ -209,8 +214,6 @@ void LevenbergMarquardtMinimizer::ClassifySteps(cudaStream_t stream, const Linea
                                                 const dvector<float> &step,
                                                 ProblemPartition &partition) {
   const size_t n = partition.NumProblems();
-  diag_weight_.resize(n);
-  matrix_weight_.resize(n);
   // The predicted reduction's terms δᵀDδ and δᵀHδ, per subproblem. The step
   // is in physical coordinates (dx = S z, see ColumnScaling), so the damping
   // term λ zᵀ diag(S H S) z is λ dxᵀ diag(H) dx with the unscaled Hessian;

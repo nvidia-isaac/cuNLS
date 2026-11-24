@@ -111,6 +111,7 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
       THROW_ON_CUDA_ERROR(cudaGetLastError());
     }
     LogMessage("Hessian storage: BSR with block size {}", block_size_);
+    hessian_step_.resize(num_cols);  // StepCurvature() allocates nothing in a solve
     return;
   }
 
@@ -136,6 +137,13 @@ void NormalEquations::Initialize(cudaStream_t stream, const Problem &problem, in
     row_of_entry_kernel<<<Blocks(n), kThreads, 0, stream>>>(csr_hessian_.row_offsets.data(), n,
                                                             row_of_entry_.data());
     THROW_ON_CUDA_ERROR(cudaGetLastError());
+  }
+  // StepCurvature() allocates nothing in a solve: H δ, and cuSPARSE's handle and SpMV workspace
+  // (one product with the pattern's current values; the result is not used).
+  hessian_step_.resize(num_cols);
+  if (n > 0) {
+    const dvector<float> x(0.f, n);
+    MultiplyHessian(stream, x, hessian_step_);
   }
 }
 

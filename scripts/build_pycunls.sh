@@ -69,12 +69,16 @@ Path('pycunls/_build_provenance.json').write_text(json.dumps({
 }, sort_keys=True) + '\n')
 PY
 
+# The PyPI page: the README with absolute links at the release tag (the commit for other builds).
+rm README.md
+python3 ../scripts/pypi_readme.py ../README.md "${RELEASE_TAG:-$RELEASE_COMMIT}" > README.md
+
 # PYTHON_VERSION (e.g. 3.13) builds for that Python; the default is the image's python3.
 PYTHON=python3
 if [ -n "${PYTHON_VERSION:-}" ]; then
   uv venv --seed --python "$PYTHON_VERSION" "$WORK_DIR/venv"
   PYTHON="$WORK_DIR/venv/bin/python"
-  uv pip install --python "$PYTHON" "scikit-build-core>=0.10" "nanobind>=2.4"
+  uv pip install --python "$PYTHON" "scikit-build-core>=0.11" "nanobind>=2.4"
 fi
 
 export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}
@@ -105,6 +109,16 @@ with zipfile.ZipFile(wheels[0]) as archive:
     provenance = json.loads(archive.read('pycunls/_build_provenance.json'))
     if provenance != {'git_sha': os.environ['RELEASE_COMMIT'], 'cuda_version': os.environ['CUDA_VERSION']}:
         raise SystemExit('Repaired wheel lost the original build provenance')
+    info = next(n for n in archive.namelist() if re.fullmatch(r'[^/]+\.dist-info/METADATA', n))
+    metadata = archive.read(info).decode()
+    for needed in ('License-Expression: Apache-2.0', 'Description-Content-Type: text/markdown',
+                   'raw.githubusercontent.com/nvidia-isaac/cuNLS/'):
+        if needed not in metadata:
+            raise SystemExit(f'Wheel metadata lacks {needed!r}: check python/pyproject.toml and scripts/pypi_readme.py')
+    licenses = info.replace('METADATA', 'licenses/')
+    for name in ('LICENSE', 'NOTICE', 'third_party/LICENSES/spdlog.LICENSE'):
+        if licenses + name not in archive.namelist():
+            raise SystemExit(f'Wheel lacks the license file {licenses + name}: check license-files in python/pyproject.toml')
     for member in archive.namelist():
         if re.search(r'(^|/)lib(cudart|cusparse|cublas|cusolver|cudss|cuda)[^/]*\.so', member):
             raise SystemExit(f'CUDA runtime library must remain external: {member}')

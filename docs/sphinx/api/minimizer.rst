@@ -146,9 +146,9 @@ then override individual fields.
 - **real_time** (``bool``, default ``False``) — a fixed budget without host
   synchronization: exactly ``max_num_iterations`` iterations, each with
   exactly ``max_line_search_steps`` line-search evaluations; the summary has
-  NaN costs and ``TerminationReason.NotDetermined``.  The first call sets the
-  structure up; with ``reuse_structure`` the following calls can be captured
-  in a CUDA graph.  In ``AugmentedLagrangianMinimizerOptions.base_options`` it makes
+  NaN costs and ``TerminationReason.NotDetermined``.  The structure setup
+  synchronizes; with ``reuse_structure``, calls on a structure ``initialize``
+  (or an earlier call) set up can be captured in a CUDA graph.  In ``AugmentedLagrangianMinimizerOptions.base_options`` it makes
   the whole augmented Lagrangian call real time; with constraint batches that call
   still reads its final status back once (and synchronizes), without them it reads
   nothing back.  Real time needs ``disable_safety_checks`` (the default): the safety
@@ -193,9 +193,9 @@ then override individual fields.
   much cheaper when the eliminated states outnumber the others. See
   :doc:`../linear_solvers`.
 - **reuse_structure** (``bool``, default ``False``) — the problem's structure
-  is unchanged since this minimizer's previous ``minimize`` on it (same
-  batches, connectivity, active and constant counts, partition; only state
-  values, factor data and bounds may differ).  Calls after the first then
+  is unchanged since this minimizer's previous ``minimize`` or ``initialize``
+  on it (same batches, connectivity, active and constant counts, partition;
+  only state values, factor data and bounds may differ).  Later calls then
   skip the structure setup (index expansion, Hessian pattern, symbolic
   analysis of the linear solver).  A size change falls back to the full
   setup; rewritten index tables at the same sizes must not be combined with
@@ -373,6 +373,14 @@ problem partition every decision is taken per subproblem.
   synchronized before the call returns.  Returns a
   :ref:`MinimizerSummary <py-minimizer-summary-label>` with iteration count
   and cost statistics.
+- ``initialize(stream: CudaStream, problem: Problem) -> None`` — sets the
+  problem's structure up without solving: the part of a first ``minimize``
+  that synchronizes (Hessian pattern, subproblem maps, the linear solver's
+  analysis).  Optional: ``minimize`` runs it itself when the structure is not
+  set up.  Call it before capturing ``minimize`` in a CUDA graph (with
+  ``real_time`` and ``reuse_structure``).  Leaves the states unchanged,
+  synchronizes *stream*, and raises ``ValueError`` on a stream being captured.
+  ``AugmentedLagrangianMinimizer.initialize`` also sets up its constraint maps.
 
 **Properties**
 
@@ -1065,6 +1073,25 @@ number of running subproblems), plus one per line-search step.
   RHS, and internal state snapshots) across calls; when the problem size is
   unchanged, device memory is reused instead of reallocated. With
   ``MinimizerOptions::reuse_structure`` the structure setup is skipped too.
+
+.. cpp:function:: void Minimizer::Initialize(cudaStream_t stream, const Problem& problem)
+
+  Sets the problem's structure up without solving: the part of a first
+  :cpp:func:`Minimizer::Minimize` that synchronizes (index expansion, Hessian
+  pattern, subproblem maps, the linear solver's analysis).  ``Minimize`` calls
+  the same setup itself when the structure is not set up, so this call is
+  optional; make it before capturing ``Minimize`` in a CUDA graph (with
+  ``real_time`` and ``reuse_structure``), or to keep the setup out of the first
+  solve.  Assembles the system once at the current states and leaves them
+  unchanged; synchronizes *stream*.
+  ``AugmentedLagrangianMinimizer::Initialize`` does the same for the
+  augmented Lagrangian (constraint maps, bounded columns, its inner solver).
+
+  Accepts constraint batches and box-bounded states (the augmented
+  Lagrangian sets its inner solver up with it); ``Minimize`` rejects those for
+  Gauss-Newton and Levenberg-Marquardt.  Throws ``std::invalid_argument`` if
+  *stream* is being captured or the problem's sizes or device are invalid;
+  ``std::runtime_error`` if the linear solver rejects the system.
 
 .. cpp:function:: const MinimizerOptions& Minimizer::Options() const
 

@@ -99,6 +99,9 @@ void DenseQRSolver::EnsureBuffersSize(cudaStream_t stream, size_t n) {
     dev_info_pinned_.resize(1);
   }
 
+  // The cuBLAS handle of the solve's triangular step, created here: a solve then creates
+  // nothing, so it can be captured.
+  cublas_handle_.GetHandle(stream);
   if (n != last_n_ && n > 0) {
     auto handle = static_cast<cusolverDnHandle_t>(cusolver_handle_.GetHandle(stream));
     int geqrf_lwork = 0;

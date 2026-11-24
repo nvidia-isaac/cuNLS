@@ -601,32 +601,24 @@ TEST(StreamBoundHandleTest, CudssSolverSolvesOnAnotherStream) {
   SetLoggerOptions(Verbosity::Error);
   SetLogCallback([&errors](Verbosity, std::string_view msg) { errors.emplace_back(msg); });
 
-  for (auto mode :
-       {cuDSSLinearSolverMode::SlowInitFastSolve, cuDSSLinearSolverMode::FastInitSlowSolve}) {
-    SCOPED_TRACE(mode == cuDSSLinearSolverMode::SlowInitFastSolve ? "SlowInitFastSolve"
-                                                                  : "FastInitSlowSolve");
-    {
-      CudaStream a;
-      CudaStream b;
-      SparseLinearSolverConfig config;
-      config.cudss_solver_options.mode = mode;
-      SparseLinearSolverPtr solver =
-          CreateSparseLinearSolver(SparseLinearSolverType::cuDSS, config);
-      ASSERT_TRUE(solver->Initialize(a.GetStream(), Problem(), matrix, rhs, result));
-      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(a.GetStream()));
-      for (CudaStream *stream : {&b, &a}) {
-        THROW_ON_CUDA_ERROR(
-            cudaMemsetAsync(result.data(), 0, n * sizeof(float), stream->GetStream()));
-        ASSERT_TRUE(solver->Solve(stream->GetStream(), matrix, rhs, result));
-        THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream->GetStream()));
-        std::vector<float> x(n);
-        result.CopyToHost(x.data(), n);
-        for (int i = 0; i < n; ++i) ASSERT_NEAR(x[i], x_true[i], 1e-4f) << "row " << i;
-      }
-    }  // the solver is destroyed here, before its streams
-    for (const std::string &e : errors) ADD_FAILURE() << e;
-    errors.clear();
-  }
+  {
+    CudaStream a;
+    CudaStream b;
+    SparseLinearSolverPtr solver =
+        CreateSparseLinearSolver(SparseLinearSolverType::cuDSS, SparseLinearSolverConfig{});
+    ASSERT_TRUE(solver->Initialize(a.GetStream(), Problem(), matrix, rhs, result));
+    THROW_ON_CUDA_ERROR(cudaStreamSynchronize(a.GetStream()));
+    for (CudaStream *stream : {&b, &a}) {
+      THROW_ON_CUDA_ERROR(
+          cudaMemsetAsync(result.data(), 0, n * sizeof(float), stream->GetStream()));
+      ASSERT_TRUE(solver->Solve(stream->GetStream(), matrix, rhs, result));
+      THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream->GetStream()));
+      std::vector<float> x(n);
+      result.CopyToHost(x.data(), n);
+      for (int i = 0; i < n; ++i) ASSERT_NEAR(x[i], x_true[i], 1e-4f) << "row " << i;
+    }
+  }  // the solver is destroyed here, before its streams
+  for (const std::string &e : errors) ADD_FAILURE() << e;
 }
 #endif  // CUNLS_ENABLE_CUDSS
 
