@@ -536,7 +536,9 @@ void AugmentedLagrangianMinimizer::UpdateBoundedStates(cudaStream_t stream, cons
   for (size_t b = 0; b < state_batches.size(); ++b) {
     if (HasBoxBounds(state_batches[b])) bounded_.push_back(b);
   }
-  if (bounded_.empty() || (!recompute && column_offsets_.size() == state_batches.size())) return;
+  // The setup computes the columns of the current layout, also without bounds (a later call
+  // with reuse_structure may bound a state); a reuse call keeps them.
+  if (!recompute && (bounded_.empty() || column_offsets_.size() == state_batches.size())) return;
   problem.CheckSizes();
   column_offsets_.resize(state_batches.size());
   int first_column = 0;

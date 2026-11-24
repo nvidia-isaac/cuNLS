@@ -323,9 +323,10 @@ class AugmentedLagrangianMinimizer {
   void SetUp(cudaStream_t stream, const Problem &problem);
 
   /**
-   * @brief Finds the box-bounded state batches (bounded_) and, with
-   * `recompute` or when their number changed, the reduced-system column of
-   * every state (column_offsets_).
+   * @brief Finds the box-bounded state batches (bounded_) and the
+   * reduced-system column of every state (column_offsets_): always with
+   * `recompute` (the setup, also without bounds), otherwise only with bounds
+   * when the number of state batches changed.
    */
   void UpdateBoundedStates(cudaStream_t stream, const Problem &problem, bool recompute);
 

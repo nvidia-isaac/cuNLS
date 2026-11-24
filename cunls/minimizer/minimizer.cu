@@ -544,9 +544,10 @@ void Minimizer::Initialize(cudaStream_t stream, const Problem &problem) {
       throw std::runtime_error(msg);
     }
   }
+  // Set up only once the setup's work has completed.
+  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
   structure_.problem = &problem;
   structure_.signature = StructureSignature(problem);
-  THROW_ON_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 
 MinimizerSummary Minimizer::Minimize(cudaStream_t stream, Problem &problem) {
