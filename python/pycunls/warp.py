@@ -43,7 +43,7 @@ import numpy as np
 
 import warp as wp
 
-from pycunls._arrays import (cached_stream, cuda_device, is_warp_function, warp_length,
+from pycunls._arrays import (borrow_stream, cuda_device, is_warp_function, warp_length,
                              warp_result_type)
 from pycunls._pycunls_core import CustomFactorBatch, CustomStateBatch
 
@@ -163,7 +163,6 @@ class WarpFactorBatch(CustomFactorBatch):
         device = self._device = cuda_device(device, owner)
         self._num_states = len(state_sizes)
         self._num_columns = int(sum(state_sizes))
-        self._streams: dict = {}    # cudaStream_t handle -> wp.Stream (made once per handle)
         # The Jacobian argument when only residuals are requested: no rows.
         self._no_jacobians = wp.empty((0, residual_size, self._num_columns), dtype=wp.float32,
                                       device=device)
@@ -240,15 +239,17 @@ class WarpFactorBatch(CustomFactorBatch):
         return ids
 
     def make_warp_stream(self, stream_handle: int) -> wp.Stream:
-        """The ``warp.Stream`` wrapping an existing ``cudaStream_t`` (made once per handle and
-        cached, so a callback does not build a new one at every evaluation).
+        """A ``warp.Stream`` for the ``cudaStream_t`` cuNLS passes to a callback, to launch
+        kernels on. It borrows the stream: it does not register it with Warp, so collecting it
+        leaves the ``wp.Stream`` that owns the handle (often Warp's own stream) usable, also for
+        graph captures.
 
         Parameters
         ----------
         stream_handle : int
             The raw ``cudaStream_t`` handle (as an integer).
         """
-        return cached_stream(self._streams, stream_handle, self._device)
+        return borrow_stream(stream_handle, self._device)
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -421,7 +422,6 @@ class WarpStateBatch(CustomStateBatch):
         if device is None and isinstance(data, wp.array):
             device = data.device
         self._device = cuda_device(device, owner)
-        self._streams: dict = {}    # cudaStream_t handle -> wp.Stream (made once per handle)
         # (x, delta, x_plus_delta pointers, state count) -> their arrays; the last few only.
         self._arguments: collections.OrderedDict = collections.OrderedDict()
 
@@ -452,15 +452,17 @@ class WarpStateBatch(CustomStateBatch):
                         device=self._device, copy=False)
 
     def make_warp_stream(self, stream_handle: int) -> wp.Stream:
-        """The ``warp.Stream`` wrapping an existing ``cudaStream_t`` (made once per handle and
-        cached, so a callback does not build a new one at every evaluation).
+        """A ``warp.Stream`` for the ``cudaStream_t`` cuNLS passes to a callback, to launch
+        kernels on. It borrows the stream: it does not register it with Warp, so collecting it
+        leaves the ``wp.Stream`` that owns the handle (often Warp's own stream) usable, also for
+        graph captures.
 
         Parameters
         ----------
         stream_handle : int
             The raw ``cudaStream_t`` handle (as an integer).
         """
-        return cached_stream(self._streams, stream_handle, self._device)
+        return borrow_stream(stream_handle, self._device)
 
     # ------------------------------------------------------------------
     # Update

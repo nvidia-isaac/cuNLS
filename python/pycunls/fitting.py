@@ -55,7 +55,7 @@ import numpy as np
 import warp as wp
 
 from pycunls import _pycunls_core as _core
-from pycunls._arrays import (cached_stream, is_warp_function, to_numpy, warp_length,
+from pycunls._arrays import (borrow_stream, is_warp_function, to_numpy, warp_length,
                              warp_result_type, warp_stream)
 from pycunls._summary import _plain
 from pycunls.builder import make_solver
@@ -290,7 +290,6 @@ class _SampleFactors(_core.CustomFactorBatch):
     def __init__(self, model: _WarpModel, x: wp.array, y: wp.array, w: wp.array):
         super().__init__(model.m, [model.num_params], y.shape[0])
         self.model, self.x, self.y, self.w = model, x, y, w
-        self._streams: Dict[int, wp.Stream] = {}
 
     def evaluate(self, res_ptr, jac_ptr, sp_ptr, stream_handle, ids_ptr, num_ids):
         n = num_ids if num_ids else self.num_active_factors
@@ -299,7 +298,7 @@ class _SampleFactors(_core.CustomFactorBatch):
         def wrap(ptr, dtype, shape):
             return wp.array(ptr=ptr, dtype=dtype, shape=shape, device=device, copy=False)
 
-        stream = cached_stream(self._streams, stream_handle, device)
+        stream = borrow_stream(stream_handle, device)
         with wp.ScopedStream(stream, sync_enter=False):
             # Item t evaluates factor ids[t], or t % N without ids (FactorBatch.Evaluate).
             ids = wrap(ids_ptr, wp.int32, (n,)) if ids_ptr else None
