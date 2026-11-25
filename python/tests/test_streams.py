@@ -15,11 +15,15 @@
 
 """Streams of other libraries (wp.Stream, __cuda_stream__ objects) wherever pycunls takes one."""
 
+import gc
+
 import numpy as np
 import pytest
 import warp as wp
 
 import pycunls
+from pycunls._arrays import borrow_stream
+from pycunls.warp import WarpFactorBatch
 
 
 def _prior_problem(n):
@@ -84,10 +88,9 @@ def test_a_captured_call_that_would_synchronize_raises_with_the_fix(augmented_la
 
 def test_cuda_stream_keeps_a_temporary_warp_stream_alive():
     """CudaStream(wp.Stream(...)): the temporary Warp stream must outlive the wrapper's use."""
-    import gc
     wrapped = pycunls.CudaStream(wp.Stream(wp.get_cuda_device()))
     gc.collect()
-    with wp.ScopedStream(wp.Stream(wp.get_cuda_device(), cuda_stream=wrapped.get_stream())):
+    with wp.ScopedStream(borrow_stream(wrapped.get_stream())):
         problem, x, targets = _prior_problem(8)
     pycunls.LevenbergMarquardtMinimizer().minimize(wrapped, problem)
     np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
@@ -111,6 +114,92 @@ def test_cuda_stream_wraps_other_streams_without_owning_them():
     np.testing.assert_allclose(x.numpy(), targets.numpy(), atol=1e-4)
     with pytest.raises(TypeError, match="Fix:"):
         pycunls.CudaStream("not a stream")
+
+
+# ---------------------------------------------------------------------------
+# Callbacks borrow the solver stream: Warp keeps knowing the stream's owner
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def _prior3_kernel(observations: wp.array(dtype=wp.vec3), factor_ids: wp.array(dtype=wp.int32),
+                   states: wp.array2d(dtype=wp.uint64), residuals: wp.array2d(dtype=float),
+                   jacobians: wp.array3d(dtype=float)):
+    t = wp.tid()
+    x = wp.array(ptr=states[t, 0], shape=(3,), dtype=float)
+    obs = observations[factor_ids[t]]
+    for d in range(3):
+        residuals[t, d] = x[d] - obs[d]
+    if jacobians.shape[0] > 0:
+        for d in range(3):
+            for c in range(3):
+                jacobians[t, d, c] = wp.where(d == c, 1.0, 0.0)
+
+
+def _assert_capturable(stream):
+    """A graph captured on ``stream`` replays: Warp still knows the stream."""
+    a = wp.zeros(4, dtype=float)
+    with wp.ScopedCapture(stream=stream) as capture:
+        a.fill_(1.0)
+    wp.capture_launch(capture.graph, stream=stream)
+    np.testing.assert_array_equal(a.numpy(), 1.0)
+
+
+def _solve_with_kernel_factor(stream):
+    """Solves an 8-state prior problem with a kernel WarpFactorBatch; everything is collected."""
+    n = 8
+    x = wp.zeros(3 * n, dtype=float)
+    states = pycunls.VectorStateBatch3(x, n)
+    states.set_num_active_states(n)
+    targets = wp.array(np.ones((n, 3), dtype=np.float32), dtype=wp.vec3)
+    prior = WarpFactorBatch(_prior3_kernel, inputs=[targets], residual_size=3, state_sizes=[3],
+                            capacity=n)
+    prior.set_num_active_factors(n)
+    problem = pycunls.Problem()
+    problem.add_state_batch(states)
+    problem.add_factor_batch(prior, [states.state_device_ptr(i) for i in range(n)])
+    assert pycunls.GaussNewtonMinimizer().minimize(stream, problem).converged()
+    np.testing.assert_allclose(x.numpy(), 1.0, atol=1e-5)
+
+
+@pytest.mark.parametrize("which", ["warp", "user"])
+def test_callbacks_leave_the_solver_stream_registered_with_warp(which):
+    """Callbacks launch on a borrowed view of the solver stream; collecting it must not make
+    Warp forget the stream's owner (captures on it failed with "unknown stream", and Warp's
+    current stream became NULL)."""
+    device = wp.get_cuda_device()
+    stream = wp.get_stream(device) if which == "warp" else wp.Stream(device)
+    _solve_with_kernel_factor(stream)
+    gc.collect()
+    assert wp.get_stream(device).cuda_stream == device.runtime.core.wp_cuda_context_get_stream(
+        device.context)
+    _assert_capturable(stream)
+
+
+def test_fit_and_diagnose_leave_warp_streams_registered():
+    """fit() on Warp's stream and diagnose() on a CudaStream wrapping a user wp.Stream."""
+
+    @wp.func
+    def line(x: float, p: wp.vec2) -> float:
+        return p[0] * x + p[1]
+
+    xs = np.linspace(0.0, 1.0, 32).astype(np.float32)
+    result = pycunls.fit(line, xs, 2.0 * xs + 1.0, [0.0, 0.0], stream=wp.get_stream())
+    np.testing.assert_allclose(np.asarray(result.params), [2.0, 1.0], atol=1e-4)
+    user = wp.Stream(wp.get_cuda_device())
+    problem, _, _ = _prior_problem(4)
+    pycunls.diagnose(problem, pycunls.CudaStream(user))
+    gc.collect()
+    _assert_capturable(wp.get_stream())
+    _assert_capturable(user)
+
+
+def test_a_borrowed_stream_has_the_attributes_of_a_warp_stream():
+    """borrow_stream sets wp.Stream's attributes by hand (running wp.Stream.__init__ would
+    register the handle): an attribute a Warp release adds must be added there too."""
+    device = wp.get_cuda_device()
+    owner = wp.Stream(device)
+    assert set(vars(borrow_stream(owner.cuda_stream, device))) == set(vars(owner))
 
 
 # ---------------------------------------------------------------------------

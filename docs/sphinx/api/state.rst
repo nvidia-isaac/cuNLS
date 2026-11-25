@@ -428,7 +428,8 @@ These helpers convert its arguments:
 
 - ``wrap_array(ptr: int, dtype, shape) -> wp.array`` — zero-copy wrap of a device pointer.
 - ``make_warp_stream(stream_handle: int) -> wp.Stream`` — the minimizer's stream, for
-  ``wp.launch(..., stream=...)``.
+  ``wp.launch(..., stream=...)``. It borrows the stream (it does not register it with Warp), so
+  collecting it leaves the ``wp.Stream`` that owns the handle usable, also for graph captures.
 
 See :ref:`pycunls_tutorial:Custom Warp State` for a complete example.
 

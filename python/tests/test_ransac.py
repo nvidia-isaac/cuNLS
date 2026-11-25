@@ -28,6 +28,7 @@ import pytest
 import warp as wp
 
 import pycunls
+from pycunls._arrays import borrow_stream
 
 TAU = 0.01
 
@@ -213,7 +214,7 @@ def _device_floats(ptr, n):
 
 def _cunls_stream(stream_handle):
     """A wp.Stream view of the cudaStream_t cuNLS passes to a callback."""
-    return wp.Stream(wp.get_cuda_device(), cuda_stream=stream_handle)
+    return borrow_stream(stream_handle)
 
 
 class LineState(pycunls.CustomStateBatch):

@@ -27,6 +27,7 @@ import pytest
 import warp as wp
 
 import pycunls
+from pycunls._arrays import borrow_stream
 
 
 def make_solver():
@@ -228,7 +229,7 @@ class HsRows(pycunls.CustomFactorBatch):
         state_ptrs = wp.array(ptr=sp_ptr, shape=(n,), dtype=wp.uint64, device=device)
         res = wp.array(ptr=res_ptr, shape=(n,), dtype=float, device=device)
         wp.launch(_hs_rows, dim=n, inputs=[self.which, state_ptrs, res, wp.uint64(jac_ptr)],
-                  device=device, stream=wp.Stream(device, cuda_stream=stream_handle))
+                  device=device, stream=borrow_stream(stream_handle, device))
         return True
 
 

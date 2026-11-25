@@ -87,6 +87,10 @@ CI runs the same four commands, parameterized by `CUDA_VERSION` / `UBUNTU_VERSIO
 
 - `docker login -p $SECRET` exposes the secret: pipe it to `--password-stdin` from `env:`.
 - `grep ... | head -1 || echo "?"` never falls back (`||` binds to `head`): use `${VAR:-"?"}`.
+- `wp.Stream(device, cuda_stream=h)` registers `h` in Warp's stream table (one entry per handle,
+  no reference count) and its `__del__` erases the entry: never wrap a handle another
+  `wp.Stream` owns (cuNLS passes Warp's own stream to callbacks). Use
+  `pycunls._arrays.borrow_stream`, which leaves the table alone.
 - `.dockerignore` must sit at the build-context root. Use `@v5` actions with
   `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true`. Build CI images from the Dockerfile, not from a
   private registry.

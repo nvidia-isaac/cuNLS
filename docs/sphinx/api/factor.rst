@@ -922,7 +922,8 @@ arrays). These helpers convert its arguments:
   item as an ``int32`` array: wraps ``factor_ids_ptr`` when it is non-null, otherwise returns
   (and caches) ``arange(num_items) % num_active_factors``.
 - ``make_warp_stream(stream_handle: int) -> wp.Stream`` — the minimizer's stream, for
-  ``wp.launch(..., stream=...)``.
+  ``wp.launch(..., stream=...)``. It borrows the stream (it does not register it with Warp), so
+  collecting it leaves the ``wp.Stream`` that owns the handle usable, also for graph captures.
 
 See :ref:`pycunls_tutorial:Custom Warp Factor` for a complete example.
 

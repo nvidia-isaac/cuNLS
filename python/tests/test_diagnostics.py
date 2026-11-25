@@ -22,6 +22,7 @@ import pytest
 import warp as wp
 
 import pycunls
+from pycunls._arrays import borrow_stream
 from pycunls.catalog import effective_factor
 
 
@@ -83,7 +84,7 @@ class _WrongJacobianPrior(pycunls.CustomFactorBatch):
         res = wp.array(ptr=res_ptr, shape=(n, 2), dtype=float, device=device)
         wp.launch(_wrong_jacobian_prior, dim=n,
                   inputs=[state_ptrs, self.obs, float(self.scale), res, wp.uint64(jac_ptr)],
-                  stream=wp.Stream(device, cuda_stream=stream))
+                  stream=borrow_stream(stream, device))
         return True
 
 

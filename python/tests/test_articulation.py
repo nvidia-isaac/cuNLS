@@ -593,12 +593,6 @@ def test_topology_from_joint_arrays_maps_scene_indices(stream):
         topology_from_joint_arrays(*bad, joints=range(0, 3))
 
 
-def test_warp_factor_batch_helpers_cache_streams():
-    inner = _frame_height(wp.zeros(4, dtype=float), 4)
-    s = wp.Stream(wp.get_cuda_device())
-    assert inner.make_warp_stream(s.cuda_stream) is inner.make_warp_stream(s.cuda_stream)
-
-
 def test_topology_accepts_gpu_arrays():
     ident = [0, 0, 0, 0, 0, 0, 1]
     host = dict(joint_type=[JT.Fixed.value, JT.Revolute.value], joint_parent=[-1, 0],

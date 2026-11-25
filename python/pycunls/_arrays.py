@@ -45,8 +45,7 @@ def to_numpy(a, dtype, name: str, owner: str) -> np.ndarray:
             # which are also valid stream handles).
             producer = a.__cuda_array_interface__.get("stream")
             if producer:
-                wp.get_stream(view.device).wait_stream(
-                    wp.Stream(view.device, cuda_stream=producer))
+                wp.get_stream(view.device).wait_stream(borrow_stream(producer, view.device))
             a = view.numpy()
         return np.asarray(a, dtype=dtype)
     except Exception as exc:  # noqa: BLE001
@@ -90,10 +89,39 @@ def to_device(a, dtype=None, name: str = "array", owner: str = "pycunls") -> wp.
     return wp.array(host, dtype=wp.dtype_from_numpy(host.dtype), device=wp.get_cuda_device())
 
 
+class _BorrowedStream(wp.Stream):
+    """A ``wp.Stream`` view of a CUDA stream another object owns. Unlike
+    ``wp.Stream(device, cuda_stream=handle)`` it never touches Warp's table of known streams:
+    that table has one entry per handle and no reference count, so collecting a second wrapper
+    of a handle would erase the entry of the ``wp.Stream`` that owns it (Warp's own stream, or
+    the user's), and Warp would then reject graph captures on it ("unknown stream") and drop it
+    as the current stream. Kernel launches, ``ScopedStream`` and ``wait_stream`` work on it; it
+    cannot begin a graph capture (capture on the owner's ``wp.Stream``)."""
+
+    def __init__(self, handle: int, device: wp.Device):
+        # The attributes of a non-owning wp.Stream (owner and cuda_stream also come from
+        # wp.Stream.__new__); test_streams.py checks the set against Warp's.
+        self._cached_event = None
+        self._is_blocking = None
+        self.device = device
+        self.cuda_stream = handle
+        self.owner = False
+
+    def __del__(self):
+        pass                    # nothing registered, nothing owned
+
+
+def borrow_stream(handle: int, device=None) -> wp.Stream:
+    """A ``wp.Stream`` for the raw ``cudaStream_t`` ``handle`` (on ``device``, default the current
+    CUDA device) that neither owns the stream nor registers it with Warp: see
+    :class:`_BorrowedStream`. Cheap (no driver calls): make one per use."""
+    return _BorrowedStream(handle, device if device is not None else wp.get_cuda_device())
+
+
 def warp_stream(stream) -> wp.Stream:
     """A ``wp.Stream`` for any stream pycunls accepts: a ``wp.Stream`` itself, a
     :class:`pycunls.CudaStream`, an object with the CUDA stream protocol ``__cuda_stream__``, or a
-    raw ``cudaStream_t``; it does not own the stream."""
+    raw ``cudaStream_t`` (borrowed: see :func:`borrow_stream`); it does not own the stream."""
     if isinstance(stream, wp.Stream):
         return stream
     if isinstance(stream, int):
@@ -104,16 +132,7 @@ def warp_stream(stream) -> wp.Stream:
         handle = int(stream.cuda_stream)
     else:
         handle = int(stream.__cuda_stream__()[1])
-    return wp.Stream(wp.get_cuda_device(), cuda_stream=handle)
-
-
-def cached_stream(cache: dict, handle: int, device) -> wp.Stream:
-    """The ``wp.Stream`` wrapping the raw ``cudaStream_t`` ``handle``, made once per handle and
-    kept in ``cache``, so a callback does not build a new one at every evaluation."""
-    stream = cache.get(handle)
-    if stream is None:
-        stream = cache[handle] = wp.Stream(device, cuda_stream=handle)
-    return stream
+    return borrow_stream(handle)
 
 
 def is_warp_function(obj) -> bool:
